@@ -13,6 +13,7 @@ mod claimed;
 pub(in crate::sandbox) mod dispatch;
 mod readiness;
 mod refusal;
+mod runtime;
 mod validation;
 pub use authority::{ChannelControlExecutionAuthorization, ChannelControlExecutionFence};
 pub use refusal::ChannelControlRefusalSnapshot;
@@ -92,7 +93,13 @@ impl ChannelControlExecutionService {
         )
         .await
     }
-    pub async fn release_held(&self, command: &AdmittedAgentCommand) -> Result<(), Error> {
+    /// Check the same local runtime registry used for dispatch before releasing
+    /// the hold. Local absence preserves the hold and does not revoke authority.
+    pub async fn release_held(
+        &self,
+        command: &AdmittedAgentCommand,
+        operations: &crate::sandbox::AgentOperationService,
+    ) -> Result<(), Error> {
         if command.queue_expired(&crate::now_rfc3339()) {
             return self.store.expire_control_hold(command).await;
         }
@@ -127,6 +134,13 @@ impl ChannelControlExecutionService {
                 )
                 .map_err(|_| Error::Unavailable)?;
         }
+        runtime::require_local(
+            operations,
+            fence.proof(),
+            fence.snapshot(),
+            fence.deadline(),
+        )
+        .await?;
         tokio::time::timeout_at(
             fence.deadline(),
             self.store.release_control_hold(fence, command),

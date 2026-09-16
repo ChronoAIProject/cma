@@ -110,8 +110,8 @@ async fn channel_control_execution_ambiguous_conversation_commit_recovers_one_di
         hook_entered.store(failpoint_count(&configured), Ordering::SeqCst);
     }.boxed()
     });
-    // First resolve occurs after release and claim, immediately before the
-    // conversation mutation; the failpoint cannot consume an earlier commit.
+    // Dispatch resolve zero follows the hold-release and readiness lookups,
+    // immediately before the conversation mutation; no earlier commit is hit.
     let (execution, writes) = worker::execution_at(&c, Some(hook), 0, false);
     let result = AgentCommandWorker::new(
         c.f.resources.clone(),
@@ -213,7 +213,7 @@ async fn channel_control_execution_expired_held_control_is_permanently_refused()
         .unwrap();
     database.collection::<Document>("bridge_channel_control_intents").update_one(doc! {"_id":&held.sidecar.intent.id}, doc! {"$set":{"record":record_bson(&held.sidecar.intent).unwrap(),"intent_sha256":&held.sidecar.intent_sha256}}).await.unwrap();
     worker::service(&c)
-        .release_held(&held.command)
+        .release_held(&held.command, &worker::operations(&c))
         .await
         .unwrap();
     let row = database

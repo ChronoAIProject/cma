@@ -19,6 +19,10 @@ mod denial;
 mod denial_faults;
 #[path = "channel_control_execution_tests/denial_races.rs"]
 mod denial_races;
+#[path = "channel_control_execution_tests/local_runtime.rs"]
+mod local_runtime;
+#[path = "channel_control_execution_tests/local_runtime_fixture.rs"]
+mod local_runtime_fixture;
 #[path = "channel_control_execution_tests/production.rs"]
 mod production;
 #[path = "channel_control_execution_tests/races.rs"]
