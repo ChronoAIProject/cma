@@ -3,6 +3,8 @@ import { ApiError, ValidationError } from '@chronoai/cma-sdk';
 import type { CommandOptions } from '../api/client';
 
 const failures: Readonly<Record<string, string>> = {
+  bridge_incompatible_target:
+    'The selected shared parent is incompatible. Review its owner, profile revisions, runtime support, connected services and reserved capacity.',
   bridge_invoke_consent_required:
     'Grant permission to use the retained Agent’s context before enabling this bridge.',
   bridge_callback_conflict:
