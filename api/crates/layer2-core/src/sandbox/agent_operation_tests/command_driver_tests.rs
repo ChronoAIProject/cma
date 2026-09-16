@@ -13,6 +13,8 @@ use crate::sandbox::*;
 
 #[path = "command_driver_failures_tests.rs"]
 mod failures;
+#[path = "command_driver_retry_tests.rs"]
+mod retries;
 
 enum Behavior {
     Execute,

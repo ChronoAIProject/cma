@@ -4,7 +4,7 @@ import { constants } from 'node:fs';
 import { open, readFile, rename, mkdir, chmod, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { completedResponse, admittedResponse } from './cma-bridge-continuity-responses.mjs';
-import { retainedCommand, loadOwnedConfig, validateOwnedFixture } from './cma-bridge-continuity-owned-config.mjs';
+import { retainedCommand, loadOwnedConfig, loadOwnedFixture } from './cma-bridge-continuity-owned-config.mjs';
 import { capture, digest } from './cma-bridge-continuity-observer.mjs';
 import { transport } from './cma-bridge-continuity-transport.mjs';
 import { nativeIdentity, stableNative, compareRetained } from './cma-bridge-continuity-native.mjs';
@@ -21,6 +21,7 @@ const directory = join(root, 'continuations', change);
 let token;
 let journal;
 let original;
+let fixture;
 let lock;
 
 async function save(name, value) {
@@ -64,14 +65,8 @@ async function request(path, method = 'GET', body, key, stream) {
 const read = async (path) => (await request(path)).value;
 
 async function preflight() {
-  original = JSON.parse(await readFile(config.fixtureJournal, 'utf8'));
-  const result = JSON.parse(await readFile(config.fixtureResult, 'utf8'));
-  validateOwnedFixture(config, original, result);
-  requireValue(original.schema === 'cma-public-canary-journal-v1' && original.run === config.run
-    && original.origin === config.origin && original.owner === config.expectedSubject
-    && original.result?.status === 'passed' && original.resources?.agentIds?.length === 2,
-    'successful_original_owned_canary_required');
-  requireValue(!original.commands['retire-trigger'] && !original.commands['pause-sandbox'], 'original_canary_cleanup_started');
+  fixture = await loadOwnedFixture(config);
+  original = fixture.journal;
   const handle = await open(config.tokenFile, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
     const stat = await handle.stat();
@@ -112,13 +107,13 @@ async function observed() {
     requireValue(provenance.agent_id === id && provenance.creation_origin === (index ? 'manual' : 'trigger'), 'owned_agent_origin_changed');
     requireValue(Array.isArray(transcript.turns) && transcript.turns.length >= 2
       && digest(transcript.turns[0]) === digest(original.baseline.firstTurns[index]), 'original_transcript_changed');
-    return { agent, transcript, native: nativeIdentity(history) };
+    return { agent, transcript, native: nativeIdentity(history, fixture.nativeBoundaries?.[index]) };
   }));
   requireValue(agents[0].agent.worktree.id !== agents[1].agent.worktree.id, 'agents_share_worktree');
   const observer = { ...config, schema: 'cma-bridge-continuity-config-v1', agentIds: resources.agentIds };
   const snapshot = await capture(observer, await transport(observer));
   requireValue(digest(stableNative(agents.map((value) => value.native)))
-    === digest(stableNative(original.result.nativeIdentity)), 'original_native_identity_changed');
+    === digest(stableNative(fixture.result.nativeIdentity)), 'original_native_identity_changed');
   return { at: new Date().toISOString(), agents, snapshot };
 }
 
