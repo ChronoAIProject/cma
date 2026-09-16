@@ -34,6 +34,8 @@ sdk/typescript/coverage/
 .github/scripts/*
 !.github/scripts/bubblewrap-loopback.patch
 !.github/scripts/bubblewrap-loopback-test.c
+!.github/scripts/bubblewrap-openat2.patch
+!.github/scripts/bubblewrap-openat2-test.c
 
 # Editor and platform leavings.
 .DS_Store
