@@ -3,6 +3,7 @@ import type { BridgeViewsClient } from './client';
 import { Picker } from '../ui/Picker';
 import { ProfileSelection } from './ProfileSelection';
 import { RetainedAgent } from './RetainedAgent';
+import { OrganizationRetainedAgent } from './OrganizationRetainedAgent';
 import { SharedPlacementFields } from './SharedPlacementFields';
 import { placementUnavailable, type PlacementEditor } from './usePlacementEditor';
 import { initialConfiguration, initialSharedPlacement, partitions } from './configuration';
@@ -38,10 +39,6 @@ export function ContextFields({
             {
               value: 'existing_agent',
               label: 'One retained Agent',
-              unavailable:
-                organization === undefined
-                  ? undefined
-                  : 'Organization target selection needs an authorized full ancestry view',
             },
             {
               value: 'worktree_agent_per_partition',
@@ -146,12 +143,23 @@ export function ContextFields({
           </p>
         </>
       ) : placement.kind === 'existing_agent' ? (
-        <RetainedAgent
-          client={client}
-          value={placement.target}
-          disabled={disabled || organization !== undefined}
-          onChange={(target) => changePlacement({ kind: 'existing_agent', target })}
-        />
+        organization === undefined ? (
+          <RetainedAgent
+            client={client}
+            value={placement.target}
+            disabled={disabled}
+            onChange={(target) => changePlacement({ kind: 'existing_agent', target })}
+          />
+        ) : (
+          <OrganizationRetainedAgent
+            client={client}
+            value={placement.target}
+            organization={organization}
+            disabled={disabled}
+            editor={editor}
+            onChange={(target) => changePlacement({ kind: 'existing_agent', target })}
+          />
+        )
       ) : (
         <SharedPlacementFields
           client={client}
