@@ -41,13 +41,9 @@ impl ApiBearerCustody {
         subject: &SubjectId,
         credential_id: &str,
     ) -> Result<SecretDigest, StoreError> {
-        let bytes = serde_json::to_vec(&(
-            "cma-api-bearer-custody-v1",
-            issuer,
-            subject,
-            credential_id,
-        ))
-        .map_err(|_| invalid())?;
+        let bytes =
+            serde_json::to_vec(&("cma-api-bearer-custody-v1", issuer, subject, credential_id))
+                .map_err(|_| invalid())?;
         Ok(SecretDigest::from_bytes(Sha256::digest(bytes).into()))
     }
 
@@ -61,10 +57,17 @@ impl ApiBearerCustody {
             || self.subject.as_str().trim().is_empty()
             || self.subject.as_str().len() > 256
             || self.credential_id.len() != 64
-            || !self.credential_id.bytes().all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+            || !self
+                .credential_id
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
             || self.access_token.expose().is_empty()
             || self.access_token.expose().len() > 64 * 1024
-            || self.access_token.expose().bytes().any(|byte| byte.is_ascii_whitespace() || byte.is_ascii_control())
+            || self
+                .access_token
+                .expose()
+                .bytes()
+                .any(|byte| byte.is_ascii_whitespace() || byte.is_ascii_control())
             || expiry.is_zero()
             || expiry.subsec_nanos() != 0
             || expiry.as_secs() > i64::MAX as u64 / 1000

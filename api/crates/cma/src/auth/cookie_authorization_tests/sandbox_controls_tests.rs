@@ -5,6 +5,7 @@ async fn control(fixture: &ResourceFixture) -> SandboxControlRecord {
     let credential = "must-not-leak-access-token";
     let subject = SubjectId::new("owner");
     let context = CallerContext {
+        credential_source: layer2_core::resource_access::CredentialSource::Retained,
         caller: Caller::new(
             subject.clone(),
             Authorization::new([Capability::UseOwnSandboxes]),

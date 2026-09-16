@@ -6,6 +6,7 @@ use layer2_core::{Caller, LaunchId, SubjectId};
 
 fn context(api: bool) -> CallerContext {
     CallerContext {
+        credential_source: layer2_core::resource_access::CredentialSource::Retained,
         caller: Caller::new(SubjectId::new(VISITOR), visitor_authority()),
         credential: CredentialContext {
             issuer: "https://nyx.example".into(),
