@@ -40,11 +40,8 @@ pub(crate) fn configured(
         deployment.policy,
         deployment.callback_root,
     )?;
-    ingress.text_attachments = text_admission::enabled(
-        std::env::var("CMA_DISCORD_TEXT_ATTACHMENTS")
-            .ok()
-            .as_deref(),
-    )?;
+    ingress.text_attachments =
+        flags.enabled(crate::config::bridge_flags::BridgeFlag::DiscordTextAttachments);
     Ok(Some(ingress))
 }
 

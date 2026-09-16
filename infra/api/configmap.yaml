@@ -17,6 +17,8 @@ data:
   CHRONO_BRIDGE_TELEGRAM_ENABLED: "false"
   CHRONO_BRIDGE_TELEGRAM_NEW_ENABLED: "false"
   CHRONO_BRIDGE_DISCORD_ENABLED: "false"
+  # New file admissions only; supporting readers/workers must precede enablement.
+  CHRONO_BRIDGE_DISCORD_TEXT_ATTACHMENTS_ENABLED: "false"
   CHRONO_BRIDGE_LARK_ENABLED: "false"
   CHRONO_BRIDGE_FEISHU_ENABLED: "false"
   CHRONO_BRIDGE_SLACK_ENABLED: "false"

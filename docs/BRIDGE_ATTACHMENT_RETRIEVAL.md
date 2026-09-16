@@ -2,7 +2,7 @@
 
 CMA composes one opt-in attachment path: a single original Discord `text/plain`
 `.txt` attachment of 1–16,384 bytes, converted into bounded UTF-8 user text for
-the existing Agent command pipeline. `CMA_DISCORD_TEXT_ATTACHMENTS=true` enables
+the existing Agent command pipeline. `CHRONO_BRIDGE_DISCORD_TEXT_ATTACHMENTS_ENABLED=true` enables
 new admissions; the default is false. It does not enable images, PDFs, audio,
 OCR, arbitrary URLs, generic Agent attachment references, or outbound files.
 Unsupported, multiple, normalized-only and out-of-policy files retain the typed

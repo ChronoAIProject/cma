@@ -38,11 +38,3 @@ impl CallbackCapabilityExtractor for TextAdmission<'_> {
         }
     }
 }
-
-pub(in crate::bridge) fn enabled(value: Option<&str>) -> Result<bool, CallbackError> {
-    match value {
-        None | Some("false") => Ok(false),
-        Some("true") => Ok(true),
-        _ => Err(CallbackError::BindingUnavailable),
-    }
-}
