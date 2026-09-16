@@ -146,9 +146,24 @@ partitions retain their original placement and profiles after configuration
 updates. Reset retains the old generation and creates distinct children; it
 never moves sibling work.
 
-These types describe the public contract. The dashboard choices remain disabled
-until backend validation and live Agent continuity checks pass; SDK support is
-not proof that those rollout gates have passed.
+`client.bridges.capabilities({ organization })` exposes an optional `placements`
+array of `BridgePlacementCapabilities`. Each entry names one shared placement
+kind and an availability of `runtime_unavailable`, `continuity_unverified` or
+`available`. Older servers may omit the field; treat missing entries as
+unavailable. The decoder rejects null, duplicate kinds, more than two entries,
+and unknown kinds or states. The current server composition reports only the two
+unavailable states; static runtime support does not establish live shared-parent
+upgrade or rollback continuity, and stage switches cannot establish it.
+
+The dashboard uses existing public Sandbox/Workspace inventory and effective
+access to select exact parents in personal or organization scope. An available
+catalog does not authorize a target: current owner/management authority, ancestry,
+profile pins, explicit shared trust and nonzero reserves remain required. These
+reads and new-placement availability are checked again before a fresh save.
+Retained settings remain readable while unavailable, and unrelated settings may
+be saved with an unchanged placement. An uncertain mutation must retain its exact
+body and original key for explicit receipt recovery, regardless of later catalog
+changes. SDK support and scripted editor tests do not prove live rollout gates.
 
 Use `capabilities({ organization })` to read source/fixture capabilities and independent deployment switches under current owner/admin access. An unavailable or unknown catalog does not imply platform support. Telegram-new keeps the exact `telegram-new` identity; its gate is separate from Telegram. Text replies use explicit channel tools in channel-created active conversations. Attachments require a download capability that is currently unavailable, and protocol fixtures do not establish live platform delivery.
 

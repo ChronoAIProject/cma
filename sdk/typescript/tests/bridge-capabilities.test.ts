@@ -85,3 +85,25 @@ it('preserves telegram-new as a distinct selectable platform', async () => {
   });
   expect((await test.client.bridges.choices()).bots[0]!.platform).toBe('telegram-new');
 });
+
+it('preserves placement evidence and refuses unknown, duplicated or malformed placement catalogs', async () => {
+  const test = transport();
+  const placements = [
+    { kind: 'workspace_per_partition', availability: 'continuity_unverified' },
+    { kind: 'worktree_agent_per_partition', availability: 'runtime_unavailable' },
+  ];
+  test.answer({ ...empty, placements });
+  expect((await test.client.bridges.capabilities()).placements).toEqual(placements);
+  for (const invalid of [
+    null,
+    [placements[0], placements[0]],
+    [{ kind: 'future_placement', availability: 'available' }],
+    [{ kind: 'workspace_per_partition', availability: 'probably_ready' }],
+    [{ kind: 'workspace_per_partition' }],
+  ]) {
+    test.answer({ ...empty, placements: invalid });
+    await expect(test.client.bridges.capabilities()).rejects.toBeInstanceOf(ProtocolError);
+  }
+  test.answer(empty);
+  expect((await test.client.bridges.capabilities()).placements).toBeUndefined();
+});

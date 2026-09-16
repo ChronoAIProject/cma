@@ -2,6 +2,7 @@ import { capabilities } from './bridges/capabilities-schema.js';
 export type {
   BridgeCapabilityCatalog,
   BridgeConnectorCapabilities,
+  BridgePlacementCapabilities,
 } from './bridges/capabilities-schema.js';
 import { BridgeSourceControls } from './bridges/source-controls.js';
 export type * from './bridges/workspace-cleanup-schema.js';

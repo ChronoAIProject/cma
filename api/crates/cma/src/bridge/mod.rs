@@ -111,7 +111,13 @@ struct NyxBridgeValidator {
 #[async_trait::async_trait]
 impl BridgeConnectionValidator for NyxBridgeValidator {
     fn capabilities(&self) -> layer2_core::bridge::BridgeCapabilityCatalog {
-        capability_catalog::catalog(true)
+        let mut catalog = capability_catalog::catalog(true);
+        catalog.placements = capability_catalog::shared_placements(
+            self.provisioning
+                .as_ref()
+                .map(|deps| deps.adapter.capabilities()),
+        );
+        catalog
     }
     async fn validate_connection(
         &self,

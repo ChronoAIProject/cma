@@ -6,6 +6,7 @@ import {
   integer,
   nullable,
   object,
+  optional,
   positiveInteger,
   text,
   type Output,
@@ -40,12 +41,18 @@ const connector = object({
     outbound: boolean,
   }),
 });
+const placement = object({
+  kind: enumeration('workspace_per_partition', 'worktree_agent_per_partition'),
+  availability: enumeration('available', 'runtime_unavailable', 'continuity_unverified'),
+});
 const catalog = object({
   version: integer,
   source_revision: nullable(text),
   connection_validation_available: boolean,
   connectors: array(connector),
+  placements: optional(array(placement)),
 });
+export type BridgePlacementCapabilities = Output<typeof placement>;
 export type BridgeConnectorCapabilities = Output<typeof connector>;
 export type BridgeCapabilityCatalog = Output<typeof catalog>;
 /** Unknown contracts remain unavailable; deployment switches never grant authority. */
@@ -54,6 +61,9 @@ export function capabilities(value: unknown): BridgeCapabilityCatalog {
   if (
     result.version !== 1 ||
     result.connectors.length > 32 ||
+    (result.placements?.length ?? 0) > 2 ||
+    new Set(result.placements?.map((item) => item.kind)).size !==
+      (result.placements?.length ?? 0) ||
     (result.source_revision !== null && !/^[0-9a-f]{40}$/.test(result.source_revision)) ||
     new Set(result.connectors.map((item) => item.platform)).size !== result.connectors.length ||
     result.connectors.some(

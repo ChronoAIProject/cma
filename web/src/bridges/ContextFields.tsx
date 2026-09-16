@@ -3,19 +3,23 @@ import type { BridgeViewsClient } from './client';
 import { Picker } from '../ui/Picker';
 import { ProfileSelection } from './ProfileSelection';
 import { RetainedAgent } from './RetainedAgent';
-import { initialConfiguration, partitions } from './configuration';
+import { SharedPlacementFields } from './SharedPlacementFields';
+import { placementUnavailable, type PlacementEditor } from './usePlacementEditor';
+import { initialConfiguration, initialSharedPlacement, partitions } from './configuration';
 
 export function ContextFields({
   client,
   value,
   disabled,
   organization,
+  editor,
   onChange,
 }: {
   readonly client: BridgeViewsClient;
   readonly value: BridgeConfiguration;
   readonly disabled: boolean;
   readonly organization?: string;
+  readonly editor: PlacementEditor;
   readonly onChange: (value: BridgeConfiguration) => void;
 }) {
   const placement = value.placement;
@@ -42,15 +46,34 @@ export function ContextFields({
             {
               value: 'worktree_agent_per_partition',
               label: 'A new Agent in an existing Workspace',
-              unavailable: 'Shared Workspace placement is not available yet',
+              unavailable: placementUnavailable(
+                editor.catalog,
+                value.binding.platform,
+                'worktree_agent_per_partition',
+              ),
             },
             {
               value: 'workspace_per_partition',
               label: 'A new Workspace in an existing Sandbox',
-              unavailable: 'Shared Sandbox placement is not available yet',
+              unavailable: placementUnavailable(
+                editor.catalog,
+                value.binding.platform,
+                'workspace_per_partition',
+              ),
             },
           ]}
           onChange={(kind) => {
+            if (
+              (kind === 'workspace_per_partition' || kind === 'worktree_agent_per_partition') &&
+              placementUnavailable(editor.catalog, value.binding.platform, kind) === undefined
+            ) {
+              onChange({
+                ...value,
+                partition: 'conversation_sender',
+                placement: initialSharedPlacement(kind),
+              });
+              return;
+            }
             if (kind === 'existing_agent')
               onChange({
                 ...value,
@@ -130,11 +153,14 @@ export function ContextFields({
           onChange={(target) => changePlacement({ kind: 'existing_agent', target })}
         />
       ) : (
-        <p>
-          This Bridge uses a shared Sandbox. All participants share its filesystem, processes and
-          credentials. Separate Worktrees and Agent homes keep conversations distinct; they do not
-          isolate access to sibling work. Editing this placement is not available yet.
-        </p>
+        <SharedPlacementFields
+          client={client}
+          value={placement}
+          disabled={disabled}
+          organization={organization}
+          editor={editor}
+          onChange={changePlacement}
+        />
       )}
       <p>
         {organization === undefined

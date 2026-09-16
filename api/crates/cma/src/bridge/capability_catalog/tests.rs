@@ -3,6 +3,27 @@ use crate::config::BridgeFeatureFlags;
 use std::sync::Arc;
 
 #[test]
+fn shared_placement_runtime_abilities_never_invent_continuity_evidence() {
+    for runtime in [None, Some(layer3_adapter::AdapterCapabilities::default())] {
+        assert!(shared_placements(runtime)
+            .iter()
+            .all(|mode| { mode.availability == BridgePlacementAvailability::RuntimeUnavailable }));
+    }
+    let supported = layer3_adapter::RuntimeContract::V3.capabilities();
+    let modes = shared_placements(Some(supported));
+    assert_eq!(modes.len(), 2);
+    assert_ne!(modes[0].kind, modes[1].kind);
+    assert!(modes
+        .iter()
+        .all(|mode| { mode.availability == BridgePlacementAvailability::ContinuityUnverified }));
+    let mut incomplete = supported;
+    incomplete.per_agent_home = false;
+    assert!(shared_placements(Some(incomplete))
+        .iter()
+        .all(|mode| { mode.availability == BridgePlacementAvailability::RuntimeUnavailable }));
+}
+
+#[test]
 fn upstream_only_and_device_connectors_never_gain_cma_admission_from_enabled_flags() {
     let flags = BridgeFeatureFlags::from_lookup(&mut |_| Ok(Some("true".into()))).unwrap();
     let configured = crate::bridge::feature_policy::configured(
@@ -11,6 +32,10 @@ fn upstream_only_and_device_connectors_never_gain_cma_admission_from_enabled_fla
     );
     let catalog = configured.capabilities();
     assert!(!catalog.connection_validation_available);
+    assert!(catalog
+        .placements
+        .iter()
+        .all(|mode| { mode.availability == BridgePlacementAvailability::RuntimeUnavailable }));
     assert_eq!(catalog.connectors.len(), 9);
     for c in &catalog.connectors {
         assert!(!c.live_verified);
