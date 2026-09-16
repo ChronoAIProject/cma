@@ -224,33 +224,30 @@ async fn production_authorization_refuses_missing_authority_and_actor_substituti
             .await
             .unwrap(),
     );
-    for (answer, expected) in [
+    for (answer, readiness, attempt) in [
         (
             Err(CommandAuthorizationError::Revoked),
-            CommandFailureCode::AuthorityRevoked,
+            CommandReadiness::Reject(CommandFailureCode::AuthorityRevoked),
+            CommandAttempt::Reject(CommandFailureCode::AuthorityRevoked),
         ),
         (
             Err(CommandAuthorizationError::Unavailable),
-            CommandFailureCode::AuthorityUnavailable,
+            CommandReadiness::Retry,
+            CommandAttempt::Retry,
         ),
         (
             Ok(Caller::new(
                 SubjectId::new("other"),
                 Authorization::new([Capability::UseOwnSandboxes]),
             )),
-            CommandFailureCode::AuthorityRevoked,
+            CommandReadiness::Reject(CommandFailureCode::AuthorityRevoked),
+            CommandAttempt::Reject(CommandFailureCode::AuthorityRevoked),
         ),
     ] {
         *authority.0.lock().unwrap() = answer;
-        assert_eq!(
-            execution.check_queued(&admitted).await,
-            CommandReadiness::Reject(expected)
-        );
+        assert_eq!(execution.check_queued(&admitted).await, readiness);
         execution.prepare_queued(&admitted).await;
-        assert_eq!(
-            execution.execute(&admitted).await,
-            CommandAttempt::Reject(expected)
-        );
+        assert_eq!(execution.execute(&admitted).await, attempt);
     }
     assert_eq!(sends.load(Ordering::SeqCst), 0);
     assert_eq!(
