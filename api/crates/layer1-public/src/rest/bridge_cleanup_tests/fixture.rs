@@ -194,6 +194,7 @@ async fn fixture_for(owned: bool) -> Fixture {
     resources.create_sandbox(sandbox.clone()).await.unwrap();
     resources.create_workspace(workspace.clone()).await.unwrap();
     let ports = Arc::new(Ports {
+        management: std::sync::atomic::AtomicBool::new(true),
         role: AtomicUsize::new(2),
         calls: AtomicUsize::new(0),
         validation: AtomicUsize::new(1),

@@ -99,6 +99,7 @@ pub(in crate::rest) async fn fixture(organization: bool) -> Fixture {
 pub(in crate::rest) async fn fixture_for(organization: bool, foreign_target: bool) -> Fixture {
     let base = bridge_cleanup_tests::fixture::fixture().await;
     let ports = Arc::new(Ports {
+        management: std::sync::atomic::AtomicBool::new(true),
         role: AtomicUsize::new(2),
         calls: AtomicUsize::new(0),
         validation: AtomicUsize::new(1),

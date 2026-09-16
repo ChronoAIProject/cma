@@ -9,6 +9,13 @@ use layer2_core::{
 use serde::Deserialize;
 use utoipa::ToSchema;
 
+#[derive(ToSchema)]
+pub(crate) struct BridgeCreationTargetShape {
+    bridge_id: String,
+    owner: ResourceOwnerView,
+    callback_url: String,
+}
+
 #[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct CreateBridgeRequest {
