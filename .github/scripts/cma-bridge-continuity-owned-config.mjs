@@ -3,6 +3,7 @@ import { readFile, mkdir, lstat, realpath } from 'node:fs/promises';
 import { isAbsolute, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { digest, validateConfig } from './cma-bridge-continuity-observer.mjs';
+import { readRecoveryEvidence, resolveRecoveryFixture } from './cma-bridge-continuity-recovery.mjs';
 
 const check = (condition, code) => { if (!condition) throw new Error(code); };
 const marker = (value) => typeof value === 'string' && /^[A-Za-z0-9-]{1,160}$/.test(value);
@@ -20,6 +21,8 @@ export function validateOwnedConfig(config) {
   }
   check(config.browserExecutable === undefined || (typeof config.browserExecutable === 'string'
     && isAbsolute(config.browserExecutable)), 'absolute_browser_executable_required');
+  check(config.fixtureRecoveryDirectory === undefined || (typeof config.fixtureRecoveryDirectory === 'string'
+    && isAbsolute(config.fixtureRecoveryDirectory)), 'absolute_recovery_directory_required');
   check(Number.isInteger(config.limits?.turnSeconds) && config.limits.turnSeconds >= 30
     && config.limits.turnSeconds <= 1200 && Number.isInteger(config.limits.pollSeconds)
     && config.limits.pollSeconds >= 1 && config.limits.pollSeconds <= 30, 'bounded_polling_required');
@@ -42,17 +45,30 @@ export async function loadOwnedConfig(path) {
   return config;
 }
 
-export function validateOwnedFixture(config, journal, result) {
+function resolveOwnedFixture(config, journal, result, recovery) {
   check(journal?.schema === 'cma-public-canary-journal-v1' && journal.run === config.run
     && journal.owner === config.expectedSubject && journal.origin === config.origin
-    && journal.result?.status === 'passed' && result?.status === 'passed', 'successful_original_owned_canary_required');
+    && result?.status === 'passed', 'successful_original_owned_canary_required');
   check(digest(result.resources) === digest(journal.resources)
     && journal.resources?.agentIds?.length === 2
     && journal.resources.agentIds.every((value) => identifier(value, 'agt'))
     && new Set(journal.resources.agentIds).size === 2
     && identifier(journal.resources.sandboxId, 'sbx') && identifier(journal.resources.workspaceId, 'wks'), 'replacement_resource_scope_changed');
   check(journal.commands && !journal.commands['retire-trigger'] && !journal.commands['pause-sandbox'], 'original_canary_cleanup_started');
-  return journal;
+  if (result.recovery) return { journal, result, recovery, nativeBoundaries: resolveRecoveryFixture(journal, result, recovery) };
+  check(!recovery && journal.result?.status === 'passed', 'successful_original_owned_canary_required');
+  return { journal, result };
+}
+
+export function validateOwnedFixture(config, journal, result, recovery) {
+  return resolveOwnedFixture(config, journal, result, recovery).journal;
+}
+
+export async function loadOwnedFixture(config) {
+  const [originalBytes, resultBytes] = await Promise.all([readFile(config.fixtureJournal), readFile(config.fixtureResult)]);
+  const recovery = config.fixtureRecoveryDirectory
+    ? await readRecoveryEvidence(config.fixtureRecoveryDirectory, originalBytes) : undefined;
+  return resolveOwnedFixture(config, JSON.parse(originalBytes), JSON.parse(resultBytes), recovery);
 }
 
 export function retainedCommand(prior, path, body, key) {
