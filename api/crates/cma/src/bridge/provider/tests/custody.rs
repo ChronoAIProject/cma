@@ -225,6 +225,7 @@ async fn managed_import_resolves_exact_retained_key_and_local_revocation_stops_o
         .await
         .unwrap();
     let mut context = CallerContext {
+        credential_source: layer2_core::resource_access::CredentialSource::Retained,
         caller: layer2_core::Caller::new(
             SubjectId::new("person-one"),
             layer2_core::Authorization::new([layer2_core::Capability::UseOwnSandboxes]),
@@ -241,6 +242,7 @@ async fn managed_import_resolves_exact_retained_key_and_local_revocation_stops_o
     };
     context.credential = auth
         .resource_request_context(&crate::auth::RequestAuth {
+            credential_source: layer2_core::resource_access::CredentialSource::Retained,
             subject: SubjectId::new("person-one"),
             authorization: context.caller.authorization.clone(),
             profile: crate::auth::profile::Profile::default(),

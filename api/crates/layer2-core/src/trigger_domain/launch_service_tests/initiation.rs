@@ -5,6 +5,7 @@ use crate::sandbox::{AgentCreationOrigin, AgentCreationProvenance};
 
 pub(super) fn context(f: &Fixture, api: bool) -> CallerContext {
     CallerContext {
+        credential_source: crate::resource_access::CredentialSource::Retained,
         caller: f.caller.clone(),
         credential: CredentialContext {
             issuer: "https://nyx.example".into(),

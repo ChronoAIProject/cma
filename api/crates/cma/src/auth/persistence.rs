@@ -16,6 +16,9 @@ use zeroize::Zeroize;
 
 use super::profile::Profile;
 
+mod api_bearer;
+pub use api_bearer::ApiBearerCustody;
+
 /// A secret value that redacts diagnostics and clears owned bytes on drop.
 #[derive(Clone, PartialEq, Eq)]
 pub struct SecretValue(String);
@@ -170,6 +173,9 @@ pub(super) fn next_auth_counter(value: u64) -> Result<u64, StoreError> {
 
 #[async_trait::async_trait]
 pub trait AuthStore: Send + Sync {
+    /// Immutable, independently held API credential; never replaces a login.
+    async fn insert_api_bearer(&self, custody: ApiBearerCustody) -> Result<bool, StoreError>;
+    async fn api_bearer(&self, id: &SecretDigest) -> Result<Option<ApiBearerCustody>, StoreError>;
     async fn put_login_attempt(&self, attempt: LoginAttempt) -> Result<(), StoreError>;
     async fn take_login_attempt(
         &self,
@@ -199,6 +205,7 @@ pub struct MemoryAuthStore {
     attempts: Mutex<HashMap<SecretDigest, LoginAttempt>>,
     browsers: Mutex<HashMap<SecretDigest, BrowserLogin>>,
     subjects: Mutex<HashMap<SubjectId, SubjectAuthState>>,
+    api_bearers: Mutex<HashMap<SecretDigest, ApiBearerCustody>>,
 }
 
 #[cfg(test)]
@@ -231,6 +238,21 @@ impl MemoryAuthStore {
 #[cfg(test)]
 #[async_trait::async_trait]
 impl AuthStore for MemoryAuthStore {
+    async fn insert_api_bearer(&self, custody: ApiBearerCustody) -> Result<bool, StoreError> {
+        self.available()?;
+        custody.validate()?;
+        let mut records = self.api_bearers.lock().await;
+        if records.contains_key(&custody.id) {
+            return Ok(false);
+        }
+        records.insert(custody.id.clone(), custody);
+        Ok(true)
+    }
+
+    async fn api_bearer(&self, id: &SecretDigest) -> Result<Option<ApiBearerCustody>, StoreError> {
+        self.available()?;
+        Ok(self.api_bearers.lock().await.get(id).cloned())
+    }
     async fn put_login_attempt(&self, attempt: LoginAttempt) -> Result<(), StoreError> {
         self.available()?;
         self.attempts

@@ -32,6 +32,7 @@ fn organization() -> ResourceOwner {
 fn context(subject: &str) -> CallerContext {
     let subject = SubjectId::new(subject);
     CallerContext {
+        credential_source: crate::resource_access::CredentialSource::Retained,
         caller: Caller::new(
             subject.clone(),
             Authorization::new([Capability::UseOwnSandboxes]),
