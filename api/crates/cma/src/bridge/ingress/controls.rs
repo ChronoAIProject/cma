@@ -63,7 +63,8 @@ impl ChannelControlIngress {
         write: InboxWrite,
         lookup_error: Option<CallbackError>,
     ) -> Result<CallbackAcceptance, CallbackError> {
-        let candidate = write.record().envelope.content_type == "text"
+        let candidate = write.record().text_attachment.is_none()
+            && write.record().envelope.content_type == "text"
             && write.record().envelope.attachments.is_empty()
             && write.platform_redelivery().is_some()
             && write

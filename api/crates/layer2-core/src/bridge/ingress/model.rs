@@ -149,6 +149,8 @@ pub struct StoredInbox {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capabilities: Option<crate::bridge::partition::StoredPartitionObservation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_attachment: Option<super::DiscordTextAttachment>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub execution_hold: Option<InboxExecutionHold>,
     pub accepted_at: i64,
     pub expires_at: i64,
@@ -195,6 +197,7 @@ pub struct InboxWrite {
     pub(super) platform_redelivery: Option<super::VerifiedPlatformRedelivery>,
     pub(super) binding: CallbackBinding,
     pub(super) record: StoredInbox,
+    pub(super) attachment_url: Option<Zeroizing<String>>,
     pub(super) reply_token: Option<Zeroizing<String>>,
     pub(super) thread_context: Option<Zeroizing<String>>,
     pub(super) deadline: tokio::time::Instant,
@@ -207,6 +210,7 @@ pub struct SignedCallback {
     pub(super) control_refusal: Option<super::ChannelControlRefusal>,
     pub(super) bridge: BridgeRecord,
     pub(super) record: StoredInbox,
+    pub(super) attachment_url: Option<Zeroizing<String>>,
     pub(super) reply_token: Option<Zeroizing<String>>,
     pub(super) thread_context: Option<Zeroizing<String>>,
     pub(super) deadline: tokio::time::Instant,
@@ -216,6 +220,7 @@ impl SignedCallback {
     pub fn bind(mut self, binding: CallbackBinding) -> Result<InboxWrite, CallbackError> {
         binding.require_current(&self.bridge)?;
         if self.record.admission != InboxAdmission::Accepted {
+            self.attachment_url = None;
             self.reply_token = None;
             self.thread_context = None;
             self.record.reply_expires_at = None;
@@ -227,6 +232,7 @@ impl SignedCallback {
             platform_redelivery: None,
             binding,
             record: self.record,
+            attachment_url: self.attachment_url,
             reply_token: self.reply_token,
             thread_context: self.thread_context,
             deadline: self.deadline,
@@ -267,6 +273,9 @@ impl InboxWrite {
     }
     pub fn custody_pin(&self) -> &crate::bridge::BridgeCustodyPin {
         self.binding.proof.custody_pin()
+    }
+    pub fn attachment_url(&self) -> Option<&str> {
+        self.attachment_url.as_ref().map(|s| s.as_str())
     }
     pub fn reply_token(&self) -> Option<&str> {
         self.reply_token.as_ref().map(|s| s.as_str())

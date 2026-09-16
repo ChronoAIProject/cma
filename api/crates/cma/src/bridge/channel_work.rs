@@ -140,6 +140,10 @@ impl ChannelWorkPort for ChannelInboxWork {
             Err(Error::Unsupported) => (Duration::from_secs(30), "unsupported"),
             Err(Error::Suspended) => (Duration::from_secs(30), "authority_required"),
             Err(Error::Corrupt) => (Duration::from_secs(30), "inconsistent"),
+            Err(Error::AttachmentExpired) => (Duration::from_secs(30), "text_attachment_expired"),
+            Err(Error::AttachmentUnavailable) => {
+                (Duration::from_secs(5), "text_attachment_unavailable")
+            }
             Err(Error::Unavailable) => (Duration::from_secs(5), "unavailable"),
         };
         self.inbox
@@ -281,8 +285,16 @@ impl ChannelInboxWork {
             })
             .await
             .map_err(|_| Error::Suspended)?;
+        let inbox = super::attachments::capture(
+            inbox,
+            &proof,
+            &self.invokes,
+            &self.inbox,
+            &self.invoke_store,
+        )
+        .await?;
         self.commands
-            .admit(proof, inbox.clone(), record)
+            .admit(proof, inbox, record)
             .await
             .map_err(|error| match error {
                 layer2_core::sandbox::agent_io::ChannelCommandAdmissionError::Input(_) => {
