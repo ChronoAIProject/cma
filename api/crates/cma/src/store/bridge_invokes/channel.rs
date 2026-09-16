@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use layer2_core::sandbox::agent_io::{
     AdmittedAgentCommand, ChannelCommandAdmissionError, ChannelCommandReservation,
-    ChannelCommandStore, CommandLedgerError, CommandReservationResult,
+    ChannelCommandStore, CommandReservationResult,
 };
 use mongodb::{bson::Document, ClientSession, Collection};
 
@@ -14,7 +14,6 @@ use crate::store::{
     durability::majority_collection,
     sandbox_mongo::{
         commit_transaction, is_duplicate_key, is_transient, start_transaction, CommitOutcome,
-        TRANSACTION_ATTEMPTS,
     },
 };
 
@@ -24,6 +23,7 @@ mod acceptance_receipt;
 mod execution;
 mod refusal;
 mod retained;
+mod retry;
 
 pub(crate) struct MongoChannelCommandStore {
     invokes: Arc<MongoBridgeInvokeStore>,
@@ -111,7 +111,8 @@ impl ChannelCommandStore for MongoChannelCommandStore {
         &self,
         request: ChannelCommandReservation,
     ) -> Result<AdmittedAgentCommand, ChannelCommandAdmissionError> {
-        for attempt in 0..TRANSACTION_ATTEMPTS {
+        let mut retries = retry::ChannelAdmissionRetries::new(request.proof().deadline());
+        while retries.next().await {
             request.require_current()?;
             let mut session = self
                 .invokes
@@ -131,10 +132,6 @@ impl ChannelCommandStore for MongoChannelCommandStore {
                         MutationError::Driver(error)
                             if is_duplicate_key(&error) || is_transient(&error) =>
                         {
-                            // The winning admission also commits usage history.
-                            // Give that transaction time to finish before a new
-                            // snapshot; immediate retries can exhaust the budget.
-                            admission_retry_delay(attempt).await;
                             continue;
                         }
                         MutationError::Driver(_) => {
@@ -150,10 +147,7 @@ impl ChannelCommandStore for MongoChannelCommandStore {
             }
             match commit_transaction(&mut session).await {
                 CommitOutcome::Committed => return Ok(record),
-                CommitOutcome::Retry(_) => {
-                    admission_retry_delay(attempt).await;
-                    continue;
-                }
+                CommitOutcome::Retry(_) => continue,
                 // No runtime input was sent. A retry with fresh authority must
                 // recover the same permanent command/response identity.
                 CommitOutcome::Unknown(_) | CommitOutcome::Failed(_) => {
@@ -161,12 +155,11 @@ impl ChannelCommandStore for MongoChannelCommandStore {
                 }
             }
         }
-        Err(CommandLedgerError::Conflict.into())
+        // Retrying never renews the proof. Preserve an expired authority error;
+        // elapsed transient contention itself is not a semantic ledger conflict.
+        request.require_current()?;
+        Err(ChannelCommandAdmissionError::Unavailable)
     }
-}
-
-async fn admission_retry_delay(attempt: usize) {
-    tokio::time::sleep(std::time::Duration::from_millis(5 << attempt.min(4))).await;
 }
 
 #[derive(Debug, thiserror::Error)]
