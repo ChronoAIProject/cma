@@ -176,6 +176,12 @@ pub const LOCAL_CASES: &[(&str, Classification)] = &[
         "bridge-setup-capabilities-invalid-query",
         Classification::QueryShape,
     ),
+    ("bridge-creation-target-missing-key", Classification::Local),
+    ("bridge-creation-target-invalid-key", Classification::Local),
+    (
+        "bridge-creation-target-invalid-query",
+        Classification::QueryShape,
+    ),
     ("bridge-outbox-list-invalid-limit", Classification::Local),
     ("bridge-outbox-recover-missing-key", Classification::Local),
     (
@@ -1060,7 +1066,8 @@ pub fn assert_unrepresentable(case: &Case, class: Classification) {
             let allowed: &[&str] = match case.operation.as_str() {
                 "GET /api/v2/agents/{agent_id}/events/snapshot" => &["limit", "page_cursor"],
                 "GET /api/v2/agents/{agent_id}/events" => &["after_cursor", "follow"],
-                "GET /api/v1/bridge-connectors/capabilities" => &["organization"],
+                "GET /api/v1/bridge-connectors/capabilities"
+                | "GET /api/v1/bridge-creation-target" => &["organization"],
                 "GET /api/v1/bridges" => &["organization", "cursor", "limit"],
                 "GET /api/v1/agents/provenance" => &[
                     "organization",
