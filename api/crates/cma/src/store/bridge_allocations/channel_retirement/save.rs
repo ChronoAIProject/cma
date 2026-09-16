@@ -87,6 +87,21 @@ pub(super) async fn apply(
             snapshot.sandbox.runtime = None;
             ("runtime_gone", SandboxWorkStep::MarkRetired)
         }
+        RetirementChange::RetainStorage
+            if state.phase == RetirementPhase::RuntimeGone && snapshot.retention.is_none() =>
+        {
+            snapshot.retention = Some(
+                crate::store::checkpoint_objects::seal_channel_retention(
+                    &database,
+                    &snapshot,
+                    permit.human(),
+                    layer2_core::rfc3339_at(now),
+                    session,
+                )
+                .await?,
+            );
+            ("storage_retained", SandboxWorkStep::MarkRetired)
+        }
         _ => return Err(AllocationError::InvalidTransition.into()),
     };
     let claim = snapshot
@@ -126,14 +141,20 @@ pub(super) async fn apply(
         .get_i64("last_seq")
         .map_err(|_| AllocationError::Corrupt)?;
     let audits: Collection<Document> = majority_collection(&database, "channel_retirement_audits");
-    audits.insert_one(doc!{"_id":format!("{}:{}:{action}",snapshot.allocation.id,snapshot.sandbox.revision),
-        "document_schema_version":crate::store::sandbox_mongo::DOCUMENT_SCHEMA_VERSION,
-        "allocation_id":&snapshot.allocation.id,"sandbox_id":snapshot.sandbox.id.as_str(),
-        "sandbox_created_at":&snapshot.sandbox.created_at,"tree_fingerprint":&snapshot.tree.fingerprint,
-        "operation_id":&snapshot.allocation.operation_id,"action":action,"fence":claim.fence as i64,
-        "human_actor":record_bson(&permit.human().actor_context().actor).map_err(|_|AllocationError::Corrupt)?,
-        "receipt":record_bson(&state).map_err(|_|AllocationError::Corrupt)?,"appended_at":&stamp})
-        .session(&mut *session).await?;
+    let mut audit = doc! {"_id":format!("{}:{}:{action}",snapshot.allocation.id,snapshot.sandbox.revision),
+    "document_schema_version":crate::store::sandbox_mongo::DOCUMENT_SCHEMA_VERSION,
+    "allocation_id":&snapshot.allocation.id,"sandbox_id":snapshot.sandbox.id.as_str(),
+    "sandbox_created_at":&snapshot.sandbox.created_at,"tree_fingerprint":&snapshot.tree.fingerprint,
+    "operation_id":&snapshot.allocation.operation_id,"action":action,"fence":claim.fence as i64,
+    "human_actor":record_bson(&permit.human().actor_context().actor).map_err(|_|AllocationError::Corrupt)?,
+    "receipt":record_bson(&state).map_err(|_|AllocationError::Corrupt)?,"appended_at":&stamp};
+    if let Some(retention) = &snapshot.retention {
+        audit.insert(
+            "storage_retention",
+            record_bson(retention).map_err(|_| AllocationError::Corrupt)?,
+        );
+    }
+    audits.insert_one(audit).session(&mut *session).await?;
     if let Some(kind) = event {
         seq = seq.checked_add(1).ok_or(AllocationError::Corrupt)?;
         let events: Collection<Document> = majority_collection(&database, "sandbox_events");
@@ -155,6 +176,12 @@ pub(super) async fn apply(
         "channel_retirement",
         record_bson(&state).map_err(|_| AllocationError::Corrupt)?,
     );
+    if let Some(retention) = &snapshot.retention {
+        fields.insert(
+            "channel_storage_retention",
+            record_bson(retention).map_err(|_| AllocationError::Corrupt)?,
+        );
+    }
     let rows: Collection<Document> = majority_collection(&database, "sandboxes");
     let changed = rows
         .update_one(

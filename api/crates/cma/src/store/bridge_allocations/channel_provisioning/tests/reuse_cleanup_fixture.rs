@@ -5,8 +5,7 @@ use crate::{
 };
 use layer2_core::resource_access::{AccessPurpose, ResourceAccessService, ResourceCapability};
 
-#[path = "reuse_cleanup_home.rs"]
-mod home;
+use super::super::home;
 
 pub(super) struct CleanupFixture {
     pub f: ReuseCommandFixture,

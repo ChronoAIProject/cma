@@ -53,6 +53,7 @@ pub(crate) struct ChannelRetirementSnapshot {
     pub renewal: Option<ChannelRenewalState>,
     pub lifecycle: Option<ChannelLifecycleCredentialState>,
     pub state: Option<ChannelRetirementState>,
+    pub retention: Option<super::retention::ChannelStorageRetention>,
     pub tree: OwnedTree,
 }
 impl ChannelRetirementSnapshot {
@@ -71,6 +72,9 @@ impl ChannelRetirementSnapshot {
             return Err(AllocationError::IdentityMismatch);
         }
         let Some(state) = &self.state else {
+            if self.retention.is_some() {
+                return Err(AllocationError::IdentityMismatch);
+            }
             if self.sandbox.work.step != SandboxWorkStep::StopAgents {
                 return Err(AllocationError::InvalidTransition);
             }
@@ -136,6 +140,9 @@ impl ChannelRetirementSnapshot {
         {
             return Err(AllocationError::IdentityMismatch);
         }
+        if let Some(retention) = &self.retention {
+            retention.validate(self)?;
+        }
         Ok(())
     }
     fn require_runtime_accounted_for(
@@ -183,6 +190,7 @@ impl ChannelRetirementSnapshot {
             renewal: self.renewal.clone(),
             lifecycle: self.lifecycle.clone(),
             state: None,
+            retention: None,
             tree: OwnedTree {
                 fingerprint: self.tree.fingerprint.clone(),
                 agent_live: self.tree.agent_live,
