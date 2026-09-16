@@ -143,26 +143,37 @@ impl HostedBackend for ProviderHostedBackend {
         let sandbox_id = provider_request_identity(&request)?.sandbox_id;
         if self.reconcile(&request).await?.is_some() {
             return Err(AdapterError::Unavailable(
-                "existing runtime cannot acquire original dispatch proof".into(),
+                "existing runtime cannot acquire a receipt for this dispatch".into(),
             ));
         }
         let marker = crate::provider::dispatch_marker(operation_id)?;
-        let creation_observation = reclaimer.begin_creation_observation(operation_id).await?;
+        let pre_dispatch = reclaimer.observe_before_dispatch(operation_id).await?;
         request
             .metadata
             .insert(crate::provider::DISPATCH_LABEL.to_owned(), marker.clone());
-        // Exactly one POST. A failed or lost response is unresolved forever;
-        // ordinary recovery may continue but cannot mint an original receipt.
-        let created = validate_sandbox_identity(&request, self.client.create(&request).await?)?;
-        if created.metadata.get(crate::provider::DISPATCH_LABEL) != Some(&marker) {
+        // Exactly one POST. A failed or lost response cannot authorize a receipt.
+        let (created, response_sha256) = self.client.create_receipted(&request).await?;
+        let created = validate_sandbox_identity(&request, created)?;
+        if request
+            .metadata
+            .iter()
+            .any(|(key, value)| created.metadata.get(key) != Some(value))
+        {
             return Err(identity_mismatch());
         }
         let handle = RuntimeHandle(created.id.clone());
         let original = reclaimer
-            .capture_created(&handle, operation_id, request_sha256, creation_observation)
+            .capture_for_binding(
+                &handle,
+                operation_id,
+                request_sha256,
+                &response_sha256,
+                &request.metadata,
+                pre_dispatch,
+            )
             .await?;
         let handle = self.await_running(&request, created).await?;
-        reclaimer.require_original(&original).await?;
+        reclaimer.require_bound_runtime(&original).await?;
         self.transport.bind_runtime(&handle, &sandbox_id).await?;
         Ok(original)
     }
@@ -173,9 +184,11 @@ impl HostedBackend for ProviderHostedBackend {
         operation_id: &str,
     ) -> crate::Result<crate::RuntimeFinalityReceipt> {
         let reclaimer = self.client.finality_reclaimer()?;
-        reclaimer.require_original(original).await?;
+        reclaimer.require_bound_runtime(original).await?;
         self.transport.retire(original.handle()).await?;
-        reclaimer.finalize_original(original, operation_id).await
+        reclaimer
+            .finalize_bound_runtime(original, operation_id)
+            .await
     }
 
     async fn provision(&self, request: ProviderSandboxRequest) -> crate::Result<RuntimeHandle> {
