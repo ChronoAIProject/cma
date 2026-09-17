@@ -19,6 +19,7 @@ mod service;
 pub mod setup;
 pub mod status;
 mod store;
+mod timestamp;
 mod validation;
 
 pub use capabilities::*;
@@ -28,6 +29,7 @@ pub use memory::MemoryBridgeStore;
 pub use model::*;
 pub use service::{BridgeMutation, BridgePage, BridgeService};
 pub use store::*;
+pub use timestamp::provider_timestamp;
 pub use validation::*;
 
 #[cfg(test)]

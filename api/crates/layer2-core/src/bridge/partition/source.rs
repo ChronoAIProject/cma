@@ -116,7 +116,7 @@ impl NormalizedPartitionSource {
         if !opaque_id(&envelope.chat_id)
             || !opaque_id(&envelope.sender_id)
             || !opaque_id(&inbox.message_id)
-            || crate::seconds_from_rfc3339(&envelope.timestamp).is_none()
+            || crate::bridge::provider_timestamp(&envelope.timestamp).is_none()
             || inbox.accepted_at < 0
             || inbox.expires_at <= inbox.accepted_at
             || observation
