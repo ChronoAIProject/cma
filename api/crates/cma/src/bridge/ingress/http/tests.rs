@@ -17,6 +17,7 @@ mod boundaries;
 mod controls;
 mod event_matrix;
 mod fixture;
+mod nyx_payload;
 mod reply_addressing;
 
 use fixture::*;

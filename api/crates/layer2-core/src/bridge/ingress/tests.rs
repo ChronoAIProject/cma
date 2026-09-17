@@ -391,7 +391,7 @@ fn pinned_nyxid_fractional_and_offset_timestamps_accept_equivalent_signed_instan
         let current = now();
         let local = crate::rfc3339_at(UNIX_EPOCH + Duration::from_secs((current + shift) as u64));
         let header = format!("{}{suffix}", local.trim_end_matches('Z'));
-        assert_eq!(super::timestamp::provider_timestamp(&header), Some(current));
+        assert_eq!(crate::bridge::provider_timestamp(&header), Some(current));
         let mut p = payload();
         p["timestamp"] = json!(event);
         let body = serde_json::to_vec(&p).unwrap();
@@ -429,7 +429,7 @@ fn malformed_provider_dates_and_offsets_fail_in_both_header_and_signed_payload()
         "1969-12-31T23:59:59Z",
     ] {
         assert!(
-            super::timestamp::provider_timestamp(malformed).is_none(),
+            crate::bridge::provider_timestamp(malformed).is_none(),
             "{malformed}"
         );
         assert!(

@@ -8,7 +8,6 @@ mod payload;
 mod redelivery;
 mod service;
 mod text_attachment;
-mod timestamp;
 pub use text_attachment::{snowflake as discord_snowflake, valid_text as valid_attachment_text};
 pub use text_attachment::{
     CapturedAttachmentText, DiscordTextAttachment, VerifiedTextAttachment,
