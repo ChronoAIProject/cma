@@ -34,19 +34,29 @@ pub(super) struct ReplyFixture {
 
 impl ReplyFixture {
     pub async fn new() -> Self {
-        Self::build(false, false, BridgePlatform::Telegram).await
+        Self::build(false, false, BridgePlatform::Telegram, false).await
     }
     pub async fn with_callback_route() -> Self {
-        Self::build(false, true, BridgePlatform::Telegram).await
+        Self::build(false, true, BridgePlatform::Telegram, false).await
     }
     pub async fn with_newer_inbound() -> Self {
-        Self::build(true, false, BridgePlatform::Telegram).await
+        Self::build(true, false, BridgePlatform::Telegram, false).await
     }
     pub async fn with_platform(platform: BridgePlatform) -> Self {
-        Self::build(false, false, platform).await
+        Self::build(false, false, platform, false).await
     }
-    async fn build(newer: bool, callback_route: bool, platform: BridgePlatform) -> Self {
-        let mut f = if callback_route {
+    pub async fn private() -> Self {
+        Self::build(false, false, BridgePlatform::Telegram, true).await
+    }
+    async fn build(
+        newer: bool,
+        callback_route: bool,
+        platform: BridgePlatform,
+        private: bool,
+    ) -> Self {
+        let mut f = if private {
+            Fixture::private().await
+        } else if callback_route {
             Fixture::with_callback_route().await
         } else {
             Fixture::with_platform(platform.clone()).await
@@ -92,11 +102,15 @@ impl ReplyFixture {
             .await
             .unwrap();
         use crate::store::bridge_definitions::mongo_integration_tests::inbox;
-        let (body, token, _) = inbox::callback_for_platform(
-            "reply-client-input",
-            "Work on this and keep me updated.",
-            &platform,
-        );
+        let (body, token, _) = if private {
+            inbox::private_callback("reply-client-input", "Work on this and keep me updated.")
+        } else {
+            inbox::callback_for_platform(
+                "reply-client-input",
+                "Work on this and keep me updated.",
+                &platform,
+            )
+        };
         let write = crate::store::bridge_definitions::mongo_integration_tests::inbox::write(
             &f.bridges,
             &f.record.pin.bridge_id,

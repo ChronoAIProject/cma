@@ -368,14 +368,52 @@ async fn managed_import_resolves_exact_retained_key_and_local_revocation_stops_o
         .metadata
         .key_authority_v1 = snapshot;
     for _ in 0..3 {
+        let before = f.state.requests.lock().unwrap().len();
         let lease = manager.resolve(&personal(), &config).await.unwrap();
         assert_eq!(
             lease.key_state_version, 1,
             "local outbox pin remains stable"
         );
         manager.revalidate(&lease).await.unwrap();
+        let requests = f.state.requests.lock().unwrap();
+        let fresh = &requests[before..];
+        assert_eq!(
+            fresh
+                .iter()
+                .filter(|(_, uri, _)| uri == "/api/v1/users/me/authorization")
+                .count(),
+            1,
+            "one fresh human verification per key resolution"
+        );
+        assert_eq!(
+            fresh
+                .iter()
+                .filter(|(_, uri, _)| uri == "/api/v1/api-keys")
+                .count(),
+            2,
+            "binding authority remains checked before and after the possession probe"
+        );
+        assert_eq!(
+            fresh
+                .iter()
+                .filter(|(_, uri, _)| uri.starts_with("/api/v1/channel-relay/messages/"))
+                .count(),
+            1,
+            "every resolution still proves selected-key possession"
+        );
     }
     let original_rows = f.state.replies.lock().unwrap().clone();
+    for path in [
+        "/api/v1/users/me/authorization",
+        "/api/v1/channel-relay/messages/route-one",
+    ] {
+        f.state.replies.lock().unwrap().get_mut(path).unwrap().0 = StatusCode::FORBIDDEN;
+        assert!(
+            manager.resolve(&personal(), &config).await.is_err(),
+            "combined resolution must not return a lease without successful {path}"
+        );
+        *f.state.replies.lock().unwrap() = original_rows.clone();
+    }
     for patch in [
         json!({"scopes":"read"}),
         json!({"allowed_service_ids":[]}),
