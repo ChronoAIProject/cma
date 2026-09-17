@@ -154,7 +154,7 @@ impl BridgeInvokeService {
             .definitions
             .connection(&grant.owner, &grant.config)
             .await?;
-        let proof = BridgeInvokeProof {
+        let mut proof = BridgeInvokeProof {
             deadline: deadline.min(connection.deadline()),
             grant,
             bridge,
@@ -178,6 +178,21 @@ impl BridgeInvokeService {
             .resource_access_snapshot(&proof.grant.target.resource())
             .await
             .map_err(resource_store_error)?;
+        if matches!(proof.effect, BridgeInvokeEffect::ExecuteCommand { .. }) {
+            // Connection validation can overlap transcript or background-save
+            // updates. Execution must fence the latest resource state, rather
+            // than treating those updates as a loss of channel authority.
+            // Keep the original policy and retained identity; the transaction
+            // and ordered writer still check the exact turn and generation.
+            if current_resources.fence() != proof.resources.fence()
+                || current_resources.policy != proof.resources.policy
+                || current_resources.shares != proof.resources.shares
+            {
+                return Err(BridgeInvokeError::TargetMismatch);
+            }
+            require_resource_owner(&proof.grant, &current_resources)?;
+            proof.resources = current_resources.clone();
+        }
         proof.require_snapshot(&current_bridge, &current_grant, &current_resources)?;
         Ok(proof)
     }

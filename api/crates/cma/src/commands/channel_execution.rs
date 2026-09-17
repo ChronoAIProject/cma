@@ -14,19 +14,26 @@ impl ResourceCommandExecution {
         command: &AdmittedAgentCommand,
     ) -> Result<ChannelExecutionAuthorization, CommandReadiness> {
         let (Some(channel), Some(invokes)) = (&self.channel, &self.invokes) else {
-            return Err(CommandReadiness::Retry);
+            return Err(observe_readiness(
+                "composition",
+                "unavailable",
+                CommandReadiness::Retry,
+            ));
         };
         let authority = channel
             .authorize_execution(invokes, command)
             .await
-            .map_err(readiness)?;
+            .map_err(|error| readiness("authorize_execution", error))?;
         authority
             .fence()
             .require_dispatch(command)
-            .map_err(readiness)?;
+            .map_err(|error| readiness("dispatch_fence", error))?;
         let fence = authority.fence();
         let lineage = &fence.proof().resources().lineage;
-        let agent = lineage.agent.as_ref().ok_or(CommandReadiness::Retry)?;
+        let agent = lineage
+            .agent
+            .as_ref()
+            .ok_or_else(|| observe_readiness("target", "agent_missing", CommandReadiness::Retry))?;
         if !agent.status.is_live()
             || agent.requested_stop_reason.is_some()
             || matches!(
@@ -34,8 +41,10 @@ impl ResourceCommandExecution {
                 SandboxStatus::Failed | SandboxStatus::Retiring | SandboxStatus::Retired
             )
         {
-            return Err(CommandReadiness::Reject(
-                CommandFailureCode::AgentUnavailable,
+            return Err(observe_readiness(
+                "target",
+                "agent_unavailable",
+                CommandReadiness::Reject(CommandFailureCode::AgentUnavailable),
             ));
         }
         Ok(authority)
@@ -77,9 +86,46 @@ impl ResourceCommandExecution {
     }
 }
 
-fn readiness(error: ChannelCommandAdmissionError) -> CommandReadiness {
+fn readiness(stage: &'static str, error: ChannelCommandAdmissionError) -> CommandReadiness {
     use layer2_core::bridge::invoke::BridgeInvokeError;
-    match error {
+    use layer2_core::bridge::BridgeError;
+    let reason = match &error {
+        ChannelCommandAdmissionError::Invoke(error) => match error {
+            BridgeInvokeError::Bridge(error) => match error {
+                BridgeError::NotFound => "bridge_not_found",
+                BridgeError::Forbidden => "bridge_forbidden",
+                BridgeError::AuthorityUnavailable => "bridge_authority_unavailable",
+                BridgeError::InvalidConfiguration(_) => "bridge_invalid_configuration",
+                BridgeError::Conflict => "bridge_conflict",
+                BridgeError::IdempotencyConflict => "bridge_idempotency_conflict",
+                BridgeError::ImmutableIdentity => "bridge_immutable_identity",
+                BridgeError::RebindingPolicyRequired => "bridge_rebinding_policy_required",
+                BridgeError::Retired => "bridge_retired",
+                BridgeError::ConnectionRequired(_) => "bridge_connection_required",
+                BridgeError::AdmissionStopped => "bridge_admission_stopped",
+                BridgeError::Unavailable => "bridge_unavailable",
+                BridgeError::Corrupt => "bridge_corrupt",
+                BridgeError::HistoryLimit => "bridge_history_limit",
+            },
+            BridgeInvokeError::NotFound => "invoke_not_found",
+            BridgeInvokeError::Forbidden => "invoke_forbidden",
+            BridgeInvokeError::Conflict => "invoke_conflict",
+            BridgeInvokeError::IdempotencyConflict => "invoke_idempotency_conflict",
+            BridgeInvokeError::Revoked => "invoke_revoked",
+            BridgeInvokeError::TargetMismatch => "invoke_target_mismatch",
+            BridgeInvokeError::Suspended => "invoke_suspended",
+            BridgeInvokeError::Invalid(_) => "invoke_invalid",
+            BridgeInvokeError::Unavailable => "invoke_unavailable",
+            BridgeInvokeError::Corrupt => "invoke_corrupt",
+        },
+        ChannelCommandAdmissionError::Partition(_) => "partition",
+        ChannelCommandAdmissionError::Ledger(error) => error.code(),
+        ChannelCommandAdmissionError::Input(error) => error.code(),
+        ChannelCommandAdmissionError::Refused(_) => "refused",
+        ChannelCommandAdmissionError::SourceMismatch => "source_mismatch",
+        ChannelCommandAdmissionError::Unavailable => "unavailable",
+    };
+    let result = match error {
         ChannelCommandAdmissionError::Invoke(BridgeInvokeError::Revoked) => {
             CommandReadiness::Reject(CommandFailureCode::AuthorityRevoked)
         }
@@ -87,5 +133,26 @@ fn readiness(error: ChannelCommandAdmissionError) -> CommandReadiness {
             CommandReadiness::Reject(CommandFailureCode::AgentUnavailable)
         }
         _ => CommandReadiness::Retry,
-    }
+    };
+    observe_readiness(stage, reason, result)
+}
+
+fn observe_readiness(
+    stage: &'static str,
+    reason: &'static str,
+    readiness: CommandReadiness,
+) -> CommandReadiness {
+    tracing::info!(
+        event = "channel_operation",
+        operation = "command_readiness",
+        stage,
+        reason,
+        outcome = if matches!(readiness, CommandReadiness::Reject(_)) {
+            "rejected"
+        } else {
+            "retry"
+        },
+        "Channel execution readiness unavailable"
+    );
+    readiness
 }

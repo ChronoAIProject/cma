@@ -1,5 +1,5 @@
 use layer2_core::sandbox::agent_io::{
-    AgentActor, AgentCommand, AgentSourceKind, ChannelCommandAdmissionError as Error,
+    AgentActor, AgentCommand, AgentOwner, AgentSourceKind, ChannelCommandAdmissionError as Error,
     ChannelExecutionFence,
 };
 use layer2_core::sandbox::store::AgentConversationMutation;
@@ -53,17 +53,57 @@ impl MongoBridgeInvokeStore {
         if !matches!(
             original.receipt.envelope.command,
             AgentCommand::Message { .. }
-        ) || !matches!(original.receipt.envelope.actor, AgentActor::Channel { .. })
-            || original.receipt.envelope.source.kind != AgentSourceKind::Channel
-            || original.receipt.envelope.actor != command.receipt.envelope.actor
-            || original.receipt.agent_order >= command.receipt.agent_order
+        ) || original.receipt.agent_order >= command.receipt.agent_order
             || command.receipt.admitted_at < original_dispatch.fenced_at
             || original.receipt.envelope.owner != command.receipt.envelope.owner
             || original.receipt.envelope.agent_id != command.receipt.envelope.agent_id
         {
             return Err(Error::SourceMismatch.into());
         }
-        let source = self.read_channel_source(&original, session).await?;
+        // Owner website turns share this channel-created Agent, but carry no
+        // channel source themselves. Retain the latest preceding channel input
+        // as the sender/chat anchor; a Human label alone cannot widen the scope.
+        let source_command = match (
+            &original.receipt.envelope.actor,
+            original.receipt.envelope.source.kind,
+        ) {
+            (AgentActor::Channel { .. }, AgentSourceKind::Channel) => original.clone(),
+            (AgentActor::Human { subject }, AgentSourceKind::UserInterface)
+                if original.receipt.envelope.owner
+                    == (AgentOwner::Person {
+                        subject: subject.clone(),
+                    })
+                    && subject == &current.owner
+                    && matches!(
+                        fence.source().inbox().envelope.platform.as_str(),
+                        "telegram" | "telegram_new"
+                    ) =>
+            {
+                let prior = self
+                    .resources
+                    .agent_commands
+                    .find_one(doc! {
+                        "agent_id": current.id.as_str(),
+                        "agent_order": {"$lt": original.receipt.agent_order as i64},
+                        "record.receipt.envelope.command.type": "message",
+                        "record.receipt.envelope.actor.kind": "channel",
+                        "record.receipt.envelope.source.kind": "channel",
+                    })
+                    .sort(doc! {"agent_order": -1_i32})
+                    .session(&mut *session)
+                    .await?
+                    .ok_or(Error::SourceMismatch)?;
+                read_command(&prior).map_err(Error::from)?
+            }
+            _ => return Err(Error::SourceMismatch.into()),
+        };
+        if source_command.receipt.envelope.actor != command.receipt.envelope.actor
+            || source_command.receipt.envelope.owner != command.receipt.envelope.owner
+            || source_command.receipt.envelope.agent_id != command.receipt.envelope.agent_id
+        {
+            return Err(Error::SourceMismatch.into());
+        }
+        let source = self.read_channel_source(&source_command, session).await?;
         if source.allocation.id != fence.source().allocation().id
             || source.inbox.envelope.conversation_type != "private"
             || fence.source().inbox().envelope.conversation_type != "private"
@@ -109,6 +149,7 @@ impl MongoBridgeInvokeStore {
                 },
                 doc! {"$set": {"channel_supersession": {
                     "source_command_id": original.receipt.envelope.command_id.as_str(),
+                    "channel_source_command_id": source_command.receipt.envelope.command_id.as_str(),
                     "allocation_id": &source.allocation.id,
                     "operation_sequence": operation.sequence as i64,
                     "turn_sequence": operation.turn_sequence as i64,
