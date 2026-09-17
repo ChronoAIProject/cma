@@ -105,6 +105,8 @@ pub(super) fn project(
     response.created_at =
         layer2_core::seconds_from_rfc3339(&history[start].appended_at).unwrap_or_default();
     response.previous_response_id = previous.map(|turn| response_id(&agent.id, turn));
+    let mut lost_frames = 0_u64;
+    let mut turn_active = true;
     for entry in &history[start..end] {
         match &entry.kind {
             AgentLogKind::AgentMessage { content } => {
@@ -126,15 +128,26 @@ pub(super) fn project(
                     total_tokens: input_tokens.saturating_add(*output_tokens),
                 })
             }
-            AgentLogKind::TurnCompleted { .. } => response.status = ResponseStatus::Completed,
-            AgentLogKind::TurnFailed { failure, .. } => {
+            AgentLogKind::ConversationGap { frames } if turn_active => {
+                lost_frames = lost_frames.saturating_add(*frames);
+            }
+            AgentLogKind::TurnCompleted { turn_sequence } if *turn_sequence == turn => {
+                turn_active = false;
+                response.status = ResponseStatus::Completed;
+            }
+            AgentLogKind::TurnFailed {
+                turn_sequence,
+                failure,
+            } if *turn_sequence == turn => {
+                turn_active = false;
                 response.status = ResponseStatus::Failed;
                 response.error = Some(ResponseError {
                     code: failure.class.clone(),
                     message: failure.detail.clone(),
                 });
             }
-            AgentLogKind::TurnInterrupted { .. } => {
+            AgentLogKind::TurnInterrupted { turn_sequence } if *turn_sequence == turn => {
+                turn_active = false;
                 response.status = ResponseStatus::Incomplete;
                 response.incomplete_details = Some(json!({"reason": "interrupted"}));
             }
@@ -143,6 +156,11 @@ pub(super) fn project(
     }
     if end < history.len() && response.status == ResponseStatus::InProgress {
         return None;
+    }
+    if lost_frames > 0 && !turn_active {
+        response.status = ResponseStatus::Incomplete;
+        response.incomplete_details =
+            Some(json!({"reason": "conversation_output_gap", "frames": lost_frames}));
     }
     Some(response)
 }

@@ -18,6 +18,9 @@ pub struct AgentMessageCheckpoint {
     pub after_seq: u64,
     pub assembly: AgentMessageAssembly,
     pub outcome: AgentUpdateOutcome,
+    /// Survives turn boundaries; scoped to this native conversation and generation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<layer3_adapter::RuntimeOutputSource>,
 }
 
 impl AgentMessageCheckpoint {
@@ -56,6 +59,19 @@ impl AgentMessageCheckpoint {
         {
             return Err(invalid());
         }
+        if let Some(output) = &self.output {
+            if output.native_conversation_id != self.native_conversation_id
+                || uuid::Uuid::parse_str(&output.stream_id).is_err()
+                || output.cursor == 0
+                || output.payload_sha256.len() != 64
+                || !output
+                    .payload_sha256
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit())
+            {
+                return Err(invalid());
+            }
+        }
         if serde_json::to_vec(self).map_err(|_| invalid())?.len() > 8 * 1024 * 1024 {
             return Err(invalid());
         }
@@ -89,6 +105,11 @@ impl AgentMessageCheckpoint {
         {
             let mut checkpoint = self.clone();
             checkpoint.assembly = AgentMessageAssembly::default();
+            if current.conversation.conversation_id != next.conversation.conversation_id
+                || current.conversation.runtime_generation != next.conversation.runtime_generation
+            {
+                checkpoint.output = None;
+            }
             return Some(checkpoint);
         }
         if !self.matches(current) {

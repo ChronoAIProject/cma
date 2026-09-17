@@ -122,6 +122,17 @@ Before SSE, v2 route errors have JSON `{ "error": { "type", "code", "message", "
 Malformed JSON returns 400; missing authentication 401; unsupported fields 422;
 current visible interaction refusal 403; missing/inaccessible IDs the same 404;
 key/resource conflicts 409; full queues 429; unavailable authority/storage 503.
+A durable `conversation_gap` records missing runtime output. History and event
+reads retain the surrounding recorded messages and the gap evidence. An affected
+response remains `in_progress` while its native turn is active; after its recorded
+terminal outcome, Responses v1 and v2 report `incomplete` with
+`incomplete_details: { "reason": "conversation_output_gap", "frames": N }`.
+Later completion cannot certify missing output as complete. Earlier and later
+independent turns retain their own outcomes. The transcript represents an affected
+completed turn with its existing failed-outcome shape and failure class
+`conversation_output_gap`; this projection does not rewrite the stored native
+completion or invent missing messages.
+
 429 and 503 route responses include `Retry-After: 1`. Deployment-wide middleware
 authentication/dependency failures and limits retain the shared REST problem
 envelope; both CMA SDKs accept both error shapes. After headers, a connection error instructs
