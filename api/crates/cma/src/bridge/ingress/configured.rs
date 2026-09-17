@@ -75,7 +75,10 @@ fn deployment(
         return Ok(None);
     }
     let issuer = base_url.trim_end_matches('/').to_owned();
-    let endpoint = format!("{}/jwks.json", nyxid_public_url.trim_end_matches('/'));
+    let endpoint = format!(
+        "{}/.well-known/jwks.json",
+        nyxid_public_url.trim_end_matches('/')
+    );
     Ok(Some(Deployment {
         keys: PinnedCallbackKeys::new(issuer.clone(), endpoint)?,
         policy: CallbackTokenPolicy {
@@ -150,6 +153,25 @@ mod tests {
                 deployment(&mode, Some(endpoint)),
                 Err(CallbackError::KeysUnavailable)
             ));
+        }
+    }
+
+    #[test]
+    fn configured_jwks_uses_provider_discovery_path_on_pinned_public_origin() {
+        // NyxID discovery advertises /.well-known/jwks.json. Its frontend
+        // proxies /.well-known; /jwks.json falls through to the HTML app.
+        let provider_jwks =
+            reqwest::Url::parse("https://nyx.example/.well-known/jwks.json").unwrap();
+        let mode = provider("https://nyx.example", "https://cma.example");
+        for public_origin in ["https://public.nyx.example", "https://public.nyx.example/"] {
+            let configured = deployment(&mode, Some(public_origin)).unwrap().unwrap();
+            let endpoint = reqwest::Url::parse(configured.keys.endpoint()).unwrap();
+            assert_eq!(endpoint.path(), provider_jwks.path());
+            assert_eq!(
+                endpoint.origin().ascii_serialization(),
+                "https://public.nyx.example"
+            );
+            assert_eq!(configured.policy.issuer, "https://nyx.example");
         }
     }
 }
