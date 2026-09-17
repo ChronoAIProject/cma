@@ -240,7 +240,7 @@ impl Fixture {
     }
 }
 
-fn sign(claims: &Value) -> String {
+pub(crate) fn sign(claims: &Value) -> String {
     let key = RsaKeyPair::from_pkcs8(include_bytes!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../layer2-core/src/bridge/ingress/fixtures/callback-test-only.pk8"

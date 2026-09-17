@@ -80,7 +80,7 @@ impl Payload {
             || !optional(&self.reply_to_platform_message_id, 256)
             || !optional(&self.thread_id, 4096)
             || self.timestamp.len() > 64
-            || super::timestamp::provider_timestamp(&self.timestamp).is_none()
+            || crate::bridge::provider_timestamp(&self.timestamp).is_none()
             || self.reply_token.as_ref().is_some_and(|s| s.len() > 16384)
             || self.content.text.as_ref().is_some_and(|s| s.len() > 524288)
             || self.content.attachments.len() > 32

@@ -130,7 +130,7 @@ impl NyxBridgeProvider {
             return DeliveryOutcome::Unknown(DeliveryFailure::ReceiptInvalid);
         };
         if response.upstream_message_id != platform_id
-            || layer2_core::seconds_from_rfc3339(&response.edited_at).is_none()
+            || layer2_core::bridge::provider_timestamp(&response.edited_at).is_none()
         {
             return DeliveryOutcome::Unknown(DeliveryFailure::ReceiptInvalid);
         }
