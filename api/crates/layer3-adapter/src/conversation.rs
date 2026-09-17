@@ -98,6 +98,11 @@ pub enum TurnEvidence {
 /// One ordered update from the ACP conversation.
 #[derive(Debug, Clone)]
 pub enum ConversationUpdate {
+    /// One ordered runtime frame. A protocol-only frame still needs a durable cursor.
+    RuntimeOutput {
+        receipt: crate::RuntimeOutputReceipt,
+        update: Option<Box<ConversationUpdate>>,
+    },
     WithoutPromptEvidence(Box<ConversationUpdate>),
     Said(SessionUpdate),
     Asked(PermissionRequest),
@@ -126,6 +131,7 @@ impl ConversationUpdate {
 
     pub fn turn_evidence(&self) -> Option<TurnEvidence> {
         match self {
+            Self::RuntimeOutput { update, .. } => update.as_deref().and_then(Self::turn_evidence),
             Self::WithoutPromptEvidence(_) => None,
             Self::Said(SessionUpdate::AgentMessageChunk(_)) => {
                 Some(TurnEvidence::Activity(TurnScopedEvidence::AgentMessage))

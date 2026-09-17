@@ -94,6 +94,10 @@ async fn record_update(
     assembly: &mut AgentMessageAssembly,
     update: ConversationUpdate,
 ) -> Result<(), AgentConversationError> {
+    let receipt = match &update {
+        ConversationUpdate::RuntimeOutput { receipt, .. } => Some(receipt),
+        _ => None,
+    };
     loop {
         match recorder
             .record_update(
@@ -105,7 +109,15 @@ async fn record_update(
             )
             .await
         {
-            Ok(_) => return Ok(()),
+            Ok(_) => {
+                if let Some(receipt) = receipt {
+                    receipt
+                        .acknowledge()
+                        .await
+                        .map_err(|error| AgentConversationError::Unavailable(error.to_string()))?;
+                }
+                return Ok(());
+            }
             Err(AgentConversationError::Unavailable(detail)) => {
                 tracing::warn!(agent_id = %agent_id, %detail, "agent update persistence is unavailable");
                 tokio::time::sleep(UPDATE_RETRY_DELAY).await;

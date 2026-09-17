@@ -455,7 +455,7 @@ async fn open_pins_one_endpoint_and_retires_the_authenticated_link() {
             .expect("WebSocket request record lock")
             .as_ref(),
         Some(&(
-            "/proxy/3001/runtime/agents/agent-1/conversation".into(),
+            "/proxy/3001/runtime/agents/agent-1/conversation?outputAck=1".into(),
             Some("provider-secret".into()),
         ))
     );
