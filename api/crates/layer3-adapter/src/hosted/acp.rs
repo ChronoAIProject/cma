@@ -26,6 +26,8 @@ const STARTUP_UPDATE_LIMIT: usize = 256;
 pub(super) const MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
 pub(super) const LANE_CONVERSATION: u8 = 0x02;
 pub(super) const LANE_CONVERSATION_GAP: u8 = 0x03;
+const LANE_RETAINED_OUTPUT: u8 = 0x04;
+const LANE_OUTPUT_ACK: u8 = 0x05;
 
 type Socket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 type Sink = SplitSink<Socket, Message>;
@@ -33,6 +35,12 @@ type Pending = Arc<Mutex<HashMap<String, PendingCall>>>;
 
 #[path = "acp_recovery.rs"]
 mod recovery;
+
+#[path = "acp_output.rs"]
+mod output;
+
+#[path = "acp_reader.rs"]
+mod reader;
 
 pub(super) struct PendingCall {
     pub(super) answer: tokio::sync::oneshot::Sender<serde_json::Value>,
@@ -60,6 +68,7 @@ pub(super) struct Bridge {
     next_id: AtomicI64,
     recovery: Mutex<recovery::PromptRecovery>,
     conversation: Mutex<ConversationState>,
+    output: Option<Mutex<output::ReliableOutput>>,
     pub(super) blocked: Mutex<HashMap<String, Blocked>>,
     pub(super) answered: Arc<Mutex<HashMap<String, serde_json::Value>>>,
     pub(super) owned_prompt_waiters: Arc<AtomicUsize>,
@@ -82,6 +91,8 @@ struct Ready {
     lanes: Vec<String>,
     #[serde(rename = "agentId")]
     agent_id: String,
+    #[serde(default, rename = "outputAcknowledgement")]
+    output_acknowledgement: Option<output::OutputCapability>,
 }
 
 impl Bridge {
@@ -153,7 +164,8 @@ impl Bridge {
             .map_err(|_| AdapterError::Unavailable("runtime sent no Ready declaration".into()))?
             .ok_or_else(|| AdapterError::Unavailable("runtime closed before Ready".into()))?
             .map_err(|error| AdapterError::Unavailable(format!("Ready read failed: {error}")))?;
-        validate_ready(declaration, expected_agent)?;
+        let output_stream = validate_ready(declaration, expected_agent)?;
+        let (acknowledgements, acknowledged) = mpsc::channel(128);
 
         let bridge = Arc::new(Self {
             subscription,
@@ -163,6 +175,8 @@ impl Bridge {
             next_id: AtomicI64::new(1),
             recovery: Mutex::new(recovery::PromptRecovery::new(recovered_prompt)),
             conversation: Mutex::new(ConversationState::default()),
+            output: output_stream
+                .map(|stream| Mutex::new(output::ReliableOutput::new(stream, acknowledgements))),
             blocked: Mutex::new(HashMap::new()),
             answered: Arc::new(Mutex::new(HashMap::new())),
             owned_prompt_waiters: Arc::new(AtomicUsize::new(0)),
@@ -178,35 +192,7 @@ impl Bridge {
             async move { writer.drive(input, &updates).await }
         });
 
-        let reader = Arc::clone(&bridge);
-        let reader_updates = updates.clone();
-        let reader_task = tokio::spawn(async move {
-            while let Some(frame) = source.next().await {
-                match frame {
-                    Ok(Message::Binary(bytes)) => match unframe(&bytes) {
-                        Some((LANE_CONVERSATION, payload)) => {
-                            reader.receive(payload, &reader_updates).await;
-                        }
-                        Some((LANE_CONVERSATION_GAP, payload)) => {
-                            if let Some(frames) = gap_count(payload) {
-                                reader_updates.send(ConversationUpdate::Lost { frames });
-                            }
-                        }
-                        _ => {}
-                    },
-                    Ok(Message::Close(_)) => break,
-                    Ok(Message::Text(_)) => {
-                        tracing::debug!("text frame ignored after Ready declaration");
-                    }
-                    Ok(_) => {}
-                    Err(error) => {
-                        tracing::warn!(%error, "conversation link read failed");
-                        break;
-                    }
-                }
-            }
-            reader.finish().await;
-        });
+        let reader_task = reader::spawn(Arc::clone(&bridge), source, updates.clone(), acknowledged);
 
         if let Err(error) = bridge
             .handshake(resume_conversation, cwd, settings, &updates)
@@ -230,6 +216,12 @@ impl Bridge {
         }
         let conversation_id = bridge.session().await?;
         bridge.release_recovered_prompt(&updates).await;
+        if let Err(error) = bridge.activate_output(&conversation_id, &updates).await {
+            bridge.retire().await;
+            reader_task.abort();
+            relay.abort();
+            return Err(error);
+        }
         Ok(OpenedBridge {
             channel: ConversationChannel {
                 input,
@@ -445,7 +437,7 @@ impl Bridge {
     }
 }
 
-fn validate_ready(message: Message, expected_agent: &str) -> crate::Result<()> {
+fn validate_ready(message: Message, expected_agent: &str) -> crate::Result<Option<uuid::Uuid>> {
     let Message::Text(text) = message else {
         return Err(AdapterError::Rejected(
             "runtime sent a non-text Ready declaration".into(),
@@ -463,7 +455,10 @@ fn validate_ready(message: Message, expected_agent: &str) -> crate::Result<()> {
             "runtime Ready declaration does not match the requested agent".into(),
         ));
     }
-    Ok(())
+    ready
+        .output_acknowledgement
+        .map(|capability| capability.validate())
+        .transpose()
 }
 
 fn unframe(bytes: &[u8]) -> Option<(u8, &[u8])> {

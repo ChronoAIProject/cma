@@ -7,6 +7,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 #[path = "agent_message_anchor_tests.rs"]
 mod anchor_tests;
 
+#[path = "agent_output_recovery_tests.rs"]
+mod output_tests;
+
 fn messages(entries: &[AgentLogEntry]) -> Vec<String> {
     entries
         .iter()
