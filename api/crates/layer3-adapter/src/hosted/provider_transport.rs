@@ -322,7 +322,8 @@ impl ProviderHostedControlTransport {
             tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
         >,
     > {
-        let url = endpoint.conversation(agent_id.as_str())?;
+        let mut url = endpoint.conversation(agent_id.as_str())?;
+        url.query_pairs_mut().append_pair("outputAck", "1");
         let mut request = url
             .as_str()
             .into_client_request()
@@ -333,8 +334,8 @@ impl ProviderHostedControlTransport {
             .map_err(|_| AdapterError::Rejected("provider API key is not a valid header".into()))?;
         request.headers_mut().insert(name, value);
         let config = WebSocketConfig {
-            max_message_size: Some(MAX_FRAME_BYTES + 1),
-            max_frame_size: Some(MAX_FRAME_BYTES + 1),
+            max_message_size: Some(MAX_FRAME_BYTES + 25),
+            max_frame_size: Some(MAX_FRAME_BYTES + 25),
             ..WebSocketConfig::default()
         };
         let connected = tokio_tungstenite::connect_async_with_config(request, Some(config), false);

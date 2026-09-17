@@ -129,3 +129,82 @@ async fn invalid_restoration_does_not_record_a_queued_native_update() {
     .expect("invalid restoration must close the attachment");
     assert!(received.try_recv().is_err());
 }
+
+struct CommitGateRecorder {
+    entered: Notify,
+    release: Notify,
+    refuse: bool,
+}
+
+#[async_trait::async_trait]
+impl AgentUpdateRecorder for CommitGateRecorder {
+    async fn record_update(
+        &self,
+        _id: &AgentId,
+        _generation: u64,
+        _assembly: &mut AgentMessageAssembly,
+        _update: ConversationUpdate,
+        _at: String,
+    ) -> Result<AgentUpdateOutcome, AgentConversationError> {
+        self.entered.notify_one();
+        self.release.notified().await;
+        if self.refuse {
+            return Err(AgentConversationError::Corrupt("commit refused".into()));
+        }
+        Ok(AgentUpdateOutcome {
+            appended: vec![],
+            turn_closed: false,
+        })
+    }
+}
+
+#[tokio::test]
+async fn runtime_ack_requires_durable_success_and_survives_neither_abort_nor_refusal() {
+    for outcome in ["disconnect", "refuse", "commit"] {
+        let recorder = Arc::new(CommitGateRecorder {
+            entered: Notify::new(),
+            release: Notify::new(),
+            refuse: outcome == "refuse",
+        });
+        let (acknowledgements, mut acknowledged) = mpsc::channel(1);
+        let source = layer3_adapter::RuntimeOutputSource {
+            stream_id: uuid::Uuid::new_v4().to_string(),
+            cursor: 7,
+            native_conversation_id: "retained-session".into(),
+            payload_sha256: "a".repeat(64),
+        };
+        let update = ConversationUpdate::RuntimeOutput {
+            receipt: layer3_adapter::RuntimeOutputReceipt::new(source.clone(), acknowledgements),
+            update: None,
+        };
+        let recording = recorder.clone();
+        let task = tokio::spawn(async move {
+            record_update(
+                recording.as_ref(),
+                &AgentId("agt_ack".into()),
+                19,
+                &mut AgentMessageAssembly::default(),
+                update,
+            )
+            .await
+        });
+        recorder.entered.notified().await;
+        assert!(
+            acknowledged.try_recv().is_err(),
+            "receipt must remain held while commit is pending"
+        );
+        if outcome == "disconnect" {
+            task.abort();
+            assert!(task.await.unwrap_err().is_cancelled());
+        } else {
+            recorder.release.notify_one();
+            let result = task.await.unwrap();
+            assert_eq!(result.is_ok(), outcome == "commit");
+        }
+        if outcome == "commit" {
+            assert_eq!(acknowledged.recv().await, Some(source));
+        } else {
+            assert!(acknowledged.try_recv().is_err());
+        }
+    }
+}

@@ -16,6 +16,9 @@ digest and triggers recorded rotation; a new tag or label is not evidence.
 See [CMA Model](CMA_Model.md) for the current contract and
 [Operations](CMA_Operations.md) for the final verification register.
 
+The additive conversation acknowledgement protocol and its rollout limits are
+documented in [Runtime output acknowledgement](CMA_Runtime_Output_Recovery.md).
+
 The historical provider observations in sections 1-7 below remain unchanged.
 They establish only behavior on their recorded versions. Section 8 records
 Agent-home experiments on a contract-2 image with Codex 0.147.0 and codex-acp
