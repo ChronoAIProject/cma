@@ -135,7 +135,7 @@ impl CallbackVerifier {
             now,
         )?;
         let digest = format!("{:x}", Sha256::digest(body));
-        let header_time = super::timestamp::provider_timestamp(headers.timestamp)
+        let header_time = crate::bridge::provider_timestamp(headers.timestamp)
             .ok_or(CallbackError::Authentication)?;
         if claims.body_sha256 != digest
             || claims.api_key_id != config.connector.key_id

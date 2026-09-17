@@ -112,8 +112,7 @@ impl OutboxSource {
             && !matches!(normalized.thread(), ThreadEvidence::Verified(_))
         {
             Some(
-                crate::seconds_from_rfc3339(&inbox.envelope.timestamp)
-                    .and_then(|seconds| i64::try_from(seconds).ok())
+                crate::bridge::provider_timestamp(&inbox.envelope.timestamp)
                     .and_then(|seconds| seconds.checked_add(14 * 60))
                     .and_then(|seconds| seconds.checked_mul(1000))
                     .ok_or(OutboxError::Corrupt)?,
