@@ -32,19 +32,24 @@ fn assert_one_edit(fixture: &Fixture) {
 
 #[tokio::test]
 async fn edit_acknowledges_exact_original_platform_message_and_retains_receipt() {
-    let f = fixture(
-        StatusCode::OK,
-        json!({
-            "upstream_message_id":"om_original_reply", "edited_at":"2026-09-16T03:00:00Z"
-        }),
-        Duration::ZERO,
-    )
-    .await;
-    assert_eq!(
-        edit(&f, Duration::from_secs(1)).await,
-        DeliveryOutcome::Confirmed(original())
-    );
-    assert_one_edit(&f);
+    // NyxID UpdateReplyResponse uses Utc::now().to_rfc3339().
+    for edited_at in [
+        "2026-09-16T03:00:00Z",
+        "2026-09-16T03:00:00.123456789+00:00",
+        "2026-09-16T11:00:00.123+08:00",
+    ] {
+        let f = fixture(
+            StatusCode::OK,
+            json!({"upstream_message_id":"om_original_reply", "edited_at":edited_at}),
+            Duration::ZERO,
+        )
+        .await;
+        assert_eq!(
+            edit(&f, Duration::from_secs(1)).await,
+            DeliveryOutcome::Confirmed(original())
+        );
+        assert_one_edit(&f);
+    }
 }
 
 #[tokio::test]
@@ -52,6 +57,8 @@ async fn malformed_or_mismatched_edit_acknowledgement_is_unknown_without_retry()
     for body in [
         json!({"upstream_message_id":"other", "edited_at":"2026-09-16T03:00:00Z"}),
         json!({"upstream_message_id":"om_original_reply", "edited_at":"invalid"}),
+        json!({"upstream_message_id":"om_original_reply", "edited_at":"1969-12-31T23:59:59.999+00:00"}),
+        json!({"upstream_message_id":"om_original_reply", "edited_at":"2026-02-30T03:00:00+00:00"}),
         json!({"message_id":"new-outbound", "platform_message_id":"om_original_reply"}),
         json!({"upstream_message_id":"om_original_reply", "edited_at":"2026-09-16T03:00:00Z", "extra":true}),
     ] {
