@@ -11,6 +11,10 @@ use super::{LiveAgentAttachmentIdentity, LiveAgentRegistry};
 
 const UPDATE_RETRY_DELAY: Duration = Duration::from_secs(1);
 
+#[cfg(test)]
+#[path = "updates_tests.rs"]
+mod tests;
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn spawn_update_task(
     registry: Weak<LiveAgentRegistry>,
@@ -24,6 +28,20 @@ pub(super) fn spawn_update_task(
             return;
         }
         let mut assembly = AgentMessageAssembly::default();
+        if restore_assembly(
+            recorder.as_ref(),
+            &attachment.agent_id,
+            attachment.runtime_generation,
+            &mut assembly,
+        )
+        .await
+        .is_err()
+        {
+            if let Some(registry) = registry.upgrade() {
+                registry.connection_ended(attachment).await;
+            }
+            return;
+        }
         while let Some(update) = updates.recv().await {
             if record_update(
                 recorder.as_ref(),
@@ -43,6 +61,30 @@ pub(super) fn spawn_update_task(
         }
     });
     task.abort_handle()
+}
+
+async fn restore_assembly(
+    recorder: &dyn AgentUpdateRecorder,
+    agent_id: &AgentId,
+    runtime_generation: u64,
+    assembly: &mut AgentMessageAssembly,
+) -> Result<(), AgentConversationError> {
+    loop {
+        match recorder
+            .restore_assembly(agent_id, runtime_generation, assembly)
+            .await
+        {
+            Ok(()) => return Ok(()),
+            Err(AgentConversationError::Unavailable(detail)) => {
+                tracing::warn!(agent_id = %agent_id, %detail, "agent checkpoint restoration is unavailable");
+                tokio::time::sleep(UPDATE_RETRY_DELAY).await;
+            }
+            Err(error) => {
+                tracing::error!(agent_id = %agent_id, %error, "agent checkpoint restoration stopped");
+                return Err(error);
+            }
+        }
+    }
 }
 
 async fn record_update(
