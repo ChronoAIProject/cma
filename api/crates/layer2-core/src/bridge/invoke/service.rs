@@ -178,10 +178,13 @@ impl BridgeInvokeService {
             .resource_access_snapshot(&proof.grant.target.resource())
             .await
             .map_err(resource_store_error)?;
-        if matches!(proof.effect, BridgeInvokeEffect::ExecuteCommand { .. }) {
+        if matches!(
+            proof.effect,
+            BridgeInvokeEffect::AdmitMessage { .. } | BridgeInvokeEffect::ExecuteCommand { .. }
+        ) {
             // Connection validation can overlap transcript or background-save
-            // updates. Execution must fence the latest resource state, rather
-            // than treating those updates as a loss of channel authority.
+            // updates. Admission and execution fence the latest resource state;
+            // those updates do not remove channel authority.
             // Keep the original policy and retained identity; the transaction
             // and ordered writer still check the exact turn and generation.
             if current_resources.fence() != proof.resources.fence()
