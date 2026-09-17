@@ -140,7 +140,61 @@ impl Bridge {
                 ))
             })?;
         }
+        if settings.channel_tool.is_some() {
+            // adapter_agent accepts this opaque binding only from the trusted
+            // channel source after durable creation-provenance and exact-open
+            // checks. Manual/Trigger Agents cannot opt in through runtime flags.
+            // Apply on new/load/rejoin so an existing Agent also benefits, without
+            // changing its immutable profile, home or launch request identity.
+            self.configure_channel_effort(&session).await;
+        }
         Ok(())
+    }
+
+    async fn configure_channel_effort(&self, session: &str) {
+        let result = self
+            .call_within(
+                "session/set_config_option",
+                serde_json::json!({
+                    "sessionId": session, "configId": "reasoning_effort", "value": "low"
+                }),
+                std::time::Duration::from_secs(1),
+            )
+            .await;
+        let confirmed = result.as_ref().is_ok_and(|response| {
+            response
+                .get("configOptions")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(|options| {
+                    options.iter().any(|option| {
+                        option.get("id").and_then(serde_json::Value::as_str)
+                            == Some("reasoning_effort")
+                            && option
+                                .get("currentValue")
+                                .and_then(serde_json::Value::as_str)
+                                == Some("low")
+                            && option
+                                .get("options")
+                                .and_then(serde_json::Value::as_array)
+                                .is_some_and(|values| {
+                                    values.iter().any(|value| {
+                                        value.get("value").and_then(serde_json::Value::as_str)
+                                            == Some("low")
+                                    })
+                                })
+                    })
+                })
+        });
+        if confirmed {
+            tracing::info!("channel session reasoning effort set to low");
+        } else {
+            // Effort is a latency preference, never delivery authority. An old
+            // runtime or unsupported value must not prevent the input opening.
+            // Do not retain remote error bodies or echoed session settings.
+            tracing::warn!(
+                "channel session reasoning effort was not confirmed; retaining runtime setting"
+            );
+        }
     }
 
     async fn greet(&self, params: serde_json::Value, protected: bool) -> crate::Result<Greeting> {
