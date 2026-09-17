@@ -116,6 +116,17 @@ impl AgentWorkerStore for InMemorySandboxStore {
 
         let agent_id = mutation.agent.id.clone();
         let sandbox_id = mutation.agent.sandbox_id.clone();
+        if let Some(checkpoint) = candidate.agent_message_checkpoints.get(&agent_id) {
+            let current = candidate
+                .agents
+                .get(&agent_id)
+                .ok_or(SandboxStoreError::NotFound)?;
+            if let Some(carried) = checkpoint.advance(current, &mutation.agent) {
+                candidate
+                    .agent_message_checkpoints
+                    .insert(agent_id.clone(), carried);
+            }
+        }
         save_record!(
             candidate,
             agents,
