@@ -9,6 +9,12 @@ pub(super) struct UpdateRelay {
 }
 
 impl UpdateRelay {
+    /// Collect the domain effect of one frame without publishing before its receipt.
+    pub(super) fn capture() -> (Self, mpsc::UnboundedReceiver<ConversationUpdate>) {
+        let (ingress, receiver) = mpsc::unbounded_channel();
+        (Self { ingress }, receiver)
+    }
+
     pub(super) fn send(&self, update: ConversationUpdate) {
         if self.ingress.send(update).is_err() {
             tracing::debug!("conversation update relay has ended");

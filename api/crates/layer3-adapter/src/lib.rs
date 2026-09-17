@@ -21,6 +21,7 @@ mod home_volume;
 mod prompt_identity;
 mod provider_finality;
 mod runtime;
+mod runtime_output;
 mod runtime_status;
 mod workspace;
 mod workspace_removal;
@@ -92,6 +93,7 @@ pub use runtime::{
     DEFAULT_COMMAND_TIMEOUT_SECONDS, DEFAULT_HOME_DIRECTORY, DEFAULT_SUPERVISOR_PROGRAM,
     DEFAULT_TOTAL_TIMEOUT_SECONDS,
 };
+pub use runtime_output::{RuntimeOutputReceipt, RuntimeOutputSource};
 pub use runtime_status::{valid_home_identity, RuntimeStatus, RuntimeStatusRequest};
 pub use workspace::{
     SetupReceipt, WorkspaceReceipt, WorkspaceRemoveReceipt, WorkspaceRemoveRequest,
