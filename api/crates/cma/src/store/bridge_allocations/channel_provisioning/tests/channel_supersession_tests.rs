@@ -9,6 +9,9 @@ use layer3_adapter::{ConversationInput, ConversationInputSender};
 use mongodb::bson::{doc, Document};
 use std::sync::Mutex;
 
+#[path = "channel_supersession_interleaving_tests.rs"]
+mod interleaving;
+
 struct Runtime {
     sender: ConversationInputSender,
 }
