@@ -9,6 +9,21 @@ use crate::store::sandbox_mongo::record_bson;
 
 pub(super) const FIELD: &str = "agent_message_checkpoint";
 
+pub(in super::super) fn carry_fields(
+    row: &Document,
+    current: &Agent,
+    next: &Agent,
+    fields: &mut Document,
+) -> Result<(), SandboxStoreError> {
+    if let Some(checkpoint) = read(row)?.and_then(|value| value.advance(current, next)) {
+        fields.insert(
+            FIELD,
+            record_bson(&checkpoint).map_err(SandboxStoreError::Corrupt)?,
+        );
+    }
+    Ok(())
+}
+
 pub(super) fn read(row: &Document) -> Result<Option<AgentMessageCheckpoint>, SandboxStoreError> {
     let Some(value) = row.get(FIELD) else {
         return Ok(None);
