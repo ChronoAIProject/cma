@@ -71,6 +71,15 @@ pub trait AgentUpdateRecorder: Send + Sync {
         None
     }
 
+    async fn restore_assembly(
+        &self,
+        _id: &AgentId,
+        _runtime_generation: u64,
+        _assembly: &mut AgentMessageAssembly,
+    ) -> Result<(), AgentConversationError> {
+        Ok(())
+    }
+
     async fn record_update(
         &self,
         id: &AgentId,
