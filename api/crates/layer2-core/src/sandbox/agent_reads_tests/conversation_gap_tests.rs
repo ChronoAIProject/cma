@@ -95,11 +95,9 @@ async fn declared_gap_preserves_history_and_marks_only_affected_completion_incom
     };
     assert_eq!(at, NOW);
     assert_eq!(failure.class, "conversation_output_gap");
-    assert!(
-        failure
-            .detail
-            .starts_with("37 runtime output frames were lost.")
-    );
+    assert!(failure
+        .detail
+        .starts_with("37 runtime output frames were lost."));
     let events = reads
         .log(&caller("owner", true), &current.id, 0, 100)
         .await
