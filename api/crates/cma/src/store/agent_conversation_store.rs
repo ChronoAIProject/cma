@@ -31,6 +31,8 @@ mod checkpoint_tests;
 mod cleanup_admission;
 mod implementation;
 
+pub(super) use checkpoint::carry_fields as carry_checkpoint_fields;
+
 #[cfg_attr(test, derive(Clone))]
 pub(super) struct ConversationReceipt {
     pub(super) command_dispatch: Option<layer2_core::sandbox::agent_io::CommandDispatch>,

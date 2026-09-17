@@ -18,6 +18,9 @@ use super::{
 
 const MAX_CONVERSATION_COMMIT_RETRIES: usize = 8;
 
+#[path = "conversation_checkpoint.rs"]
+mod checkpoint;
+
 #[path = "conversation_live.rs"]
 pub(super) mod live;
 
@@ -44,6 +47,79 @@ impl DurableAgentUpdateRecorder {
 impl AgentUpdateRecorder for DurableAgentUpdateRecorder {
     fn subscribe_live(&self, id: &AgentId) -> Option<AgentLiveSubscription> {
         Some(self.live.subscribe(id))
+    }
+
+    async fn restore_assembly(
+        &self,
+        id: &AgentId,
+        runtime_generation: u64,
+        assembly: &mut AgentMessageAssembly,
+    ) -> Result<(), AgentConversationError> {
+        if assembly.pending_update.is_some() {
+            return Err(AgentConversationError::InvalidState(
+                "an uncertain update must be retried before restoring its assembly",
+            ));
+        }
+        for _ in 0..MAX_CONVERSATION_COMMIT_RETRIES {
+            let current = AgentStore::get_agent(self.store.as_ref(), id)
+                .await
+                .map_err(store_error)?
+                .ok_or(AgentConversationError::NotFound)?;
+            if runtime_generation == 0
+                || current.conversation.runtime_generation != Some(runtime_generation)
+            {
+                return Err(AgentConversationError::StaleGeneration);
+            }
+            if !current.status.is_live() {
+                return Err(AgentConversationError::InvalidState(
+                    "assembly restoration requires a live agent",
+                ));
+            }
+            let previous = self
+                .store
+                .agent_message_checkpoint(id)
+                .await
+                .map_err(store_error)?;
+            let recovered = match checkpoint::recover_assembly(
+                self.store.as_ref(),
+                &current,
+                previous.as_ref(),
+            )
+            .await
+            {
+                Ok(recovered) => recovered,
+                Err(error) => {
+                    if AgentStore::get_agent(self.store.as_ref(), id)
+                        .await
+                        .map_err(store_error)?
+                        .as_ref()
+                        != Some(&current)
+                    {
+                        continue;
+                    }
+                    return Err(error);
+                }
+            };
+            if let Some(next) = previous
+                .as_ref()
+                .and_then(|value| value.reanchored(&current))
+            {
+                match self
+                    .store
+                    .commit_agent_message_update(current, previous, next, None)
+                    .await
+                {
+                    Ok(_) => {}
+                    Err(SandboxStoreError::Conflict) => continue,
+                    Err(error) => return Err(store_error(error)),
+                }
+            }
+            *assembly = recovered;
+            return Ok(());
+        }
+        Err(AgentConversationError::Unavailable(
+            "conversation changed during every restoration attempt".into(),
+        ))
     }
 
     async fn record_update(
@@ -88,20 +164,56 @@ impl AgentUpdateRecorder for DurableAgentUpdateRecorder {
                 .agent_message_checkpoint(id)
                 .await
                 .map_err(store_error)?;
-            if let Some(recorded) = previous
+            let recorded = previous
                 .as_ref()
-                .filter(|checkpoint| checkpoint.update_id == update_id)
-            {
+                .filter(|checkpoint| checkpoint.update_id == update_id);
+            if let Some(recorded) = recorded {
                 if recorded.update_fingerprint != fingerprint {
                     return Err(AgentConversationError::Corrupt(
                         "checkpoint update identity conflict".into(),
                     ));
                 }
-                *assembly = if recorded.matches(&current) {
-                    recorded.assembly.clone()
-                } else {
-                    AgentMessageAssembly::default()
-                };
+            }
+            let recovered = match checkpoint::recover_assembly(
+                self.store.as_ref(),
+                &current,
+                previous.as_ref(),
+            )
+            .await
+            {
+                Ok(recovered) => recovered,
+                Err(error) => {
+                    // Aggregate and checkpoint reads are separate. A concurrent
+                    // append may invalidate their apparent anchor relationship.
+                    let refreshed = AgentStore::get_agent(self.store.as_ref(), id)
+                        .await
+                        .map_err(store_error)?;
+                    if refreshed.as_ref() != Some(&current) {
+                        continue;
+                    }
+                    return Err(error);
+                }
+            };
+            if let Some(recorded) = recorded {
+                if let Some(reanchored) = recorded.reanchored(&current) {
+                    // An exact receipt retry must also persist a verified repair.
+                    // Otherwise a later control write still sees the obsolete anchor.
+                    match self
+                        .store
+                        .commit_agent_message_update(
+                            current.clone(),
+                            previous.clone(),
+                            reanchored,
+                            None,
+                        )
+                        .await
+                    {
+                        Ok(_) => {}
+                        Err(SandboxStoreError::Conflict) => continue,
+                        Err(error) => return Err(store_error(error)),
+                    }
+                }
+                *assembly = recovered;
                 return Ok(recorded.outcome.clone());
             }
             if let Some(pending) = &assembly.pending_update {
@@ -112,36 +224,6 @@ impl AgentUpdateRecorder for DurableAgentUpdateRecorder {
                         "uncertain update receipt is no longer the current checkpoint".into(),
                     ));
                 }
-            }
-            let recovered = previous
-                .as_ref()
-                .filter(|checkpoint| checkpoint.matches(&current))
-                .map(|checkpoint| checkpoint.assembly.clone())
-                .unwrap_or_default();
-            if previous.as_ref().is_some_and(|checkpoint| {
-                checkpoint.native_conversation_id
-                    == current
-                        .conversation
-                        .conversation_id
-                        .as_deref()
-                        .unwrap_or_default()
-                    && checkpoint.runtime_generation == runtime_generation
-                    && checkpoint.active_turn == current.conversation.active_turn
-                    && checkpoint.after_seq != current.conversation.last_seq
-                    && !checkpoint.assembly.is_empty()
-            }) {
-                // A generic semantic write advances the private anchor atomically, but
-                // these two reads are separate. Retry a changed aggregate before treating
-                // a stable, inconsistent checkpoint as corrupt.
-                let refreshed = AgentStore::get_agent(self.store.as_ref(), id)
-                    .await
-                    .map_err(store_error)?;
-                if refreshed.as_ref() != Some(&current) {
-                    continue;
-                }
-                return Err(AgentConversationError::Corrupt(
-                    "active message checkpoint has a stale log anchor".into(),
-                ));
             }
             let folded = fold_update(&current, &recovered, update.clone(), &appended_at)?;
             let (next_agent, mut next_assembly, logs, turn_closed) = match folded {
@@ -165,7 +247,11 @@ impl AgentUpdateRecorder for DurableAgentUpdateRecorder {
             let durable_assembly_changed = next_assembly.message_id != recovered.message_id
                 || next_assembly.content != recovered.content
                 || next_assembly.prompt_evidence != recovered.prompt_evidence;
-            if logs.is_empty() && !durable_assembly_changed {
+            let recovered_anchor = !recovered.is_empty()
+                && previous
+                    .as_ref()
+                    .is_some_and(|checkpoint| !checkpoint.matches(&current));
+            if logs.is_empty() && !durable_assembly_changed && !recovered_anchor {
                 *assembly = next_assembly;
                 self.live.publish(fragment);
                 return Ok(AgentUpdateOutcome::quiet());

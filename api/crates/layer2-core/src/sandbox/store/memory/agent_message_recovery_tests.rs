@@ -4,6 +4,9 @@ use crate::sandbox::{Agent, AgentUpdateOutcome, MAX_DURABLE_AGENT_MESSAGE_BYTES}
 use crate::{AgentId, SubjectId};
 use std::sync::atomic::{AtomicBool, Ordering};
 
+#[path = "agent_message_anchor_tests.rs"]
+mod anchor_tests;
+
 fn messages(entries: &[AgentLogEntry]) -> Vec<String> {
     entries
         .iter()
@@ -286,6 +289,28 @@ struct LostCommitReply {
     store: super::super::InMemorySandboxStore,
     fail_next: AtomicBool,
     advance_on_read: AtomicBool,
+    publish_on_commit: AtomicBool,
+}
+
+#[async_trait::async_trait]
+impl AgentLogStore for LostCommitReply {
+    async fn append_agent_log(
+        &self,
+        id: &AgentId,
+        at: String,
+        kind: AgentLogKind,
+    ) -> Result<AgentLogEntry, SandboxStoreError> {
+        self.store.append_agent_log(id, at, kind).await
+    }
+
+    async fn agent_log(
+        &self,
+        id: &AgentId,
+        after: u64,
+        limit: u16,
+    ) -> Result<Vec<AgentLogEntry>, SandboxStoreError> {
+        self.store.agent_log(id, after, limit).await
+    }
 }
 
 #[async_trait::async_trait]
@@ -345,6 +370,9 @@ impl AgentConversationStore for LostCommitReply {
         next: AgentMessageCheckpoint,
         mutation: Option<AgentConversationMutation>,
     ) -> Result<AgentUpdateOutcome, SandboxStoreError> {
+        if self.publish_on_commit.swap(false, Ordering::SeqCst) {
+            anchor_tests::publish_connection(&self.store, &current.id).await;
+        }
         let outcome = self
             .store
             .commit_agent_message_update(current, previous, next, mutation)
@@ -377,6 +405,7 @@ async fn uncertain_checkpoint_and_terminal_retries_recover_exact_original_outcom
         store: store.clone(),
         fail_next: AtomicBool::new(true),
         advance_on_read: AtomicBool::new(false),
+        publish_on_commit: AtomicBool::new(false),
     });
     let recorder = DurableAgentUpdateRecorder::new(flaky.clone());
     let mut live = recorder.subscribe_live(&working.id).unwrap();
@@ -464,6 +493,7 @@ async fn semantic_write_between_agent_and_checkpoint_reads_retries_without_losin
         store: store.clone(),
         fail_next: AtomicBool::new(false),
         advance_on_read: AtomicBool::new(true),
+        publish_on_commit: AtomicBool::new(false),
     });
     let replacement = DurableAgentUpdateRecorder::new(interleaved);
     let mut fresh = AgentMessageAssembly::default();
