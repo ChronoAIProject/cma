@@ -215,8 +215,8 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
     case 'conversation_gap':
       return recover(next, {
         id: `gap:${String(event.seq)}`,
-        title: 'Conversation recovery',
-        detail: `${String(number(kind.frames) ?? 0)} live frame(s) were recovered from durable history.`,
+        title: 'Incomplete conversation output',
+        detail: `${String(number(kind.frames) ?? 0)} live frame(s) were lost. Stored messages remain available, but the output may be incomplete.`,
       });
     case 'sign_in_required':
       return recover(next, {

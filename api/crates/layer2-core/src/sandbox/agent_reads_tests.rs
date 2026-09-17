@@ -1,5 +1,7 @@
 #[path = "agent_reads_tests/command_admission_tests.rs"]
 mod command_admission_tests;
+#[path = "agent_reads_tests/conversation_gap_tests.rs"]
+mod conversation_gap_tests;
 #[path = "agent_reads_tests/resource_access_tests.rs"]
 mod resource_access_tests;
 #[path = "agent_reads_tests/unpublished_identity_tests.rs"]
@@ -802,10 +804,11 @@ async fn transcript_preserves_fenced_steering_in_durable_message_order() {
         );
         assert_eq!(turn.messages[2].sequence, 7);
         assert_eq!(turn.messages[2].appended_at, NOW);
-        assert!(turn
-            .messages
-            .windows(2)
-            .all(|pair| pair[0].sequence < pair[1].sequence));
+        assert!(
+            turn.messages
+                .windows(2)
+                .all(|pair| pair[0].sequence < pair[1].sequence)
+        );
         let restored: AgentTranscript =
             serde_json::from_value(serde_json::to_value(&transcript).unwrap()).unwrap();
         assert_eq!(restored, transcript);
