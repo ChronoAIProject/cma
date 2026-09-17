@@ -60,7 +60,8 @@ impl NyxBridgeProvider {
                     &SecretValue::new(human_credential.to_owned()),
                     connector,
                 )
-                .await?;
+                .await
+                .inspect_err(|error| binding_failure("binding_before_probe", error))?;
             let mut endpoint = self.base_url.clone();
             endpoint.set_path("/api/v1/channel-relay/messages");
             endpoint
@@ -71,7 +72,10 @@ impl NyxBridgeProvider {
                 .query_pairs_mut()
                 .append_pair("page", "1")
                 .append_pair("per_page", "1");
-            let probe: BindingProbe = self.fetch(endpoint, secret).await?;
+            let probe: BindingProbe = self
+                .fetch(endpoint, secret)
+                .await
+                .inspect_err(|error| binding_failure("key_possession_probe", error))?;
             if probe.page != 1
                 || probe.per_page != 1
                 || probe.messages.len() > 1
@@ -89,10 +93,12 @@ impl NyxBridgeProvider {
                     &SecretValue::new(human_credential.to_owned()),
                     connector,
                 )
-                .await?;
+                .await
+                .inspect_err(|error| binding_failure("binding_after_probe", error))?;
             if current.key_state_version < binding.key_state_version
                 || current.key_authority != binding.key_authority
             {
+                binding_failure("binding_changed_during_probe", &binding_mismatch());
                 return Err(binding_mismatch());
             }
             current.deadline = current
@@ -347,6 +353,14 @@ impl NyxBridgeProvider {
         endpoint: reqwest::Url,
         credential: &SecretValue,
     ) -> Result<T, BridgeError> {
+        // Fixed categories only; never log URLs, IDs, credentials or bodies.
+        let stage = match endpoint.path() {
+            "/api/v1/users/me/authorization" => "human_authority",
+            "/api/v1/channel-bots" => "bot_inventory",
+            "/api/v1/api-keys" => "key_inventory",
+            "/api/v1/channel-conversations" => "route_inventory",
+            _ => "provider_read",
+        };
         let mut response = self
             .http
             .get(endpoint)
@@ -354,6 +368,13 @@ impl NyxBridgeProvider {
             .send()
             .await
             .map_err(|_| BridgeError::AuthorityUnavailable)?;
+        if response.status().as_u16() != 200 {
+            tracing::warn!(
+                stage,
+                status = response.status().as_u16(),
+                "Channel provider verification read failed"
+            );
+        }
         match response.status().as_u16() {
             200 => {}
             401 | 403 | 404 => return Err(binding_mismatch()),
@@ -385,6 +406,10 @@ impl NyxBridgeProvider {
         }
         serde_json::from_slice(&bytes).map_err(|_| binding_mismatch())
     }
+}
+
+fn binding_failure(stage: &'static str, error: &BridgeError) {
+    tracing::warn!(stage, failure = %error, "Channel provider binding verification failed");
 }
 
 fn raw_agent_key(value: &str) -> bool {

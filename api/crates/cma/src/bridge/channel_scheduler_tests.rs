@@ -88,3 +88,113 @@ async fn invalid_discovery_cannot_publish_candidates_or_advance_cursor() {
     assert!(scheduled.queued.is_empty());
     assert!(scheduled.tasks.is_empty());
 }
+
+struct RetryPort {
+    seen: Mutex<Vec<String>>,
+}
+
+#[async_trait::async_trait]
+impl ChannelWorkPort for RetryPort {
+    fn kind(&self) -> crate::bridge::operations::WorkKind {
+        crate::bridge::operations::WorkKind::Fixture
+    }
+    async fn discover(&self, _: Option<&str>) -> Result<Vec<String>, ChannelWorkError> {
+        Ok(vec!["allocation".into(), "unrelated".into()])
+    }
+    async fn run_one(&self, id: &str) -> Result<(), ChannelWorkError> {
+        self.seen.lock().unwrap().push(id.to_owned());
+        if id == "allocation" {
+            Err(ChannelWorkError::Suspended)
+        } else {
+            Ok(())
+        }
+    }
+}
+
+async fn discover_and_drain(scheduled: &mut Scheduled) {
+    scheduled.poll();
+    scheduled.fill();
+    while let Some(completed) = scheduled.tasks.join_next_with_id().await {
+        scheduled.complete(completed);
+        scheduled.fill();
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn suspended_allocation_waits_before_retry_without_delaying_unrelated_work() {
+    let port = Arc::new(RetryPort {
+        seen: Mutex::new(Vec::new()),
+    });
+    let mut scheduled = Scheduled::new(port.clone());
+    discover_and_drain(&mut scheduled).await;
+    for _ in 0..119 {
+        tokio::time::advance(Duration::from_millis(250)).await;
+        discover_and_drain(&mut scheduled).await;
+    }
+    {
+        let seen = port.seen.lock().unwrap();
+        assert_eq!(
+            seen.iter().filter(|id| id.as_str() == "allocation").count(),
+            1
+        );
+        assert_eq!(
+            seen.iter().filter(|id| id.as_str() == "unrelated").count(),
+            120
+        );
+    }
+    tokio::time::advance(Duration::from_millis(250)).await;
+    discover_and_drain(&mut scheduled).await;
+    assert_eq!(
+        port.seen
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|id| id.as_str() == "allocation")
+            .count(),
+        2
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn invalid_discovery_waits_before_contacting_the_store_again() {
+    let mut scheduled = Scheduled::new(Arc::new(InvalidPage));
+    discover_and_drain(&mut scheduled).await;
+    tokio::time::advance(Duration::from_secs(29)).await;
+    scheduled.poll();
+    assert!(scheduled.tasks.is_empty());
+    tokio::time::advance(Duration::from_secs(1)).await;
+    scheduled.poll();
+    assert_eq!(scheduled.tasks.len(), 1);
+    let completed = scheduled.tasks.join_next_with_id().await.unwrap();
+    scheduled.complete(completed);
+}
+
+#[tokio::test(start_paused = true)]
+async fn retry_window_is_bounded_and_resumes_after_capacity_pause() {
+    let port = Arc::new(RetryPort {
+        seen: Mutex::new(Vec::new()),
+    });
+    let mut scheduled = Scheduled::new(port.clone());
+    let deadline = tokio::time::Instant::now() + FAILURE_RETRY_DELAY;
+    for n in 0..MAX_RETRY_ENTRIES {
+        scheduled.retry_after.insert(format!("prior{n}"), deadline);
+    }
+    discover_and_drain(&mut scheduled).await;
+    assert_eq!(scheduled.retry_after.len(), MAX_RETRY_ENTRIES);
+    tokio::time::advance(Duration::from_secs(29)).await;
+    scheduled.poll();
+    scheduled.fill();
+    assert!(scheduled.tasks.is_empty());
+    tokio::time::advance(Duration::from_secs(1)).await;
+    discover_and_drain(&mut scheduled).await;
+    assert!(scheduled.retry_after.len() < MAX_RETRY_ENTRIES);
+    assert_eq!(
+        port.seen
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|id| id.as_str() == "allocation")
+            .count(),
+        2
+    );
+}
