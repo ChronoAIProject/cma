@@ -20,6 +20,11 @@ struct Cache {
 
 impl PinnedCallbackKeys {
     #[cfg(test)]
+    pub(super) fn endpoint(&self) -> &str {
+        &self.endpoint
+    }
+
+    #[cfg(test)]
     pub(crate) fn fixture() -> Self {
         let deadline = Instant::now() + Duration::from_secs(60);
         let mut provider = Self::new(
