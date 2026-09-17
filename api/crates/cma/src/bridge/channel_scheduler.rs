@@ -12,7 +12,7 @@ use tokio::{
 
 use super::operations::{elapsed_ms, WorkKind};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ChannelWorkError {
     Unavailable,
     Changed,
@@ -21,6 +21,19 @@ pub(crate) enum ChannelWorkError {
     Corrupt,
     AttachmentExpired,
     AttachmentUnavailable,
+}
+
+impl ChannelWorkError {
+    pub(crate) fn retry_delay(self) -> Duration {
+        match self {
+            Self::Changed => Duration::from_millis(250),
+            Self::Unavailable => Duration::from_secs(1),
+            Self::AttachmentUnavailable => Duration::from_secs(5),
+            Self::Unsupported | Self::Suspended | Self::Corrupt | Self::AttachmentExpired => {
+                FAILURE_RETRY_DELAY
+            }
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -198,8 +211,11 @@ impl Scheduled {
         match self.kinds.remove(&id) {
             Some(Kind::Discover) => {
                 self.discovering = false;
-                self.discovery_after = (!matches!(&joined, Ok((_, Ok(Some(_))))))
-                    .then(|| tokio::time::Instant::now() + FAILURE_RETRY_DELAY);
+                self.discovery_after = match &joined {
+                    Ok((_, Ok(Some(_)))) => None,
+                    Ok((_, Err(error))) => Some(tokio::time::Instant::now() + error.retry_delay()),
+                    _ => Some(tokio::time::Instant::now() + FAILURE_RETRY_DELAY),
+                };
             }
             Some(Kind::Work(id, started)) => {
                 self.active.remove(&id);
@@ -207,10 +223,9 @@ impl Scheduled {
                 // failed row must not reuse that cadence to hammer identity
                 // providers or prevent their rate-limit windows recovering.
                 if !matches!(&joined, Ok((_, Ok(_)))) {
-                    let delay = if matches!(&joined, Ok((_, Err(ChannelWorkError::Changed)))) {
-                        Duration::from_secs(1)
-                    } else {
-                        FAILURE_RETRY_DELAY
+                    let delay = match &joined {
+                        Ok((_, Err(error))) => error.retry_delay(),
+                        _ => FAILURE_RETRY_DELAY,
                     };
                     let deadline = tokio::time::Instant::now() + delay;
                     if self.retry_after.len() < MAX_RETRY_ENTRIES {
