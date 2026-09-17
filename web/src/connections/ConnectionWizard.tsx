@@ -19,6 +19,7 @@ interface WizardProps {
   readonly onReady: (report: ConnectionReport) => void;
   readonly onCancel?: () => void;
   readonly forceSubscription?: boolean;
+  readonly expectedOwner?: string;
   readonly client?: ConnectionClient;
 }
 
@@ -39,6 +40,7 @@ function ConnectionSequence({
   onCancel,
   onRetry,
   forceSubscription = false,
+  expectedOwner,
   client = connectionClient,
 }: WizardProps & { readonly onRetry: () => void }) {
   const key = JSON.stringify(target);
@@ -58,7 +60,7 @@ function ConnectionSequence({
   useEffect(() => {
     ready.current = onReady;
   }, [onReady]);
-  const owner = useRef<string | undefined>(undefined);
+  const owner = useRef<string | undefined>(expectedOwner);
   const attempt = useRef<StartedConnection | undefined>(undefined);
   const sequence = useRef(false);
   const generation = useRef(0);
@@ -156,7 +158,7 @@ function ConnectionSequence({
     attempt.current = undefined;
     completed.current = false;
     forceDone.current = !forceSubscription;
-    owner.current = undefined;
+    owner.current = expectedOwner;
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     let failures = 0;
@@ -265,7 +267,7 @@ function ConnectionSequence({
     };
     // The serialized target makes this lifecycle independent of parent renders.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, client, forceSubscription]);
+  }, [key, client, forceSubscription, expectedOwner]);
 
   const connect = () => {
     if (busy || report === undefined) return;
