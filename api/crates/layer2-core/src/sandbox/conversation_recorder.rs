@@ -138,7 +138,24 @@ impl AgentUpdateRecorder for DurableAgentUpdateRecorder {
                 "conversation update timestamp is invalid",
             ));
         }
-        let fingerprint = format!("{:x}", Sha256::digest(format!("{update:?}").as_bytes()));
+        let (source, update) = match update {
+            ConversationUpdate::RuntimeOutput { receipt, update } => {
+                (Some(receipt.source), update.map(|update| *update))
+            }
+            update => (None, Some(update)),
+        };
+        let fingerprint = source.as_ref().map_or_else(
+            || {
+                format!(
+                    "{:x}",
+                    Sha256::digest(
+                        format!("{:?}", update.as_ref().expect("legacy update is present"))
+                            .as_bytes()
+                    )
+                )
+            },
+            |source| format!("{:x}", Sha256::digest(format!("{source:?}").as_bytes())),
+        );
         let update_id = if let Some(pending) = &assembly.pending_update {
             if pending.fingerprint != fingerprint
                 || pending.runtime_generation != runtime_generation
@@ -167,6 +184,11 @@ impl AgentUpdateRecorder for DurableAgentUpdateRecorder {
             let recorded = previous
                 .as_ref()
                 .filter(|checkpoint| checkpoint.update_id == update_id);
+            let replayed = if let Some(source) = &source {
+                output_replayed(source, &current, previous.as_ref())?
+            } else {
+                false
+            };
             if let Some(recorded) = recorded {
                 if recorded.update_fingerprint != fingerprint {
                     return Err(AgentConversationError::Corrupt(
@@ -194,6 +216,31 @@ impl AgentUpdateRecorder for DurableAgentUpdateRecorder {
                     return Err(error);
                 }
             };
+            if replayed {
+                // A reconnect may parse an old terminal as a no-op after the turn closed.
+                // The immutable source position is the receipt, independent of that parsing.
+                if let Some(reanchored) = previous
+                    .as_ref()
+                    .and_then(|checkpoint| checkpoint.reanchored(&current))
+                {
+                    match self
+                        .store
+                        .commit_agent_message_update(
+                            current.clone(),
+                            previous.clone(),
+                            reanchored,
+                            None,
+                        )
+                        .await
+                    {
+                        Ok(_) => {}
+                        Err(SandboxStoreError::Conflict) => continue,
+                        Err(error) => return Err(store_error(error)),
+                    }
+                }
+                *assembly = recovered;
+                return Ok(AgentUpdateOutcome::quiet());
+            }
             if let Some(recorded) = recorded {
                 if let Some(reanchored) = recorded.reanchored(&current) {
                     // An exact receipt retry must also persist a verified repair.
@@ -225,7 +272,10 @@ impl AgentUpdateRecorder for DurableAgentUpdateRecorder {
                     ));
                 }
             }
-            let folded = fold_update(&current, &recovered, update.clone(), &appended_at)?;
+            let folded = match &update {
+                Some(update) => fold_update(&current, &recovered, update.clone(), &appended_at)?,
+                None => FoldedConversationUpdate::Quiet(recovered.clone()),
+            };
             let (next_agent, mut next_assembly, logs, turn_closed) = match folded {
                 FoldedConversationUpdate::Quiet(next) => (current.clone(), next, Vec::new(), false),
                 FoldedConversationUpdate::Changed(change) => (
@@ -235,13 +285,15 @@ impl AgentUpdateRecorder for DurableAgentUpdateRecorder {
                     change.turn_closed,
                 ),
             };
-            let fragment = live::accepted_fragment(
-                &current,
-                &recovered,
-                &mut next_assembly,
-                &update,
-                next_agent.conversation.last_seq,
-            );
+            let fragment = update.as_ref().and_then(|update| {
+                live::accepted_fragment(
+                    &current,
+                    &recovered,
+                    &mut next_assembly,
+                    update,
+                    next_agent.conversation.last_seq,
+                )
+            });
             // Thoughts remain ephemeral, and an unchanged bounded message needs no write.
             // Accepted assistant text is checkpointed before it can be published live.
             let durable_assembly_changed = next_assembly.message_id != recovered.message_id
@@ -251,7 +303,8 @@ impl AgentUpdateRecorder for DurableAgentUpdateRecorder {
                 && previous
                     .as_ref()
                     .is_some_and(|checkpoint| !checkpoint.matches(&current));
-            if logs.is_empty() && !durable_assembly_changed && !recovered_anchor {
+            if source.is_none() && logs.is_empty() && !durable_assembly_changed && !recovered_anchor
+            {
                 *assembly = next_assembly;
                 self.live.publish(fragment);
                 return Ok(AgentUpdateOutcome::quiet());
@@ -281,6 +334,20 @@ impl AgentUpdateRecorder for DurableAgentUpdateRecorder {
                 after_seq: next_agent.conversation.last_seq,
                 assembly: next_assembly.clone(),
                 outcome,
+                output: source.clone().or_else(|| {
+                    previous
+                        .as_ref()
+                        .filter(|checkpoint| {
+                            checkpoint.native_conversation_id
+                                == current
+                                    .conversation
+                                    .conversation_id
+                                    .as_deref()
+                                    .unwrap_or_default()
+                                && checkpoint.runtime_generation == runtime_generation
+                        })
+                        .and_then(|checkpoint| checkpoint.output.clone())
+                }),
             };
             checkpoint.validate().map_err(store_error)?;
             let mutation = (!logs.is_empty()).then(|| AgentConversationMutation {
@@ -329,6 +396,48 @@ impl AgentUpdateRecorder for DurableAgentUpdateRecorder {
         Err(AgentConversationError::Unavailable(
             "conversation changed during every commit attempt".into(),
         ))
+    }
+}
+
+fn output_replayed(
+    source: &layer3_adapter::RuntimeOutputSource,
+    current: &super::Agent,
+    previous: Option<&AgentMessageCheckpoint>,
+) -> Result<bool, AgentConversationError> {
+    let invalid = || {
+        AgentConversationError::Corrupt(
+            "runtime output receipt is not contiguous with its conversation".into(),
+        )
+    };
+    if current.conversation.conversation_id.as_deref() != Some(&source.native_conversation_id)
+        || uuid::Uuid::parse_str(&source.stream_id).is_err()
+        || source.cursor == 0
+        || source.payload_sha256.len() != 64
+        || !source
+            .payload_sha256
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err(invalid());
+    }
+    let previous = previous
+        .filter(|checkpoint| {
+            checkpoint.native_conversation_id == source.native_conversation_id
+                && Some(checkpoint.runtime_generation) == current.conversation.runtime_generation
+        })
+        .and_then(|checkpoint| checkpoint.output.as_ref());
+    match previous {
+        Some(previous) if previous.stream_id != source.stream_id => Err(invalid()),
+        Some(previous)
+            if source.cursor == previous.cursor
+                && source.payload_sha256 != previous.payload_sha256 =>
+        {
+            Err(invalid())
+        }
+        Some(previous) if source.cursor <= previous.cursor => Ok(true),
+        Some(previous) if previous.cursor.checked_add(1) == Some(source.cursor) => Ok(false),
+        None if source.cursor == 1 => Ok(false),
+        _ => Err(invalid()),
     }
 }
 
