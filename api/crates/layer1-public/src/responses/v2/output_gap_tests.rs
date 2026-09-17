@@ -129,11 +129,11 @@ fn project(kinds: &[AgentLogKind], turn: u64, active: bool) -> (ResponseObject, 
 #[test]
 fn completed_output_gap_retains_messages_and_emits_incomplete_replay() {
     let (legacy, response) = project(&history(), 6, false);
-    let details = Some(json!({"reason":"conversation_output_gap","frames":5}));
+    let details = json!({"reason":"conversation_output_gap","frames":5});
     assert_eq!(legacy.status, ResponseStatus::Incomplete);
     assert_eq!(response.status, V2ResponseStatus::Incomplete);
-    assert_eq!(legacy.incomplete_details, details);
-    assert_eq!(response.incomplete_details, details);
+    assert_eq!(legacy.incomplete_details.as_ref(), Some(&details));
+    assert_eq!(response.incomplete_details.as_ref(), Some(&details));
     assert_eq!(legacy.output, response.output);
     assert_eq!(
         response
@@ -148,7 +148,7 @@ fn completed_output_gap_retains_messages_and_emits_incomplete_replay() {
     assert_eq!(replay.last().unwrap()["type"], "response.incomplete");
     assert_eq!(
         replay.last().unwrap()["response"]["incomplete_details"],
-        details.unwrap()
+        details
     );
     assert!(replay
         .iter()
