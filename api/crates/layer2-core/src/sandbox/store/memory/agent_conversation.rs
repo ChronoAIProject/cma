@@ -28,7 +28,15 @@ impl AgentConversationStore for InMemorySandboxStore {
         next.validate()?;
         let mut state = self.lock();
         let actual = state.agent_message_checkpoints.get(&current.id);
-        if let Some(recorded) = actual.filter(|value| value.update_id == next.update_id) {
+        let reanchor = mutation.is_none()
+            && previous
+                .as_ref()
+                .and_then(|value| value.reanchored(&current))
+                .as_ref()
+                == Some(&next);
+        if let Some(recorded) = actual.filter(|value| {
+            value.update_id == next.update_id && (!reanchor || value.after_seq >= next.after_seq)
+        }) {
             return if recorded.update_fingerprint == next.update_fingerprint {
                 Ok(recorded.outcome.clone())
             } else {
@@ -42,6 +50,13 @@ impl AgentConversationStore for InMemorySandboxStore {
             return Err(SandboxStoreError::Conflict);
         }
         let mut candidate = state.clone();
+        if reanchor {
+            candidate
+                .agent_message_checkpoints
+                .insert(current.id, next.clone());
+            *state = candidate;
+            return Ok(next.outcome);
+        }
         match mutation {
             Some(mutation) => {
                 if mutation.agent.id != current.id || !next.matches(&mutation.agent) {

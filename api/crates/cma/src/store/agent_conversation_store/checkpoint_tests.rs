@@ -6,6 +6,8 @@ use layer2_core::sandbox::{AgentLogKind, AgentMessageAssembly, AgentStatus, Agen
 use super::*;
 use crate::store::sandbox_maintenance::mongo_integration_tests::{database, fixture};
 
+#[path = "checkpoint_anchor_tests.rs"]
+mod anchor;
 #[path = "checkpoint_failpoint_tests.rs"]
 mod failpoints;
 #[path = "checkpoint_recorder_tests.rs"]

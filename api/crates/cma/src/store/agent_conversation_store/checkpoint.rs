@@ -9,6 +9,21 @@ use crate::store::sandbox_mongo::record_bson;
 
 pub(super) const FIELD: &str = "agent_message_checkpoint";
 
+pub(in super::super) fn carry_fields(
+    row: &Document,
+    current: &Agent,
+    next: &Agent,
+    fields: &mut Document,
+) -> Result<(), SandboxStoreError> {
+    if let Some(checkpoint) = read(row)?.and_then(|value| value.advance(current, next)) {
+        fields.insert(
+            FIELD,
+            record_bson(&checkpoint).map_err(SandboxStoreError::Corrupt)?,
+        );
+    }
+    Ok(())
+}
+
 pub(super) fn read(row: &Document) -> Result<Option<AgentMessageCheckpoint>, SandboxStoreError> {
     let Some(value) = row.get(FIELD) else {
         return Ok(None);
@@ -57,6 +72,12 @@ pub(super) async fn commit(
     mutation: Option<AgentConversationMutation>,
 ) -> Result<AgentUpdateOutcome, SandboxStoreError> {
     next.validate()?;
+    let reanchor = mutation.is_none()
+        && previous
+            .as_ref()
+            .and_then(|value| value.reanchored(&current))
+            .as_ref()
+            == Some(&next);
     if let Some(mutation) = &mutation {
         ensure_append_batch_size(mutation.agent_logs.len())?;
     }
@@ -118,7 +139,7 @@ pub(super) async fn commit(
                 let unresolved = commit_error.clone();
                 let store = store.clone();
                 return wait_for_reconciliation("agent message commit", async move {
-                    reconcile(&store, &current.id, &next, snapshot_time)
+                    reconcile(&store, &current.id, &next, snapshot_time, reanchor)
                         .await?
                         .ok_or_else(|| {
                             SandboxStoreError::Unavailable(format!(
@@ -161,6 +182,23 @@ async fn apply(
         .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
     let actual_agent = read_agent(&row).map_err(ApplyError::Domain)?;
     let actual = read(&row).map_err(ApplyError::Domain)?;
+    if mutation.is_none()
+        && previous
+            .and_then(|value| value.reanchored(current))
+            .as_ref()
+            == Some(next)
+    {
+        if let Some(outcome) =
+            replay_at_anchor(actual.as_ref(), next, true).map_err(ApplyError::Domain)?
+        {
+            return Ok(outcome);
+        }
+        if actual_agent != *current || actual.as_ref() != previous || !current.status.is_live() {
+            return Err(ApplyError::Domain(SandboxStoreError::Conflict));
+        }
+        write(store, current, Some(next), session).await?;
+        return Ok(next.outcome.clone());
+    }
     if let Some(outcome) = replay(actual.as_ref(), next).map_err(ApplyError::Domain)? {
         return Ok(outcome);
     }
@@ -202,6 +240,17 @@ fn replay(
         Some(_) => Err(SandboxStoreError::Conflict),
         None => Ok(None),
     }
+}
+
+pub(super) fn replay_at_anchor(
+    actual: Option<&AgentMessageCheckpoint>,
+    next: &AgentMessageCheckpoint,
+    require_anchor: bool,
+) -> Result<Option<AgentUpdateOutcome>, SandboxStoreError> {
+    if require_anchor && actual.is_none_or(|value| value.after_seq < next.after_seq) {
+        return Ok(None);
+    }
+    replay(actual, next)
 }
 
 async fn write(
@@ -252,6 +301,7 @@ async fn reconcile(
     id: &AgentId,
     next: &AgentMessageCheckpoint,
     snapshot_time: Timestamp,
+    require_anchor: bool,
 ) -> Result<Option<AgentUpdateOutcome>, SandboxStoreError> {
     let mut session = snapshot_session(store, Some(snapshot_time)).await?;
     let row = store
@@ -265,5 +315,6 @@ async fn reconcile(
         return Ok(None);
     };
     read_agent(&row)?;
-    replay(read(&row)?.as_ref(), next)
+    let actual = read(&row)?;
+    replay_at_anchor(actual.as_ref(), next, require_anchor)
 }
