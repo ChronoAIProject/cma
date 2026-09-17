@@ -7,7 +7,7 @@ use layer2_core::sandbox::store::{
 use layer2_core::sandbox::{
     Agent, AgentLogEntry, AgentStatus, AgentWorkStep, Sandbox, SandboxEvent, Worktree,
 };
-use mongodb::bson::{doc, Bson};
+use mongodb::bson::{doc, Bson, Document};
 
 use super::agent_log::{log_document, scan_complete_log_with_session};
 use super::agent_log_integrity::{
@@ -148,17 +148,14 @@ async fn apply_publication(
     mutation: &AgentWorkMutation,
     session: &mut mongodb::ClientSession,
 ) -> Result<PublicationReceipt, ApplyError> {
-    let current = store
+    let current_row = store
         .agents
         .find_one(doc! { "_id": mutation.agent.id.as_str() })
         .session(&mut *session)
         .await
         .map_err(ApplyError::Driver)?
-        .as_ref()
-        .map(read_agent)
-        .transpose()
-        .map_err(ApplyError::Domain)?
         .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
+    let current = read_agent(&current_row).map_err(ApplyError::Domain)?;
     let current_worktree = store
         .worktrees
         .find_one(doc! { "_id": current.worktree_id.as_str() })
@@ -245,7 +242,15 @@ async fn apply_publication(
         publication_capacity(&current, mutation),
     )
     .map_err(ApplyError::Domain)?;
-    advance_agent(store, &current, &final_agent, mutation, session).await?;
+    advance_agent(
+        store,
+        &current_row,
+        &current,
+        &final_agent,
+        mutation,
+        session,
+    )
+    .await?;
     if let Some(versioned) = mutation.worktree.as_ref() {
         advance_worktree(store, &current_worktree, &versioned.worktree, session).await?;
     }
@@ -299,6 +304,7 @@ fn final_agent_and_logs(
 
 async fn advance_agent(
     store: &MongoSandboxStore,
+    current_row: &Document,
     current: &Agent,
     next: &Agent,
     mutation: &AgentWorkMutation,
@@ -310,6 +316,13 @@ async fn advance_agent(
         .as_ref()
         .ok_or(ApplyError::Domain(SandboxStoreError::Conflict))?;
     let mut fields = agent_replacement_fields(next).map_err(ApplyError::Domain)?;
+    super::agent_conversation_store::carry_checkpoint_fields(
+        current_row,
+        current,
+        next,
+        &mut fields,
+    )
+    .map_err(ApplyError::Domain)?;
     fields.insert(
         "last_seq",
         signed(next.conversation.last_seq, "agent log sequence")

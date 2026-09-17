@@ -64,9 +64,15 @@ pub trait AgentReadStore:
 {
 }
 
-pub trait AgentConversationUpdateStore: AgentStore + AgentConversationStore {}
+pub trait AgentConversationUpdateStore:
+    AgentStore + AgentConversationStore + AgentLogStore
+{
+}
 
-impl<T> AgentConversationUpdateStore for T where T: AgentStore + AgentConversationStore {}
+impl<T> AgentConversationUpdateStore for T where
+    T: AgentStore + AgentConversationStore + AgentLogStore
+{
+}
 
 impl<T> AgentLifecycleStore for T where
     T: SandboxStore

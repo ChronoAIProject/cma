@@ -69,6 +69,17 @@ impl AgentMessageCheckpoint {
             && agent.conversation.last_seq == self.after_seq
     }
 
+    /// Candidate anchor-only repair after the recorder verifies the intervening log.
+    /// Preserve the exact update receipt and prefix; never cross a turn or identity.
+    pub fn reanchored(&self, agent: &Agent) -> Option<Self> {
+        if self.assembly.is_empty() || self.after_seq >= agent.conversation.last_seq {
+            return None;
+        }
+        let mut next = self.clone();
+        next.after_seq = agent.conversation.last_seq;
+        next.matches(agent).then_some(next)
+    }
+
     /// Other semantic writes may append control evidence while the same message is active.
     /// Carry its anchor in that transaction, but never carry a prefix into a different turn.
     pub fn advance(&self, current: &Agent, next: &Agent) -> Option<Self> {

@@ -82,3 +82,80 @@ async fn checkpoint_reconciles_ambiguous_quiet_and_boundary_commits_without_dupl
     }
     client.database(&name).drop().await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a failpoint-enabled replica set"]
+async fn checkpoint_reanchor_reconciles_ambiguous_commit_without_replaying_the_old_anchor() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_FAILPOINT_URI").unwrap();
+    let suffix = uuid::Uuid::new_v4().simple().to_string();
+    let app_name = format!("cma-checkpoint-reanchor-{suffix}");
+    let name = format!("cma_checkpoint_reanchor_{suffix}");
+    let admin = Client::with_uri_str(&uri).await.unwrap();
+    let mut options = ClientOptions::parse(&uri).await.unwrap();
+    options.app_name = Some(app_name.clone());
+    let client = Client::with_options(options).unwrap();
+    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let current = super::anchor::working_with_worktree(&store, "sbx_checkpoint_reanchor").await;
+    let previous = partial(&current, "retained answer");
+    store
+        .commit_agent_message_update(current.clone(), None, previous.clone(), None)
+        .await
+        .unwrap();
+    super::anchor::publish_legacy_connection(&store, &current.id).await;
+    let current = store.get_agent(&current.id).await.unwrap().unwrap();
+    let next = previous.reanchored(&current).unwrap();
+    // The old exact receipt proves the original chunk, not the requested repair.
+    assert_eq!(
+        checkpoint::replay_at_anchor(Some(&previous), &next, true).unwrap(),
+        None
+    );
+    assert_eq!(
+        checkpoint::replay_at_anchor(Some(&previous), &next, false).unwrap(),
+        Some(previous.outcome.clone())
+    );
+    let logs = store.agent_log(&current.id, 0, 200).await.unwrap();
+    admin.database("admin").run_command(doc! {
+        "configureFailPoint": "failCommand", "mode": { "times": 5_i32 },
+        "data": { "failCommands": ["commitTransaction"], "appName": &app_name,
+            "writeConcernError": { "code": 50_i32, "codeName": "MaxTimeMSExpired", "errmsg": "injected ambiguous checkpoint reanchor" } },
+    }).await.unwrap();
+    let result = store
+        .commit_agent_message_update(current.clone(), Some(previous.clone()), next.clone(), None)
+        .await;
+    admin
+        .database("admin")
+        .run_command(doc! { "configureFailPoint": "failCommand", "mode": "off" })
+        .await
+        .unwrap();
+    assert_eq!(result.unwrap(), previous.outcome);
+    assert_eq!(
+        store.agent_message_checkpoint(&current.id).await.unwrap(),
+        Some(next.clone())
+    );
+    // Repeating the exact anchor CAS keeps the original receipt and no public writes.
+    assert_eq!(
+        store
+            .commit_agent_message_update(current.clone(), Some(previous), next.clone(), None)
+            .await
+            .unwrap(),
+        next.outcome
+    );
+    assert_eq!(
+        store.get_agent(&current.id).await.unwrap(),
+        Some(current.clone())
+    );
+    assert_eq!(store.agent_log(&current.id, 0, 200).await.unwrap(), logs);
+    let mut conflicting = next.clone();
+    conflicting.update_fingerprint = "b".repeat(64);
+    assert!(matches!(
+        store
+            .commit_agent_message_update(current.clone(), Some(next.clone()), conflicting, None)
+            .await,
+        Err(SandboxStoreError::Conflict)
+    ));
+    assert_eq!(
+        store.agent_message_checkpoint(&current.id).await.unwrap(),
+        Some(next)
+    );
+    client.database(&name).drop().await.unwrap();
+}
