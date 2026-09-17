@@ -31,21 +31,7 @@ mod checkpoint_tests;
 mod cleanup_admission;
 mod implementation;
 
-pub(super) fn carry_checkpoint_fields(
-    row: &mongodb::bson::Document,
-    current: &Agent,
-    next: &Agent,
-    fields: &mut mongodb::bson::Document,
-) -> Result<(), SandboxStoreError> {
-    if let Some(checkpoint) = checkpoint::read(row)?.and_then(|value| value.advance(current, next))
-    {
-        fields.insert(
-            checkpoint::FIELD,
-            super::sandbox_mongo::record_bson(&checkpoint).map_err(SandboxStoreError::Corrupt)?,
-        );
-    }
-    Ok(())
-}
+pub(super) use checkpoint::carry_fields as carry_checkpoint_fields;
 
 #[cfg_attr(test, derive(Clone))]
 pub(super) struct ConversationReceipt {
