@@ -118,17 +118,35 @@ impl AgentCommandWorker {
         if !candidate.awaiting_claim(&now_rfc3339()) {
             return Ok(());
         }
+        let checked_at = tokio::time::Instant::now();
+        let mut readiness_timed_out = false;
         let readiness = if candidate.queue_expired(&now_rfc3339()) {
             CommandReadiness::Reject(CommandFailureCode::QueueTimeout)
         } else {
             tokio::time::timeout(IO_BOUND, self.execution.check_queued(&candidate))
                 .await
-                .unwrap_or(CommandReadiness::Retry)
+                .unwrap_or_else(|_| {
+                    readiness_timed_out = true;
+                    CommandReadiness::Retry
+                })
         };
         match readiness {
             CommandReadiness::Ready => {}
             CommandReadiness::Retry => {
-                pace_unclaimed(&candidate, UNCLAIMED_RECHECK_DELAY).await;
+                let delay = unclaimed_recheck_delay(&candidate);
+                if is_channel_message(&candidate) {
+                    tracing::info!(
+                        event = "channel_operation",
+                        operation = "command_readiness",
+                        stage = "check_queued",
+                        outcome = "retry",
+                        timed_out = readiness_timed_out,
+                        elapsed_ms = checked_at.elapsed().as_millis() as u64,
+                        retry_delay_ms = delay.as_millis() as u64,
+                        "Channel readiness will be checked again"
+                    );
+                }
+                pace_unclaimed(&candidate, delay).await;
                 return Ok(());
             }
             CommandReadiness::Reject(code) => {
@@ -279,6 +297,32 @@ impl AgentCommandWorker {
                     .map(|_| ())
             }
         }
+    }
+}
+
+fn is_channel_message(command: &AdmittedAgentCommand) -> bool {
+    matches!(command.receipt.envelope.actor, AgentActor::Channel { .. })
+        && command.receipt.envelope.source.kind == AgentSourceKind::Channel
+        && matches!(
+            command.receipt.envelope.command,
+            AgentCommand::Message { .. }
+        )
+}
+
+fn unclaimed_recheck_delay(command: &AdmittedAgentCommand) -> Duration {
+    if !is_channel_message(command) {
+        return UNCLAIMED_RECHECK_DELAY;
+    }
+    // A transient observation must not add fifteen seconds to a fresh chat
+    // message. Age the retry pace from its immutable admission receipt so a
+    // sustained outage returns to normal polling, including after restarts.
+    let age = crate::seconds_from_rfc3339(&now_rfc3339())
+        .zip(crate::seconds_from_rfc3339(&command.receipt.admitted_at))
+        .and_then(|(now, admitted)| now.checked_sub(admitted));
+    match age {
+        Some(0..30) => Duration::from_secs(1),
+        Some(30..120) => Duration::from_secs(5),
+        _ => UNCLAIMED_RECHECK_DELAY,
     }
 }
 

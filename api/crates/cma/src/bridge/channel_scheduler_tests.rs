@@ -93,6 +93,69 @@ struct RetryPort {
     seen: Mutex<Vec<String>>,
 }
 
+struct TransientPort {
+    seen: Mutex<Vec<String>>,
+    failure: ChannelWorkError,
+}
+#[async_trait::async_trait]
+impl ChannelWorkPort for TransientPort {
+    fn kind(&self) -> crate::bridge::operations::WorkKind {
+        crate::bridge::operations::WorkKind::Inbox
+    }
+    async fn discover(&self, _: Option<&str>) -> Result<Vec<String>, ChannelWorkError> {
+        Ok(vec!["transient".into(), "unrelated".into()])
+    }
+    async fn run_one(&self, id: &str) -> Result<(), ChannelWorkError> {
+        let mut seen = self.seen.lock().unwrap();
+        seen.push(id.into());
+        if id == "transient" && seen.iter().filter(|id| id.as_str() == "transient").count() == 1 {
+            Err(self.failure)
+        } else {
+            Ok(())
+        }
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn transient_input_recovers_promptly_without_hot_retry_or_blocking_another_message() {
+    for (failure, delay) in [
+        (ChannelWorkError::Unavailable, Duration::from_secs(1)),
+        (ChannelWorkError::Changed, Duration::from_millis(250)),
+    ] {
+        let port = Arc::new(TransientPort {
+            seen: Mutex::new(Vec::new()),
+            failure,
+        });
+        let mut scheduled = Scheduled::new(port.clone());
+        discover_and_drain(&mut scheduled).await;
+        tokio::time::advance(delay - Duration::from_millis(1)).await;
+        discover_and_drain(&mut scheduled).await;
+        {
+            let seen = port.seen.lock().unwrap();
+            assert_eq!(
+                seen.iter().filter(|id| id.as_str() == "transient").count(),
+                1
+            );
+            assert_eq!(
+                seen.iter().filter(|id| id.as_str() == "unrelated").count(),
+                2
+            );
+        }
+        tokio::time::advance(Duration::from_millis(1)).await;
+        discover_and_drain(&mut scheduled).await;
+        assert_eq!(
+            port.seen
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|id| id.as_str() == "transient")
+                .count(),
+            2
+        );
+        assert!(!scheduled.retry_after.contains_key("transient"));
+    }
+}
+
 #[async_trait::async_trait]
 impl ChannelWorkPort for RetryPort {
     fn kind(&self) -> crate::bridge::operations::WorkKind {
