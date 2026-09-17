@@ -155,7 +155,7 @@ export function AgentSurface({
     ? 'Loading conversation activity.'
     : state.historyUnavailable
       ? 'Conversation activity is unavailable. Reconnecting.'
-      : controller.actionError;
+      : (connections.error ?? controller.actionError);
   const preparation = agentProgress({ ...detail, status }, state.sandboxEvents ?? []);
 
   return (
@@ -217,7 +217,10 @@ export function AgentSurface({
                 size="sm"
                 icon={<IconCloseOutline16 />}
                 aria-label="Dismiss error"
-                onClick={controller.clearActionError}
+                onClick={() => {
+                  connections.clearError();
+                  controller.clearActionError();
+                }}
               />
             )}
           </div>
@@ -303,11 +306,15 @@ export function AgentSurface({
                 : controller.inputAvailability
           }
           busy={
-            historyIncomplete || (controller.pending !== undefined && controller.pending !== 'send')
+            connections.pending ||
+            historyIncomplete ||
+            (controller.pending !== undefined && controller.pending !== 'send')
           }
           onSend={async (content, onAccepted) => {
-            connections.run(
+            if (verified === undefined) return;
+            await connections.checkAndRun(
               { type: 'agent', id: agentId },
+              viewerId ?? verified.owner,
               () => void controller.send(content, onAccepted),
             );
           }}
