@@ -62,22 +62,28 @@ impl MongoBridgeInvokeStore {
         }
         // Owner website turns share this channel-created Agent, but carry no
         // channel source themselves. Retain the latest preceding channel input
-        // as the sender/chat anchor; a Human label alone cannot widen the scope.
+        // as the sender/chat anchor; an owner actor alone cannot widen the scope.
         let source_command = match (
             &original.receipt.envelope.actor,
             original.receipt.envelope.source.kind,
         ) {
             (AgentActor::Channel { .. }, AgentSourceKind::Channel) => original.clone(),
             (AgentActor::Human { subject }, AgentSourceKind::UserInterface)
-                if original.receipt.envelope.owner
-                    == (AgentOwner::Person {
-                        subject: subject.clone(),
-                    })
-                    && subject == &current.owner
-                    && matches!(
-                        fence.source().inbox().envelope.platform.as_str(),
-                        "telegram" | "telegram_new"
-                    ) =>
+            | (
+                AgentActor::Api {
+                    subject,
+                    delegation_id: None,
+                },
+                AgentSourceKind::Api,
+            ) if original.receipt.envelope.owner
+                == (AgentOwner::Person {
+                    subject: subject.clone(),
+                })
+                && subject == &current.owner
+                && matches!(
+                    fence.source().inbox().envelope.platform.as_str(),
+                    "telegram" | "telegram_new"
+                ) =>
             {
                 let prior = self
                     .resources
