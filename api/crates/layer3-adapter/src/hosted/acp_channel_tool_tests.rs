@@ -23,6 +23,29 @@ fn binding(retained: Option<&str>) -> HostedChannelToolBinding {
     .unwrap()
 }
 
+async fn confirm_low_effort(server: &mut ServerSocket) {
+    let configure = receive_json(server).await;
+    assert_eq!(configure["method"], "session/set_config_option");
+    assert_eq!(
+        configure["params"],
+        serde_json::json!({
+            "sessionId":"channel-conversation", "configId":"reasoning_effort", "value":"low"
+        })
+    );
+    respond(
+        server,
+        &configure,
+        serde_json::json!({"configOptions":[{
+            "id":"reasoning_effort", "type":"select", "currentValue":"low",
+            "options":[{"value":"low", "name":"Low"},{"value":"xhigh", "name":"Extra high"}]
+        }]}),
+    )
+    .await;
+}
+
+#[path = "acp_channel_effort_tests.rs"]
+mod effort_tests;
+
 #[tokio::test]
 async fn fresh_and_resumed_sessions_receive_only_explicit_negotiated_channel_tool() {
     for resume in [None, Some("channel-conversation")] {
@@ -70,6 +93,7 @@ async fn fresh_and_resumed_sessions_receive_only_explicit_negotiated_channel_too
                 serde_json::json!({"sessionId":"channel-conversation"}),
             )
             .await;
+            confirm_low_effort(&mut server).await;
             // Hold the link until the client has observed the completed handshake.
             let _ = server.next().await;
         });
@@ -132,12 +156,13 @@ async fn unsupported_or_unproved_existing_runtime_cannot_silently_omit_required_
 }
 
 #[tokio::test]
-async fn retained_exact_tool_receipt_allows_rejoin_without_reconfiguring_running_turn() {
+async fn retained_exact_tool_receipt_rejoins_with_low_effort_without_replaying_input() {
     let (client, mut server) = socket_pair().await;
     send_ready(&mut server, "agent-1").await;
     let serving = tokio::spawn(async move {
         let initialize = receive_json(&mut server).await;
         reject(&mut server, &initialize).await;
+        confirm_low_effort(&mut server).await;
         // Rejoining a proven tool session must not load/reset it or send input.
         while let Some(Ok(frame)) = server.next().await {
             assert!(!matches!(frame, Message::Binary(_)));
