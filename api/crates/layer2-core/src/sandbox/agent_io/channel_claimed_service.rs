@@ -6,15 +6,15 @@ use layer3_adapter::{ContentBlock, ConversationInput};
 
 use super::{AdmittedAgentCommand, AgentCommand, ChannelExecutionAuthorization};
 
-const CHANNEL_DELIVERY_INSTRUCTIONS: &str = "[Trusted channel delivery instructions]\n\
-This input is a message from a user in the channel that created this Agent. \
-Call read_channel_context for this input, then use reply_to_channel with the returned \
-reply_context to send your response to the user before ending the turn. You may send \
-multiple progress updates and continue working between replies. Final assistant text \
-is visible only in CMA and is not sent to the channel. Never reuse a reply_context \
-from a previous input. Use a new request_key for each intentional message; retain \
-the same request_key and text when retrying that message. A queued receipt does not \
-mean delivery has completed.\n[/Trusted channel delivery instructions]";
+const CHANNEL_DELIVERY_INSTRUCTIONS: &str = r#"[Trusted channel delivery instructions]
+This input is a message from a user in the channel that created this Agent.
+Your first actions must acknowledge the user through the native channel tools, before substantive reasoning, planning, skill or workspace reads, shell commands, or other work:
+1. Call read_channel_context with {}.
+2. Immediately use reply_to_channel with {"reply_context":"<returned reply_context>","request_key":"<unique message key>","text":"Received — ..."}, replacing the placeholders with the current context, a unique key, and a brief acknowledgement in the user's language.
+These native MCP transport tools are ready to use; no NyxID CLI, skill loading, bootstrap, or network discovery is needed before acknowledging.
+Aim to issue the acknowledgement within 3 seconds of starting this input. If the answer needs more than 5 seconds of work, include a brief progress update in that first reply, then continue working and send further updates as needed. These are response targets, not guaranteed delivery times.
+Send the user-facing answer through reply_to_channel before ending the turn. Final assistant text is visible only in CMA and is not sent to the channel. Never reuse a reply_context from a previous input. Use a new request_key for each intentional message; retain the same request_key and text when retrying that message. A queued receipt does not mean delivery has completed.
+[/Trusted channel delivery instructions]"#;
 
 fn add_channel_delivery_instructions(input: &mut ConversationInput) {
     if let ConversationInput::RecoverablePrompt { content, .. } = input {
@@ -138,6 +138,30 @@ mod tests {
             assert_eq!(original.text, text);
             assert!(instructions.text.contains("Call read_channel_context"));
             assert!(instructions.text.contains("use reply_to_channel"));
+            let read = instructions
+                .text
+                .find("1. Call read_channel_context with {}.")
+                .unwrap();
+            let reply = instructions
+                .text
+                .find("2. Immediately use reply_to_channel")
+                .unwrap();
+            assert!(
+                read < reply,
+                "read the current context before acknowledging"
+            );
+            for required in [
+                "Your first actions must acknowledge",
+                "before substantive reasoning",
+                "\"reply_context\":\"<returned reply_context>\"",
+                "\"request_key\":\"<unique message key>\"",
+                "\"text\":\"Received — ...\"",
+                "no NyxID CLI, skill loading, bootstrap, or network discovery",
+                "within 3 seconds",
+                "more than 5 seconds",
+            ] {
+                assert!(instructions.text.contains(required), "missing: {required}");
+            }
             assert!(instructions.text.contains("before ending the turn"));
             assert!(instructions.text.contains("visible only in CMA"));
             assert!(instructions.text.contains("same request_key and text"));

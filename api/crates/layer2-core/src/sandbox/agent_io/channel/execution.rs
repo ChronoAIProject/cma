@@ -36,9 +36,10 @@ pub struct ChannelExecutionAuthorization {
 /// Opaque authority for one Channel message. The common conversation store
 /// consumes it alongside the same command lease, input, log and parent mutation.
 pub struct ChannelExecutionFence {
-    source: ChannelCommandReservation,
-    envelope: AgentCommandEnvelope,
-    sidecar: ChannelCommandSidecar,
+    pub(super) source: ChannelCommandReservation,
+    pub(super) envelope: AgentCommandEnvelope,
+    pub(super) sidecar: ChannelCommandSidecar,
+    pub(super) supersession: Option<super::supersession::ChannelSupersession>,
 }
 
 impl std::fmt::Debug for ChannelExecutionFence {
@@ -82,6 +83,7 @@ impl ChannelAgentCommandService {
                 source: reservation,
                 envelope: command.receipt.envelope.clone(),
                 sidecar: source.sidecar,
+                supersession: None,
             }),
         };
         authority
@@ -123,6 +125,20 @@ impl ChannelAgentCommandService {
 }
 
 impl ChannelExecutionAuthorization {
+    pub(super) fn with_supersession(
+        &self,
+        supersession: super::supersession::ChannelSupersession,
+    ) -> Self {
+        Self {
+            invokes: self.invokes.clone(),
+            fence: Arc::new(ChannelExecutionFence {
+                source: self.fence.source.clone(),
+                envelope: self.fence.envelope.clone(),
+                sidecar: self.fence.sidecar.clone(),
+                supersession: Some(supersession),
+            }),
+        }
+    }
     pub fn fence(&self) -> Arc<ChannelExecutionFence> {
         self.fence.clone()
     }
@@ -183,6 +199,9 @@ impl ChannelExecutionFence {
         Ok(())
     }
     pub fn require_dispatch(&self, command: &AdmittedAgentCommand) -> Result<(), Error> {
+        if self.supersession.is_some() {
+            return Err(Error::SourceMismatch);
+        }
         self.require_envelope(&command.receipt.envelope)?;
         self.source.require_result(command)?;
         if self.sidecar.execution_hold != ChannelCommandHold::Released {

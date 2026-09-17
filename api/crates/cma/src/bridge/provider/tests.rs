@@ -367,6 +367,7 @@ async fn provider_fractional_and_offset_expirations_bound_the_original_observati
     }
 }
 
+#[path = "tests/custody_tests.rs"]
 mod custody;
 mod custody_semantics;
 

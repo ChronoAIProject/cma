@@ -18,6 +18,7 @@ mod refusal;
 pub use refusal::{ChannelHoldRefusal, ChannelHoldRefusalReason};
 mod prepare;
 mod sidecar;
+mod supersession;
 pub use execution::{
     ChannelCommandExecutionSource, ChannelExecutionAuthorization, ChannelExecutionFence,
 };
