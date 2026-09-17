@@ -10,6 +10,8 @@ use std::sync::Arc;
 pub(crate) mod controls;
 mod conversation;
 mod error;
+#[cfg(test)]
+mod output_gap_tests;
 mod parse;
 mod projection;
 pub(crate) mod queued_cancellation;

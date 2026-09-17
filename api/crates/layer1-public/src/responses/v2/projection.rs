@@ -115,6 +115,8 @@ pub(super) fn project(
         return Some(response);
     };
     let start = snapshot.history.iter().position(|entry| entry.seq == turn && matches!(entry.kind, Some(AgentLogKind::TurnStarted { turn_sequence, .. }) if turn_sequence == turn))?;
+    let mut lost_frames = 0_u64;
+    let mut turn_active = true;
     for entry in snapshot.history.iter().skip(start + 1) {
         match &entry.kind {
             Some(AgentLogKind::TurnStarted { .. }) => break,
@@ -143,7 +145,11 @@ pub(super) fn project(
                     output_tokens_details: OutputTokenDetails::default(),
                 })
             }
+            Some(AgentLogKind::ConversationGap { frames }) if turn_active => {
+                lost_frames = lost_frames.saturating_add(*frames);
+            }
             Some(AgentLogKind::TurnCompleted { turn_sequence }) if *turn_sequence == turn => {
+                turn_active = false;
                 response.status = V2ResponseStatus::Completed;
                 response.completed_at = layer2_core::seconds_from_rfc3339(&entry.appended_at);
                 response.error = None;
@@ -153,6 +159,7 @@ pub(super) fn project(
                 turn_sequence,
                 failure,
             }) if *turn_sequence == turn => {
+                turn_active = false;
                 response.status = V2ResponseStatus::Failed;
                 response.error = Some(ResponseError {
                     code: failure.class.clone(),
@@ -160,11 +167,17 @@ pub(super) fn project(
                 });
             }
             Some(AgentLogKind::TurnInterrupted { turn_sequence, .. }) if *turn_sequence == turn => {
+                turn_active = false;
                 response.status = V2ResponseStatus::Incomplete;
                 response.incomplete_details = Some(json!({"reason":"interrupted"}));
             }
             _ => {}
         }
+    }
+    if lost_frames > 0 && !turn_active {
+        response.status = V2ResponseStatus::Incomplete;
+        response.incomplete_details =
+            Some(json!({"reason":"conversation_output_gap","frames":lost_frames}));
     }
     Some(response)
 }
