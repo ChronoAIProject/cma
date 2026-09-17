@@ -21,6 +21,8 @@ pub(crate) struct BridgeControlPlaneGrant {
     pub owner: ResourceOwner,
     pub connector: BridgeConnector,
     pub subject: SubjectId,
+    /// Immutable issuance evidence. Current OAuth custody is independently
+    /// verified for this subject without extending the retained grant's expiry.
     pub incarnation: String,
     pub issued_at: String,
     pub expires_at: String,
@@ -88,7 +90,6 @@ impl BridgeControlPlaneLease {
     ) -> Self {
         grant.validate().unwrap();
         assert_eq!(&grant.subject, human.subject());
-        assert_eq!(grant.incarnation, human.incarnation());
         assert!(custody_revision > 0);
         let deadline = grant.deadline().unwrap().min(human.deadline());
         Self {
@@ -166,7 +167,7 @@ impl ManagedBridgeCredentials {
         }
         let human = self
             .auth
-            .resolve_bridge_human(&grant.subject, &grant.incarnation, owner)
+            .resolve_bridge_human(&grant.subject, owner)
             .await?;
         let deadline = deadline.min(human.deadline());
         self.provider
