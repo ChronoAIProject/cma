@@ -1,5 +1,5 @@
 //! Real runtime startup precedes the ordinary connection-publication handoff.
-use crate::sandbox::channel_startup::model::ChannelStartupPlan;
+use crate::sandbox::channel_startup::{model::ChannelStartupPlan, prompt};
 use crate::sandbox::{
     agent_skills::{AgentSkillResolver, OrnnAgentSkillResolver},
     channel_provisioning::ChannelControlPlaneVerifier,
@@ -54,7 +54,7 @@ impl ChannelReuseStartupDriver {
                 &context.worktree,
             );
             ChannelStartupPlan {
-                schema_version: 1,
+                schema_version: prompt::SCHEMA_VERSION,
                 allocation_id: snapshot.allocation.id.clone(),
                 skills: material,
                 worktree: WorktreeRequest::new(
@@ -69,7 +69,10 @@ impl ChannelReuseStartupDriver {
                 home: AgentHomeRequest::new(
                     format!("agent:{}:home:create:v1", context.agent.id),
                     options.clone(),
-                    context.agent.profile.content.system_prompt.clone(),
+                    prompt::system_prompt(
+                        prompt::SCHEMA_VERSION,
+                        &context.agent.profile.content.system_prompt,
+                    )?,
                     skills,
                 ),
                 open: AgentOpenRequest::new(

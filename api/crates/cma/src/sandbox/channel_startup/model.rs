@@ -160,14 +160,17 @@ impl ChannelStartupContext {
             options.clone(),
             None,
         );
-        if plan.schema_version != 1
-            || plan.allocation_id != self.snapshot.allocation.id
+        if plan.allocation_id != self.snapshot.allocation.id
             || plan.worktree != worktree
             || plan.open != open
             || plan.home.operation_id != format!("agent:{}:home:create:v1", self.agent.id)
             || !plan.home.has_valid_sha256()
             || plan.home.options != options
-            || plan.home.system_prompt != self.agent.profile.content.system_prompt
+            || plan.home.system_prompt
+                != super::prompt::system_prompt(
+                    plan.schema_version,
+                    &self.agent.profile.content.system_prompt,
+                )?
             || plan.skills.len() != self.agent.profile.content.skills.len()
             || plan.home.skills.len() != plan.skills.len()
             || !plan

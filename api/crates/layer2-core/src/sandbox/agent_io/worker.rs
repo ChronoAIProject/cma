@@ -128,7 +128,7 @@ impl AgentCommandWorker {
         match readiness {
             CommandReadiness::Ready => {}
             CommandReadiness::Retry => {
-                pace_unclaimed(&candidate).await;
+                pace_unclaimed(&candidate, UNCLAIMED_RECHECK_DELAY).await;
                 return Ok(());
             }
             CommandReadiness::Reject(code) => {
@@ -167,7 +167,17 @@ impl AgentCommandWorker {
                 return Ok(());
             }
             let _ = tokio::time::timeout(IO_BOUND, self.execution.prepare_queued(&current)).await;
-            pace_unclaimed(&current).await;
+            // Channel preparation may have just interrupted the active turn.
+            // Revisit its replacement promptly, retaining normal backoff for
+            // failed authority checks and non-channel lifecycle preparation.
+            let delay = if matches!(current.receipt.envelope.actor, AgentActor::Channel { .. })
+                && current.receipt.envelope.source.kind == AgentSourceKind::Channel
+            {
+                Duration::from_millis(250)
+            } else {
+                UNCLAIMED_RECHECK_DELAY
+            };
+            pace_unclaimed(&current, delay).await;
             return Ok(());
         };
         command.validate()?;
@@ -276,12 +286,12 @@ impl AgentCommandWorker {
 /// retains this task in its per-process in-flight set while waiting, without
 /// an execution lane lease or saved authorization. Cancellation/restart may
 /// shorten pacing; the next sweep must still reread and reauthorize the command.
-async fn pace_unclaimed(command: &AdmittedAgentCommand) {
+async fn pace_unclaimed(command: &AdmittedAgentCommand, delay: Duration) {
     let remaining = crate::seconds_from_rfc3339(&command.queue_deadline)
         .zip(crate::seconds_from_rfc3339(&now_rfc3339()))
         .map(|(deadline, now)| Duration::from_secs(deadline.saturating_sub(now)))
         .unwrap_or_default();
-    tokio::time::sleep(UNCLAIMED_RECHECK_DELAY.min(remaining)).await;
+    tokio::time::sleep(delay.min(remaining)).await;
 }
 
 async fn bounded<T>(

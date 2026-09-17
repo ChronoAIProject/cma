@@ -7,6 +7,7 @@ use layer2_core::bridge::{BridgeConfig, BridgeConnector, BridgeError, BridgeId, 
 use layer2_core::resource_access::ResourceOwner;
 use layer2_core::SubjectId;
 
+use super::operations::health::{authority_failure, AuthorityFailure};
 use super::ManagedBridgeCredentials;
 use crate::auth::bridge_control_plane::BridgeHumanLease;
 
@@ -135,6 +136,44 @@ impl ManagedBridgeCredentials {
         owner: &ResourceOwner,
         config: &BridgeConfig,
     ) -> Result<BridgeControlPlaneLease, BridgeError> {
+        self.resolve_control_plane_material(owner, config, None)
+            .await
+            .map(|(lease, _)| lease)
+    }
+
+    /// Verify the selected key in the same resolution. Its possession check
+    /// verifies the human too, so no duplicate human-provider read is needed.
+    /// No control-plane lease escapes until both checks and final fences pass.
+    pub(super) async fn resolve_control_plane_and_key(
+        &self,
+        owner: &ResourceOwner,
+        config: &BridgeConfig,
+        secret: &crate::auth::persistence::SecretValue,
+    ) -> Result<
+        (
+            BridgeControlPlaneLease,
+            super::provider::VerifiedProviderBinding,
+        ),
+        BridgeError,
+    > {
+        let (lease, verified) = self
+            .resolve_control_plane_material(owner, config, Some(secret))
+            .await?;
+        Ok((lease, verified.ok_or(BridgeError::Corrupt)?))
+    }
+
+    async fn resolve_control_plane_material(
+        &self,
+        owner: &ResourceOwner,
+        config: &BridgeConfig,
+        secret: Option<&crate::auth::persistence::SecretValue>,
+    ) -> Result<
+        (
+            BridgeControlPlaneLease,
+            Option<super::provider::VerifiedProviderBinding>,
+        ),
+        BridgeError,
+    > {
         let material = self
             .store
             .get(&config.connector.custody)
@@ -170,9 +209,27 @@ impl ManagedBridgeCredentials {
             .resolve_bridge_human(&grant.subject, owner)
             .await?;
         let deadline = deadline.min(human.deadline());
-        self.provider
-            .verify_human(human.subject(), human.credential())
-            .await?;
+        let verified = if let Some(secret) = secret {
+            Some(
+                self.provider
+                    .verify_secret(
+                        owner,
+                        secret,
+                        &config.connector,
+                        human.subject(),
+                        human.credential(),
+                    )
+                    .await
+                    .inspect_err(|_| {
+                        authority_failure(AuthorityFailure::CredentialVerificationFailed);
+                    })?,
+            )
+        } else {
+            self.provider
+                .verify_human(human.subject(), human.credential())
+                .await?;
+            None
+        };
         let lease = BridgeControlPlaneLease {
             grant,
             human,
@@ -180,7 +237,7 @@ impl ManagedBridgeCredentials {
             deadline,
         };
         self.revalidate_control_plane(&lease).await?;
-        Ok(lease)
+        Ok((lease, verified))
     }
 
     pub(crate) async fn revalidate_control_plane(
