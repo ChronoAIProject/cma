@@ -85,7 +85,13 @@ impl ChannelWorkPort for ChannelAllocationWork {
             .authority
             .resolve(&self.definitions, &record)
             .await
-            .map_err(|_| Error::Suspended)?;
+            .map_err(|error| {
+                // BridgeError contains fixed variants only, never credentials
+                // or provider bodies. Keep the failure stage observable.
+                tracing::warn!(stage = "allocation_authority", failure = %error,
+                    "Channel allocation is waiting for authority");
+                Error::Suspended
+            })?;
         if matches!(record.placement, AllocationPlacement::ReuseParent { .. }) {
             self.reuse
                 .run_one(record, &authority, &lease)
