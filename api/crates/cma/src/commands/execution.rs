@@ -97,6 +97,10 @@ impl AgentCommandExecution for ResourceCommandExecution {
         }
         match channel.authorize_execution(invokes, command).await {
             Ok(authority) => {
+                let _ = self
+                    .operations
+                    .interrupt_channel_for_input(&authority, command)
+                    .await;
                 let _ = channel.release_execution_hold(&authority, command).await;
             }
             Err(ChannelCommandAdmissionError::Invoke(
@@ -162,8 +166,21 @@ impl AgentCommandExecution for ResourceCommandExecution {
             return;
         }
         if is_channel(command) {
-            if let Some(revival) = &self.channel_revival {
-                if let Ok(authority) = self.channel_checked(command).await {
+            if let Ok(authority) = self.channel_checked(command).await {
+                if authority
+                    .fence()
+                    .proof()
+                    .resources()
+                    .lineage
+                    .agent
+                    .as_ref()
+                    .is_some_and(|agent| agent.conversation.active_turn.is_some())
+                {
+                    let _ = self
+                        .operations
+                        .interrupt_channel_for_input(&authority, command)
+                        .await;
+                } else if let Some(revival) = &self.channel_revival {
                     revival.prepare(command, &authority).await;
                 }
             }
