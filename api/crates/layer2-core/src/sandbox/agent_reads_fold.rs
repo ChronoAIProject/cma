@@ -10,7 +10,7 @@ use super::queued_message::queued_message_origin_sequence;
 use super::{
     Agent, AgentLogEntry, AgentLogKind, AgentOperationDelivery, AgentOperationKind,
     AgentTranscript, AgentTranscriptMessage, AgentTranscriptRole, AgentTranscriptTurn,
-    AgentTurnOutcome, AgentUsage, AgentUsageReading,
+    AgentTurnOutcome, AgentUsage, AgentUsageReading, TypedFailure,
 };
 
 pub(super) struct AgentLogProjection {
@@ -180,8 +180,11 @@ pub(super) fn fold_agent_log(
                 *context_used,
                 *context_window,
             )?,
-            AgentLogKind::ConversationGap { .. } => {
-                return Err("agent log records a conversation gap".into());
+            AgentLogKind::ConversationGap { frames } => {
+                if latest_conversation.is_none() || *frames == 0 {
+                    return Err("agent conversation gap is invalid".into());
+                }
+                transcript.gap(*frames)?;
             }
             _ => {}
         }
@@ -263,6 +266,7 @@ impl TranscriptFold {
             messages: owner_message.into_iter().collect(),
             agent_messages: Vec::new(),
             metadata: None,
+            lost_frames: 0,
         });
         Ok(())
     }
@@ -332,6 +336,19 @@ impl TranscriptFold {
         Ok(())
     }
 
+    fn gap(&mut self, frames: u64) -> Result<(), String> {
+        // A declared transport gap does not invalidate the surrounding durable
+        // log. Preserve it for event readers and scope incomplete output to the
+        // active turn; an idle gap cannot fail a later, independent turn.
+        if let Some(turn) = self.active.as_mut() {
+            turn.lost_frames = turn
+                .lost_frames
+                .checked_add(frames)
+                .ok_or_else(|| "agent conversation gap count overflowed".to_string())?;
+        }
+        Ok(())
+    }
+
     fn finish(&mut self, turn_sequence: u64, outcome: AgentTurnOutcome) -> Result<(), String> {
         let turn = self
             .active
@@ -361,10 +378,26 @@ struct ActiveTurn {
     agent_messages: Vec<String>,
     messages: Vec<AgentTranscriptMessage>,
     metadata: Option<BTreeMap<String, String>>,
+    lost_frames: u64,
 }
 
 impl ActiveTurn {
     fn into_transcript(self, outcome: AgentTurnOutcome) -> Result<AgentTranscriptTurn, String> {
+        let outcome = match outcome {
+            AgentTurnOutcome::Completed { at } if self.lost_frames > 0 => {
+                AgentTurnOutcome::Failed {
+                    at,
+                    failure: TypedFailure {
+                        class: "conversation_output_gap".into(),
+                        detail: format!(
+                            "{} runtime output frames were lost. Recorded messages are preserved, but this output is incomplete.",
+                            self.lost_frames
+                        ),
+                    },
+                }
+            }
+            outcome => outcome,
+        };
         Ok(AgentTranscriptTurn {
             turn_sequence: self.turn_sequence,
             started_at: self.started_at,

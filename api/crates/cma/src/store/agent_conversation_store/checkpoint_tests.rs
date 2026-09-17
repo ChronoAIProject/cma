@@ -78,6 +78,7 @@ fn partial(current: &Agent, content: &str) -> AgentMessageCheckpoint {
         version: 1,
         update_id: uuid::Uuid::new_v4().to_string(),
         update_fingerprint: "a".repeat(64),
+        output: None,
         native_conversation_id: current.conversation.conversation_id.clone().unwrap(),
         runtime_generation: current.conversation.runtime_generation.unwrap(),
         active_turn: current.conversation.active_turn,
@@ -123,7 +124,13 @@ async fn checkpoint_survives_reopen_without_public_revision_or_log_changes() {
         .await
         .unwrap()
         .is_none());
-    let checkpoint = partial(&current, "prefix before restart");
+    let mut checkpoint = partial(&current, "prefix before restart");
+    checkpoint.output = Some(layer3_adapter::RuntimeOutputSource {
+        stream_id: uuid::Uuid::new_v4().to_string(),
+        cursor: 17,
+        native_conversation_id: checkpoint.native_conversation_id.clone(),
+        payload_sha256: "b".repeat(64),
+    });
     store
         .commit_agent_message_update(current.clone(), None, checkpoint.clone(), None)
         .await

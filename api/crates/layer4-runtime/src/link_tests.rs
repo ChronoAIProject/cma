@@ -177,9 +177,8 @@ async fn malformed_known_tag_returns_failure_for_that_operation() {
     std::fs::remove_dir_all(home).unwrap();
 }
 
-#[tokio::test]
-async fn websocket_announces_and_relays_the_opaque_conversation_lane() {
-    let home = root("websocket");
+async fn echo_supervisor(name: &str) -> (PathBuf, Arc<Supervisor>) {
+    let home = root(name);
     let supervisor = supervisor(home.clone());
     install_and_credential(&supervisor).await;
     let workspace = match supervisor
@@ -237,7 +236,12 @@ async fn websocket_announces_and_relays_the_opaque_conversation_lane() {
         }))
         .await;
     assert!(matches!(opened, ResponseFrame::OpenAgent(_)), "{opened:?}");
+    (home, supervisor)
+}
 
+#[tokio::test]
+async fn websocket_announces_and_relays_the_opaque_conversation_lane() {
+    let (home, supervisor) = echo_supervisor("websocket").await;
     let (address, server) = serve(Arc::clone(&supervisor)).await;
     let (mut socket, _) = tokio_tungstenite::connect_async(format!(
         "ws://{address}/runtime/agents/agent-1/conversation"
@@ -253,6 +257,7 @@ async fn websocket_announces_and_relays_the_opaque_conversation_lane() {
     assert_eq!(ready["t"], "ready");
     assert_eq!(ready["wireVersion"], lanes::WIRE_VERSION);
     assert_eq!(ready["agentId"], "agent-1");
+    assert!(ready.get("outputAcknowledgement").is_none());
 
     let payload = br#"{"jsonrpc":"2.0","id":7}"#;
     socket
@@ -275,6 +280,10 @@ async fn websocket_announces_and_relays_the_opaque_conversation_lane() {
     .expect("agent echoed the conversation frame");
     assert_eq!(echoed, lanes::frame(lanes::CONVERSATION, payload));
     socket.close(None).await.unwrap();
+    let bridge = supervisor.bridge("agent-1").await.unwrap();
+    let retained = bridge.retained_output.snapshot(0).await.unwrap();
+    assert_eq!(retained.frames.len(), 1);
+    assert_eq!(retained.frames[0].bytes.as_ref(), payload);
     let closed = supervisor
         .dispatch(close_agent_request(AgentCloseRequest::new(
             "agent:agent-1:close:v1",
@@ -283,6 +292,264 @@ async fn websocket_announces_and_relays_the_opaque_conversation_lane() {
         .await;
     assert!(matches!(closed, ResponseFrame::CloseAgent(_)));
 
+    server.abort();
+    let _ = server.await;
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+type ClientSocket =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+async fn reliable_socket(address: SocketAddr) -> (ClientSocket, uuid::Uuid) {
+    let (mut socket, _) = tokio_tungstenite::connect_async(format!(
+        "ws://{address}/runtime/agents/agent-1/conversation?outputAck=1"
+    ))
+    .await
+    .unwrap();
+    let ready = next_conversation_message(&mut socket).await;
+    let ready: serde_json::Value = serde_json::from_str(&ready.into_text().unwrap()).unwrap();
+    assert_eq!(ready["wireVersion"], 1);
+    assert_eq!(ready["outputAcknowledgement"]["version"], 1);
+    let stream =
+        uuid::Uuid::parse_str(ready["outputAcknowledgement"]["streamId"].as_str().unwrap())
+            .unwrap();
+    (socket, stream)
+}
+
+async fn next_conversation_message(socket: &mut ClientSocket) -> ClientMessage {
+    tokio::time::timeout(Duration::from_secs(2), socket.next())
+        .await
+        .expect("conversation message deadline")
+        .unwrap()
+        .unwrap()
+}
+
+#[tokio::test]
+async fn legacy_first_bridge_stays_legacy_when_a_new_api_requests_acknowledgements() {
+    let (home, supervisor) = echo_supervisor("legacy-first").await;
+    let (address, server) = serve(Arc::clone(&supervisor)).await;
+    let endpoint = format!("ws://{address}/runtime/agents/agent-1/conversation");
+    let (mut legacy, _) = tokio_tungstenite::connect_async(endpoint.as_str())
+        .await
+        .unwrap();
+    assert!(matches!(
+        next_conversation_message(&mut legacy).await,
+        ClientMessage::Text(_)
+    ));
+    legacy
+        .send(ClientMessage::Binary(lanes::frame(
+            lanes::CONVERSATION,
+            b"already recorded",
+        )))
+        .await
+        .unwrap();
+    assert_eq!(
+        next_conversation_message(&mut legacy).await,
+        ClientMessage::Binary(lanes::frame(lanes::CONVERSATION, b"already recorded"))
+    );
+    legacy.close(None).await.unwrap();
+
+    let (mut upgraded_api, _) = tokio_tungstenite::connect_async(format!("{endpoint}?outputAck=1"))
+        .await
+        .unwrap();
+    let ready = next_conversation_message(&mut upgraded_api)
+        .await
+        .into_text()
+        .unwrap();
+    let ready: serde_json::Value = serde_json::from_str(&ready).unwrap();
+    assert!(ready.get("outputAcknowledgement").is_none());
+    upgraded_api
+        .send(ClientMessage::Binary(lanes::frame(
+            lanes::CONVERSATION,
+            b"next turn",
+        )))
+        .await
+        .unwrap();
+    // The legacy output is absent; the first native output belongs to this request.
+    assert_eq!(
+        next_conversation_message(&mut upgraded_api).await,
+        ClientMessage::Binary(lanes::frame(lanes::CONVERSATION, b"next turn"))
+    );
+    upgraded_api.close(None).await.unwrap();
+    supervisor
+        .bridge("agent-1")
+        .await
+        .unwrap()
+        .terminate()
+        .await
+        .unwrap();
+    server.abort();
+    let _ = server.await;
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[tokio::test]
+async fn reliable_first_bridge_rejects_a_legacy_downgrade_before_websocket_upgrade() {
+    let (home, supervisor) = echo_supervisor("reliable-first").await;
+    let (address, server) = serve(Arc::clone(&supervisor)).await;
+    let (mut reliable, _) = reliable_socket(address).await;
+    reliable.close(None).await.unwrap();
+    let result = tokio_tungstenite::connect_async(format!(
+        "ws://{address}/runtime/agents/agent-1/conversation"
+    ))
+    .await;
+    let tokio_tungstenite::tungstenite::Error::Http(response) = result.unwrap_err() else {
+        panic!("legacy downgrade must fail before WebSocket upgrade");
+    };
+    assert_eq!(response.status().as_u16(), StatusCode::CONFLICT.as_u16());
+    let body: serde_json::Value =
+        serde_json::from_slice(response.body().as_deref().unwrap()).unwrap();
+    assert_eq!(body["code"], "output_acknowledgement_required");
+    supervisor
+        .bridge("agent-1")
+        .await
+        .unwrap()
+        .terminate()
+        .await
+        .unwrap();
+    server.abort();
+    let _ = server.await;
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[tokio::test]
+async fn reliable_websocket_replays_terminal_after_disconnect_and_releases_only_after_ack() {
+    let (home, supervisor) = echo_supervisor("reliable-replay").await;
+    let (address, server) = serve(Arc::clone(&supervisor)).await;
+    let (mut first, stream) = reliable_socket(address).await;
+    let terminal = br#"{"jsonrpc":"2.0","id":"prompt-1","result":{"stopReason":"end_turn"}}"#;
+    first
+        .send(ClientMessage::Binary(lanes::frame(
+            lanes::CONVERSATION,
+            terminal,
+        )))
+        .await
+        .unwrap();
+    let first_terminal = next_conversation_message(&mut first).await;
+    assert_eq!(
+        first_terminal,
+        ClientMessage::Binary(lanes::acknowledged_frame(stream, 1, terminal))
+    );
+    first.close(None).await.unwrap();
+
+    let (mut replacement, replacement_stream) = reliable_socket(address).await;
+    assert_eq!(replacement_stream, stream);
+    assert_eq!(
+        next_conversation_message(&mut replacement).await,
+        first_terminal
+    );
+    let mut acknowledgement = lanes::acknowledged_frame(stream, 1, b"");
+    acknowledgement[0] = lanes::OUTPUT_ACKNOWLEDGEMENT;
+    replacement
+        .send(ClientMessage::Binary(acknowledgement))
+        .await
+        .unwrap();
+    replacement
+        .send(ClientMessage::Binary(lanes::frame(
+            lanes::CONVERSATION,
+            b"next",
+        )))
+        .await
+        .unwrap();
+    assert_eq!(
+        next_conversation_message(&mut replacement).await,
+        ClientMessage::Binary(lanes::acknowledged_frame(stream, 2, b"next"))
+    );
+    replacement.close(None).await.unwrap();
+
+    let (mut third, _) = reliable_socket(address).await;
+    assert_eq!(
+        next_conversation_message(&mut third).await,
+        ClientMessage::Binary(lanes::acknowledged_frame(stream, 2, b"next"))
+    );
+    third.close(None).await.unwrap();
+    supervisor
+        .bridge("agent-1")
+        .await
+        .unwrap()
+        .terminate()
+        .await
+        .unwrap();
+    server.abort();
+    let _ = server.await;
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[tokio::test]
+async fn reliable_terminal_remains_reachable_after_native_exit_until_final_ack() {
+    let (home, supervisor) = echo_supervisor("reliable-exited").await;
+    let bridge = supervisor.bridge("agent-1").await.unwrap();
+    let (address, server) = serve(Arc::clone(&supervisor)).await;
+    let (mut first, stream) = reliable_socket(address).await;
+    let terminal = br#"{"jsonrpc":"2.0","id":"prompt-1","result":{"stopReason":"end_turn"}}"#;
+    first
+        .send(ClientMessage::Binary(lanes::frame(
+            lanes::CONVERSATION,
+            terminal,
+        )))
+        .await
+        .unwrap();
+    let expected = next_conversation_message(&mut first).await;
+    first.close(None).await.unwrap();
+    bridge.terminate().await.unwrap();
+    tokio::time::timeout(Duration::from_secs(2), bridge.ended())
+        .await
+        .unwrap();
+    assert!(Arc::ptr_eq(
+        &bridge,
+        &supervisor.bridge("agent-1").await.unwrap()
+    ));
+
+    let (mut replacement, replay_stream) = reliable_socket(address).await;
+    assert_eq!(replay_stream, stream);
+    assert_eq!(next_conversation_message(&mut replacement).await, expected);
+    let mut acknowledgement = lanes::acknowledged_frame(stream, 1, b"");
+    acknowledgement[0] = lanes::OUTPUT_ACKNOWLEDGEMENT;
+    replacement
+        .send(ClientMessage::Binary(acknowledgement))
+        .await
+        .unwrap();
+    assert!(matches!(
+        next_conversation_message(&mut replacement).await,
+        ClientMessage::Close(_)
+    ));
+    server.abort();
+    let _ = server.await;
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[tokio::test]
+async fn reliable_overflow_sends_gap_and_closes_without_terminating_native_process() {
+    let (home, supervisor) = echo_supervisor("reliable-overflow").await;
+    let bridge = supervisor.bridge("agent-1").await.unwrap();
+    let frame = vec![b'x'; crate::bridge::MAX_FRAME_BYTES];
+    bridge.retained_output.retain(&frame).await;
+    bridge.retained_output.retain(&frame).await;
+    let (address, server) = serve(Arc::clone(&supervisor)).await;
+    let (mut socket, _) = reliable_socket(address).await;
+    let gap = next_conversation_message(&mut socket).await.into_data();
+    let (lane, payload) = lanes::unframe(&gap).unwrap();
+    assert_eq!(lane, lanes::CONVERSATION_GAP);
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(payload).unwrap()["frames"],
+        1
+    );
+    assert!(matches!(
+        next_conversation_message(&mut socket).await,
+        ClientMessage::Close(_)
+    ));
+    assert!(!bridge.is_ended());
+
+    let mut native = bridge.subscribe();
+    assert!(bridge.send(b"still running".to_vec()).await);
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(2), native.recv())
+            .await
+            .unwrap()
+            .unwrap(),
+        crate::bridge::Outbound::Frame(b"still running".to_vec())
+    );
+    bridge.terminate().await.unwrap();
     server.abort();
     let _ = server.await;
     std::fs::remove_dir_all(home).unwrap();

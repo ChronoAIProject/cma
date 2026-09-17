@@ -82,8 +82,33 @@ describe('durable Agent conversation folding', () => {
       expect.objectContaining({ id: 'approval_1', reason: 'write', message: 'Edit app.ts' }),
     ]);
     expect(state.usage).toEqual(expect.objectContaining({ inputTokens: 120, contextWindow: 1000 }));
-    expect(state.recovery[0]?.detail).toContain('3 live frame');
+    expect(state.recovery[0]?.detail).toContain('3 live frame(s) were lost');
     expect(state.cursor).toBe(10);
+  });
+
+  it('retains the loss notice and later messages when a turn with missing output completes', () => {
+    const active = [
+      durable(5, 'turn_started', { turn_sequence: 5 }),
+      durable(6, 'conversation_gap', { frames: 35 }),
+      durable(7, 'agent_message', { content: 'Stored after the gap.' }),
+    ].reduce(foldAgentEvent, conversationFromTranscript(TRANSCRIPT));
+    expect(active.activeRunId).toBe('5');
+    expect(active.recovery).toEqual([
+      expect.objectContaining({
+        title: 'Incomplete conversation output',
+        detail:
+          '35 live frame(s) were lost. Stored messages remain available, but the output may be incomplete.',
+      }),
+    ]);
+    const completed = foldAgentEvent(active, durable(8, 'turn_completed', { turn_sequence: 5 }));
+    expect(completed.activeRunId).toBeUndefined();
+    expect(completed.messages.map(({ content }) => content)).toEqual([
+      'Inspect the repository.',
+      'I found the issue.',
+      'Stored after the gap.',
+    ]);
+    expect(completed.recovery).toEqual(active.recovery);
+    expect(completed.cursor).toBe(8);
   });
 
   it('hydrates chronological steering messages and continues the same active turn after reload', () => {
