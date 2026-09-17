@@ -2,6 +2,7 @@
 
 use std::{sync::Arc, time::Duration};
 
+use futures_util::{stream, StreamExt, TryStreamExt};
 use layer3_adapter::hosted::{CheckpointArchiveDownload, CheckpointArchiveUpload};
 use layer3_adapter::{AdapterError, Result};
 
@@ -123,9 +124,13 @@ impl CheckpointBlobStore for ChronoStorage {
     async fn delete(&self, key: &str) -> Result<()> {
         if let Some(size) = multipart::size_from_key(key)? {
             // The durable key names every possible part, even when upload never published a manifest.
-            for index in 0..size.div_ceil(multipart::PART_BYTES as u64) {
-                self.delete_object(&multipart::part_key(key, index)).await?;
-            }
+            stream::iter(0..size.div_ceil(multipart::PART_BYTES as u64))
+                .map(|index| async move {
+                    self.delete_object(&multipart::part_key(key, index)).await
+                })
+                .buffer_unordered(4)
+                .try_collect::<Vec<_>>()
+                .await?;
         }
         self.delete_object(key).await
     }

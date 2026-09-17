@@ -1,5 +1,5 @@
 use super::state::ChannelReuseSnapshot;
-use layer2_core::sandbox::{Workspace, WorkspaceSource};
+use layer2_core::sandbox::{Workspace, WorkspaceSource, WorkspaceWorkStep};
 use layer3_adapter::{WorkspaceRequest, WorkspaceSetupRequest};
 
 pub(crate) fn prepare(snapshot: &ChannelReuseSnapshot, workspace: &Workspace) -> WorkspaceRequest {
@@ -13,7 +13,7 @@ pub(crate) fn prepare(snapshot: &ChannelReuseSnapshot, workspace: &Workspace) ->
         WorkspaceSource::Empty => layer3_adapter::WorkspaceSource::Init,
     };
     WorkspaceRequest::with_clone_depth(
-        format!("{}:workspace-prepare", snapshot.allocation.operation_id),
+        workspace.operation_id(WorkspaceWorkStep::Prepare),
         workspace.id.to_string(),
         workspace.name.clone(),
         source,
@@ -27,7 +27,7 @@ pub(crate) fn setup(
 ) -> WorkspaceSetupRequest {
     let execution = snapshot.state.settings.execution;
     WorkspaceSetupRequest::with_timeouts(
-        format!("{}:workspace-setup", snapshot.allocation.operation_id),
+        workspace.operation_id(WorkspaceWorkStep::Setup),
         workspace.id.to_string(),
         workspace.name.clone(),
         workspace.profile.content.setup_commands.clone(),
