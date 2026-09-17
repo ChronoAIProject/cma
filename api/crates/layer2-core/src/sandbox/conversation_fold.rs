@@ -186,6 +186,9 @@ pub(super) fn fold_update(
             appended_at,
         ),
         ConversationUpdate::WithoutPromptEvidence(_) => unreachable!("wrapper removed"),
+        ConversationUpdate::RuntimeOutput { .. } => Err(AgentConversationError::InvalidState(
+            "runtime output receipt must be recorded before folding",
+        )),
     }
 }
 

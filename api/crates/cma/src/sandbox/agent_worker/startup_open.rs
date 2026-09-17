@@ -96,7 +96,11 @@ impl AgentWorker {
                         updates_open = false;
                         continue;
                     };
-                    received += 1;
+                    // Reliable frames are bounded at the retained runtime journal and
+                    // adapter ingress. Replaying more than 256 is valid after a detach.
+                    if !matches!(&update, ConversationUpdate::RuntimeOutput { .. }) {
+                        received += 1;
+                    }
                     if received > UPDATE_BUFFER {
                         return Err(WorkerFailure::terminal("agent_startup_update_limit", "runtime emitted too many startup updates"));
                     }

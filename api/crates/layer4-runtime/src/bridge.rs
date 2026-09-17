@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::process::Stdio;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -9,11 +10,18 @@ use std::os::unix::process::CommandExt as _;
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _, BufReader};
 use tokio::sync::{mpsc, Mutex};
 
+#[path = "bridge_output.rs"]
+mod retained_output;
+pub(crate) use retained_output::OutputRetention;
+
 const BUFFER_BYTES: usize = 8 * 1024 * 1024;
 const INPUT_BUFFER: usize = 256;
 pub(crate) const MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(2);
 const CLOSE_POLL: Duration = Duration::from_millis(10);
+const OUTPUT_UNSELECTED: u8 = 0;
+const OUTPUT_LEGACY: u8 = 1;
+const OUTPUT_ACKNOWLEDGED: u8 = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Outbound {
@@ -70,6 +78,8 @@ pub(crate) struct Bridge {
     input: mpsc::Sender<Vec<u8>>,
     output: tokio::sync::broadcast::Sender<Outbound>,
     pending: Arc<Mutex<Pending>>,
+    pub(crate) retained_output: Arc<OutputRetention>,
+    output_mode: AtomicU8,
     ended: tokio::sync::watch::Sender<bool>,
     writer_session_root: Option<i32>,
 }
@@ -118,9 +128,15 @@ impl Bridge {
         let (input, input_rx) = mpsc::channel(INPUT_BUFFER);
         let (output, _) = tokio::sync::broadcast::channel(INPUT_BUFFER);
         let pending = Arc::new(Mutex::new(Pending::default()));
+        let retained_output = Arc::new(OutputRetention::default());
         let (ended, _) = tokio::sync::watch::channel(false);
         spawn_writer(stdin, input_rx);
-        spawn_reader(stdout, output.clone(), Arc::clone(&pending));
+        spawn_reader(
+            stdout,
+            output.clone(),
+            Arc::clone(&pending),
+            Arc::clone(&retained_output),
+        );
         spawn_diagnostics(stderr);
         spawn_reaper(child, managed, ended.clone());
         tracing::info!(agent = %launch.agent_id.as_str(), program = %launch.program, "agent bridge started");
@@ -128,6 +144,8 @@ impl Bridge {
             input,
             output,
             pending,
+            retained_output,
+            output_mode: AtomicU8::new(OUTPUT_UNSELECTED),
             ended,
             writer_session_root,
         })
@@ -135,6 +153,30 @@ impl Bridge {
 
     pub(crate) async fn send(&self, frame: Vec<u8>) -> bool {
         frame.len() <= MAX_FRAME_BYTES && self.input.send(frame).await.is_ok()
+    }
+
+    /// Legacy recording has no durable cursor. Never replay that history into a
+    /// later reliable attachment, or let a downgrade bypass an established cursor.
+    pub(crate) fn select_output_acknowledgement(&self, requested: bool) -> Result<bool, ()> {
+        let selected = if requested {
+            OUTPUT_ACKNOWLEDGED
+        } else {
+            OUTPUT_LEGACY
+        };
+        let mode = match self.output_mode.compare_exchange(
+            OUTPUT_UNSELECTED,
+            selected,
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+        ) {
+            Ok(_) => selected,
+            Err(mode) => mode,
+        };
+        match mode {
+            OUTPUT_LEGACY => Ok(false),
+            OUTPUT_ACKNOWLEDGED if requested => Ok(true),
+            _ => Err(()),
+        }
     }
 
     pub(crate) fn subscribe(&self) -> tokio::sync::broadcast::Receiver<Outbound> {
@@ -183,6 +225,7 @@ fn spawn_reader(
     stdout: tokio::process::ChildStdout,
     output: tokio::sync::broadcast::Sender<Outbound>,
     pending: Arc<Mutex<Pending>>,
+    retained_output: Arc<OutputRetention>,
 ) {
     tokio::spawn(async move {
         let mut stdout = BufReader::new(stdout);
@@ -195,15 +238,23 @@ fn spawn_reader(
                 Ok(read) => read,
                 Err(error) => {
                     tracing::warn!(%error, "agent bridge output failed");
+                    retained_output.gap().await;
                     break;
                 }
             };
             for byte in &chunk[..read] {
                 if *byte == b'\n' {
                     if discarding {
+                        retained_output.gap().await;
                         pending.lock().await.gap();
                     } else {
-                        publish(std::mem::take(&mut frame), &output, &pending).await;
+                        publish(
+                            std::mem::take(&mut frame),
+                            &output,
+                            &pending,
+                            &retained_output,
+                        )
+                        .await;
                     }
                     frame.clear();
                     discarding = false;
@@ -218,10 +269,12 @@ fn spawn_reader(
             }
         }
         if discarding {
+            retained_output.gap().await;
             pending.lock().await.gap();
         } else if !frame.is_empty() {
-            publish(frame, &output, &pending).await;
+            publish(frame, &output, &pending, &retained_output).await;
         }
+        retained_output.finish().await;
     });
 }
 
@@ -229,7 +282,9 @@ async fn publish(
     frame: Vec<u8>,
     output: &tokio::sync::broadcast::Sender<Outbound>,
     pending: &Arc<Mutex<Pending>>,
+    retained_output: &OutputRetention,
 ) {
+    retained_output.retain(&frame).await;
     if output.send(Outbound::Frame(frame.clone())).is_err() {
         pending.lock().await.push(frame);
     }
