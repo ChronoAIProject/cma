@@ -1,4 +1,3 @@
-//! OpenAPI generation for the currently composed REST boundary.
 use utoipa::openapi::security::SecurityRequirement;
 use utoipa::{openapi, OpenApi};
 mod identity;
