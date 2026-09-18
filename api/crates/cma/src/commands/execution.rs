@@ -146,11 +146,7 @@ impl AgentCommandExecution for ResourceCommandExecution {
                 });
         }
         if is_channel(command) {
-            return self
-                .channel_checked(command)
-                .await
-                .map(|_| CommandReadiness::Ready)
-                .unwrap_or_else(|readiness| readiness);
+            return self.observe_channel_readiness(command).await;
         }
         match self.checked(command).await {
             Ok(_) => CommandReadiness::Ready,

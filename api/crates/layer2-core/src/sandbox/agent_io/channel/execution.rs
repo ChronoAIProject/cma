@@ -49,6 +49,34 @@ impl std::fmt::Debug for ChannelExecutionFence {
 }
 
 impl ChannelAgentCommandService {
+    /// Inspect current queued source and target without provider IO. The result
+    /// carries no execution authority and cannot release, revive or send input.
+    pub async fn observe_execution_readiness(
+        &self,
+        invokes: &BridgeInvokeService,
+        command: &AdmittedAgentCommand,
+    ) -> Result<crate::resource_access::ResourceAccessSnapshot, Error> {
+        command.validate()?;
+        let AgentActor::Channel { grant_id, .. } = &command.receipt.envelope.actor else {
+            return Err(Error::SourceMismatch);
+        };
+        let source = self.store.channel_execution_source(command).await?;
+        if source.sidecar.execution_hold != ChannelCommandHold::Released {
+            return Err(CommandLedgerError::NotAdmissible.into());
+        }
+        invokes
+            .observe_execution_readiness(BridgeInvokeRequest {
+                grant_id: BridgeInvokeGrantId(grant_id.clone()),
+                pin: source.inbox.pin,
+                target: source.allocation.placement.target().clone(),
+                effect: BridgeInvokeEffect::ExecuteCommand {
+                    command_id: command.receipt.envelope.command_id.clone(),
+                },
+            })
+            .await
+            .map_err(Into::into)
+    }
+
     pub async fn authorize_execution(
         &self,
         invokes: &BridgeInvokeService,
