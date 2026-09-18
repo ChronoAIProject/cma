@@ -1,6 +1,7 @@
 import { act, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import {
+  ApiError,
   createClient,
   type AgentProvenance,
   type BridgePartition,
@@ -168,6 +169,56 @@ it('clears private previews on an authorization failure or redaction', async () 
   pendingMessages.mockResolvedValue({ status: 'redacted' });
   await act(() => vi.advanceTimersByTimeAsync(2000));
   expect(screen.queryByText('Queued from Telegram')).not.toBeInTheDocument();
+});
+
+it('retries snapshot conflicts after 250ms twice, then backs off until success resets the limit', async () => {
+  const { pendingMessages, listPartitions, draw } = fixture();
+  render(draw());
+  await flush();
+  pendingMessages.mockRejectedValue(new ApiError(409, 'Snapshot changed'));
+  await act(() => vi.advanceTimersByTimeAsync(1000));
+  expect(screen.queryByText('Queued from Telegram')).not.toBeInTheDocument();
+  expect(pendingMessages).toHaveBeenCalledTimes(2);
+  await act(() => vi.advanceTimersByTimeAsync(249));
+  expect(pendingMessages).toHaveBeenCalledTimes(2);
+  await act(() => vi.advanceTimersByTimeAsync(1));
+  expect(pendingMessages).toHaveBeenCalledTimes(3);
+  await act(() => vi.advanceTimersByTimeAsync(250));
+  expect(pendingMessages).toHaveBeenCalledTimes(4);
+  await act(() => vi.advanceTimersByTimeAsync(1999));
+  expect(pendingMessages).toHaveBeenCalledTimes(4);
+  pendingMessages.mockResolvedValue(value());
+  await act(() => vi.advanceTimersByTimeAsync(1));
+  expect(screen.getByText('Queued from Telegram')).toBeInTheDocument();
+  pendingMessages.mockRejectedValueOnce(new ApiError(409, 'Snapshot changed again'));
+  await act(() => vi.advanceTimersByTimeAsync(1000));
+  expect(pendingMessages).toHaveBeenCalledTimes(6);
+  expect(screen.queryByText('Queued from Telegram')).not.toBeInTheDocument();
+  await act(() => vi.advanceTimersByTimeAsync(250));
+  expect(pendingMessages).toHaveBeenCalledTimes(7);
+  expect(screen.getByText('Queued from Telegram')).toBeInTheDocument();
+  expect(listPartitions).toHaveBeenCalledOnce();
+});
+
+it('keeps private text cleared and uses the full authorization backoff after a snapshot conflict', async () => {
+  const { pendingMessages, draw } = fixture();
+  render(draw());
+  await flush();
+  pendingMessages.mockRejectedValueOnce(new ApiError(409, 'Snapshot changed'));
+  pendingMessages.mockRejectedValue(new ApiError(403, 'Access removed'));
+  await act(() => vi.advanceTimersByTimeAsync(1000));
+  await act(() => vi.advanceTimersByTimeAsync(250));
+  expect(pendingMessages).toHaveBeenCalledTimes(3);
+  expect(screen.queryByText('Queued from Telegram')).not.toBeInTheDocument();
+  await act(() => vi.advanceTimersByTimeAsync(1999));
+  expect(pendingMessages).toHaveBeenCalledTimes(3);
+  await act(() => vi.advanceTimersByTimeAsync(1));
+  expect(pendingMessages).toHaveBeenCalledTimes(4);
+  await act(() => vi.advanceTimersByTimeAsync(3999));
+  expect(pendingMessages).toHaveBeenCalledTimes(4);
+  expect(screen.queryByText('Queued from Telegram')).not.toBeInTheDocument();
+  await act(() => vi.advanceTimersByTimeAsync(1));
+  expect(pendingMessages).toHaveBeenCalledTimes(5);
 });
 
 it('ignores late responses after viewer or Agent changes and never overlaps polling', async () => {
