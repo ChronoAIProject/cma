@@ -29,8 +29,8 @@ pub struct ChannelCommandExecutionSource {
 
 #[derive(Clone)]
 pub struct ChannelExecutionAuthorization {
-    invokes: BridgeInvokeService,
-    fence: Arc<ChannelExecutionFence>,
+    pub(super) invokes: BridgeInvokeService,
+    pub(super) fence: Arc<ChannelExecutionFence>,
 }
 
 /// Opaque authority for one Channel message. The common conversation store

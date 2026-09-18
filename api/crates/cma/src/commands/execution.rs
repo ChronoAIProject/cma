@@ -77,23 +77,30 @@ impl ResourceCommandExecution {
 #[async_trait::async_trait]
 impl AgentCommandExecution for ResourceCommandExecution {
     async fn release_held(&self, command: &AdmittedAgentCommand) {
+        let _ = self.release_held_for_attempt(command).await;
+    }
+
+    async fn release_held_for_attempt(
+        &self,
+        command: &AdmittedAgentCommand,
+    ) -> Option<ChannelExecutionHandoff> {
         if is_channel_control(command) {
             if let Some(service) = &self.channel_controls {
                 let _ = service.release_held(command, &self.operations).await;
             }
-            return;
+            return None;
         }
         if !is_channel(command) {
-            return;
+            return None;
         }
         let (Some(channel), Some(invokes)) = (&self.channel, &self.invokes) else {
-            return;
+            return None;
         };
         if command.queue_expired(&now_rfc3339()) {
             let _ = channel
                 .refuse_execution_hold(command, ChannelHoldRefusalReason::QueueTimeout)
                 .await;
-            return;
+            return None;
         }
         match channel.authorize_execution(invokes, command).await {
             Ok(authority) => {
@@ -101,7 +108,13 @@ impl AgentCommandExecution for ResourceCommandExecution {
                     .operations
                     .interrupt_channel_for_input(&authority, command)
                     .await;
-                let _ = channel.release_execution_hold(&authority, command).await;
+                if channel
+                    .release_execution_hold(&authority, command)
+                    .await
+                    .is_ok()
+                {
+                    return channel.idle_execution_handoff(authority, command);
+                }
             }
             Err(ChannelCommandAdmissionError::Invoke(
                 layer2_core::bridge::invoke::BridgeInvokeError::Revoked,
@@ -128,6 +141,7 @@ impl AgentCommandExecution for ResourceCommandExecution {
             }
             Err(_) => {}
         }
+        None
     }
 
     async fn check_queued(&self, command: &AdmittedAgentCommand) -> CommandReadiness {
@@ -269,6 +283,30 @@ impl AgentCommandExecution for ResourceCommandExecution {
             }
             Err(error) => classify(error),
         }
+    }
+
+    async fn execute_with_handoff(
+        &self,
+        command: &AdmittedAgentCommand,
+        handoff: Option<ChannelExecutionHandoff>,
+    ) -> CommandAttempt {
+        if let (Some(handoff), Some(channel)) = (handoff, &self.channel) {
+            let started = tokio::time::Instant::now();
+            let resumed = channel.resume_idle_execution(handoff, command).await;
+            tracing::info!(
+                event = "channel_operation",
+                operation = "command_execution",
+                stage = "idle_handoff",
+                command_id = %command.receipt.envelope.command_id,
+                outcome = if resumed.is_ok() { "retained" } else { "full_authorization" },
+                elapsed_ms = started.elapsed().as_millis() as u64,
+                "Channel idle authorization handoff checked"
+            );
+            if let Ok(authority) = resumed {
+                return self.execute_channel_authorized(command, authority).await;
+            }
+        }
+        self.execute(command).await
     }
 }
 

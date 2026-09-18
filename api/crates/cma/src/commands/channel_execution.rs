@@ -54,6 +54,14 @@ impl ResourceCommandExecution {
             Err(CommandReadiness::Reject(code)) => return CommandAttempt::Reject(code),
             Err(_) => return CommandAttempt::Retry,
         };
+        self.execute_channel_authorized(command, authority).await
+    }
+
+    pub(super) async fn execute_channel_authorized(
+        &self,
+        command: &AdmittedAgentCommand,
+        authority: ChannelExecutionAuthorization,
+    ) -> CommandAttempt {
         // Lease renewal may have advanced its expiry during provider IO. Reuse
         // the current lease, but never substitute a new claim or receipt.
         let Ok(Some(current)) = self
@@ -73,14 +81,29 @@ impl ResourceCommandExecution {
         {
             return CommandAttempt::Retry;
         }
-        match self
+        let started = tokio::time::Instant::now();
+        let result = match self
             .operations
             .execute_channel_claim(&authority, &current)
             .await
         {
             Ok(_) => CommandAttempt::Finished,
             Err(error) => super::execution::classify(error),
-        }
+        };
+        tracing::info!(
+            event = "channel_operation",
+            operation = "command_execution",
+            stage = "claimed_dispatch",
+            command_id = %command.receipt.envelope.command_id,
+            outcome = match result {
+                CommandAttempt::Finished => "finished",
+                CommandAttempt::Retry => "retry",
+                CommandAttempt::Reject(_) => "rejected",
+            },
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            "Channel claimed execution attempt finished"
+        );
+        result
     }
 }
 

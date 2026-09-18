@@ -7,6 +7,60 @@ use super::{
     BridgeSetupBlock,
 };
 
+/// Internal request for current custody verification of one already-created
+/// channel Agent. Only invocation authorization can prepare this request; it
+/// cannot authorize provisioning, setup, or a different input/target.
+#[derive(Clone)]
+pub struct RetainedChannelConnection {
+    grant: super::invoke::BridgeInvokeGrant,
+    effect: super::invoke::BridgeInvokeEffect,
+}
+
+impl RetainedChannelConnection {
+    pub(super) fn new(
+        grant: &super::invoke::BridgeInvokeGrant,
+        effect: &super::invoke::BridgeInvokeEffect,
+        resources: &ResourceAccessSnapshot,
+    ) -> Result<Self, super::invoke::BridgeInvokeError> {
+        require_retained_channel(grant, effect)?;
+        grant.target.require(&grant.owner, resources)?;
+        grant
+            .channel
+            .as_ref()
+            .expect("checked channel basis")
+            .require_resources(resources)?;
+        Ok(Self {
+            grant: grant.clone(),
+            effect: effect.clone(),
+        })
+    }
+
+    pub fn owner(&self) -> &ResourceOwner {
+        &self.grant.owner
+    }
+    pub fn config(&self) -> &BridgeConfig {
+        &self.grant.config
+    }
+}
+
+fn require_retained_channel(
+    grant: &super::invoke::BridgeInvokeGrant,
+    effect: &super::invoke::BridgeInvokeEffect,
+) -> Result<(), super::invoke::BridgeInvokeError> {
+    use super::invoke::{BridgeInvokeEffect, BridgeInvokeError};
+    grant.require_active()?;
+    effect.validate()?;
+    if grant.channel.is_none()
+        || !matches!(
+            effect,
+            BridgeInvokeEffect::AdmitMessage { .. } | BridgeInvokeEffect::ExecuteCommand { .. }
+        )
+    {
+        return Err(BridgeInvokeError::TargetMismatch);
+    }
+    Ok(())
+}
+
 /// Facts from existing NyxID interfaces and the selected encrypted custody
 /// entry. This type cannot be deserialized from browser or callback payloads.
 #[derive(Debug, Clone)]
@@ -45,6 +99,9 @@ pub struct BridgeValidation {
     digest: String,
     custody: BridgeCustodyPin,
     deadline: tokio::time::Instant,
+    /// None is the full setup/provisioning proof. A retained proof is an exact
+    /// grant-and-effect digest and is rejected by every generic consumer.
+    retained_channel: Option<String>,
 }
 
 /// Exact local custody observation retained through storage admission. Stores
@@ -74,6 +131,25 @@ impl BridgeValidation {
         owner: &ResourceOwner,
         config: &BridgeConfig,
         observation: BridgeConnectionObservation,
+    ) -> Result<Self, BridgeError> {
+        Self::observe(owner, config, observation, None)
+    }
+
+    pub fn from_retained_channel_observation(
+        request: &RetainedChannelConnection,
+        observation: BridgeConnectionObservation,
+    ) -> Result<Self, BridgeError> {
+        require_retained_channel(&request.grant, &request.effect)
+            .map_err(|_| BridgeError::ConnectionRequired(BridgeSetupBlock::TargetMismatch))?;
+        let scope = super::store::digest(&(&request.grant, &request.effect))?;
+        Self::observe(request.owner(), request.config(), observation, Some(scope))
+    }
+
+    fn observe(
+        owner: &ResourceOwner,
+        config: &BridgeConfig,
+        observation: BridgeConnectionObservation,
+        retained_channel: Option<String>,
     ) -> Result<Self, BridgeError> {
         config.validate()?;
         let blocked = |reason| BridgeError::ConnectionRequired(reason);
@@ -113,61 +189,63 @@ impl BridgeValidation {
         {
             return Err(blocked(BridgeSetupBlock::CustodyUnavailable));
         }
-        match &config.placement {
-            BridgePlacementPolicy::WorkspacePerPartition { sandbox_id, .. }
-            | BridgePlacementPolicy::WorktreeAgentPerPartition { sandbox_id, .. } => {
-                let target = config
-                    .placement
-                    .reused_parent()
-                    .ok_or_else(|| blocked(BridgeSetupBlock::IncompatibleTarget))?;
-                let resources = observation
-                    .existing_target
-                    .as_ref()
-                    .ok_or_else(|| blocked(BridgeSetupBlock::IncompatibleTarget))?;
-                let scope = resources
-                    .scope(&target)
-                    .map_err(|_| blocked(BridgeSetupBlock::IncompatibleTarget))?;
-                if &scope.owner != owner
-                    || &resources.lineage.sandbox.id != sandbox_id
-                    || !observation.exact_profiles_available
-                    || !observation.renewable_sandbox_authority
-                {
-                    return Err(blocked(BridgeSetupBlock::IncompatibleTarget));
-                }
-            }
-            BridgePlacementPolicy::ExistingAgent { target } => {
-                let snapshot = observation
-                    .existing_target
-                    .as_ref()
-                    .ok_or_else(|| blocked(BridgeSetupBlock::TargetMismatch))?;
-                let resource = ResourceTarget::Agent {
-                    agent_id: target.agent_id.clone(),
-                };
-                let scope = snapshot
-                    .scope(&resource)
-                    .map_err(|_| blocked(BridgeSetupBlock::TargetMismatch))?;
-                if &scope.owner != owner
-                    || snapshot.lineage.sandbox.id != target.sandbox_id
-                    || snapshot
-                        .lineage
-                        .workspace
+        if retained_channel.is_none() {
+            match &config.placement {
+                BridgePlacementPolicy::WorkspacePerPartition { sandbox_id, .. }
+                | BridgePlacementPolicy::WorktreeAgentPerPartition { sandbox_id, .. } => {
+                    let target = config
+                        .placement
+                        .reused_parent()
+                        .ok_or_else(|| blocked(BridgeSetupBlock::IncompatibleTarget))?;
+                    let resources = observation
+                        .existing_target
                         .as_ref()
-                        .is_none_or(|w| w.id != target.workspace_id)
-                    || snapshot
-                        .lineage
-                        .worktree
+                        .ok_or_else(|| blocked(BridgeSetupBlock::IncompatibleTarget))?;
+                    let scope = resources
+                        .scope(&target)
+                        .map_err(|_| blocked(BridgeSetupBlock::IncompatibleTarget))?;
+                    if &scope.owner != owner
+                        || &resources.lineage.sandbox.id != sandbox_id
+                        || !observation.exact_profiles_available
+                        || !observation.renewable_sandbox_authority
+                    {
+                        return Err(blocked(BridgeSetupBlock::IncompatibleTarget));
+                    }
+                }
+                BridgePlacementPolicy::ExistingAgent { target } => {
+                    let snapshot = observation
+                        .existing_target
                         .as_ref()
-                        .is_none_or(|w| w.id != target.worktree_id)
-                {
-                    return Err(blocked(BridgeSetupBlock::TargetMismatch));
+                        .ok_or_else(|| blocked(BridgeSetupBlock::TargetMismatch))?;
+                    let resource = ResourceTarget::Agent {
+                        agent_id: target.agent_id.clone(),
+                    };
+                    let scope = snapshot
+                        .scope(&resource)
+                        .map_err(|_| blocked(BridgeSetupBlock::TargetMismatch))?;
+                    if &scope.owner != owner
+                        || snapshot.lineage.sandbox.id != target.sandbox_id
+                        || snapshot
+                            .lineage
+                            .workspace
+                            .as_ref()
+                            .is_none_or(|w| w.id != target.workspace_id)
+                        || snapshot
+                            .lineage
+                            .worktree
+                            .as_ref()
+                            .is_none_or(|w| w.id != target.worktree_id)
+                    {
+                        return Err(blocked(BridgeSetupBlock::TargetMismatch));
+                    }
                 }
-            }
-            BridgePlacementPolicy::NewSandbox { .. } => {
-                if !observation.renewable_sandbox_authority {
-                    return Err(blocked(BridgeSetupBlock::RenewableAuthorityUnavailable));
-                }
-                if !observation.exact_profiles_available {
-                    return Err(blocked(BridgeSetupBlock::ProfileUnavailable));
+                BridgePlacementPolicy::NewSandbox { .. } => {
+                    if !observation.renewable_sandbox_authority {
+                        return Err(blocked(BridgeSetupBlock::RenewableAuthorityUnavailable));
+                    }
+                    if !observation.exact_profiles_available {
+                        return Err(blocked(BridgeSetupBlock::ProfileUnavailable));
+                    }
                 }
             }
         }
@@ -180,10 +258,39 @@ impl BridgeValidation {
                 key_state_version: observation.key_state_version,
             },
             deadline: observation.deadline,
+            retained_channel,
         })
     }
 
     pub(super) fn require(
+        &self,
+        owner: &ResourceOwner,
+        config: &BridgeConfig,
+    ) -> Result<(), BridgeError> {
+        if self.retained_channel.is_some() {
+            return Err(BridgeError::ConnectionRequired(
+                BridgeSetupBlock::TargetMismatch,
+            ));
+        }
+        self.require_binding(owner, config)
+    }
+
+    pub(super) fn require_invocation(
+        &self,
+        grant: &super::invoke::BridgeInvokeGrant,
+        effect: &super::invoke::BridgeInvokeEffect,
+    ) -> Result<(), super::invoke::BridgeInvokeError> {
+        if let Some(scope) = &self.retained_channel {
+            require_retained_channel(grant, effect)?;
+            if scope != &super::store::digest(&(grant, effect))? {
+                return Err(super::invoke::BridgeInvokeError::TargetMismatch);
+            }
+        }
+        self.require_binding(&grant.owner, &grant.config)?;
+        Ok(())
+    }
+
+    fn require_binding(
         &self,
         owner: &ResourceOwner,
         config: &BridgeConfig,
@@ -252,4 +359,14 @@ pub trait BridgeConnectionValidator: Send + Sync {
         owner: &ResourceOwner,
         config: &BridgeConfig,
     ) -> Result<BridgeValidation, BridgeError>;
+
+    /// Implementations may omit provisioning-only work for this exact retained
+    /// input. The default preserves the full validation contract.
+    async fn validate_retained_channel(
+        &self,
+        request: &RetainedChannelConnection,
+    ) -> Result<BridgeValidation, BridgeError> {
+        self.validate_connection(request.owner(), request.config())
+            .await
+    }
 }

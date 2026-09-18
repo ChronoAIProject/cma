@@ -1,6 +1,9 @@
 use super::*;
 use std::sync::atomic::AtomicBool;
 
+#[path = "idle_handoff_tests.rs"]
+mod idle_handoff_tests;
+
 #[derive(Clone, Copy, Debug)]
 enum AdmissionMutation {
     SessionRevision,
