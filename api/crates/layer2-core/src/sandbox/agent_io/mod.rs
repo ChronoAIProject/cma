@@ -54,8 +54,8 @@ pub use capabilities::AgentInterfaceCapabilities;
 pub use channel::{
     ChannelAgentCommandService, ChannelCommandAdmissionError, ChannelCommandExecutionSource,
     ChannelCommandHold, ChannelCommandReservation, ChannelCommandSidecar, ChannelCommandStore,
-    ChannelExecutionAuthorization, ChannelExecutionFence, ChannelHoldRefusal,
-    ChannelHoldRefusalReason,
+    ChannelExecutionAuthorization, ChannelExecutionFence, ChannelExecutionHandoff,
+    ChannelHoldRefusal, ChannelHoldRefusalReason,
 };
 pub use channel_control::{
     ChannelControlExecutionAuthorization, ChannelControlExecutionFence,

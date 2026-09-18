@@ -150,10 +150,19 @@ impl BridgeInvokeService {
             .await
             .map_err(resource_store_error)?;
         require_resource_owner(&grant, &resources)?;
-        let connection = self
-            .definitions
-            .connection(&grant.owner, &grant.config)
-            .await?;
+        let connection = if grant.channel.is_some()
+            && matches!(
+                request.effect,
+                BridgeInvokeEffect::AdmitMessage { .. } | BridgeInvokeEffect::ExecuteCommand { .. }
+            ) {
+            self.definitions
+                .retained_channel_connection(&grant, &request.effect, &resources)
+                .await?
+        } else {
+            self.definitions
+                .connection(&grant.owner, &grant.config)
+                .await?
+        };
         let mut proof = BridgeInvokeProof {
             deadline: deadline.min(connection.deadline()),
             grant,
