@@ -580,6 +580,13 @@
     content: '';
   }
 }
+.agent-channel-pending__message {
+  padding: 12px 14px;
+  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-bg-layer-1);
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
 .agent-channel-pending__text {
   margin: 6px 0 0;
   white-space: pre-wrap;

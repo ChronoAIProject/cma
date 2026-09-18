@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { PendingChannelMessages } from '@chronoai/cma-sdk';
 import { useCmaClient } from '../api/context';
 import type { ProvenanceState } from './provenance';
+import { pendingChannelAllocation } from './pendingChannelAllocation';
 
 type PendingSnapshot = Extract<PendingChannelMessages, { status: 'available' }>;
 const isVisible = () => document.visibilityState !== 'hidden';
@@ -53,13 +54,22 @@ export function ChannelPendingMessages({
     let request: AbortController | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let retry = 1000;
+    let allocation: string | undefined;
     const poll = async () => {
       if (request !== undefined || lifetime.signal.aborted || !isVisible()) return;
       clearTimeout(timer);
       const current = new AbortController();
       request = current;
       try {
-        const snapshot = await client.bridges.pendingMessages(bridge, partition, {
+        allocation ??= await pendingChannelAllocation(
+          client,
+          bridge,
+          generation,
+          agentId,
+          current.signal,
+        );
+        if (lifetime.signal.aborted || current.signal.aborted) return;
+        const snapshot = await client.bridges.pendingMessages(bridge, allocation, {
           signal: current.signal,
         });
         if (lifetime.signal.aborted || current.signal.aborted) return;
@@ -68,7 +78,7 @@ export function ChannelPendingMessages({
           if (
             snapshot.agent_id !== agentId ||
             snapshot.bridge_id !== bridge ||
-            snapshot.partition_id !== partition ||
+            snapshot.partition_id !== allocation ||
             snapshot.generation !== generation
           )
             throw new Error('Channel message observation changed its target.');
@@ -118,7 +128,7 @@ export function ChannelPendingMessages({
       aria-live="polite"
     >
       {snapshot.messages.map((message) => (
-        <div className="agent-action-error" role="status" key={message.command_id}>
+        <div className="agent-channel-pending__message" role="status" key={message.command_id}>
           <div>
             <strong>
               {message.platform.startsWith('telegram') ? 'Telegram' : 'Channel'} message received ·
