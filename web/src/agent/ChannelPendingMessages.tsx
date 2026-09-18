@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { PendingChannelMessages } from '@chronoai/cma-sdk';
+import { ApiError, type PendingChannelMessages } from '@chronoai/cma-sdk';
 import { useCmaClient } from '../api/context';
 import type { ProvenanceState } from './provenance';
 import { pendingChannelAllocation } from './pendingChannelAllocation';
@@ -54,12 +54,14 @@ export function ChannelPendingMessages({
     let request: AbortController | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let retry = 1000;
+    let conflicts = 0;
     let allocation: string | undefined;
     const poll = async () => {
       if (request !== undefined || lifetime.signal.aborted || !isVisible()) return;
       clearTimeout(timer);
       const current = new AbortController();
       request = current;
+      let delay = 1000;
       try {
         allocation ??= await pendingChannelAllocation(
           client,
@@ -85,14 +87,17 @@ export function ChannelPendingMessages({
           setObserved({ context, snapshot });
         }
         retry = 1000;
-      } catch {
+        conflicts = 0;
+      } catch (cause) {
         if (!lifetime.signal.aborted && !current.signal.aborted) {
           setObserved(undefined);
-          retry = Math.min(retry * 2, 10000);
+          conflicts = cause instanceof ApiError && cause.status === 409 ? conflicts + 1 : 0;
+          if (conflicts > 0 && conflicts <= 2) delay = 250;
+          else delay = retry = Math.min(retry * 2, 10000);
         }
       } finally {
         if (request === current) request = undefined;
-        if (!lifetime.signal.aborted && isVisible()) timer = setTimeout(() => void poll(), retry);
+        if (!lifetime.signal.aborted && isVisible()) timer = setTimeout(() => void poll(), delay);
       }
     };
     const foreground = () => {
