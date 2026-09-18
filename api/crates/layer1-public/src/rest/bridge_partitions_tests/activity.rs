@@ -8,7 +8,7 @@ use layer2_core::{
 };
 use serde_json::json;
 
-fn command(
+pub(super) fn command(
     f: &fixture::Fixture,
     order: u64,
     status: AgentResponseStatus,

@@ -212,12 +212,20 @@ impl ManagedBridgeCredentials {
         let verified = if let Some(secret) = secret {
             Some(
                 self.provider
-                    .verify_secret(
+                    .verify_secret_with_authority(
                         owner,
                         secret,
                         &config.connector,
                         human.subject(),
                         human.credential(),
+                        Some((
+                            material
+                                .metadata
+                                .key_authority_v1
+                                .as_ref()
+                                .ok_or_else(reconnect)?,
+                            material.metadata.key_state_version,
+                        )),
                     )
                     .await
                     .inspect_err(|_| {
