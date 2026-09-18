@@ -14,6 +14,8 @@ use crate::bridge::{
 use super::{AdmittedAgentCommand, CommandLedgerError, CommandReservation};
 
 mod execution;
+mod handoff;
+pub use handoff::ChannelExecutionHandoff;
 mod refusal;
 pub use refusal::{ChannelHoldRefusal, ChannelHoldRefusalReason};
 mod prepare;

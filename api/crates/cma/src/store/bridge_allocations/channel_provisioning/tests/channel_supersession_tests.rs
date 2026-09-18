@@ -113,6 +113,12 @@ async fn channel_supersession_interrupts_once_and_preserves_new_input_for_next_t
         .authorize_execution(&f.invokes, &held)
         .await
         .unwrap();
+    assert!(
+        channel
+            .idle_execution_handoff(authority.clone(), &held)
+            .is_none(),
+        "active-turn input must retain full interruption and execution authorization"
+    );
     let (operations, writes) = operations(&f);
     let (first, duplicate) = tokio::join!(
         operations.interrupt_channel_for_input(&authority, &held),

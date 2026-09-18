@@ -10,6 +10,9 @@ use tokio::task::{Id, JoinError, JoinHandle, JoinSet};
 use tokio::time::MissedTickBehavior;
 
 const PAGE_SIZE: u16 = 50;
+// At idle, at most four indexed discovery scans per second per replica. Existing
+// single-discovery, pagination and eight-command backpressure remain bounded.
+const POLL_INTERVAL: Duration = Duration::from_millis(250);
 
 pub(crate) struct CommandScheduler {
     worker: Arc<dyn CommandScheduleWork>,
@@ -56,7 +59,7 @@ impl CommandScheduler {
     pub(crate) fn new(worker: Arc<AgentCommandWorker>) -> Self {
         Self {
             worker,
-            interval: Duration::from_secs(1),
+            interval: POLL_INTERVAL,
             concurrency: 8,
             drain_timeout: Duration::from_secs(25),
         }
