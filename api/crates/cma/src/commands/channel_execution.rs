@@ -9,6 +9,21 @@ pub(super) fn is_channel(command: &AdmittedAgentCommand) -> bool {
 }
 
 impl ResourceCommandExecution {
+    pub(super) async fn observe_channel_readiness(
+        &self,
+        command: &AdmittedAgentCommand,
+    ) -> CommandReadiness {
+        let (Some(channel), Some(invokes)) = (&self.channel, &self.invokes) else {
+            return observe_readiness("composition", "unavailable", CommandReadiness::Retry);
+        };
+        match channel.observe_execution_readiness(invokes, command).await {
+            Ok(snapshot) => require_live_target(&snapshot.lineage)
+                .map(|()| CommandReadiness::Ready)
+                .unwrap_or_else(|readiness| readiness),
+            Err(error) => readiness("observe_execution_readiness", error),
+        }
+    }
+
     pub(super) async fn channel_checked(
         &self,
         command: &AdmittedAgentCommand,
@@ -29,24 +44,7 @@ impl ResourceCommandExecution {
             .require_dispatch(command)
             .map_err(|error| readiness("dispatch_fence", error))?;
         let fence = authority.fence();
-        let lineage = &fence.proof().resources().lineage;
-        let agent = lineage
-            .agent
-            .as_ref()
-            .ok_or_else(|| observe_readiness("target", "agent_missing", CommandReadiness::Retry))?;
-        if !agent.status.is_live()
-            || agent.requested_stop_reason.is_some()
-            || matches!(
-                lineage.sandbox.status,
-                SandboxStatus::Failed | SandboxStatus::Retiring | SandboxStatus::Retired
-            )
-        {
-            return Err(observe_readiness(
-                "target",
-                "agent_unavailable",
-                CommandReadiness::Reject(CommandFailureCode::AgentUnavailable),
-            ));
-        }
+        require_live_target(&fence.proof().resources().lineage)?;
         Ok(authority)
     }
 
@@ -84,6 +82,29 @@ impl ResourceCommandExecution {
             Err(error) => super::execution::classify(error),
         }
     }
+}
+
+fn require_live_target(
+    lineage: &layer2_core::resource_access::ResourceLineage,
+) -> Result<(), CommandReadiness> {
+    let agent = lineage
+        .agent
+        .as_ref()
+        .ok_or_else(|| observe_readiness("target", "agent_missing", CommandReadiness::Retry))?;
+    if !agent.status.is_live()
+        || agent.requested_stop_reason.is_some()
+        || matches!(
+            lineage.sandbox.status,
+            SandboxStatus::Failed | SandboxStatus::Retiring | SandboxStatus::Retired
+        )
+    {
+        return Err(observe_readiness(
+            "target",
+            "agent_unavailable",
+            CommandReadiness::Reject(CommandFailureCode::AgentUnavailable),
+        ));
+    }
+    Ok(())
 }
 
 fn readiness(stage: &'static str, error: ChannelCommandAdmissionError) -> CommandReadiness {

@@ -1,6 +1,7 @@
 //! Read-only partition observations. Historical source/response correlation is
 //! never a grant to invoke, reset, detach, retry or remove a retained target.
 mod access;
+mod pending_messages;
 mod service;
 mod usage;
 mod validation;
@@ -8,6 +9,7 @@ mod views;
 
 use super::{allocation::AllocationRecord, ingress::StoredInbox, BridgeManagementLease};
 use crate::{resource_access::ResourceTarget, sandbox::agent_io::*};
+pub use pending_messages::*;
 pub use service::BridgePartitionService;
 pub use usage::*;
 pub use views::*;

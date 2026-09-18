@@ -24,6 +24,8 @@ export type {
   BridgePartitionCommand,
   BridgePartitionActivity,
   BridgePartitionDetail,
+  PendingChannelMessages,
+  PendingChannelMessage,
 } from './bridges/partitions-schema.js';
 export type * from './bridges/workspace-cleanup-schema.js';
 export type {
