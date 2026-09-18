@@ -119,7 +119,61 @@ async fn retained_verification_rejects_post_probe_changes_without_relisting_befo
         assert!(result.is_err(), "{patch}");
         let requests = f.state.requests.lock().unwrap();
         assert_eq!(requests.len(), 5);
-        assert_eq!(requests[0].1, "/api/v1/users/me/authorization");
-        assert!(requests[1].1.starts_with("/api/v1/channel-relay/messages/"));
+        let first_wave = &requests[..2];
+        assert!(first_wave
+            .iter()
+            .any(|(_, uri, _)| uri == "/api/v1/users/me/authorization"));
+        assert!(first_wave
+            .iter()
+            .any(|(_, uri, _)| uri.starts_with("/api/v1/channel-relay/messages/")));
+    }
+}
+
+#[tokio::test]
+async fn retained_verification_overlaps_reads_but_inventory_requires_both_to_succeed() {
+    for denied_endpoint in [
+        None,
+        Some("/api/v1/users/me/authorization"),
+        Some("/api/v1/channel-relay/messages/route-one"),
+    ] {
+        let f = fixture(possession_replies()).await;
+        let imported = verify(&f).await.unwrap();
+        f.state.requests.lock().unwrap().clear();
+        if let Some(endpoint) = denied_endpoint {
+            f.state.replies.lock().unwrap().get_mut(endpoint).unwrap().0 = StatusCode::FORBIDDEN;
+        }
+        // Neither response can finish until both requests have arrived. A
+        // serial implementation cannot pass this barrier, regardless of IO speed.
+        *f.state.verification_barrier.lock().unwrap() =
+            Some(Arc::new(tokio::sync::Barrier::new(2)));
+        let result = tokio::time::timeout(
+            Duration::from_secs(5),
+            f.provider.verify_secret_with_authority(
+                &personal(),
+                &SecretValue::new(format!("nyxid_ag_{}", "a".repeat(64))),
+                &f.connector,
+                &SubjectId::new("person-one"),
+                "fixture-human-oauth",
+                Some((&imported.key_authority, imported.key_state_version)),
+            ),
+        )
+        .await
+        .expect("independent verification requests must start concurrently");
+        assert_eq!(result.is_ok(), denied_endpoint.is_none());
+        let requests = f.state.requests.lock().unwrap();
+        assert_eq!(
+            requests.len(),
+            if denied_endpoint.is_none() { 5 } else { 2 }
+        );
+        assert!(requests[..2]
+            .iter()
+            .any(|(_, uri, _)| uri == "/api/v1/users/me/authorization"));
+        assert!(requests[..2]
+            .iter()
+            .any(|(_, uri, _)| uri.starts_with("/api/v1/channel-relay/messages/")));
+        if let Ok(binding) = result {
+            assert_eq!(binding.key_authority, imported.key_authority);
+            assert!(binding.key_state_version > imported.key_state_version);
+        }
     }
 }

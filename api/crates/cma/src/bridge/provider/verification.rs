@@ -37,10 +37,11 @@ impl NyxBridgeProvider {
         if !raw_agent_key(secret.expose()) || connector.route_ids.is_empty() {
             return Err(binding_mismatch());
         }
-        tokio::time::timeout(DEADLINE, async {
-            let start = tokio::time::Instant::now();
-            self.verify_human(human_subject, human_credential).await?;
+        let started = tokio::time::Instant::now();
+        let result = tokio::time::timeout(DEADLINE, async {
+            let start = started;
             let binding = if retained.is_none() {
+                self.verify_human(human_subject, human_credential).await?;
                 Some(
                     self.read_binding(
                         owner,
@@ -64,26 +65,15 @@ impl NyxBridgeProvider {
             if version <= 0 || authority.id != connector.key_id {
                 return Err(binding_mismatch());
             }
-            let mut endpoint = self.base_url.clone();
-            endpoint.set_path("/api/v1/channel-relay/messages");
-            endpoint
-                .path_segments_mut()
-                .map_err(|_| binding_mismatch())?
-                .push(&connector.route_ids[0]);
-            endpoint
-                .query_pairs_mut()
-                .append_pair("page", "1")
-                .append_pair("per_page", "1");
-            let probe: BindingProbe = self
-                .fetch(endpoint, secret)
-                .await
-                .inspect_err(|error| binding_failure("key_possession_probe", error))?;
-            if probe.page != 1
-                || probe.per_page != 1
-                || probe.messages.len() > 1
-                || probe.total < probe.messages.len() as u64
-            {
-                return Err(binding_mismatch());
+            if retained.is_some() {
+                // Both checks are independent reads. Retained import authority
+                // supplies the baseline; neither result escapes until both pass.
+                tokio::try_join!(
+                    self.verify_human(human_subject, human_credential),
+                    self.verify_possession(secret, connector),
+                )?;
+            } else {
+                self.verify_possession(secret, connector).await?;
             }
             // Possession reads update NyxID's last_used_at and row version.
             // Recheck all current authority after that IO, within this same
@@ -112,6 +102,44 @@ impl NyxBridgeProvider {
             Ok(current)
         })
         .await
-        .map_err(|_| BridgeError::AuthorityUnavailable)?
+        .map_err(|_| BridgeError::AuthorityUnavailable)?;
+        tracing::info!(
+            target: "cma::bridge::operations",
+            stage = "selected_key_verification",
+            retained = retained.is_some(),
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            success = result.is_ok(),
+            "channel_input_timing"
+        );
+        result
+    }
+
+    async fn verify_possession(
+        &self,
+        secret: &SecretValue,
+        connector: &BridgeConnector,
+    ) -> Result<(), BridgeError> {
+        let mut endpoint = self.base_url.clone();
+        endpoint.set_path("/api/v1/channel-relay/messages");
+        endpoint
+            .path_segments_mut()
+            .map_err(|_| binding_mismatch())?
+            .push(&connector.route_ids[0]);
+        endpoint
+            .query_pairs_mut()
+            .append_pair("page", "1")
+            .append_pair("per_page", "1");
+        let probe: BindingProbe = self
+            .fetch(endpoint, secret)
+            .await
+            .inspect_err(|error| binding_failure("key_possession_probe", error))?;
+        if probe.page != 1
+            || probe.per_page != 1
+            || probe.messages.len() > 1
+            || probe.total < probe.messages.len() as u64
+        {
+            return Err(binding_mismatch());
+        }
+        Ok(())
     }
 }
