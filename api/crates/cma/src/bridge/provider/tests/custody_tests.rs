@@ -380,6 +380,31 @@ async fn managed_import_resolves_exact_retained_key_and_local_revocation_stops_o
         assert_eq!(
             fresh
                 .iter()
+                .filter(|(_, uri, _)| uri.starts_with("/api/v1/"))
+                .count(),
+            5,
+            "retained resolution makes five fresh provider reads"
+        );
+        let probe = fresh
+            .iter()
+            .position(|(_, uri, _)| uri.starts_with("/api/v1/channel-relay/messages/"))
+            .unwrap();
+        for inventory in [
+            "/api/v1/api-keys",
+            "/api/v1/channel-bots",
+            "/api/v1/channel-conversations",
+        ] {
+            assert!(
+                fresh
+                    .iter()
+                    .position(|(_, uri, _)| uri == inventory)
+                    .unwrap()
+                    > probe
+            );
+        }
+        assert_eq!(
+            fresh
+                .iter()
                 .filter(|(_, uri, _)| uri == "/api/v1/users/me/authorization")
                 .count(),
             1,
@@ -390,8 +415,8 @@ async fn managed_import_resolves_exact_retained_key_and_local_revocation_stops_o
                 .iter()
                 .filter(|(_, uri, _)| uri == "/api/v1/api-keys")
                 .count(),
-            2,
-            "binding authority remains checked before and after the possession probe"
+            1,
+            "retained authority is checked against fresh inventory after possession"
         );
         assert_eq!(
             fresh
@@ -441,6 +466,7 @@ async fn managed_import_resolves_exact_retained_key_and_local_revocation_stops_o
                 key[field] = value.clone();
             }
         }
+        *f.state.key_patch_on_probe.lock().unwrap() = Some(patch.clone());
         assert!(
             manager.resolve(&personal(), &config).await.is_err(),
             "{patch}"

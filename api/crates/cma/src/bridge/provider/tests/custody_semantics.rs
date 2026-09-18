@@ -91,3 +91,35 @@ async fn required_permission_fields_cannot_be_silently_defaulted() {
         assert!(verify(&f).await.is_err(), "{field}");
     }
 }
+
+#[tokio::test]
+async fn retained_verification_rejects_post_probe_changes_without_relisting_before_probe() {
+    for patch in [
+        json!({"scopes":"read"}),
+        json!({"is_active":false}),
+        json!({"state_version":1}),
+        json!({"callback_url":"https://other.example/callback"}),
+        json!({"expires_at":"2000-01-01T00:00:00Z"}),
+    ] {
+        let f = fixture(possession_replies()).await;
+        let imported = verify(&f).await.unwrap();
+        f.state.requests.lock().unwrap().clear();
+        *f.state.key_patch_on_probe.lock().unwrap() = Some(patch.clone());
+        let result = f
+            .provider
+            .verify_secret_with_authority(
+                &personal(),
+                &SecretValue::new(format!("nyxid_ag_{}", "a".repeat(64))),
+                &f.connector,
+                &SubjectId::new("person-one"),
+                "fixture-human-oauth",
+                Some((&imported.key_authority, imported.key_state_version)),
+            )
+            .await;
+        assert!(result.is_err(), "{patch}");
+        let requests = f.state.requests.lock().unwrap();
+        assert_eq!(requests.len(), 5);
+        assert_eq!(requests[0].1, "/api/v1/users/me/authorization");
+        assert!(requests[1].1.starts_with("/api/v1/channel-relay/messages/"));
+    }
+}

@@ -1,4 +1,5 @@
 use super::*;
+use std::sync::atomic::AtomicBool;
 
 #[derive(Clone, Copy, Debug)]
 enum AdmissionMutation {
@@ -15,6 +16,8 @@ struct MovingConnection {
     replace_generation: bool,
     admission_mutation: Option<AdmissionMutation>,
     updates: AtomicUsize,
+    checks: AtomicUsize,
+    unavailable: AtomicBool,
 }
 
 #[async_trait::async_trait]
@@ -24,6 +27,10 @@ impl BridgeConnectionValidator for MovingConnection {
         owner: &ResourceOwner,
         config: &BridgeConfig,
     ) -> Result<BridgeValidation, BridgeError> {
+        self.checks.fetch_add(1, Ordering::SeqCst);
+        if self.unavailable.load(Ordering::SeqCst) {
+            return Err(BridgeError::AuthorityUnavailable);
+        }
         let result = self.inner.validate_connection(owner, config).await?;
         if let Some(mutation) = self.admission_mutation {
             // Mutate between the two resource reads used for admission, before
@@ -94,6 +101,8 @@ fn install_moving_connection(
         replace_generation,
         admission_mutation,
         updates: AtomicUsize::new(0),
+        checks: AtomicUsize::new(0),
+        unavailable: AtomicBool::new(false),
     });
     c.f.service = BridgeInvokeService::new(
         BridgeService::new(c.f.bridges.clone(), c.f.authority.clone(), moving.clone()),
@@ -105,6 +114,106 @@ fn install_moving_connection(
         c.f.store.clone(),
     );
     (c, moving)
+}
+
+#[tokio::test]
+#[ignore = "requires the disposable MongoDB replica contract runner"]
+async fn channel_queue_readiness_avoids_provider_io_and_never_authorizes_runtime_input() {
+    for failure in [None, Some("provider"), Some("revocation")] {
+        let (c, moving) = moving_fixture(false).await;
+        let held = held(&c).await;
+        let (execution, sends) = execution(&c, false);
+        execution.release_held(&held).await;
+        let queued =
+            c.f.resources
+                .get_command(&held.receipt.envelope.command_id)
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(queued.status, AgentResponseStatus::Queued);
+        assert_eq!(moving.checks.load(Ordering::SeqCst), 2);
+        let before =
+            c.f.resources
+                .agent_log(&c.f.target.agent_id, 0, 100)
+                .await
+                .unwrap();
+        assert_eq!(
+            execution.check_queued(&queued).await,
+            CommandReadiness::Ready
+        );
+        assert_eq!(
+            moving.checks.load(Ordering::SeqCst),
+            2,
+            "advisory readiness performs no provider IO"
+        );
+        assert_eq!(sends.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            c.f.resources
+                .agent_log(&c.f.target.agent_id, 0, 100)
+                .await
+                .unwrap(),
+            before,
+            "readiness cannot append or start a turn"
+        );
+        if failure == Some("revocation") {
+            c.f.service
+                .revoke(
+                    &caller(),
+                    None,
+                    c.f.revoke(&c.grant, "after-advisory-readiness"),
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                execution.check_queued(&queued).await,
+                CommandReadiness::Reject(CommandFailureCode::AuthorityRevoked)
+            );
+            assert_eq!(moving.checks.load(Ordering::SeqCst), 2);
+        } else {
+            moving
+                .unavailable
+                .store(failure.is_some(), Ordering::SeqCst);
+        }
+        AgentCommandWorker::new(c.f.resources.clone(), execution, "advisory-ready".into())
+            .unwrap()
+            .run_one(&held.receipt.envelope.command_id)
+            .await
+            .unwrap();
+        let current =
+            c.f.resources
+                .get_command(&held.receipt.envelope.command_id)
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(current.receipt, held.receipt);
+        if failure.is_none() {
+            assert_eq!(sends.load(Ordering::SeqCst), 1);
+            assert_eq!(
+                moving.checks.load(Ordering::SeqCst),
+                4,
+                "admission, release, execution, and writer each retain fresh provider checks"
+            );
+            assert_eq!(
+                current.work.observation.unwrap().delivery,
+                AgentOperationDelivery::WriteConfirmed
+            );
+        } else {
+            assert_eq!(sends.load(Ordering::SeqCst), 0);
+            assert!(current.work.dispatch.is_none());
+            assert_eq!(
+                c.f.resources
+                    .agent_log(&c.f.target.agent_id, 0, 100)
+                    .await
+                    .unwrap(),
+                before
+            );
+            assert_eq!(
+                moving.checks.load(Ordering::SeqCst),
+                if failure == Some("provider") { 3 } else { 2 }
+            );
+        }
+        c.close().await;
+    }
 }
 
 #[tokio::test]
