@@ -2,7 +2,11 @@
 
 use futures_util::TryStreamExt as _;
 use layer2_core::{GatewayRecord, GatewayRecordHead, GatewayRecordStore, StoreError, SubjectId};
-use mongodb::{bson::doc, options::ReturnDocument, Client, Collection, IndexModel};
+use mongodb::{
+    bson::{doc, spec::BinarySubtype, Binary},
+    options::ReturnDocument,
+    Client, Collection, IndexModel,
+};
 use serde::{Deserialize, Serialize};
 
 use super::{
@@ -19,7 +23,7 @@ struct GatewayRecordDoc {
     record_id: String,
     document_schema_version: i64,
     owner: String,
-    blob: Vec<u8>,
+    blob: Binary,
     version: i64,
     created_at: String,
     updated_at: String,
@@ -31,7 +35,10 @@ impl GatewayRecordDoc {
             record_id: record_id.into(),
             document_schema_version: DOCUMENT_SCHEMA_VERSION,
             owner: owner.as_str().into(),
-            blob,
+            blob: Binary {
+                subtype: BinarySubtype::Generic,
+                bytes: blob,
+            },
             version: 1,
             created_at: now.clone(),
             updated_at: now,
@@ -43,7 +50,7 @@ impl GatewayRecordDoc {
         Ok(GatewayRecord {
             record_id: self.record_id,
             owner: SubjectId::new(self.owner),
-            blob: self.blob,
+            blob: self.blob.bytes,
             version: u64::try_from(self.version)
                 .map_err(|_| StoreError::Malformed("gateway record version is negative".into()))?,
             created_at: self.created_at,
@@ -138,7 +145,7 @@ impl GatewayRecordStore for MongoGatewayRecordStore {
         let update = doc! {
             "$set": {
                 "owner": owner.as_str(),
-                "blob": mongodb::bson::Binary { subtype: mongodb::bson::spec::BinarySubtype::Generic, bytes: blob },
+                "blob": Binary { subtype: BinarySubtype::Generic, bytes: blob },
                 "updated_at": now,
             },
             "$inc": { "version": 1_i64 },
