@@ -179,7 +179,49 @@ async fn compiled_binary_loads_mounted_secrets_and_serves_curl_without_leaking_c
     let read = curl("GET", &format!("{base}/v1/channels/{id}"), None, 200).await;
     assert_eq!(read["definition"]["name"], "support-bot");
     let document = curl("GET", &format!("{base}/openapi.json"), None, 200).await;
-    assert_eq!(document["paths"].as_object().unwrap().len(), 5);
+    assert_eq!(document["paths"].as_object().unwrap().len(), 9);
+    let output = Command::new("curl")
+        .args([
+            "--silent",
+            "--show-error",
+            "--fail",
+            "--max-time",
+            "5",
+            "--request",
+            "POST",
+            "--header",
+            "Content-Type: application/json",
+            "--header",
+            "Authorization: Bearer nyx_abcdefghijklmnop",
+            "--data-binary",
+            r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#,
+            &format!("{base}/mcp"),
+        ])
+        .output()
+        .await
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let listed: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let tools = listed["result"]["tools"].as_array().unwrap();
+    assert_eq!(tools.len(), 4);
+    for name in [
+        "replyToEvent",
+        "updateMessage",
+        "sendTyping",
+        "readEventContext",
+    ] {
+        assert!(tools.iter().any(|tool| tool["name"] == name));
+        assert!(document["paths"].as_object().unwrap().values().any(|path| {
+            path.as_object()
+                .unwrap()
+                .values()
+                .any(|operation| operation["operationId"] == name)
+        }));
+    }
     curl(
         "DELETE",
         &format!("{base}/v1/channels/{id}?expected_version=1"),

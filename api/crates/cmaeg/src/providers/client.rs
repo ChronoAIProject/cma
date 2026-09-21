@@ -254,12 +254,19 @@ impl ProviderClient {
             .entry
             .url("responses", &[])
             .map_err(|error| ProviderError::InvalidRequest(error.to_string()))?;
-        let body = json!({
+        if let Some(context) = &request.event_context {
+            context.validate()?;
+        }
+        let mut body = json!({
             "conversation": request.conversation_id,
             "stream": true,
             "input": request.input,
             "metadata": request.metadata,
         });
+        if let Some(context) = &request.event_context {
+            body["event_context"] = serde_json::to_value(context)
+                .map_err(|_| ProviderError::InvalidRequest("invalid event context".into()))?;
+        }
         let request_started = Instant::now();
         tracing::debug!(
             target: "cmaeg.provider.request_started",
@@ -319,7 +326,7 @@ impl ProviderClient {
         })
     }
 
-    fn handle(&self, provider: &ProviderSlug) -> Result<&ProviderHandle, ProviderError> {
+    pub(super) fn handle(&self, provider: &ProviderSlug) -> Result<&ProviderHandle, ProviderError> {
         self.providers
             .get(provider)
             .ok_or_else(|| ProviderError::UnknownProvider(provider.to_string()))
