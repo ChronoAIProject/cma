@@ -49,6 +49,10 @@ kube = { version = "4.2", default-features = false, features = [
     "ws",
 ] }
 libc = "0.2"
+# CMAEG's bounded metrics facade and pull-format renderer; the service owns its
+# private Axum listener, so the exporter's extra servers and push client stay off.
+metrics = "0.24.6"
+metrics-exporter-prometheus = { version = "0.18.3", default-features = false }
 mongodb = { version = "3", default-features = false, features = [
     "bson-3",
     "compat-3-3-0",
