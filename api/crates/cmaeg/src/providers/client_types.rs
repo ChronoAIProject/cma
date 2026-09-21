@@ -8,12 +8,13 @@ use std::{
 
 use cmaeg_core::{
     channel::{ConformanceLevel, Secret},
-    ids::{BindingId, ConversationId, IdempotencyKey, ProviderSlug},
+    ids::{BindingId, ConversationId, IdempotencyKey},
     profile::AgentProfileSnapshot,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::{mpsc, oneshot};
+use utoipa::ToSchema;
 
 use super::responses::ResponsesEvent;
 
@@ -72,7 +73,7 @@ pub struct ToolsAdvertisement {
     pub nyxid_service_slug: String,
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct BindingResponse {
     pub binding_id: BindingId,
     pub level: ConformanceLevel,
@@ -82,7 +83,7 @@ pub struct BindingResponse {
     pub refused: Vec<FieldRefusal>,
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct FieldRefusal {
     pub field: String,
     pub reason: String,
@@ -124,7 +125,3 @@ pub(crate) const MAX_METADATA_KEYS: usize = 16;
 pub(crate) const MAX_METADATA_KEY_BYTES: usize = 64;
 pub(crate) const MAX_METADATA_VALUE_BYTES: usize = 512;
 pub(crate) const MAX_SEMAPHORE_WAIT: Duration = Duration::from_millis(50);
-
-// Keep the type available to compile-time API checks without exposing fields that contain secrets.
-#[allow(dead_code)]
-pub(crate) fn _provider_slug(_: &ProviderSlug) {}

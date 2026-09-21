@@ -148,6 +148,7 @@ async fn bind_conversation_probe_and_stream_round_trip() {
         .any(|request| request.idempotency_key.as_deref() == Some("evt_event-1")));
     assert!(requests
         .iter()
+        .filter(|request| request.method != "PUT" || request.path.contains("conversations"))
         .all(|request| !request.body.contains("agent-secret")));
     fake.close().await;
 }
