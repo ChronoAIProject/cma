@@ -60,7 +60,7 @@ async fn run(
         input: vec![serde_json::json!({"role":"user","content":[{"type":"input_text","text":"CMAEG channel test"}]})],
         idempotency_key: IdempotencyKey::new(format!("test_{}", uuid::Uuid::new_v4().simple()))
             .map_err(ManagementError::Invalid)?,
-        metadata: BTreeMap::new(), agent_key: credential.clone(),
+        metadata: BTreeMap::new(), agent_key: credential.clone(), event_context: None,
     }).await.map_err(ManagementError::Provider)?;
     let accepted = stream
         .accepted

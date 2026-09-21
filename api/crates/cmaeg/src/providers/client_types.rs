@@ -98,6 +98,7 @@ pub struct TurnRequest {
     pub idempotency_key: IdempotencyKey,
     pub metadata: BTreeMap<String, String>,
     pub agent_key: Secret,
+    pub event_context: Option<super::EventContextSnapshot>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

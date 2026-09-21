@@ -152,8 +152,8 @@ is added by the delivery implementation. Stream loss and timeout remain explicit
 
 Turn metadata carries hashed channel/partition identifiers, event and actor IDs.
 Event references longer than the provider's 512-byte metadata limit are omitted
-with a content-free warning, requiring tools context lookup. The reference still
-travels with the internal delivery context. No credential or source envelope is
+with a content-free warning. The reference still travels in the provider
+`event_context` extension and the internal delivery context. No credential or source envelope is
 rendered into provider input. Text assembly is bounded to 256 KiB and 256 items;
 local tracked turns are bounded to 4,096 and tool-reply dedupe to 50,000 live refs.
 
@@ -169,6 +169,61 @@ The runner emits `cmaeg_ingress_to_provider_seconds` and
 `cmaeg_provider_accept_seconds` as structured tracing measurements. The current
 provider start timestamp marks HTTP dispatch; the observability work adds the
 socket-write measurement required by the final latency harness.
+
+### Agent tools and native MCP
+
+Agent tools are available as REST and as stateless MCP streamable HTTP at
+`POST /mcp` (protocol `2025-06-18`, JSON responses). The two interfaces call the
+same authenticated operations. `initialize`, `ping`, `tools/list` and `tools/call`
+are supported; other JSON-RPC methods return `-32601`. Notifications return 202
+without performing a tool send. MCP validates the public Origin when present;
+GET and DELETE return 405. Tool schemas are generated from the Rust request types,
+with all four tools requiring `event_ref`; updates also require `message_ref`.
+
+| REST operation | Frozen operation ID / native MCP tool | Result |
+| --- | --- | --- |
+| `POST /v1/events/{event_ref}/replies` | `replyToEvent` | Await the delivery receipt, including rendering and confirmed/rejected/unknown outcome. |
+| `POST /v1/messages/{message_ref}/update` | `updateMessage` | Await an update receipt; Telegram relay edits are unsupported. |
+| `POST /v1/events/{event_ref}/typing` | `sendTyping` | `sent` or `unsupported`; Telegram relay typing is unsupported. |
+| `GET /v1/events/{event_ref}/context` | `readEventContext` | Public activity and reply capabilities, excluding credentials and the raw source envelope. |
+
+NyxID exposes these as `cmaeg__replyToEvent`, `cmaeg__updateMessage`,
+`cmaeg__sendTyping` and `cmaeg__readEventContext`. Reply/update REST bodies use
+`OutboundMessage`; their MCP arguments wrap that same body in `message`.
+A 20 KiB text reply is supported; text over 32 KiB returns 413. Tool HTTP bodies
+are limited to 128 KiB. Delivery enqueue and receipt together have an eight-second
+deadline; expiry returns 504 `internal` with `delivery_timeout`. A timeout does
+not confirm whether delivery happened. Confirmed tool replies mark the exact
+reference hash to suppress automatic final delivery. The current placeholder
+engine returns `delivery_not_configured` for replies, and `unsupported` for edits
+and typing, until the relay delivery engine is composed.
+
+Missing/invalid bearers return 401 and a channel key-hash mismatch returns 403.
+Malformed/tampered event refs return 400 `event_ref_invalid`; expired refs return
+410 `event_ref_expired`. Channel resolution still applies its deletion, restore
+and cache rules. MCP tool failures include the same Problem document in JSON-RPC
+`error.data`. An MCP update must bind both supplied references to the same channel
+and event.
+
+### Provider event-context extension
+
+The 4 KiB sealed reference cannot contain an entire permitted 32 KiB activity.
+To make context readable after a gateway restart, a turn's existing Responses
+POST also carries `event_context` with schema version 1, `channel_id`,
+`conversation_id`, the full normalized `activity`, and the opaque `event_ref`.
+The provider must store it atomically with turn admission/idempotency and expose
+its reference to the bound agent. This adds no network operation to ingress.
+Synthetic management turns omit the extension.
+
+Authenticated context reads use GET at the configured provider conversation path
+plus `/events/{event_id}`. The gateway uses the retained agent credential, keeps
+the request on the allowlisted origin, refuses redirects, and bounds response
+time to three seconds and size to 1 MiB. Returned channel, conversation and event
+identities must match the authorized reference. Unsupported or unavailable
+provider context returns 503 `event_context_unavailable`; gateway memory is not a
+fallback authority. The CMA provider implementation must implement this additive
+contract before real context reads can succeed. Local tests cover a complete
+32 KiB Unicode message read through a new gateway resolver.
 
 ### Channel management
 

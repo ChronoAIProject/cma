@@ -65,6 +65,7 @@ pub struct Backend {
     pub jwks: Arc<Mutex<Value>>,
     pub gets: Arc<AtomicUsize>,
     pub records: Arc<AtomicUsize>,
+    pub record_status: Arc<AtomicUsize>,
     pub status: Arc<AtomicUsize>,
     pub delay_ms: Arc<AtomicUsize>,
     pub blob: Arc<Mutex<Vec<u8>>>,
@@ -83,9 +84,14 @@ async fn jwks(State(state): State<Backend>) -> Response {
     )
         .into_response()
 }
-async fn record(State(state): State<Backend>) -> Json<Value> {
+async fn record(State(state): State<Backend>) -> Response {
     state.records.fetch_add(1, Ordering::SeqCst);
+    let status = state.record_status.load(Ordering::SeqCst) as u16;
+    if status != 200 {
+        return StatusCode::from_u16(status).unwrap().into_response();
+    }
     Json(json!({"blob":STANDARD.encode(state.blob.lock().unwrap().as_slice()),"version":1}))
+        .into_response()
 }
 pub struct Fixture {
     pub state: IngressState,
@@ -110,6 +116,7 @@ impl Fixture {
             jwks: Arc::new(Mutex::new(signer.jwks())),
             gets: Arc::new(0.into()),
             records: Arc::new(0.into()),
+            record_status: Arc::new(200.into()),
             status: Arc::new(200.into()),
             delay_ms: Arc::new(0.into()),
             blob: Arc::new(Mutex::new(Vec::new())),
@@ -201,6 +208,11 @@ pub struct Envelope {
     pub payload: Value,
     pub callback: Value,
     pub reply: Value,
+}
+impl Default for Envelope {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 impl Envelope {
     pub fn new() -> Self {

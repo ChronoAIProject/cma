@@ -114,6 +114,7 @@ async fn bind_conversation_probe_and_stream_round_trip() {
                 idempotency_key: IdempotencyKey::from_event(&"event-1".parse().unwrap()),
                 metadata: BTreeMap::new(),
                 agent_key: secret.clone(),
+                event_context: None,
             },
         )
         .await
@@ -181,6 +182,7 @@ async fn busy_and_missing_conversation_errors_are_typed() {
                 idempotency_key: IdempotencyKey::from_event(&"event-2".parse().unwrap()),
                 metadata: BTreeMap::new(),
                 agent_key: secret,
+                event_context: None,
             },
         )
         .await
@@ -205,6 +207,7 @@ async fn full_provider_semaphore_returns_busy_without_waiting() {
         idempotency_key: IdempotencyKey::from_event(&event.parse().unwrap()),
         metadata: BTreeMap::new(),
         agent_key: secret.clone(),
+        event_context: None,
     };
     let first = client
         .start_turn(&provider, request("event-1"))
@@ -238,6 +241,7 @@ async fn one_hundred_sequential_turns_accept_with_low_latency() {
                     ),
                     metadata: BTreeMap::new(),
                     agent_key: secret.clone(),
+                    event_context: None,
                 },
             )
             .await
@@ -275,6 +279,7 @@ async fn streaming_lifetime_outlives_header_timeout_and_drop_releases_capacity()
         idempotency_key: IdempotencyKey::from_event(&event.parse().unwrap()),
         metadata: BTreeMap::new(),
         agent_key: Secret::new("ephemeral-test-agent"),
+        event_context: None,
     };
     let mut first = client
         .start_turn_immediate(&provider(), request("one"))
