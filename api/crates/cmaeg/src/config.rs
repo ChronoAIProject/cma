@@ -7,9 +7,11 @@ use cmaeg_core::{channel::Secret, seal::MasterKeyRing};
 use reqwest::Url;
 
 mod cache;
+mod delivery;
 mod ingress;
 mod turns;
 pub use cache::*;
+pub use delivery::*;
 pub use ingress::*;
 pub use turns::*;
 
@@ -89,6 +91,7 @@ pub struct Config {
     pub channel_cache: ChannelCacheConfig,
     pub ingress: IngressConfig,
     pub turns: TurnConfig,
+    pub delivery: DeliveryConfig,
 }
 
 /// Secrets and origins used by the channel management plane.
@@ -133,6 +136,7 @@ impl Config {
             channel_cache: ChannelCacheConfig::from_env()?,
             ingress: IngressConfig::from_env()?,
             turns: TurnConfig::from_env()?,
+            delivery: DeliveryConfig::from_env()?,
         })
     }
 }
@@ -191,7 +195,7 @@ fn required_origin(name: &'static str) -> Result<String, ConfigError> {
     validate_origin(name, &value)
 }
 
-fn validate_origin(name: &'static str, value: &str) -> Result<String, ConfigError> {
+pub(crate) fn validate_origin(name: &'static str, value: &str) -> Result<String, ConfigError> {
     let url = Url::parse(value).map_err(|error| ConfigError::InvalidManagement {
         detail: format!("{name} is not an origin URL: {error}"),
     })?;

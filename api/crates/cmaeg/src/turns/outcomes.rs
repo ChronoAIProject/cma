@@ -1,8 +1,5 @@
 //! Events passed to delivery, retaining context only for the lifetime of a turn.
 pub use crate::delivery::intents::DeliveryCommand;
-use crate::delivery::intents::{DeliveryOutcome, IntentReceipt, TypingOutcome, TypingReceipt};
-use cmaeg_core::message::{RenderingOutcome, RenderingReport};
-use tokio::sync::mpsc;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TurnOutcome {
@@ -33,42 +30,5 @@ impl TurnOutcome {
             self,
             Self::Completed { .. } | Self::Failed { .. } | Self::Incomplete { .. }
         )
-    }
-}
-/// Temporary production sink until the delivery engine is composed. Never log content or refs.
-pub async fn log_outcomes(mut receiver: mpsc::Receiver<DeliveryCommand>) {
-    while let Some(command) = receiver.recv().await {
-        match command {
-            DeliveryCommand::StreamOutcome { outcome, .. } => {
-                tracing::info!(outcome = outcome.kind(), "provider turn outcome")
-            }
-            DeliveryCommand::Typing { receipt, .. } => {
-                let _ = receipt.send(TypingReceipt {
-                    outcome: TypingOutcome::Unsupported,
-                });
-            }
-            DeliveryCommand::Update { receipt, .. } => {
-                let _ = receipt.send(IntentReceipt {
-                    message_ref: None,
-                    rendering: RenderingReport {
-                        outcome: RenderingOutcome::Unsupported,
-                        blocks: vec![],
-                    },
-                    delivery: DeliveryOutcome::Unsupported,
-                });
-            }
-            DeliveryCommand::Reply { receipt, .. } => {
-                let _ = receipt.send(IntentReceipt {
-                    message_ref: None,
-                    rendering: RenderingReport {
-                        outcome: RenderingOutcome::Unsupported,
-                        blocks: vec![],
-                    },
-                    delivery: DeliveryOutcome::Rejected {
-                        reason: "delivery_not_configured".into(),
-                    },
-                });
-            }
-        }
     }
 }

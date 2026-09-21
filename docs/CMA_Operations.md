@@ -66,6 +66,10 @@ The gateway startup settings are:
 | `CMAEG_INGRESS_INFLIGHT` | `256` | Concurrent callbacks per replica; overflow returns immediate 429 with `Retry-After: 1`. |
 | `CMAEG_ACCEPT_BUDGET_MS` | `20000` | Time from the last inbound body byte to acknowledgment; a pending provider request continues after the gateway returns 202. |
 | `CMAEG_TURN_TIMEOUT_MS` | `600000` | Total turn lifetime including provider setup, retry and stream consumption. |
+| `CMAEG_NYXID_REPLY_TIMEOUT_MS` | `5000` | NyxID reply connect/send/read timeout; uncertain sends are never blindly retried. |
+| `CMAEG_ACK_TEXT` | `Working on it…` | Progress acknowledgement for long turns; nonempty text up to 1024 bytes without controls. |
+| `CMAEG_HEARTBEAT_MS` | `60000` | Inactivity after acknowledgement before a heartbeat, capped at five per turn. |
+| `CMAEG_FAILURE_TEXT` | `Sorry, I couldn’t finish that request. Please try again.` | Short failure notice; same bounds as acknowledgement text. |
 | `CMAEG_DRAIN_SECONDS` | `600` | Maximum shutdown drain for tracked turns and HTTP requests. |
 | `CMAEG_BUSY_RETRY_MAX_MS` | `15000` | Maximum interval for retrying upstream busy refusals with jitter. |
 
@@ -194,9 +198,8 @@ A 20 KiB text reply is supported; text over 32 KiB returns 413. Tool HTTP bodies
 are limited to 128 KiB. Delivery enqueue and receipt together have an eight-second
 deadline; expiry returns 504 `internal` with `delivery_timeout`. A timeout does
 not confirm whether delivery happened. Confirmed tool replies mark the exact
-reference hash to suppress automatic final delivery. The current placeholder
-engine returns `delivery_not_configured` for replies, and `unsupported` for edits
-and typing, until the relay delivery engine is composed.
+reference hash to suppress automatic final delivery. Telegram replies use NyxID's
+relay reply endpoint; edits and typing return `unsupported`.
 
 The Telegram renderer preserves escape atoms while splitting at 4,000 UTF-16
 units, preferring paragraph boundaries. It breaks mentions with a zero-width
@@ -204,6 +207,25 @@ space and strips bidi controls. Cards become text, buttons and choices become
 numbered text, forms become labelled lines, and attachments become placeholders
 with HTTPS links where available. Rendering reports name each block degradation;
 index `65535` denotes a whole-message `chunked:<count>` transformation.
+
+Eight bounded workers serialize commands for each channel/event pair. Acknowledgements
+do not suppress the final answer. Committed messages and tool replies suppress the
+terminal fallback, and tool replies suppress failure notices. A tool send with an
+unknown outcome also suppresses automatic output to avoid a possible duplicate.
+Per-event state expires 30 seconds after the terminal outcome; hashes of consumed
+single-use tokens remain until token expiry. These are local safeguards; gateway
+restarts and multiple replicas rely on NyxID's single-use token enforcement and the
+provider's durable turn idempotency.
+
+The first send uses an unexpired reply token; later parts and sends use the retained
+channel route key. Each route has a three-second minimum interval on this replica.
+A 429 delays one retry (Retry-After capped at ten seconds) using the channel key;
+a second 429 or a malformed/lost response has an unknown outcome and is not retried.
+Chunked sends stop on the first unconfirmed part and report partial delivery as
+unknown. Their receipt contains the first confirmed platform message reference.
+During shutdown the gateway drains provider consumers and then queued delivery
+within the same deadline, so a terminal event cannot be discarded merely because
+its stream consumer has exited.
 
 Missing/invalid bearers return 401 and a channel key-hash mismatch returns 403.
 Malformed/tampered event refs return 400 `event_ref_invalid`; expired refs return
