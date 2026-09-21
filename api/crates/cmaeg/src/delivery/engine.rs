@@ -30,8 +30,10 @@ impl DeliveryEngine {
         relay: RelayClient,
         config: DeliveryConfig,
         tracker: Arc<TurnTracker>,
+        custom: super::custom::CustomDelivery,
     ) -> Self {
         let sender = Arc::new(Sender {
+            custom,
             keys,
             relay,
             pacing: Pacing::default(),

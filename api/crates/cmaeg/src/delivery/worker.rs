@@ -72,7 +72,9 @@ async fn handle(
             }
             let state = events
                 .entry(id)
-                .or_insert_with(|| EventState::new(channel, event));
+                .or_insert_with(|| EventState::new(channel.clone(), event.clone()));
+            state.channel = channel;
+            state.event = event;
             let result = sender.reply(state, &message).await;
             if matches!(
                 result.delivery,
@@ -87,19 +89,52 @@ async fn handle(
         }
         DeliveryCommand::StreamOutcome { turn, outcome } => {
             tracing::info!(outcome = outcome.kind(), "provider turn outcome");
-            let Ok(opened) = turn.event_ref.open(&sender.keys, now()) else {
+            // This is an already-admitted internal turn. Tool ingress separately enforces
+            // ref expiry; a long turn may still deliver with its retained channel key.
+            let Ok(opened) = cmaeg_core::seal::open::<cmaeg_core::seal::EventRefPayload>(
+                &sender.keys,
+                cmaeg_core::seal::TokenKind::EventRef,
+                turn.event_ref.as_str(),
+            ) else {
                 return;
             };
+            if opened.payload.validate().is_err()
+                || opened.payload.channel_id != turn.channel.id
+                || opened.payload.event_id != turn.activity.event_id
+                || opened.payload.record_id != turn.channel.pointer.record_id
+            {
+                return;
+            }
             let id = key(turn.channel.id.as_str(), turn.activity.event_id.as_str());
             if !reserve(events, &id) {
                 tracing::warn!("delivery event capacity reached");
                 return;
+            }
+            let custom = matches!(
+                turn.activity.source,
+                cmaeg_core::activity::SourceKind::Custom
+            );
+            if custom {
+                sender.custom.stream(&opened.payload, &outcome);
             }
             let state = events
                 .entry(id)
                 .or_insert_with(|| EventState::new(turn.channel.clone(), opened.payload));
             state.tool_replied |= tracker.has_tool_reply(turn.event_ref.as_str(), now());
             if state.terminal {
+                return;
+            }
+            if custom {
+                if matches!(outcome, TurnOutcome::Accepted { .. }) {
+                    state.terminal_at = None;
+                }
+                sender
+                    .custom
+                    .outcome(&state.channel, &state.event, &outcome)
+                    .await;
+                if outcome.terminal() {
+                    finish(state);
+                }
                 return;
             }
             outcome_event(state, outcome, sender, config).await;
@@ -114,10 +149,9 @@ fn reserve(events: &mut HashMap<EventKey, EventState>, id: &EventKey) -> bool {
 }
 fn expire(events: &mut HashMap<EventKey, EventState>) {
     events.retain(|_, state| {
-        state.event.expires_at > now()
-            && state
-                .terminal_at
-                .is_none_or(|at| at.elapsed() < Duration::from_secs(30))
+        state
+            .terminal_at
+            .is_none_or(|at| at.elapsed() < Duration::from_secs(30))
     });
 }
 async fn outcome_event(
