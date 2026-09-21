@@ -22,6 +22,7 @@ pub enum ProblemCode {
     CallbackInvalid,
     AdmissionRefused,
     RateLimited,
+    Conflict,
     PayloadTooLarge,
     UnsupportedMediaType,
     Internal,

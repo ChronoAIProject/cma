@@ -153,3 +153,68 @@ fn conversation_and_idempotency_keys_are_deterministic() {
     let long: EventId = "x".repeat(400).parse().unwrap();
     assert_eq!(IdempotencyKey::from_event(&long).as_str().len(), 200);
 }
+
+#[test]
+fn blob_wire_limit_and_authentication_are_enforced() {
+    use cmaeg_core::seal::{open_blob, seal_blob, MAX_BLOB_BYTES};
+    let keys =
+        MasterKeyRing::parse(&format!("255:{}", STANDARD_NO_PAD.encode([3_u8; 32]))).unwrap();
+    let blob = seal_blob(&keys, &vec![7; MAX_BLOB_BYTES]).unwrap();
+    assert!(blob.len() <= 65_536);
+    assert_eq!(
+        open_blob(&keys, &blob).unwrap().payload.len(),
+        MAX_BLOB_BYTES
+    );
+    assert!(matches!(
+        seal_blob(&keys, &vec![7; MAX_BLOB_BYTES + 1]),
+        Err(SealError::TooLarge)
+    ));
+    assert!(matches!(
+        open_blob(&keys, &vec![b'a'; 65_537]),
+        Err(OpenError::Format)
+    ));
+    let blob = String::from_utf8(seal_blob(&keys, b"secret-fixture").unwrap()).unwrap();
+    assert!(open_blob(&keys, blob.replace(".bl.", ".ch.").as_bytes()).is_err());
+    assert!(matches!(
+        open::<serde_json::Value>(&keys, TokenKind::Channel, &blob),
+        Err(OpenError::WrongKind)
+    ));
+    let mut parts: Vec<_> = blob.split('.').map(str::to_owned).collect();
+    let mut bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(&parts[3])
+        .unwrap();
+    bytes[12] ^= 1;
+    parts[3] = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
+    assert!(matches!(
+        open_blob(&keys, parts.join(".").as_bytes()),
+        Err(OpenError::Tampered)
+    ));
+}
+
+#[test]
+fn record_pointers_allow_cluster_origins_without_relaxing_source_policy() {
+    for origin in [
+        "http://cma-api.chrono-bot.svc",
+        "http://[::1]:8090",
+        "https://cma.example",
+    ] {
+        let pointer = ChannelPointer {
+            v: 1,
+            record_url: format!("{origin}/records/one"),
+            record_id: "one".parse().unwrap(),
+        };
+        assert!(pointer.validate().is_ok());
+    }
+    for origin in [
+        "http://public.example",
+        "https://user:pass@cma.example",
+        "https://cma.example/x?y=z",
+    ] {
+        let pointer = ChannelPointer {
+            v: 1,
+            record_url: format!("{origin}/records/one"),
+            record_id: "one".parse().unwrap(),
+        };
+        assert!(pointer.validate().is_err());
+    }
+}

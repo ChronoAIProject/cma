@@ -17,8 +17,9 @@ pub use event_ref::{EventRef, EventRefPayload, ReplyAddress};
 pub use pointer::ChannelPointer;
 
 pub const MAX_TOKEN_LENGTH: usize = 4_096;
-pub const MAX_BLOB_BYTES: usize = 65_536;
-const MAX_BLOB_WIRE_LENGTH: usize = 100_000;
+/// Maximum plaintext with space for the wire prefix, nonce, tag and base64 expansion.
+pub const MAX_BLOB_BYTES: usize = (MAX_BLOB_WIRE_LENGTH - 14) / 4 * 3 - 28;
+const MAX_BLOB_WIRE_LENGTH: usize = 65_536;
 const TOKEN_VERSION: &str = "cmaeg1";
 const HKDF_SALT: &[u8] = b"cmaeg.v1";
 
@@ -174,7 +175,7 @@ impl fmt::Display for SealError {
         match self {
             Self::Serialize(error) => write!(formatter, "cannot serialize token payload: {error}"),
             Self::Random(_) => formatter.write_str("secure nonce generation failed"),
-            Self::TooLarge => formatter.write_str("sealed token exceeds 4096 characters"),
+            Self::TooLarge => formatter.write_str("sealed payload exceeds its size limit"),
         }
     }
 }
