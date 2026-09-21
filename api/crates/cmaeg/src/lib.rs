@@ -16,10 +16,12 @@ use tower_http::limit::RequestBodyLimitLayer;
 use utoipa::OpenApi;
 
 pub use config::{
-    Config, ConfigError, ManagementConfig, CMAEG_CMA_BASE_URL, CMAEG_CMA_SERVICE_TOKEN_FILE,
-    CMAEG_LISTEN, CMAEG_MASTER_KEYS_FILE, CMAEG_NYXID_BASE_URL, CMAEG_PROVIDERS,
-    CMAEG_PROVIDER_CONNECT_TIMEOUT_MS, CMAEG_PROVIDER_MAX_INFLIGHT,
-    CMAEG_PROVIDER_REQUEST_TIMEOUT_MS, CMAEG_PUBLIC_URL, CMAEG_TOOLS_NYXID_SLUG,
+    ChannelCacheConfig, Config, ConfigError, ManagementConfig, CMAEG_CHANNEL_CACHE_MAX,
+    CMAEG_CHANNEL_CACHE_TTL_MS, CMAEG_CHANNEL_NEGATIVE_TTL_MS, CMAEG_CMA_BASE_URL,
+    CMAEG_CMA_SERVICE_TOKEN_FILE, CMAEG_LISTEN, CMAEG_MASTER_KEYS_FILE, CMAEG_NYXID_BASE_URL,
+    CMAEG_PROVIDERS, CMAEG_PROVIDER_CONNECT_TIMEOUT_MS, CMAEG_PROVIDER_MAX_INFLIGHT,
+    CMAEG_PROVIDER_REQUEST_TIMEOUT_MS, CMAEG_PUBLIC_URL, CMAEG_RESTORE_RATE_PER_MINUTE,
+    CMAEG_RESTORE_TIMEOUT_MS, CMAEG_TOOLS_NYXID_SLUG,
 };
 
 const REQUEST_BODY_LIMIT_BYTES: usize = 1024 * 1024;
@@ -73,7 +75,10 @@ impl utoipa::Modify for ManagementSecurity {
 pub fn router() -> Router {
     Router::new()
         .route("/healthz", get(healthz))
-        .route("/readyz", get(readyz))
+        .route(
+            "/readyz",
+            get(http::readiness::readyz).with_state(http::readiness::Readiness::default()),
+        )
         .route("/openapi.json", get(openapi))
         .layer(RequestBodyLimitLayer::new(REQUEST_BODY_LIMIT_BYTES))
         .layer(axum::middleware::from_fn(http::problems::protocol_headers))
@@ -81,9 +86,13 @@ pub fn router() -> Router {
 
 /// Build the complete stateful router used by the running service.
 pub fn router_with_state(state: http::ManagementState) -> Router {
+    let readiness = state.readiness.clone();
     http::management::management_router(state)
         .route("/healthz", get(healthz))
-        .route("/readyz", get(readyz))
+        .route(
+            "/readyz",
+            get(http::readiness::readyz).with_state(readiness),
+        )
         .route("/openapi.json", get(openapi))
         .layer(RequestBodyLimitLayer::new(REQUEST_BODY_LIMIT_BYTES))
         .layer(axum::middleware::from_fn(http::problems::protocol_headers))
@@ -91,10 +100,6 @@ pub fn router_with_state(state: http::ManagementState) -> Router {
 
 async fn healthz() -> Json<StatusResponse> {
     Json(StatusResponse { status: "ok" })
-}
-
-async fn readyz() -> Json<StatusResponse> {
-    Json(StatusResponse { status: "ready" })
 }
 
 async fn openapi() -> Json<utoipa::openapi::OpenApi> {
@@ -112,8 +117,14 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let creator_auth = std::sync::Arc::new(auth::CreatorAuthenticator::new(
         &config.management.nyxid_base_url,
     )?);
-    let state =
-        http::ManagementState::new(providers, records, creator_auth, config.management.clone());
+    let state = http::ManagementState::new(
+        providers,
+        records,
+        creator_auth,
+        config.management.clone(),
+        config.channel_cache,
+    );
+    let _reachability_probe = state.readiness.start_probe(state.records.clone());
     let listener = tokio::net::TcpListener::bind(config.listen).await?;
     tracing::info!(bind = %config.listen, "CMAEG listening");
 

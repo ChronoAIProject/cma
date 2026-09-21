@@ -38,10 +38,12 @@ async fn health_and_readiness_are_live() {
         get_json(&base, "/healthz").await,
         serde_json::json!({"status": "ok"})
     );
-    assert_eq!(
-        get_json(&base, "/readyz").await,
-        serde_json::json!({"status": "ready"})
-    );
+    let response = reqwest::get(format!("{base}/readyz")).await.unwrap();
+    assert_eq!(response.status(), 503);
+    assert_eq!(response.headers()["cache-control"], "no-store");
+    let report: Value = response.json().await.unwrap();
+    assert_eq!(report["ready"], false);
+    assert_eq!(report["reasons"].as_array().unwrap().len(), 2);
     shutdown.send(()).expect("server is listening");
     task.await.expect("server task");
 }

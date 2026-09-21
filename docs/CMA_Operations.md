@@ -56,6 +56,11 @@ The gateway startup settings are:
 | `CMAEG_CMA_SERVICE_TOKEN_FILE` | Required | Mounted file containing the service-account bearer for CMA channel records and gateway rekey requests. |
 | `CMAEG_NYXID_BASE_URL` | Required | NyxID origin for creator authentication, with the same URL restrictions as the CMA origin. |
 | `CMAEG_TOOLS_NYXID_SLUG` | `cmaeg` | NyxID service slug in the provider tools advertisement, matching `[a-z0-9_]{1,32}`. |
+| `CMAEG_CHANNEL_CACHE_TTL_MS` | `60000` | Fresh lifetime of a resolved channel on this replica. |
+| `CMAEG_CHANNEL_NEGATIVE_TTL_MS` | `10000` | Lifetime of a cached CMA record-not-found result; expired negative entries are never served. |
+| `CMAEG_CHANNEL_CACHE_MAX` | `50000` | Maximum positive and negative channel entries on this replica. |
+| `CMAEG_RESTORE_RATE_PER_MINUTE` | `10` | Per-channel restore refill rate, with an initial burst of three. |
+| `CMAEG_RESTORE_TIMEOUT_MS` | `800` | Total cold-restore deadline, inside the record client's 1.5-second HTTP deadline. |
 
 Each allowlisted provider gets its own pooled HTTP client with a bounded idle
 pool, no redirects and the CMAEG user agent. Cleartext `.svc` clients use HTTP/2
@@ -86,8 +91,8 @@ IPv6 loopback and operator-configured cluster addresses.
 The management API is available at `/v1/channels`; `/openapi.json` describes all
 six operations, their authentication schemes, and the RFC 9457 error schema.
 Every HTTP response, including health, routing errors and body-limit refusals,
-carries `CMAEG-Protocol-Version: 1` and `Cache-Control: no-store`. Error bodies
-use `application/problem+json`. The request body limit is 1 MiB; the sealed
+carries `CMAEG-Protocol-Version: 1` and `Cache-Control: no-store`. Problem bodies
+use `application/problem+json`; readiness failures retain their diagnostic JSON. The request body limit is 1 MiB; the sealed
 channel definition must fit CMA's 65,536-byte record limit.
 
 | Method and path | Authorization | Result |
@@ -156,6 +161,52 @@ files, exercises create/read/delete/OpenAPI using `curl`, and checks responses
 and captured tracing output for the supplied credential fixtures. Other cases
 cover provider refusal, record-store rollback, ownership, version conflicts,
 credential retention, idempotency, Unicode output, truncated streams and rekey.
+
+### Channel restoration and readiness
+
+Ingress and tools use the shared channel resolver. A fresh entry is an in-memory
+lookup with no outbound request. A cold entry opens the sealed pointer, checks
+its exact CMA record URL, fetches one encrypted record, validates the definition
+and decodes the agent-key hash. Concurrent misses for the same channel share
+one restore, including when the initiating caller disconnects. The record
+version overrides the version inside the encrypted definition.
+
+Only record-not-found responses are negatively cached. CMA timeouts and server
+failures return 503 `channel_restore_unavailable` and can be retried. Invalid
+stored definitions return 503 `channel_invalid`; malformed IDs return 400 and
+authenticated tampering returns 404 before CMA is contacted. Restore attempts
+are rate limited per channel, returning 429 `rate_limited` after the available
+burst is consumed. Warm hits do not consume this allowance.
+
+An expired positive entry can be served while one background refresh is running,
+for at most one additional TTL. Negative entries never get this grace period.
+At capacity, insertion removes expired entries and then evicts the oldest entry
+in a bounded sample of 32. There is no external cache or persistent replica
+state. Update, delete and rekey invalidate the local cache, and an in-flight
+restore cannot republish a definition invalidated by that operation. Other
+replicas discover changes at the next TTL refresh; an outage can extend stale
+serving to the single additional TTL described above.
+
+`/readyz` reports `ready`, `reasons` and `cma_reachable`. Missing master keys or an
+unparsed provider registry make readiness false with HTTP 503. Production
+startup validates both before binding the listener. CMA reachability is probed
+at `/ready` immediately and every ten seconds and is diagnostic only: a CMA
+outage does not remove a locally initialized gateway from service. Unreachable
+CMA can still prevent cold channel restoration while cached channels remain
+available.
+
+Each restore emits a `cmaeg.restore` span with its record ID and pointer key ID,
+and an elapsed-seconds event carrying the reserved metric name
+`cmaeg_restore_duration_seconds`. Opening a blob under an older key logs its
+rekey need. Histogram export is added by the observability issue. No channel
+credentials or decrypted record bodies are included in these events.
+
+`cargo test -p cmaeg --test restore` exercises concurrent restoration, TTLs,
+rate limits, capacity, cancellation, invalidation races and the latency bound.
+Its HTTP harness submits 100 concurrent misses and checks one restore span and
+100 responses. Its `curl` readiness test stops and restarts the local fake CMA
+and observes the ten-second background probe through both reachability changes.
+The `/resolve` route in that harness exists only in the test server.
 
 ## Delivery Authority
 

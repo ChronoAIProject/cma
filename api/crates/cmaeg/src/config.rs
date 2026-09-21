@@ -6,6 +6,9 @@ use crate::providers::ProviderRegistry;
 use cmaeg_core::{channel::Secret, seal::MasterKeyRing};
 use reqwest::Url;
 
+mod cache;
+pub use cache::*;
+
 /// The listener address used by CMAEG.
 pub const CMAEG_LISTEN: &str = "CMAEG_LISTEN";
 pub const CMAEG_PROVIDERS: &str = "CMAEG_PROVIDERS";
@@ -79,6 +82,7 @@ pub struct Config {
     pub provider_max_inflight: usize,
     /// Configuration required to expose the channel management API.
     pub management: ManagementConfig,
+    pub channel_cache: ChannelCacheConfig,
 }
 
 /// Secrets and origins used by the channel management plane.
@@ -120,6 +124,7 @@ impl Config {
             provider_request_timeout,
             provider_max_inflight,
             management,
+            channel_cache: ChannelCacheConfig::from_env()?,
         })
     }
 }
@@ -253,7 +258,12 @@ fn positive_duration(
     let milliseconds = value
         .parse::<u64>()
         .ok()
-        .filter(|value| *value > 0)
+        .filter(|value| {
+            *value > 0
+                && std::time::Instant::now()
+                    .checked_add(std::time::Duration::from_millis(*value))
+                    .is_some()
+        })
         .ok_or_else(|| ConfigError::InvalidDuration {
             name,
             value: value.clone(),

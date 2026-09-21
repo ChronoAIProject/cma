@@ -98,6 +98,19 @@ impl RecordClient {
         })
     }
 
+    /// Probe CMA's readiness endpoint without inspecting or mutating channel records.
+    pub async fn reachable(&self) -> bool {
+        let Ok(url) = self.base_url.join("/ready") else {
+            return false;
+        };
+        self.client
+            .get(url)
+            .timeout(Duration::from_millis(1_500))
+            .send()
+            .await
+            .is_ok_and(|response| response.status().is_success())
+    }
+
     pub fn record_url(&self, record_id: &str) -> Result<Url, RecordError> {
         let id = uuid::Uuid::parse_str(record_id)
             .map_err(|_| RecordError::Rejected("invalid record ID".into()))?;

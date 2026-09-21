@@ -41,6 +41,11 @@ impl MountedSecrets {
             .env_remove("CMAEG_PROVIDER_REQUEST_TIMEOUT_MS")
             .env_remove("CMAEG_PROVIDER_MAX_INFLIGHT")
             .env_remove("CMAEG_TOOLS_NYXID_SLUG")
+            .env_remove("CMAEG_CHANNEL_CACHE_TTL_MS")
+            .env_remove("CMAEG_CHANNEL_NEGATIVE_TTL_MS")
+            .env_remove("CMAEG_CHANNEL_CACHE_MAX")
+            .env_remove("CMAEG_RESTORE_RATE_PER_MINUTE")
+            .env_remove("CMAEG_RESTORE_TIMEOUT_MS")
             .env("CMAEG_PROVIDERS", json!([{
                 "slug":"cma_codex", "base_url":provider.base_url(), "kind":"responses_http",
                 "paths": {"agent_card":"/.well-known/agent-card.json", "binding":"/api/v1/cmaeg/bindings/{binding_id}",
@@ -216,6 +221,27 @@ async fn compiled_binary_refuses_missing_and_invalid_mounted_secrets() {
             String::from_utf8_lossy(&output.stderr)
         );
         assert!(logs.contains(key), "{logs}");
+    }
+    for key in [
+        "CMAEG_CHANNEL_CACHE_TTL_MS",
+        "CMAEG_CHANNEL_NEGATIVE_TTL_MS",
+        "CMAEG_CHANNEL_CACHE_MAX",
+        "CMAEG_RESTORE_RATE_PER_MINUTE",
+        "CMAEG_RESTORE_TIMEOUT_MS",
+    ] {
+        let output = files
+            .command("127.0.0.1:0", &cma, &nyxid, &provider)
+            .env(key, "0")
+            .output()
+            .await
+            .unwrap();
+        assert!(!output.status.success());
+        let logs = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(logs.contains(key));
     }
     for (name, bad) in [
         ("keys", "invalid-master-fixture"),

@@ -122,6 +122,10 @@ EXPOSE 8090
 # Runtime contract: CMAEG_PUBLIC_URL, CMAEG_CMA_BASE_URL and CMAEG_NYXID_BASE_URL
 # are required origins. Mount CMAEG_MASTER_KEYS_FILE and CMAEG_CMA_SERVICE_TOKEN_FILE
 # as secret files; startup refuses missing or invalid contents before binding.
-# CMAEG_TOOLS_NYXID_SLUG defaults to cmaeg. See docs/CMA_Operations.md.
+# CMAEG_TOOLS_NYXID_SLUG defaults to cmaeg. Channel cache settings default to
+# CMAEG_CHANNEL_CACHE_TTL_MS=60000, CMAEG_CHANNEL_NEGATIVE_TTL_MS=10000,
+# CMAEG_CHANNEL_CACHE_MAX=50000, CMAEG_RESTORE_RATE_PER_MINUTE=10 and
+# CMAEG_RESTORE_TIMEOUT_MS=800. /readyz reports local readiness and CMA reachability.
+# See docs/CMA_Operations.md.
 ENTRYPOINT ["/usr/local/bin/cmaeg"]
 # Health is asserted by the Kubernetes probes in infra/api/deployment.yaml.
