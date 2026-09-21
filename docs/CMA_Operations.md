@@ -81,6 +81,82 @@ workspace's existing `time` and `uuid` dependencies for timestamps and resource
 IDs. The pure protocol library uses `url` to validate record pointers, including
 IPv6 loopback and operator-configured cluster addresses.
 
+### Channel management
+
+The management API is available at `/v1/channels`; `/openapi.json` describes all
+six operations, their authentication schemes, and the RFC 9457 error schema.
+Every HTTP response, including health, routing errors and body-limit refusals,
+carries `CMAEG-Protocol-Version: 1` and `Cache-Control: no-store`. Error bodies
+use `application/problem+json`. The request body limit is 1 MiB; the sealed
+channel definition must fit CMA's 65,536-byte record limit.
+
+| Method and path | Authorization | Result |
+| --- | --- | --- |
+| `POST /v1/channels` | Creator bearer | Validate, bind the provider, encrypt and store the definition, return 201 with the channel ID, record ID, provider result and endpoints. |
+| `GET /v1/channels/{channel_id}` | Owning creator | Return the public definition, current record version and endpoints. |
+| `PUT /v1/channels/{channel_id}` | Owning creator | Replace channel policy with the required `expected_version`; return 200 or 409 on a stale version. |
+| `DELETE /v1/channels/{channel_id}?expected_version=N` | Owning creator | Unbind the provider, delete the matching record and return 204. |
+| `POST /v1/channels/{channel_id}/test` | Owning creator | Run one synthetic provider turn under a 30-second total deadline; return acceptance latency, up to 200 Unicode characters and the provider level. |
+| `POST /v1/channels/{channel_id}/rekey` | CMA service bearer | Reseal the stored definition under the current master key with a version check and return its `kid`. |
+
+Create requires schema version 1, a name of 1–80 bytes, an Agent Profile snapshot,
+a registered provider slug, sources, partition and reply policies, and
+credentials. The provider receives the profile, its canonical digest, the agent
+key and the gateway tools advertisement. The channel key and HMAC secrets remain
+inside the encrypted definition. A profile's author metadata is independent of
+the authenticated channel owner. Relay sources require a channel key; custom
+HMAC sources must reference a supplied base64 HMAC secret. The gateway derives
+each relay JWKS URL from its HTTPS issuer origin.
+
+The returned endpoints identify the NyxID callback and custom-event URL that the
+creator registers elsewhere. They are addresses for the later ingress work;
+management creation does not register a NyxID route. After deleting a channel,
+**the creator must also remove its NyxID route**. The gateway does not list
+channels for creators; the creator keeps its channel IDs.
+
+The optional create `Idempotency-Key` header is limited to 256 ASCII bytes.
+Successful responses replay for ten minutes **on the same replica only**.
+Concurrent equal requests on that replica allocate one record and binding;
+reusing the key with another payload returns 409. A different replica or a
+process restart has no replay entry. Keep creation requests on one replica when
+using this guarantee. At 10,000 live replay entries, new keyed creates return
+503 until entries expire.
+
+Read/update/delete/test enforce the sealed definition's owner; another subject
+receives 404. Malformed channel IDs return 400, while authenticated tampering or
+an unknown key ID returns 404. CMA's record version is authoritative and is
+returned both at the top level and in the public definition. Newly stored
+records begin at version 1.
+
+Updates preserve the channel ID, record ID, binding ID and creation timestamp.
+The provider slug cannot change on an existing channel. Omitted credentials
+are retained; explicitly supplied credential fields replace only those fields.
+Changing either the profile digest or the agent key rebinds the provider before
+the record write. A failed create record write triggers a best-effort unbind;
+a failed update record write never unbinds the existing channel.
+
+Provider mutation and CMA record storage do not share a transaction. Mutation
+locks serialize changes within a replica, and CMA version checks detect racing
+record writes across replicas. A failed write after rebind can leave the provider
+with the attempted profile until the caller rereads and retries its intended
+update with the latest version. A failed record delete after unbind should be
+retried with the current version. Coordinate management writes for a channel
+when multiple replicas serve creators.
+
+For master-key rotation, put the new key first while retaining old keys, restart
+the gateway through the normal deployment process, then invoke rekey for each
+retained channel. Rekey rewrites the blob and advances its record version; the
+channel ID remains stable. Retain the old key while any channel ID sealed with
+it remains in use, even after its stored blob has been rekeyed.
+
+Local verification is reproducible with
+`cargo test -p cmaeg --test management` from `api/`. It starts fake CMA, NyxID
+and provider services, launches the actual gateway binary with mounted test
+files, exercises create/read/delete/OpenAPI using `curl`, and checks responses
+and captured tracing output for the supplied credential fixtures. Other cases
+cover provider refusal, record-store rollback, ownership, version conflicts,
+credential retention, idempotency, Unicode output, truncated streams and rekey.
+
 ## Delivery Authority
 
 For this milestone, the maintainer's explicit instructions override the release
