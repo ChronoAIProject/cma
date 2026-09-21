@@ -36,6 +36,8 @@ pub enum Capability {
     ReadUserDirectory,
     /// Read and change deployment-owned settings.
     ConfigurePlatform,
+    /// Manage opaque CMA event-gateway channel records.
+    ManageGatewayRecords,
 }
 
 /// A closed set of capabilities established by the authentication boundary.

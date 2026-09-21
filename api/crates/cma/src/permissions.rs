@@ -16,6 +16,7 @@ pub mod permission {
     pub const ADMIN_USERS: &str = "cma:admin:users";
     pub const ADMIN_CONTROL: &str = "cma:admin:control";
     pub const ADMIN_SETTINGS: &str = "cma:admin:settings";
+    pub const GATEWAY_RECORDS: &str = "cma:gateway:records";
 }
 
 const PROVIDER_WILDCARD: &str = "*";
@@ -30,7 +31,7 @@ const OWN_WORK: [Capability; 6] = [
     Capability::LaunchTriggers,
 ];
 
-const ALL_CAPABILITIES: [Capability; 13] = [
+const ALL_CAPABILITIES: [Capability; 14] = [
     Capability::CreateSandbox,
     Capability::UseOwnSandboxes,
     Capability::DeleteOwnSandbox,
@@ -44,6 +45,7 @@ const ALL_CAPABILITIES: [Capability; 13] = [
     Capability::ReadActivityLog,
     Capability::ReadUserDirectory,
     Capability::ConfigurePlatform,
+    Capability::ManageGatewayRecords,
 ];
 
 /// Translate exact provider grants. Unknown permissions grant nothing.
@@ -70,6 +72,7 @@ pub fn capabilities_from_permissions<S: AsRef<str>>(
             permission::ADMIN_USERS => granted.push(Capability::ReadUserDirectory),
             permission::ADMIN_CONTROL => granted.push(Capability::ControlAnySandbox),
             permission::ADMIN_SETTINGS => granted.push(Capability::ConfigurePlatform),
+            permission::GATEWAY_RECORDS => granted.push(Capability::ManageGatewayRecords),
             _ => {}
         }
     }
@@ -136,5 +139,12 @@ mod tests {
         assert!(authority.allows(Capability::ReadAllSandboxes));
         assert!(authority.allows(Capability::ReadRuntimeInventory));
         assert_eq!(authority.iter().count(), 2);
+    }
+
+    #[test]
+    fn gateway_record_permission_maps_to_its_dedicated_capability() {
+        let authority = capabilities_from_permissions([permission::GATEWAY_RECORDS]);
+        assert!(authority.allows(Capability::ManageGatewayRecords));
+        assert_eq!(authority.iter().count(), 1);
     }
 }

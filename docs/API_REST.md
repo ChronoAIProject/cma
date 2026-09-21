@@ -98,6 +98,28 @@ response is exactly `{ email_signup, social_providers, invite_code_required,
 register_available }`. CMA reports registration availability but never creates
 NyxID users or roles. Anonymous preview/badge GETs and OAuth callbacks are inert.
 
+## Event Gateway Channel Records
+
+The `/api/v1/gateway/channel-records` routes store opaque, base64-encoded CMAEG
+channel-definition blobs for callers with the NyxID permission
+`cma:gateway:records`. CMA does not decrypt or interpret the blob. Record ids
+are canonical UUID v4 values, blobs contain 1 to 65,536 decoded bytes, and all
+responses carry `Cache-Control: no-store`.
+
+`PUT /api/v1/gateway/channel-records/{record_id}` accepts
+`{ owner, blob, expected_version }` and returns the new version and update time.
+An omitted expected version creates a record; a supplied version performs a
+compare-and-set update. A stale version returns `409 conflict`. `GET` returns
+the full base64 blob and returns `404 gateway_record_not_found` when absent.
+`DELETE` accepts the optional `expected_version` query parameter and returns
+`204` on deletion, `404 gateway_record_not_found` when absent, or `409 conflict`
+for a stale version.
+
+`GET /api/v1/gateway/channel-records?owner=&after=&limit=` lists stable
+record-id order and returns `{ items, next_after }`. The default limit is 100
+and valid limits are 1 through 200. Listing and all mutations require the same
+capability; an authenticated caller without it receives `403 forbidden`.
+
 ## Errors, Retry And Concurrency
 
 Errors use `application/problem+json` with standard `type`, `title`, `status`,
@@ -682,6 +704,10 @@ above applies even when an operation annotates only its principal responses.
 | `GET /api/v1/resource-shares/{kind}/{id}/{share_id}` | - | - | 200 ResourceShareView |
 | `PATCH /api/v1/resource-shares/{kind}/{id}/{share_id}` | UpdateShareBody; key | - | 200 ShareReceiptView |
 | `DELETE /api/v1/resource-shares/{kind}/{id}/{share_id}` | -; key | expected_revision* | 200 ShareReceiptView |
+| `GET /api/v1/gateway/channel-records` | - | owner, after, limit | 200 GatewayRecordPageView |
+| `PUT /api/v1/gateway/channel-records/{record_id}` | PutGatewayRecordRequest | - | 200 PutGatewayRecordView |
+| `GET /api/v1/gateway/channel-records/{record_id}` | - | - | 200 GatewayRecordView; 404 ProblemDocument |
+| `DELETE /api/v1/gateway/channel-records/{record_id}` | - | expected_version | 204 empty; 404/409 ProblemDocument |
 
 ### Administration
 

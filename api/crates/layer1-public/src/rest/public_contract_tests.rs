@@ -20,6 +20,7 @@ mod credential_cases;
 mod domains;
 mod experience_cases;
 mod fault_cases;
+mod gateway_cases;
 mod inventory;
 mod inventory_cases;
 mod invoke_cases;
@@ -231,6 +232,9 @@ async fn scenario(name: &str) -> Scenario {
         return scenario;
     }
     if let Some(scenario) = fault_cases::scenario(name).await {
+        return scenario;
+    }
+    if let Some(scenario) = gateway_cases::scenario(name).await {
         return scenario;
     }
     if let Some(scenario) = agent_cases::scenario(name).await {
