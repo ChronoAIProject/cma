@@ -218,3 +218,21 @@ fn record_pointers_allow_cluster_origins_without_relaxing_source_policy() {
         assert!(pointer.validate().is_err());
     }
 }
+
+#[test]
+fn alternate_key_id_spellings_cannot_alias_authenticated_tokens() {
+    let keys = ring();
+    let token =
+        cmaeg_core::seal::seal(&keys, TokenKind::Channel, &serde_json::json!({"ok":true})).unwrap();
+    let blob = String::from_utf8(cmaeg_core::seal::seal_blob(&keys, b"fixture").unwrap()).unwrap();
+    for alias in [".02.", ".+2.", ".0002."] {
+        assert!(matches!(
+            open::<serde_json::Value>(&keys, TokenKind::Channel, &token.replacen(".2.", alias, 1)),
+            Err(OpenError::Format)
+        ));
+        assert!(matches!(
+            cmaeg_core::seal::open_blob(&keys, blob.replacen(".2.", alias, 1).as_bytes()),
+            Err(OpenError::Format)
+        ));
+    }
+}
