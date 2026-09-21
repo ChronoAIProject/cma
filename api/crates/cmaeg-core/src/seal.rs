@@ -256,6 +256,11 @@ pub fn open<T: DeserializeOwned>(
         return Err(OpenError::WrongKind);
     }
     let kid = parts[2].parse::<u8>().map_err(|_| OpenError::Format)?;
+    // Token text is also a cache/rate-limit identity; equivalent numeric spellings
+    // must not create new identities for the same authenticated ciphertext.
+    if kid.to_string() != parts[2] {
+        return Err(OpenError::Format);
+    }
     let key = ring.key(kid).ok_or(OpenError::UnknownKid(kid))?;
     let mut bytes = general_purpose::URL_SAFE_NO_PAD
         .decode(parts[3])
@@ -317,6 +322,11 @@ pub fn open_blob(ring: &MasterKeyRing, token: &[u8]) -> Result<Opened<Vec<u8>>, 
         return Err(OpenError::Format);
     }
     let kid = parts[2].parse::<u8>().map_err(|_| OpenError::Format)?;
+    // Token text is also a cache/rate-limit identity; equivalent numeric spellings
+    // must not create new identities for the same authenticated ciphertext.
+    if kid.to_string() != parts[2] {
+        return Err(OpenError::Format);
+    }
     let key = ring.key(kid).ok_or(OpenError::UnknownKid(kid))?;
     let mut bytes = general_purpose::URL_SAFE_NO_PAD
         .decode(parts[3])
