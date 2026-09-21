@@ -12,6 +12,50 @@ external event channels and call agent providers. Its initial health server
 listens on `CMAEG_LISTEN`, defaulting to `0.0.0.0:8090`. The deployment image is
 `cma-cmaeg`; deployment manifests are added with the gateway rollout issue.
 
+The gateway loads its outbound provider policy once at startup. `CMAEG_PROVIDERS`
+is a JSON array; an empty array is the default and means that no provider calls
+are permitted. Each entry has this shape:
+
+```json
+[
+  {
+    "slug": "cma_codex",
+    "base_url": "https://provider.example",
+    "kind": "responses_http",
+    "paths": {
+      "agent_card": "/.well-known/agent-card.json",
+      "binding": "/api/v1/cmaeg/bindings/{binding_id}",
+      "conversation": "/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}",
+      "responses": "/api/v2/responses"
+    },
+    "max_inflight": 256
+  }
+]
+```
+
+Provider slugs are lowercase names of up to 32 characters. The registry accepts
+HTTPS origins and cleartext HTTP only for loopback or Kubernetes `.svc` hosts;
+credentials, queries, fragments, unresolved placeholders, traversal segments
+and duplicate slugs are rejected before the service starts. Path variables are
+percent-encoded as single segments, and redirects are disabled. Keep provider
+credentials in the runtime secret mechanism; the allowlist contains origins
+and route templates, never bearer keys.
+
+The provider client settings are:
+
+| Environment key | Default | Purpose |
+| --- | ---: | --- |
+| `CMAEG_LISTEN` | `0.0.0.0:8090` | CMAEG listen address. |
+| `CMAEG_PROVIDERS` | `[]` | Strict JSON provider allowlist described above. |
+| `CMAEG_PROVIDER_CONNECT_TIMEOUT_MS` | `2000` | TCP/TLS connection timeout for each provider pool. |
+| `CMAEG_PROVIDER_REQUEST_TIMEOUT_MS` | `30000` | Deadline for provider setup and probe requests, and the HTTP stream request. |
+| `CMAEG_PROVIDER_MAX_INFLIGHT` | `256` | Deployment-wide upper bound applied to each provider's semaphore. Calls wait at most 50 ms for a provider permit before returning a typed busy result. |
+
+Each allowlisted provider gets its own pooled HTTP client with a bounded idle
+pool, no redirects and the CMAEG user agent. Cleartext `.svc` clients use HTTP/2
+prior knowledge. Changes to any of these keys require a normal deployment and
+startup validation; malformed policy or non-positive limits fail closed.
+
 ## Delivery Authority
 
 For this milestone, the maintainer's explicit instructions override the release
