@@ -31,6 +31,18 @@ pub struct Capabilities {
     pub attachments: String,
     pub max_text_chars: u32,
 }
+impl Capabilities {
+    pub fn telegram() -> Self {
+        Self {
+            edit: false,
+            typing: false,
+            buttons: "numbered_text".into(),
+            cards: "text".into(),
+            attachments: "link_text".into(),
+            max_text_chars: 4000,
+        }
+    }
+}
 pub(super) async fn read(
     state: &ToolsState,
     channel: &ResolvedChannel,
@@ -66,14 +78,7 @@ pub(super) async fn read(
             conversation: activity.conversation,
             occurred_at: activity.occurred_at,
         },
-        capabilities: Capabilities {
-            edit: false,
-            typing: false,
-            buttons: "numbered_text".into(),
-            cards: "text".into(),
-            attachments: "link_text".into(),
-            max_text_chars: 4000,
-        },
+        capabilities: Capabilities::telegram(),
     })
 }
 fn unavailable() -> Problem {
