@@ -5,6 +5,13 @@ The current runtime contract is **3**, not the contract-2 image named in the
 original #832 plan. Product semantics are defined in [CMA Model](CMA_Model.md);
 public routes are in [REST](API_REST.md).
 
+## CMAEG
+
+CMAEG (CMA Event Gateway) is a separate stateless service that will receive
+external event channels and call agent providers. Its initial health server
+listens on `CMAEG_LISTEN`, defaulting to `0.0.0.0:8090`. The deployment image is
+`cma-cmaeg`; deployment manifests are added with the gateway rollout issue.
+
 ## Delivery Authority
 
 For this milestone, the maintainer's explicit instructions override the release

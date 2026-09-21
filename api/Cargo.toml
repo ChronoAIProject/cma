@@ -6,6 +6,8 @@ members = [
     "crates/layer3-adapter",
     "crates/layer4-runtime",
     "crates/cma",
+    "crates/cmaeg-core",
+    "crates/cmaeg",
 ]
 
 [workspace.package]
@@ -84,7 +86,7 @@ tokio = { version = "1", features = [
     "process",
 ] }
 tokio-tungstenite = "0.24"
-tower-http = { version = "0.6", features = ["cors", "trace", "fs", "request-id"] }
+tower-http = { version = "0.6", features = ["cors", "trace", "fs", "request-id", "limit"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 unicode-normalization = "0.1"
