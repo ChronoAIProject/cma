@@ -32,7 +32,11 @@ pub async fn protocol_headers(
     next: axum::middleware::Next,
 ) -> Response {
     let mut response = next.run(request).await;
-    if (response.status().is_client_error() || response.status().is_server_error())
+    if response
+        .extensions()
+        .get::<super::readiness::ReadinessReport>()
+        .is_none()
+        && (response.status().is_client_error() || response.status().is_server_error())
         && response
             .headers()
             .get(header::CONTENT_TYPE)

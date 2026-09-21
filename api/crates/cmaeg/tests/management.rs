@@ -53,6 +53,14 @@ async fn app_with_keys(
     nyxid: &FakeNyxid,
     ring: cmaeg_core::seal::MasterKeyRing,
 ) -> (String, oneshot::Sender<()>, tokio::task::JoinHandle<()>) {
+    serve_app(management_state(provider, cma, nyxid, ring)).await
+}
+fn management_state(
+    provider: &FakeProvider,
+    cma: &FakeCma,
+    nyxid: &FakeNyxid,
+    ring: cmaeg_core::seal::MasterKeyRing,
+) -> ManagementState {
     let providers = Arc::new(
         ProviderClient::new(
             registry(provider.base_url()),
@@ -64,7 +72,7 @@ async fn app_with_keys(
     );
     let records = Arc::new(RecordClient::new(&cma.base_url, "cma-service").unwrap());
     let creator_auth = Arc::new(CreatorAuthenticator::new(&nyxid.base_url).unwrap());
-    let state = ManagementState::new(
+    ManagementState::new(
         providers,
         records,
         creator_auth,
@@ -76,7 +84,12 @@ async fn app_with_keys(
             cma_service_token: cmaeg_core::channel::Secret::new("cma-service"),
             nyxid_base_url: nyxid.base_url.clone(),
         },
-    );
+        cmaeg::ChannelCacheConfig::default(),
+    )
+}
+async fn serve_app(
+    state: ManagementState,
+) -> (String, oneshot::Sender<()>, tokio::task::JoinHandle<()>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let (shutdown, signal) = oneshot::channel();
@@ -147,3 +160,6 @@ mod boundaries;
 mod lifecycle;
 #[path = "management/operations.rs"]
 mod operations;
+
+#[path = "management/invalidation.rs"]
+mod invalidation;
