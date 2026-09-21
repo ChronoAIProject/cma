@@ -17,6 +17,7 @@ pub use turns::*;
 
 /// The listener address used by CMAEG.
 pub const CMAEG_LISTEN: &str = "CMAEG_LISTEN";
+pub const CMAEG_METRICS_LISTEN: &str = "CMAEG_METRICS_LISTEN";
 pub const CMAEG_PROVIDERS: &str = "CMAEG_PROVIDERS";
 pub const CMAEG_PROVIDER_CONNECT_TIMEOUT_MS: &str = "CMAEG_PROVIDER_CONNECT_TIMEOUT_MS";
 pub const CMAEG_PROVIDER_REQUEST_TIMEOUT_MS: &str = "CMAEG_PROVIDER_REQUEST_TIMEOUT_MS";
@@ -33,6 +34,7 @@ pub const CMAEG_TOOLS_NYXID_SLUG: &str = "CMAEG_TOOLS_NYXID_SLUG";
 pub enum ConfigError {
     /// The configured listener was not a valid socket address.
     InvalidListen {
+        name: &'static str,
         value: String,
         source: std::net::AddrParseError,
     },
@@ -49,8 +51,12 @@ pub enum ConfigError {
 impl std::fmt::Display for ConfigError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::InvalidListen { value, source } => {
-                write!(formatter, "{CMAEG_LISTEN}={value:?} is invalid: {source}")
+            Self::InvalidListen {
+                name,
+                value,
+                source,
+            } => {
+                write!(formatter, "{name}={value:?} is invalid: {source}")
             }
             Self::InvalidProviders { detail } => {
                 write!(formatter, "{CMAEG_PROVIDERS} is invalid: {detail}")
@@ -78,6 +84,7 @@ impl std::error::Error for ConfigError {}
 pub struct Config {
     /// Address on which the HTTP service accepts requests.
     pub listen: SocketAddr,
+    pub metrics_listen: SocketAddr,
     /// Providers explicitly allowed to receive outbound CMAEG requests.
     pub providers: ProviderRegistry,
     /// TCP/TLS connection establishment timeout for provider clients.
@@ -109,9 +116,17 @@ impl Config {
     /// Read configuration from the process environment.
     pub fn from_env() -> Result<Self, ConfigError> {
         let value = env::var(CMAEG_LISTEN).unwrap_or_else(|_| "0.0.0.0:8090".to_owned());
-        let listen = value
-            .parse()
-            .map_err(|source| ConfigError::InvalidListen { value, source })?;
+        let listen = value.parse().map_err(|source| ConfigError::InvalidListen {
+            name: CMAEG_LISTEN,
+            value,
+            source,
+        })?;
+        let value = env::var(CMAEG_METRICS_LISTEN).unwrap_or_else(|_| "0.0.0.0:9091".to_owned());
+        let metrics_listen = value.parse().map_err(|source| ConfigError::InvalidListen {
+            name: CMAEG_METRICS_LISTEN,
+            value,
+            source,
+        })?;
         let providers_json = env::var(CMAEG_PROVIDERS).unwrap_or_else(|_| "[]".to_owned());
         let providers = ProviderRegistry::parse(&providers_json)?;
         let provider_connect_timeout = positive_duration(CMAEG_PROVIDER_CONNECT_TIMEOUT_MS, 2_000)?;
@@ -128,6 +143,7 @@ impl Config {
         let management = ManagementConfig::from_env()?;
         Ok(Self {
             listen,
+            metrics_listen,
             providers,
             provider_connect_timeout,
             provider_request_timeout,
