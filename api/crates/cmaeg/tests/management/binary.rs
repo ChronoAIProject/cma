@@ -46,6 +46,9 @@ impl MountedSecrets {
             .env_remove("CMAEG_CHANNEL_CACHE_MAX")
             .env_remove("CMAEG_RESTORE_RATE_PER_MINUTE")
             .env_remove("CMAEG_RESTORE_TIMEOUT_MS")
+            .env_remove("CMAEG_JWKS_TTL_MS")
+            .env_remove("CMAEG_INGRESS_MAX_BODY")
+            .env_remove("CMAEG_INGRESS_INFLIGHT")
             .env("CMAEG_PROVIDERS", json!([{
                 "slug":"cma_codex", "base_url":provider.base_url(), "kind":"responses_http",
                 "paths": {"agent_card":"/.well-known/agent-card.json", "binding":"/api/v1/cmaeg/bindings/{binding_id}",
@@ -172,7 +175,7 @@ async fn compiled_binary_loads_mounted_secrets_and_serves_curl_without_leaking_c
     let read = curl("GET", &format!("{base}/v1/channels/{id}"), None, 200).await;
     assert_eq!(read["definition"]["name"], "support-bot");
     let document = curl("GET", &format!("{base}/openapi.json"), None, 200).await;
-    assert_eq!(document["paths"].as_object().unwrap().len(), 4);
+    assert_eq!(document["paths"].as_object().unwrap().len(), 5);
     curl(
         "DELETE",
         &format!("{base}/v1/channels/{id}?expected_version=1"),
@@ -228,6 +231,9 @@ async fn compiled_binary_refuses_missing_and_invalid_mounted_secrets() {
         "CMAEG_CHANNEL_CACHE_MAX",
         "CMAEG_RESTORE_RATE_PER_MINUTE",
         "CMAEG_RESTORE_TIMEOUT_MS",
+        "CMAEG_JWKS_TTL_MS",
+        "CMAEG_INGRESS_MAX_BODY",
+        "CMAEG_INGRESS_INFLIGHT",
     ] {
         let output = files
             .command("127.0.0.1:0", &cma, &nyxid, &provider)

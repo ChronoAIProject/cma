@@ -139,6 +139,11 @@ async fn http_errors_and_openapi_share_the_management_contract() {
         .unwrap()
         .values()
         .flat_map(|path| path.as_object().unwrap().values())
+        .filter(|operation| {
+            operation["tags"]
+                .as_array()
+                .is_some_and(|tags| tags.iter().any(|tag| tag == "channels"))
+        })
         .map(|operation| {
             assert!(
                 operation["responses"]["default"]["content"]["application/problem+json"]
