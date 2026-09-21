@@ -21,15 +21,15 @@ use tower_http::limit::RequestBodyLimitLayer;
 use utoipa::OpenApi;
 
 pub use config::{
-    ChannelCacheConfig, Config, ConfigError, IngressConfig, ManagementConfig, TurnConfig,
-    CMAEG_ACCEPT_BUDGET_MS, CMAEG_BUSY_RETRY_MAX_MS, CMAEG_CHANNEL_CACHE_MAX,
-    CMAEG_CHANNEL_CACHE_TTL_MS, CMAEG_CHANNEL_NEGATIVE_TTL_MS, CMAEG_CMA_BASE_URL,
-    CMAEG_CMA_SERVICE_TOKEN_FILE, CMAEG_DRAIN_SECONDS, CMAEG_INGRESS_INFLIGHT,
-    CMAEG_INGRESS_MAX_BODY, CMAEG_JWKS_TTL_MS, CMAEG_LISTEN, CMAEG_MASTER_KEYS_FILE,
-    CMAEG_NYXID_BASE_URL, CMAEG_PROVIDERS, CMAEG_PROVIDER_CONNECT_TIMEOUT_MS,
-    CMAEG_PROVIDER_MAX_INFLIGHT, CMAEG_PROVIDER_REQUEST_TIMEOUT_MS, CMAEG_PUBLIC_URL,
-    CMAEG_RESTORE_RATE_PER_MINUTE, CMAEG_RESTORE_TIMEOUT_MS, CMAEG_TOOLS_NYXID_SLUG,
-    CMAEG_TURN_TIMEOUT_MS,
+    ChannelCacheConfig, Config, ConfigError, DeliveryConfig, IngressConfig, ManagementConfig,
+    TurnConfig, CMAEG_ACCEPT_BUDGET_MS, CMAEG_ACK_TEXT, CMAEG_BUSY_RETRY_MAX_MS,
+    CMAEG_CHANNEL_CACHE_MAX, CMAEG_CHANNEL_CACHE_TTL_MS, CMAEG_CHANNEL_NEGATIVE_TTL_MS,
+    CMAEG_CMA_BASE_URL, CMAEG_CMA_SERVICE_TOKEN_FILE, CMAEG_DRAIN_SECONDS, CMAEG_FAILURE_TEXT,
+    CMAEG_HEARTBEAT_MS, CMAEG_INGRESS_INFLIGHT, CMAEG_INGRESS_MAX_BODY, CMAEG_JWKS_TTL_MS,
+    CMAEG_LISTEN, CMAEG_MASTER_KEYS_FILE, CMAEG_NYXID_BASE_URL, CMAEG_NYXID_REPLY_TIMEOUT_MS,
+    CMAEG_PROVIDERS, CMAEG_PROVIDER_CONNECT_TIMEOUT_MS, CMAEG_PROVIDER_MAX_INFLIGHT,
+    CMAEG_PROVIDER_REQUEST_TIMEOUT_MS, CMAEG_PUBLIC_URL, CMAEG_RESTORE_RATE_PER_MINUTE,
+    CMAEG_RESTORE_TIMEOUT_MS, CMAEG_TOOLS_NYXID_SLUG, CMAEG_TURN_TIMEOUT_MS,
 };
 
 const REQUEST_BODY_LIMIT_BYTES: usize = 1024 * 1024;
@@ -140,7 +140,16 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let _reachability_probe = state.readiness.start_probe(state.records.clone());
     let tracker = turns::TurnTracker::new(state.readiness.clone());
     let (delivery, outcomes) = tokio::sync::mpsc::channel(256);
-    let delivery_task = tokio::spawn(turns::outcomes::log_outcomes(outcomes));
+    let delivery_engine = delivery::engine::DeliveryEngine::start(
+        outcomes,
+        state.master_keys.clone(),
+        delivery::relay_client::RelayClient::new(
+            &config.management.nyxid_base_url,
+            config.delivery.reply_timeout,
+        )?,
+        config.delivery.clone(),
+        tracker.clone(),
+    );
     let runner = std::sync::Arc::new(turns::TurnRunner::new(
         providers.clone(),
         tracker.clone(),
@@ -180,6 +189,11 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if !tracker.drain(deadline).await {
             tracing::warn!("turn drain deadline reached; remaining consumers cancelled");
         }
+        if !delivery_engine.drain(deadline).await {
+            tracing::warn!(
+                "delivery drain deadline reached; remaining sends cancelled with unknown outcome"
+            );
+        }
         let _ = shutdown_started.send(deadline);
     })
     .into_future();
@@ -195,7 +209,6 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             }
         }
     }
-    delivery_task.abort();
     Ok(())
 }
 

@@ -11,6 +11,8 @@ mod transport;
 #[path = "relay/verification.rs"]
 mod verification;
 
+#[path = "fake_nyxid_reply.rs"]
+pub mod fake_nyxid_reply;
 #[path = "fake_provider.rs"]
 mod fake_provider;
 #[path = "relay/runner_binary.rs"]
