@@ -154,6 +154,7 @@ jobs:
             infra/api/serviceaccount.yaml infra/api/secretproviderclass.yaml \
             infra/api/httproute.yaml infra/api/healthcheckpolicy.yaml \
             infra/api/gcpbackendpolicy.yaml \
+            infra/cmaeg/Dockerfile \
             infra/runtime/Dockerfile \
             infra/storage/home-seed.yaml infra/storage/home-template.yaml \
             infra/web/Dockerfile infra/web/configmap.yaml infra/web/deployment.yaml \
@@ -184,6 +185,16 @@ jobs:
             && { echo "::error::layer3-adapter must not depend on layer1 or layer2"; fail=1; }
           grep -q 'layer4-runtime' api/crates/cma/Cargo.toml \
             && { echo "::error::control plane must not depend on layer4-runtime"; fail=1; }
+          for manifest in api/crates/layer1-public/Cargo.toml \
+            api/crates/layer2-core/Cargo.toml api/crates/layer3-adapter/Cargo.toml \
+            api/crates/layer4-runtime/Cargo.toml api/crates/cma/Cargo.toml; do
+            grep -qE 'cmaeg(-core)?' "$manifest" \
+              && { echo "::error::$manifest must not depend on CMAEG crates"; fail=1; }
+          done
+          for manifest in api/crates/cmaeg*/Cargo.toml; do
+            grep -qE 'layer1-public|layer2-core|layer3-adapter|layer4-runtime|(^|[^[:alnum:]_-])cma([^[:alnum:]_-]|$)' "$manifest" \
+              && { echo "::error::$manifest must not depend on control-plane or layer crates"; fail=1; }
+          done
           exit $fail
       - name: Layer 2 is protocol- and kernel-agnostic
         run: |
@@ -463,7 +474,7 @@ jobs:
         # Adding a value here adds a check named "Images (<value>)" and leaves
         # the existing names untouched, so branch protection keeps reporting.
         # The new check is not required until it is added to the ruleset.
-        component: [api, web, runtime]
+        component: [api, web, runtime, cmaeg]
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       # arm64 builds run under emulation on the amd64 runner.
