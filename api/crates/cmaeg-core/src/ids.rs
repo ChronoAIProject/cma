@@ -199,6 +199,23 @@ impl ConversationId {
 pub struct IdempotencyKey(String);
 
 impl IdempotencyKey {
+    /// Construct a bounded printable provider request key.
+    pub fn new(value: impl Into<String>) -> Result<Self, ValidationError> {
+        let value = value.into();
+        if value.is_empty()
+            || value.len() > 200
+            || !value
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
+        {
+            return Err(ValidationError::new(
+                "/idempotency_key",
+                "must be 1..=200 safe ASCII bytes",
+            ));
+        }
+        Ok(Self(value))
+    }
+
     pub fn from_event(event_id: &EventId) -> Self {
         let mut value = String::from("evt_");
         value.extend(event_id.as_str().chars().map(|character| {
