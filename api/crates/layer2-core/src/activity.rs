@@ -29,6 +29,9 @@ pub enum ActivityAction {
     Update,
     Delete,
     Configure,
+    GatewayRecordWrite,
+    GatewayRecordRead,
+    GatewayRecordDelete,
 }
 
 /// Safe identity of the thing an action reached.

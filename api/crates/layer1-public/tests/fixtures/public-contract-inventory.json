@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 183,
+  "openapi_operations": 187,
   "operations": {
     "GET /api/v1/organizations": {
       "classification": "openapi",
@@ -1947,6 +1947,26 @@
         "resource_forbidden",
         "resource_not_found"
       ]
+    },
+    "GET /api/v1/gateway/channel-records": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/gateway_records.rs# Capability-gated opaque record listing is exercised by the gateway contract fixture.",
+      "required_problems": []
+    },
+    "PUT /api/v1/gateway/channel-records/{record_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/gateway_records.rs# Opaque record creation and compare-and-set updates are exercised by the gateway contract fixture.",
+      "required_problems": []
+    },
+    "GET /api/v1/gateway/channel-records/{record_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/gateway_records.rs# Opaque record reads are exercised by the gateway contract fixture.",
+      "required_problems": []
+    },
+    "DELETE /api/v1/gateway/channel-records/{record_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/gateway_records.rs# Compare-and-set record deletion is exercised by the gateway contract fixture.",
+      "required_problems": []
     },
     "GET /api/v2": {
       "classification": "openapi",
