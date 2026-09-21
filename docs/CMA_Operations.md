@@ -198,6 +198,13 @@ reference hash to suppress automatic final delivery. The current placeholder
 engine returns `delivery_not_configured` for replies, and `unsupported` for edits
 and typing, until the relay delivery engine is composed.
 
+The Telegram renderer preserves escape atoms while splitting at 4,000 UTF-16
+units, preferring paragraph boundaries. It breaks mentions with a zero-width
+space and strips bidi controls. Cards become text, buttons and choices become
+numbered text, forms become labelled lines, and attachments become placeholders
+with HTTPS links where available. Rendering reports name each block degradation;
+index `65535` denotes a whole-message `chunked:<count>` transformation.
+
 Missing/invalid bearers return 401 and a channel key-hash mismatch returns 403.
 Malformed/tampered event refs return 400 `event_ref_invalid`; expired refs return
 410 `event_ref_expired`. Channel resolution still applies its deletion, restore
