@@ -35,6 +35,16 @@ pub fn render(activity: &Activity, definition: &ChannelDefinition) -> Vec<Respon
         }
         ActivityKind::Command { name, args } => format!("/{name} {args}").trim_end().to_owned(),
         ActivityKind::Event { ce } => {
+            if let Some(template) = definition.sources.iter().find_map(|source| match source {
+                Source::Custom {
+                    prompt_template, ..
+                } => prompt_template.as_deref(),
+                _ => None,
+            }) {
+                return vec![
+                    json!({"role":"user","content":[{"type":"input_text","text":crate::ingress::custom::template::render(template, ce)}]}),
+                ];
+            }
             let data = ce
                 .data
                 .as_ref()
