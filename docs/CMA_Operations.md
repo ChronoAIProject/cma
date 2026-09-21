@@ -43,9 +43,17 @@ and route templates, never bearer keys.
 
 The gateway startup settings are:
 
+The metrics implementation uses `metrics` 0.24 and
+`metrics-exporter-prometheus` 0.18 (MIT / Apache-2.0), with the exporter's optional
+HTTP server and push client disabled. CMAEG owns the separate Axum scrape listener.
+Registration is process-wide and idempotent. Histogram buckets are 0.005, 0.01,
+0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, and 10 seconds. Operation instrumentation
+is added alongside the socket timing and latency-budget harness.
+
 | Environment key | Default | Purpose |
 | --- | ---: | --- |
 | `CMAEG_LISTEN` | `0.0.0.0:8090` | CMAEG listen address. |
+| `CMAEG_METRICS_LISTEN` | `0.0.0.0:9091` | Separate Prometheus scrape listener; `/metrics` is absent from the public router. |
 | `CMAEG_PROVIDERS` | `[]` | Strict JSON provider allowlist described above. |
 | `CMAEG_PROVIDER_CONNECT_TIMEOUT_MS` | `2000` | TCP/TLS connection timeout for each provider pool. |
 | `CMAEG_PROVIDER_REQUEST_TIMEOUT_MS` | `30000` | Deadline for provider setup and probe requests, and receipt of streaming HTTP response headers. Active streams are owned and bounded by their consumer. |

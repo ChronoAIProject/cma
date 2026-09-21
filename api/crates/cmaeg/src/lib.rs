@@ -9,6 +9,7 @@ pub mod ingress;
 pub mod mcp;
 pub mod providers;
 pub mod records;
+pub mod telemetry;
 pub mod tools;
 pub mod turns;
 
@@ -26,10 +27,11 @@ pub use config::{
     CMAEG_CHANNEL_CACHE_MAX, CMAEG_CHANNEL_CACHE_TTL_MS, CMAEG_CHANNEL_NEGATIVE_TTL_MS,
     CMAEG_CMA_BASE_URL, CMAEG_CMA_SERVICE_TOKEN_FILE, CMAEG_DRAIN_SECONDS, CMAEG_FAILURE_TEXT,
     CMAEG_HEARTBEAT_MS, CMAEG_INGRESS_INFLIGHT, CMAEG_INGRESS_MAX_BODY, CMAEG_JWKS_TTL_MS,
-    CMAEG_LISTEN, CMAEG_MASTER_KEYS_FILE, CMAEG_NYXID_BASE_URL, CMAEG_NYXID_REPLY_TIMEOUT_MS,
-    CMAEG_PROVIDERS, CMAEG_PROVIDER_CONNECT_TIMEOUT_MS, CMAEG_PROVIDER_MAX_INFLIGHT,
-    CMAEG_PROVIDER_REQUEST_TIMEOUT_MS, CMAEG_PUBLIC_URL, CMAEG_RESTORE_RATE_PER_MINUTE,
-    CMAEG_RESTORE_TIMEOUT_MS, CMAEG_TOOLS_NYXID_SLUG, CMAEG_TURN_TIMEOUT_MS,
+    CMAEG_LISTEN, CMAEG_MASTER_KEYS_FILE, CMAEG_METRICS_LISTEN, CMAEG_NYXID_BASE_URL,
+    CMAEG_NYXID_REPLY_TIMEOUT_MS, CMAEG_PROVIDERS, CMAEG_PROVIDER_CONNECT_TIMEOUT_MS,
+    CMAEG_PROVIDER_MAX_INFLIGHT, CMAEG_PROVIDER_REQUEST_TIMEOUT_MS, CMAEG_PUBLIC_URL,
+    CMAEG_RESTORE_RATE_PER_MINUTE, CMAEG_RESTORE_TIMEOUT_MS, CMAEG_TOOLS_NYXID_SLUG,
+    CMAEG_TURN_TIMEOUT_MS,
 };
 
 const REQUEST_BODY_LIMIT_BYTES: usize = 1024 * 1024;
@@ -177,6 +179,8 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         public_origin: config.management.public_url.clone(),
     };
     let listener = tokio::net::TcpListener::bind(config.listen).await?;
+    let _metrics =
+        http::metrics::MetricsServer::start(config.metrics_listen, telemetry::install()?).await?;
     tracing::info!(bind = %config.listen, "CMAEG listening");
 
     let (shutdown_started, shutdown_signal) = oneshot::channel();

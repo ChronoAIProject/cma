@@ -119,6 +119,9 @@ COPY --from=codex-auth /usr/local/bin/codex-native /usr/local/bin/codex-native
 COPY --from=secret-scanner /usr/local/bin/gitleaks /usr/local/bin/gitleaks
 COPY --from=secret-scanner /usr/local/share/gitleaks /usr/local/share/gitleaks
 EXPOSE 8090
+EXPOSE 9091
+# CMAEG_METRICS_LISTEN defaults to 0.0.0.0:9091; /metrics is served separately
+# from the public management, ingress and tools listener.
 # Runtime contract: CMAEG_PUBLIC_URL, CMAEG_CMA_BASE_URL and CMAEG_NYXID_BASE_URL
 # are required origins. Mount CMAEG_MASTER_KEYS_FILE and CMAEG_CMA_SERVICE_TOKEN_FILE
 # as secret files; startup refuses missing or invalid contents before binding.

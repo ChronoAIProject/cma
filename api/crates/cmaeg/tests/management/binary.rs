@@ -32,6 +32,7 @@ impl MountedSecrets {
         let mut command = Command::new(env!("CARGO_BIN_EXE_cmaeg"));
         command.kill_on_drop(true)
             .env("CMAEG_LISTEN", address)
+            .env("CMAEG_METRICS_LISTEN", "127.0.0.1:0")
             .env("CMAEG_PUBLIC_URL", format!("http://{address}"))
             .env("CMAEG_MASTER_KEYS_FILE", self.dir.join("keys"))
             .env("CMAEG_CMA_SERVICE_TOKEN_FILE", self.dir.join("token"))

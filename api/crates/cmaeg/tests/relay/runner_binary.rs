@@ -60,6 +60,7 @@ impl Process {
         let child=Command::new(env!("CARGO_BIN_EXE_cmaeg")).kill_on_drop(true)
             .env_clear().env("RUST_LOG","cmaeg=info")
             .env("CMAEG_LISTEN",address.to_string()).env("CMAEG_PUBLIC_URL",&base)
+            .env("CMAEG_METRICS_LISTEN", "127.0.0.1:0")
             .env("CMAEG_CMA_BASE_URL",cma).env("CMAEG_NYXID_BASE_URL",nyxid)
             .env("CMAEG_MASTER_KEYS_FILE",dir.join("keys")).env("CMAEG_CMA_SERVICE_TOKEN_FILE",dir.join("service"))
             .env("CMAEG_ACCEPT_BUDGET_MS",budget_ms.to_string()).env("CMAEG_DRAIN_SECONDS","15")
