@@ -128,6 +128,13 @@ handoff measurement.
 
 ### Provider turns and shutdown
 
+Confirmed delivery references use a distinct authenticated token kind,
+`cmaeg1.mr.<kid>.<sealed-data>`, carrying channel, event, route and platform message
+identifiers. They are capped at 4 KiB and cannot be substituted for event refs.
+Agent tool callers must present a single NyxID agent-key bearer (`nyxid_ag_` or
+`nyx_` plus 16–128 URL-safe key characters); the gateway hashes it and compares
+the channel's retained key hash in constant time without a NyxID request.
+
 The production callback route starts a provider turn with the channel's retained
 agent credential, deterministic conversation ID, and the same event idempotency
 key on every retry. A missing conversation is created once before retrying the
