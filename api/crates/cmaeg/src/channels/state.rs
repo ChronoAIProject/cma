@@ -14,6 +14,8 @@ use std::{collections::BTreeMap, fmt, sync::Arc};
 use tokio::sync::Mutex;
 #[derive(Clone)]
 pub struct ManagementState {
+    pub resolver: super::resolver::ChannelResolver,
+    pub readiness: crate::http::readiness::Readiness,
     pub providers: Arc<ProviderClient>,
     pub records: Arc<RecordClient>,
     pub creator_auth: Arc<CreatorAuthenticator>,
@@ -39,8 +41,16 @@ impl ManagementState {
         records: Arc<RecordClient>,
         creator_auth: Arc<CreatorAuthenticator>,
         config: crate::ManagementConfig,
+        cache_config: crate::ChannelCacheConfig,
     ) -> Self {
+        let resolver = super::resolver::ChannelResolver::new(
+            records.clone(),
+            config.master_keys.clone(),
+            cache_config,
+        );
         Self {
+            resolver,
+            readiness: crate::http::readiness::Readiness::initialized(),
             providers,
             records,
             creator_auth,

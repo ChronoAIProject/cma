@@ -121,6 +121,7 @@ pub async fn update(
             "cannot change an existing channel provider",
         )));
     }
+    state.resolver.invalidate(channel_id.as_str());
     let mut definition =
         build_update(&request, &current.definition).map_err(ManagementError::Invalid)?;
     definition.version = current.record.version;
@@ -153,6 +154,7 @@ pub async fn update(
         )
         .await
         .map_err(ManagementError::Record)?;
+    state.resolver.invalidate(channel_id.as_str());
     Ok(LoadedChannel {
         channel_id: channel_id.clone(),
         pointer: current.pointer,
@@ -175,6 +177,7 @@ pub async fn delete(
             actual: Some(current.record.version),
         });
     }
+    state.resolver.invalidate(channel_id.as_str());
     let credential = current
         .definition
         .secrets
@@ -197,7 +200,10 @@ pub async fn delete(
         .delete(&current.definition.record_id, expected_version)
         .await
     {
-        Ok(true) | Ok(false) => Ok(()),
+        Ok(true) | Ok(false) => {
+            state.resolver.invalidate(channel_id.as_str());
+            Ok(())
+        }
         Err(RecordError::Conflict { expected, actual }) => {
             Err(ManagementError::Conflict { expected, actual })
         }
@@ -208,6 +214,7 @@ pub async fn delete(
 pub async fn rekey(state: &ManagementState, channel_id: &ChannelId) -> Result<u8, ManagementError> {
     let _guard = state.mutation_guard(channel_id.as_str()).await;
     let loaded = load_unowned(state, channel_id).await?;
+    state.resolver.invalidate(channel_id.as_str());
     let mut definition = loaded.definition;
     definition.version = loaded.record.version;
     let blob = seal_definition(state.master_keys.as_ref(), &definition)?;
@@ -226,6 +233,7 @@ pub async fn rekey(state: &ManagementState, channel_id: &ChannelId) -> Result<u8
             }
             other => ManagementError::Record(other),
         })?;
+    state.resolver.invalidate(channel_id.as_str());
     Ok(state.master_keys.current_kid())
 }
 
