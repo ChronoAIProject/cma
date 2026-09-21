@@ -156,6 +156,7 @@ impl App {
         let (receipt, received) = oneshot::channel();
         self.commands
             .send(DeliveryCommand::Reply {
+                trace: tracing::Span::current(),
                 channel: self.turn.channel.clone(),
                 event: self.event.clone(),
                 message,

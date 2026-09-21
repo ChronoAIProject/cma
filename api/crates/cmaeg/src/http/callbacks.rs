@@ -11,11 +11,15 @@ use crate::ingress::{
     },
     IngressState,
 };
+use crate::telemetry::{
+    http::{EventOutcome, RefusalReason},
+    timing::IngressTiming,
+};
 use axum::{
     body::to_bytes,
     extract::{Path, Request, State},
     http::{header, HeaderValue, StatusCode},
-    middleware::{from_fn, Next},
+    middleware::from_fn,
     response::{IntoResponse, Response},
     routing::post,
     Json, Router,
@@ -25,20 +29,18 @@ use cmaeg_core::{
     problem::ProblemCode,
 };
 use serde::Serialize;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use tracing::Instrument;
 use utoipa::ToSchema;
 
 pub fn router(state: IngressState) -> Router {
-    Router::new()
-        .route("/v1/callbacks/{channel_id}", post(callback))
-        .with_state(state)
-        .layer(from_fn(protocol_headers))
-        .layer(from_fn(timing))
+    crate::telemetry::http::instrument(
+        Router::new()
+            .route("/v1/callbacks/{channel_id}", post(callback))
+            .with_state(state)
+            .layer(from_fn(protocol_headers)),
+    )
 }
-#[derive(Clone, Copy)]
-struct ReceivedAt(Instant);
-#[derive(Clone, Copy)]
-struct IngressDuration(Duration);
 #[derive(Serialize, ToSchema)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum CallbackResponse {
@@ -59,10 +61,11 @@ pub async fn callback(
     Path(channel_id): Path<String>,
     request: Request,
 ) -> Response {
-    let received_at = request
+    let timing = request
         .extensions()
-        .get::<ReceivedAt>()
-        .map_or_else(Instant::now, |at| at.0);
+        .get::<IngressTiming>()
+        .cloned()
+        .unwrap_or_else(|| IngressTiming::new("nyxid_relay"));
     let Ok(_permit) = state.inflight.clone().try_acquire_owned() else {
         let mut response = problem(
             StatusCode::TOO_MANY_REQUESTS,
@@ -113,8 +116,12 @@ pub async fn callback(
         Ok(Err(_)) => return too_large(),
         Ok(Ok(body)) => body,
     };
-    let body_received_at = Instant::now();
-    let channel = match state.resolver.resolve(&channel_id).await {
+    let body_received_at = timing.received();
+    let channel = match state
+        .resolver
+        .resolve_observed(&channel_id, Some(&timing))
+        .await
+    {
         Ok(channel) => channel,
         Err(error) => {
             let error = error.problem();
@@ -125,6 +132,8 @@ pub async fn callback(
             );
         }
     };
+    let verify_time = timing.verify();
+    let verify_span = tracing::info_span!("cmaeg.verify", channel = %crate::telemetry::channel_hash(&channel_id), event_id = tracing::field::Empty);
     let platform = match verify::single(&parts.headers, "x-nyxid-platform", true) {
         Ok(Some(platform)) => platform,
         Err(error) => return invalid(error),
@@ -146,6 +155,7 @@ pub async fn callback(
         &body,
         time::OffsetDateTime::now_utc().unix_timestamp(),
     )
+    .instrument(verify_span.clone())
     .await
     {
         Ok(verified) => verified,
@@ -176,7 +186,7 @@ pub async fn callback(
     if verified.reply_expires_at <= now || verified.callback_deadline <= now {
         return invalid(VerificationError("token_time"));
     }
-    let request = match launch_request(
+    let mut request = match launch_request(
         channel,
         verified,
         facts,
@@ -189,10 +199,12 @@ pub async fn callback(
             return problem(StatusCode::BAD_REQUEST, ProblemCode::InvalidRequest, reason)
         }
     };
+    verify_span.record("event_id", request.activity.event_id.as_str());
+    drop(verify_time);
+    request.timing = Some(timing);
     let event_id = request.activity.event_id.to_string();
     let conversation_id = request.conversation_id.to_string();
-    let ingress_duration = received_at.elapsed();
-    let mut response = match state.launcher.launch(request).await {
+    match state.launcher.launch(request).await {
         LaunchOutcome::Accepted { .. } | LaunchOutcome::Deferred => (
             StatusCode::ACCEPTED,
             Json(CallbackResponse::Accepted {
@@ -215,18 +227,22 @@ pub async fn callback(
             }
             response
         }
-    };
-    response
-        .extensions_mut()
-        .insert(IngressDuration(ingress_duration));
-    response
+    }
 }
 fn refused(reason: Refusal) -> Response {
-    (
+    let mut response = (
         StatusCode::ACCEPTED,
         Json(CallbackResponse::Refused { reason }),
     )
-        .into_response()
+        .into_response();
+    response.extensions_mut().insert(EventOutcome("refused"));
+    let label = serde_json::to_value(reason)
+        .unwrap()
+        .as_str()
+        .unwrap()
+        .to_owned();
+    response.extensions_mut().insert(RefusalReason(label));
+    response
 }
 fn invalid(error: VerificationError) -> Response {
     problem(
@@ -241,22 +257,4 @@ fn too_large() -> Response {
         ProblemCode::PayloadTooLarge,
         "callback body exceeds limit",
     )
-}
-async fn timing(mut request: Request, next: Next) -> Response {
-    let started = Instant::now();
-    request.extensions_mut().insert(ReceivedAt(started));
-    let mut response = next.run(request).await;
-    let duration = response
-        .extensions()
-        .get::<IngressDuration>()
-        .map_or_else(|| started.elapsed(), |value| value.0);
-    response.headers_mut().insert(
-        "server-timing",
-        HeaderValue::from_str(&format!(
-            "ingress;dur={:.3}",
-            duration.as_secs_f64() * 1000.0
-        ))
-        .unwrap(),
-    );
-    response
 }

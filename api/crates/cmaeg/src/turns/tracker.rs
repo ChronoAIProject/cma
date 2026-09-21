@@ -12,7 +12,7 @@ use std::{
     time::Instant,
 };
 use tokio::sync::Notify;
-use tracing::instrument::WithSubscriber;
+use tracing::{instrument::WithSubscriber, Instrument};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TurnKey {
@@ -83,6 +83,7 @@ impl TurnTracker {
                 started_at: request.received_at,
             },
         );
+        metrics::gauge!(crate::telemetry::names::TURNS_INFLIGHT).increment(1);
         let guard = TurnGuard {
             tracker: self.clone(),
             key,
@@ -92,6 +93,9 @@ impl TurnTracker {
                 let _guard = guard;
                 let _ = Abortable::new(future, registration).await;
             }
+            .instrument(tracing::info_span!("cmaeg.turn",
+                channel = %crate::telemetry::channel_hash(request.channel.id.as_str()),
+                event_id = %request.activity.event_id))
             .with_current_subscriber(),
         );
         Ok(())
@@ -158,6 +162,7 @@ struct TurnGuard {
 impl Drop for TurnGuard {
     fn drop(&mut self) {
         self.tracker.active.remove(&self.key);
+        metrics::gauge!(crate::telemetry::names::TURNS_INFLIGHT).decrement(1);
         self.tracker.changed.notify_waiters();
     }
 }

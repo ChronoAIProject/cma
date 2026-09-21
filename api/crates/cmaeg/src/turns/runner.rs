@@ -41,6 +41,12 @@ impl TurnRunner {
         }
     }
     async fn execute(&self, turn: Arc<LaunchRequest>, sender: oneshot::Sender<LaunchOutcome>) {
+        use crate::telemetry::{
+            names,
+            operations::{provider_error, Operation},
+        };
+        let provider = turn.channel.definition.provider.slug.to_string();
+        let mut observation = Operation::new(names::TURN_DURATION, names::PROVIDER, &provider);
         let mut admitted = Some(sender);
         let deadline = turn.received_at + self.config.turn_timeout;
         let result = tokio::time::timeout_at(deadline.into(), async {
@@ -64,10 +70,18 @@ impl TurnRunner {
         })
         .await;
         let error = match result {
-            Ok(Ok(())) => return,
+            Ok(Ok(outcome)) => {
+                observation.finish(outcome);
+                if outcome != "completed" {
+                    provider_error(&provider, outcome);
+                }
+                return;
+            }
             Ok(Err(error)) => error,
             Err(_) => (ProblemCode::ProviderUnavailable, "turn_timeout"),
         };
+        observation.finish(error.1);
+        provider_error(&provider, error.1);
         consume::refuse(&mut admitted, error.0, error.1);
         // A stalled delivery sink must not keep a timed-out turn alive indefinitely.
         let command = DeliveryCommand::StreamOutcome {
@@ -147,9 +161,10 @@ impl TurnRunner {
     }
 }
 impl TurnLauncher for TurnRunner {
-    fn launch(&self, request: LaunchRequest) -> BoxFuture<'_, LaunchOutcome> {
+    fn launch(&self, mut request: LaunchRequest) -> BoxFuture<'_, LaunchOutcome> {
         Box::pin(async move {
             let deadline = request.received_at + self.config.accept_budget;
+            request.trace = tracing::Span::current();
             let turn = Arc::new(request);
             let (sender, accepted) = oneshot::channel();
             let runner = self.clone();

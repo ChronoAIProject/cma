@@ -78,6 +78,8 @@ impl CustomDelivery {
             self.emit(event, name, &data, outcome.terminal());
         }
     }
+    #[tracing::instrument(name="cmaeg.deliver", skip_all, fields(
+        channel = %crate::telemetry::channel_hash(channel.id.as_str()), event_id = %event.event_id))]
     pub async fn outcome(
         &self,
         channel: &ResolvedChannel,
@@ -85,7 +87,13 @@ impl CustomDelivery {
         outcome: &TurnOutcome,
     ) {
         if let Some((kind, data)) = terminal(event, outcome) {
+            let mut observation = crate::telemetry::operations::Operation::new(
+                crate::telemetry::names::DELIVERY_DURATION,
+                crate::telemetry::names::PLATFORM,
+                "custom",
+            );
             let delivered = self.webhook(channel, event, kind, data, false).await;
+            observation.finish(delivered.kind());
             tracing::info!(
                 outcome = delivered.kind(),
                 "custom terminal delivery finished"

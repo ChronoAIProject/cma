@@ -16,6 +16,7 @@ use cmaeg_core::{
 };
 use std::{sync::Arc, time::Duration};
 use tokio::sync::{mpsc, oneshot};
+use tracing::Instrument;
 #[derive(Clone)]
 pub struct ToolsState {
     pub resolver: ChannelResolver,
@@ -73,34 +74,45 @@ impl ToolsState {
         reference: &EventRef,
         message: OutboundMessage,
     ) -> Result<IntentReceipt, Problem> {
-        validate(&message)?;
-        let (channel, event) = self.authorize_event(caller, reference).await?;
-        let expires_at = event.expires_at;
-        let (receipt, received) = oneshot::channel();
-        let result = self
-            .deliver(
-                DeliveryCommand::Reply {
-                    channel,
-                    event,
-                    message,
-                    source: ReplySource::Tool,
-                    receipt,
-                },
-                received,
-            )
-            .await?;
-        if matches!(result.delivery, DeliveryOutcome::Confirmed { .. }) {
-            if let Err(reason) =
-                self.tracker
-                    .record_tool_reply(reference.as_str(), expires_at, now())
-            {
-                tracing::warn!(
-                    reason,
-                    "confirmed tool reply could not retain its dedupe marker"
-                );
+        let mut observation = crate::telemetry::operations::Operation::new(
+            crate::telemetry::names::TOOL_DURATION,
+            crate::telemetry::names::TOOL,
+            "replyToEvent",
+        );
+        let result = async {
+            validate(&message)?;
+            let (channel, event) = self.authorize_event(caller, reference).await?;
+            let expires_at = event.expires_at;
+            let (receipt, received) = oneshot::channel();
+            let result = self
+                .deliver(
+                    DeliveryCommand::Reply {
+                        trace: tracing::Span::current(),
+                        channel,
+                        event,
+                        message,
+                        source: ReplySource::Tool,
+                        receipt,
+                    },
+                    received,
+                )
+                .await?;
+            if matches!(result.delivery, DeliveryOutcome::Confirmed { .. }) {
+                if let Err(reason) =
+                    self.tracker
+                        .record_tool_reply(reference.as_str(), expires_at, now())
+                {
+                    tracing::warn!(
+                        reason,
+                        "confirmed tool reply could not retain its dedupe marker"
+                    );
+                }
             }
+            Ok(result)
         }
-        Ok(result)
+        .await;
+        observation.finish(if result.is_ok() { "success" } else { "error" });
+        result
     }
     pub async fn update(
         &self,
@@ -108,59 +120,109 @@ impl ToolsState {
         reference: &MessageRef,
         message: OutboundMessage,
     ) -> Result<IntentReceipt, Problem> {
-        validate(&message)?;
-        let (channel, message_ref) = self.authorize_message(caller, reference).await?;
-        let (receipt, received) = oneshot::channel();
-        self.deliver(
-            DeliveryCommand::Update {
-                channel,
-                message_ref,
-                message,
-                receipt,
-            },
-            received,
-        )
-        .await
+        let mut observation = crate::telemetry::operations::Operation::new(
+            crate::telemetry::names::TOOL_DURATION,
+            crate::telemetry::names::TOOL,
+            "updateMessage",
+        );
+        let result = async {
+            validate(&message)?;
+            let (channel, message_ref) = self.authorize_message(caller, reference).await?;
+            let (receipt, received) = oneshot::channel();
+            self.deliver(
+                DeliveryCommand::Update {
+                    trace: tracing::Span::current(),
+                    channel,
+                    message_ref,
+                    message,
+                    receipt,
+                },
+                received,
+            )
+            .await
+        }
+        .await;
+        observation.finish(if result.is_ok() { "success" } else { "error" });
+        result
     }
     pub async fn typing(
         &self,
         caller: AgentCaller,
         reference: &EventRef,
     ) -> Result<TypingReceipt, Problem> {
-        let (channel, event) = self.authorize_event(caller, reference).await?;
-        let (receipt, received) = oneshot::channel();
-        self.deliver(
-            DeliveryCommand::Typing {
-                channel,
-                event,
-                receipt,
-            },
-            received,
-        )
-        .await
+        let mut observation = crate::telemetry::operations::Operation::new(
+            crate::telemetry::names::TOOL_DURATION,
+            crate::telemetry::names::TOOL,
+            "sendTyping",
+        );
+        let result = async {
+            let (channel, event) = self.authorize_event(caller, reference).await?;
+            let (receipt, received) = oneshot::channel();
+            self.deliver(
+                DeliveryCommand::Typing {
+                    trace: tracing::Span::current(),
+                    channel,
+                    event,
+                    receipt,
+                },
+                received,
+            )
+            .await
+        }
+        .await;
+        observation.finish(if result.is_ok() { "success" } else { "error" });
+        result
     }
     pub async fn context(
         &self,
         caller: AgentCaller,
         reference: &EventRef,
     ) -> Result<ContextResponse, Problem> {
-        let (channel, event) = self.authorize_event(caller, reference).await?;
-        super::context::read(self, &channel, &event).await
+        let mut observation = crate::telemetry::operations::Operation::new(
+            crate::telemetry::names::TOOL_DURATION,
+            crate::telemetry::names::TOOL,
+            "readEventContext",
+        );
+        let result = async {
+            let (channel, event) = self.authorize_event(caller, reference).await?;
+            super::context::read(self, &channel, &event).await
+        }
+        .await;
+        observation.finish(if result.is_ok() { "success" } else { "error" });
+        result
     }
     async fn deliver<T>(
         &self,
         command: DeliveryCommand,
         received: oneshot::Receiver<T>,
     ) -> Result<T, Problem> {
-        tokio::time::timeout(Duration::from_secs(8), async {
-            self.delivery
-                .send(command)
-                .await
-                .map_err(|_| Problem::new(ProblemCode::Internal, 503, "delivery_unavailable"))?;
-            received
-                .await
-                .map_err(|_| Problem::new(ProblemCode::Internal, 503, "delivery_unavailable"))
-        })
+        let (channel, event_id) = match &command {
+            DeliveryCommand::Reply { channel, event, .. }
+            | DeliveryCommand::Typing { channel, event, .. } => {
+                (channel.id.as_str(), event.event_id.as_str())
+            }
+            DeliveryCommand::Update {
+                channel,
+                message_ref,
+                ..
+            } => (channel.id.as_str(), message_ref.event_id.as_str()),
+            DeliveryCommand::StreamOutcome { turn, .. } => {
+                (turn.channel.id.as_str(), turn.activity.event_id.as_str())
+            }
+        };
+        let span = tracing::info_span!("cmaeg.deliver", channel = %crate::telemetry::channel_hash(channel), event_id);
+        tokio::time::timeout(
+            Duration::from_secs(8),
+            async {
+                self.delivery.send(command).await.map_err(|_| {
+                    Problem::new(ProblemCode::Internal, 503, "delivery_unavailable")
+                })?;
+                received
+                    .await
+                    .map_err(|_| Problem::new(ProblemCode::Internal, 503, "delivery_unavailable"))
+            }
+            .instrument(span),
+        )
         .await
         .map_err(|_| Problem::new(ProblemCode::Internal, 504, "delivery_timeout"))?
     }
