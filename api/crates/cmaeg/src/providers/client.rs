@@ -109,6 +109,7 @@ impl ProviderClient {
             "schema_version": request.schema_version,
             "profile": request.profile,
             "profile_digest": request.profile_digest,
+            "agent_key": request.agent_key.as_str(),
             "tools": request.tools,
         });
         let response = handle
@@ -348,9 +349,14 @@ async fn forward_turn(
                     });
                 }
                 ResponsesEvent::InProgress => {
+                    let Some(response_id) =
+                        response_id_from_frame(&frame).filter(|id| !id.is_empty())
+                    else {
+                        tracing::warn!("provider acceptance frame has no response id");
+                        break;
+                    };
                     let _ = sender.send(Accepted {
-                        response_id: response_id_from_frame(&frame)
-                            .unwrap_or_else(|| "unknown".into()),
+                        response_id,
                         at: Instant::now(),
                     });
                 }
