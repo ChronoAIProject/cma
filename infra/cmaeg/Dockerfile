@@ -127,8 +127,10 @@ EXPOSE 8090
 # CMAEG_CHANNEL_CACHE_MAX=50000, CMAEG_RESTORE_RATE_PER_MINUTE=10 and
 # CMAEG_RESTORE_TIMEOUT_MS=800. /readyz reports local readiness and CMA reachability.
 # Relay callbacks use CMAEG_JWKS_TTL_MS=600000, CMAEG_INGRESS_MAX_BODY=1048576
-# and CMAEG_INGRESS_INFLIGHT=256. POST /v1/callbacks/{channel_id} verifies callbacks;
-# until runner composition, admitted callbacks explicitly return 503.
+# and CMAEG_INGRESS_INFLIGHT=256. POST /v1/callbacks/{channel_id} verifies callbacks.
+# Turns use CMAEG_ACCEPT_BUDGET_MS=20000, CMAEG_TURN_TIMEOUT_MS=600000,
+# CMAEG_BUSY_RETRY_MAX_MS=15000 and CMAEG_DRAIN_SECONDS=600. During shutdown,
+# /readyz returns 503 draining while tracked turns finish within the drain deadline.
 # See docs/CMA_Operations.md.
 ENTRYPOINT ["/usr/local/bin/cmaeg"]
 # Health is asserted by the Kubernetes probes in infra/api/deployment.yaml.

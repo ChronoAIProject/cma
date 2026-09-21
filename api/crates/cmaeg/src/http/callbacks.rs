@@ -113,6 +113,7 @@ pub async fn callback(
         Ok(Err(_)) => return too_large(),
         Ok(Ok(body)) => body,
     };
+    let body_received_at = Instant::now();
     let channel = match state.resolver.resolve(&channel_id).await {
         Ok(channel) => channel,
         Err(error) => {
@@ -180,7 +181,7 @@ pub async fn callback(
         verified,
         facts,
         &state.master_keys,
-        received_at,
+        body_received_at,
         now,
     ) {
         Ok(request) => request,
@@ -200,11 +201,20 @@ pub async fn callback(
             }),
         )
             .into_response(),
-        LaunchOutcome::Refused(error) => problem(
-            StatusCode::from_u16(error.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
-            error.code,
-            error.detail.unwrap_or_default(),
-        ),
+        LaunchOutcome::Refused(error) => {
+            let retry = error.code == ProblemCode::ProviderBusy;
+            let mut response = problem(
+                StatusCode::from_u16(error.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+                error.code,
+                error.detail.unwrap_or_default(),
+            );
+            if retry {
+                response
+                    .headers_mut()
+                    .insert(header::RETRY_AFTER, HeaderValue::from_static("2"));
+            }
+            response
+        }
     };
     response
         .extensions_mut()

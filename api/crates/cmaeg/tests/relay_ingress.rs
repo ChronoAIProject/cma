@@ -10,3 +10,8 @@ mod support;
 mod transport;
 #[path = "relay/verification.rs"]
 mod verification;
+
+#[path = "fake_provider.rs"]
+mod fake_provider;
+#[path = "relay/runner_binary.rs"]
+mod runner_binary;
