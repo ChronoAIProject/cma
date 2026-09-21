@@ -1,6 +1,8 @@
 //! CMA Event Gateway HTTP service.
 
+pub mod auth;
 mod config;
+pub mod records;
 pub mod providers;
 
 use std::{future::IntoFuture, net::SocketAddr, time::Duration};
@@ -12,8 +14,10 @@ use tower_http::limit::RequestBodyLimitLayer;
 use utoipa::OpenApi;
 
 pub use config::{
-    Config, ConfigError, CMAEG_LISTEN, CMAEG_PROVIDERS, CMAEG_PROVIDER_CONNECT_TIMEOUT_MS,
-    CMAEG_PROVIDER_MAX_INFLIGHT, CMAEG_PROVIDER_REQUEST_TIMEOUT_MS,
+    Config, ConfigError, ManagementConfig, CMAEG_CMA_BASE_URL, CMAEG_CMA_SERVICE_TOKEN_FILE,
+    CMAEG_LISTEN, CMAEG_MASTER_KEYS_FILE, CMAEG_NYXID_BASE_URL, CMAEG_PROVIDERS,
+    CMAEG_PROVIDER_CONNECT_TIMEOUT_MS, CMAEG_PROVIDER_MAX_INFLIGHT,
+    CMAEG_PROVIDER_REQUEST_TIMEOUT_MS, CMAEG_PUBLIC_URL, CMAEG_TOOLS_NYXID_SLUG,
 };
 
 const REQUEST_BODY_LIMIT_BYTES: usize = 1024 * 1024;
