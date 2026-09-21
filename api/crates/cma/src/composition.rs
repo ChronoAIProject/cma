@@ -3,7 +3,6 @@ use std::sync::Arc;
 mod adapter;
 mod bridge;
 use adapter::production_adapter;
-
 use axum::{extract::DefaultBodyLimit, Router};
 use layer1_public::rest::{self, HierarchyState, ProfilesState};
 use layer2_core::{
@@ -32,7 +31,6 @@ use crate::{
     trigger::{CmaServiceConnectionBroker, TriggerComposition, TriggerCompositionDependencies},
     REQUEST_BODY_LIMIT_BYTES,
 };
-
 pub(crate) struct ControlPlaneComposition {
     pub router: Router,
     #[allow(dead_code)]
@@ -440,6 +438,12 @@ impl ControlPlaneComposition {
             )
             .merge(trigger_routes)
             .merge(layer1_public::rest::admin::router(admin));
+        let resource_routes = resource_routes.merge(layer1_public::rest::gateway_record_router(
+            layer2_core::GatewayRecordService::new(
+                stores.gateway_records.clone(),
+                Arc::clone(&activity),
+            ),
+        ));
         let public = super::rest_router(resource_routes)
             .merge(crate::connections::router(browser_connections))
             .merge(crate::auth::router(Arc::clone(&auth)))
