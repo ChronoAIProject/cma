@@ -53,6 +53,7 @@ struct StatusResponse {
         http::management::test_channel,
         http::management::rekey_channel,
         http::callbacks::callback,
+        http::events::receive_event,
         http::tools::reply_to_event,
         http::tools::update_message,
         http::tools::send_typing,
@@ -140,6 +141,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let _reachability_probe = state.readiness.start_probe(state.records.clone());
     let tracker = turns::TurnTracker::new(state.readiness.clone());
     let (delivery, outcomes) = tokio::sync::mpsc::channel(256);
+    let waiters = std::sync::Arc::new(delivery::sync::SyncRegistry::default());
     let delivery_engine = delivery::engine::DeliveryEngine::start(
         outcomes,
         state.master_keys.clone(),
@@ -149,6 +151,10 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         )?,
         config.delivery.clone(),
         tracker.clone(),
+        delivery::custom::CustomDelivery::new(
+            config.management.public_url.clone(),
+            waiters.clone(),
+        ),
     );
     let runner = std::sync::Arc::new(turns::TurnRunner::new(
         providers.clone(),
@@ -177,6 +183,10 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let server = axum::serve(
         listener,
         router_with_state(state)
+            .merge(http::events::router(http::events::CustomIngressState {
+                ingress: ingress.clone(),
+                waiters,
+            }))
             .merge(http::callbacks::router(ingress))
             .merge(http::tools::router(tools_state.clone()))
             .merge(mcp::router(tools_state))

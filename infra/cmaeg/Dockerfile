@@ -138,6 +138,8 @@ EXPOSE 8090
 # Delivery uses CMAEG_NYXID_REPLY_TIMEOUT_MS=5000, CMAEG_ACK_TEXT="Working on it…",
 # CMAEG_HEARTBEAT_MS=60000 and CMAEG_FAILURE_TEXT for short failure notices.
 # Eight workers pace each relay route at three seconds and drain queued sends.
+# Custom ingress: POST /v1/channels/{channel_id}/events (256 KiB), optional
+# mode=stream SSE, and signed HTTPS result webhooks with DNS pinning per attempt.
 # See docs/CMA_Operations.md.
 ENTRYPOINT ["/usr/local/bin/cmaeg"]
 # Health is asserted by the Kubernetes probes in infra/api/deployment.yaml.

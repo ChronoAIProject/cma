@@ -80,6 +80,10 @@ impl App {
             RelayClient::new(&fake.base, config.reply_timeout).unwrap(),
             config,
             tracker.clone(),
+            cmaeg::delivery::custom::CustomDelivery::new(
+                "https://gateway.example".into(),
+                Arc::default(),
+            ),
         );
         let provider = FakeProvider::start(provider_config).await;
         let registry=ProviderRegistry::parse(&json!([{"slug":"cma_codex","base_url":provider.base_url(),"kind":"responses_http","paths":{"agent_card":"/.well-known/agent-card.json","binding":"/api/v1/cmaeg/bindings/{binding_id}","conversation":"/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}","responses":"/api/v2/responses"},"max_inflight":8}]).to_string()).unwrap();

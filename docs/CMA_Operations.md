@@ -216,6 +216,9 @@ Per-event state expires 30 seconds after the terminal outcome; hashes of consume
 single-use tokens remain until token expiry. These are local safeguards; gateway
 restarts and multiple replicas rely on NyxID's single-use token enforcement and the
 provider's durable turn idempotency.
+Already-admitted internal turns retain delivery authority through completion even
+when their event references expire; new tool calls still enforce reference expiry.
+Expired reply tokens are replaced by the channel route key at dispatch time.
 
 The first send uses an unexpired reply token; later parts and sends use the retained
 channel route key. Each route has a three-second minimum interval on this replica.
@@ -234,7 +237,14 @@ and cache rules. MCP tool failures include the same Problem document in JSON-RPC
 `error.data`. An MCP update must bind both supplied references to the same channel
 and event.
 
-### Custom-source authentication and normalization
+### Custom CloudEvents and sinks
+
+`POST /v1/channels/{channel_id}/events` accepts structured
+`application/cloudevents+json` and binary `application/json` with `ce-*` headers,
+up to 256 KiB. Without `mode=stream`, it returns 202 after provider acceptance or
+the configured acceptance budget, while work continues in the tracked runner.
+The channel must have a custom source; malformed events and unsupported query
+modes return 400. Custom ingress shares the callback concurrency limit.
 
 Custom-source authentication uses the exact retained HMAC secret bytes and Standard
 Webhooks `webhook-id`, `webhook-timestamp`, and `webhook-signature: v1,<base64>`
@@ -243,8 +253,35 @@ are refused. NyxID source keys are checked locally against the configured SHA-25
 hashes. Custom channels admit only `fixed`, `event_subject`, or `per_event`
 partitioning. Long URI subjects retain their full activity value and conversation
 derivation; sealed references carry a digest when the partition exceeds 512 bytes.
+Actor URIs over the provider metadata limit also use a digest in metadata; the
+provider's stored activity and public context retain the complete URI.
 Templates substitute known placeholders once, cap canonical data at 8 KiB and
 total output at 32 KiB with `[truncated]`, and leave unknown placeholders intact.
+
+A configured Sync sink enables `?mode=stream`: 200 SSE carries `cmaeg.text.delta`,
+`cmaeg.message`, and terminal `cmaeg.completed` or `cmaeg.failed`, with keepalive
+comments every 15 seconds. Disconnecting does not cancel the admitted turn.
+Waiters are local to the replica, capped at 4096 with eight queued frames each and
+a shared 32 MiB payload budget. Slow consumers receive `sync_backpressure` and
+close. A sync tool receipt confirms acceptance into that local stream buffer;
+the protocol does not acknowledge consumption by the caller. Tool replies on a
+replica without the waiter still use the channel's other configured sinks.
+
+Result-webhook sinks receive a signed CloudEvent on every tool reply and on
+Completed, Failed, or Incomplete. Neutral messages remain verbatim in
+`data.message`. The types are `cmaeg.response.message`, `cmaeg.response.completed`,
+and `cmaeg.response.failed`. The source contains a channel hash prefix, not a
+sealed reference. Provider diagnostics and credentials are excluded. A Source
+sink on a custom channel delivers nowhere; it does not imply a webhook.
+
+Webhook targets require HTTPS without user information or fragments. Each attempt
+resolves DNS, rejects private/special-use addresses, pins the accepted addresses
+for TLS connection, and refuses redirects and proxy environment settings. Each
+attempt has a five-second total budget. Transient failures retry at 1, 4, and 16
+seconds, keeping the same webhook ID and body and refreshing the signed timestamp.
+Receivers must deduplicate that ID; retries can repeat a previously accepted send.
+These retries are in process and share the delivery drain deadline. HTTP 4xx
+other than 429, redirects, and invalid destinations are definitive refusals.
 
 ### Provider event-context extension
 
