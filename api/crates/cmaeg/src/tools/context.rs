@@ -32,6 +32,16 @@ pub struct Capabilities {
     pub max_text_chars: u32,
 }
 impl Capabilities {
+    pub fn custom() -> Self {
+        Self {
+            edit: false,
+            typing: false,
+            buttons: "json".into(),
+            cards: "json".into(),
+            attachments: "reference".into(),
+            max_text_chars: 32768,
+        }
+    }
     pub fn telegram() -> Self {
         Self {
             edit: false,
@@ -69,6 +79,11 @@ pub(super) async fn read(
         return Err(unavailable());
     }
     let activity = snapshot.activity;
+    let capabilities = if matches!(activity.source, cmaeg_core::activity::SourceKind::Custom) {
+        Capabilities::custom()
+    } else {
+        Capabilities::telegram()
+    };
     Ok(ContextResponse {
         event_id: event.event_id.clone(),
         conversation_id: event.conversation_id.clone(),
@@ -78,7 +93,7 @@ pub(super) async fn read(
             conversation: activity.conversation,
             occurred_at: activity.occurred_at,
         },
-        capabilities: Capabilities::telegram(),
+        capabilities,
     })
 }
 fn unavailable() -> Problem {

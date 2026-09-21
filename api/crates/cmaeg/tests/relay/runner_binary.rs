@@ -197,6 +197,92 @@ fn credential(value: &mut Value) {
 }
 
 #[tokio::test]
+async fn executable_accepts_signed_custom_events_and_curl_streams_through_completion() {
+    let provider = FakeProvider::start(FakeProviderConfig {
+        terminal_delay: Duration::from_millis(200),
+        ..Default::default()
+    })
+    .await;
+    let secret = cmaeg_core::channel::Secret::new(uuid::Uuid::new_v4().to_string());
+    let mut fixture = Fixture::new(
+        |value| {
+            credential(value);
+            value["sources"] = json!([{"type":"custom","auth":{"type":"hmac","key_id":"ingress"}}]);
+            value["partition"]["key"] = "per_event".into();
+            value["reply"]["sinks"] = json!([{"type":"sync"}]);
+            value["secrets"]["hmac_secrets"] = json!([["ingress", secret.as_str()]]);
+        },
+        Default::default(),
+    )
+    .await;
+    let mut process = Process::start(&mut fixture, &provider, 20000).await;
+    let body = json!({"specversion":"1.0","id":"event-1","type":"test.event","source":"https://events.example","data":{"message":"hello"}}).to_string();
+    let body_path = process.dir.join("event.json");
+    fs::write(&body_path, &body).unwrap();
+    for stream in [true, false] {
+        let timestamp = time::OffsetDateTime::now_utc().unix_timestamp().to_string();
+        let signature =
+            cmaeg::auth::webhook::signature(&secret, "delivery-1", &timestamp, body.as_bytes());
+        let url = format!(
+            "{}/v1/channels/{}/events{}",
+            process.base,
+            fixture.id,
+            if stream { "?mode=stream" } else { "" }
+        );
+        let output = Command::new("curl")
+            .args([
+                "--silent",
+                "--show-error",
+                "--fail",
+                "--max-time",
+                "5",
+                "--request",
+                "POST",
+                "--header",
+                "Content-Type: application/cloudevents+json",
+                "--header",
+                "webhook-id: delivery-1",
+                "--header",
+                &format!("webhook-timestamp: {timestamp}"),
+                "--header",
+                &format!("webhook-signature: {signature}"),
+                "--data-binary",
+                &format!("@{}", body_path.display()),
+                &url,
+            ])
+            .output()
+            .await
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let text = String::from_utf8(output.stdout).unwrap();
+        if stream {
+            assert!(text.contains("event: cmaeg.text.delta"));
+            assert!(text.contains("event: cmaeg.completed"));
+        } else {
+            assert_eq!(
+                serde_json::from_str::<Value>(&text).unwrap()["status"],
+                "accepted"
+            );
+        }
+    }
+    process.terminate().await;
+    assert!(
+        tokio::time::timeout(Duration::from_secs(3), process.child.wait())
+            .await
+            .unwrap()
+            .unwrap()
+            .success()
+    );
+    process.assert_safe_logs();
+    assert!(!process.logs().contains(secret.as_str()));
+    provider.close().await;
+}
+
+#[tokio::test]
 async fn real_signed_callback_accepts_at_two_seconds_and_defers_at_twenty() {
     for (delay, budget, expected) in [(2, 20000, 2), (30, 20000, 20)] {
         let fake = FakeProvider::start(FakeProviderConfig {

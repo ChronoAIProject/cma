@@ -1,4 +1,5 @@
 //! Platform rendering is separate from transport and send authority.
+pub mod custom;
 mod telegram;
 mod text;
 use crate::tools::Capabilities;

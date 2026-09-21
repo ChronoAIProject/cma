@@ -7,6 +7,36 @@ use serde_json::json;
 use std::{sync::Arc, time::Duration};
 
 #[tokio::test]
+async fn admitted_turn_outlives_ref_expiry_and_uses_channel_key_for_final_delivery() {
+    let mut app = App::standard(0).await;
+    app.event.expires_at = super::relay_support::now() + 1;
+    if let cmaeg_core::seal::ReplyAddress::NyxidRelay {
+        reply_token_expires_at,
+        ..
+    } = &mut app.event.reply
+    {
+        *reply_token_expires_at = app.event.expires_at;
+    }
+    Arc::get_mut(&mut app.turn).unwrap().event_ref =
+        cmaeg_core::seal::EventRef::seal(&app.event, &app.fixture.state.master_keys).unwrap();
+    app.outcome(TurnOutcome::Accepted {
+        response_id: "response".into(),
+    })
+    .await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    app.outcome(TurnOutcome::Completed {
+        final_text: Some("late final".into()),
+    })
+    .await;
+    app.drain().await;
+    assert_eq!(app.fake.texts(), ["late final"]);
+    assert_eq!(
+        app.fake.requests.lock().unwrap()[0].authorization,
+        "Bearer test-route-credential"
+    );
+}
+
+#[tokio::test]
 async fn partial_send_with_missing_route_key_is_unknown_and_retains_first_message_ref() {
     let mut app = App::standard(0).await;
     let turn = Arc::get_mut(&mut app.turn).unwrap();

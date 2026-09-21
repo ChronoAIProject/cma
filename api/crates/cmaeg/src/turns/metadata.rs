@@ -14,7 +14,17 @@ pub(super) fn render(request: &LaunchRequest) -> BTreeMap<String, String> {
                     .partition_key(&request.channel.definition.partition),
             ),
         ),
-        ("cmaeg.actor".into(), request.activity.actor.id.clone()),
+        (
+            "cmaeg.actor".into(),
+            if request.activity.actor.id.len() <= 512 {
+                request.activity.actor.id.clone()
+            } else {
+                format!(
+                    "sha256:{:x}",
+                    Sha256::digest(request.activity.actor.id.as_bytes())
+                )
+            },
+        ),
     ]);
     if request.event_ref.as_str().len() <= 512 {
         values.insert(
