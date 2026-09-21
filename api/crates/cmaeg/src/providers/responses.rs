@@ -122,6 +122,11 @@ pub fn parse_event(frame: &SseFrame) -> Result<ResponsesEvent, ResponsesEventErr
         "response.failed" => {
             let error = object
                 .get("error")
+                .or_else(|| {
+                    object
+                        .get("response")
+                        .and_then(|response| response.get("error"))
+                })
                 .and_then(Value::as_object)
                 .ok_or_else(|| {
                     ResponsesEventError::Malformed("response.failed has no error".into())
@@ -144,6 +149,11 @@ pub fn parse_event(frame: &SseFrame) -> Result<ResponsesEvent, ResponsesEventErr
         "response.incomplete" => Ok(ResponsesEvent::Incomplete {
             reason: object
                 .get("incomplete_details")
+                .or_else(|| {
+                    object
+                        .get("response")
+                        .and_then(|response| response.get("incomplete_details"))
+                })
                 .and_then(Value::as_object)
                 .and_then(|details| details.get("reason"))
                 .and_then(Value::as_str)
@@ -298,7 +308,7 @@ mod tests {
         );
         assert!(matches!(
             parse_event(&frame(
-                r#"{"type":"response.failed","error":{"code":"bad","message":"no"}}"#
+                r#"{"type":"response.failed","response":{"error":{"code":"bad","message":"no"}}}"#
             )),
             Ok(ResponsesEvent::Failed { .. })
         ));

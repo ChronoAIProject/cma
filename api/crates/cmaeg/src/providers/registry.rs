@@ -100,6 +100,11 @@ impl ProviderEntry {
             )));
         }
         for (name, value) in parameters {
+            if value.is_empty() || matches!(*value, "." | "..") {
+                return Err(ProviderUrlError(
+                    "path parameter must be a non-empty opaque segment".into(),
+                ));
+            }
             rendered = rendered.replace(&format!("{{{name}}}"), &encode_segment(value));
         }
         if rendered.contains('{') || rendered.contains('}') {
@@ -107,9 +112,14 @@ impl ProviderEntry {
                 "provider path {path_key:?} contains an unresolved placeholder"
             )));
         }
-        self.base_url
-            .join(rendered.trim_start_matches('/'))
-            .map_err(|error| ProviderUrlError(format!("provider path is not a URL: {error}")))
+        let url = self
+            .base_url
+            .join(&rendered)
+            .map_err(|_| ProviderUrlError("provider path is not a URL".into()))?;
+        if url.origin() != self.base_url.origin() {
+            return Err(ProviderUrlError("provider path changed the origin".into()));
+        }
+        Ok(url)
     }
 
     /// Typed shorthand for callers that do not need string path keys.
@@ -275,7 +285,8 @@ fn validate_base_url(url: &Url) -> Result<(), String> {
 }
 
 fn validate_path(name: &str, path: &str, placeholders: &[&str]) -> Result<(), String> {
-    if !path.starts_with('/')
+    if path.starts_with("//")
+        || !path.starts_with('/')
         || path.contains('?')
         || path.contains('#')
         || path.contains('%')
@@ -290,6 +301,9 @@ fn validate_path(name: &str, path: &str, placeholders: &[&str]) -> Result<(), St
     }
     let mut remainder = path;
     while let Some(open) = remainder.find('{') {
+        if remainder[..open].contains('}') {
+            return Err(format!("{name} contains an unmatched brace"));
+        }
         let after_open = &remainder[open + 1..];
         let Some(close) = after_open.find('}') else {
             return Err(format!("{name} path contains an unterminated placeholder"));
@@ -340,7 +354,10 @@ fn is_non_public_ip(ip: &IpAddr) -> bool {
         }
         IpAddr::V6(address) => {
             let first = address.segments()[0];
-            address.is_loopback()
+            address
+                .to_ipv4_mapped()
+                .is_some_and(|ip| is_non_public_ip(&IpAddr::V4(ip)))
+                || address.is_loopback()
                 || address.is_unspecified()
                 || address.is_multicast()
                 || address.is_unicast_link_local()
@@ -438,5 +455,23 @@ mod tests {
         let traversal =
             json("https://provider.example").replace("/api/v2/responses", "/api/../responses");
         assert!(ProviderRegistry::parse(&traversal).is_err());
+    }
+    #[test]
+    fn path_templates_cannot_replace_the_allowlisted_origin() {
+        for path in ["//attacker.example/x", "/api/}/x", "/../x"] {
+            let value = json("https://provider.example").replace("/api/v2/responses", path);
+            assert!(ProviderRegistry::parse(&value).is_err());
+        }
+        let value = json("https://provider.example/base/")
+            .replace("/api/v2/responses", "/https://attacker.example/x");
+        let registry = ProviderRegistry::parse(&value).unwrap();
+        let entry = registry.iter().next().unwrap();
+        let url = entry.url("responses", &[]).unwrap();
+        assert_eq!(url.host_str(), Some("provider.example"));
+        assert_eq!(url.path(), "/https://attacker.example/x");
+        for value in ["", ".", ".."] {
+            assert!(entry.url("binding", &[("binding_id", value)]).is_err());
+        }
+        assert!(ProviderRegistry::parse(&json("https://[::ffff:169.254.169.254]")).is_err());
     }
 }
