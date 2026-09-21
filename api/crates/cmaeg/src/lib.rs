@@ -1,6 +1,7 @@
 //! CMA Event Gateway HTTP service.
 
 mod config;
+pub mod providers;
 
 use std::{future::IntoFuture, net::SocketAddr, time::Duration};
 
@@ -10,7 +11,10 @@ use tokio::sync::oneshot;
 use tower_http::limit::RequestBodyLimitLayer;
 use utoipa::OpenApi;
 
-pub use config::{Config, ConfigError, CMAEG_LISTEN};
+pub use config::{
+    Config, ConfigError, CMAEG_LISTEN, CMAEG_PROVIDERS, CMAEG_PROVIDER_CONNECT_TIMEOUT_MS,
+    CMAEG_PROVIDER_MAX_INFLIGHT, CMAEG_PROVIDER_REQUEST_TIMEOUT_MS,
+};
 
 const REQUEST_BODY_LIMIT_BYTES: usize = 1024 * 1024;
 const HTTP_DRAIN_TIMEOUT: Duration = Duration::from_secs(15);
