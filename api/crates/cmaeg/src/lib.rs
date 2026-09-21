@@ -4,6 +4,7 @@ pub mod auth;
 pub mod channels;
 mod config;
 pub mod http;
+pub mod ingress;
 pub mod providers;
 pub mod records;
 
@@ -16,12 +17,13 @@ use tower_http::limit::RequestBodyLimitLayer;
 use utoipa::OpenApi;
 
 pub use config::{
-    ChannelCacheConfig, Config, ConfigError, ManagementConfig, CMAEG_CHANNEL_CACHE_MAX,
-    CMAEG_CHANNEL_CACHE_TTL_MS, CMAEG_CHANNEL_NEGATIVE_TTL_MS, CMAEG_CMA_BASE_URL,
-    CMAEG_CMA_SERVICE_TOKEN_FILE, CMAEG_LISTEN, CMAEG_MASTER_KEYS_FILE, CMAEG_NYXID_BASE_URL,
-    CMAEG_PROVIDERS, CMAEG_PROVIDER_CONNECT_TIMEOUT_MS, CMAEG_PROVIDER_MAX_INFLIGHT,
-    CMAEG_PROVIDER_REQUEST_TIMEOUT_MS, CMAEG_PUBLIC_URL, CMAEG_RESTORE_RATE_PER_MINUTE,
-    CMAEG_RESTORE_TIMEOUT_MS, CMAEG_TOOLS_NYXID_SLUG,
+    ChannelCacheConfig, Config, ConfigError, IngressConfig, ManagementConfig,
+    CMAEG_CHANNEL_CACHE_MAX, CMAEG_CHANNEL_CACHE_TTL_MS, CMAEG_CHANNEL_NEGATIVE_TTL_MS,
+    CMAEG_CMA_BASE_URL, CMAEG_CMA_SERVICE_TOKEN_FILE, CMAEG_INGRESS_INFLIGHT,
+    CMAEG_INGRESS_MAX_BODY, CMAEG_JWKS_TTL_MS, CMAEG_LISTEN, CMAEG_MASTER_KEYS_FILE,
+    CMAEG_NYXID_BASE_URL, CMAEG_PROVIDERS, CMAEG_PROVIDER_CONNECT_TIMEOUT_MS,
+    CMAEG_PROVIDER_MAX_INFLIGHT, CMAEG_PROVIDER_REQUEST_TIMEOUT_MS, CMAEG_PUBLIC_URL,
+    CMAEG_RESTORE_RATE_PER_MINUTE, CMAEG_RESTORE_TIMEOUT_MS, CMAEG_TOOLS_NYXID_SLUG,
 };
 
 const REQUEST_BODY_LIMIT_BYTES: usize = 1024 * 1024;
@@ -45,6 +47,7 @@ struct StatusResponse {
         http::management::delete_channel,
         http::management::test_channel,
         http::management::rekey_channel,
+        http::callbacks::callback,
     )
 )]
 pub struct ApiDoc;
@@ -125,13 +128,21 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         config.channel_cache,
     );
     let _reachability_probe = state.readiness.start_probe(state.records.clone());
+    let ingress = ingress::IngressState::new(
+        state.resolver.clone(),
+        state.master_keys.clone(),
+        config.ingress,
+        std::sync::Arc::new(ingress::launch::UnavailableLauncher),
+    )?;
     let listener = tokio::net::TcpListener::bind(config.listen).await?;
     tracing::info!(bind = %config.listen, "CMAEG listening");
 
     let (shutdown_started, shutdown_signal) = oneshot::channel();
     let server = axum::serve(
         listener,
-        router_with_state(state).into_make_service_with_connect_info::<SocketAddr>(),
+        router_with_state(state)
+            .merge(http::callbacks::router(ingress))
+            .into_make_service_with_connect_info::<SocketAddr>(),
     )
     .with_graceful_shutdown(async move {
         wait_for_shutdown_signal().await;
