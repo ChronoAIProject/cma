@@ -135,19 +135,15 @@ async fn exhausted_capacity_refuses_immediately_and_recovers() {
     assert_eq!(fixture.send(&Envelope::new()).await.status(), 202);
 }
 #[tokio::test]
-async fn warm_ingress_is_local_fast_and_excludes_launcher_wait() {
+async fn warm_verification_is_local_and_total_includes_launcher_wait() {
     let fixture = Fixture::new(|_| {}, Default::default()).await;
     assert_eq!(fixture.send(&Envelope::new()).await.status(), 202);
     for _ in 0..10 {
         let response = fixture.send(&Envelope::new()).await;
         assert_eq!(response.status(), 202);
-        let duration: f64 = response.headers()["server-timing"]
-            .to_str()
-            .unwrap()
-            .strip_prefix("ingress;dur=")
-            .unwrap()
-            .parse()
-            .unwrap();
+        let timing = timing(&response);
+        let duration = timing["restore"] + timing["verify"];
+        assert_eq!(timing["launch"], 0.0); // This fixture uses a recording launcher, with no socket.
         assert!(duration < 50.0, "warm ingress took {duration} ms");
     }
     assert_eq!(fixture.backend.gets.load(Ordering::SeqCst), 1);
@@ -165,16 +161,31 @@ async fn warm_ingress_is_local_fast_and_excludes_launcher_wait() {
     tokio::time::sleep(Duration::from_millis(100)).await;
     fixture.recorder.wait.notify_one();
     let response = pending.await.unwrap().unwrap();
-    let duration: f64 = response.headers()["server-timing"]
-        .to_str()
-        .unwrap()
-        .strip_prefix("ingress;dur=")
-        .unwrap()
-        .parse()
-        .unwrap();
+    let timing = timing(&response);
+    let duration = timing["restore"] + timing["verify"];
+    assert!(timing["total"] >= 100.0);
     assert!(duration < 50.0);
     assert_eq!(
         response.json::<Value>().await.unwrap()["status"],
         "accepted"
     );
+}
+
+fn timing(response: &reqwest::Response) -> std::collections::BTreeMap<String, f64> {
+    let values: std::collections::BTreeMap<String, f64> = response.headers()["server-timing"]
+        .to_str()
+        .unwrap()
+        .split(',')
+        .map(|part| {
+            let (name, value) = part.trim().split_once(";dur=").unwrap();
+            (
+                name.to_owned(),
+                value.split(';').next().unwrap().parse().unwrap(),
+            )
+        })
+        .collect();
+    for name in ["restore", "verify", "launch"] {
+        assert!(values["total"] >= values[name]);
+    }
+    values
 }

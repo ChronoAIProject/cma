@@ -91,7 +91,7 @@ async fn one_hundred_http_misses_emit_one_restore_span() {
             .lines()
             .filter(|line| line.contains("cmaeg.restore")
                 && line.contains(": new")
-                && line.contains(fixture.definition.record_id.as_str()))
+                && line.contains(&cmaeg::telemetry::channel_hash(fixture.id.as_str())))
             .count(),
         1,
         "{trace}"

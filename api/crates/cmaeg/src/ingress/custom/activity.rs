@@ -76,6 +76,8 @@ pub fn launch_request(
     )
     .map_err(|_| "event_ref_too_large")?;
     Ok(LaunchRequest {
+        timing: None,
+        trace: tracing::Span::current(),
         channel,
         activity,
         conversation_id,

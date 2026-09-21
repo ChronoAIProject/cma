@@ -251,7 +251,7 @@ pub async fn problem(response: reqwest::Response, status: u16, reason: &str) {
     assert!(response.headers()["server-timing"]
         .to_str()
         .unwrap()
-        .starts_with("ingress;dur="));
+        .starts_with("restore;dur="));
     assert!(response.headers()["content-type"]
         .to_str()
         .unwrap()

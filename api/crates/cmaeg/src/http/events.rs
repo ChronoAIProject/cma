@@ -1,5 +1,6 @@
 //! Authenticated structured/binary CloudEvents with optional live result streaming.
 use super::problems::{problem, protocol_headers};
+use crate::telemetry::timing::IngressTiming;
 use crate::{
     auth::webhook,
     delivery::sync::SyncRegistry,
@@ -24,10 +25,7 @@ use cmaeg_core::{
 };
 use serde::Deserialize;
 use serde_json::json;
-use std::{
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::{sync::Arc, time::Duration};
 #[derive(Clone)]
 pub struct CustomIngressState {
     pub ingress: IngressState,
@@ -39,10 +37,12 @@ struct Mode {
     mode: Option<String>,
 }
 pub fn router(state: CustomIngressState) -> Router {
-    Router::new()
-        .route("/v1/channels/{channel_id}/events", post(receive_event))
-        .with_state(state)
-        .layer(axum::middleware::from_fn(protocol_headers))
+    crate::telemetry::http::instrument(
+        Router::new()
+            .route("/v1/channels/{channel_id}/events", post(receive_event))
+            .with_state(state)
+            .layer(axum::middleware::from_fn(protocol_headers)),
+    )
 }
 #[utoipa::path(post, path="/v1/channels/{channel_id}/events", operation_id="receiveCustomEvent", tag="ingress",
     params(("channel_id"=String, Path), ("mode"=Option<String>, Query, description="stream requires a configured Sync sink")),
@@ -54,6 +54,11 @@ pub async fn receive_event(
     Path(channel_id): Path<String>,
     request: Request,
 ) -> Response {
+    let timing = request
+        .extensions()
+        .get::<IngressTiming>()
+        .cloned()
+        .unwrap_or_else(|| IngressTiming::new("custom"));
     let Ok(Query(mode)) = Query::<Mode>::try_from_uri(request.uri()) else {
         return invalid("invalid mode query");
     };
@@ -110,11 +115,19 @@ pub async fn receive_event(
             )
         }
     };
-    let received_at = Instant::now();
-    let channel = match state.ingress.resolver.resolve(&channel_id).await {
+    let received_at = timing.received();
+    let channel = match state
+        .ingress
+        .resolver
+        .resolve_observed(&channel_id, Some(&timing))
+        .await
+    {
         Ok(channel) => channel,
         Err(error) => return super::tools::result::<()>(Err(error.problem())),
     };
+    let verify_time = timing.verify();
+    let verify_span = tracing::info_span!("cmaeg.verify", channel = %crate::telemetry::channel_hash(&channel_id), event_id = tracing::field::Empty);
+    let verify_guard = verify_span.enter();
     let Some(Source::Custom { auth, .. }) = channel
         .definition
         .sources
@@ -160,6 +173,7 @@ pub async fn receive_event(
         Ok(event) => event,
         Err(_) => return invalid("invalid CloudEvent"),
     };
+    verify_span.record("event_id", event.id.as_str());
     let mut waiter = None;
     let reply = if stream {
         if !channel.definition.reply.sinks.contains(&Sink::Sync) {
@@ -177,7 +191,7 @@ pub async fn receive_event(
     } else {
         ReplyAddress::None
     };
-    let turn = match custom::activity::launch_request(
+    let mut turn = match custom::activity::launch_request(
         channel,
         event,
         reply,
@@ -188,9 +202,11 @@ pub async fn receive_event(
         Ok(turn) => turn,
         Err(reason) => return invalid(reason),
     };
+    drop(verify_guard);
+    drop(verify_time);
+    turn.timing = Some(timing);
     let accepted = json!({"status":"accepted", "event_id":turn.activity.event_id, "conversation_id":turn.conversation_id});
-    let elapsed = received_at.elapsed();
-    let mut response = match state.ingress.launcher.launch(turn).await {
+    match state.ingress.launcher.launch(turn).await {
         LaunchOutcome::Refused(error) => {
             let busy = error.code == ProblemCode::ProviderBusy;
             let mut response = super::tools::result::<()>(Err(error));
@@ -207,14 +223,7 @@ pub async fn receive_event(
                 .into_response(),
             None => (StatusCode::ACCEPTED, Json(accepted)).into_response(),
         },
-    };
-    response.headers_mut().insert(
-        "server-timing",
-        format!("ingress;dur={:.3}", elapsed.as_secs_f64() * 1000.0)
-            .parse()
-            .unwrap(),
-    );
-    response
+    }
 }
 fn invalid(detail: &str) -> Response {
     problem(StatusCode::BAD_REQUEST, ProblemCode::InvalidRequest, detail)
