@@ -1,0 +1,177 @@
+use super::{
+    intents::{DeliveryOutcome, IntentReceipt},
+    render::custom,
+    sync::SyncRegistry,
+    webhook_client::WebhookClient,
+};
+use crate::{channels::resolver::ResolvedChannel, turns::outcomes::TurnOutcome};
+use cmaeg_core::{
+    channel::Sink,
+    message::OutboundMessage,
+    problem::{Problem, ProblemCode},
+    seal::{EventRefPayload, ReplyAddress},
+};
+use serde_json::{json, Value};
+use std::sync::Arc;
+#[derive(Clone)]
+pub struct CustomDelivery {
+    pub public_origin: String,
+    pub waiters: Arc<SyncRegistry>,
+    pub webhooks: WebhookClient,
+}
+impl CustomDelivery {
+    pub fn new(public_origin: String, waiters: Arc<SyncRegistry>) -> Self {
+        Self {
+            public_origin,
+            waiters,
+            webhooks: WebhookClient::default(),
+        }
+    }
+    pub async fn reply(
+        &self,
+        channel: &ResolvedChannel,
+        event: &EventRefPayload,
+        message: &OutboundMessage,
+    ) -> IntentReceipt {
+        let data = custom::data(event, message.text.as_deref(), Some(message), None);
+        let streamed = self.emit(event, "cmaeg.message", &data, false);
+        let delivery = self
+            .webhook(channel, event, "cmaeg.response.message", data, streamed)
+            .await;
+        IntentReceipt {
+            message_ref: None,
+            rendering: custom::report(message),
+            delivery,
+        }
+    }
+    pub fn stream(&self, event: &EventRefPayload, outcome: &TurnOutcome) {
+        let frame = match outcome {
+            TurnOutcome::TextDelta { text } => Some((
+                "cmaeg.text.delta",
+                json!({"event_id":event.event_id,"conversation_id":event.conversation_id,"text":text}),
+            )),
+            TurnOutcome::MessageCommitted { text } => Some((
+                "cmaeg.message",
+                custom::data(
+                    event,
+                    Some(text),
+                    Some(&OutboundMessage {
+                        text: Some(text.clone()),
+                        blocks: vec![],
+                        reply_to: None,
+                    }),
+                    None,
+                ),
+            )),
+            _ => terminal(event, outcome).map(|(_, data)| {
+                (
+                    if matches!(outcome, TurnOutcome::Completed { .. }) {
+                        "cmaeg.completed"
+                    } else {
+                        "cmaeg.failed"
+                    },
+                    data,
+                )
+            }),
+        };
+        if let Some((name, data)) = frame {
+            self.emit(event, name, &data, outcome.terminal());
+        }
+    }
+    pub async fn outcome(
+        &self,
+        channel: &ResolvedChannel,
+        event: &EventRefPayload,
+        outcome: &TurnOutcome,
+    ) {
+        if let Some((kind, data)) = terminal(event, outcome) {
+            let delivered = self.webhook(channel, event, kind, data, false).await;
+            tracing::info!(
+                outcome = delivered.kind(),
+                "custom terminal delivery finished"
+            );
+        }
+    }
+    fn emit(
+        &self,
+        event: &EventRefPayload,
+        name: &'static str,
+        data: &Value,
+        terminal: bool,
+    ) -> bool {
+        if let ReplyAddress::Sync { waiter } = &event.reply {
+            self.waiters.emit(waiter, name, data, terminal)
+        } else {
+            false
+        }
+    }
+    async fn webhook(
+        &self,
+        channel: &ResolvedChannel,
+        event: &EventRefPayload,
+        kind: &str,
+        data: Value,
+        streamed: bool,
+    ) -> DeliveryOutcome {
+        let envelope = custom::result(&self.public_origin, event, kind, data);
+        let mut result = if streamed {
+            DeliveryOutcome::Confirmed {
+                platform_message_id: None,
+            }
+        } else {
+            DeliveryOutcome::Unsupported
+        };
+        let mut attempted = streamed;
+        for sink in &channel.definition.reply.sinks {
+            let Sink::ResultWebhook { url, hmac_key_id } = sink else {
+                continue;
+            };
+            let outcome = match channel
+                .definition
+                .secrets
+                .hmac_secrets
+                .iter()
+                .find(|(id, _)| id == hmac_key_id)
+            {
+                Some((_, key)) => self.webhooks.send(url, key, &envelope).await,
+                None => DeliveryOutcome::Rejected {
+                    reason: "webhook_key_missing".into(),
+                },
+            };
+            result = if attempted
+                && (!matches!(result, DeliveryOutcome::Confirmed { .. })
+                    || !matches!(outcome, DeliveryOutcome::Confirmed { .. }))
+            {
+                DeliveryOutcome::Unknown {
+                    reason: "partial_sink_delivery".into(),
+                }
+            } else {
+                outcome
+            };
+            attempted = true;
+        }
+        result
+    }
+}
+fn terminal(event: &EventRefPayload, outcome: &TurnOutcome) -> Option<(&'static str, Value)> {
+    match outcome {
+        TurnOutcome::Completed { final_text } => Some((
+            "cmaeg.response.completed",
+            custom::data(event, final_text.as_deref(), None, None),
+        )),
+        TurnOutcome::Failed { .. } | TurnOutcome::Incomplete { .. } => Some((
+            "cmaeg.response.failed",
+            custom::data(
+                event,
+                None,
+                None,
+                Some(Problem::new(
+                    ProblemCode::ProviderUnavailable,
+                    502,
+                    "provider turn did not complete",
+                )),
+            ),
+        )),
+        _ => None,
+    }
+}

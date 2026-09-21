@@ -17,6 +17,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 pub(super) struct Sender {
+    pub custom: super::custom::CustomDelivery,
     pub keys: Arc<MasterKeyRing>,
     pub relay: RelayClient,
     pub pacing: Pacing,
@@ -25,6 +26,12 @@ pub(super) struct Sender {
 }
 impl Sender {
     pub async fn reply(&self, state: &mut EventState, message: &OutboundMessage) -> IntentReceipt {
+        if !matches!(state.event.reply, ReplyAddress::NyxidRelay { .. }) {
+            return self
+                .custom
+                .reply(&state.channel, &state.event, message)
+                .await;
+        }
         let (parts, rendering) = Telegram.render(message, &Capabilities::telegram());
         let mut result = IntentReceipt {
             message_ref: None,
