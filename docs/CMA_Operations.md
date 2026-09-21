@@ -113,6 +113,12 @@ the authenticated channel owner. Relay sources require a channel key; custom
 HMAC sources must reference a supplied base64 HMAC secret. The gateway derives
 each relay JWKS URL from its HTTPS issuer origin.
 
+Relay sources may pin an optional `bot_username` (5–32 ASCII letters, digits or
+underscores, without `@`). This is the Telegram bot identity for mention matching;
+the callback's agent name does not establish that identity. Scoped admission uses
+`{"type":"deny"}`, `{"type":"open"}` or
+`{"type":"allowlist","ids":["platform-id"]}` for sender and chat policies.
+
 The returned endpoints identify the NyxID callback and custom-event URL that the
 creator registers elsewhere. They are addresses for the later ingress work;
 management creation does not register a NyxID route. After deleting a channel,
