@@ -138,8 +138,13 @@ impl Activity {
             ));
         }
         require_string(self.event_id.as_str(), "/event_id", 1, 512)?;
-        require_string(&self.actor.id, "/actor/id", 1, 512)?;
-        require_string(&self.conversation.id, "/conversation/id", 1, 512)?;
+        let identity_limit = if matches!(self.source, SourceKind::Custom) {
+            4096
+        } else {
+            512
+        };
+        require_string(&self.actor.id, "/actor/id", 1, identity_limit)?;
+        require_string(&self.conversation.id, "/conversation/id", 1, identity_limit)?;
         require_string(&self.occurred_at, "/occurred_at", 1, 128)?;
         if let Some(thread_id) = &self.conversation.thread_id {
             require_string(thread_id, "/conversation/thread_id", 1, 512)?;

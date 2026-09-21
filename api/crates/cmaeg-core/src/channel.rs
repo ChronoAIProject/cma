@@ -401,6 +401,17 @@ impl PartitionRule {
         let has_relay = sources
             .iter()
             .any(|source| matches!(source, Source::NyxidRelay { .. }));
+        if has_custom
+            && !matches!(
+                self.key,
+                PartitionKey::Fixed | PartitionKey::EventSubject | PartitionKey::PerEvent
+            )
+        {
+            return Err(ValidationError::new(
+                "/partition/key",
+                "custom sources require fixed, event_subject, or per_event",
+            ));
+        }
         if matches!(
             self.key,
             PartitionKey::EventSubject | PartitionKey::PerEvent
