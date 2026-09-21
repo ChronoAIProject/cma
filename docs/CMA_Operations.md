@@ -234,6 +234,18 @@ and cache rules. MCP tool failures include the same Problem document in JSON-RPC
 `error.data`. An MCP update must bind both supplied references to the same channel
 and event.
 
+### Custom-source authentication and normalization
+
+Custom-source authentication uses the exact retained HMAC secret bytes and Standard
+Webhooks `webhook-id`, `webhook-timestamp`, and `webhook-signature: v1,<base64>`
+headers. Timestamps must be within five minutes; duplicate authentication headers
+are refused. NyxID source keys are checked locally against the configured SHA-256
+hashes. Custom channels admit only `fixed`, `event_subject`, or `per_event`
+partitioning. Long URI subjects retain their full activity value and conversation
+derivation; sealed references carry a digest when the partition exceeds 512 bytes.
+Templates substitute known placeholders once, cap canonical data at 8 KiB and
+total output at 32 KiB with `[truncated]`, and leave unknown placeholders intact.
+
 ### Provider event-context extension
 
 The 4 KiB sealed reference cannot contain an entire permitted 32 KiB activity.
