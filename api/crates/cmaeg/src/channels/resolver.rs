@@ -20,7 +20,7 @@ use std::{
 use tokio::sync::Notify;
 use tracing::{instrument::WithSubscriber, Instrument};
 
-pub const RESTORE_DURATION_METRIC: &str = "cmaeg_restore_duration_seconds";
+pub use crate::telemetry::names::RESTORE_DURATION as RESTORE_DURATION_METRIC;
 
 #[derive(Debug)]
 pub struct ResolvedChannel {
@@ -150,6 +150,14 @@ impl ChannelResolver {
         }
     }
     pub async fn resolve(&self, raw_id: &str) -> Result<Arc<ResolvedChannel>, ResolveError> {
+        self.resolve_observed(raw_id, None).await
+    }
+    pub async fn resolve_observed(
+        &self,
+        raw_id: &str,
+        timing: Option<&crate::telemetry::timing::IngressTiming>,
+    ) -> Result<Arc<ResolvedChannel>, ResolveError> {
+        let _duration = timing.map(|timing| timing.restore());
         loop {
             let stale = match self.inner.cache.lookup(raw_id) {
                 Lookup::Fresh(channel) => return Ok(channel),
@@ -184,11 +192,14 @@ impl ChannelResolver {
                 match self.inner.flights.entry(raw_id.to_owned()) {
                     Entry::Occupied(entry) => entry.get().clone(),
                     Entry::Vacant(entry) => {
+                        if let Some(timing) = timing {
+                            timing.triggered_restore();
+                        }
                         let flight = Arc::new(Flight::new());
                         entry.insert(flight.clone());
                         let resolver = self.clone();
                         let pending = flight.clone();
-                        let span = tracing::info_span!("cmaeg.restore", record_id = %pointer.record_id, kid = opened.kid);
+                        let span = tracing::info_span!("cmaeg.restore", channel = %crate::telemetry::channel_hash(raw_id), event_id = tracing::field::Empty, kid = opened.kid);
                         // A caller cancellation must not strand the shared flight or its waiters.
                         tokio::spawn(
                             async move {
@@ -239,6 +250,9 @@ impl ChannelResolver {
             success = result.is_ok(),
             "channel restore finished"
         );
+        metrics::histogram!(crate::telemetry::names::RESTORE_DURATION,
+            crate::telemetry::names::OUTCOME => if result.is_ok() { "success" } else { "error" })
+        .record(started.elapsed().as_secs_f64());
         let _guard = self.inner.publication.lock().unwrap();
         if !flight
             .invalidated

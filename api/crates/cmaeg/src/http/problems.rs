@@ -11,12 +11,20 @@ pub const PROTOCOL_HEADER: &str = "CMAEG-Protocol-Version";
 pub const PROTOCOL_VERSION: &str = "1";
 
 pub fn problem(status: StatusCode, code: ProblemCode, detail: impl Into<String>) -> Response {
+    let label = serde_json::to_value(code)
+        .unwrap()
+        .as_str()
+        .unwrap()
+        .to_owned();
     let body = Problem::new(code, status.as_u16(), detail);
     let mut response = (status, Json(body)).into_response();
     response.headers_mut().insert(
         header::CONTENT_TYPE,
         HeaderValue::from_static("application/problem+json"),
     );
+    response
+        .extensions_mut()
+        .insert(crate::telemetry::http::RefusalReason(label));
     response
 }
 

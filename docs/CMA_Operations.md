@@ -47,8 +47,9 @@ The metrics implementation uses `metrics` 0.24 and
 `metrics-exporter-prometheus` 0.18 (MIT / Apache-2.0), with the exporter's optional
 HTTP server and push client disabled. CMAEG owns the separate Axum scrape listener.
 Registration is process-wide and idempotent. Histogram buckets are 0.005, 0.01,
-0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, and 10 seconds. Operation instrumentation
-is added alongside the socket timing and latency-budget harness.
+0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, and 10 seconds. See
+[CMAEG observability](CMAEG_Operations.md) for metric definitions, request tracing,
+timing headers, and the status of the socket timing and latency harness.
 
 | Environment key | Default | Purpose |
 | --- | ---: | --- |

@@ -70,6 +70,7 @@ impl ChannelCache {
     }
     pub(crate) fn insert(&self, id: String, entry: CacheEntry) {
         let _guard = self.insertion.lock().unwrap();
+        let before = self.entries.len();
         self.entries.insert(id, entry);
         if self.entries.len() > self.max_entries {
             let now = Instant::now();
@@ -88,14 +89,25 @@ impl ChannelCache {
                 break;
             }
         }
+        metrics::gauge!(crate::telemetry::names::CHANNELS_CACHED)
+            .increment(self.entries.len() as f64 - before as f64);
     }
     pub(crate) fn invalidate(&self, id: &str) {
-        self.entries.remove(id);
+        let _guard = self.insertion.lock().unwrap();
+        if self.entries.remove(id).is_some() {
+            metrics::gauge!(crate::telemetry::names::CHANNELS_CACHED).decrement(1);
+        }
     }
     pub fn len(&self) -> usize {
         self.entries.len()
     }
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
+    }
+}
+impl Drop for ChannelCache {
+    fn drop(&mut self) {
+        metrics::gauge!(crate::telemetry::names::CHANNELS_CACHED)
+            .decrement(self.entries.len() as f64);
     }
 }
