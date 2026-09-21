@@ -179,9 +179,12 @@ async fn gateway_routes_require_authentication_and_capability() {
 
 #[tokio::test]
 async fn gateway_routes_round_trip_and_report_cas_and_size_errors() {
-    let id = uuid::Uuid::new_v4();
+    let app = app();
+    let id = "123e4567-e89b-42d3-a456-426614174001";
+    let second_id = "123e4567-e89b-42d3-a456-426614174002";
     let authority = Authorization::new([Capability::ManageGatewayRecords]);
-    let response = app()
+    let response = app
+        .clone()
         .oneshot(request(
             &format!("/api/v1/gateway/channel-records/{id}"),
             "PUT",
@@ -193,7 +196,30 @@ async fn gateway_routes_round_trip_and_report_cas_and_size_errors() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
-    let response = app()
+    let response = app
+        .clone()
+        .oneshot(request(
+            &format!("/api/v1/gateway/channel-records/{id}"),
+            "GET",
+            None,
+            Some(authority.clone()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let response = app
+        .clone()
+        .oneshot(request(
+            &format!("/api/v1/gateway/channel-records/{id}"),
+            "PUT",
+            Some(json!({"owner":"subject","blob":STANDARD.encode([4]),"expected_version":1})),
+            Some(authority.clone()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let response = app
+        .clone()
         .oneshot(request(
             &format!("/api/v1/gateway/channel-records/{id}"),
             "PUT",
@@ -203,6 +229,91 @@ async fn gateway_routes_round_trip_and_report_cas_and_size_errors() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::CONFLICT);
-    let response = app().oneshot(request(&format!("/api/v1/gateway/channel-records/{id}"), "PUT", Some(json!({"owner":"subject","blob":STANDARD.encode(vec![0_u8; 65_537]),"expected_version":null})), Some(authority))).await.unwrap();
+    let response = app
+        .clone()
+        .oneshot(request(
+            &format!("/api/v1/gateway/channel-records/{second_id}"),
+            "PUT",
+            Some(json!({"owner":"subject","blob":STANDARD.encode([9]),"expected_version":null})),
+            Some(authority.clone()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let response = app
+        .clone()
+        .oneshot(request(
+            "/api/v1/gateway/channel-records?owner=subject&limit=1",
+            "GET",
+            None,
+            Some(authority.clone()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let response = app
+        .clone()
+        .oneshot(request(
+            &format!("/api/v1/gateway/channel-records/{id}?expected_version=2"),
+            "DELETE",
+            None,
+            Some(authority.clone()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    let response = app
+        .clone()
+        .oneshot(request(
+            &format!("/api/v1/gateway/channel-records/{id}"),
+            "GET",
+            None,
+            Some(authority.clone()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let response = app
+        .clone()
+        .oneshot(request(
+            &format!("/api/v1/gateway/channel-records/{second_id}?expected_version=9"),
+            "DELETE",
+            None,
+            Some(authority.clone()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let response = app
+        .clone()
+        .oneshot(request(
+            &format!("/api/v1/gateway/channel-records/{second_id}"),
+            "DELETE",
+            None,
+            Some(authority.clone()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    let response = app
+        .clone()
+        .oneshot(request(
+            &format!("/api/v1/gateway/channel-records/{second_id}"),
+            "DELETE",
+            None,
+            Some(authority.clone()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let response = app
+        .oneshot(request(
+            &format!("/api/v1/gateway/channel-records/{id}"),
+            "PUT",
+            Some(json!({"owner":"subject","blob":STANDARD.encode(vec![0_u8; 65_537]),"expected_version":null})),
+            Some(authority),
+        ))
+        .await
+        .unwrap();
     assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
 }
