@@ -63,6 +63,9 @@ mongodb = { version = "3", default-features = false, features = [
 portable-pty = "0.9"
 reqwest = { version = "0.12", default-features = false, features = [
     "json",
+    # CMAEG talks to cleartext Kubernetes `.svc` providers with HTTP/2 prior
+    # knowledge; reqwest's HTTP/2 feature is required for that transport.
+    "http2",
     "rustls-tls",
     "stream",
 ] }
