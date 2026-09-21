@@ -24,6 +24,7 @@ struct Inner {
     keys_loaded: AtomicBool,
     registry_loaded: AtomicBool,
     cma_reachable: AtomicBool,
+    draining: AtomicBool,
 }
 
 #[derive(Clone, Serialize)]
@@ -39,11 +40,18 @@ impl Readiness {
                 keys_loaded: true.into(),
                 registry_loaded: true.into(),
                 cma_reachable: false.into(),
+                draining: false.into(),
             }),
         }
     }
+    pub fn start_draining(&self) {
+        self.inner.draining.store(true, Ordering::Release);
+    }
     pub fn report(&self) -> ReadinessReport {
         let mut reasons = Vec::new();
+        if self.inner.draining.load(Ordering::Acquire) {
+            reasons.push("draining");
+        }
         if !self.inner.keys_loaded.load(Ordering::Acquire) {
             reasons.push("master_keys_not_loaded");
         }

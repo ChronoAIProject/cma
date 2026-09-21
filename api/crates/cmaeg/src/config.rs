@@ -8,8 +8,10 @@ use reqwest::Url;
 
 mod cache;
 mod ingress;
+mod turns;
 pub use cache::*;
 pub use ingress::*;
+pub use turns::*;
 
 /// The listener address used by CMAEG.
 pub const CMAEG_LISTEN: &str = "CMAEG_LISTEN";
@@ -86,6 +88,7 @@ pub struct Config {
     pub management: ManagementConfig,
     pub channel_cache: ChannelCacheConfig,
     pub ingress: IngressConfig,
+    pub turns: TurnConfig,
 }
 
 /// Secrets and origins used by the channel management plane.
@@ -129,6 +132,7 @@ impl Config {
             management,
             channel_cache: ChannelCacheConfig::from_env()?,
             ingress: IngressConfig::from_env()?,
+            turns: TurnConfig::from_env()?,
         })
     }
 }

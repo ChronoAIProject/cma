@@ -27,7 +27,7 @@ pub enum LaunchOutcome {
 pub trait TurnLauncher: Send + Sync {
     fn launch(&self, request: LaunchRequest) -> BoxFuture<'_, LaunchOutcome>;
 }
-/// Composition fails explicitly until a runner is configured; nothing is silently accepted.
+/// Explicit refusal for integrations that compose ingress without a turn runner.
 pub struct UnavailableLauncher;
 impl TurnLauncher for UnavailableLauncher {
     fn launch(&self, _request: LaunchRequest) -> BoxFuture<'_, LaunchOutcome> {
