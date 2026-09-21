@@ -50,6 +50,8 @@ pub mod directory;
 mod durability;
 mod encryption;
 mod gateway_records;
+#[cfg(test)]
+mod gateway_records_mongo_integration_tests;
 mod hierarchy;
 mod launch_context;
 #[cfg(test)]
