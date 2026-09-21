@@ -29,6 +29,13 @@ pub const MAX_PROMPT_TEMPLATE_BYTES: usize = 8 * 1_024;
 pub enum Platform {
     Telegram,
 }
+impl Platform {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Telegram => "telegram",
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -57,6 +64,8 @@ pub enum Source {
         key_id: String,
         route_ids: Vec<String>,
         platform: Platform,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        bot_username: Option<String>,
         admission: AdmissionPolicy,
     },
     Custom {
@@ -90,7 +99,12 @@ pub enum AdmissionPolicy {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
+#[serde(
+    rename_all = "snake_case",
+    tag = "type",
+    content = "ids",
+    deny_unknown_fields
+)]
 pub enum IdentityAdmission {
     Deny,
     Open,
@@ -241,6 +255,7 @@ impl ChannelDefinition {
                     key_id,
                     route_ids,
                     platform,
+                    bot_username,
                     admission,
                 } => {
                     if !variants.insert("nyxid_relay") {
@@ -260,6 +275,18 @@ impl ChannelDefinition {
                         &format!("{pointer}/route_ids"),
                         MAX_ROUTE_IDS,
                     )?;
+                    if let Some(username) = bot_username {
+                        if !(5..=32).contains(&username.len())
+                            || !username
+                                .bytes()
+                                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+                        {
+                            return Err(ValidationError::new(
+                                format!("{pointer}/bot_username"),
+                                "must contain 5..=32 Telegram username characters without @",
+                            ));
+                        }
+                    }
                     validate_admission(admission, &pointer)?;
                 }
                 Source::Custom {
