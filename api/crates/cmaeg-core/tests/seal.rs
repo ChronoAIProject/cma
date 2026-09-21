@@ -117,6 +117,23 @@ fn oversized_payload_is_refused() {
 }
 
 #[test]
+fn opaque_blobs_support_large_payloads_and_rekey_notice() {
+    let old = old_ring();
+    let token = cmaeg_core::seal::seal_blob(&old, &vec![7_u8; 8_000]).expect("blob token");
+    let opened = cmaeg_core::seal::open_blob(&ring(), &token).expect("opened blob");
+    assert_eq!(opened.payload.len(), 8_000);
+    assert_eq!(opened.payload[0], 7);
+    assert!(opened.needs_rekey);
+    let current = cmaeg_core::seal::seal_blob(&ring(), b"small").expect("current blob");
+    assert_eq!(
+        cmaeg_core::seal::open_blob(&ring(), &current)
+            .unwrap()
+            .payload,
+        b"small"
+    );
+}
+
+#[test]
 fn conversation_and_idempotency_keys_are_deterministic() {
     let ring = ring();
     let first = ConversationId::derive(&ring, &channel_id(), 1, "chat");
