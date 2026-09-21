@@ -1,0 +1,1 @@
+{"schema_version":1,"event_id":"msg-1","kind":{"type":"message","text":"hello","attachments":[],"mentions_bot":true},"actor":{"id":"user-1","kind":"human"},"conversation":{"id":"chat-1","kind":"private"},"occurred_at":"2026-09-22T00:00:00Z","source":{"type":"nyxid_relay","platform":"telegram","route_id":"route-1"}}
