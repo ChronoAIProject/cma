@@ -26,6 +26,10 @@ pub struct FakeProviderConfig {
     pub conversation_missing_once: bool,
     pub malformed_frame: bool,
     pub disconnect_after: Option<usize>,
+    pub reject_binding: bool,
+    pub text: String,
+    pub unknown_event: bool,
+    pub in_progress_first: bool,
 }
 
 impl Default for FakeProviderConfig {
@@ -36,6 +40,10 @@ impl Default for FakeProviderConfig {
             conversation_missing_once: false,
             malformed_frame: false,
             disconnect_after: None,
+            reject_binding: false,
+            text: "hello".into(),
+            unknown_event: false,
+            in_progress_first: false,
         }
     }
 }
@@ -136,7 +144,14 @@ async fn bind(
         headers,
         body,
     );
-    Json(json!({"binding_id":binding_id,"level":"l3","honoured":["profile"],"refused":[]}))
+    if state.config.reject_binding {
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({"code":"profile_refused"})),
+        )
+            .into_response();
+    }
+    Json(json!({"binding_id":binding_id,"level":"l3","honoured":["profile"],"refused":[{"field":"context.mcp_servers","reason":"not supported"}]}))
         .into_response()
 }
 
@@ -211,6 +226,16 @@ async fn responses(
         "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_fake\"}}\n\n".to_owned(),
         "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_1\",\"delta\":\"hello\"}\n\n".to_owned(),
     ];
+    if state.config.in_progress_first {
+        frames[0] = frames[0].replace("response.created", "response.in_progress");
+    }
+    frames[1] = format!(
+        "data: {}\n\n",
+        json!({"type":"response.output_text.delta", "item_id":"msg_1", "delta": state.config.text})
+    );
+    if state.config.unknown_event {
+        frames.insert(1, "data: {\"type\":\"response.future\"}\n\n".into());
+    }
     if state.config.malformed_frame {
         frames.push("data: {malformed}\n\n".to_owned());
     } else {
