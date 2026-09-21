@@ -22,6 +22,11 @@ use tokio::{net::TcpListener, sync::oneshot, time::sleep};
 #[derive(Debug, Clone)]
 pub struct FakeProviderConfig {
     pub response_delay: Duration,
+    pub terminal_delay: Duration,
+    pub header_delay: Duration,
+    pub missing_turn_once: bool,
+    pub busy_always: bool,
+    pub frames: Option<Vec<Value>>,
     pub busy_once: bool,
     pub conversation_missing_once: bool,
     pub malformed_frame: bool,
@@ -36,6 +41,11 @@ impl Default for FakeProviderConfig {
     fn default() -> Self {
         Self {
             response_delay: Duration::ZERO,
+            terminal_delay: Duration::ZERO,
+            header_delay: Duration::ZERO,
+            missing_turn_once: false,
+            busy_always: false,
+            frames: None,
             busy_once: false,
             conversation_missing_once: false,
             malformed_frame: false,
@@ -62,6 +72,7 @@ struct StateData {
     requests: Mutex<Vec<ReceivedRequest>>,
     busy_once: AtomicBool,
     conversation_missing_once: AtomicBool,
+    missing_turn_once: AtomicBool,
 }
 
 pub struct FakeProvider {
@@ -76,11 +87,13 @@ impl FakeProvider {
         let address = listener.local_addr().unwrap();
         let busy_once = config.busy_once;
         let missing_once = config.conversation_missing_once;
+        let missing_turn_once = config.missing_turn_once;
         let state = Arc::new(StateData {
             config,
             requests: Mutex::new(Vec::new()),
             busy_once: AtomicBool::new(busy_once),
             conversation_missing_once: AtomicBool::new(missing_once),
+            missing_turn_once: AtomicBool::new(missing_turn_once),
         });
         let router = Router::new()
             .route("/.well-known/agent-card.json", get(agent_card))
@@ -219,7 +232,17 @@ async fn responses(
     body: Bytes,
 ) -> Response {
     record(&state, "POST", "/api/v2/responses".into(), headers, body);
-    if state.busy_once.swap(false, Ordering::SeqCst) {
+    if !state.config.header_delay.is_zero() {
+        sleep(state.config.header_delay).await;
+    }
+    if state.missing_turn_once.swap(false, Ordering::SeqCst) {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({"code":"conversation_missing"})),
+        )
+            .into_response();
+    }
+    if state.config.busy_always || state.busy_once.swap(false, Ordering::SeqCst) {
         return (StatusCode::CONFLICT, Json(json!({"code":"session_busy"}))).into_response();
     }
     let mut frames = vec![
@@ -241,14 +264,25 @@ async fn responses(
     } else {
         frames.push("event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_fake\"}}\n\n".to_owned());
     }
+    if let Some(custom) = &state.config.frames {
+        frames = custom
+            .iter()
+            .map(|frame| format!("data: {frame}\n\n"))
+            .collect();
+    }
     if let Some(count) = state.config.disconnect_after {
         frames.truncate(count);
     }
     let delay = state.config.response_delay;
+    let terminal_delay = state.config.terminal_delay;
+    let last = frames.len().saturating_sub(1);
     let stream =
         stream::iter(frames.into_iter().enumerate()).then(move |(index, frame)| async move {
             if index == 0 && !delay.is_zero() {
                 sleep(delay).await;
+            }
+            if index == last && !terminal_delay.is_zero() {
+                sleep(terminal_delay).await;
             }
             Ok::<Bytes, Infallible>(Bytes::from(frame))
         });

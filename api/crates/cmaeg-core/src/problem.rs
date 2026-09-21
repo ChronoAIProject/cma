@@ -17,6 +17,7 @@ pub enum ProblemCode {
     ProviderUnavailable,
     ProviderRejected,
     ProviderBusy,
+    Draining,
     EventRefInvalid,
     EventRefExpired,
     CallbackInvalid,

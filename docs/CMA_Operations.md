@@ -64,6 +64,10 @@ The gateway startup settings are:
 | `CMAEG_JWKS_TTL_MS` | `600000` | Fresh lifetime of relay signing keys; at most one refresh every five seconds per retained URL. |
 | `CMAEG_INGRESS_MAX_BODY` | `1048576` | Callback body limit, configurable from 1 byte through 16 MiB. |
 | `CMAEG_INGRESS_INFLIGHT` | `256` | Concurrent callbacks per replica; overflow returns immediate 429 with `Retry-After: 1`. |
+| `CMAEG_ACCEPT_BUDGET_MS` | `20000` | Time from the last inbound body byte to acknowledgment; a pending provider request continues after the gateway returns 202. |
+| `CMAEG_TURN_TIMEOUT_MS` | `600000` | Total turn lifetime including provider setup, retry and stream consumption. |
+| `CMAEG_DRAIN_SECONDS` | `600` | Maximum shutdown drain for tracked turns and HTTP requests. |
+| `CMAEG_BUSY_RETRY_MAX_MS` | `15000` | Maximum interval for retrying upstream busy refusals with jitter. |
 
 Each allowlisted provider gets its own pooled HTTP client with a bounded idle
 pool, no redirects and the CMAEG user agent. Cleartext `.svc` clients use HTTP/2
@@ -120,8 +124,44 @@ deferred launcher outcomes both return 202 with event and conversation IDs;
 launcher refusals return explicit RFC 9457 problems. Every callback response
 carries `Server-Timing: ingress;dur=...`, measuring request entry through launcher
 handoff and excluding launcher wait. The provider runner will add its own socket
-handoff measurement. Until that runner is composed, the production callback
-route explicitly returns 503 `provider_unavailable` for otherwise admitted work.
+handoff measurement.
+
+### Provider turns and shutdown
+
+The production callback route starts a provider turn with the channel's retained
+agent credential, deterministic conversation ID, and the same event idempotency
+key on every retry. A missing conversation is created once before retrying the
+turn. Upstream busy responses are retried within the configured deadline with
+jitter; local provider capacity returns 503 `provider_busy` immediately with
+`Retry-After: 2`. Header setup and the entire turn have separate deadlines.
+
+The gateway acknowledges when the provider accepts, or at the acceptance budget
+with a deferred 202. Deferred turns and turns whose HTTP caller disconnects keep
+consuming the stream under the total turn deadline. Named outcomes cover
+acceptance, deltas, committed messages, tools, completion, failure and incomplete
+responses. The temporary delivery sink logs outcome kinds only; platform delivery
+is added by the delivery implementation. Stream loss and timeout remain explicit
+`stream_lost` and `turn_timeout` failures.
+
+Turn metadata carries hashed channel/partition identifiers, event and actor IDs.
+Event references longer than the provider's 512-byte metadata limit are omitted
+with a content-free warning, requiring tools context lookup. The reference still
+travels with the internal delivery context. No credential or source envelope is
+rendered into provider input. Text assembly is bounded to 256 KiB and 256 items;
+local tracked turns are bounded to 4,096 and tool-reply dedupe to 50,000 live refs.
+
+On SIGTERM the listener continues answering `/readyz` with 503 `draining` while
+tracked consumers finish; new launches return a typed 503 `draining`. HTTP drain
+then completes within the same deadline. The deadline cancels remaining local
+consumers and releases their provider permits; it cannot cancel work already
+admitted remotely. Duplicate relay events may have separate consumers, with
+provider idempotency deciding the actual turn. Tool-reply markers contain only
+reference hashes and expire with their authenticated event reference.
+
+The runner emits `cmaeg_ingress_to_provider_seconds` and
+`cmaeg_provider_accept_seconds` as structured tracing measurements. The current
+provider start timestamp marks HTTP dispatch; the observability work adds the
+socket-write measurement required by the final latency harness.
 
 ### Channel management
 

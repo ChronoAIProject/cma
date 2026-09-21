@@ -231,8 +231,19 @@ fn output_item(value: Option<&Value>) -> Result<OutputItem, ResponsesEventError>
                 .get("text")
                 .and_then(Value::as_str)
                 .or_else(|| object.get("content").and_then(Value::as_str))
-                .unwrap_or_default()
-                .to_owned(),
+                .map(str::to_owned)
+                .unwrap_or_else(|| {
+                    object
+                        .get("content")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .filter(|part| {
+                            part.get("type").and_then(Value::as_str) == Some("output_text")
+                        })
+                        .filter_map(|part| part.get("text").and_then(Value::as_str))
+                        .collect()
+                }),
         }),
         "mcp_call" => Ok(OutputItem::McpCall {
             id: string_in(object, "id"),

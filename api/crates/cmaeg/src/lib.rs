@@ -7,8 +7,9 @@ pub mod http;
 pub mod ingress;
 pub mod providers;
 pub mod records;
+pub mod turns;
 
-use std::{future::IntoFuture, net::SocketAddr, time::Duration};
+use std::{future::IntoFuture, net::SocketAddr, time::Instant};
 
 use axum::{routing::get, Json, Router};
 use serde::Serialize;
@@ -17,17 +18,18 @@ use tower_http::limit::RequestBodyLimitLayer;
 use utoipa::OpenApi;
 
 pub use config::{
-    ChannelCacheConfig, Config, ConfigError, IngressConfig, ManagementConfig,
-    CMAEG_CHANNEL_CACHE_MAX, CMAEG_CHANNEL_CACHE_TTL_MS, CMAEG_CHANNEL_NEGATIVE_TTL_MS,
-    CMAEG_CMA_BASE_URL, CMAEG_CMA_SERVICE_TOKEN_FILE, CMAEG_INGRESS_INFLIGHT,
+    ChannelCacheConfig, Config, ConfigError, IngressConfig, ManagementConfig, TurnConfig,
+    CMAEG_ACCEPT_BUDGET_MS, CMAEG_BUSY_RETRY_MAX_MS, CMAEG_CHANNEL_CACHE_MAX,
+    CMAEG_CHANNEL_CACHE_TTL_MS, CMAEG_CHANNEL_NEGATIVE_TTL_MS, CMAEG_CMA_BASE_URL,
+    CMAEG_CMA_SERVICE_TOKEN_FILE, CMAEG_DRAIN_SECONDS, CMAEG_INGRESS_INFLIGHT,
     CMAEG_INGRESS_MAX_BODY, CMAEG_JWKS_TTL_MS, CMAEG_LISTEN, CMAEG_MASTER_KEYS_FILE,
     CMAEG_NYXID_BASE_URL, CMAEG_PROVIDERS, CMAEG_PROVIDER_CONNECT_TIMEOUT_MS,
     CMAEG_PROVIDER_MAX_INFLIGHT, CMAEG_PROVIDER_REQUEST_TIMEOUT_MS, CMAEG_PUBLIC_URL,
     CMAEG_RESTORE_RATE_PER_MINUTE, CMAEG_RESTORE_TIMEOUT_MS, CMAEG_TOOLS_NYXID_SLUG,
+    CMAEG_TURN_TIMEOUT_MS,
 };
 
 const REQUEST_BODY_LIMIT_BYTES: usize = 1024 * 1024;
-const HTTP_DRAIN_TIMEOUT: Duration = Duration::from_secs(15);
 const DEFAULT_LOG_FILTER: &str = "cmaeg=info";
 
 #[derive(Debug, Serialize)]
@@ -121,18 +123,27 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         &config.management.nyxid_base_url,
     )?);
     let state = http::ManagementState::new(
-        providers,
+        providers.clone(),
         records,
         creator_auth,
         config.management.clone(),
         config.channel_cache,
     );
     let _reachability_probe = state.readiness.start_probe(state.records.clone());
+    let tracker = turns::TurnTracker::new(state.readiness.clone());
+    let (delivery, outcomes) = tokio::sync::mpsc::channel(256);
+    let delivery_task = tokio::spawn(turns::outcomes::log_outcomes(outcomes));
+    let runner = std::sync::Arc::new(turns::TurnRunner::new(
+        providers,
+        tracker.clone(),
+        delivery,
+        config.turns.clone(),
+    ));
     let ingress = ingress::IngressState::new(
         state.resolver.clone(),
         state.master_keys.clone(),
         config.ingress,
-        std::sync::Arc::new(ingress::launch::UnavailableLauncher),
+        runner,
     )?;
     let listener = tokio::net::TcpListener::bind(config.listen).await?;
     tracing::info!(bind = %config.listen, "CMAEG listening");
@@ -146,19 +157,27 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     )
     .with_graceful_shutdown(async move {
         wait_for_shutdown_signal().await;
-        let _ = shutdown_started.send(());
+        tracker.start_draining();
+        let deadline = Instant::now() + config.turns.drain;
+        if !tracker.drain(deadline).await {
+            tracing::warn!("turn drain deadline reached; remaining consumers cancelled");
+        }
+        let _ = shutdown_started.send(deadline);
     })
     .into_future();
     tokio::pin!(server);
 
     tokio::select! {
         result = &mut server => result?,
-        _ = shutdown_signal => {
-            tokio::time::timeout(HTTP_DRAIN_TIMEOUT, &mut server)
-                .await
-                .map_err(|_| "CMAEG HTTP drain exceeded 15 seconds")??;
+        deadline = shutdown_signal => {
+            let deadline = deadline?;
+            match tokio::time::timeout_at(deadline.into(), &mut server).await {
+                Ok(result) => result?,
+                Err(_) => tracing::warn!("HTTP drain deadline reached"),
+            }
         }
     }
+    delivery_task.abort();
     Ok(())
 }
 
