@@ -49,6 +49,10 @@ impl MountedSecrets {
             .env_remove("CMAEG_JWKS_TTL_MS")
             .env_remove("CMAEG_INGRESS_MAX_BODY")
             .env_remove("CMAEG_INGRESS_INFLIGHT")
+            .env_remove("CMAEG_ACCEPT_BUDGET_MS")
+            .env_remove("CMAEG_TURN_TIMEOUT_MS")
+            .env_remove("CMAEG_DRAIN_SECONDS")
+            .env_remove("CMAEG_BUSY_RETRY_MAX_MS")
             .env("CMAEG_PROVIDERS", json!([{
                 "slug":"cma_codex", "base_url":provider.base_url(), "kind":"responses_http",
                 "paths": {"agent_card":"/.well-known/agent-card.json", "binding":"/api/v1/cmaeg/bindings/{binding_id}",
@@ -234,6 +238,10 @@ async fn compiled_binary_refuses_missing_and_invalid_mounted_secrets() {
         "CMAEG_JWKS_TTL_MS",
         "CMAEG_INGRESS_MAX_BODY",
         "CMAEG_INGRESS_INFLIGHT",
+        "CMAEG_ACCEPT_BUDGET_MS",
+        "CMAEG_TURN_TIMEOUT_MS",
+        "CMAEG_DRAIN_SECONDS",
+        "CMAEG_BUSY_RETRY_MAX_MS",
     ] {
         let output = files
             .command("127.0.0.1:0", &cma, &nyxid, &provider)
