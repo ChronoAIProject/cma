@@ -76,7 +76,8 @@ macro_rules! id_type {
 id_type!(RecordId);
 id_type!(EventId);
 id_type!(ConversationId);
-id_type!(MessageRef);
+mod message_ref;
+pub use message_ref::MessageRef;
 id_type!(BindingId);
 id_type!(ProviderSlug);
 

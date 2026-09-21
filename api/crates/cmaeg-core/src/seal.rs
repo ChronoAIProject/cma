@@ -11,9 +11,11 @@ use ring::{
 use serde::{de::DeserializeOwned, Serialize};
 
 pub mod event_ref;
+pub mod message_ref;
 pub mod pointer;
 
 pub use event_ref::{EventRef, EventRefPayload, ReplyAddress};
+pub use message_ref::MessageRefPayload;
 pub use pointer::ChannelPointer;
 
 pub const MAX_TOKEN_LENGTH: usize = 4_096;
@@ -27,6 +29,7 @@ const HKDF_SALT: &[u8] = b"cmaeg.v1";
 pub enum TokenKind {
     Channel,
     EventRef,
+    MessageRef,
     Blob,
 }
 
@@ -35,6 +38,7 @@ impl TokenKind {
         match self {
             Self::Channel => "ch",
             Self::EventRef => "ev",
+            Self::MessageRef => "mr",
             Self::Blob => "bl",
         }
     }

@@ -1,0 +1,22 @@
+//! A confirmed destination, authenticated under its own token kind.
+use crate::{
+    ids::{ChannelId, EventId},
+    require_string, ValidationError,
+};
+use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MessageRefPayload {
+    pub channel_id: ChannelId,
+    pub event_id: EventId,
+    pub platform_message_id: String,
+    pub route_id: String,
+}
+impl MessageRefPayload {
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        require_string(&self.platform_message_id, "/platform_message_id", 1, 512)?;
+        require_string(&self.route_id, "/route_id", 1, 512)?;
+        Ok(())
+    }
+}
