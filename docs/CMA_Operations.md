@@ -48,7 +48,7 @@ The gateway startup settings are:
 | `CMAEG_LISTEN` | `0.0.0.0:8090` | CMAEG listen address. |
 | `CMAEG_PROVIDERS` | `[]` | Strict JSON provider allowlist described above. |
 | `CMAEG_PROVIDER_CONNECT_TIMEOUT_MS` | `2000` | TCP/TLS connection timeout for each provider pool. |
-| `CMAEG_PROVIDER_REQUEST_TIMEOUT_MS` | `30000` | Deadline for provider setup and probe requests, and the HTTP stream request. |
+| `CMAEG_PROVIDER_REQUEST_TIMEOUT_MS` | `30000` | Deadline for provider setup and probe requests, and receipt of streaming HTTP response headers. Active streams are owned and bounded by their consumer. |
 | `CMAEG_PROVIDER_MAX_INFLIGHT` | `256` | Deployment-wide upper bound applied to each provider's semaphore. Calls wait at most 50 ms for a provider permit before returning a typed busy result. |
 | `CMAEG_PUBLIC_URL` | Required | Externally reachable origin used in channel callback and tool URLs, without a trailing slash. HTTPS, or loopback HTTP for local tests. |
 | `CMAEG_MASTER_KEYS_FILE` | Required | Mounted file containing one `kid:base64key[,kid:base64key]` line; each key decodes to 32 bytes and the first key is current. |

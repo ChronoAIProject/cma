@@ -254,3 +254,64 @@ async fn one_hundred_sequential_turns_accept_with_low_latency() {
     assert!(latencies[49] < Duration::from_millis(5));
     fake.close().await;
 }
+
+#[tokio::test]
+async fn streaming_lifetime_outlives_header_timeout_and_drop_releases_capacity() {
+    let fake = FakeProvider::start(FakeProviderConfig {
+        response_delay: Duration::from_millis(250),
+        ..Default::default()
+    })
+    .await;
+    let client = ProviderClient::new(
+        registry(fake.base_url(), 1),
+        Duration::from_secs(1),
+        Duration::from_millis(100),
+        1,
+    )
+    .unwrap();
+    let request = |event: &str| TurnRequest {
+        conversation_id: ConversationId::new("conv_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap(),
+        input: vec![],
+        idempotency_key: IdempotencyKey::from_event(&event.parse().unwrap()),
+        metadata: BTreeMap::new(),
+        agent_key: Secret::new("ephemeral-test-agent"),
+    };
+    let mut first = client
+        .start_turn_immediate(&provider(), request("one"))
+        .await
+        .unwrap();
+    assert!(matches!(
+        client
+            .start_turn_immediate(&provider(), request("two"))
+            .await,
+        Err(ProviderError::Capacity)
+    ));
+    assert_eq!(
+        (&mut first.accepted).await.unwrap().response_id,
+        "resp_fake"
+    );
+    while first.events.recv().await.is_some() {}
+    let idle = client
+        .start_turn_immediate(&provider(), request("three"))
+        .await
+        .unwrap();
+    drop(idle);
+    let start = std::time::Instant::now();
+    let next = tokio::time::timeout(Duration::from_millis(100), async {
+        loop {
+            match client
+                .start_turn_immediate(&provider(), request("four"))
+                .await
+            {
+                Err(ProviderError::Capacity) => tokio::task::yield_now().await,
+                result => break result.unwrap(),
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert!(start.elapsed() < Duration::from_millis(100));
+    drop(next);
+    assert_eq!(fake.requests().len(), 3);
+    fake.close().await;
+}
