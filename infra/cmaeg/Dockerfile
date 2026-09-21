@@ -135,6 +135,9 @@ EXPOSE 8090
 # /v1/messages/{message_ref}/update and stateless POST /mcp (2025-06-18).
 # Providers retain event_context on the Responses POST and serve authenticated
 # GET at the configured conversation path plus /events/{event_id}.
+# Delivery uses CMAEG_NYXID_REPLY_TIMEOUT_MS=5000, CMAEG_ACK_TEXT="Working on it…",
+# CMAEG_HEARTBEAT_MS=60000 and CMAEG_FAILURE_TEXT for short failure notices.
+# Eight workers pace each relay route at three seconds and drain queued sends.
 # See docs/CMA_Operations.md.
 ENTRYPOINT ["/usr/local/bin/cmaeg"]
 # Health is asserted by the Kubernetes probes in infra/api/deployment.yaml.

@@ -53,6 +53,10 @@ impl MountedSecrets {
             .env_remove("CMAEG_TURN_TIMEOUT_MS")
             .env_remove("CMAEG_DRAIN_SECONDS")
             .env_remove("CMAEG_BUSY_RETRY_MAX_MS")
+            .env_remove("CMAEG_NYXID_REPLY_TIMEOUT_MS")
+            .env_remove("CMAEG_HEARTBEAT_MS")
+            .env_remove("CMAEG_ACK_TEXT")
+            .env_remove("CMAEG_FAILURE_TEXT")
             .env("CMAEG_PROVIDERS", json!([{
                 "slug":"cma_codex", "base_url":provider.base_url(), "kind":"responses_http",
                 "paths": {"agent_card":"/.well-known/agent-card.json", "binding":"/api/v1/cmaeg/bindings/{binding_id}",
@@ -284,6 +288,8 @@ async fn compiled_binary_refuses_missing_and_invalid_mounted_secrets() {
         "CMAEG_TURN_TIMEOUT_MS",
         "CMAEG_DRAIN_SECONDS",
         "CMAEG_BUSY_RETRY_MAX_MS",
+        "CMAEG_NYXID_REPLY_TIMEOUT_MS",
+        "CMAEG_HEARTBEAT_MS",
     ] {
         let output = files
             .command("127.0.0.1:0", &cma, &nyxid, &provider)

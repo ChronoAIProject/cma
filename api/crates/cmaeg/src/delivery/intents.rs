@@ -50,6 +50,17 @@ pub enum DeliveryOutcome {
     Unknown { reason: String },
     Unsupported,
 }
+impl DeliveryOutcome {
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::Confirmed { .. } => "confirmed",
+            Self::Rejected { .. } => "rejected",
+            Self::RateLimited { .. } => "rate_limited",
+            Self::Unknown { .. } => "unknown",
+            Self::Unsupported => "unsupported",
+        }
+    }
+}
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct IntentReceipt {
