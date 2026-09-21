@@ -17,6 +17,8 @@ pub use event_ref::{EventRef, EventRefPayload, ReplyAddress};
 pub use pointer::ChannelPointer;
 
 pub const MAX_TOKEN_LENGTH: usize = 4_096;
+pub const MAX_BLOB_BYTES: usize = 65_536;
+const MAX_BLOB_WIRE_LENGTH: usize = 100_000;
 const TOKEN_VERSION: &str = "cmaeg1";
 const HKDF_SALT: &[u8] = b"cmaeg.v1";
 
@@ -24,6 +26,7 @@ const HKDF_SALT: &[u8] = b"cmaeg.v1";
 pub enum TokenKind {
     Channel,
     EventRef,
+    Blob,
 }
 
 impl TokenKind {
@@ -31,6 +34,7 @@ impl TokenKind {
         match self {
             Self::Channel => "ch",
             Self::EventRef => "ev",
+            Self::Blob => "bl",
         }
     }
 }
@@ -267,6 +271,73 @@ pub fn open<T: DeserializeOwned>(
     let payload = serde_json::from_slice(plaintext).map_err(OpenError::Malformed)?;
     Ok(Opened {
         payload,
+        kid,
+        needs_rekey: kid != ring.current_kid(),
+    })
+}
+
+/// Seal an opaque channel-definition blob without the short URL-token limit.
+/// The wire value still carries the key id and authenticated `cmaeg1.bl.<kid>`
+/// AAD so CMA can retain and return it without learning its contents.
+pub fn seal_blob(ring: &MasterKeyRing, plaintext: &[u8]) -> Result<Vec<u8>, SealError> {
+    if plaintext.len() > MAX_BLOB_BYTES {
+        return Err(SealError::TooLarge);
+    }
+    let kid = ring.current_kid();
+    let aad = aad(TokenKind::Blob, kid);
+    let mut nonce = [0_u8; 12];
+    SystemRandom::new()
+        .fill(&mut nonce)
+        .map_err(SealError::Random)?;
+    let nonce_value = Nonce::assume_unique_for_key(nonce);
+    let mut ciphertext = plaintext.to_vec();
+    ring.key(kid)
+        .expect("the ring always contains its current key")
+        .seal_in_place_append_tag(nonce_value, Aad::from(aad.as_bytes()), &mut ciphertext)
+        .map_err(|_| SealError::Random(ring::error::Unspecified))?;
+    let mut encoded = Vec::with_capacity(12 + ciphertext.len());
+    encoded.extend_from_slice(&nonce);
+    encoded.extend_from_slice(&ciphertext);
+    Ok(format!(
+        "{TOKEN_VERSION}.bl.{kid}.{}",
+        general_purpose::URL_SAFE_NO_PAD.encode(encoded)
+    )
+    .into_bytes())
+}
+
+/// Open an opaque channel-definition blob and report whether it needs rekeying.
+pub fn open_blob(ring: &MasterKeyRing, token: &[u8]) -> Result<Opened<Vec<u8>>, OpenError> {
+    if token.len() > MAX_BLOB_WIRE_LENGTH {
+        return Err(OpenError::Format);
+    }
+    let token = std::str::from_utf8(token).map_err(|_| OpenError::Format)?;
+    let parts = token.split('.').collect::<Vec<_>>();
+    if parts.len() != 4 || parts[0] != TOKEN_VERSION || parts[1] != TokenKind::Blob.wire_name() {
+        return Err(OpenError::Format);
+    }
+    let kid = parts[2].parse::<u8>().map_err(|_| OpenError::Format)?;
+    let key = ring.key(kid).ok_or(OpenError::UnknownKid(kid))?;
+    let mut bytes = general_purpose::URL_SAFE_NO_PAD
+        .decode(parts[3])
+        .map_err(|_| OpenError::Format)?;
+    if bytes.len() < 12 + aead::MAX_TAG_LEN {
+        return Err(OpenError::Format);
+    }
+    let nonce_bytes: [u8; 12] = bytes[..12].try_into().map_err(|_| OpenError::Format)?;
+    let nonce = Nonce::assume_unique_for_key(nonce_bytes);
+    let mut ciphertext = bytes.split_off(12);
+    let plaintext = key
+        .open_in_place(
+            nonce,
+            Aad::from(aad(TokenKind::Blob, kid).as_bytes()),
+            &mut ciphertext,
+        )
+        .map_err(|_| OpenError::Tampered)?;
+    if plaintext.len() > MAX_BLOB_BYTES {
+        return Err(OpenError::Format);
+    }
+    Ok(Opened {
+        payload: plaintext.to_vec(),
         kid,
         needs_rekey: kid != ring.current_kid(),
     })
