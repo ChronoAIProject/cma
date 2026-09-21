@@ -10,19 +10,16 @@ use cmaeg_core::{
     channel::Secret,
     ids::{BindingId, ConversationId, ProviderSlug},
 };
-use futures_util::StreamExt;
 use serde_json::{json, Value};
 use tokio::sync::{mpsc, oneshot, OwnedSemaphorePermit, Semaphore};
 
 use super::{
     client_types::{
-        Accepted, BindingRequest, BindingResponse, ProviderError, ProviderHandle, TurnRequest,
-        TurnStream, MAX_METADATA_KEYS, MAX_METADATA_KEY_BYTES, MAX_METADATA_VALUE_BYTES,
-        MAX_SEMAPHORE_WAIT,
+        BindingRequest, BindingResponse, ProviderError, ProviderHandle, TurnRequest, TurnStream,
+        MAX_METADATA_KEYS, MAX_METADATA_KEY_BYTES, MAX_METADATA_VALUE_BYTES, MAX_SEMAPHORE_WAIT,
     },
-    parse_event, parse_sse,
     probe::{classify_conformance, AgentCardProbe},
-    responses::{response_id_from_frame, ResponsesEvent},
+    stream::forward_turn,
     ProviderRegistry,
 };
 
@@ -225,6 +222,34 @@ impl ProviderClient {
         validate_metadata(&request.metadata)?;
         let handle = self.handle(provider)?;
         let permit = acquire(&handle.inflight).await?;
+        self.start_with_permit(provider, request, handle, permit)
+            .await
+    }
+
+    /// Runner admission never waits behind another turn's lifetime semaphore.
+    pub async fn start_turn_immediate(
+        &self,
+        provider: &ProviderSlug,
+        request: TurnRequest,
+    ) -> Result<TurnStream, ProviderError> {
+        validate_metadata(&request.metadata)?;
+        let handle = self.handle(provider)?;
+        let permit = handle
+            .inflight
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| ProviderError::Capacity)?;
+        self.start_with_permit(provider, request, handle, permit)
+            .await
+    }
+
+    async fn start_with_permit(
+        &self,
+        provider: &ProviderSlug,
+        request: TurnRequest,
+        handle: &ProviderHandle,
+        permit: OwnedSemaphorePermit,
+    ) -> Result<TurnStream, ProviderError> {
         let url = handle
             .entry
             .url("responses", &[])
@@ -242,17 +267,20 @@ impl ProviderClient {
             conversation = %request.conversation_id,
             "provider request started"
         );
-        let response = handle
-            .client
-            .post(url)
-            .bearer_auth(request.agent_key.as_str())
-            .header(reqwest::header::ACCEPT, "text/event-stream")
-            .header("idempotency-key", request.idempotency_key.as_str())
-            .json(&body)
-            .timeout(self.request_timeout)
-            .send()
-            .await
-            .map_err(transport_error)?;
+        let response = tokio::time::timeout(
+            self.request_timeout,
+            handle
+                .client
+                .post(url)
+                .bearer_auth(request.agent_key.as_str())
+                .header(reqwest::header::ACCEPT, "text/event-stream")
+                .header("idempotency-key", request.idempotency_key.as_str())
+                .json(&body)
+                .send(),
+        )
+        .await
+        .map_err(|_| ProviderError::Unavailable("provider request timed out".into()))?
+        .map_err(transport_error)?;
         let response = self.success_or_error(response).await?;
         let (accepted_tx, accepted) = oneshot::channel();
         let (events_tx, events) = mpsc::channel(64);
@@ -315,67 +343,6 @@ async fn acquire(semaphore: &Arc<Semaphore>) -> Result<OwnedSemaphorePermit, Pro
             retry_after: Some(MAX_SEMAPHORE_WAIT),
         })?
         .map_err(|_| ProviderError::Unavailable("provider semaphore closed".into()))
-}
-
-async fn forward_turn(
-    response: reqwest::Response,
-    accepted_tx: oneshot::Sender<Accepted>,
-    events_tx: mpsc::Sender<ResponsesEvent>,
-    _permit: OwnedSemaphorePermit,
-) {
-    let mut accepted_tx = Some(accepted_tx);
-    let mut stream = Box::pin(parse_sse(response.bytes_stream()));
-    while let Some(frame) = stream.next().await {
-        let frame = match frame {
-            Ok(frame) => frame,
-            Err(error) => {
-                tracing::warn!(%error, "provider SSE parser stopped");
-                break;
-            }
-        };
-        let event = match parse_event(&frame) {
-            Ok(event) => event,
-            Err(error) => {
-                tracing::warn!(%error, "provider response event was rejected");
-                break;
-            }
-        };
-        if let Some(sender) = accepted_tx.take() {
-            match &event {
-                ResponsesEvent::Created { response_id } => {
-                    let _ = sender.send(Accepted {
-                        response_id: response_id.clone(),
-                        at: Instant::now(),
-                    });
-                }
-                ResponsesEvent::InProgress => {
-                    let Some(response_id) =
-                        response_id_from_frame(&frame).filter(|id| !id.is_empty())
-                    else {
-                        tracing::warn!("provider acceptance frame has no response id");
-                        break;
-                    };
-                    let _ = sender.send(Accepted {
-                        response_id,
-                        at: Instant::now(),
-                    });
-                }
-                _ => accepted_tx = Some(sender),
-            }
-        }
-        let terminal = matches!(
-            event,
-            ResponsesEvent::Completed { .. }
-                | ResponsesEvent::Failed { .. }
-                | ResponsesEvent::Incomplete { .. }
-        );
-        if events_tx.send(event).await.is_err() {
-            break;
-        }
-        if terminal {
-            break;
-        }
-    }
 }
 
 fn validate_metadata(metadata: &BTreeMap<String, String>) -> Result<(), ProviderError> {

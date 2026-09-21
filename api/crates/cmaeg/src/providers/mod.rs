@@ -6,6 +6,7 @@ mod probe;
 mod registry;
 mod responses;
 mod sse;
+mod stream;
 
 pub use client::ProviderClient;
 pub use client_types::{

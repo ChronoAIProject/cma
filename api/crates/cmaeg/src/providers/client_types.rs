@@ -24,6 +24,7 @@ pub enum ProviderError {
     UnknownProvider(String),
     InvalidRequest(String),
     Busy { retry_after: Option<Duration> },
+    Capacity,
     ConversationMissing,
     Rejected { status: u16, code: String },
     Unavailable(String),
@@ -41,6 +42,7 @@ impl fmt::Display for ProviderError {
             Self::Busy { retry_after } => {
                 write!(formatter, "provider is busy (retry_after={retry_after:?})")
             }
+            Self::Capacity => formatter.write_str("provider concurrency is exhausted"),
             Self::ConversationMissing => formatter.write_str("provider conversation is missing"),
             Self::Rejected { status, code } => write!(
                 formatter,
