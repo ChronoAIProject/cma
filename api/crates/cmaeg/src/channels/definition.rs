@@ -62,6 +62,8 @@ pub enum SourceRequest {
         key_id: String,
         route_ids: Vec<String>,
         platform: cmaeg_core::channel::Platform,
+        #[serde(default)]
+        bot_username: Option<String>,
         admission: AdmissionPolicy,
     },
     Custom {
@@ -268,6 +270,7 @@ fn build_sources(sources: &[SourceRequest]) -> Result<Vec<Source>, ValidationErr
                 key_id,
                 route_ids,
                 platform,
+                bot_username,
                 admission,
             } => Source::NyxidRelay {
                 issuer: issuer.clone(),
@@ -275,6 +278,7 @@ fn build_sources(sources: &[SourceRequest]) -> Result<Vec<Source>, ValidationErr
                 key_id: key_id.clone(),
                 route_ids: route_ids.clone(),
                 platform: *platform,
+                bot_username: bot_username.clone(),
                 admission: admission.clone(),
             },
             SourceRequest::Custom {

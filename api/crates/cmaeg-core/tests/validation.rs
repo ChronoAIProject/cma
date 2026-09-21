@@ -109,3 +109,52 @@ fn canonical_json_golden_vector_is_byte_stable() {
     let value = serde_json::json!({"b":1,"a":[{"d":2,"c":3}]});
     assert_eq!(canonical_json(value), r#"{"a":[{"c":3,"d":2}],"b":1}"#);
 }
+
+#[test]
+fn relay_bot_username_is_an_optional_bounded_identity_pin() {
+    let mut value: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/channel.json")).unwrap();
+    value["sources"] = serde_json::json!([{"type":"nyxid_relay", "issuer":"https://nyx.example", "jwks_url":"https://nyx.example/.well-known/jwks.json", "key_id":"key-1", "route_ids":["route-1"], "platform":"telegram", "admission":{"type":"all"}}]);
+    value["partition"]["key"] = "conversation".into();
+    let profile: AgentProfileSnapshot = serde_json::from_value(value["profile"].clone()).unwrap();
+    value["profile_digest"] = profile.digest().into();
+    let channel: ChannelDefinition = serde_json::from_value(value.clone()).unwrap();
+    channel.validate().unwrap();
+    for username in [
+        "",
+        "short name",
+        "@support_bot",
+        "a",
+        "abcdefghijklmnopqrstuvwxyz_0123456789",
+    ] {
+        value["sources"][0]["bot_username"] = username.into();
+        assert!(serde_json::from_value::<ChannelDefinition>(value.clone())
+            .unwrap()
+            .validate()
+            .is_err());
+    }
+    value["sources"][0]["bot_username"] = "support_bot".into();
+    serde_json::from_value::<ChannelDefinition>(value)
+        .unwrap()
+        .validate()
+        .unwrap();
+}
+
+#[test]
+fn scoped_identity_allowlists_have_a_serializable_wire_shape() {
+    use cmaeg_core::channel::IdentityAdmission;
+    let policy = IdentityAdmission::Allowlist(vec!["sender-1".into()]);
+    let json = serde_json::to_value(&policy).unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!({"type":"allowlist", "ids":["sender-1"]})
+    );
+    assert_eq!(
+        serde_json::from_value::<IdentityAdmission>(json).unwrap(),
+        policy
+    );
+    assert_eq!(
+        serde_json::to_value(IdentityAdmission::Deny).unwrap(),
+        serde_json::json!({"type":"deny"})
+    );
+}
