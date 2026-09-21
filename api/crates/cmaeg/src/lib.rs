@@ -89,29 +89,33 @@ impl utoipa::Modify for ManagementSecurity {
 
 /// Build the stateless HTTP router.
 pub fn router() -> Router {
-    Router::new()
-        .route("/healthz", get(healthz))
-        .route(
-            "/readyz",
-            get(http::readiness::readyz).with_state(http::readiness::Readiness::default()),
-        )
-        .route("/openapi.json", get(openapi))
-        .layer(RequestBodyLimitLayer::new(REQUEST_BODY_LIMIT_BYTES))
-        .layer(axum::middleware::from_fn(http::problems::protocol_headers))
+    telemetry::http::instrument(
+        Router::new()
+            .route("/healthz", get(healthz))
+            .route(
+                "/readyz",
+                get(http::readiness::readyz).with_state(http::readiness::Readiness::default()),
+            )
+            .route("/openapi.json", get(openapi))
+            .layer(RequestBodyLimitLayer::new(REQUEST_BODY_LIMIT_BYTES))
+            .layer(axum::middleware::from_fn(http::problems::protocol_headers)),
+    )
 }
 
 /// Build the complete stateful router used by the running service.
 pub fn router_with_state(state: http::ManagementState) -> Router {
     let readiness = state.readiness.clone();
-    http::management::management_router(state)
-        .route("/healthz", get(healthz))
-        .route(
-            "/readyz",
-            get(http::readiness::readyz).with_state(readiness),
-        )
-        .route("/openapi.json", get(openapi))
-        .layer(RequestBodyLimitLayer::new(REQUEST_BODY_LIMIT_BYTES))
-        .layer(axum::middleware::from_fn(http::problems::protocol_headers))
+    telemetry::http::instrument(
+        http::management::management_router(state)
+            .route("/healthz", get(healthz))
+            .route(
+                "/readyz",
+                get(http::readiness::readyz).with_state(readiness),
+            )
+            .route("/openapi.json", get(openapi))
+            .layer(RequestBodyLimitLayer::new(REQUEST_BODY_LIMIT_BYTES))
+            .layer(axum::middleware::from_fn(http::problems::protocol_headers)),
+    )
 }
 
 async fn healthz() -> Json<StatusResponse> {

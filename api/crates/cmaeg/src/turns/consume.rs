@@ -15,7 +15,7 @@ pub(super) async fn consume(
     turn: Arc<LaunchRequest>,
     delivery: &mpsc::Sender<DeliveryCommand>,
     admitted: &mut Option<oneshot::Sender<LaunchOutcome>>,
-) -> Result<(), &'static str> {
+) -> Result<&'static str, &'static str> {
     let mut acceptance_pending = true;
     let mut projection = Projection::default();
     loop {
@@ -24,6 +24,9 @@ pub(super) async fn consume(
             accepted = &mut stream.accepted, if acceptance_pending => {
                 acceptance_pending = false;
                 let accepted = accepted.map_err(|_| "stream_lost")?;
+                metrics::histogram!(crate::telemetry::names::PROVIDER_ACCEPT,
+                    crate::telemetry::names::PROVIDER => turn.channel.definition.provider.slug.to_string())
+                    .record(accepted.at.saturating_duration_since(stream.request_started).as_secs_f64());
                 tracing::info!(metric="cmaeg_provider_accept_seconds",duration_seconds=accepted.at.saturating_duration_since(stream.request_started).as_secs_f64(),"provider accepted turn");
                 if let Some(sender) = admitted.take() {let _ = sender.send(LaunchOutcome::Accepted {response_id:accepted.response_id.clone()});}
                 send(delivery,&turn,TurnOutcome::Accepted {response_id:accepted.response_id}).await?;
@@ -32,11 +35,12 @@ pub(super) async fn consume(
                 let Some(event) = event else {return Err("stream_lost");};
                 if let Some(outcome) = projection.event(event)? {
                     let terminal = outcome.terminal();
+                    let kind = outcome.kind();
                     if terminal && acceptance_pending {
                         refuse(admitted,ProblemCode::ProviderUnavailable,"provider stream ended before acceptance");
                     }
                     send(delivery,&turn,outcome).await?;
-                    if terminal {return Ok(());}
+                    if terminal {return Ok(kind);}
                 }
             }
         }

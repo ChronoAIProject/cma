@@ -19,10 +19,12 @@ use serde_json::{json, Value};
 use std::time::Duration;
 const VERSION: &str = "2025-06-18";
 pub fn router(state: ToolsState) -> Router {
-    Router::new()
-        .route("/mcp", post(invoke))
-        .with_state(state)
-        .layer(axum::middleware::from_fn(protocol_headers))
+    crate::telemetry::http::instrument(
+        Router::new()
+            .route("/mcp", post(invoke))
+            .with_state(state)
+            .layer(axum::middleware::from_fn(protocol_headers)),
+    )
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]

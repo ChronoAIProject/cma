@@ -10,6 +10,7 @@ use crate::{
 use cmaeg_core::message::OutboundMessage;
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::{sync::mpsc, time::Instant};
+use tracing::Instrument;
 const MAX_EVENTS: usize = 8192;
 pub(super) async fn run(
     mut commands: mpsc::Receiver<DeliveryCommand>,
@@ -26,7 +27,8 @@ pub(super) async fn run(
             biased;
             command = commands.recv() => {
                 let Some(command) = command else { break; };
-                handle(command, &mut events, &sender, &config, &tracker).await;
+                let trace = command.trace();
+                handle(command, &mut events, &sender, &config, &tracker).instrument(trace).await;
             }
             _ = tick.tick(), if !commands.is_closed() => {
                 expire(&mut events);
@@ -57,6 +59,7 @@ async fn handle(
             message,
             source,
             receipt,
+            ..
         } => {
             if receipt.is_closed() {
                 return;

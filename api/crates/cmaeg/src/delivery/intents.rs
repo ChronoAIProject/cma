@@ -19,6 +19,7 @@ pub enum ReplySource {
 #[derive(Debug)]
 pub enum DeliveryCommand {
     Reply {
+        trace: tracing::Span,
         channel: Arc<ResolvedChannel>,
         event: EventRefPayload,
         message: OutboundMessage,
@@ -26,12 +27,14 @@ pub enum DeliveryCommand {
         receipt: oneshot::Sender<IntentReceipt>,
     },
     Update {
+        trace: tracing::Span,
         channel: Arc<ResolvedChannel>,
         message_ref: MessageRefPayload,
         message: OutboundMessage,
         receipt: oneshot::Sender<IntentReceipt>,
     },
     Typing {
+        trace: tracing::Span,
         channel: Arc<ResolvedChannel>,
         event: EventRefPayload,
         receipt: oneshot::Sender<TypingReceipt>,
@@ -40,6 +43,16 @@ pub enum DeliveryCommand {
         turn: Arc<LaunchRequest>,
         outcome: TurnOutcome,
     },
+}
+impl DeliveryCommand {
+    pub(crate) fn trace(&self) -> tracing::Span {
+        match self {
+            Self::Reply { trace, .. } | Self::Update { trace, .. } | Self::Typing { trace, .. } => {
+                trace.clone()
+            }
+            Self::StreamOutcome { turn, .. } => turn.trace.clone(),
+        }
+    }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "outcome", rename_all = "snake_case")]

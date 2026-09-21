@@ -25,7 +25,27 @@ pub(super) struct Sender {
     pub consumed: Mutex<HashMap<[u8; 32], i64>>,
 }
 impl Sender {
+    #[tracing::instrument(name="cmaeg.deliver", parent = &state.trace, skip_all, fields(
+        channel = %crate::telemetry::channel_hash(state.channel.id.as_str()), event_id = %state.event.event_id))]
     pub async fn reply(&self, state: &mut EventState, message: &OutboundMessage) -> IntentReceipt {
+        let mut observation = crate::telemetry::operations::Operation::new(
+            crate::telemetry::names::DELIVERY_DURATION,
+            crate::telemetry::names::PLATFORM,
+            if matches!(state.event.reply, ReplyAddress::NyxidRelay { .. }) {
+                "telegram"
+            } else {
+                "custom"
+            },
+        );
+        let result = self.reply_inner(state, message).await;
+        observation.finish(result.delivery.kind());
+        result
+    }
+    async fn reply_inner(
+        &self,
+        state: &mut EventState,
+        message: &OutboundMessage,
+    ) -> IntentReceipt {
         if !matches!(state.event.reply, ReplyAddress::NyxidRelay { .. }) {
             return self
                 .custom

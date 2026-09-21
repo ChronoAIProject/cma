@@ -17,6 +17,8 @@ pub struct LaunchRequest {
     pub event_ref: EventRef,
     pub idempotency_key: IdempotencyKey,
     pub received_at: Instant,
+    pub trace: tracing::Span,
+    pub timing: Option<crate::telemetry::timing::IngressTiming>,
 }
 #[derive(Debug)]
 pub enum LaunchOutcome {

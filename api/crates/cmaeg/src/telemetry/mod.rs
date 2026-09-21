@@ -1,8 +1,16 @@
 //! Process metrics registration; the HTTP listener lives on a separate address.
+pub mod http;
 pub mod names;
+pub mod operations;
+pub mod timing;
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
 use std::sync::OnceLock;
 static REGISTRY: OnceLock<Result<PrometheusHandle, String>> = OnceLock::new();
+pub fn channel_hash(id: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let hash = Sha256::digest(id.as_bytes());
+    hash[..8].iter().map(|byte| format!("{byte:02x}")).collect()
+}
 pub fn install() -> Result<PrometheusHandle, String> {
     REGISTRY
         .get_or_init(|| {

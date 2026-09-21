@@ -112,6 +112,7 @@ async fn closed_receipt_skips_queued_tool_send_and_drain_deadline_cancels_slow_w
     drop(received);
     app.commands
         .send(DeliveryCommand::Reply {
+            trace: tracing::Span::current(),
             channel: app.turn.channel.clone(),
             event: app.event.clone(),
             message: OutboundMessage {

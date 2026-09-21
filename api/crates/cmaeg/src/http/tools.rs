@@ -22,14 +22,16 @@ use serde::Serialize;
 use tower_http::limit::RequestBodyLimitLayer;
 
 pub fn router(state: ToolsState) -> Router {
-    Router::new()
-        .route("/v1/events/{event_ref}/replies", post(reply_to_event))
-        .route("/v1/messages/{message_ref}/update", post(update_message))
-        .route("/v1/events/{event_ref}/typing", post(send_typing))
-        .route("/v1/events/{event_ref}/context", get(read_event_context))
-        .with_state(state)
-        .layer(RequestBodyLimitLayer::new(131072))
-        .layer(axum::middleware::from_fn(protocol_headers))
+    crate::telemetry::http::instrument(
+        Router::new()
+            .route("/v1/events/{event_ref}/replies", post(reply_to_event))
+            .route("/v1/messages/{message_ref}/update", post(update_message))
+            .route("/v1/events/{event_ref}/typing", post(send_typing))
+            .route("/v1/events/{event_ref}/context", get(read_event_context))
+            .with_state(state)
+            .layer(RequestBodyLimitLayer::new(131072))
+            .layer(axum::middleware::from_fn(protocol_headers)),
+    )
 }
 #[utoipa::path(post,path="/v1/events/{event_ref}/replies",operation_id="replyToEvent",tag="tools",
     security(("agentBearer"=[])),params(("event_ref"=String,Path)),request_body=OutboundMessage,

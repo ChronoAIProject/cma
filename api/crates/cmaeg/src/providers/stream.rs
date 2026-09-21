@@ -19,15 +19,15 @@ pub(super) async fn forward_turn(
         };
         let frame = match frame {
             Ok(frame) => frame,
-            Err(error) => {
-                tracing::warn!(%error, "provider SSE parser stopped");
+            Err(_) => {
+                tracing::warn!("provider SSE parser stopped");
                 break;
             }
         };
         let event = match parse_event(&frame) {
             Ok(event) => event,
-            Err(error) => {
-                tracing::warn!(%error, "provider response event was rejected");
+            Err(_) => {
+                tracing::warn!("provider response event was rejected");
                 break;
             }
         };
