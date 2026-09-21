@@ -1,9 +1,11 @@
 //! CMA Event Gateway HTTP service.
 
 pub mod auth;
+pub mod channels;
 mod config;
-pub mod records;
+pub mod http;
 pub mod providers;
+pub mod records;
 
 use std::{future::IntoFuture, net::SocketAddr, time::Duration};
 
@@ -29,10 +31,43 @@ struct StatusResponse {
     status: &'static str,
 }
 
-/// The initial CMAEG OpenAPI document. Later issues add the versioned routes.
+/// The versioned CMAEG management API document.
 #[derive(Debug, OpenApi)]
-#[openapi(info(title = "CMA Event Gateway", version = "0.1.0"))]
+#[openapi(
+    info(title = "CMA Event Gateway", version = "0.1.0"),
+    modifiers(&ManagementSecurity),
+    paths(
+        http::management::create_channel,
+        http::management::get_channel,
+        http::management::update_channel,
+        http::management::delete_channel,
+        http::management::test_channel,
+        http::management::rekey_channel,
+    )
+)]
 pub struct ApiDoc;
+
+struct ManagementSecurity;
+impl utoipa::Modify for ManagementSecurity {
+    fn modify(&self, document: &mut utoipa::openapi::OpenApi) {
+        use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
+        let components = document.components.get_or_insert_with(Default::default);
+        for (name, description) in [
+            ("creatorBearer", "NyxID creator bearer token"),
+            ("serviceBearer", "CMA service token; rekey only"),
+        ] {
+            components.add_security_scheme(
+                name,
+                SecurityScheme::Http(
+                    HttpBuilder::new()
+                        .scheme(HttpAuthScheme::Bearer)
+                        .description(Some(description))
+                        .build(),
+                ),
+            );
+        }
+    }
+}
 
 /// Build the stateless HTTP router.
 pub fn router() -> Router {
@@ -41,6 +76,17 @@ pub fn router() -> Router {
         .route("/readyz", get(readyz))
         .route("/openapi.json", get(openapi))
         .layer(RequestBodyLimitLayer::new(REQUEST_BODY_LIMIT_BYTES))
+        .layer(axum::middleware::from_fn(http::problems::protocol_headers))
+}
+
+/// Build the complete stateful router used by the running service.
+pub fn router_with_state(state: http::ManagementState) -> Router {
+    http::management::management_router(state)
+        .route("/healthz", get(healthz))
+        .route("/readyz", get(readyz))
+        .route("/openapi.json", get(openapi))
+        .layer(RequestBodyLimitLayer::new(REQUEST_BODY_LIMIT_BYTES))
+        .layer(axum::middleware::from_fn(http::problems::protocol_headers))
 }
 
 async fn healthz() -> Json<StatusResponse> {
@@ -58,13 +104,23 @@ async fn openapi() -> Json<utoipa::openapi::OpenApi> {
 /// Run CMAEG until a process termination signal arrives.
 pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let config = Config::from_env()?;
+    let providers = std::sync::Arc::new(providers::ProviderClient::from_config(&config)?);
+    let records = std::sync::Arc::new(records::RecordClient::new(
+        &config.management.cma_base_url,
+        config.management.cma_service_token.as_str(),
+    )?);
+    let creator_auth = std::sync::Arc::new(auth::CreatorAuthenticator::new(
+        &config.management.nyxid_base_url,
+    )?);
+    let state =
+        http::ManagementState::new(providers, records, creator_auth, config.management.clone());
     let listener = tokio::net::TcpListener::bind(config.listen).await?;
     tracing::info!(bind = %config.listen, "CMAEG listening");
 
     let (shutdown_started, shutdown_signal) = oneshot::channel();
     let server = axum::serve(
         listener,
-        router().into_make_service_with_connect_info::<SocketAddr>(),
+        router_with_state(state).into_make_service_with_connect_info::<SocketAddr>(),
     )
     .with_graceful_shutdown(async move {
         wait_for_shutdown_signal().await;
