@@ -49,6 +49,7 @@ mod default_profiles;
 pub mod directory;
 mod durability;
 mod encryption;
+mod gateway_records;
 mod hierarchy;
 mod launch_context;
 #[cfg(test)]
@@ -122,6 +123,7 @@ pub(crate) use codex_subscriptions::MongoSubscriptionStore;
 pub(crate) use default_profiles::DefaultProfileSpec;
 pub use directory::MongoUserDirectoryStore;
 pub(crate) use encryption::AuthEncryptionKey;
+pub(crate) use gateway_records::MongoGatewayRecordStore;
 pub use mongo::MongoStores;
 pub use operation::MongoOperationStore;
 pub(crate) use sandbox_credentials::MongoSandboxCredentialStore;

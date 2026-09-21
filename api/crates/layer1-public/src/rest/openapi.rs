@@ -26,13 +26,12 @@ use super::instances_openapi_shapes::{
     WorktreeListView, WorktreeView,
 };
 use super::launch_events::*;
-use super::openapi_shapes::ConformanceDocument;
 use super::problems::ProblemDocument;
 use super::profile_authoring::shapes::*;
 use super::profiles_openapi_shapes::*;
 use super::trigger_openapi_shapes::*;
+#[rustfmt::skip] use super::gateway_records::{GatewayRecordHeadView as GatewayRecordHead, GatewayRecordPageView as GatewayRecordPage, GatewayRecordView as GatewayRecord, PutGatewayRecordRequest as PutGatewayRequest, PutGatewayRecordView as PutGateway};
 use identity::{anonymous_path, operation_id};
-
 #[derive(OpenApi)]
 #[openapi(
     paths(
@@ -193,12 +192,14 @@ use identity::{anonymous_path, operation_id};
         super::admin::triggers::resume,
         super::admin::runtime_inventory,
         super::admin::activity,
+        super::gateway_records::put_record, super::gateway_records::get_record,
+        super::gateway_records::delete_record, super::gateway_records::list,
     ),
     components(schemas(
         super::agent_artifacts::AgentArtifactView,
         super::agent_artifacts::AgentArtifactPageView,
         super::agent_artifacts::PublishAgentArtifactRequest,
-        ConformanceDocument,
+        super::openapi_shapes::ConformanceDocument,
         super::defaults::DefaultProfilesView,
         ProblemDocument,
         ProfileCapacityBoundsView,
@@ -422,6 +423,7 @@ use identity::{anonymous_path, operation_id};
         RuntimeInventoryView,
         ActivityView,
         ActivityPageView,
+        PutGatewayRequest, PutGateway, GatewayRecord, GatewayRecordHead, GatewayRecordPage,
     )),
     tags(
         (name = "discovery", description = "Anonymous deployment discovery"),
@@ -445,7 +447,6 @@ use identity::{anonymous_path, operation_id};
     )
 )]
 struct ApiDoc;
-
 pub fn document() -> utoipa::openapi::OpenApi {
     let mut document = ApiDoc::openapi();
     document.merge(crate::responses::document());
@@ -495,6 +496,5 @@ pub fn document() -> utoipa::openapi::OpenApi {
     }
     document
 }
-
 #[cfg(test)]
 mod tests;

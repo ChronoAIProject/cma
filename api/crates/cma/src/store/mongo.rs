@@ -7,7 +7,7 @@ use mongodb::{bson::doc, Client};
 
 use super::{
     AuthEncryptionKey, MongoActivityStore, MongoAuthStore, MongoCheckpointObjectStore,
-    MongoOperationStore, MongoPlatformSettingsStore, MongoProfileStore,
+    MongoGatewayRecordStore, MongoOperationStore, MongoPlatformSettingsStore, MongoProfileStore,
     MongoSandboxCredentialStore, MongoSandboxStore, MongoTriggerDefinitionStore,
     MongoUserDirectoryStore,
 };
@@ -38,6 +38,7 @@ pub struct MongoStores {
     pub users: Arc<MongoUserDirectoryStore>,
     pub settings: Arc<MongoPlatformSettingsStore>,
     pub operations: Arc<MongoOperationStore>,
+    pub gateway_records: Arc<MongoGatewayRecordStore>,
     client: Client,
     database: String,
 }
@@ -96,6 +97,7 @@ impl MongoStores {
         let users = Arc::new(MongoUserDirectoryStore::open(&client, database).await?);
         let settings = Arc::new(MongoPlatformSettingsStore::open(&client, database).await?);
         let operations = Arc::new(MongoOperationStore::open(&client, database).await?);
+        let gateway_records = Arc::new(MongoGatewayRecordStore::open(&client, database).await?);
         let stores = Self {
             sandbox_model,
             sandbox_profiles,
@@ -111,6 +113,7 @@ impl MongoStores {
             users,
             settings,
             operations,
+            gateway_records,
             client,
             database: database.to_owned(),
         };
