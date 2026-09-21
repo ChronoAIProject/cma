@@ -48,7 +48,7 @@ pub(super) async fn send(
     outcome: TurnOutcome,
 ) -> Result<(), &'static str> {
     delivery
-        .send(DeliveryCommand {
+        .send(DeliveryCommand::StreamOutcome {
             turn: turn.clone(),
             outcome,
         })

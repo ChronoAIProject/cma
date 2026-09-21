@@ -70,7 +70,7 @@ impl TurnRunner {
         };
         consume::refuse(&mut admitted, error.0, error.1);
         // A stalled delivery sink must not keep a timed-out turn alive indefinitely.
-        let command = DeliveryCommand {
+        let command = DeliveryCommand::StreamOutcome {
             turn,
             outcome: TurnOutcome::Failed {
                 code: error.1.into(),
@@ -99,6 +99,13 @@ impl TurnRunner {
             idempotency_key: turn.idempotency_key.clone(),
             metadata: metadata::render(turn),
             agent_key: credential.clone(),
+            event_context: Some(crate::providers::EventContextSnapshot {
+                schema_version: 1,
+                channel_id: turn.channel.id.clone(),
+                conversation_id: turn.conversation_id.clone(),
+                activity: turn.activity.clone(),
+                event_ref: turn.event_ref.clone(),
+            }),
         };
         let retry_deadline = Instant::now() + self.config.busy_retry_max;
         let mut ensured = false;

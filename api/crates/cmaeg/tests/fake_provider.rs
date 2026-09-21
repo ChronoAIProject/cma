@@ -105,6 +105,7 @@ impl FakeProvider {
                 "/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}",
                 put(ensure_conversation).delete(delete_conversation),
             )
+            .route("/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}", get(event_context))
             .route("/api/v2/responses", post(responses))
             .with_state(state.clone());
         let (shutdown, signal) = oneshot::channel();
@@ -307,4 +308,32 @@ fn record(state: &StateData, method: &str, path: String, headers: HeaderMap, bod
             .map(str::to_owned),
         body: String::from_utf8_lossy(&body).into_owned(),
     });
+}
+
+async fn event_context(
+    State(state): State<Arc<StateData>>,
+    Path((_binding, conversation, event)): Path<(String, String, String)>,
+    headers: HeaderMap,
+) -> Response {
+    let authorization = headers
+        .get("authorization")
+        .and_then(|value| value.to_str().ok());
+    let snapshot = state
+        .requests
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|request| {
+            request.method == "POST" && request.authorization.as_deref() == authorization
+        })
+        .find_map(|request| {
+            let value: Value = serde_json::from_str(&request.body).ok()?;
+            let context = value.get("event_context")?;
+            (context["conversation_id"] == conversation && context["activity"]["event_id"] == event)
+                .then(|| context.clone())
+        });
+    match snapshot {
+        Some(value) => Json(value).into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
 }
