@@ -7,7 +7,9 @@ use cmaeg_core::{channel::Secret, seal::MasterKeyRing};
 use reqwest::Url;
 
 mod cache;
+mod ingress;
 pub use cache::*;
+pub use ingress::*;
 
 /// The listener address used by CMAEG.
 pub const CMAEG_LISTEN: &str = "CMAEG_LISTEN";
@@ -83,6 +85,7 @@ pub struct Config {
     /// Configuration required to expose the channel management API.
     pub management: ManagementConfig,
     pub channel_cache: ChannelCacheConfig,
+    pub ingress: IngressConfig,
 }
 
 /// Secrets and origins used by the channel management plane.
@@ -125,6 +128,7 @@ impl Config {
             provider_max_inflight,
             management,
             channel_cache: ChannelCacheConfig::from_env()?,
+            ingress: IngressConfig::from_env()?,
         })
     }
 }

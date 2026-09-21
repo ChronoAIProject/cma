@@ -7,7 +7,7 @@ public routes are in [REST](API_REST.md).
 
 ## CMAEG
 
-CMAEG (CMA Event Gateway) is a separate stateless service that will receive
+CMAEG (CMA Event Gateway) is a separate stateless service that receives
 external event channels and call agent providers. Its management service
 listens on `CMAEG_LISTEN`, defaulting to `0.0.0.0:8090`. The deployment image is
 `cma-cmaeg`; deployment manifests are added with the gateway rollout issue.
@@ -61,6 +61,9 @@ The gateway startup settings are:
 | `CMAEG_CHANNEL_CACHE_MAX` | `50000` | Maximum positive and negative channel entries on this replica. |
 | `CMAEG_RESTORE_RATE_PER_MINUTE` | `10` | Per-channel restore refill rate, with an initial burst of three. |
 | `CMAEG_RESTORE_TIMEOUT_MS` | `800` | Total cold-restore deadline, inside the record client's 1.5-second HTTP deadline. |
+| `CMAEG_JWKS_TTL_MS` | `600000` | Fresh lifetime of relay signing keys; at most one refresh every five seconds per retained URL. |
+| `CMAEG_INGRESS_MAX_BODY` | `1048576` | Callback body limit, configurable from 1 byte through 16 MiB. |
+| `CMAEG_INGRESS_INFLIGHT` | `256` | Concurrent callbacks per replica; overflow returns immediate 429 with `Retry-After: 1`. |
 
 Each allowlisted provider gets its own pooled HTTP client with a bounded idle
 pool, no redirects and the CMAEG user agent. Cleartext `.svc` clients use HTTP/2
@@ -85,6 +88,40 @@ cache and `subtle` for constant-time service-token comparison. It uses the
 workspace's existing `time` and `uuid` dependencies for timestamps and resource
 IDs. The pure protocol library uses `url` to validate record pointers, including
 IPv6 loopback and operator-configured cluster addresses.
+
+### Relay callbacks
+
+`POST /v1/callbacks/{channel_id}` accepts JSON NyxID Telegram relay callbacks.
+The gateway verifies single-valued callback token, message ID, timestamp and
+platform headers, RS256 signature and pinned issuer/audience, exact body digest,
+route membership, and the bound reply token before normalizing any activity.
+An optional relay user token can corroborate the owner and key; it grants no
+additional authority. JWT headers cannot supply a signing-key endpoint.
+
+JWKS requests use only the resolved channel's retained URL, with no redirects,
+a three-second timeout, a 32 KiB response limit and at most sixteen RSA keys.
+The cache holds at most 4,096 URLs, removes expired idle entries at capacity,
+and refuses new URLs when every slot is live. Failed fetches clear stale keys;
+repeated misses and unknown key IDs are throttled for five seconds.
+
+Only human text messages are admitted. Bot/system/unknown senders, edits,
+interactive actions, system events, nontext content and attachments return
+`202 {"status":"refused","reason":"..."}` with a stable reason. Sender and chat
+allowlists and group admission are evaluated after verification. Mention gating
+requires the pinned `bot_username` and Telegram mention entities (UTF-16 offsets);
+missing identity evidence refuses the group message. Reply gating requires
+`reply_to_message.from.is_bot == true`. Raw chat types and verified forum topic
+IDs govern partitioning; normalized route metadata cannot supply a topic.
+
+Admitted messages produce a neutral activity, deterministic conversation ID and
+sealed event reference expiring no later than the reply token or thirty minutes.
+Duplicate callbacks are handed through to provider idempotency. Accepted and
+deferred launcher outcomes both return 202 with event and conversation IDs;
+launcher refusals return explicit RFC 9457 problems. Every callback response
+carries `Server-Timing: ingress;dur=...`, measuring request entry through launcher
+handoff and excluding launcher wait. The provider runner will add its own socket
+handoff measurement. Until that runner is composed, the production callback
+route explicitly returns 503 `provider_unavailable` for otherwise admitted work.
 
 ### Channel management
 
@@ -120,8 +157,8 @@ the callback's agent name does not establish that identity. Scoped admission use
 `{"type":"allowlist","ids":["platform-id"]}` for sender and chat policies.
 
 The returned endpoints identify the NyxID callback and custom-event URL that the
-creator registers elsewhere. They are addresses for the later ingress work;
-management creation does not register a NyxID route. After deleting a channel,
+creator registers elsewhere. The callback route is available; the custom-event route is reserved for its
+source implementation. Management creation does not register a NyxID route. After deleting a channel,
 **the creator must also remove its NyxID route**. The gateway does not list
 channels for creators; the creator keeps its channel IDs.
 
