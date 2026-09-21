@@ -3,10 +3,13 @@
 pub mod auth;
 pub mod channels;
 mod config;
+pub mod delivery;
 pub mod http;
 pub mod ingress;
+pub mod mcp;
 pub mod providers;
 pub mod records;
+pub mod tools;
 pub mod turns;
 
 use std::{future::IntoFuture, net::SocketAddr, time::Instant};
@@ -50,6 +53,10 @@ struct StatusResponse {
         http::management::test_channel,
         http::management::rekey_channel,
         http::callbacks::callback,
+        http::tools::reply_to_event,
+        http::tools::update_message,
+        http::tools::send_typing,
+        http::tools::read_event_context,
     )
 )]
 pub struct ApiDoc;
@@ -62,6 +69,7 @@ impl utoipa::Modify for ManagementSecurity {
         for (name, description) in [
             ("creatorBearer", "NyxID creator bearer token"),
             ("serviceBearer", "CMA service token; rekey only"),
+            ("agentBearer", "NyxID bot agent key; tools only"),
         ] {
             components.add_security_scheme(
                 name,
@@ -134,9 +142,9 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let (delivery, outcomes) = tokio::sync::mpsc::channel(256);
     let delivery_task = tokio::spawn(turns::outcomes::log_outcomes(outcomes));
     let runner = std::sync::Arc::new(turns::TurnRunner::new(
-        providers,
+        providers.clone(),
         tracker.clone(),
-        delivery,
+        delivery.clone(),
         config.turns.clone(),
     ));
     let ingress = ingress::IngressState::new(
@@ -145,6 +153,14 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         config.ingress,
         runner,
     )?;
+    let tools_state = tools::ToolsState {
+        resolver: state.resolver.clone(),
+        keys: state.master_keys.clone(),
+        providers,
+        delivery,
+        tracker: tracker.clone(),
+        public_origin: config.management.public_url.clone(),
+    };
     let listener = tokio::net::TcpListener::bind(config.listen).await?;
     tracing::info!(bind = %config.listen, "CMAEG listening");
 
@@ -153,6 +169,8 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         listener,
         router_with_state(state)
             .merge(http::callbacks::router(ingress))
+            .merge(http::tools::router(tools_state.clone()))
+            .merge(mcp::router(tools_state))
             .into_make_service_with_connect_info::<SocketAddr>(),
     )
     .with_graceful_shutdown(async move {

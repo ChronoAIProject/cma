@@ -131,6 +131,10 @@ EXPOSE 8090
 # Turns use CMAEG_ACCEPT_BUDGET_MS=20000, CMAEG_TURN_TIMEOUT_MS=600000,
 # CMAEG_BUSY_RETRY_MAX_MS=15000 and CMAEG_DRAIN_SECONDS=600. During shutdown,
 # /readyz returns 503 draining while tracked turns finish within the drain deadline.
+# Agent tools: /v1/events/{event_ref}/{replies,typing,context},
+# /v1/messages/{message_ref}/update and stateless POST /mcp (2025-06-18).
+# Providers retain event_context on the Responses POST and serve authenticated
+# GET at the configured conversation path plus /events/{event_id}.
 # See docs/CMA_Operations.md.
 ENTRYPOINT ["/usr/local/bin/cmaeg"]
 # Health is asserted by the Kubernetes probes in infra/api/deployment.yaml.

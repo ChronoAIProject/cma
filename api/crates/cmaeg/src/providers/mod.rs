@@ -2,6 +2,7 @@
 
 mod client;
 mod client_types;
+mod context;
 mod probe;
 mod registry;
 mod responses;
@@ -13,6 +14,7 @@ pub use client_types::{
     Accepted, BindingRequest, BindingResponse, FieldRefusal, ProviderError, ToolsAdvertisement,
     TurnRequest, TurnStream,
 };
+pub use context::EventContextSnapshot;
 pub use probe::AgentCardProbe;
 pub use registry::{
     ProviderEntry, ProviderKind, ProviderPath, ProviderPaths, ProviderRegistry, ProviderUrlError,

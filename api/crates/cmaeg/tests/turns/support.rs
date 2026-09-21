@@ -116,9 +116,13 @@ impl Fixture {
         let mut outcomes = Vec::new();
         tokio::time::timeout(Duration::from_secs(5), async {
             loop {
-                let command = self.outcomes.recv().await.unwrap();
-                let done = command.outcome.terminal();
-                outcomes.push(command.outcome);
+                let DeliveryCommand::StreamOutcome { outcome, .. } =
+                    self.outcomes.recv().await.unwrap()
+                else {
+                    panic!("expected stream outcome");
+                };
+                let done = outcome.terminal();
+                outcomes.push(outcome);
                 if done {
                     break;
                 }
