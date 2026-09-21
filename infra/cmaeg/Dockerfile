@@ -119,5 +119,9 @@ COPY --from=codex-auth /usr/local/bin/codex-native /usr/local/bin/codex-native
 COPY --from=secret-scanner /usr/local/bin/gitleaks /usr/local/bin/gitleaks
 COPY --from=secret-scanner /usr/local/share/gitleaks /usr/local/share/gitleaks
 EXPOSE 8090
+# Runtime contract: CMAEG_PUBLIC_URL, CMAEG_CMA_BASE_URL and CMAEG_NYXID_BASE_URL
+# are required origins. Mount CMAEG_MASTER_KEYS_FILE and CMAEG_CMA_SERVICE_TOKEN_FILE
+# as secret files; startup refuses missing or invalid contents before binding.
+# CMAEG_TOOLS_NYXID_SLUG defaults to cmaeg. See docs/CMA_Operations.md.
 ENTRYPOINT ["/usr/local/bin/cmaeg"]
 # Health is asserted by the Kubernetes probes in infra/api/deployment.yaml.

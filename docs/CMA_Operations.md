@@ -8,7 +8,7 @@ public routes are in [REST](API_REST.md).
 ## CMAEG
 
 CMAEG (CMA Event Gateway) is a separate stateless service that will receive
-external event channels and call agent providers. Its initial health server
+external event channels and call agent providers. Its management service
 listens on `CMAEG_LISTEN`, defaulting to `0.0.0.0:8090`. The deployment image is
 `cma-cmaeg`; deployment manifests are added with the gateway rollout issue.
 
@@ -41,7 +41,7 @@ percent-encoded as single segments, and redirects are disabled. Keep provider
 credentials in the runtime secret mechanism; the allowlist contains origins
 and route templates, never bearer keys.
 
-The provider client settings are:
+The gateway startup settings are:
 
 | Environment key | Default | Purpose |
 | --- | ---: | --- |
@@ -50,11 +50,36 @@ The provider client settings are:
 | `CMAEG_PROVIDER_CONNECT_TIMEOUT_MS` | `2000` | TCP/TLS connection timeout for each provider pool. |
 | `CMAEG_PROVIDER_REQUEST_TIMEOUT_MS` | `30000` | Deadline for provider setup and probe requests, and the HTTP stream request. |
 | `CMAEG_PROVIDER_MAX_INFLIGHT` | `256` | Deployment-wide upper bound applied to each provider's semaphore. Calls wait at most 50 ms for a provider permit before returning a typed busy result. |
+| `CMAEG_PUBLIC_URL` | Required | Externally reachable origin used in channel callback and tool URLs, without a trailing slash. HTTPS, or loopback HTTP for local tests. |
+| `CMAEG_MASTER_KEYS_FILE` | Required | Mounted file containing one `kid:base64key[,kid:base64key]` line; each key decodes to 32 bytes and the first key is current. |
+| `CMAEG_CMA_BASE_URL` | Required | CMA record-store origin. HTTPS, or loopback/`.svc` HTTP; no credentials, path, query, fragment, or trailing slash. |
+| `CMAEG_CMA_SERVICE_TOKEN_FILE` | Required | Mounted file containing the service-account bearer for CMA channel records and gateway rekey requests. |
+| `CMAEG_NYXID_BASE_URL` | Required | NyxID origin for creator authentication, with the same URL restrictions as the CMA origin. |
+| `CMAEG_TOOLS_NYXID_SLUG` | `cmaeg` | NyxID service slug in the provider tools advertisement, matching `[a-z0-9_]{1,32}`. |
 
 Each allowlisted provider gets its own pooled HTTP client with a bounded idle
 pool, no redirects and the CMAEG user agent. Cleartext `.svc` clients use HTTP/2
 prior knowledge. Changes to any of these keys require a normal deployment and
 startup validation; malformed policy or non-positive limits fail closed.
+
+Both mounted secrets are read before the listener binds. Missing files, invalid key
+rings, empty tokens, and invalid origins stop startup. No mounted secret belongs
+in the provider allowlist or environment values. The image expects these mounts;
+Kubernetes resources remain scheduled for the dedicated gateway rollout issue.
+
+Creator authentication calls NyxID `GET /api/v1/users/me` with a three-second
+deadline. Only token hashes are cached: successes for 60 seconds and failures for
+10 seconds, with oldest-entry eviction at 10,000 entries. A cached success can
+continue during a short NyxID outage; an uncached unreachable check returns 503.
+Invalid bearers return 401. The record client sends the service bearer only to
+the configured canonical CMA record URL, with no redirects or retries and a
+1.5-second read deadline (five seconds for writes and lists).
+
+The management implementation uses `dashmap` for the bounded authentication
+cache and `subtle` for constant-time service-token comparison. It uses the
+workspace's existing `time` and `uuid` dependencies for timestamps and resource
+IDs. The pure protocol library uses `url` to validate record pointers, including
+IPv6 loopback and operator-configured cluster addresses.
 
 ## Delivery Authority
 
