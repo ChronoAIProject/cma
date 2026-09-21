@@ -4,6 +4,7 @@ pub mod callbacks;
 pub mod events;
 pub mod management;
 mod management_responses;
+pub mod metrics;
 pub mod problems;
 pub mod readiness;
 pub mod tools;
