@@ -1,3 +1,7 @@
+#[path = "responses_v2/activity.rs"]
+mod activity;
+#[path = "responses_v2/binding.rs"]
+mod binding;
 #[path = "responses_v2/fixture.rs"]
 mod fixture;
 #[path = "support/wire.rs"]

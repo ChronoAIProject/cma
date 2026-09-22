@@ -57,6 +57,7 @@ fn sandbox(limit: u8) -> Sandbox {
         failure: None,
         runtime: None,
         credential: SandboxCredentialState {
+            source: Default::default(),
             service_grants: Vec::new(),
             reaches: vec![],
             key_generation: 0,
@@ -132,6 +133,7 @@ fn profile() -> AgentProfileSnapshot {
 
 pub(super) fn admission(key: &str) -> AgentAdmission {
     AgentAdmission {
+        binding: None,
         created_by: None,
         owner: SubjectId::new("owner"),
         workspace_id: WorkspaceId("wks_agent_admission".into()),

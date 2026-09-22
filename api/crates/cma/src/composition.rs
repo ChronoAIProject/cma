@@ -1,9 +1,10 @@
 //! Production control-plane service and router assembly.
 use std::sync::Arc;
 mod adapter;
+mod bindings;
 mod bridge;
+mod profiles;
 use adapter::production_adapter;
-
 use axum::{extract::DefaultBodyLimit, Router};
 use layer1_public::rest::{self, HierarchyState, ProfilesState};
 use layer2_core::{
@@ -32,9 +33,9 @@ use crate::{
     trigger::{CmaServiceConnectionBroker, TriggerComposition, TriggerCompositionDependencies},
     REQUEST_BODY_LIMIT_BYTES,
 };
-
 pub(crate) struct ControlPlaneComposition {
     pub router: Router,
+    pub bindings: bindings::BindingComposition,
     #[allow(dead_code)]
     pub bridge_definitions: layer2_core::bridge::BridgeService,
     #[allow(dead_code)]
@@ -79,20 +80,7 @@ impl ControlPlaneComposition {
         let users = UserDirectory::new(stores.users.clone());
         let profile_policy = profile_route_policy();
         let authoring_bounds = profile_policy.capacity_bounds;
-        stores
-            .sandbox_profiles
-            .seed_default_profiles(
-                &DefaultProfileSpec {
-                    cpu_millis: config.default_profiles.cpu_millis,
-                    memory_mib: config.default_profiles.memory_mib,
-                    agent_model: config.default_profiles.agent_model.clone(),
-                    agent_effort: config.default_profiles.agent_effort,
-                },
-                profile_policy.capacity_bounds,
-                profile_policy.public_value_scanner.as_ref(),
-            )
-            .await
-            .map_err(|error| format!("default profiles are not usable: {error}"))?;
+        profiles::seed_profiles(&stores, config, &profile_policy).await?;
 
         let retirement = Arc::new(StoredSandboxRetirement::new(stores.sandbox_model.clone()));
         let sandbox_operators = Arc::new(SandboxOperatorService::new(
@@ -154,7 +142,8 @@ impl ControlPlaneComposition {
             }),
             stores.auth.clone(),
             config.nyxid_public_url.clone(),
-        );
+        )
+        .with_binding_store(stores.sandbox_model.clone());
         let key_issuer = bridge::key_issuer(config);
         let bridge_provisioning = bridge::provisioning(
             config,
@@ -207,10 +196,7 @@ impl ControlPlaneComposition {
         )
         .with_connections(connection_prerequisite.clone());
         let live_agents = Arc::new(LiveAgentRegistry::default());
-        let resource_access = Arc::new(layer2_core::resource_access::ResourceAccessService::new(
-            stores.sandbox_model.clone(),
-            auth.clone(),
-        ));
+        let resource_access = bindings::resource_access(&stores, auth.clone());
         let projections = AgentProjectionServices::new(
             stores.sandbox_model.clone(),
             stores.sandbox_profiles.clone(),
@@ -220,6 +206,16 @@ impl ControlPlaneComposition {
         )
         .with_connections(connection_prerequisite.clone())
         .with_resource_access(resource_access.clone());
+        let bindings = bindings::BindingComposition::new(
+            &stores,
+            layer2_core::sandbox::binding::BindingResources {
+                sandboxes: sandbox_service.clone(),
+                workspaces: workspace_service.clone(),
+                agents: projections.agents(),
+            },
+            sandbox_policy.clone(),
+            authoring_bounds,
+        );
         let hierarchy = HierarchyReadService::new(stores.sandbox_model.clone())
             .with_resource_access(resource_access.clone());
         let admin = layer1_public::rest::admin::AdminState::new(
@@ -384,12 +380,7 @@ impl ControlPlaneComposition {
             auth.clone(),
         );
         let projections = projections.with_commands(command_service.clone());
-        let responses_v2 = layer1_public::responses::v2::router(
-            layer1_public::responses::v2::ResponsesV2State::new(
-                command_service,
-                projections.reads(),
-            ),
-        );
+        let responses_v2 = bindings::responses(&stores, command_service, projections.reads());
         let provenance = layer2_core::sandbox::AgentProvenanceService::new(
             stores.sandbox_model.clone(),
             resource_access.clone(),
@@ -433,13 +424,18 @@ impl ControlPlaneComposition {
             .merge(rest::profile_authoring_router(profile_authoring))
             .merge(rest::hierarchy_router(hierarchy))
             .merge(projections.router(Arc::clone(&operations)))
-            .merge(projections.conversation_router(context, sandbox_lifecycle.updates()))
+            .merge(projections.conversation_router(
+                context,
+                sandbox_lifecycle.updates(),
+                &config.public_url,
+            ))
             .merge(responses_v2)
             .merge(
                 projections.agent_events_router(config.bridge_flags, sandbox_lifecycle.updates()),
             )
             .merge(trigger_routes)
             .merge(layer1_public::rest::admin::router(admin));
+        let resource_routes = resource_routes.merge(bindings.router(&stores, activity.clone()));
         let public = super::rest_router(resource_routes)
             .merge(crate::connections::router(browser_connections))
             .merge(crate::auth::router(Arc::clone(&auth)))
@@ -480,6 +476,7 @@ impl ControlPlaneComposition {
 
         Ok(Self {
             router,
+            bindings,
             bridge_definitions,
             bridge_credentials,
             bridge_invokes: bridge.invokes,

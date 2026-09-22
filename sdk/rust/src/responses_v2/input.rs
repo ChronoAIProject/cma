@@ -6,17 +6,17 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-/// Existing Agent selected by string or standard conversation reference.
+/// Existing Agent or binding conversation selected by string or reference.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ConversationReference {
-    /// Agent ID string.
+    /// Agent ID or external binding conversation ID.
     Id(String),
     /// Standard reference object.
     Object(super::ResponseConversation),
 }
 impl ConversationReference {
-    /// Selected Agent ID.
+    /// Selected Agent or external conversation ID.
     pub fn id(&self) -> &str {
         match self {
             Self::Id(id) => id,
@@ -79,7 +79,10 @@ impl From<String> for ResponseInput {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CreateResponseRequest {
-    /// Existing Agent; optional only on the explicit per-Agent alias.
+    /// Complete immutable event context; requires a current binding key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_context: Option<super::EventContext>,
+    /// Existing Agent or binding conversation; optional on the per-Agent alias.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub conversation: Option<ConversationReference>,
     /// One user message.
@@ -107,6 +110,7 @@ impl CreateResponseRequest {
             input: input.into(),
             stream: true,
             metadata: None,
+            event_context: None,
             previous_response_id: None,
             model: None,
             store: None,
@@ -120,7 +124,11 @@ impl CreateResponseRequest {
             .or(alias)
             .filter(|id| !id.trim().is_empty())
             .ok_or_else(|| Error::validation("conversation must select an existing Agent"))?;
-        if alias.is_some_and(|alias| alias != id)
+        if let Some(context) = &self.event_context {
+            context.validate()?;
+        }
+        if alias
+            .is_some_and(|alias| alias != id && alias.starts_with("agt_") && id.starts_with("agt_"))
             || self.previous_response_id.is_some()
             || self
                 .model

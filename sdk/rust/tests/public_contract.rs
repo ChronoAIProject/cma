@@ -1,5 +1,7 @@
 #[path = "public_contract/agent_events_v2.rs"]
 mod agent_events_v2;
+#[path = "public_contract/bindings.rs"]
+mod bindings;
 #[path = "public_contract/bridges.rs"]
 mod bridges;
 #[path = "public_contract/context.rs"]
@@ -22,7 +24,9 @@ use context::{Case, Context};
 
 async fn dispatch(c: &Context<'_>) -> Result<()> {
     let op = c.case.operation.as_str();
-    if op.contains("/bridges")
+    if op.contains("/cmaeg/bindings") {
+        bindings::dispatch(c).await
+    } else if op.contains("/bridges")
         || op.contains("/bridge-connectors")
         || op.contains("/bridge-creation-target")
         || op.contains("/bridge-invoke-grants")

@@ -13,6 +13,7 @@ use crate::sandbox::{
 
 #[derive(Debug, Clone)]
 pub struct AgentAdmission {
+    pub binding: Option<crate::sandbox::binding::BindingAdmissionFence>,
     /// Server-attributed creating actor; absent for legacy/internal profile work.
     pub created_by: Option<crate::resource_access::ResourceActor>,
     pub owner: SubjectId,

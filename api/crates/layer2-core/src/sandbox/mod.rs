@@ -17,6 +17,7 @@ mod agent_runtime;
 mod agent_service;
 mod agent_work;
 mod background_checkpoint;
+pub mod binding;
 pub mod channel_usage;
 mod checkpoint;
 mod checkpoint_capture;
@@ -39,6 +40,7 @@ pub use provenance_inventory::{
 pub use provenance_service::{
     AgentProvenanceDetails, AgentProvenanceReading, AgentProvenanceService,
 };
+mod binding_creation;
 mod credential;
 mod credential_prerequisite;
 mod error;
@@ -152,8 +154,8 @@ pub use conversation_recorder::{
     AgentLiveFragment, AgentLiveFragmentKind, AgentLiveSubscription, DurableAgentUpdateRecorder,
 };
 pub use credential::{
-    SandboxCredentialAuthority, SandboxCredentialState, SandboxRevokeDebt, SandboxServiceGrant,
-    SandboxSignInState,
+    SandboxCredentialAuthority, SandboxCredentialSource, SandboxCredentialState, SandboxRevokeDebt,
+    SandboxServiceGrant, SandboxSignInState,
 };
 pub use credential_prerequisite::{
     FixedSandboxCredentialPrerequisite, SandboxCredentialPrerequisite,

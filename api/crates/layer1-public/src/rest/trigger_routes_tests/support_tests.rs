@@ -409,6 +409,7 @@ impl TestApp {
                 failure: None,
                 runtime: None,
                 credential: SandboxCredentialState {
+                    source: Default::default(),
                     reaches: revision.content.credential_services(&[]),
                     service_grants: Vec::new(),
                     key_generation: 0,

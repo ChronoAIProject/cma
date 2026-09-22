@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "gateway-record-put",
+      "operation": "PUT /api/v1/gateway/channel-records/{record_id}",
+      "scenario": "gateway_records",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/gateway/channel-records/123e4567-e89b-42d3-a456-426614174000",
+        "headers": {"content-type": "application/json"},
+        "body": {"owner": "gateway-owner", "blob": "AQID", "expected_version": null}
+      },
+      "response": {
+        "status": 200,
+        "headers": {"cache-control": "no-store", "content-type": "application/json"},
+        "body": {"record_id": "123e4567-e89b-42d3-a456-426614174000", "version": 1, "updated_at": "now"},
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "gateway-record-get",
+      "operation": "GET /api/v1/gateway/channel-records/{record_id}",
+      "scenario": "gateway_records",
+      "request": {"method": "GET", "path": "/api/v1/gateway/channel-records/123e4567-e89b-42d3-a456-426614174000", "headers": {}},
+      "response": {
+        "status": 200,
+        "headers": {"cache-control": "no-store", "content-type": "application/json"},
+        "body": {"record_id": "123e4567-e89b-42d3-a456-426614174000", "owner": "gateway-owner", "blob": "AQID", "version": 1, "created_at": "now", "updated_at": "now"},
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "gateway-record-list",
+      "operation": "GET /api/v1/gateway/channel-records",
+      "scenario": "gateway_records",
+      "request": {"method": "GET", "path": "/api/v1/gateway/channel-records?owner=gateway-owner&limit=100", "headers": {}},
+      "response": {
+        "status": 200,
+        "headers": {"cache-control": "no-store", "content-type": "application/json"},
+        "body": {"items": [{"record_id": "123e4567-e89b-42d3-a456-426614174000", "owner": "gateway-owner", "version": 1, "updated_at": "now"}], "next_after": null},
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "gateway-record-delete",
+      "operation": "DELETE /api/v1/gateway/channel-records/{record_id}",
+      "scenario": "gateway_records",
+      "request": {"method": "DELETE", "path": "/api/v1/gateway/channel-records/123e4567-e89b-42d3-a456-426614174000?expected_version=1", "headers": {}},
+      "response": {"status": 204, "headers": {"cache-control": "no-store"}, "body": null, "bodyKind": "empty"},
+      "captures": {}
+    }
+  ]
+}

@@ -1,0 +1,369 @@
+use super::profiles::{BindingProfileStore, BindingProfiles};
+use super::*;
+use crate::profiles::{AgentProvider, ProfileCapacityBounds};
+use crate::sandbox::store::{AgentStore, SandboxStore, SandboxStoreError, WorkspaceStore};
+use crate::sandbox::{AgentService, SandboxPolicySource, SandboxService, WorkspaceService};
+use crate::{now_rfc3339, Caller, Capability};
+use std::sync::Arc;
+
+pub trait BindingServiceStore: BindingStore + SandboxStore + WorkspaceStore + AgentStore {}
+impl<T: BindingStore + SandboxStore + WorkspaceStore + AgentStore> BindingServiceStore for T {}
+
+pub struct BindingResources {
+    pub sandboxes: Arc<SandboxService>,
+    pub workspaces: Arc<WorkspaceService>,
+    pub agents: Arc<AgentService>,
+}
+
+pub struct BindingPolicy {
+    pub provider: AgentProvider,
+    pub supported_model_api: String,
+    pub bounds: ProfileCapacityBounds,
+    pub sandbox: Arc<dyn SandboxPolicySource>,
+}
+
+pub struct BindingService {
+    pub(super) store: Arc<dyn BindingServiceStore>,
+    pub(super) profiles: BindingProfiles,
+    pub(super) resources: BindingResources,
+    pub(super) credentials: Arc<dyn BindingCredentialCustody>,
+    policy: BindingPolicy,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum BindingError {
+    #[error("forbidden")]
+    Forbidden,
+    #[error("binding not found")]
+    NotFound,
+    #[error("invalid binding request: {0}")]
+    InvalidRequest(String),
+    #[error("binding changed or is not ready")]
+    Conflict,
+    #[error("binding dependency unavailable: {0}")]
+    Unavailable(String),
+    #[error("binding data is not usable: {0}")]
+    Corrupt(String),
+}
+
+impl BindingService {
+    pub fn new<S, P>(
+        store: Arc<S>,
+        profiles: Arc<P>,
+        resources: BindingResources,
+        credentials: Arc<dyn BindingCredentialCustody>,
+        policy: BindingPolicy,
+    ) -> Arc<Self>
+    where
+        S: BindingServiceStore + 'static,
+        P: BindingProfileStore + 'static,
+    {
+        Arc::new(Self {
+            store,
+            profiles: BindingProfiles {
+                store: profiles,
+                bounds: policy.bounds,
+            },
+            resources,
+            credentials,
+            policy,
+        })
+    }
+
+    pub async fn read(&self, caller: &Caller, id: &str) -> Result<ProviderBinding, BindingError> {
+        require(caller)?;
+        let binding = self
+            .store
+            .binding(id)
+            .await?
+            .ok_or(BindingError::NotFound)?;
+        if binding.manager != caller.subject {
+            return Err(BindingError::NotFound);
+        }
+        Ok(binding)
+    }
+
+    pub async fn put(
+        &self,
+        caller: &Caller,
+        id: &str,
+        profile: serde_json::Value,
+        digest: &str,
+        credential: &ProvidedCredential,
+    ) -> Result<ProviderBinding, BindingError> {
+        require(caller)?;
+        self.credentials
+            .validate(credential)
+            .map_err(credential_error)?;
+        if !super::model::valid_id(id, 1) {
+            return Err(BindingError::InvalidRequest(
+                "invalid binding identifier".into(),
+            ));
+        }
+        let mut plan = map_profile(
+            profile,
+            digest,
+            self.policy.provider,
+            &self.policy.supported_model_api,
+            self.policy.bounds,
+        )
+        .map_err(|error| BindingError::InvalidRequest(error.to_string()))?;
+        let policy = self
+            .policy
+            .sandbox
+            .current_sandbox_policy()
+            .await
+            .map_err(unavailable)?;
+        plan.refused.push(BindingFieldRefusal {
+            field: "tools.native_mcp_url".into(),
+            reason: "external tool endpoints are not supported".into(),
+        });
+        if let Some(environment) = &mut plan.environment {
+            // Pin the effective floor once. Replays keep the original reservation
+            // even when the deployment policy changes between attempts.
+            let services = &mut environment.sandbox.nyxid_services;
+            let routes = environment.sandbox.agent_provider.connection_services();
+            services.extend(
+                policy
+                    .baseline_services
+                    .into_iter()
+                    .filter(|service| !routes.contains(service.as_str())),
+            );
+            services.sort();
+            services.dedup();
+        }
+        for _ in 0..8 {
+            let current = self.store.binding(id).await?;
+            if current
+                .as_ref()
+                .is_some_and(|value| value.manager != caller.subject)
+            {
+                return Err(BindingError::NotFound);
+            }
+            let binding = match current {
+                Some(value) if value.state == BindingState::Retired => {
+                    return Err(BindingError::Conflict)
+                }
+                Some(value)
+                    if value.profile_digest == digest
+                        && value.key_sha256 == credential.sha256() =>
+                {
+                    value
+                }
+                Some(value) if value.profile_digest == digest => {
+                    return self
+                        .credentials
+                        .rotate_binding(&value, credential)
+                        .await
+                        .map_err(credential_error);
+                }
+                Some(value) => {
+                    let next = value
+                        .reconfigure(plan.clone(), credential.sha256(), now_rfc3339())
+                        .map_err(|_| BindingError::Conflict)?;
+                    match self
+                        .store
+                        .save_binding(Some(value.revision), next.clone())
+                        .await
+                    {
+                        Ok(()) => next,
+                        Err(SandboxStoreError::Conflict) => continue,
+                        Err(error) => return Err(error.into()),
+                    }
+                }
+                None => {
+                    let next = ProviderBinding::new(
+                        id.into(),
+                        caller.subject.clone(),
+                        plan.clone(),
+                        credential.sha256(),
+                        now_rfc3339(),
+                    )
+                    .map_err(BindingError::InvalidRequest)?;
+                    match self.store.save_binding(None, next.clone()).await {
+                        Ok(()) => next,
+                        Err(SandboxStoreError::Conflict) => continue,
+                        Err(error) => return Err(error.into()),
+                    }
+                }
+            };
+            if binding.work != BindingWork::AwaitingCredential {
+                return Ok(binding);
+            }
+            self.credentials
+                .retain_binding(&binding, credential)
+                .await
+                .map_err(credential_error)?;
+            let mut next = binding.clone();
+            next.work = if binding.previous.is_some() {
+                BindingWork::RetirePreviousConversations
+            } else {
+                BindingWork::ProvisionSandbox
+            };
+            next.advance_revision(now_rfc3339())
+                .map_err(BindingError::Corrupt)?;
+            match self
+                .store
+                .save_binding(Some(binding.revision), next.clone())
+                .await
+            {
+                Ok(()) => return Ok(next),
+                Err(SandboxStoreError::Conflict) => continue,
+                Err(error) => return Err(error.into()),
+            }
+        }
+        Err(BindingError::Conflict)
+    }
+
+    pub async fn retire(&self, caller: &Caller, id: &str) -> Result<(), BindingError> {
+        for _ in 0..8 {
+            let binding = match self.read(caller, id).await {
+                Ok(value) => value,
+                Err(BindingError::NotFound) => return Ok(()),
+                Err(error) => return Err(error),
+            };
+            if binding.state == BindingState::Retired {
+                return Ok(());
+            }
+            let mut next = binding.clone();
+            next.state = BindingState::Retired;
+            next.work = if next.previous.is_some() {
+                BindingWork::RetirePreviousConversations
+            } else {
+                BindingWork::RetireCurrentConversations
+            };
+            next.advance_revision(now_rfc3339())
+                .map_err(BindingError::Corrupt)?;
+            match self.store.save_binding(Some(binding.revision), next).await {
+                Ok(()) => return Ok(()),
+                Err(SandboxStoreError::Conflict) => continue,
+                Err(error) => return Err(error.into()),
+            }
+        }
+        Err(BindingError::Conflict)
+    }
+
+    pub async fn ensure_conversation(
+        &self,
+        caller: &Caller,
+        id: &str,
+        conversation_id: &str,
+    ) -> Result<(BindingConversation, bool), BindingError> {
+        if !super::model::valid_id(conversation_id, 8) {
+            return Err(BindingError::InvalidRequest(
+                "invalid conversation identifier".into(),
+            ));
+        }
+        for _ in 0..8 {
+            let binding = self.read(caller, id).await?;
+            if binding.state != BindingState::Ready {
+                return Err(BindingError::Conflict);
+            }
+            if let Some(value) = self
+                .store
+                .binding_conversation(id, binding.generation, conversation_id)
+                .await?
+            {
+                if matches!(
+                    value.state,
+                    BindingConversationState::Retiring | BindingConversationState::Retired
+                ) {
+                    return Err(BindingError::Conflict);
+                }
+                return Ok((value, false));
+            }
+            let value = BindingConversation::new(&binding, conversation_id.into(), now_rfc3339())
+                .map_err(BindingError::InvalidRequest)?;
+            match self
+                .store
+                .save_binding_conversation(binding.revision, None, value.clone())
+                .await
+            {
+                Ok(()) => return Ok((value, true)),
+                Err(SandboxStoreError::Conflict) => continue,
+                Err(error) => return Err(error.into()),
+            }
+        }
+        Err(BindingError::Conflict)
+    }
+
+    pub async fn retire_conversation(
+        &self,
+        caller: &Caller,
+        id: &str,
+        conversation_id: &str,
+    ) -> Result<(), BindingError> {
+        if !super::model::valid_id(conversation_id, 8) {
+            return Err(BindingError::InvalidRequest(
+                "invalid conversation identifier".into(),
+            ));
+        }
+        for _ in 0..8 {
+            let binding = self.read(caller, id).await?;
+            let Some(value) = self
+                .store
+                .binding_conversation(id, binding.generation, conversation_id)
+                .await?
+            else {
+                if binding.state != BindingState::Ready {
+                    return Ok(());
+                }
+                self.ensure_conversation(caller, id, conversation_id)
+                    .await?;
+                continue;
+            };
+            if matches!(
+                value.state,
+                BindingConversationState::Retiring | BindingConversationState::Retired
+            ) {
+                return Ok(());
+            }
+            let mut next = value.clone();
+            next.state = BindingConversationState::Retiring;
+            next.revision = next.revision.checked_add(1).ok_or(BindingError::Conflict)?;
+            next.updated_at = now_rfc3339();
+            match self
+                .store
+                .save_binding_conversation(binding.revision, Some(value.revision), next)
+                .await
+            {
+                Ok(()) => return Ok(()),
+                Err(SandboxStoreError::Conflict) => continue,
+                Err(error) => return Err(error.into()),
+            }
+        }
+        Err(BindingError::Conflict)
+    }
+}
+
+fn require(caller: &Caller) -> Result<(), BindingError> {
+    caller
+        .require(Capability::ManageGatewayRecords)
+        .map_err(|_| BindingError::Forbidden)?;
+    caller
+        .require(Capability::ManageProviderBindings)
+        .map_err(|_| BindingError::Forbidden)
+}
+
+pub(super) fn unavailable(error: impl std::fmt::Display) -> BindingError {
+    BindingError::Unavailable(error.to_string())
+}
+
+fn credential_error(error: crate::CoreError) -> BindingError {
+    match error {
+        crate::CoreError::InvalidRequest(detail) => BindingError::InvalidRequest(detail),
+        crate::CoreError::InvalidState(_) => BindingError::Conflict,
+        other => unavailable(other),
+    }
+}
+
+impl From<SandboxStoreError> for BindingError {
+    fn from(error: SandboxStoreError) -> Self {
+        match error {
+            SandboxStoreError::NotFound => Self::NotFound,
+            SandboxStoreError::Conflict | SandboxStoreError::Duplicate => Self::Conflict,
+            SandboxStoreError::Corrupt(detail) => Self::Corrupt(detail),
+            other => unavailable(other),
+        }
+    }
+}

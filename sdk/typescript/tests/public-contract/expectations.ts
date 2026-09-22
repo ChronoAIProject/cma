@@ -339,9 +339,7 @@ export function expectedProjection(fixture: ContractCase): unknown {
 /** Both public error envelopes retain their exact machine code and extensions. */
 export function problemBody(fixture: ContractCase): Record<string, unknown> {
   const body = fixture.response.body as Record<string, unknown>;
-  return fixture.operation.includes('/api/v2') &&
-    fixture.response.status >= 400 &&
-    body.error !== undefined
+  return fixture.response.status >= 400 && body?.error !== undefined
     ? (body.error as Record<string, unknown>)
     : body;
 }

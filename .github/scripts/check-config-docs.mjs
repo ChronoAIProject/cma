@@ -5,13 +5,13 @@ import { join, resolve } from "node:path";
 export function missingConfiguration(sources, markdown) {
   const keys = new Set(
     sources.flatMap((source) =>
-      [...source.matchAll(/"(CHRONO_[A-Z0-9_]+)"/g)].map((match) => match[1]),
+      [...source.matchAll(/"((?:CHRONO|CMAEG)_[A-Z0-9_]+)"/g)].map((match) => match[1]),
     ),
   );
   if (keys.size === 0)
     throw new Error("No quoted configuration keys were found.");
   const documented = new Set(
-    [...markdown.matchAll(/`(CHRONO_[A-Z0-9_]+)`/g)].map((match) => match[1]),
+    [...markdown.matchAll(/`((?:CHRONO|CMAEG)_[A-Z0-9_]+)`/g)].map((match) => match[1]),
   );
   return [...keys].sort().filter((key) => !documented.has(key));
 }
@@ -34,16 +34,16 @@ if (
 ) {
   try {
     const root = fileURLToPath(new URL("../../", import.meta.url));
-    const sources = [
-      readFileSync(join(root, "api/crates/cma/src/config.rs"), "utf8"),
-      ...sourcesIn(join(root, "api/crates/cma/src/config")),
-    ];
-    const markdown = readFileSync(join(root, "docs/CMA_Operations.md"), "utf8");
-    const missing = missingConfiguration(sources, markdown);
-    if (missing.length > 0)
-      throw new Error(
-        `Undocumented configuration keys:\n${missing.join("\n")}`,
-      );
+    for (const [crate, doc] of [["cma", "CMA_Operations"], ["cmaeg", "CMAEG_Operations"]]) {
+      const sources = [
+        readFileSync(join(root, `api/crates/${crate}/src/config.rs`), "utf8"),
+        ...sourcesIn(join(root, `api/crates/${crate}/src/config`)),
+      ];
+      const markdown = readFileSync(join(root, `docs/${doc}.md`), "utf8");
+      const missing = missingConfiguration(sources, markdown);
+      if (missing.length > 0)
+        throw new Error(`Undocumented configuration keys in ${doc}:\n${missing.join("\n")}`);
+    }
     console.log(
       "Operations documentation covers every quoted deployment configuration key.",
     );

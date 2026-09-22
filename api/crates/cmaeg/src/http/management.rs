@@ -1,0 +1,368 @@
+//! Versioned channel management routes.
+
+use axum::{
+    extract::{Path, Query, State},
+    http::{HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
+    routing::{get, post},
+    Json, Router,
+};
+use cmaeg_core::{channel::ConformanceLevel, problem::ProblemCode};
+use serde::{Deserialize, Serialize};
+use utoipa::{IntoParams, ToSchema};
+
+use crate::{
+    auth::Creator,
+    channels::{
+        definition::{ChannelCreateRequest, ChannelUpdateRequest},
+        management::{self, ManagementError, ManagementState},
+    },
+};
+
+use super::management_responses::*;
+use super::problems::{no_store, problem, protocol_headers};
+
+pub fn management_router(state: ManagementState) -> Router {
+    Router::new()
+        .route("/v1/channels", post(create_channel))
+        .route(
+            "/v1/channel-records/{record_id}",
+            get(super::creation::recover_channel),
+        )
+        .route(
+            "/v1/channels/{channel_id}",
+            get(get_channel).put(update_channel).delete(delete_channel),
+        )
+        .route("/v1/channels/{channel_id}/test", post(test_channel))
+        .route("/v1/channels/{channel_id}/rekey", post(rekey_channel))
+        .with_state(state)
+        .layer(axum::middleware::from_fn(protocol_headers))
+}
+
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct ChannelResponse {
+    pub channel_id: String,
+    pub record_id: String,
+    pub version: u64,
+    pub provider: ProviderResponse,
+    pub endpoints: EndpointResponse,
+    pub definition: super::schema::PublicChannelDefinition,
+}
+
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct ProviderResponse {
+    pub slug: String,
+    pub binding_id: String,
+    pub level: ConformanceLevel,
+    pub honoured: Vec<String>,
+    pub refused: Vec<crate::providers::FieldRefusal>,
+}
+
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct EndpointResponse {
+    pub nyxid_callback_url: String,
+    pub custom_event_url: String,
+}
+
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct RekeyResponse {
+    pub kid: u8,
+}
+
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct TestChannelResponse {
+    pub accepted_after_ms: u64,
+    pub first_text: String,
+    pub level: ConformanceLevel,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, IntoParams)]
+#[serde(deny_unknown_fields)]
+#[into_params(parameter_in = Query)]
+pub struct DeleteQuery {
+    #[param(required = true, nullable = false)]
+    pub expected_version: Option<u64>,
+}
+
+#[utoipa::path(
+    post,
+    path = "/v1/channels",
+    operation_id = "createChannel",
+    tag = "channels",
+    security(("creatorBearer" = [])),
+    params(("Idempotency-Key" = Option<String>, Header, description = "1..=256 ASCII bytes; identical creates replay locally for ten minutes")),
+    request_body = ChannelCreateRequest,
+    responses((status = 201, body = ChannelResponse), (status = "default", body = cmaeg_core::problem::Problem, content_type = "application/problem+json"))
+)]
+pub async fn create_channel(
+    State(state): State<ManagementState>,
+    creator: Creator,
+    headers: HeaderMap,
+    body: Result<Json<ChannelCreateRequest>, axum::extract::rejection::JsonRejection>,
+) -> Response {
+    let body = match body {
+        Ok(Json(body)) => body,
+        Err(_error) => {
+            return no_store(problem(
+                StatusCode::BAD_REQUEST,
+                ProblemCode::InvalidRequest,
+                "request does not match the channel schema",
+            ))
+        }
+    };
+    let key = match idempotency_key(&headers) {
+        Ok(key) => key,
+        Err(error) => return management_error(error),
+    };
+    let fingerprint = body.fingerprint();
+    // Keep keyed creates serialized until their response is cached, so concurrent
+    // requests on one replica cannot allocate two records for the same key.
+    let mut cache_guard = if key.is_some() {
+        Some(state.idempotency.lock().await)
+    } else {
+        None
+    };
+    if let (Some(key), Some(cache)) = (&key, cache_guard.as_mut()) {
+        cache.retain(|_, entry| entry.expires_at > std::time::Instant::now());
+        if let Some(entry) = cache.get(&(creator.subject.clone(), key.clone())) {
+            if entry.fingerprint != fingerprint {
+                return problem(
+                    StatusCode::CONFLICT,
+                    ProblemCode::Conflict,
+                    "Idempotency-Key was used for another request",
+                );
+            }
+            return (StatusCode::CREATED, Json(entry.body.clone())).into_response();
+        }
+        if cache.len() >= 10_000 {
+            return problem(
+                StatusCode::SERVICE_UNAVAILABLE,
+                ProblemCode::ProviderUnavailable,
+                "idempotency cache is full",
+            );
+        }
+    }
+    let created = match management::create(&state, &creator, body).await {
+        Ok(created) => created,
+        Err(error) => return management_error(error),
+    };
+    let response = channel_response(
+        &state,
+        &created.channel_id,
+        &created.definition,
+        created.version,
+        ProviderResponse {
+            slug: created.definition.provider.slug.to_string(),
+            binding_id: created.binding.binding_id.to_string(),
+            level: created.binding.level,
+            honoured: created.binding.honoured.clone(),
+            refused: created.binding.refused.clone(),
+        },
+        &created.record_id,
+    );
+    let response = match response {
+        Ok(response) => response,
+        Err(error) => return management_error(error),
+    };
+    let body = match serde_json::to_value(&response) {
+        Ok(body) => body,
+        Err(error) => return management_error(ManagementError::Internal(error.to_string())),
+    };
+    if let (Some(key), Some(cache)) = (key, cache_guard.as_mut()) {
+        cache.insert(
+            (creator.subject.clone(), key),
+            crate::channels::state::CachedResponse {
+                expires_at: std::time::Instant::now() + std::time::Duration::from_secs(600),
+                body: body.clone(),
+                fingerprint,
+            },
+        );
+    }
+    no_store((StatusCode::CREATED, Json(body)).into_response())
+}
+
+#[utoipa::path(
+    get,
+    path = "/v1/channels/{channel_id}",
+    operation_id = "getChannel",
+    tag = "channels",
+    security(("creatorBearer" = [])),
+    params(("channel_id" = String, Path)),
+    responses((status = 200, body = ChannelResponse), (status = "default", body = cmaeg_core::problem::Problem, content_type = "application/problem+json"))
+)]
+pub async fn get_channel(
+    State(state): State<ManagementState>,
+    creator: Creator,
+    Path(raw_id): Path<String>,
+) -> Response {
+    let channel_id = match parse_channel_id(&raw_id) {
+        Ok(channel_id) => channel_id,
+        Err(error) => return management_error(error),
+    };
+    let loaded = match management::load(&state, &creator, &channel_id).await {
+        Ok(loaded) => loaded,
+        Err(error) => return management_error(error),
+    };
+    let response = channel_response(
+        &state,
+        &channel_id,
+        &loaded.definition,
+        loaded.record.version,
+        provider_response(&loaded.definition),
+        &loaded.definition.record_id,
+    );
+    response
+        .map(|body| no_store(Json(body).into_response()))
+        .unwrap_or_else(management_error)
+}
+
+#[utoipa::path(
+    put,
+    path = "/v1/channels/{channel_id}",
+    operation_id = "updateChannel",
+    tag = "channels",
+    security(("creatorBearer" = [])),
+    params(("channel_id" = String, Path)),
+    request_body = ChannelUpdateRequest,
+    responses((status = 200, body = ChannelResponse), (status = "default", body = cmaeg_core::problem::Problem, content_type = "application/problem+json"))
+)]
+pub async fn update_channel(
+    State(state): State<ManagementState>,
+    creator: Creator,
+    Path(raw_id): Path<String>,
+    body: Result<Json<ChannelUpdateRequest>, axum::extract::rejection::JsonRejection>,
+) -> Response {
+    let channel_id = match parse_channel_id(&raw_id) {
+        Ok(channel_id) => channel_id,
+        Err(error) => return management_error(error),
+    };
+    let body = match body {
+        Ok(Json(body)) => body,
+        Err(_error) => {
+            return no_store(problem(
+                StatusCode::BAD_REQUEST,
+                ProblemCode::InvalidRequest,
+                "request does not match the channel schema",
+            ))
+        }
+    };
+    let loaded = match management::update(&state, &creator, &channel_id, body).await {
+        Ok(loaded) => loaded,
+        Err(error) => return management_error(error),
+    };
+    let response = channel_response(
+        &state,
+        &channel_id,
+        &loaded.definition,
+        loaded.record.version,
+        provider_response(&loaded.definition),
+        &loaded.definition.record_id,
+    );
+    response
+        .map(|body| no_store(Json(body).into_response()))
+        .unwrap_or_else(management_error)
+}
+
+#[utoipa::path(
+    delete,
+    path = "/v1/channels/{channel_id}",
+    operation_id = "deleteChannel",
+    tag = "channels",
+    security(("creatorBearer" = [])),
+    params(("channel_id" = String, Path), DeleteQuery),
+    responses((status = 204), (status = "default", body = cmaeg_core::problem::Problem, content_type = "application/problem+json"))
+)]
+pub async fn delete_channel(
+    State(state): State<ManagementState>,
+    creator: Creator,
+    Path(raw_id): Path<String>,
+    query: Result<Query<DeleteQuery>, axum::extract::rejection::QueryRejection>,
+) -> Response {
+    let channel_id = match parse_channel_id(&raw_id) {
+        Ok(channel_id) => channel_id,
+        Err(error) => return management_error(error),
+    };
+    let query = match query {
+        Ok(Query(query)) => query,
+        Err(_error) => {
+            return no_store(problem(
+                StatusCode::BAD_REQUEST,
+                ProblemCode::InvalidRequest,
+                "request does not match the channel schema",
+            ))
+        }
+    };
+    let Some(expected_version) = query.expected_version else {
+        return no_store(problem(
+            StatusCode::BAD_REQUEST,
+            ProblemCode::InvalidRequest,
+            "expected_version is required",
+        ));
+    };
+    match management::delete(&state, &creator, &channel_id, expected_version).await {
+        Ok(()) => no_store(StatusCode::NO_CONTENT.into_response()),
+        Err(error) => management_error(error),
+    }
+}
+
+#[utoipa::path(
+    post,
+    path = "/v1/channels/{channel_id}/test",
+    operation_id = "testChannel",
+    tag = "channels",
+    security(("creatorBearer" = [])),
+    params(("channel_id" = String, Path)),
+    responses((status = 200, body = TestChannelResponse), (status = "default", body = cmaeg_core::problem::Problem, content_type = "application/problem+json"))
+)]
+pub async fn test_channel(
+    State(state): State<ManagementState>,
+    creator: Creator,
+    Path(raw_id): Path<String>,
+) -> Response {
+    let channel_id = match parse_channel_id(&raw_id) {
+        Ok(channel_id) => channel_id,
+        Err(error) => return management_error(error),
+    };
+    match management::test_turn(&state, &creator, &channel_id).await {
+        Ok(result) => no_store(
+            Json(TestChannelResponse {
+                accepted_after_ms: result.accepted_after_ms,
+                first_text: result.first_text,
+                level: result.level,
+            })
+            .into_response(),
+        ),
+        Err(error) => management_error(error),
+    }
+}
+
+#[utoipa::path(
+    post,
+    path = "/v1/channels/{channel_id}/rekey",
+    operation_id = "rekeyChannel",
+    tag = "channels",
+    security(("serviceBearer" = [])),
+    params(("channel_id" = String, Path)),
+    responses((status = 200, body = RekeyResponse), (status = "default", body = cmaeg_core::problem::Problem, content_type = "application/problem+json"))
+)]
+pub async fn rekey_channel(
+    State(state): State<ManagementState>,
+    Path(raw_id): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    if !service_authorized(&headers, state.cma_service_token.as_str()) {
+        return no_store(problem(
+            StatusCode::UNAUTHORIZED,
+            ProblemCode::NotAuthenticated,
+            "CMA service authentication is required",
+        ));
+    }
+    let channel_id = match parse_channel_id(&raw_id) {
+        Ok(channel_id) => channel_id,
+        Err(error) => return management_error(error),
+    };
+    match management::rekey(&state, &channel_id).await {
+        Ok(kid) => no_store(Json(RekeyResponse { kid }).into_response()),
+        Err(error) => management_error(error),
+    }
+}

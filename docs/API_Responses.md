@@ -18,7 +18,7 @@ durable custody. Browser requests retain their existing sign-in incarnation.
 For external API requests, CMA independently encrypts the exact NyxID access
 token presented by the caller until its provider-verified expiry. The token must
 be an ordinary, unrestricted user access token with active introspection, a
-matching subject, current permissions and an explicit expiry. Agent keys,
+matching subject, current permissions and an explicit expiry. Unregistered agent keys,
 service-account, delegated, relay, resource-scoped and sender-constrained tokens
 cannot use this path. API custody neither replaces a browser login nor borrows
 its refresh token; callers obtain a new API token when theirs expires. Current history
@@ -31,6 +31,50 @@ membership, resource policy and the exact admitted credential custody again. San
 revival additionally requires independent `manage_sandbox` authority and uses
 the resource owner's connections. Organization resource creation and credential
 provisioning remain separate capabilities under development.
+
+A supplied key registered to a live provider binding uses local hash lookup and
+only `UseBindingConversations`; no NyxID request or owner login is needed. It can
+read and interact with that binding's mapped Agents. It cannot list the owner's
+other resources, manage Sandboxes, read files, change sharing or answer approvals.
+For these callers, `conversation` may name the external conversation ID or its
+mapped `agt_` ID. The Agent URL alias and body may use different IDs when both
+resolve to the same mapped Agent. Missing and foreign mappings return
+`404 conversation_not_found`; a provisioning mapping returns
+`409 conversation_not_ready`. Conversation GET routes accept the same aliases.
+Responses retain the mapped Agent ID as their conversation identity.
+
+Binding command receipts retain the binding identity and environment generation,
+so rotating its supplied key preserves idempotency and already admitted work.
+Admission, controls, cancellation, dispatch and automatic parent revival fence
+current binding and conversation authority in the same store transaction. The
+worker obtains fresh authority before execution. Retirement or reconfiguration
+refuses old-generation work. Held streams close when their binding proof changes;
+reconnect with the current key. A queued binding command may revive only its
+mapped parent without granting public Sandbox-management authority.
+
+Binding requests may include `event_context` with
+`{schema_version:1,channel_id,conversation_id,activity,event_ref}`. The full object
+(up to 1 MiB when serialized) is retained atomically with admission and is part of
+the command fingerprint. `conversation_id` must be the binding's external
+conversation ID, including when the request uses the mapped Agent alias. The
+activity must have schema version 1 and a nonempty event ID. The channel ID is
+independent of the binding ID. A different context under the same idempotency key,
+or a second key for the same binding/conversation/event, returns a conflict.
+Neither can overwrite the original object or enqueue another turn.
+Command admission retries transient database contention with backoff for up to
+five seconds between completed attempts, bounded by the original authorization
+deadline. An active transaction or commit is allowed to finish; the retry budget
+does not cancel it or renew authorization.
+
+The Agent receives the ordinary input followed by `event_ref: <reference>`.
+The full activity is retrieved through authenticated
+`GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}`.
+This read requires a current key for the exact binding and mapped conversation,
+revalidates authority before releasing the object, and returns `Cache-Control:
+no-store`. Missing context returns `404 event_context_not_found`; unavailable
+storage fails explicitly. Owner credentials do not grant access to this binding
+route. The existing 256 KiB runtime input limit includes the reference; the large
+context does not consume metadata capacity or become prompt text.
 
 | Method and route | Behavior |
 |---|---|
@@ -58,7 +102,7 @@ The model pinned in the Agent Profile remains authoritative.
 | `input` | Required nonempty text, or one user message with string content or one or more `input_text` parts; adjacent text parts canonicalize |
 | `stream` | Literal `true` required; absent/false returns `stream_required` |
 | `model` | Optional nonempty string; mismatch returns `model_mismatch` |
-| `metadata` | Optional object/null; 16 string pairs, 64 characters per key, 512 per value; visible only to the personal owner |
+| `metadata` | Optional object/null; 16 string pairs, 64 characters per key, 512 per value; visible to the personal owner and the scoped binding |
 | `store` | Omitted or literal `true`; data is retained under Agent history policy |
 | `previous_response_id` | Omitted/null only; predecessor continuation is unsupported; combining a nonnull predecessor with conversation returns `conversation_previous_response_conflict` |
 | `instructions`, `reasoning`, `tools`, `tool_choice` | Refused by name; execution configuration belongs to the pinned profile |
@@ -91,16 +135,23 @@ uncertain.
 |---|---|
 | `response.created` | Exactly once in a full replay; stable ID, creation time and initial queued status |
 | `response.in_progress` | Once execution is bound to a durable turn |
-| `response.output_item.added`, `response.output_item.done` | Standard assistant message items with stable indexes and IDs |
+| `response.output_item.added`, `response.output_item.done` | Standard assistant message and informational `mcp_call` items with stable indexes and IDs |
+| `response.mcp_call.in_progress`, `response.mcp_call.completed`, `response.mcp_call.failed` | Durable provider activity transitions; no client tool execution |
 | `response.content_part.added`, `response.content_part.done` | Standard `output_text` parts |
 | `response.output_text.delta`, `response.output_text.done` | Text emitted at durable message commit boundaries; done contains the complete text |
 | `response.completed`, `response.failed`, `response.incomplete` | Terminal projection from durable command/turn state |
 | `error` | Observation failure after headers; does not change the command's durable outcome |
 
 This version streams committed messages, not transient provider token fragments.
-Tool activity, reasoning fragments, approval and steer details stay in the
-separately authorized AG-UI companion discovered by `GET /api/v2`; v2 does not
-mislabel them as standard output items. `GET` and terminal SSE output agree on
+Provider tool activity uses standard `mcp_call` items with `server_label: "cma"`,
+a display `name` bounded to 200 Unicode characters, empty `arguments`, and null
+`output` and `error` bodies. These items describe provider activity; they do not
+request client tool execution. Their status is `in_progress`, `completed` or
+`failed`. Tool starts and terminal updates follow immutable log order, so tools
+may overlap and text may appear before a tool completes without rewriting the
+replay prefix. Message IDs remain identical to conversation item IDs. Reasoning
+fragments, approvals and steer details use the separately authorized AG-UI
+companion discovered by `GET /api/v2`. `GET` and terminal SSE output agree on
 response IDs, item IDs, metadata, text and usage. `previous_response_id` in v2
 response objects is null because the primary mode uses conversation identity.
 

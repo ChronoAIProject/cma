@@ -2,6 +2,7 @@ use layer2_core::bridge::outbox::{
     DeliveryFailure, DeliveryOutcome, DeliveryReceipt, RelayDeliveryRequest, RelayOperation,
 };
 use serde::Deserialize;
+use zeroize::Zeroizing;
 
 use super::*;
 mod retry_after;

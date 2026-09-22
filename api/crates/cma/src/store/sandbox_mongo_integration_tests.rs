@@ -140,6 +140,7 @@ pub(super) fn sandbox(id: &str) -> Sandbox {
         failure: None,
         runtime: None,
         credential: SandboxCredentialState {
+            source: Default::default(),
             service_grants: Vec::new(),
             reaches: vec![],
             key_generation: 1,
@@ -204,6 +205,7 @@ fn retired_sandbox(id: &str) -> Sandbox {
 
 fn credential(sandbox_id: &str, plaintext: &str) -> CredentialMaterial {
     CredentialMaterial {
+        source: Default::default(),
         sandbox_id: SandboxId(sandbox_id.into()),
         owner: SubjectId("owner".into()),
         authority: SandboxCredentialAuthority {
@@ -360,6 +362,7 @@ fn workspace(sandbox: &Sandbox, id: &str, name: &str) -> Workspace {
 
 fn workspace_admission(workspace: Workspace) -> WorkspaceAdmission {
     WorkspaceAdmission {
+        binding: None,
         workspace,
         kind: WorkspaceAdmissionKind::Manual,
         event_at: NOW.into(),
@@ -377,6 +380,7 @@ fn ready_workspace(parent: &Sandbox, id: &str, name: &str) -> Workspace {
 
 fn agent_admission(workspace: &Workspace, key: &str, id: &str) -> AgentAdmission {
     AgentAdmission {
+        binding: None,
         created_by: None,
         owner: workspace.owner.clone(),
         workspace_id: workspace.id.clone(),
@@ -983,6 +987,7 @@ async fn sandbox_profile_workspace_origin_replays_the_existing_admission() {
 
     let created = store
         .admit_workspace(WorkspaceAdmission {
+            binding: None,
             workspace: first.clone(),
             kind: WorkspaceAdmissionKind::SandboxProfile,
             event_at: NOW.into(),
@@ -995,6 +1000,7 @@ async fn sandbox_profile_workspace_origin_replays_the_existing_admission() {
     replay.id = WorkspaceId("wks_origin_replay".into());
     let replayed = store
         .admit_workspace(WorkspaceAdmission {
+            binding: None,
             workspace: replay,
             kind: WorkspaceAdmissionKind::SandboxProfile,
             event_at: "2026-09-05T00:00:01Z".into(),
@@ -1031,6 +1037,7 @@ async fn concurrent_sandbox_profile_workspace_replays_create_one_aggregate() {
         async move {
             store
                 .admit_workspace(WorkspaceAdmission {
+                    binding: None,
                     workspace: candidate,
                     kind: WorkspaceAdmissionKind::SandboxProfile,
                     event_at: NOW.into(),
@@ -1214,6 +1221,7 @@ async fn sandbox_profile_workspace_rejects_a_forged_durable_slot_reference() {
     assert_eq!(
         store
             .admit_workspace(WorkspaceAdmission {
+                binding: None,
                 workspace: forged,
                 kind: WorkspaceAdmissionKind::SandboxProfile,
                 event_at: NOW.into(),
@@ -1253,6 +1261,7 @@ async fn durable_parent_slot_change_rejects_an_obsolete_workspace_replay() {
     assert!(matches!(
         store
             .admit_workspace(WorkspaceAdmission {
+                binding: None,
                 workspace: first.clone(),
                 kind: WorkspaceAdmissionKind::SandboxProfile,
                 event_at: NOW.into(),
@@ -1275,6 +1284,7 @@ async fn durable_parent_slot_change_rejects_an_obsolete_workspace_replay() {
     assert_eq!(
         store
             .admit_workspace(WorkspaceAdmission {
+                binding: None,
                 workspace: replay,
                 kind: WorkspaceAdmissionKind::SandboxProfile,
                 event_at: "2026-09-05T00:00:01Z".into(),

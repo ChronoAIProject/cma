@@ -18,6 +18,8 @@ pub enum Capability {
     DeleteOwnSandbox,
     /// Author and revise Profiles owned by the caller.
     ManageOwnProfiles,
+    /// Create and manage external Bots owned by the caller.
+    ManageOwnBots,
     /// Publish Triggers owned by the caller.
     PublishTriggers,
     /// Launch a published Trigger into the caller's own resources.
@@ -36,6 +38,12 @@ pub enum Capability {
     ReadUserDirectory,
     /// Read and change deployment-owned settings.
     ConfigurePlatform,
+    /// Manage opaque CMA event-gateway channel records.
+    ManageGatewayRecords,
+    /// Manage externally provisioned environments and conversations.
+    ManageProviderBindings,
+    /// Operate only conversations selected by verified binding-key authority.
+    UseBindingConversations,
 }
 
 /// A closed set of capabilities established by the authentication boundary.

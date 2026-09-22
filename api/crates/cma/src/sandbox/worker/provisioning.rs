@@ -383,6 +383,11 @@ impl SandboxWorker {
         sandbox: Sandbox,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        if !sandbox.credential.source.is_managed() {
+            return self
+                .advance_status(sandbox, SandboxStatus::Active, SandboxWorkStep::None, now)
+                .await;
+        }
         let Some(ready) = credential_rotation_at(&sandbox) else {
             return self.fail_corrupt_claim(sandbox, now).await;
         };
@@ -401,6 +406,9 @@ impl SandboxWorker {
         sandbox: Sandbox,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        if !sandbox.credential.source.is_managed() {
+            return self.activate(sandbox, now).await;
+        }
         self.advance_status(
             sandbox,
             SandboxStatus::CredentialRotating,
@@ -472,16 +480,6 @@ impl SandboxWorker {
         sandbox: Sandbox,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
-        let Some(ready) = credential_rotation_at(&sandbox) else {
-            return self.fail_corrupt_claim(sandbox, now).await;
-        };
-        self.advance_status_at(
-            sandbox,
-            SandboxStatus::Active,
-            SandboxWorkStep::WaitForCredentialRotation,
-            now,
-            ready,
-        )
-        .await
+        self.activate(sandbox, now).await
     }
 }

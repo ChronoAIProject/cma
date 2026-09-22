@@ -1,3 +1,4 @@
+mod binding;
 mod support;
 use support::{profile_error, require, require_launch, store_error, trust_error, workspace};
 
@@ -280,6 +281,7 @@ impl WorkspaceService {
         let result = self
             .store
             .admit_workspace(WorkspaceAdmission {
+                binding: None,
                 workspace,
                 kind,
                 event_at: now,

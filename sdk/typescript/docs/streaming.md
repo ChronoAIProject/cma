@@ -142,11 +142,26 @@ to bound observation. `timeoutMs` bounds the handshake.
 V2 uses opaque response IDs, a queued lifecycle, conversation on each turn,
 and no predecessor. Text is emitted at durable message commit boundaries. Shared
 readers receive empty metadata, and membership expiry can end their connection.
-Provider tools and approval details use the independently authorized AG-UI
-companion. Nested v2 HTTP errors become `ApiError` with their exact code,
+Output items are a typed union of `message` and informational `mcp_call` activity.
+Narrow on `item.type` before reading message `content`. Activity carries an empty
+`arguments` string, null `output`/`error`, and a display title; it never asks the
+client to execute a tool. The three `response.mcp_call.*` events retain stable
+indexes through interleaved text, overlapping calls and replay. Approval details
+use the independently authorized AG-UI companion. Nested v2 HTTP errors become `ApiError` with their exact code,
 `extensions.type`, `extensions.param`, request ID and retry delay. Deployment
 middleware may still return the shared REST problem envelope, which is also
 supported. See the [API contract](../../../docs/API_Responses.md).
+
+Binding-key callers may supply an external conversation ID; the returned
+conversation identifies the mapped Agent. The Agent alias and request conversation
+may differ when the server resolves both to the same Agent. Known Agent IDs still
+receive exact identity validation. An optional `event_context` retains the complete
+schema-version-1 event snapshot atomically with admission. Preserve the original
+body and idempotency key on retry. Changed context or another key for the same event
+conflicts. The runtime receives its `event_ref`, while the complete object is read
+with `responsesV2.readEventContext(bindingId, conversationId, eventId)`.
+The helper requires binding authentication and validates conversation/event identity.
+The snapshot limit is 1 MiB; metadata and runtime input limits remain independent.
 
 ## Response-targeted controls
 

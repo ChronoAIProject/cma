@@ -81,6 +81,7 @@ async fn channel_minted_secret_custody_collision_rolls_back_pending_authority_an
     let at = std::time::SystemTime::now();
     f.custody
         .insert(CredentialMaterial {
+            source: Default::default(),
             sandbox_id: f.record.placement.target().sandbox_id.clone(),
             owner: caller().caller.subject,
             value: crate::auth::persistence::SecretValue::new("existing-fixture-key".into()),

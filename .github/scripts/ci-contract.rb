@@ -70,7 +70,7 @@ module CIContract
     step(gate, "Release contract mutation regressions", "ruby .github/scripts/ci-contract-tests.rb release")
     step(gate, "Runtime image evidence and provenance regressions", "node --test .github/scripts/runtime-image-evidence.test.mjs .github/scripts/release-runtime-input.test.mjs")
     images = job(ci, "images", "Images")
-    require!(!images.key?("if") && images.dig("strategy", "matrix", "component") == %w[api web runtime], "all image gates must execute")
+    require!(!images.key?("if") && images.dig("strategy", "matrix", "component") == %w[api web runtime cmaeg], "all image gates must execute")
     step(images, "Execute built runtime image contract", 'node .github/scripts/runtime-image-evidence.mjs run cma-runtime:ci "$GITHUB_SHA" "$RUNNER_TEMP/runtime-image-evidence.json"', "matrix.component == 'runtime'")
     step(images, "Require passing runtime image evidence", 'node .github/scripts/runtime-image-evidence.mjs verify cma-runtime:ci "$GITHUB_SHA" "$RUNNER_TEMP/runtime-image-evidence.json"', "always() && matrix.component == 'runtime'")
     artifact(images, "always() && matrix.component == 'runtime'", "runtime-image-evidence")

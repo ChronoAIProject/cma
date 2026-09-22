@@ -106,6 +106,13 @@ pub use resource_access::resource_access_router;
 #[cfg(test)]
 mod trigger_assets_test_support;
 
+mod bindings;
+#[cfg(test)]
+mod bindings_tests;
+pub use bindings::binding_router;
+mod gateway_records;
+#[cfg(test)]
+mod gateway_records_tests;
 mod hierarchy_shared_shapes;
 mod idempotency;
 pub(crate) mod instance_problem;
@@ -140,6 +147,7 @@ pub use agents::{agent_router, AgentRoutesState};
 pub use embed::{
     EmbedContentSecurityPolicy, EmbedDescriptor, EmbedSnippets, EMBED_V1_JAVASCRIPT_SRI,
 };
+pub use gateway_records::gateway_record_router;
 pub use instances::{hierarchy_router, HierarchyState};
 pub use launch_events::{
     FirstMessageStateValue, LaunchBlockedReasonView, LaunchEffectKindValue, LaunchEventKindView,

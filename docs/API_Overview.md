@@ -58,6 +58,11 @@ They can launch and use/delete their own Sandboxes, but cannot directly create
 Sandboxes, manage profiles, publish Triggers or use administration routes.
 Capabilities, not the role's display name or slug, determine access.
 
+The event-gateway channel-record administration surface is granted by the exact
+NyxID permission `cma:gateway:records`, which maps to the
+`ManageGatewayRecords` capability. It is separate from owner Sandbox and
+Profile permissions.
+
 Only explicitly anonymous discovery, signup options, public Trigger preview and
 badge routes bypass owner authentication. A public Trigger URL does not make
 Launch creation anonymous. Shared rate limits and origin checks still apply.

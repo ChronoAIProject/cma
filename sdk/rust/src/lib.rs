@@ -17,6 +17,7 @@
 #[macro_use]
 mod macros;
 pub mod admin;
+pub mod agent_card;
 pub mod agent_events_v2;
 pub mod agents;
 pub mod agui;
@@ -28,11 +29,13 @@ mod conformance;
 pub mod defaults;
 pub mod discovery;
 mod error;
+pub mod gateway_records;
 mod http;
 pub mod instances;
 pub mod launches;
 pub mod profile_authoring;
 pub mod profiles;
+pub mod provider_bindings;
 pub mod resource_access;
 mod resources;
 pub mod responses;

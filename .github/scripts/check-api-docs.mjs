@@ -31,6 +31,8 @@ export function missingOperations(document, markdown) {
       ),
     ].map((match) => `${match[1]} ${match[2]}`),
   );
+  const base = document.servers?.[0]?.url ?? "";
+  const prefix = base.startsWith("/") ? base.replace(/\/$/, "") : "";
   const operations = Object.entries(document.paths).flatMap(([path, item]) => {
     if (
       !path.startsWith("/") ||
@@ -42,7 +44,7 @@ export function missingOperations(document, markdown) {
     }
     return methods
       .filter((method) => item[method])
-      .map((method) => `${method.toUpperCase()} ${path}`);
+      .map((method) => `${method.toUpperCase()} ${prefix}${path}`);
   });
   if (operations.length === 0)
     throw new Error("The OpenAPI document has no operations.");
@@ -54,9 +56,12 @@ if (
   resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 ) {
   try {
-    const document = JSON.parse(readFileSync(0, "utf8"));
+    const args = process.argv.slice(2);
+    if (args.length !== 0 && args.length !== 2)
+      throw new Error("usage: check-api-docs.mjs [openapi.json documentation.md]");
+    const document = JSON.parse(readFileSync(args[0] ?? 0, "utf8"));
     const markdown = readFileSync(
-      new URL("../../docs/API_REST.md", import.meta.url),
+      args[1] ?? new URL("../../docs/API_REST.md", import.meta.url),
       "utf8",
     );
     const missing = missingOperations(document, markdown);

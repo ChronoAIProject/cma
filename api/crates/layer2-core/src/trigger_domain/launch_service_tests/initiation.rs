@@ -66,6 +66,7 @@ async fn verified_launch_initiator_is_distinct_from_trigger_creator_and_replay_r
             launch_id: created.launch.id.clone(),
         };
         let request = AgentAdmission {
+            binding: None,
             created_by: Some(executor.clone()),
             owner: f.caller.subject.clone(),
             workspace_id: workspace.id.clone(),

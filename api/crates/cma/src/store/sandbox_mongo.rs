@@ -86,6 +86,7 @@ const PROFILE_COLLECTIONS: &[&str] = &[
 /// share a client session and therefore a real Mongo transaction.
 #[derive(Clone)]
 pub struct MongoSandboxStore {
+    pub(super) bindings: super::bindings::BindingCollections,
     pub(crate) channel_invokes:
         std::sync::Arc<std::sync::OnceLock<std::sync::Weak<super::MongoBridgeInvokeStore>>>,
     pub(super) client: Client,
@@ -137,6 +138,7 @@ impl MongoSandboxStore {
         let checkpoint_objects =
             MongoCheckpointObjectStore::open_with_storage(client, name, objects).await?;
         let store = Self {
+            bindings: super::bindings::BindingCollections::open(&database).await?,
             channel_invokes: std::sync::Arc::new(std::sync::OnceLock::new()),
             client: client.clone(),
             checkpoint_objects,

@@ -39,6 +39,7 @@ pub(super) fn sandbox() -> Sandbox {
         failure: None,
         runtime: None,
         credential: SandboxCredentialState {
+            source: Default::default(),
             service_grants: Vec::new(),
             reaches: vec![ServiceId::new("ornn-api")],
             key_generation: 3,
@@ -73,6 +74,7 @@ pub(super) fn sandbox() -> Sandbox {
 fn credential_material() -> CredentialMaterial {
     let sandbox = sandbox();
     CredentialMaterial {
+        source: Default::default(),
         sandbox_id: sandbox.id,
         owner: sandbox.owner,
         authority: sandbox.credential.current.unwrap(),
