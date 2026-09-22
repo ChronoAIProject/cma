@@ -1,0 +1,84 @@
+//! Resolve current, refreshable human authority for owner-admitted Bot work.
+use super::{cookie_authorization, persistence::SecretValue, refresh, AuthState};
+use layer2_core::{bots::BotError, Capability, SubjectId};
+use std::time::{Duration, SystemTime};
+
+impl AuthState {
+    /// An API key resolving to a human's subject cannot borrow that human's
+    /// renewable login to mint broader keys. Admission uses the actual login.
+    pub(super) async fn authorize_bot_request(
+        &self,
+        request: &super::RequestAuth,
+    ) -> Result<bool, layer2_core::StoreError> {
+        let Some(credential) = request.delegated_credential.as_deref() else {
+            return Ok(false);
+        };
+        if !personal(credential) {
+            return Ok(false);
+        }
+        let Some(state) = self.store.subject(&request.subject).await? else {
+            return Ok(false);
+        };
+        state.validate()?;
+        Ok(state.subject == request.subject
+            && state.tokens.as_ref().is_some_and(|tokens| {
+                tokens.access_token.expose() == credential
+                    && tokens.expires_at > SystemTime::now()
+                    && tokens
+                        .refresh_token
+                        .as_ref()
+                        .is_some_and(|t| !t.expose().is_empty())
+            }))
+    }
+    pub(crate) async fn bot_owner_token(&self, owner: &SubjectId) -> Result<SecretValue, BotError> {
+        tokio::time::timeout(Duration::from_secs(15), async {
+            let mut state = self
+                .store
+                .subject(owner)
+                .await
+                .map_err(|_| BotError::Unavailable)?
+                .ok_or(BotError::Forbidden)?;
+            state.validate().map_err(|_| BotError::Unavailable)?;
+            if state.subject != *owner {
+                return Err(BotError::Forbidden);
+            }
+            let incarnation = state.incarnation.clone();
+            refresh::refresh_if_needed(self, &mut state)
+                .await
+                .map_err(|_| BotError::Unavailable)?;
+            if state.incarnation != incarnation {
+                return Err(BotError::Forbidden);
+            }
+            let tokens = state.tokens.as_ref().ok_or(BotError::Forbidden)?;
+            if tokens
+                .refresh_token
+                .as_ref()
+                .is_none_or(|t| t.expose().is_empty())
+                || tokens.expires_at <= SystemTime::now() + Duration::from_secs(60)
+                || !personal(tokens.access_token.expose())
+            {
+                return Err(BotError::Forbidden);
+            }
+            let request = cookie_authorization::request_for_cookie(self, owner, state.clone())
+                .await
+                .map_err(|_| BotError::Unavailable)?;
+            if !request.authorization.allows(Capability::ManageOwnBots)
+                || request.delegated_credential.as_deref() != Some(tokens.access_token.expose())
+            {
+                return Err(BotError::Forbidden);
+            }
+            cookie_authorization::require_current_custody(self, &state)
+                .await
+                .map_err(|_| BotError::Forbidden)?;
+            Ok(tokens.access_token.clone())
+        })
+        .await
+        .map_err(|_| BotError::Unavailable)?
+    }
+}
+
+fn personal(token: &str) -> bool {
+    !token.starts_with("nyx_")
+        && !token.starts_with("nyxid_")
+        && super::bearer::permits_personal_authority(token)
+}

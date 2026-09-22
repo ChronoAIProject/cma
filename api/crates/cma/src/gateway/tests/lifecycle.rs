@@ -1,0 +1,192 @@
+use super::*;
+struct Tokens;
+#[async_trait::async_trait]
+impl OwnerTokens for Tokens {
+    async fn bot_owner_token(
+        &self,
+        owner: &SubjectId,
+    ) -> Result<crate::auth::persistence::SecretValue, BotError> {
+        assert_eq!(owner.as_str(), "owner");
+        Ok(crate::auth::persistence::SecretValue::new(
+            "owner-token".into(),
+        ))
+    }
+}
+struct Profiles(BotProfiles);
+#[async_trait::async_trait]
+impl BotProfileResolver for Profiles {
+    async fn resolve(
+        &self,
+        _: &SubjectId,
+        _: &layer2_core::profiles::AgentProfileRef,
+    ) -> Result<BotProfiles, BotError> {
+        Ok(self.0.clone())
+    }
+}
+pub(super) fn external(server: &Server, gateway: &Gateway) -> Arc<GatewayBots> {
+    let http = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .redirect(reqwest::redirect::Policy::none())
+        .retry(reqwest::retry::never())
+        .build()
+        .unwrap();
+    Arc::new(GatewayBots {
+        auth: Arc::new(Tokens),
+        gateway: client::GatewayClient::new(
+            http.clone(),
+            &GatewayConfig {
+                base_url: gateway.base.clone(),
+                public_url: gateway.base.clone(),
+            },
+            "https://nyx.example".into(),
+        )
+        .unwrap(),
+        nyxid: nyxid::NyxidClient {
+            http: http.clone(),
+            base: server.base.clone(),
+        },
+        issuer: KeyIssuer::new(http, &server.base, "test"),
+        public: gateway.base.clone(),
+    })
+}
+fn owner() -> layer2_core::Caller {
+    layer2_core::Caller::new(
+        SubjectId::new("owner"),
+        layer2_core::Authorization::new([layer2_core::Capability::ManageOwnBots]),
+    )
+}
+pub(super) async fn setup(
+    server: &Server,
+    gateway: &Gateway,
+) -> (Arc<BotService>, Arc<InMemoryBotStore>, BotWorker, Bot) {
+    let bot = bot().await;
+    let store = Arc::new(InMemoryBotStore::default());
+    store.insert(&bot).await.unwrap();
+    let service = BotService::new(
+        store.clone(),
+        Arc::new(Profiles(bot.profiles.clone())),
+        "cma_codex".into(),
+    );
+    let worker = BotWorker::new(service.clone(), external(server, gateway), "worker".into());
+    (service, store, worker, bot)
+}
+#[tokio::test]
+async fn production_effects_create_disable_rotate_and_delete_through_compiled_gateway() {
+    let server = Server::start().await;
+    let mut gateway = Gateway::start(&server).await;
+    let (service, _, worker, initial) = setup(&server, &gateway).await;
+    worker.run(&initial.bot_id).await.unwrap();
+    let active = service.get(&owner(), &initial.bot_id).await.unwrap();
+    assert_eq!(active.state, BotState::Active);
+    assert_eq!(
+        server.identity.lock().unwrap().calls,
+        ["mint_agent", "mint_route", "callback", "create_route"]
+    );
+    assert_eq!(server.identity.lock().unwrap().keys.len(), 2);
+    assert_eq!(server.identity.lock().unwrap().routes.len(), 1);
+    gateway.restart(&server).await;
+    for operation in [
+        BotOperation::Disable,
+        BotOperation::Rotate,
+        BotOperation::Enable,
+    ] {
+        service
+            .admit(&owner(), &initial.bot_id, operation)
+            .await
+            .unwrap();
+        worker.run(&initial.bot_id).await.unwrap();
+        let bot = service.get(&owner(), &initial.bot_id).await.unwrap();
+        assert_eq!(
+            bot.state,
+            if operation == BotOperation::Enable {
+                BotState::Active
+            } else {
+                BotState::Disabled
+            }
+        );
+        assert_eq!(server.identity.lock().unwrap().keys.len(), 2);
+        assert_eq!(
+            bot.resources.channel.as_ref().unwrap().channel_id,
+            active.resources.channel.as_ref().unwrap().channel_id
+        );
+    }
+    service
+        .admit(&owner(), &initial.bot_id, BotOperation::Delete)
+        .await
+        .unwrap();
+    worker.run(&initial.bot_id).await.unwrap();
+    assert_eq!(
+        service.get(&owner(), &initial.bot_id).await,
+        Err(BotError::NotFound)
+    );
+    assert!(server.identity.lock().unwrap().keys.is_empty());
+    assert!(server.identity.lock().unwrap().routes.is_empty());
+    assert!(server.remote.records.lock().unwrap().is_empty());
+    assert!(server.remote.provider_keys.lock().unwrap().is_empty());
+}
+#[tokio::test]
+async fn unknown_nyxid_creation_outcomes_clean_up_owned_effects_after_gateway_restart() {
+    for failed_step in ["mint_agent", "mint_route", "callback", "create_route"] {
+        let server = Server::start().await;
+        let mut gateway = Gateway::start(&server).await;
+        let (service, store, worker, initial) = setup(&server, &gateway).await;
+        server.identity.lock().unwrap().fail_after = Some(failed_step);
+        assert!(worker.run(&initial.bot_id).await.is_err());
+        gateway.restart(&server).await;
+        let mut bot = store.get(&initial.bot_id).await.unwrap().unwrap();
+        let prior = bot.revision;
+        bot.revision += 1;
+        bot.work.as_mut().unwrap().expires_at = Some(layer2_core::rfc3339_at(
+            std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(1),
+        ));
+        store.replace(prior, &bot).await.unwrap();
+        worker.run(&initial.bot_id).await.unwrap();
+        let bot = service.get(&owner(), &initial.bot_id).await.unwrap();
+        assert!(matches!(bot.state, BotState::Failed { .. }));
+        assert!(bot.work.is_none());
+        assert!(
+            server.identity.lock().unwrap().keys.is_empty(),
+            "{failed_step}"
+        );
+        assert!(
+            server.identity.lock().unwrap().routes.is_empty(),
+            "{failed_step}"
+        );
+        assert!(
+            server.remote.records.lock().unwrap().is_empty(),
+            "{failed_step}"
+        );
+        assert!(
+            server.remote.provider_keys.lock().unwrap().is_empty(),
+            "{failed_step}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn required_profile_refusal_cleans_up_instead_of_activating_a_partial_bot() {
+    let server = Server::start().await;
+    let gateway = Gateway::start(&server).await;
+    let (service, store, worker, initial) = setup(&server, &gateway).await;
+    *server.remote.refusal.lock().unwrap() = Some("model.service".into());
+    assert!(worker.run(&initial.bot_id).await.is_err());
+    let mut bot = store.get(&initial.bot_id).await.unwrap().unwrap();
+    assert!(matches!(bot.state, BotState::Failed { .. }));
+    let prior = bot.revision;
+    bot.revision += 1;
+    bot.work.as_mut().unwrap().expires_at = Some(layer2_core::rfc3339_at(
+        std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(1),
+    ));
+    store.replace(prior, &bot).await.unwrap();
+    worker.run(&initial.bot_id).await.unwrap();
+    assert!(service
+        .get(&owner(), &initial.bot_id)
+        .await
+        .unwrap()
+        .work
+        .is_none());
+    assert!(server.identity.lock().unwrap().keys.is_empty());
+    assert!(server.identity.lock().unwrap().routes.is_empty());
+    assert!(server.remote.records.lock().unwrap().is_empty());
+    assert!(server.remote.provider_keys.lock().unwrap().is_empty());
+}
