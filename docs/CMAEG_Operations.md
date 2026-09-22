@@ -544,3 +544,12 @@ the conversation with PUT 201, and the immediate retry returned 409 while its
 Agent was still provisioning. CMAEG correctly treated that unrecognized conflict
 as a refusal and returned 503. No turn was admitted and no native-tool success
 is claimed from this attempt. The existing Telegram route was unchanged.
+
+CMA now returns `429 conversation_not_ready` with `Retry-After: 1` while the
+reserved conversation is provisioning. This uses CMAEG's existing bounded busy
+retry and retains the event body and idempotency key. Local regressions reproduce
+the former 409 refusal, require retryable preparation, and verify one response
+identity after readiness and replay. Gateway coverage also exercises a missing
+conversation followed by busy preparation and eventual acceptance with one PUT
+and unchanged POST bodies/keys. This follow-up still needs its own successful
+CI, rollout and fresh live acceptance; it is not part of the image record above.
