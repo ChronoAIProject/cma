@@ -12,6 +12,9 @@ use std::{
     time::{Duration, SystemTime},
 };
 
+#[path = "writer_snapshot_tests.rs"]
+mod writer_snapshot_tests;
+
 struct NoHumanAuthority;
 #[async_trait::async_trait]
 impl AgentCommandAuthorizer for NoHumanAuthority {

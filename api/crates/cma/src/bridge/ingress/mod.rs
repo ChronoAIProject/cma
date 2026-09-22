@@ -106,9 +106,12 @@ impl CallbackIngress {
             return Err(CallbackError::Bounds);
         }
         let headers = parse_headers(headers)?;
-        tokio::time::timeout(Duration::from_secs(5), self.accept_inner(id, headers, body))
-            .await
-            .map_err(|_| CallbackError::Unavailable)?
+        tokio::time::timeout(
+            keys::CALLBACK_ACCEPT_BUDGET,
+            self.accept_inner(id, headers, body),
+        )
+        .await
+        .map_err(|_| CallbackError::Unavailable)?
     }
 
     async fn accept_inner(

@@ -83,7 +83,7 @@ async fn deliberate_org_authority_survives_cookie_logout_and_refreshes_exact_sig
     *f.control.organization_token.write().await = "rotated-fixture-token".into();
     let renewed = f
         .auth
-        .resolve_bridge_human(admitted.subject(), admitted.incarnation(), &org())
+        .resolve_bridge_human(admitted.subject(), &org())
         .await
         .unwrap();
     assert_eq!(renewed.subject(), &SubjectId::new("owner"));
@@ -107,6 +107,85 @@ async fn deliberate_org_authority_survives_cookie_logout_and_refreshes_exact_sig
 }
 
 #[tokio::test]
+async fn retained_bridge_human_uses_fresh_same_subject_sign_in_and_fences_old_lease() {
+    for resource_owner in [owner(), org()] {
+        let f = Fixture::new().await;
+        let state = f.seed().await;
+        let mut prior = f
+            .auth
+            .capture_bridge_human(
+                &context(&f, &state),
+                "must-not-leak-access-token",
+                &resource_owner,
+            )
+            .await
+            .unwrap();
+        for token in ["fresh-login-one", "fresh-login-two"] {
+            // Use the actual successful OAuth login persistence path, which
+            // intentionally replaces incarnation for deferred-command fencing.
+            f.auth
+                .store_sign_in(
+                    state.subject.clone(),
+                    DurableSubjectTokens {
+                        access_token: SecretValue::new(token.into()),
+                        refresh_token: Some(SecretValue::new("fresh-refresh".into())),
+                        expires_at: SystemTime::now() + Duration::from_secs(3600),
+                    },
+                    state.authorization.clone(),
+                    state.profile.clone(),
+                )
+                .await
+                .unwrap();
+            let current = f.store.subject(&state.subject).await.unwrap().unwrap();
+            assert_ne!(current.incarnation, prior.incarnation());
+            assert!(f.auth.revalidate_bridge_human(&prior).await.is_err());
+            *f.control.organization_token.write().await = token.into();
+            let renewed = f
+                .auth
+                .resolve_bridge_human(&state.subject, &resource_owner)
+                .await
+                .unwrap();
+            assert_eq!(renewed.subject(), &state.subject);
+            assert_eq!(renewed.incarnation(), current.incarnation);
+            assert_eq!(renewed.credential(), token);
+            f.auth.revalidate_bridge_human(&renewed).await.unwrap();
+            prior = renewed;
+        }
+        if resource_owner == org() {
+            assert_eq!(f.control.organization_requests.load(Ordering::SeqCst), 3);
+        }
+    }
+}
+
+#[tokio::test]
+async fn fresh_sign_in_does_not_allow_bridge_to_borrow_another_humans_custody() {
+    let f = Fixture::new().await;
+    let state = f.seed().await;
+    f.auth
+        .store_sign_in(
+            SubjectId::new("another-human"),
+            state.tokens.clone().unwrap(),
+            state.authorization.clone(),
+            state.profile.clone(),
+        )
+        .await
+        .unwrap();
+    assert!(f
+        .auth
+        .resolve_bridge_human(&SubjectId::new("another-human"), &owner())
+        .await
+        .is_err());
+    let mut removed = state.clone();
+    removed.tokens = None;
+    f.store.put_subject(removed).await.unwrap();
+    assert!(f
+        .auth
+        .resolve_bridge_human(&state.subject, &owner())
+        .await
+        .is_err());
+}
+
+#[tokio::test]
 async fn retained_authority_rechecks_exact_org_role_account_and_sign_in() {
     let f = Fixture::new().await;
     let state = f.seed().await;
@@ -114,7 +193,7 @@ async fn retained_authority_rechecks_exact_org_role_account_and_sign_in() {
         *f.control.organization.write().await = Reply::json(json!({"id":"org","your_role":role}));
         assert!(f
             .auth
-            .resolve_bridge_human(&state.subject, &state.incarnation, &org())
+            .resolve_bridge_human(&state.subject, &org())
             .await
             .is_err());
     }
@@ -122,19 +201,19 @@ async fn retained_authority_rechecks_exact_org_role_account_and_sign_in() {
         Reply::json(json!({"id":"other-org","your_role":"admin"}));
     assert!(f
         .auth
-        .resolve_bridge_human(&state.subject, &state.incarnation, &org())
+        .resolve_bridge_human(&state.subject, &org())
         .await
         .is_err());
     *f.control.organization.write().await = Reply::json(json!({"id":"org","your_role":"admin"}));
     let lease = f
         .auth
-        .resolve_bridge_human(&state.subject, &state.incarnation, &org())
+        .resolve_bridge_human(&state.subject, &org())
         .await
         .unwrap();
     *f.control.introspection.write().await = Reply::json(json!({"active":false}));
     assert!(f
         .auth
-        .resolve_bridge_human(&state.subject, &state.incarnation, &org())
+        .resolve_bridge_human(&state.subject, &org())
         .await
         .is_err());
     let replacement = SubjectAuthState::new(
@@ -147,7 +226,7 @@ async fn retained_authority_rechecks_exact_org_role_account_and_sign_in() {
     assert!(f.auth.revalidate_bridge_human(&lease).await.is_err());
     assert!(f
         .auth
-        .resolve_bridge_human(&state.subject, &state.incarnation, &owner())
+        .resolve_bridge_human(&state.subject, &owner())
         .await
         .is_err());
 }
@@ -160,21 +239,17 @@ async fn sign_in_replacement_during_org_io_fences_buffered_success() {
     f.control.organization.write().await.gate = Some(gate.clone());
     let auth = f.auth.clone();
     let subject = state.subject.clone();
-    let incarnation = state.incarnation.clone();
-    let pending = tokio::spawn(async move {
-        auth.resolve_bridge_human(&subject, &incarnation, &org())
-            .await
-    });
+    let pending = tokio::spawn(async move { auth.resolve_bridge_human(&subject, &org()).await });
     tokio::time::timeout(Duration::from_secs(2), gate.reached.notified())
         .await
         .unwrap();
-    f.store
-        .put_subject(SubjectAuthState::new(
+    f.auth
+        .store_sign_in(
             state.subject,
+            state.tokens.unwrap(),
             state.authorization,
             state.profile,
-            state.tokens,
-        ))
+        )
         .await
         .unwrap();
     gate.release.notify_one();
@@ -200,7 +275,7 @@ async fn removed_tokens_and_delegated_or_raw_key_custody_never_refresh_as_humans
         f.store.put_subject(changed).await.unwrap();
         assert!(f
             .auth
-            .resolve_bridge_human(&state.subject, &state.incarnation, &org())
+            .resolve_bridge_human(&state.subject, &org())
             .await
             .is_err());
     }

@@ -6,6 +6,7 @@ use std::{sync::Arc, time::Duration};
 use layer2_core::bridge::{
     BridgeConfig, BridgeConnectionObservation, BridgeConnectionValidator, BridgeError,
     BridgePlacementPolicy, BridgeService, BridgeSetupBlock, BridgeValidation,
+    RetainedChannelConnection,
 };
 use layer2_core::resource_access::{ResourceOwner, ResourceShareStore, ResourceTarget};
 
@@ -36,6 +37,8 @@ pub(crate) mod outbox_scheduler;
 pub(crate) mod partition_commands;
 mod provider;
 pub(crate) mod provisioning;
+#[cfg(test)]
+pub(crate) mod retained_validation_test_support;
 pub(crate) mod setup;
 mod types;
 pub(crate) mod workspace_cleanup_work;
@@ -130,6 +133,51 @@ impl BridgeConnectionValidator for NyxBridgeValidator {
         owner: &ResourceOwner,
         config: &BridgeConfig,
     ) -> Result<BridgeValidation, BridgeError> {
+        self.validate_scoped(owner, config, None).await
+    }
+
+    async fn validate_retained_channel(
+        &self,
+        request: &RetainedChannelConnection,
+    ) -> Result<BridgeValidation, BridgeError> {
+        self.validate_scoped(request.owner(), request.config(), Some(request))
+            .await
+    }
+}
+
+impl NyxBridgeValidator {
+    async fn validate_scoped(
+        &self,
+        owner: &ResourceOwner,
+        config: &BridgeConfig,
+        retained: Option<&RetainedChannelConnection>,
+    ) -> Result<BridgeValidation, BridgeError> {
+        let started = tokio::time::Instant::now();
+        let result = self.observe_connection(owner, config, retained).await;
+        tracing::info!(
+            channel_operation = "connection_validation",
+            scope = if retained.is_some() {
+                "retained_channel"
+            } else {
+                "full"
+            },
+            outcome = if result.is_ok() {
+                "verified"
+            } else {
+                "refused"
+            },
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            "Bridge connection validation completed"
+        );
+        result
+    }
+
+    async fn observe_connection(
+        &self,
+        owner: &ResourceOwner,
+        config: &BridgeConfig,
+        retained: Option<&RetainedChannelConnection>,
+    ) -> Result<BridgeValidation, BridgeError> {
         config.validate()?;
         let started = tokio::time::Instant::now();
         let lease = self.custody.resolve(owner, config).await?;
@@ -149,33 +197,39 @@ impl BridgeConnectionValidator for NyxBridgeValidator {
             ));
         }
         let mut reused_snapshot = None;
-        let existing_target = match &config.placement {
-            BridgePlacementPolicy::WorkspacePerPartition { .. }
-            | BridgePlacementPolicy::WorktreeAgentPerPartition { .. } => {
-                let (_, authorized, _) = self
-                    .provisioning
-                    .as_ref()
-                    .ok_or_else(control_plane::reconnect)?
-                    .reuse_preflight(&lease.control_plane, config, None)
-                    .await?;
-                reused_snapshot = Some(authorized.snapshot);
-                config.placement.reused_parent()
-            }
-            BridgePlacementPolicy::ExistingAgent { target } => Some(ResourceTarget::Agent {
-                agent_id: target.agent_id.clone(),
-            }),
-            BridgePlacementPolicy::NewSandbox { .. } => {
-                self.provisioning
-                    .as_ref()
-                    .ok_or_else(control_plane::reconnect)?
-                    .preflight(
-                        &lease.control_plane,
-                        config,
-                        lease.control_plane.bridge_id().as_str(),
-                        None,
-                    )
-                    .await?;
-                None
+        // Invocation brackets this IO with current exact target/provenance
+        // reads. A retained proof makes no new-resource capability claim.
+        let existing_target = if retained.is_some() {
+            None
+        } else {
+            match &config.placement {
+                BridgePlacementPolicy::WorkspacePerPartition { .. }
+                | BridgePlacementPolicy::WorktreeAgentPerPartition { .. } => {
+                    let (_, authorized, _) = self
+                        .provisioning
+                        .as_ref()
+                        .ok_or_else(control_plane::reconnect)?
+                        .reuse_preflight(&lease.control_plane, config, None)
+                        .await?;
+                    reused_snapshot = Some(authorized.snapshot);
+                    config.placement.reused_parent()
+                }
+                BridgePlacementPolicy::ExistingAgent { target } => Some(ResourceTarget::Agent {
+                    agent_id: target.agent_id.clone(),
+                }),
+                BridgePlacementPolicy::NewSandbox { .. } => {
+                    self.provisioning
+                        .as_ref()
+                        .ok_or_else(control_plane::reconnect)?
+                        .preflight(
+                            &lease.control_plane,
+                            config,
+                            lease.control_plane.bridge_id().as_str(),
+                            None,
+                        )
+                        .await?;
+                    None
+                }
             }
         };
         let current = if let Some(target) = existing_target {
@@ -203,27 +257,28 @@ impl BridgeConnectionValidator for NyxBridgeValidator {
             None
         };
         self.custody.revalidate(&lease).await?;
-        let creates_children = config.placement.creates_partition_agent();
-        BridgeValidation::from_observation(
-            owner,
-            config,
-            BridgeConnectionObservation {
-                connector: config.connector.clone(),
-                bot_owner: owner.clone(),
-                key_owner: owner.clone(),
-                routes: lease.routes,
-                custody_owner: lease.owner,
-                custody_revision: lease.custody_revision,
-                key_state_version: lease.key_state_version,
-                key_active: true,
-                custody_available: true,
-                callback_conflict: false,
-                renewable_sandbox_authority: creates_children,
-                exact_profiles_available: creates_children,
-                existing_target: current,
-                deadline: lease.deadline.min(started + Duration::from_secs(60)),
-            },
-        )
+        let creates_children = retained.is_none() && config.placement.creates_partition_agent();
+        let observation = BridgeConnectionObservation {
+            connector: config.connector.clone(),
+            bot_owner: owner.clone(),
+            key_owner: owner.clone(),
+            routes: lease.routes,
+            custody_owner: lease.owner,
+            custody_revision: lease.custody_revision,
+            key_state_version: lease.key_state_version,
+            key_active: true,
+            custody_available: true,
+            callback_conflict: false,
+            renewable_sandbox_authority: creates_children,
+            exact_profiles_available: creates_children,
+            existing_target: current,
+            deadline: lease.deadline.min(started + Duration::from_secs(60)),
+        };
+        if let Some(request) = retained {
+            BridgeValidation::from_retained_channel_observation(request, observation)
+        } else {
+            BridgeValidation::from_observation(owner, config, observation)
+        }
     }
 }
 

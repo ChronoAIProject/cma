@@ -61,10 +61,9 @@ impl ChannelReuseState {
                     | AgentStart
                     | Ready
             )
-            || self
-                .startup_plan
-                .as_ref()
-                .is_some_and(|plan| plan.schema_version != 1 || plan.allocation_id != record.id)
+            || self.startup_plan.as_ref().is_some_and(|plan| {
+                !matches!(plan.schema_version, 1 | 2 | 3) || plan.allocation_id != record.id
+            })
             || (self.phase == Ready && self.startup_plan.is_none())
             || self.last_receipt_digest.as_ref().is_some_and(|digest| {
                 digest.len() != 64

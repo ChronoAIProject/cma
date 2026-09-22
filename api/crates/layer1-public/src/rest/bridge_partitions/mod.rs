@@ -19,6 +19,10 @@ pub fn bridge_partitions_router(service: Option<Arc<BridgePartitionService>>) ->
         .route("/api/v1/bridges/{id}/usage", get(usage::read))
         .route("/api/v1/bridges/{id}/partitions", get(list))
         .route("/api/v1/bridges/{id}/partitions/{allocation}", get(detail))
+        .route(
+            "/api/v1/bridges/{id}/partitions/{allocation}/pending-messages",
+            get(pending_messages),
+        )
         .layer(axum::middleware::from_fn(private_headers))
         .with_state(service)
 }
@@ -103,6 +107,27 @@ pub(crate) async fn detail(
     respond(
         service
             .detail(
+                &caller.context,
+                credential(&caller),
+                &BridgeId(id),
+                &allocation,
+            )
+            .await,
+    )
+}
+
+#[utoipa::path(get,path="/api/v1/bridges/{id}/partitions/{allocation}/pending-messages",tag="bridges",params(("id"=String,Path),("allocation"=String,Path)),responses((status=200,body=PendingChannelMessagesShape),(status=403,body=super::ProblemDocument),(status=404,body=super::ProblemDocument),(status=409,body=super::ProblemDocument),(status=503,body=super::ProblemDocument)))]
+pub(crate) async fn pending_messages(
+    State(service): State<Option<Arc<BridgePartitionService>>>,
+    caller: AuthenticatedResourceCaller,
+    Path((id, allocation)): Path<(String, String)>,
+) -> Response {
+    let Some(service) = service else {
+        return problem(PartitionStatusError::Unavailable);
+    };
+    respond(
+        service
+            .pending_messages(
                 &caller.context,
                 credential(&caller),
                 &BridgeId(id),

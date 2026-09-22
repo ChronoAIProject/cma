@@ -187,3 +187,34 @@ pub(crate) struct BridgePartitionDetailShape {
     partition: BridgePartitionShape,
     activity: PartitionActivityShape,
 }
+
+#[derive(ToSchema)]
+pub(crate) struct PendingChannelMessageShape {
+    command_id: String,
+    response_id: String,
+    agent_order: u64,
+    admitted_at: String,
+    platform: PartitionPlatformShape,
+    #[schema(max_length = 1024)]
+    text: String,
+    text_truncated: bool,
+}
+
+#[derive(ToSchema)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub(crate) enum PendingChannelMessagesShape {
+    Available {
+        bridge_id: String,
+        partition_id: String,
+        generation: u64,
+        agent_id: String,
+        through_sequence: u64,
+        #[schema(max_items = 64)]
+        messages: Vec<PendingChannelMessageShape>,
+        pending_truncated: bool,
+        source_unavailable: bool,
+        observed_at_ms: i64,
+    },
+    Unavailable,
+    Redacted,
+}
