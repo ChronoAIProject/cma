@@ -25,6 +25,7 @@ pub mod assets;
 pub mod auth;
 pub mod bridges;
 mod client;
+pub mod cmaeg;
 mod conformance;
 pub mod defaults;
 pub mod discovery;
