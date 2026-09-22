@@ -118,8 +118,14 @@ async fn upstream_busy_retries_same_key_and_missing_conversation_is_created_once
             missing_turn_once: true,
             ..Default::default()
         },
+        FakeProviderConfig {
+            missing_turn_once: true,
+            busy_once: true,
+            ..Default::default()
+        },
     ] {
         let missing = config.missing_turn_once;
+        let busy = config.busy_once;
         let mut fixture = Fixture::new(config, Default::default(), 4).await;
         assert!(matches!(
             fixture.runner.launch(fixture.request("retry")).await,
@@ -128,9 +134,11 @@ async fn upstream_busy_retries_same_key_and_missing_conversation_is_created_once
         fixture.terminal().await;
         let requests = fixture.fake.requests();
         let posts: Vec<_> = requests.iter().filter(|r| r.method == "POST").collect();
-        assert_eq!(posts.len(), 2);
-        assert_eq!(posts[0].idempotency_key, posts[1].idempotency_key);
-        assert_eq!(posts[0].body, posts[1].body);
+        assert_eq!(posts.len(), 1 + usize::from(missing) + usize::from(busy));
+        for pair in posts.windows(2) {
+            assert_eq!(pair[0].idempotency_key, pair[1].idempotency_key);
+            assert_eq!(pair[0].body, pair[1].body);
+        }
         assert_eq!(
             requests.iter().filter(|r| r.method == "PUT").count(),
             usize::from(missing)

@@ -133,7 +133,9 @@ Responses use `Cache-Control: no-store` and never contain supplied key material.
 The digest is `sha256:` followed by the canonical profile digest. The response
 contains `binding_id`, `owner`, `profile_digest`, `sandbox_id`, `workspace_id`,
 `level`, `honoured`, `refused`, `state`, `generation`, and timestamps. The current
-turn-contract level is `l2` (text and informational activity items). Native external tool endpoints are explicitly refused. Resource
+turn-contract level is `l2` (text and informational activity items). Native tools
+require the exact configured CMAEG endpoint and a runtime with proven proxy
+support; unsupported endpoints are explicitly refused. Resource
 provisioning is asynchronous: `GET` reports `provisioning`, `ready`, `failed`
 (with a reason), or `retired`. Repeating the same digest and key returns the
 retained reservation. A supplied key hash can belong to only one binding;
@@ -148,6 +150,10 @@ letters, digits, underscores or hyphens. Each generation retains exactly one
 Agent and Worktree per conversation id. Resource admission revives a paused
 Sandbox through the existing lifecycle transaction. A binding that is not ready
 returns `409 binding_not_ready`; malformed ids return `400 invalid_binding`.
+Once reserved, a conversation still provisioning its Agent returns
+`429 conversation_not_ready` and `Retry-After: 1` on Responses requests. Retry
+the same input and idempotency key; a preparation refusal admits no turn.
+Missing, foreign, failed or retired conversations remain 404.
 
 Both DELETE operations return 204 after durable retirement admission. Conversation
 cleanup stops the Agent and removes its Worktree through the existing workers;
