@@ -25,14 +25,14 @@ impl GatewayRecordStore for Records {
         expected: Option<u64>,
     ) -> Result<GatewayRecord, StoreError> {
         let mut records = self.0.lock().unwrap();
-        if expected.is_some() {
+        if let Some(expected) = expected {
             let record = records.get_mut(id).ok_or(StoreError::RevisionConflict {
-                expected: expected.unwrap(),
+                expected,
                 actual: 0,
             })?;
-            if record.version != expected.unwrap() {
+            if record.version != expected {
                 return Err(StoreError::RevisionConflict {
-                    expected: expected.unwrap(),
+                    expected,
                     actual: record.version,
                 });
             }
@@ -68,9 +68,9 @@ impl GatewayRecordStore for Records {
         let Some(record) = records.get(id) else {
             return Ok(false);
         };
-        if expected.is_some_and(|version| version != record.version) {
+        if let Some(expected) = expected.filter(|version| *version != record.version) {
             return Err(StoreError::RevisionConflict {
-                expected: expected.unwrap(),
+                expected,
                 actual: record.version,
             });
         }
