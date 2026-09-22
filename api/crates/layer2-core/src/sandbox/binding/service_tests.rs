@@ -445,4 +445,5 @@ async fn binding_rejects_invalid_credential_before_reserving_the_identifier() {
     assert!(f.custody.keys.lock().unwrap().is_empty());
 }
 
+mod access;
 mod rotation;

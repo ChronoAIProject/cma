@@ -7,6 +7,38 @@ use crate::sandbox::binding::{BindingConversation, BindingStore, ProviderBinding
 
 #[async_trait]
 impl BindingStore for InMemorySandboxStore {
+    async fn find_by_key_hash(
+        &self,
+        hash: &str,
+    ) -> Result<Option<ProviderBinding>, SandboxStoreError> {
+        Ok(self
+            .lock()
+            .bindings
+            .values()
+            .find(|value| {
+                value.key_sha256 == hash
+                    && value.state != crate::sandbox::binding::BindingState::Retired
+            })
+            .cloned())
+    }
+    async fn binding_conversation_for_agent(
+        &self,
+        binding: &str,
+        generation: u64,
+        agent: &crate::AgentId,
+    ) -> Result<Option<BindingConversation>, SandboxStoreError> {
+        Ok(self
+            .lock()
+            .binding_conversations
+            .values()
+            .find(|value| {
+                value.binding_id == binding
+                    && value.generation == generation
+                    && value.agent_id == *agent
+            })
+            .cloned())
+    }
+
     async fn binding(&self, id: &str) -> Result<Option<ProviderBinding>, SandboxStoreError> {
         Ok(self.lock().bindings.get(id).cloned())
     }
@@ -18,6 +50,13 @@ impl BindingStore for InMemorySandboxStore {
     ) -> Result<(), SandboxStoreError> {
         let mut state = self.lock();
         validate_binding_write(state.bindings.get(&next.binding_id), expected, &next)?;
+        if state
+            .bindings
+            .values()
+            .any(|value| value.binding_id != next.binding_id && value.key_sha256 == next.key_sha256)
+        {
+            return Err(SandboxStoreError::Conflict);
+        }
         state.bindings.insert(next.binding_id.clone(), next);
         Ok(())
     }
@@ -72,6 +111,13 @@ impl BindingStore for InMemorySandboxStore {
             expected,
             &next,
         )?;
+        if state
+            .binding_conversations
+            .iter()
+            .any(|(id, value)| id != &key && value.agent_id == next.agent_id)
+        {
+            return Err(SandboxStoreError::Conflict);
+        }
         state.binding_conversations.insert(key, next);
         Ok(())
     }

@@ -136,7 +136,9 @@ contains `binding_id`, `owner`, `profile_digest`, `sandbox_id`, `workspace_id`,
 level is `l1`. Native external tool endpoints are explicitly refused. Resource
 provisioning is asynchronous: `GET` reports `provisioning`, `ready`, `failed`
 (with a reason), or `retired`. Repeating the same digest and key returns the
-retained reservation. A changed profile waits for prior work to settle, retires
+retained reservation. A supplied key hash can belong to only one binding;
+retired records retain that reservation. Reusing the key on another binding
+returns a conflict. A changed profile waits for prior work to settle, retires
 old conversation Agents, and keeps compatible Sandbox and Workspace snapshots.
 
 `PUT /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}` accepts
