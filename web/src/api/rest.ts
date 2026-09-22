@@ -51,6 +51,7 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
     agentTransport: transport === undefined ? undefined : createAgentTransport(sdk, transport),
     resourceViews: sdk,
     bridgeViews: sdk,
+    botViews: sdk,
     listSandboxes: async (options) => {
       const page = await sdk.sandboxes.list(options);
       return { items: page.items.map(sandboxSummary), next: page.next };
