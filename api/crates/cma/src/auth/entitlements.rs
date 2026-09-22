@@ -17,6 +17,7 @@ pub(crate) fn wire_name(capability: Capability) -> &'static str {
         Capability::ReadActivityLog => "read_activity_log",
         Capability::ReadUserDirectory => "read_user_directory",
         Capability::ConfigurePlatform => "configure_platform",
+        Capability::UseBindingConversations => "use_binding_conversations",
         Capability::ManageProviderBindings => "manage_provider_bindings",
         Capability::ManageGatewayRecords => "manage_gateway_records",
     }
@@ -30,7 +31,7 @@ pub(crate) fn reported(authorization: &Authorization) -> Vec<&'static str> {
 mod tests {
     use super::*;
 
-    const ALL: [Capability; 15] = [
+    const ALL: [Capability; 16] = [
         Capability::CreateSandbox,
         Capability::UseOwnSandboxes,
         Capability::DeleteOwnSandbox,
@@ -46,6 +47,7 @@ mod tests {
         Capability::ConfigurePlatform,
         Capability::ManageGatewayRecords,
         Capability::ManageProviderBindings,
+        Capability::UseBindingConversations,
     ];
 
     #[test]

@@ -57,12 +57,56 @@ impl BindingCollections {
                 .await
                 .map_err(|e| StoreError::Unavailable(format!("binding index: {e}")))?;
         }
+        for (collection, key) in [
+            (&value.records, "record.key_sha256"),
+            (&value.conversations, "record.agent_id"),
+        ] {
+            let mut keys = Document::new();
+            keys.insert(key, 1);
+            collection
+                .create_index(
+                    IndexModel::builder()
+                        .keys(keys)
+                        .options(
+                            mongodb::options::IndexOptions::builder()
+                                .unique(true)
+                                .build(),
+                        )
+                        .build(),
+                )
+                .await
+                .map_err(|error| {
+                    StoreError::Unavailable(format!("binding unique index: {error}"))
+                })?;
+        }
         Ok(value)
     }
 }
 
 #[async_trait::async_trait]
 impl BindingStore for MongoSandboxStore {
+    async fn find_by_key_hash(
+        &self,
+        hash: &str,
+    ) -> Result<Option<ProviderBinding>, SandboxStoreError> {
+        self.bindings
+            .records
+            .find_one(doc! {"record.key_sha256": hash, "record.state.status": {"$ne": "retired"}})
+            .await
+            .map_err(driver)?
+            .map(read_binding)
+            .transpose()
+    }
+    async fn binding_conversation_for_agent(
+        &self,
+        binding: &str,
+        generation: u64,
+        agent: &layer2_core::AgentId,
+    ) -> Result<Option<BindingConversation>, SandboxStoreError> {
+        self.bindings.conversations.find_one(doc! {"binding_id": binding, "generation": integer(generation)?, "record.agent_id": agent.as_str()})
+            .await.map_err(driver)?.map(read_conversation).transpose()
+    }
+
     async fn binding(&self, id: &str) -> Result<Option<ProviderBinding>, SandboxStoreError> {
         self.bindings
             .records
@@ -207,6 +251,8 @@ fn driver(error: mongodb::error::Error) -> SandboxStoreError {
     }
 }
 
+#[cfg(test)]
+mod access_tests;
 #[cfg(test)]
 mod custody_tests;
 #[cfg(test)]
