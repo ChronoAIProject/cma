@@ -1,0 +1,52 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: cmaeg
+  namespace: chrono-bot
+  labels:
+    app.kubernetes.io/name: cmaeg
+    app.kubernetes.io/part-of: cma
+spec:
+  parentRefs:
+    - name: chronoai-gateway
+      namespace: gateway-infra
+      sectionName: https
+  hostnames:
+    - bot-gateway.chrono-ai.fun
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - group: ""
+          kind: Service
+          name: cmaeg
+          port: 80
+          weight: 1
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: cmaeg-http-redirect
+  namespace: chrono-bot
+  labels:
+    app.kubernetes.io/name: cmaeg
+    app.kubernetes.io/part-of: cma
+spec:
+  parentRefs:
+    - name: chronoai-gateway
+      namespace: gateway-infra
+      sectionName: http
+  hostnames:
+    - bot-gateway.chrono-ai.fun
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            statusCode: 301
