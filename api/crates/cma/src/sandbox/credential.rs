@@ -8,6 +8,7 @@ use crate::auth::keys::{KeyIssuer, KeyIssuerError};
 use crate::auth::persistence::SecretValue;
 
 mod contracts;
+mod provided;
 pub(crate) use contracts::*;
 
 pub(crate) struct ManagedSandboxCredentials {
@@ -55,6 +56,15 @@ impl ManagedSandboxCredentials {
                 "credential revocation crossed its sandbox boundary".into(),
             ));
         }
+        if !sandbox.credential.source.is_managed() {
+            for revocation in revocations {
+                self.custody
+                    .delete_revocation(&sandbox.id, &revocation.provider_key_id)
+                    .await
+                    .map_err(custody_error)?;
+            }
+            return Ok(());
+        }
         let token = self.owner_token(&sandbox.owner).await?;
         for revocation in revocations {
             self.issuer
@@ -87,7 +97,12 @@ impl SandboxCredentialController for ManagedSandboxCredentials {
         }
         self.settle_queued(sandbox).await?;
         if let Some(existing) = self.material(&sandbox.id, generation).await? {
-            return owned_material(existing, &sandbox.owner);
+            return owned_material(existing, sandbox);
+        }
+        if !sandbox.credential.source.is_managed() {
+            return Err(CredentialError::Security(
+                "provided credential is absent from custody".into(),
+            ));
         }
         let token = self.owner_token(&sandbox.owner).await?;
         let minted = self
@@ -100,6 +115,7 @@ impl SandboxCredentialController for ManagedSandboxCredentials {
             .await
             .map_err(classify_issuer)?;
         let material = CredentialMaterial {
+            source: Default::default(),
             sandbox_id: sandbox.id.clone(),
             owner: sandbox.owner.clone(),
             authority: SandboxCredentialAuthority {
@@ -123,7 +139,7 @@ impl SandboxCredentialController for ManagedSandboxCredentials {
                             "credential generation raced but no durable value remained".into(),
                         )
                     })?;
-                let winner = owned_material(winner, &sandbox.owner)?;
+                let winner = owned_material(winner, sandbox)?;
                 if winner.authority.provider_key_id != material.authority.provider_key_id {
                     let revocation = CredentialRevocation {
                         sandbox_id: sandbox.id.clone(),
@@ -190,6 +206,9 @@ impl SandboxCredentialController for ManagedSandboxCredentials {
         sandbox: &Sandbox,
         provider_key_id: &str,
     ) -> Result<(), CredentialError> {
+        if !sandbox.credential.source.is_managed() {
+            return Ok(());
+        }
         let token = self.owner_token(&sandbox.owner).await?;
         self.issuer
             .revoke(provider_key_id, token.expose())
@@ -204,9 +223,13 @@ impl SandboxCredentialController for ManagedSandboxCredentials {
 
 fn owned_material(
     material: CredentialMaterial,
-    owner: &SubjectId,
+    sandbox: &Sandbox,
 ) -> Result<CredentialMaterial, CredentialError> {
-    if &material.owner == owner {
+    if material.owner == sandbox.owner
+        && material.sandbox_id == sandbox.id
+        && material.source == sandbox.credential.source
+        && material.matches_source()
+    {
         Ok(material)
     } else {
         Err(CredentialError::Security(

@@ -82,6 +82,7 @@ impl ChannelLifecycleCredentialDriver {
             .await
             .map_err(|_| AllocationError::Unavailable)?;
         let material = CredentialMaterial {
+            source: Default::default(),
             sandbox_id: started.sandbox.id.clone(),
             owner: started.sandbox.owner.clone(),
             authority: SandboxCredentialAuthority {

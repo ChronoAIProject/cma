@@ -140,6 +140,7 @@ pub(super) fn sandbox(id: &str) -> Sandbox {
         failure: None,
         runtime: None,
         credential: SandboxCredentialState {
+            source: Default::default(),
             service_grants: Vec::new(),
             reaches: vec![],
             key_generation: 1,
@@ -204,6 +205,7 @@ fn retired_sandbox(id: &str) -> Sandbox {
 
 fn credential(sandbox_id: &str, plaintext: &str) -> CredentialMaterial {
     CredentialMaterial {
+        source: Default::default(),
         sandbox_id: SandboxId(sandbox_id.into()),
         owner: SubjectId("owner".into()),
         authority: SandboxCredentialAuthority {

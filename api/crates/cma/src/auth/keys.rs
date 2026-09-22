@@ -19,6 +19,7 @@ use identifiers::{credential_of, key_name, validate_credential_id};
 pub(crate) mod bridge;
 mod catalog;
 mod identifiers;
+mod provided;
 
 const KEYS_PATH: &str = "/api/v1/api-keys";
 const SERVICES_PATH: &str = "/api/v1/services";
