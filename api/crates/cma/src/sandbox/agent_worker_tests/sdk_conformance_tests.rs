@@ -23,6 +23,7 @@ use super::*;
 use crate::projections::{AgentProjectionServices, UnavailableSandboxResources};
 
 mod approval_tests;
+mod binding_tests;
 mod cancellation_tests;
 mod cross_interface_tests;
 mod mongo_tests;
@@ -239,6 +240,13 @@ async fn conversation_router_with_probe<S: FixtureStore>(
     Router,
     Arc<layer2_core::sandbox::agent_io::AgentCommandWorker>,
 ) {
+    let (services, context) = projection_components(harness, probe).await;
+    v2_tests::compose(harness, services, context, worker_holder)
+}
+async fn projection_components<S: FixtureStore>(
+    harness: &Harness<S>,
+    probe: Option<Arc<runtime_tests::RuntimeProbe>>,
+) -> (AgentProjectionServices, Arc<AgentContextService>) {
     let profiles = Arc::new(InMemoryProfileStore::default());
     let snapshot = agent_profile(Vec::new());
     let stamp = rfc3339_at(harness.now);
@@ -304,7 +312,7 @@ async fn conversation_router_with_probe<S: FixtureStore>(
         profiles,
         Arc::new(defaults),
     );
-    v2_tests::compose(harness, services, context, worker_holder)
+    (services, context)
 }
 
 async fn drive_agent_readiness(harness: Arc<Harness>) {
