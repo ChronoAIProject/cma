@@ -6,7 +6,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-struct Profiles;
+pub(super) struct Profiles;
 #[async_trait::async_trait]
 impl BotProfileResolver for Profiles {
     async fn resolve(
@@ -56,13 +56,13 @@ impl BotProfileResolver for Profiles {
         })
     }
 }
-fn caller(subject: &str) -> Caller {
+pub(super) fn caller(subject: &str) -> Caller {
     Caller::new(
         SubjectId::new(subject),
         Authorization::new([Capability::ManageOwnBots]),
     )
 }
-fn input() -> CreateBot {
+pub(super) fn input() -> CreateBot {
     CreateBot {
         name: "test bot".into(),
         external_bot_id: uuid::Uuid::new_v4().to_string(),
