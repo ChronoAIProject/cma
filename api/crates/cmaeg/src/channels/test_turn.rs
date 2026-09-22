@@ -56,6 +56,7 @@ async fn run(
         .await
         .map_err(ManagementError::Provider)?;
     let mut stream = state.providers.start_turn(&definition.provider.slug, TurnRequest {
+                timing: None,
         conversation_id,
         input: vec![serde_json::json!({"role":"user","content":[{"type":"input_text","text":"CMAEG channel test"}]})],
         idempotency_key: IdempotencyKey::new(format!("test_{}", uuid::Uuid::new_v4().simple()))
