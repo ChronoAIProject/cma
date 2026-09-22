@@ -16,6 +16,7 @@ pub mod permission {
     pub const ADMIN_USERS: &str = "cma:admin:users";
     pub const ADMIN_CONTROL: &str = "cma:admin:control";
     pub const ADMIN_SETTINGS: &str = "cma:admin:settings";
+    pub const PROVIDER_BINDINGS: &str = "cma:provider:bindings";
     pub const GATEWAY_RECORDS: &str = "cma:gateway:records";
 }
 
@@ -31,7 +32,7 @@ const OWN_WORK: [Capability; 6] = [
     Capability::LaunchTriggers,
 ];
 
-const ALL_CAPABILITIES: [Capability; 14] = [
+const ALL_CAPABILITIES: [Capability; 15] = [
     Capability::CreateSandbox,
     Capability::UseOwnSandboxes,
     Capability::DeleteOwnSandbox,
@@ -46,6 +47,7 @@ const ALL_CAPABILITIES: [Capability; 14] = [
     Capability::ReadUserDirectory,
     Capability::ConfigurePlatform,
     Capability::ManageGatewayRecords,
+    Capability::ManageProviderBindings,
 ];
 
 /// Translate exact provider grants. Unknown permissions grant nothing.
@@ -72,6 +74,7 @@ pub fn capabilities_from_permissions<S: AsRef<str>>(
             permission::ADMIN_USERS => granted.push(Capability::ReadUserDirectory),
             permission::ADMIN_CONTROL => granted.push(Capability::ControlAnySandbox),
             permission::ADMIN_SETTINGS => granted.push(Capability::ConfigurePlatform),
+            permission::PROVIDER_BINDINGS => granted.push(Capability::ManageProviderBindings),
             permission::GATEWAY_RECORDS => granted.push(Capability::ManageGatewayRecords),
             _ => {}
         }
