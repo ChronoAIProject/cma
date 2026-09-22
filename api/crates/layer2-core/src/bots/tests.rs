@@ -9,11 +9,8 @@ use std::{
 pub(super) struct Profiles;
 #[async_trait::async_trait]
 impl BotProfileResolver for Profiles {
-    async fn resolve(
-        &self,
-        _: &SubjectId,
-        reference: &AgentProfileRef,
-    ) -> Result<BotProfiles, BotError> {
+    async fn resolve(&self, _: &SubjectId, request: &CreateBot) -> Result<BotProfiles, BotError> {
+        let reference = &request.profile;
         let agent = AgentProfileContent {
             model: Some("test".into()),
             thinking_effort: ThinkingEffort::Medium,
@@ -67,6 +64,8 @@ pub(super) fn input() -> CreateBot {
         name: "test bot".into(),
         external_bot_id: uuid::Uuid::new_v4().to_string(),
         profile: AgentProfileRef::new(crate::AgentProfileId("agp_test".into()), 1),
+        sandbox_profile: None,
+        workspace_profile: None,
         admission: BotAdmission::Scoped {
             senders: IdentityAdmission::Open,
             chats: IdentityAdmission::Open,

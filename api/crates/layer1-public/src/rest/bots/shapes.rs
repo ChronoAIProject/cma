@@ -1,4 +1,8 @@
-use layer2_core::{bots::*, profiles::AgentProfileRef, AgentProfileId};
+use layer2_core::{
+    bots::*,
+    profiles::{AgentProfileRef, SandboxProfileRef, WorkspaceProfileRef},
+    AgentProfileId, SandboxProfileId, WorkspaceProfileId,
+};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -8,6 +12,8 @@ pub struct CreateBotBody {
     pub name: String,
     pub nyxid_bot_id: String,
     pub profile: ProfileRef,
+    pub sandbox_profile: Option<ProfileRef>,
+    pub workspace_profile: Option<ProfileRef>,
     pub admission: Admission,
     pub reply: Reply,
 }
@@ -61,6 +67,12 @@ impl CreateBotBody {
                 id: AgentProfileId(self.profile.id),
                 revision: self.profile.revision,
             },
+            sandbox_profile: self
+                .sandbox_profile
+                .map(|p| SandboxProfileRef::new(SandboxProfileId(p.id), p.revision)),
+            workspace_profile: self
+                .workspace_profile
+                .map(|p| WorkspaceProfileRef::new(WorkspaceProfileId(p.id), p.revision)),
             admission: serde_json::from_value(
                 serde_json::to_value(self.admission).map_err(|_| BotError::Unavailable)?,
             )
@@ -79,6 +91,8 @@ pub struct BotView {
     pub name: String,
     pub nyxid_bot_id: String,
     pub profile: ProfileRef,
+    pub sandbox_profile: ProfileRef,
+    pub workspace_profile: ProfileRef,
     pub provider: String,
     pub state: String,
     pub failure: Option<String>,
@@ -150,6 +164,14 @@ impl From<Bot> for BotView {
             profile: ProfileRef {
                 id: bot.request.profile.id.0,
                 revision: bot.request.profile.revision,
+            },
+            sandbox_profile: ProfileRef {
+                id: bot.profiles.sandbox.profile_id.0,
+                revision: bot.profiles.sandbox.revision,
+            },
+            workspace_profile: ProfileRef {
+                id: bot.profiles.workspace.profile_id.0,
+                revision: bot.profiles.workspace.revision,
             },
             provider: bot.provider,
             state: state.into(),

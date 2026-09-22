@@ -112,6 +112,18 @@ export function BotDetail({
               <dd>{bot.provider === 'cma_codex' ? 'CMA' : bot.provider}</dd>
               <dt>Provider level</dt>
               <dd>{bot.channel?.level ?? 'Not reported'}</dd>
+              <dt>Sandbox profile</dt>
+              <dd>
+                {bot.sandbox_profile
+                  ? `${bot.sandbox_profile.id} · Version ${bot.sandbox_profile.revision}`
+                  : 'Not reported'}
+              </dd>
+              <dt>Workspace profile</dt>
+              <dd>
+                {bot.workspace_profile
+                  ? `${bot.workspace_profile.id} · Version ${bot.workspace_profile.revision}`
+                  : 'Not reported'}
+              </dd>
               <dt>Access expiry</dt>
               <dd>
                 {bot.credentials_expire_at === null
