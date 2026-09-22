@@ -98,6 +98,11 @@ clients SHOULD omit absent request values rather than invent empty strings.
 Limits are byte lengths unless another unit is stated. Deployment-specific
 bounds and deadlines are listed in [operations](CMAEG_Operations.md).
 
+Relay JWKS, result-webhook, card-image and link URLs MUST be absolute HTTPS
+URLs. Local testing also permits HTTP on `localhost`, `127.0.0.1` and the IPv6
+loopback host `[::1]`, with an optional port. Whitespace, missing hosts and
+malformed authorities or ports are refused. Profile MCP URLs require HTTPS.
+
 Errors are RFC 9457 `application/problem+json`, for example:
 
 ```json
