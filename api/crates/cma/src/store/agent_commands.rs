@@ -10,7 +10,7 @@ use mongodb::bson::doc;
 
 use super::sandbox_mongo::{
     commit_transaction, is_duplicate_key, is_transient, start_transaction, CommitOutcome,
-    MongoSandboxStore, TRANSACTION_ATTEMPTS,
+    MongoSandboxStore,
 };
 
 pub(super) mod audit;
@@ -20,6 +20,7 @@ mod queued_cancellation;
 mod reconcile;
 mod records;
 pub(in crate::store) mod reserve;
+mod retry;
 mod targeted_control;
 mod worker;
 mod worker_apply;
@@ -125,7 +126,8 @@ impl AgentCommandStore for MongoSandboxStore {
     ) -> Result<CommandReservationResult, CommandLedgerError> {
         request.require_non_channel()?;
         request.validate()?;
-        for _ in 0..TRANSACTION_ATTEMPTS {
+        let mut retries = retry::CommandAdmissionRetries::new(request.authority_deadline);
+        while retries.next().await {
             request.require_current_authority()?;
             let mut session = self
                 .client
@@ -144,7 +146,6 @@ impl AgentCommandStore for MongoSandboxStore {
                 Err(ApplyError::Driver(error)) => {
                     let _ = session.abort_transaction().await;
                     if is_transient(&error) || is_duplicate_key(&error) {
-                        tokio::task::yield_now().await;
                         continue;
                     }
                     return Err(CommandLedgerError::Unavailable);
