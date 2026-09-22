@@ -27,11 +27,7 @@ pub(super) fn channel_response(
             nyxid_callback_url: format!("{}/v1/callbacks/{}", state.public_url, channel_id),
             custom_event_url: format!("{}/v1/channels/{}/events", state.public_url, channel_id),
         },
-        definition: {
-            let mut public = definition.to_public_json();
-            public["version"] = version.into();
-            public
-        },
+        definition: super::schema::PublicChannelDefinition::new(definition, version),
     })
 }
 

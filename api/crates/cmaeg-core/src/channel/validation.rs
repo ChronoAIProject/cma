@@ -14,7 +14,7 @@ pub(super) fn validate_admission(
             }
             None
         }
-        AdmissionPolicy::All => None,
+        AdmissionPolicy::All {} => None,
     };
     if let Some(values) = values {
         validate_nonempty_unique(values, &format!("{pointer}/admission"), 512)?;

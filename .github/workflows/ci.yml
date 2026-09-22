@@ -100,6 +100,8 @@ jobs:
         run: node --test .github/scripts/check-api-docs.test.mjs .github/scripts/check-config-docs.test.mjs
       - name: Deployment configuration is documented
         run: node .github/scripts/check-config-docs.mjs
+      - name: Check CMAEG protocol operation inventory
+        run: node .github/scripts/check-api-docs.mjs api/crates/cmaeg/openapi/v1.json docs/CMAEG_Protocol.md
       - name: Release notes validator regressions
         run: .github/release-notes-tests.sh
       - name: Release planning tests

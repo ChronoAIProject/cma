@@ -9,7 +9,7 @@ use cmaeg_core::{
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EventContextSnapshot {
     pub schema_version: u16,

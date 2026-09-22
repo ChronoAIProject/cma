@@ -23,13 +23,23 @@ use cmaeg_core::{
     problem::ProblemCode,
     seal::ReplyAddress,
 };
-use serde::Deserialize;
-use serde_json::json;
+use serde::{Deserialize, Serialize};
 use std::{sync::Arc, time::Duration};
 #[derive(Clone)]
 pub struct CustomIngressState {
     pub ingress: IngressState,
     pub waiters: Arc<SyncRegistry>,
+}
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct EventAccepted {
+    pub status: AcceptedStatus,
+    pub event_id: cmaeg_core::ids::EventId,
+    pub conversation_id: cmaeg_core::ids::ConversationId,
+}
+#[derive(Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AcceptedStatus {
+    Accepted,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -45,9 +55,21 @@ pub fn router(state: CustomIngressState) -> Router {
     )
 }
 #[utoipa::path(post, path="/v1/channels/{channel_id}/events", operation_id="receiveCustomEvent", tag="ingress",
-    params(("channel_id"=String, Path), ("mode"=Option<String>, Query, description="stream requires a configured Sync sink")),
-    request_body(content=cmaeg_core::cloudevent::CloudEvent, content_type="application/cloudevents+json"),
-    responses((status=202, description="Provider accepted or acceptance budget elapsed"), (status=200, content_type="text/event-stream", description="Live deltas, messages, and terminal outcome"),
+    params(("channel_id"=String, Path), ("mode"=Option<String>, Query, description="stream requires a configured Sync sink"),
+        ("webhook-id"=Option<String>, Header, description="Required for HMAC authentication"),
+        ("webhook-timestamp"=Option<String>, Header, description="Required for HMAC authentication; Unix seconds within 300 seconds"),
+        ("webhook-signature"=Option<String>, Header, description="Required for HMAC authentication; v1,base64 over id.timestamp.raw_body using the retained secret string bytes"),
+        ("Authorization"=Option<String>, Header, description="Bearer key required for nyxid_key authentication"),
+        ("ce-specversion"=Option<String>, Header, description="Required in binary mode; 1.0"),
+        ("ce-id"=Option<String>, Header, description="Required in binary mode"),
+        ("ce-source"=Option<String>, Header, description="Required in binary mode"),
+        ("ce-type"=Option<String>, Header, description="Required in binary mode"),
+        ("ce-subject"=Option<String>, Header), ("ce-time"=Option<String>, Header),
+        ("ce-dataschema"=Option<String>, Header), ("ce-datacontenttype"=Option<String>, Header)),
+    request_body(description="Structured CloudEvent or binary-mode JSON data. Source configuration selects HMAC or bearer authentication.", content(
+        (cmaeg_core::cloudevent::CloudEvent="application/cloudevents+json"),
+        (serde_json::Value="application/json"))),
+    responses((status=202, body=EventAccepted, description="Provider accepted or acceptance budget elapsed"), (status=200, content_type="text/event-stream", description="Live deltas, messages, and terminal outcome"),
         (status="default", body=cmaeg_core::problem::Problem, content_type="application/problem+json")))]
 pub async fn receive_event(
     State(state): State<CustomIngressState>,
@@ -176,7 +198,7 @@ pub async fn receive_event(
     verify_span.record("event_id", event.id.as_str());
     let mut waiter = None;
     let reply = if stream {
-        if !channel.definition.reply.sinks.contains(&Sink::Sync) {
+        if !channel.definition.reply.sinks.contains(&Sink::Sync {}) {
             return invalid("stream requires a Sync sink");
         }
         let Some((id, pending)) = state.waiters.register() else {
@@ -205,7 +227,11 @@ pub async fn receive_event(
     drop(verify_guard);
     drop(verify_time);
     turn.timing = Some(timing);
-    let accepted = json!({"status":"accepted", "event_id":turn.activity.event_id, "conversation_id":turn.conversation_id});
+    let accepted = EventAccepted {
+        status: AcceptedStatus::Accepted,
+        event_id: turn.activity.event_id.clone(),
+        conversation_id: turn.conversation_id.clone(),
+    };
     match state.ingress.launcher.launch(turn).await {
         LaunchOutcome::Refused(error) => {
             let busy = error.code == ProblemCode::ProviderBusy;

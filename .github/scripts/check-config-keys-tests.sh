@@ -298,4 +298,21 @@ set -e
 assert_status 0 'default root discovery'
 pass 'an installed checker discovers its repository root without an argument'
 
+new_case 'gateway configuration'
+write_source "${case_root}/api/crates/cma/src/config.rs" 'let key = lookup("CHRONO_ONLY");'
+write_configmap 'CHRONO_ONLY'
+write_secret_contract
+mkdir -p "${case_root}/infra/cmaeg"
+write_source "${case_root}/api/crates/cmaeg/src/config.rs" 'let key = lookup("CMAEG_LISTEN");'
+write_source "${case_root}/api/crates/cmaeg/src/config/turns.rs" 'let key = lookup("CMAEG_DRAIN_SECONDS");'
+printf '%s\n' 'data:' '  CMAEG_LISTEN: "127.0.0.1:8090"' >"${case_root}/infra/cmaeg/configmap.yaml"
+printf '%s\n' '# References only.' >"${case_root}/infra/cmaeg/secret.yaml"
+run_checker "${case_root}"
+assert_status 1 'gateway missing key'
+assert_contains "${stderr_file}" 'missing manifest key: CMAEG_DRAIN_SECONDS' 'gateway missing key'
+printf '%s\n' '  CMAEG_DRAIN_SECONDS: "600"' >>"${case_root}/infra/cmaeg/configmap.yaml"
+run_checker "${case_root}"
+assert_status 0 'gateway complete'
+pass 'gateway configuration is checked when its manifest exists, including nested modules'
+
 printf '1..%d\n' "${tests}"

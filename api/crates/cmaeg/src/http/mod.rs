@@ -7,6 +7,7 @@ mod management_responses;
 pub mod metrics;
 pub mod problems;
 pub mod readiness;
+pub mod schema;
 pub mod tools;
 
 pub use crate::channels::management::ManagementState;
