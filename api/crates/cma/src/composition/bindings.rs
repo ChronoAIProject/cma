@@ -60,3 +60,18 @@ impl BindingComposition {
         })
     }
 }
+
+pub(super) fn resource_access(
+    stores: &MongoStores,
+    auth: Arc<AuthState>,
+) -> Arc<layer2_core::resource_access::ResourceAccessService> {
+    Arc::new(
+        layer2_core::resource_access::ResourceAccessService::new(
+            stores.sandbox_model.clone(),
+            auth,
+        )
+        .with_bindings(layer2_core::sandbox::binding::BindingAccessService::new(
+            stores.sandbox_model.clone(),
+        )),
+    )
+}

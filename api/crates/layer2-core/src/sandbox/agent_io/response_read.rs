@@ -50,7 +50,7 @@ impl AgentCommandService {
         };
         Ok(AgentResponseReading {
             command: CommandStatusView::from_record(&record),
-            metadata: if personal {
+            metadata: if personal || authorized.binding_authority().is_some() {
                 metadata.clone()
             } else {
                 BTreeMap::new()
