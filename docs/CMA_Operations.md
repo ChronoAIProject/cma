@@ -1546,3 +1546,28 @@ failures retry through discovery; terminal rejection does not schedule runtime I
 Applied receipts describe durable transitions, whose runtime work is completed
 by the existing lifecycle recovery loop. Public reads and same-key retries recover
 lost acknowledgments without adding another transition.
+
+### Bot lifecycle records
+
+The `bots` collection stores owner-scoped creation receipts, immutable profile
+revisions, reserved channel-record UUIDs, external resource IDs, credential hashes
+and worker progress. Credential bytes are not part of this aggregate. Writes and
+reads require majority acknowledgement. A unique `(owner, creation_key_hash)`
+index prevents concurrent requests with one creation key from admitting two Bots;
+changed request content conflicts. Deleted records retain this receipt so a late
+retry cannot silently recreate external resources.
+
+The selected Agent Profile revision is pinned with the current published Sandbox
+and Workspace defaults. Agent profiles do not reference parent environments in
+the CMA model. Later default or draft changes cannot rewrite an admitted Bot.
+Every reference must be readable by the owner and must identify a published
+revision. An omitted Agent model pins the deployment's configured default model.
+
+Bot commands and worker claims share the aggregate's revision fence. A claim
+expires after 120 seconds; successful checkpoints renew it. An abandoned create
+is reclaimed as cleanup work because its transient key values cannot be recovered
+from the Bot record. Cleanup must resolve any reserved external resource before
+completing. Pending mutations block incompatible commands, and expired writers
+cannot save progress over a replacement worker. `cma:bot:manage` maps to the
+owner-only `ManageOwnBots` capability; it grants no binding or gateway record
+management authority.
