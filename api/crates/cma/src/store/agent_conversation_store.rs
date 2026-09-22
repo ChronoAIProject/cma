@@ -40,7 +40,7 @@ pub(super) struct ConversationReceipt {
     pub(super) logs: Vec<AgentLogEntry>,
 }
 
-enum ApplyError {
+pub(super) enum ApplyError {
     Domain(SandboxStoreError),
     Driver(mongodb::error::Error),
 }

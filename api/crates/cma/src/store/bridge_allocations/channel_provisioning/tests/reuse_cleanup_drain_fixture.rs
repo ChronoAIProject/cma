@@ -48,6 +48,7 @@ impl CleanupFixture {
             .map_or(0, |policy| policy.revision);
         let now = SystemTime::now();
         CommandReservation {
+            binding: None,
             authority_deadline: None,
             admission_audit: None,
             response_id: matches!(command, AgentCommand::Message { .. })

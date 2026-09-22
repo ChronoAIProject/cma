@@ -14,7 +14,7 @@ use serde_json::json;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tower::ServiceExt;
 
-fn reserved(key: &ProvidedCredential) -> ProviderBinding {
+pub(super) fn reserved(key: &ProvidedCredential) -> ProviderBinding {
     let profile = json!({"schema_version":1,"metadata":{"name":"authentication","owner":{"kind":"human","subject":"owner"},"provider":"registered"},
         "model":{"access":"managed","service":AgentProvider::default().connection_services().managed,"api_type":"responses","model":"test","thinking_effort":"medium"},
         "permission":{"action_mode":"guarded"},"context":{},"environment":{"size":{"cpu_cores":1,"memory_gib":2},"workspace":{"type":"directory","name":"project"}}});
@@ -53,7 +53,7 @@ fn headers(key: &ProvidedCredential) -> HeaderMap {
     );
     headers
 }
-fn key() -> ProvidedCredential {
+pub(super) fn key() -> ProvidedCredential {
     ProvidedCredential::new(format!("nyx_{}", uuid::Uuid::new_v4().simple())).unwrap()
 }
 

@@ -19,7 +19,7 @@ use mongodb::options::ReadConcern;
 
 mod channel_reuse;
 mod command_revival;
-enum ApplyError {
+pub(super) enum ApplyError {
     Domain(SandboxStoreError),
     Driver(mongodb::error::Error),
 }

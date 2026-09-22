@@ -64,6 +64,7 @@ pub(crate) async fn fixture(bound: bool) -> Fixture {
     let command = AgentCommand::message("Private source input");
     f.store
         .reserve_command(CommandReservation {
+            binding: None,
             envelope: AgentCommandEnvelope {
                 schema_version: AGENT_IO_SCHEMA_VERSION,
                 command_id: AgentCommandId(SOURCE.into()),

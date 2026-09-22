@@ -8,6 +8,7 @@ pub(super) fn validate(
     at: &str,
     event: &SandboxEventKind,
 ) -> Result<(), SandboxStoreError> {
+    super::bindings::require_conversation_authority(state, proof.binding_authority())?;
     let command = state
         .agent_commands
         .get(&proof.command().receipt.envelope.command_id)

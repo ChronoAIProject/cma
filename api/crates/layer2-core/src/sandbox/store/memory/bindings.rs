@@ -162,3 +162,19 @@ impl BindingStore for InMemorySandboxStore {
             .collect())
     }
 }
+
+pub(super) fn require_conversation_authority(
+    state: &super::State,
+    proof: Option<&crate::sandbox::binding::BindingConversationAuthority>,
+) -> Result<(), SandboxStoreError> {
+    let Some(proof) = proof else { return Ok(()) };
+    let binding = state
+        .bindings
+        .get(&proof.binding.binding_id)
+        .ok_or(SandboxStoreError::Conflict)?;
+    let conversation = state
+        .binding_conversations
+        .get(&conversation_storage_key(&proof.conversation))
+        .ok_or(SandboxStoreError::Conflict)?;
+    proof.require_current(binding, conversation)
+}
