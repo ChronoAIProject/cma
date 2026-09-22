@@ -150,6 +150,13 @@ impl BindingService {
                 {
                     value
                 }
+                Some(value) if value.profile_digest == digest => {
+                    return self
+                        .credentials
+                        .rotate_binding(&value, credential)
+                        .await
+                        .map_err(credential_error);
+                }
                 Some(value) => {
                     let next = value
                         .reconfigure(plan.clone(), credential.sha256(), now_rfc3339())

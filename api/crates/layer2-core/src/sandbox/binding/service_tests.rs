@@ -444,3 +444,5 @@ async fn binding_rejects_invalid_credential_before_reserving_the_identifier() {
     assert!(f.store.binding("binding-one").await.unwrap().is_none());
     assert!(f.custody.keys.lock().unwrap().is_empty());
 }
+
+mod rotation;

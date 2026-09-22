@@ -44,6 +44,25 @@ impl BindingCredentialCustody for ManagedSandboxCredentials {
 }
 
 impl ManagedSandboxCredentials {
+    pub(crate) fn binding_material(
+        binding: &layer2_core::sandbox::binding::ProviderBinding,
+        credential: &ProvidedCredential,
+    ) -> Result<CredentialMaterial, CoreError> {
+        let services = &binding
+            .profile
+            .environment
+            .as_ref()
+            .ok_or_else(|| CoreError::InvalidState("missing binding environment".into()))?
+            .sandbox
+            .nyxid_services;
+        let mut material =
+            Self::provided_material(&binding.sandbox_id, &binding.owner, services, credential)?;
+        material.source = SandboxCredentialSource::Binding {
+            binding_id: binding.binding_id.clone(),
+        };
+        Ok(material)
+    }
+
     pub(crate) fn provided_material(
         sandbox_id: &SandboxId,
         owner: &SubjectId,
