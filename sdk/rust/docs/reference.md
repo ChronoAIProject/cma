@@ -208,3 +208,23 @@ there is no automatic reconnect or Last-Event-ID replay. The configured request
 timeout covers the complete stream. Requests do not follow redirects or retry
 uncertain mutations. Context reads retain the full persisted activity; typing and
 message-update receipts explicitly report unsupported transports.
+
+
+## Owner Bots
+
+`client.bots()` exposes `create`, `list`, `get`, `available`, `test`, `disable`,
+`enable`, `rotate_keys` and `delete`. Use the current renewable CMA sign-in with
+`cma:bot:manage`; independent agent keys cannot borrow the owner's stored login.
+The owner must already have registered a personal Telegram bot in NyxID and
+connected the profile/model services plus the `cmaeg` tools service.
+
+Creation takes a name, `nyxid_bot_id`, a published Agent profile reference, an
+admission policy and a reply policy. Retain the creation idempotency key across
+uncertain outcomes. HTTP 201 returns the durable Bot in `creating`; poll `get`
+for `active` or `failed` and inspect `operation.step` for cleanup progress.
+Other mutations return 202 with progress. A deleted Bot becomes 404 only after
+its provider binding, channel, routes and owned credentials have been removed.
+The `test` method runs a synthetic provider turn and sends no Telegram message.
+
+Bot responses contain no credential bytes. Preserve channel IDs and callback
+URLs exactly; never decode, reconstruct or log opaque gateway references.

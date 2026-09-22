@@ -15,6 +15,7 @@ import {
   type ContractCase,
 } from './public-contract/context.js';
 import { resourceDispatch } from './public-contract/resources.js';
+import { botDispatch } from './public-contract/bots.js';
 import { operatorDispatch } from './public-contract/operator.js';
 import { triggerDispatch } from './public-contract/triggers.js';
 import { experienceDispatch } from './public-contract/experience.js';
@@ -30,6 +31,7 @@ import {
 import { browserOperations, verifyNavigation } from './public-contract/navigation.js';
 
 const dispatch = {
+  ...botDispatch,
   ...resourceDispatch,
   ...operatorDispatch,
   ...triggerDispatch,
