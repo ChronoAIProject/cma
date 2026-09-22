@@ -469,6 +469,24 @@ Local interoperability tests under `cma::gateway::tests` execute the compiled
 gateway binary with HTTP fixtures and CMA's actual profile mapper. Build `cmaeg`
 before running these tests in isolation; full CI builds the workspace first.
 
+### Runtime tool credential transport
+
+The runtime has an optional fixed-endpoint HTTP proxy for provider tool
+connections. `CHRONO_TOOL_PROXY_URL` is unset by default. When supplied at runtime
+creation it must be one canonical HTTPS URL without credentials, query or
+fragment; literal loopback HTTP is accepted for local verification. The proxy
+binds only `127.0.0.3:9093` and accepts `POST /`, with a 128 KiB request limit,
+a five-second request-body deadline, a ten-second upstream deadline and a
+256 KiB response limit. Caller URLs cannot select another destination. Redirects,
+encoded responses and responses exposing the injected credential are refused.
+
+Each request uses the runtime's current in-memory Sandbox credential, so a
+credential delivery changes subsequent calls without reopening the conversation.
+No credential file or additional shared secret is used. Uncertain upstream
+results are not retried. This transport alone does not attach tools to an Agent:
+binding provenance, retained endpoint configuration and confirmed conversation
+setup must be established before the provider advertises native tools support.
+
 ## Delivery Authority
 
 For the 2026-09-22 gateway deployment, the maintainer additionally authorizes a
