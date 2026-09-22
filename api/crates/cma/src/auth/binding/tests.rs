@@ -1,0 +1,226 @@
+use super::*;
+use crate::auth::{persistence::MemoryAuthStore, AuthMode};
+use axum::{
+    http::{header, HeaderMap, StatusCode},
+    Router,
+};
+use layer2_core::profiles::{content_digest, AgentProvider, ProfileCapacityBounds};
+use layer2_core::sandbox::binding::{
+    map_profile, BindingState, BindingWork, ProvidedCredential, ProviderBinding,
+};
+use layer2_core::sandbox::InMemorySandboxStore;
+use layer2_core::{Capability, SubjectId};
+use serde_json::json;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use tower::ServiceExt;
+
+fn reserved(key: &ProvidedCredential) -> ProviderBinding {
+    let profile = json!({"schema_version":1,"metadata":{"name":"authentication","owner":{"kind":"human","subject":"owner"},"provider":"registered"},
+        "model":{"access":"managed","service":AgentProvider::default().connection_services().managed,"api_type":"responses","model":"test","thinking_effort":"medium"},
+        "permission":{"action_mode":"guarded"},"context":{},"environment":{"size":{"cpu_cores":1,"memory_gib":2},"workspace":{"type":"directory","name":"project"}}});
+    let digest = format!("sha256:{}", content_digest(&profile).unwrap());
+    let mapped = map_profile(
+        profile,
+        &digest,
+        AgentProvider::default(),
+        "responses",
+        ProfileCapacityBounds {
+            min_cpu_millis: 250,
+            max_cpu_millis: 8000,
+            min_memory_mib: 512,
+            max_memory_mib: 16384,
+        },
+    )
+    .unwrap();
+    ProviderBinding::new(
+        "binding-auth".into(),
+        SubjectId::new("manager"),
+        mapped,
+        key.sha256(),
+        layer2_core::now_rfc3339(),
+    )
+    .unwrap()
+}
+fn headers(key: &ProvidedCredential) -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::AUTHORIZATION,
+        format!("Bearer {}", key.expose()).parse().unwrap(),
+    );
+    headers.insert(
+        header::COOKIE,
+        "cma_session=unavailable-cookie".parse().unwrap(),
+    );
+    headers
+}
+fn key() -> ProvidedCredential {
+    ProvidedCredential::new(format!("nyx_{}", uuid::Uuid::new_v4().simple())).unwrap()
+}
+
+#[tokio::test]
+async fn binding_key_bypasses_nyxid_and_cookie_custody_and_never_inherits_owner_rights() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let count = calls.clone();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            Router::new().fallback(move || {
+                let count = count.clone();
+                async move {
+                    count.fetch_add(1, Ordering::SeqCst);
+                    StatusCode::INTERNAL_SERVER_ERROR
+                }
+            }),
+        )
+        .await
+        .unwrap();
+    });
+    let auth_store = Arc::new(MemoryAuthStore::default());
+    auth_store.set_unavailable(true);
+    let store = Arc::new(InMemorySandboxStore::default());
+    let auth = AuthState::with_store(
+        AuthMode::Provider {
+            base_url: base,
+            client_id: "client".into(),
+            client_secret: uuid::Uuid::new_v4().to_string(),
+            public_url: "https://cma.example".into(),
+        },
+        None,
+        auth_store,
+    )
+    .with_binding_store(store.clone());
+    let original = key();
+    let mut binding = reserved(&original);
+    store.save_binding(None, binding.clone()).await.unwrap();
+    let resolved = auth
+        .resolve_request(&headers(&original))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(resolved.subject, binding.owner);
+    assert_eq!(
+        resolved.authorization.iter().collect::<Vec<_>>(),
+        vec![Capability::UseBindingConversations]
+    );
+    assert_eq!(
+        resolved.binding.as_ref().unwrap().binding_id(),
+        binding.binding_id
+    );
+    let context = auth.resource_request_context(&resolved);
+    assert!(context.validate_principal());
+    assert_eq!(context.credential_source, CredentialSource::Binding);
+    assert_eq!(context.credential.credential_id, original.sha256());
+    async fn inspect(
+        axum::Extension(method): axum::Extension<layer1_public::AuthMethod>,
+    ) -> StatusCode {
+        assert_eq!(
+            method,
+            layer1_public::AuthMethod::BindingKey {
+                binding_id: "binding-auth".into()
+            }
+        );
+        StatusCode::NO_CONTENT
+    }
+    let app = Router::new()
+        .route("/api/v2/responses", axum::routing::post(inspect))
+        .route(
+            "/api/v1/agents",
+            axum::routing::get(|| async { StatusCode::OK }),
+        )
+        .layer(axum::middleware::from_fn_with_state(
+            auth.clone(),
+            crate::auth::attach_subject,
+        ));
+    for (method, path, expected) in [
+        ("POST", "/api/v2/responses", StatusCode::NO_CONTENT),
+        ("GET", "/api/v1/agents", StatusCode::FORBIDDEN),
+    ] {
+        let mut request = axum::http::Request::builder()
+            .method(method)
+            .uri(path)
+            .body(axum::body::Body::empty())
+            .unwrap();
+        *request.headers_mut() = headers(&original);
+        assert_eq!(
+            app.clone().oneshot(request).await.unwrap().status(),
+            expected
+        );
+    }
+
+    assert!(auth
+        .resolve_request(&headers(&key()))
+        .await
+        .unwrap()
+        .is_none());
+    binding.state = BindingState::Ready;
+    binding.work = BindingWork::Idle;
+    binding
+        .advance_revision(layer2_core::now_rfc3339())
+        .unwrap();
+    store.save_binding(Some(1), binding.clone()).await.unwrap();
+    let replacement = key();
+    let rotated = binding
+        .rotate_credential(replacement.sha256(), layer2_core::now_rfc3339())
+        .unwrap();
+    store
+        .save_binding(Some(binding.revision), rotated.clone())
+        .await
+        .unwrap();
+    assert!(auth
+        .resolve_request(&headers(&original))
+        .await
+        .unwrap()
+        .is_none());
+    assert!(auth
+        .resolve_request(&headers(&replacement))
+        .await
+        .unwrap()
+        .is_some());
+    let mut retired = rotated.clone();
+    retired.state = BindingState::Retired;
+    retired.work = BindingWork::RetireCurrentConversations;
+    retired
+        .advance_revision(layer2_core::now_rfc3339())
+        .unwrap();
+    store
+        .save_binding(Some(rotated.revision), retired)
+        .await
+        .unwrap();
+    assert!(auth
+        .resolve_request(&headers(&replacement))
+        .await
+        .unwrap()
+        .is_none());
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    server.abort();
+}
+
+#[test]
+fn binding_request_paths_exclude_management_and_foreign_event_context() {
+    use axum::http::Method;
+    for path in [
+        "/api/v1/agents",
+        "/api/v1/sandboxes",
+        "/api/v1/profiles",
+        "/auth/session",
+        "/api/v1/cmaeg/bindings/binding-auth",
+        "/api/v1/cmaeg/bindings/other/conversations/conversation/events/event",
+    ] {
+        assert!(
+            !permits_request(&Method::GET, path, "binding-auth"),
+            "{path}"
+        );
+    }
+    assert!(permits_request(
+        &Method::GET,
+        "/api/v1/cmaeg/bindings/binding-auth/conversations/conversation/events/event",
+        "binding-auth"
+    ));
+    assert!(!permits_request(
+        &Method::DELETE,
+        "/api/v1/cmaeg/bindings/binding-auth/conversations/conversation",
+        "binding-auth"
+    ));
+}

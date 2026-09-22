@@ -142,7 +142,8 @@ impl ControlPlaneComposition {
             }),
             stores.auth.clone(),
             config.nyxid_public_url.clone(),
-        );
+        )
+        .with_binding_store(stores.sandbox_model.clone());
         let key_issuer = bridge::key_issuer(config);
         let bridge_provisioning = bridge::provisioning(
             config,
