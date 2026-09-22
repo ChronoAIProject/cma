@@ -18,7 +18,9 @@ procedure to apply changes. Configuration is operator-owned.
 | `CMAEG_MASTER_KEYS` | secret string | Required unless file source is set | Kubernetes Secret environment value containing `kid:base64key[,kid:base64key]`; each key decodes to 32 bytes and the first key is current. |
 | `CMAEG_MASTER_KEYS_FILE` | file path | Optional alternative | Compatibility file source for the same key ring; mutually exclusive with `CMAEG_MASTER_KEYS`. |
 | `CMAEG_CMA_BASE_URL` | origin URL | Required | CMA record-store origin. HTTPS, or loopback/`.svc` HTTP; no credentials, path, query, fragment, or trailing slash. |
-| `CMAEG_CMA_SERVICE_TOKEN` | secret string | Required unless file source is set | Kubernetes Secret environment value containing the dedicated NyxID service-account bearer for CMA records, gateway rekey, and provider binding/conversation management. Grant both `cma:gateway:records` and `cma:provider:bindings`. |
+| `CMAEG_CMA_SERVICE_TOKEN` | secret string | Required unless file source is set | Kubernetes Secret environment value authenticating inbound gateway rekey. Also used for outbound CMA authentication when the service-account client pair is absent. |
+| `CMAEG_CMA_CLIENT_ID` | string | Optional pair | Dedicated NyxID service-account client ID, injected from Kubernetes Secret. Must be set together with its client secret. |
+| `CMAEG_CMA_CLIENT_SECRET` | secret string | Optional pair | Exchanges renewable outbound CMA tokens at the configured NyxID origin using `client_credentials` and `openid roles`. The account role grants `cma:gateway:records` and `cma:provider:bindings`. |
 | `CMAEG_CMA_SERVICE_TOKEN_FILE` | file path | Optional alternative | Compatibility file source for the same bearer; mutually exclusive with `CMAEG_CMA_SERVICE_TOKEN`. |
 | `CMAEG_NYXID_BASE_URL` | origin URL | Required | NyxID origin for creator authentication, with the same URL restrictions as the CMA origin. |
 | `CMAEG_TOOLS_NYXID_SLUG` | string | `cmaeg` | NyxID service slug in the provider tools advertisement, matching `[a-z0-9_]{1,32}`. |
@@ -197,18 +199,30 @@ fits the existing wildcard certificate.
 
 Use native Kubernetes Secrets, injected as environment variables through explicit
 `secretKeyRef` entries. `cmaeg-master-keys` supplies `CMAEG_MASTER_KEYS`, and
-`cmaeg-cma-service-token` supplies `CMAEG_CMA_SERVICE_TOKEN`. Populate both Secrets
+`cmaeg-cma-service-token` supplies `CMAEG_CMA_SERVICE_TOKEN`,
+`CMAEG_CMA_CLIENT_ID`, and `CMAEG_CMA_CLIENT_SECRET`. Populate both Secrets
 out of band. `secret.yaml` contains names and key contracts only, never values.
 There are no credential file mounts, CSI resources, or Google Secret Manager
 dependencies for the gateway. Its service account has no RBAC grants and does not
 mount a Kubernetes API token. Existing `_FILE` inputs remain optional for other
 installations; setting both sources for a credential fails startup.
 
-Both credentials are read at process startup. Preserve the key ring across pod
-replacements. Renew the service-account bearer before expiry, update its Secret,
-and roll the gateway to load it; keep the same service-account subject so retained
-CMA records remain accessible. Grant the service token only the CMA channel-record
-and gateway management authority it needs. Register
+Secrets are read at process startup. Preserve the key ring across pod replacements.
+Production supplies the service-account client pair because NyxID access tokens
+expire after one hour. CMAEG obtains a token before opening its listener and
+shares its cache across records and provider management. Requests renew the token
+within the final minute of its lifetime; concurrent callers share one exchange.
+A failed refresh can use the existing token only until expiry, and retries are
+bounded. Exchange responses and credentials are never logged, and redirects are
+refused. Renewal requires no Secret update, file, pod restart, or extra workload.
+
+`CMAEG_CMA_SERVICE_TOKEN` remains a separate stable inbound rekey credential when
+renewable authentication is enabled. It is not sent to CMA in that mode. Static
+outbound bearer configuration remains available for other installations; those
+operators must renew it and restart before expiry. Client-secret rotation also
+requires a Secret update and a gateway rollout. Retain the same service-account
+subject so stored CMA records and provider bindings remain accessible. Grant the
+account only the two gateway permissions. Register
 the tools service under `CMAEG_TOOLS_NYXID_SLUG` with the four protocol operation
 IDs. Configure provider paths explicitly and retain provider/binding ownership.
 A channel's bot agent key supplies provider and tool authority; a relay user token
@@ -307,10 +321,13 @@ The API update must contain both those fixes and the gateway/provider changes.
 Updating the control plane does not rotate existing Sandbox images.
 
 Native Secret `cmaeg-master-keys` has been provisioned in production directly
-from memory. The dedicated CMA service identity and its populated
-`cmaeg-cma-service-token` Secret are still required before the gateway can start.
+from memory. The maintainer authorized dedicated NyxID provisioning. Non-default
+role `cmaeg-service` and service account `cmaeg-prod` now exist, and the role grants
+exactly the two gateway permissions. Client credentials were saved directly in
+`cmaeg-cma-service-token`, and the issued bearer was verified through userinfo.
+Its measured lifetime is 3,600 seconds, so production requires the renewable
+client-credentials implementation and its updated image before rollout.
 The operator's CLI confirms active admin authority, and role inventory succeeds
 with the CLI request headers. An earlier generic HTTP request received 403; that
-was not evidence of missing account permissions. The existing CMA roles do not
-include the gateway's two required permissions. This preparation record does
-not attest a completed production rollout or a Telegram round trip.
+was not evidence of missing account permissions. The existing human CMA roles
+were left unchanged. This preparation record does not attest a completed production rollout or a Telegram round trip.

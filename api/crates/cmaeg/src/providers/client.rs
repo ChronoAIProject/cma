@@ -94,7 +94,10 @@ impl ProviderClient {
             &config.management.cma_base_url,
             config.management.cma_service_token.clone(),
         )?);
-        Ok(client)
+        Ok(client.with_service_auth(
+            crate::service_auth::ServiceAuth::from_config(config)
+                .map_err(|error| ProviderError::Unavailable(error.to_string()))?,
+        ))
     }
 
     pub fn provider_count(&self) -> usize {
@@ -120,11 +123,13 @@ impl ProviderClient {
             "agent_key": request.agent_key.as_str(),
             "tools": request.tools,
         });
-        let bearer = self.management_bearer(provider, &url, &request.agent_key);
+        let bearer = self
+            .management_bearer(provider, &url, &request.agent_key)
+            .await?;
         let response = handle
             .client
             .put(url)
-            .bearer_auth(bearer)
+            .bearer_auth(bearer.as_str())
             .json(&body)
             .timeout(self.request_timeout)
             .send()
@@ -149,11 +154,11 @@ impl ProviderClient {
             .entry
             .url("binding", &[("binding_id", binding_id.as_str())])
             .map_err(|error| ProviderError::InvalidRequest(error.to_string()))?;
-        let bearer = self.management_bearer(provider, &url, agent_key);
+        let bearer = self.management_bearer(provider, &url, agent_key).await?;
         let response = handle
             .client
             .delete(url)
-            .bearer_auth(bearer)
+            .bearer_auth(bearer.as_str())
             .timeout(self.request_timeout)
             .send()
             .await
@@ -206,14 +211,18 @@ impl ProviderClient {
                 ],
             )
             .map_err(|error| ProviderError::InvalidRequest(error.to_string()))?;
-        let bearer = self.management_bearer(provider, &url, agent_key);
+        let bearer = self.management_bearer(provider, &url, agent_key).await?;
         let request = if delete {
-            handle.client.delete(url).bearer_auth(bearer).send()
+            handle
+                .client
+                .delete(url)
+                .bearer_auth(bearer.as_str())
+                .send()
         } else {
             handle
                 .client
                 .put(url)
-                .bearer_auth(bearer)
+                .bearer_auth(bearer.as_str())
                 .json(&json!({}))
                 .send()
         };

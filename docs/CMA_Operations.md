@@ -411,6 +411,12 @@ The `/resolve` route in that harness exists only in the test server.
 
 ## Delivery Authority
 
+For the 2026-09-22 gateway deployment, the maintainer additionally authorizes a
+non-default `cmaeg-service` NyxID role with exactly `cma:gateway:records` and
+`cma:provider:bindings`, a dedicated `cmaeg-prod` service account assigned that
+role, and credential storage directly in Kubernetes Secrets. This is a narrow
+exception to the earlier milestone's NyxID restriction below.
+
 For this milestone, the maintainer's explicit instructions override the release
 step in #832: deliver changes to `develop`, build images and deploy directly to
 production. The 2026-09-16 delivery direction prioritizes parallel feature

@@ -125,6 +125,8 @@ EXPOSE 9091
 # Runtime contract: CMAEG_PUBLIC_URL, CMAEG_CMA_BASE_URL and CMAEG_NYXID_BASE_URL
 # are required origins. Inject CMAEG_MASTER_KEYS and CMAEG_CMA_SERVICE_TOKEN
 # from Kubernetes Secrets; startup refuses missing or invalid values before binding.
+# CMAEG_CMA_CLIENT_ID and CMAEG_CMA_CLIENT_SECRET enable automatic outbound CMA
+# token renewal; the service token then remains the separate inbound rekey bearer.
 # CMAEG_TOOLS_NYXID_SLUG defaults to cmaeg. Channel cache settings default to
 # CMAEG_CHANNEL_CACHE_TTL_MS=60000, CMAEG_CHANNEL_NEGATIVE_TTL_MS=10000,
 # CMAEG_CHANNEL_CACHE_MAX=50000, CMAEG_RESTORE_RATE_PER_MINUTE=10 and
