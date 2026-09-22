@@ -98,6 +98,22 @@ compositions without an observed transport. Such values are not successful
 zero-latency launches. REST and MCP tools responses include `deliver;dur`,
 covering the complete request through the receipt or refusal.
 
+The `request finished` info record includes the exact `server_timing` header
+for ingress and tool routes. A separate `ingress socket write` info record emits
+`ingress_to_provider_ms`, `source`, and `cold` once per observed first provider
+write, under the originating `cmaeg.request` span. The value matches the histogram
+sample, before bucket aggregation. It can arrive after the HTTP response if the
+acceptance budget elapsed before the write; retain that record instead of treating
+the earlier `not_written` header as a zero-latency sample. Repeated transport
+notifications and retries do not create extra first-write samples.
+
+For a live latency campaign, retain raw metric scrapes and these timing records
+with the pod UID/image, request IDs and measurement window. Calculate nearest-rank
+percentiles from the per-write values, separating `cold=true` initiators from
+warm requests. Histogram buckets provide threshold bounds rather than exact
+per-message percentiles. Metrics have no channel label: an isolated test window
+or request correlation is required before attributing aggregate counts to one Bot.
+
 The Responses transport observes successful TCP writes. HTTP/1 connections are
 pooled with up to 64 idle connections per provider and a 90-second idle lifetime.
 HTTP/2 requests share a connection; cleartext `.svc` providers use prior knowledge,
