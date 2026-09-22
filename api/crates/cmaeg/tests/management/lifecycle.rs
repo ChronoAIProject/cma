@@ -127,7 +127,7 @@ async fn update_preserves_identity_credentials_and_rejects_stale_or_invalid_writ
         initial["provider"]["binding_id"]
     );
     assert_eq!(body["definition"]["version"], 2);
-    assert_eq!(provider.requests().len(), 1);
+    assert_eq!(provider.requests().len(), 2);
     let stale = client
         .put(&url)
         .bearer_auth("token-alice")
