@@ -1,7 +1,7 @@
 use std::{
     collections::BTreeMap,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex,
     },
 };
@@ -29,11 +29,15 @@ struct Stored {
 struct StateData {
     records: Arc<Mutex<BTreeMap<String, Stored>>>,
     pub fail_put: Arc<AtomicBool>,
+    pub get_delay_ms: Arc<AtomicU64>,
+    pub gets: Arc<AtomicU64>,
 }
 
 pub struct FakeCma {
     pub base_url: String,
     pub fail_put: Arc<AtomicBool>,
+    pub get_delay_ms: Arc<AtomicU64>,
+    pub gets: Arc<AtomicU64>,
     state: StateData,
     shutdown: Option<oneshot::Sender<()>>,
 }
@@ -45,6 +49,8 @@ impl FakeCma {
         let state = StateData {
             records: Arc::new(Mutex::new(BTreeMap::new())),
             fail_put: Arc::new(AtomicBool::new(fail_put)),
+            get_delay_ms: Arc::default(),
+            gets: Arc::default(),
         };
         let router = Router::new()
             .route("/api/v1/gateway/channel-records", get(list_records))
@@ -77,6 +83,8 @@ impl FakeCma {
         Self {
             base_url: format!("http://{address}"),
             fail_put: state.fail_put.clone(),
+            get_delay_ms: state.get_delay_ms.clone(),
+            gets: state.gets.clone(),
             state,
             shutdown: Some(shutdown),
         }
@@ -172,6 +180,11 @@ async fn put_record(
 }
 
 async fn get_record(State(state): State<StateData>, Path(record_id): Path<String>) -> Response {
+    state.gets.fetch_add(1, Ordering::SeqCst);
+    tokio::time::sleep(std::time::Duration::from_millis(
+        state.get_delay_ms.load(Ordering::SeqCst),
+    ))
+    .await;
     let records = state.records.lock().unwrap();
     let Some(record) = records.get(&record_id) else {
         return StatusCode::NOT_FOUND.into_response();
