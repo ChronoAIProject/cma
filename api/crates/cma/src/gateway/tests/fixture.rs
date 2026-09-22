@@ -134,12 +134,13 @@ async fn bind(
     // Exercise the actual negotiation for each request. Runtime allocation and
     // credential custody remain fake; provider_keys below retains their effects.
     let plan = super::provider_fixture::service()
-        .put(
+        .put_with_tool_endpoint(
             &manager,
             &id,
             body["profile"].clone(),
             body["profile_digest"].as_str().unwrap(),
             &ProvidedCredential::new(body["agent_key"].as_str().unwrap().into()).unwrap(),
+            Some(body["tools"]["native_mcp_url"].as_str().unwrap().into()),
         )
         .await
         .unwrap();
