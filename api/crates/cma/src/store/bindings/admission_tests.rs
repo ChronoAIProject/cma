@@ -29,9 +29,7 @@ pub(super) fn sandbox(value: &ProviderBinding) -> Sandbox {
         failure: None,
         runtime: None,
         credential: SandboxCredentialState {
-            source: SandboxCredentialSource::Binding {
-                binding_id: value.binding_id.clone(),
-            },
+            source: value.credential_source(),
             service_grants: vec![],
             reaches: content.nyxid_services,
             key_generation: 0,
