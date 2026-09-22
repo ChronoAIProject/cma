@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 194,
+  "openapi_operations": 203,
   "operations": {
     "GET /api/v1/organizations": {
       "classification": "openapi",
@@ -2684,6 +2684,101 @@
       "required_problems": [
         "bridge_not_found",
         "bridge_partition_unavailable"
+      ]
+    },
+    "POST /api/v1/bots": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bots/mod.rs# Owner Bot operations use durable core admission and expose typed lifecycle problems without credential custody.",
+      "required_problems": [
+        "not_authenticated",
+        "bot_forbidden",
+        "bot_unavailable",
+        "bot_conflict",
+        "invalid_bot"
+      ]
+    },
+    "GET /api/v1/bots": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bots/mod.rs# Owner Bot operations use durable core admission and expose typed lifecycle problems without credential custody.",
+      "required_problems": [
+        "not_authenticated",
+        "bot_forbidden",
+        "bot_unavailable",
+        "invalid_bot"
+      ]
+    },
+    "GET /api/v1/bots/nyxid-bots": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bots/mod.rs# Owner Bot operations use durable core admission and expose typed lifecycle problems without credential custody.",
+      "required_problems": [
+        "not_authenticated",
+        "bot_forbidden",
+        "bot_unavailable"
+      ]
+    },
+    "GET /api/v1/bots/{bot_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bots/mod.rs# Owner Bot operations use durable core admission and expose typed lifecycle problems without credential custody.",
+      "required_problems": [
+        "not_authenticated",
+        "bot_forbidden",
+        "bot_unavailable",
+        "bot_not_found"
+      ]
+    },
+    "POST /api/v1/bots/{bot_id}/test": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bots/mod.rs# Owner Bot operations use durable core admission and expose typed lifecycle problems without credential custody.",
+      "required_problems": [
+        "not_authenticated",
+        "bot_forbidden",
+        "bot_unavailable",
+        "bot_not_found",
+        "bot_conflict"
+      ]
+    },
+    "POST /api/v1/bots/{bot_id}/disable": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bots/mod.rs# Owner Bot operations use durable core admission and expose typed lifecycle problems without credential custody.",
+      "required_problems": [
+        "not_authenticated",
+        "bot_forbidden",
+        "bot_unavailable",
+        "bot_not_found",
+        "bot_conflict"
+      ]
+    },
+    "POST /api/v1/bots/{bot_id}/enable": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bots/mod.rs# Owner Bot operations use durable core admission and expose typed lifecycle problems without credential custody.",
+      "required_problems": [
+        "not_authenticated",
+        "bot_forbidden",
+        "bot_unavailable",
+        "bot_not_found",
+        "bot_conflict"
+      ]
+    },
+    "POST /api/v1/bots/{bot_id}/rotate-keys": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bots/mod.rs# Owner Bot operations use durable core admission and expose typed lifecycle problems without credential custody.",
+      "required_problems": [
+        "not_authenticated",
+        "bot_forbidden",
+        "bot_unavailable",
+        "bot_not_found",
+        "bot_conflict"
+      ]
+    },
+    "DELETE /api/v1/bots/{bot_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bots/mod.rs# Owner Bot operations use durable core admission and expose typed lifecycle problems without credential custody.",
+      "required_problems": [
+        "not_authenticated",
+        "bot_forbidden",
+        "bot_unavailable",
+        "bot_not_found",
+        "bot_conflict"
       ]
     }
   }

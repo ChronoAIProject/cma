@@ -7,6 +7,7 @@ mod commands;
 mod composition;
 mod config;
 mod connections;
+mod gateway;
 mod health;
 mod permissions;
 mod profile_authoring;
@@ -87,6 +88,9 @@ async fn serve() -> Result<(), String> {
     );
     let mut shutdown = ShutdownCoordinator::new();
     shutdown.push(composition.bindings.spawn(shutdown.subscribe()));
+    if let Some(bots) = composition.bots {
+        shutdown.push(bots.spawn(shutdown.subscribe()));
+    }
     let worker_signal = shutdown.subscribe();
     shutdown.push(composition.launch_scheduler.spawn(worker_signal));
     shutdown.push(composition.command_scheduler.spawn(shutdown.subscribe()));
