@@ -146,6 +146,7 @@ impl AuthState {
             return Err(CommandAuthorizationError::Revoked);
         }
         Ok(RequestAuth {
+            binding: None,
             credential_source: CredentialSource::Independent {
                 expires_at: Some(expires_at),
             },

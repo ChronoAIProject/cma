@@ -242,6 +242,7 @@ async fn managed_import_resolves_exact_retained_key_and_local_revocation_stops_o
     };
     context.credential = auth
         .resource_request_context(&crate::auth::RequestAuth {
+            binding: None,
             credential_source: layer2_core::resource_access::CredentialSource::Retained,
             subject: SubjectId::new("person-one"),
             authorization: context.caller.authorization.clone(),
