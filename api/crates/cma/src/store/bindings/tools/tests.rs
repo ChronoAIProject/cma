@@ -117,15 +117,23 @@ async fn setup(
         event_at: mongo_tests::NOW.into(),
     };
     store.admit_agent(admission).await.unwrap();
-    let mut tree = store
-        .get_worktree(&conversation.worktree_id)
+    let mut agent = store
+        .get_agent(&conversation.agent_id)
         .await
         .unwrap()
         .unwrap();
-    let revision = tree.revision;
-    tree.status = WorktreeStatus::Ready;
-    tree.revision += 1;
-    store.save_worktree(revision, tree).await.unwrap();
+    let revision = agent.revision;
+    // The worker opens the conversation before publishing the Worktree ready.
+    agent.work.step = AgentWorkStep::OpenConversation;
+    agent.work.lease = Some(AgentWorkLease {
+        holder: "provider-tool-test".into(),
+        fence: agent.work.next_fence,
+        expires_at: layer2_core::rfc3339_at(
+            std::time::SystemTime::now() + std::time::Duration::from_secs(300),
+        ),
+    });
+    agent.revision += 1;
+    store.save_agent(revision, agent).await.unwrap();
 
     let snapshot = store
         .agent_provenance_snapshot(&conversation.agent_id)
@@ -263,7 +271,7 @@ fn assert_provenance_fences(
 ) {
     let (initial, _) =
         validation::validate(snapshot, binding, conversation, runtime, request, fence).unwrap();
-    for case in 0..12 {
+    for case in 0..18 {
         let mut state = snapshot.clone();
         let mut parent = binding.clone();
         let mut conversation = conversation.clone();
@@ -305,13 +313,59 @@ fn assert_provenance_fences(
                     .unwrap()
                     .requested_stop_reason = Some(AgentStopReason::Owner)
             }
-            _ => state.creation.as_mut().unwrap().created_by = None,
+            11 => state.creation.as_mut().unwrap().created_by = None,
+            12 => {
+                state.resource.lineage.agent.as_mut().unwrap().work.step =
+                    AgentWorkStep::MaterializeHome
+            }
+            13 => state.resource.lineage.agent.as_mut().unwrap().status = AgentStatus::Ready,
+            14 => state.resource.lineage.worktree.as_mut().unwrap().status = WorktreeStatus::Failed,
+            15 => {
+                state.resource.lineage.worktree.as_mut().unwrap().status = WorktreeStatus::Removing
+            }
+            16 => state.resource.lineage.agent.as_mut().unwrap().work.lease = None,
+            _ => {
+                state
+                    .resource
+                    .lineage
+                    .agent
+                    .as_mut()
+                    .unwrap()
+                    .work
+                    .lease
+                    .as_mut()
+                    .unwrap()
+                    .expires_at = mongo_tests::NOW.into()
+            }
         }
         assert!(
             validation::validate(&state, &parent, &conversation, runtime, request, fence).is_err(),
             "case {case}"
         );
     }
+    // Reconnection before ready publication retains the same successful-open
+    // authority; publishing ready changes lifecycle state, not that identity.
+    let mut publishing = snapshot.clone();
+    let agent = publishing.resource.lineage.agent.as_mut().unwrap();
+    agent.work.step = AgentWorkStep::PublishReady;
+    agent.conversation.conversation_id = Some("native-conversation".into());
+    agent.conversation.runtime_generation = Some(1);
+    let (scope, _) =
+        validation::validate(&publishing, binding, conversation, runtime, request, fence).unwrap();
+    assert_eq!(scope, initial);
+    publishing
+        .resource
+        .lineage
+        .worktree
+        .as_mut()
+        .unwrap()
+        .status = WorktreeStatus::Ready;
+    let agent = publishing.resource.lineage.agent.as_mut().unwrap();
+    agent.status = AgentStatus::Ready;
+    agent.work.step = AgentWorkStep::PublishConnection;
+    let (scope, _) =
+        validation::validate(&publishing, binding, conversation, runtime, request, fence).unwrap();
+    assert_eq!(scope, initial);
     // Key rotation changes the proof requested from the running proxy, while
     // preserving the successful-open scope and the existing ACP descriptor.
     let mut rotated = snapshot.clone();
