@@ -1,8 +1,12 @@
 //! Owner Bot lifecycle. External protocol orchestration implements the execution port.
+mod creation;
+mod execution;
 mod model;
 mod profiles;
+mod rotation;
 mod service;
 mod store;
+pub use execution::*;
 pub use model::*;
 pub use profiles::*;
 pub use service::*;
@@ -22,6 +26,8 @@ pub enum BotError {
     Unavailable,
 }
 
+#[cfg(test)]
+mod execution_tests;
 #[cfg(test)]
 mod profile_tests;
 #[cfg(test)]
