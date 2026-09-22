@@ -96,7 +96,7 @@ async fn ready(store: &InMemorySandboxStore, mut binding: ProviderBinding) -> Pr
     store.save_binding(Some(1), binding.clone()).await.unwrap();
     binding
 }
-fn request(path: &str, principal: &BindingPrincipal, body: Value) -> Request<Body> {
+pub(super) fn request(path: &str, principal: &BindingPrincipal, body: Value) -> Request<Body> {
     let mut request = fixtures::request(
         Method::POST,
         path,
@@ -119,8 +119,12 @@ fn request(path: &str, principal: &BindingPrincipal, body: Value) -> Request<Bod
     request
 }
 
-#[tokio::test]
-async fn binding_aliases_and_agent_ids_share_receipts_and_conceal_foreign_conversations() {
+pub(super) async fn fixture() -> (
+    axum::Router,
+    Arc<InMemorySandboxStore>,
+    Arc<BindingAccessService>,
+    BindingPrincipal,
+) {
     let (state, store) = fixtures::conversation_fixture().await;
     let agent = fixtures::seeded_agent("agt_fixture", AgentStatus::Ready, 2, None);
     fixtures::insert_agent(&store, agent.clone(), vec![]).await;
@@ -162,6 +166,11 @@ async fn binding_aliases_and_agent_ids_share_receipts_and_conceal_foreign_conver
         super::ResponsesV2State::new(commands, state.reads.with_resource_access(access))
             .with_bindings(bindings.clone()),
     );
+    (app, store, bindings, principal)
+}
+#[tokio::test]
+async fn binding_aliases_and_agent_ids_share_receipts_and_conceal_foreign_conversations() {
+    let (app, store, bindings, principal) = fixture().await;
     let mut response_id = None;
     for (path, alias) in [
         ("/api/v2/responses", "conversation-external"),

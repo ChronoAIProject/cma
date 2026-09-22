@@ -15,6 +15,9 @@ mod bindings;
 pub(crate) mod controls;
 mod conversation;
 mod error;
+mod event_context;
+#[cfg(test)]
+mod event_context_tests;
 mod output;
 #[cfg(test)]
 mod output_gap_tests;
@@ -82,6 +85,10 @@ pub fn router(state: ResponsesV2State) -> Router {
             "/api/v2/conversations/{conversation_id}/items",
             get(conversation::items),
         )
+        .route(
+            "/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}",
+            get(event_context::retrieve),
+        )
         .with_state(state)
 }
 pub(super) fn document() -> utoipa::openapi::OpenApi {
@@ -89,6 +96,7 @@ pub(super) fn document() -> utoipa::openapi::OpenApi {
     #[derive(OpenApi)]
     #[openapi(
         paths(
+            event_context::retrieve,
             routes::capabilities,
             routes::create,
             routes::create_alias,

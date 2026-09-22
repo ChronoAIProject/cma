@@ -93,6 +93,19 @@ impl AgentCommandStore for MongoSandboxStore {
             .transpose()
     }
 
+    async fn get_external_event_command(
+        &self,
+        key: &str,
+    ) -> Result<Option<AdmittedAgentCommand>, CommandLedgerError> {
+        self.agent_commands
+            .find_one(doc! { "external_event_key": key })
+            .await
+            .map_err(|_| CommandLedgerError::Unavailable)?
+            .as_ref()
+            .map(records::read)
+            .transpose()
+    }
+
     async fn get_response_command(
         &self,
         id: &layer2_core::ids::AgentResponseId,

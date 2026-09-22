@@ -265,3 +265,6 @@ async fn binding_retirement_and_rotation_fence_admission_and_dispatch_transactio
 
 #[path = "binding_revival_tests.rs"]
 mod revival;
+
+#[path = "binding_event_tests.rs"]
+mod event_context_tests;
