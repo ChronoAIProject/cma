@@ -309,5 +309,8 @@ Updating the control plane does not rotate existing Sandbox images.
 Native Secret `cmaeg-master-keys` has been provisioned in production directly
 from memory. The dedicated CMA service identity and its populated
 `cmaeg-cma-service-token` Secret are still required before the gateway can start.
-The current operator cannot inspect NyxID roles (HTTP 403). This preparation
-record does not attest a completed production rollout or a Telegram round trip.
+The operator's CLI confirms active admin authority, and role inventory succeeds
+with the CLI request headers. An earlier generic HTTP request received 403; that
+was not evidence of missing account permissions. The existing CMA roles do not
+include the gateway's two required permissions. This preparation record does
+not attest a completed production rollout or a Telegram round trip.
