@@ -1,0 +1,91 @@
+//! Supplied binding keys resolve locally and carry no ambient owner authority.
+use super::{profile::Profile, AuthState, RequestAuth};
+use layer2_core::resource_access::{
+    CallerContext, CredentialContext, CredentialSource, ResourceActor,
+};
+use layer2_core::sandbox::binding::{BindingAccessService, BindingPrincipal, BindingStore};
+use layer2_core::StoreError;
+use sha2::{Digest, Sha256};
+use std::sync::Arc;
+
+impl AuthState {
+    pub(crate) fn with_binding_store(
+        mut self: Arc<Self>,
+        store: Arc<dyn BindingStore>,
+    ) -> Arc<Self> {
+        Arc::get_mut(&mut self)
+            .expect("binding custody is composed before sharing authentication")
+            .bindings = Some(BindingAccessService::new(store));
+        self
+    }
+
+    pub(super) async fn binding_request(
+        &self,
+        token: String,
+    ) -> Result<Option<RequestAuth>, StoreError> {
+        let access = self.bindings.as_ref().ok_or_else(|| {
+            StoreError::Unavailable("binding authentication is not composed".into())
+        })?;
+        let hash = format!("{:x}", Sha256::digest(token.as_bytes()));
+        let Some(principal) = access
+            .authenticate(&hash)
+            .await
+            .map_err(|_| StoreError::Unavailable("binding authentication unavailable".into()))?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(RequestAuth {
+            credential_source: CredentialSource::Binding,
+            subject: principal.owner().clone(),
+            authorization: principal.caller().authorization,
+            profile: Profile::default(),
+            delegated_credential: Some(token),
+            binding: Some(principal),
+        }))
+    }
+}
+
+pub(super) fn context(principal: &BindingPrincipal) -> CallerContext {
+    CallerContext {
+        credential_source: CredentialSource::Binding,
+        caller: principal.caller(),
+        credential: CredentialContext {
+            issuer: "binding:local".into(),
+            subject: principal.owner().clone(),
+            credential_id: principal.key_sha256().into(),
+        },
+        actor: ResourceActor::Api {
+            subject: principal.owner().clone(),
+            delegation_id: None,
+        },
+        memberships: vec![],
+    }
+}
+
+pub(super) fn permits_request(method: &axum::http::Method, path: &str, binding: &str) -> bool {
+    use axum::http::Method;
+    let segments = path.trim_start_matches('/').split('/').collect::<Vec<_>>();
+    match (method, segments.as_slice()) {
+        (&Method::GET, ["api", "v2"])
+        | (&Method::POST, ["api", "v2", "responses"])
+        | (&Method::POST, ["api", "v2", "agents", _, "responses"])
+        | (&Method::GET, ["api", "v2", "responses", _])
+        | (&Method::GET, ["api", "v2", "responses", _, "events"])
+        | (&Method::POST, ["api", "v2", "responses", _, "cancel"])
+        | (&Method::GET, ["api", "v2", "commands", _])
+        | (&Method::GET, ["api", "v2", "conversations", _])
+        | (&Method::GET, ["api", "v2", "conversations", _, "items"]) => true,
+        (
+            method,
+            ["api", "v2", "agents", _, "responses", _, "controls" | "queued-cancellation"],
+        ) => matches!(*method, Method::GET | Method::POST),
+        (
+            &Method::GET,
+            ["api", "v1", "cmaeg", "bindings", selected, "conversations", _, "events", _],
+        ) => *selected == binding,
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests;

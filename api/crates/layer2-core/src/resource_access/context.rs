@@ -124,6 +124,8 @@ impl OrganizationMembership {
 pub enum CredentialSource {
     /// Authority established by an existing retained sign-in or internal adapter.
     Retained,
+    /// Authority confined to one retained external binding.
+    Binding,
     /// Exact independently presented credential; cannot borrow sign-in custody.
     Independent { expires_at: Option<SystemTime> },
 }
