@@ -481,3 +481,66 @@ It does not establish the real Telegram acceptance campaign in #918. Native
 provider tool attachment is being implemented in CMA to respect the maintainer's
 instruction to leave NyxID unchanged; that path is not enabled by this web rollout.
 The original bridge is still retained pending migration and acceptance evidence.
+
+### Native CMA tools rollout on 2026-09-22
+
+PR #931 merged into `develop` as
+`37394165a4df0a5007a6e53a23efa7a8ea431068`, including every commit from #930.
+All fourteen required jobs in CI run `35786266601` passed. Its tested revision
+`6c2e412b44c608b582844588b942ed42c04bb5cb` and the merged commit share tree
+`13cedb931a48622f579764d8706e5b492e0d90da`. Archive checksums, native image
+configuration, source labels and immutable registry references were verified.
+The runtime image passed its executed Linux checkpoint contract and the pinned
+Codex/ACP native-tool contract. No release workflow or `main` merge was used.
+
+At 22:17 UTC, API and web rollouts and public readiness checks had passed in
+production `chrono-bot`. API, CMAEG and web each have one ready replica. The
+registry prefix is
+`us-central1-docker.pkg.dev/example-project-01/example-registry-02`:
+
+| Component | Repository | Deployed digest |
+| --- | --- | --- |
+| CMA API | `cma-api` | `sha256:d41b02c608f0764856e893ba8f41771c8f9e7f0c199625e9bf1f9919523340c4` |
+| CMA web | `cma-web` | `sha256:99985942a90578f0351ed51642c394bc230c324be3556f9cc08548a52810a4c3` |
+| New-allocation runtime default | `cma-runtime` | `sha256:bf7fe30a8259015115beb81e8a8d6fbb4394d85e83dcef67e30ca8637e735905` |
+| CMAEG, retained from its timing rollout | `cma-cmaeg` | `sha256:952e60116d5db599e7516e48bcd48d9762c87078b3a6ba8f94353978dfa6a25f` |
+
+Server dry-runs preceded all writes. Deployment UID, resource version, replica
+count and prior-image preconditions fenced the API/web patches. The runtime
+default ConfigMap and API annotation changed together. Native Kubernetes
+Secrets continue to supply gateway credentials. NyxID catalogue, configuration,
+code and deployment were unchanged.
+
+The initial inventory contained nine runtime Pods. The first broad comparison
+correctly detected three replacements and paused acceptance work. An exact-ID,
+majority-read Mongo audit then classified six as user-owned Sandboxes and three
+as unowned warm reservations. All six owned Pods preserved their UID, Pod spec,
+container ID, image digest, readiness and restart count. The three unowned
+reservations were retired by the existing warm-pool controller and replaced
+under the new default; none had an owned Sandbox record. The audit's temporary
+Pod was removed with a UID precondition and absence was verified.
+
+Public observations at 22:12:44 and 22:14:22 UTC passed for seven selected Agents:
+lineage, profile pins, durable event prefixes and the associated runtime identity.
+This does not establish continuous availability between samples, native
+conversation identity, dirty-file preservation, duplicate-input absence, browser
+drafts/reconnect or cleanup safety.
+
+CI's fake-provider latency run recorded warm launch p99 14.038 ms (500 samples),
+cold launch p99 65.830 ms (200), cold restore p99 57.369 ms (200), and tool delivery
+p99 17.124 ms (200). These are CI results, not production Telegram latency.
+
+This deploys native CMAEG tool attachment and optional owner-selected Bot
+environment profiles. After admitting either new record shape, this verified API
+is the minimum compatible rollback floor; the former production API cannot read
+all retained fields. Existing owned Sandboxes keep their original runtime pins.
+Real custom-event and Telegram acceptance, including restart and failure drills,
+remains under #918. The legacy bridge remains enabled and wired pending that
+evidence and the retirement work in #920.
+
+The first disposable custom event at 22:19:38 UTC exposed a first-conversation
+readiness mismatch: Responses returned 404, the gateway successfully reserved
+the conversation with PUT 201, and the immediate retry returned 409 while its
+Agent was still provisioning. CMAEG correctly treated that unrecognized conflict
+as a refusal and returned 503. No turn was admitted and no native-tool success
+is claimed from this attempt. The existing Telegram route was unchanged.
