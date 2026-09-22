@@ -81,25 +81,25 @@ pub(crate) fn validate_https_url(value: &str, pointer: &str) -> Result<(), Valid
         .split_once("://")
         .ok_or_else(|| ValidationError::new(pointer, "must be an absolute URL"))?;
     let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
-    let host = authority
-        .rsplit('@')
-        .next()
-        .unwrap_or_default()
-        .split(':')
-        .next()
-        .unwrap_or_default();
-    if authority.is_empty() || host.is_empty() || value.chars().any(char::is_whitespace) {
+    let host_and_port = authority.rsplit('@').next().unwrap_or_default();
+    let host = if let Some(ipv6) = host_and_port.strip_prefix('[') {
+        ipv6.split_once(']')
+            .map(|(host, _)| host)
+            .unwrap_or_default()
+    } else {
+        host_and_port.split(':').next().unwrap_or_default()
+    };
+    if authority.is_empty()
+        || host.is_empty()
+        || value.chars().any(char::is_whitespace)
+        || url::Url::parse(value).is_err()
+    {
         return Err(ValidationError::new(
             pointer,
             "must include an absolute host",
         ));
     }
-    if scheme == "https"
-        || (scheme == "http"
-            && matches!(
-                host.trim_matches(['[', ']']),
-                "127.0.0.1" | "localhost" | "::1"
-            ))
+    if scheme == "https" || (scheme == "http" && matches!(host, "127.0.0.1" | "localhost" | "::1"))
     {
         Ok(())
     } else {
