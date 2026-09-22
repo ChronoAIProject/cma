@@ -120,11 +120,7 @@ impl GatewayClient {
             .creation
             .as_ref()
             .is_none_or(|c| !c.ready)
-            || channel.provider.refused.iter().any(|refusal| {
-                // This integration grants the NyxID tools service instead of
-                // installing the advertised optional native MCP endpoint.
-                refusal.field != "tools.native_mcp_url"
-            })
+            || !channel.provider.refused.is_empty()
         {
             return Err(BotError::Invalid(
                 "gateway provider refused the requested profile".into(),
@@ -201,12 +197,7 @@ impl GatewayClient {
         let channel: Channel = read_json(response)
             .await
             .map_err(|_| BotError::Unavailable)?;
-        if channel
-            .provider
-            .refused
-            .iter()
-            .any(|refusal| refusal.field != "tools.native_mcp_url")
-        {
+        if !channel.provider.refused.is_empty() {
             return Err(BotError::Invalid(
                 "gateway provider refused the requested profile".into(),
             ));

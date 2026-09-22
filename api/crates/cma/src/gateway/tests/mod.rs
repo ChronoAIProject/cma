@@ -60,7 +60,7 @@ async fn compiled_gateway_accepts_cma_profiles_and_full_lifecycle_after_restart(
     assert_eq!(profile["environment"]["size"]["cpu_cores"], 1.5);
     assert_eq!(
         profile["permission"]["service_scope"],
-        json!(["chrono-llm-public", "cmaeg", "ornn-api"])
+        json!(["chrono-llm-public", "ornn-api"])
     );
     bot.resources.channel = Some(created.channel.clone());
     bot.resources.route_id = Some("exact-route".into());
