@@ -6,6 +6,7 @@ use crate::{
 };
 use reqwest::{Method, StatusCode, header::HeaderValue};
 use serde::de::DeserializeOwned;
+mod activity_state;
 mod controls;
 mod controls_types;
 mod events;

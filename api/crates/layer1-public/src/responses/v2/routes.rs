@@ -283,7 +283,7 @@ pub(super) async fn capabilities(auth: Auth) -> Response {
             "target":"unbound_response_command","completion":"source_cancelled"},
         "replay":{"path":"/api/v2/responses/{response_id}/events","cursor":"starting_after","header":"Last-Event-ID","durable":true},
         "creation":{"stream":true,"conversation":"existing_agent","previous_response_id":false,"store":true,"input":"user_text","model":"pinned_agent_profile","idempotency_header":"Idempotency-Key"},
-        "output":{"standard_items":["message"],"text_deltas":"durable_message_commits","tools":"agui_companion"},
+        "output":{"standard_items":["message","mcp_call"],"text_deltas":"durable_message_commits","tools":"activity_only"},
         "companion":"/api/v1/agui/events?thread_id={agent_id}",
         "documentation":"https://github.com/ChronoAIProject/cma/blob/main/docs/API_Responses.md"
     })).into_response()

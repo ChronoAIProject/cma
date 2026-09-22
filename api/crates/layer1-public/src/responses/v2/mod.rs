@@ -8,11 +8,14 @@ use layer2_core::sandbox::{agent_io::AgentCommandService, AgentReadService};
 use std::sync::Arc;
 
 #[cfg(test)]
+mod activity_tests;
+#[cfg(test)]
 mod binding_tests;
 mod bindings;
 pub(crate) mod controls;
 mod conversation;
 mod error;
+mod output;
 #[cfg(test)]
 mod output_gap_tests;
 mod parse;
@@ -23,6 +26,7 @@ mod stream;
 #[cfg(test)]
 pub(crate) mod tests;
 
+pub use output::{ActivityItem, V2OutputItem};
 pub use projection::{ResponseConversation, V2ResponseObject, V2ResponseStatus};
 
 #[derive(Clone)]

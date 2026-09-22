@@ -118,8 +118,12 @@ indexes and assembled text. It rejects premature EOF and trailing events;
 replay after a terminal cursor legitimately has no frames. The configured
 finite timeout covers the entire observation; choose it for the expected turn.
 
-Text is projected when messages commit. Provider tools and approvals remain in
-the independently authorized AG-UI companion. Shared history redacts metadata
+Text is projected when messages commit. Match `OutputItem::Message` for text or
+`OutputItem::Activity` for informational `mcp_call` activity. Activity carries an
+empty arguments string, absent output/error bodies, and a display title; it never
+asks the client to execute a tool. `McpCallInProgress`, `McpCallCompleted` and
+`McpCallFailed` preserve stable indexes through interleaved text and replay.
+Approval details remain in the independently authorized AG-UI companion. Shared history redacts metadata
 and closes on lost authority. Nested v2 HTTP errors retain their code,
 `extensions["type"]`, `extensions["param"]`, request ID and retry delay; the
 shared REST middleware envelope remains supported as well. See the

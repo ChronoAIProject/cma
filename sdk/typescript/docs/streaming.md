@@ -142,8 +142,12 @@ to bound observation. `timeoutMs` bounds the handshake.
 V2 uses opaque response IDs, a queued lifecycle, conversation on each turn,
 and no predecessor. Text is emitted at durable message commit boundaries. Shared
 readers receive empty metadata, and membership expiry can end their connection.
-Provider tools and approval details use the independently authorized AG-UI
-companion. Nested v2 HTTP errors become `ApiError` with their exact code,
+Output items are a typed union of `message` and informational `mcp_call` activity.
+Narrow on `item.type` before reading message `content`. Activity carries an empty
+`arguments` string, null `output`/`error`, and a display title; it never asks the
+client to execute a tool. The three `response.mcp_call.*` events retain stable
+indexes through interleaved text, overlapping calls and replay. Approval details
+use the independently authorized AG-UI companion. Nested v2 HTTP errors become `ApiError` with their exact code,
 `extensions.type`, `extensions.param`, request ID and retry delay. Deployment
 middleware may still return the shared REST problem envelope, which is also
 supported. See the [API contract](../../../docs/API_Responses.md).

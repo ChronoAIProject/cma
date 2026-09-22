@@ -134,12 +134,18 @@ fn completed_output_gap_retains_messages_and_emits_incomplete_replay() {
     assert_eq!(response.status, V2ResponseStatus::Incomplete);
     assert_eq!(legacy.incomplete_details.as_ref(), Some(&details));
     assert_eq!(response.incomplete_details.as_ref(), Some(&details));
-    assert_eq!(legacy.output, response.output);
+    assert_eq!(
+        serde_json::to_value(&legacy.output).unwrap(),
+        serde_json::to_value(&response.output).unwrap()
+    );
     assert_eq!(
         response
             .output
             .iter()
-            .map(|item| item.content[0].text.as_str())
+            .map(|item| match item {
+                super::V2OutputItem::Message(item) => item.content[0].text.as_str(),
+                _ => panic!("fixture contains only messages"),
+            })
             .collect::<Vec<_>>(),
         ["Stored before the gap.", "Stored after the gap."]
     );

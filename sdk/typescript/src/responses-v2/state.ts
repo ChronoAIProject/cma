@@ -1,3 +1,4 @@
+import { ActivityState } from './activity-state.js';
 import { ProtocolError } from '../errors.js';
 import type { V2ResponseEvent } from './types.js';
 
@@ -5,7 +6,7 @@ import type { V2ResponseEvent } from './types.js';
 export class V2EventState {
   private readonly items = new Map<
     number,
-    { id: string; text?: string; stage?: string; done?: boolean }
+    { id: string; text?: string; stage?: string; done?: boolean; activity?: ActivityState }
   >();
   private readonly ids = new Map<string, number>();
   private started = false;
@@ -51,7 +52,17 @@ export class V2EventState {
         this.ended = true;
         for (const [index, item] of this.items) {
           const output = response.output[index];
+          if (item.activity) {
+            if (
+              output?.type !== 'mcp_call' ||
+              output.id !== item.id ||
+              !item.activity.matches(output)
+            )
+              throw new ProtocolError('Responses terminal activity disagrees with its events');
+            continue;
+          }
           if (
+            output?.type !== 'message' ||
             !item.done ||
             output?.id !== item.id ||
             output.status !== 'completed' ||
@@ -84,6 +95,16 @@ export class V2EventState {
     }
     if (item.id !== id || item.done)
       throw new ProtocolError('Responses item identity or lifecycle changed');
+    const activity =
+      ('item' in event && event.item.type === 'mcp_call') ||
+      event.type.startsWith('response.mcp_call.');
+    if (activity) {
+      if (item.stage !== undefined) throw new ProtocolError('Responses message became activity');
+      item.activity ??= new ActivityState(this.replay);
+      item.activity.accept(event);
+      return;
+    }
+    if (item.activity) throw new ProtocolError('Responses activity became a message');
     if ('content_index' in event && event.content_index !== 0)
       throw new ProtocolError('Responses text item has an invalid content index');
     const requireStage = (stage: string) => {
@@ -93,6 +114,7 @@ export class V2EventState {
     switch (event.type) {
       case 'response.output_item.added':
         if (
+          event.item.type !== 'message' ||
           item.stage !== undefined ||
           event.item.status !== 'in_progress' ||
           event.item.content.length
@@ -129,6 +151,7 @@ export class V2EventState {
       case 'response.output_item.done':
         requireStage('part_done');
         if (
+          event.item.type !== 'message' ||
           event.item.status !== 'completed' ||
           event.item.content.length !== 1 ||
           (item.text !== undefined && item.text !== event.item.content[0]?.text)

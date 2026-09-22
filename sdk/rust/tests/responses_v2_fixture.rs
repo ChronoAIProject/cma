@@ -2,7 +2,7 @@
 use cma_sdk::{
     Client,
     responses::CreateConversationRequest,
-    responses_v2::{CreateResponseRequest, ItemOptions, ResponseEventPayload},
+    responses_v2::{CreateResponseRequest, ItemOptions, OutputItem, ResponseEventPayload},
 };
 
 #[tokio::test]
@@ -27,7 +27,14 @@ async fn cma_v2_fixture_completes_two_turns_and_replays_the_same_receipt() {
         .unwrap();
     let mut previous = None;
     for turn in 0..2 {
-        let body = CreateResponseRequest::new(&conversation.id, "sdk-helper-text");
+        let body = CreateResponseRequest::new(
+            &conversation.id,
+            if turn == 0 {
+                "sdk-raw-with-tools"
+            } else {
+                "sdk-helper-text"
+            },
+        );
         let key = format!("rust-fixture-{turn}");
         let mut stream = client
             .responses_v2()
@@ -40,11 +47,22 @@ async fn cma_v2_fixture_completes_two_turns_and_replays_the_same_receipt() {
         while let Some(event) = stream.next().await {
             events.push(event.unwrap());
         }
-        assert_eq!(events.len(), 9);
+        assert_eq!(events.len(), if turn == 0 { 13 } else { 9 });
         let ResponseEventPayload::Completed { response } = &events.last().unwrap().payload else {
             panic!("missing completed response");
         };
-        assert_eq!(response.output[0].content[0].text, "Hello from CMA");
+        let message = response
+            .output
+            .iter()
+            .find_map(|item| match item {
+                OutputItem::Message(message) => Some(message),
+                _ => None,
+            })
+            .expect("missing message");
+        if turn == 0 {
+            assert!(response.output.iter().any(|item| matches!(item, OutputItem::Activity(activity) if activity.status == cma_sdk::responses_v2::ActivityStatus::Completed)));
+        }
+        assert_eq!(message.content[0].text, "Hello from CMA");
         assert_eq!(
             client
                 .responses_v2()
