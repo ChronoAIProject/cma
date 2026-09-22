@@ -1,0 +1,134 @@
+use super::binding_tests::{fixture, request};
+use axum::{
+    body::{to_bytes, Body},
+    http::{Method, StatusCode},
+};
+use layer2_core::sandbox::agent_io::AgentCommandStore;
+use serde_json::{json, Value};
+use tower::ServiceExt;
+
+fn context() -> Value {
+    json!({"schema_version":1,"channel_id":"channel-independent-of-binding","conversation_id":"conversation-external",
+        "activity":{"schema_version":1,"event_id":"event-1","kind":{"type":"message","text":"Hello","attachments":[],"mentions_bot":true},"actor":{"id":"sender"},"conversation":{"id":"raw-chat","kind":"private"},"occurred_at":"2026-09-22T00:00:00Z","source":"telegram", "retained_extra":"x".repeat(300_000)},
+        "event_ref":"sealed-reference"})
+}
+#[tokio::test]
+async fn full_context_is_admitted_once_read_by_its_binding_and_never_overwritten() {
+    let (app, store, _, principal) = fixture().await;
+    let expected = context();
+    let body = json!({"conversation":"conversation-external", "stream":true,"input":"Hello","event_context":expected});
+    let response = app
+        .clone()
+        .oneshot(request("/api/v2/responses", &principal, body.clone()))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let id = response.headers()["x-cma-response-id"]
+        .to_str()
+        .unwrap()
+        .to_owned();
+    drop(response);
+    let retained = store
+        .get_response_command(&layer2_core::ids::AgentResponseId(id.clone()))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        retained
+            .receipt
+            .envelope
+            .command
+            .external_event()
+            .unwrap()
+            .payload,
+        expected
+    );
+    let retried = app
+        .clone()
+        .oneshot(request("/api/v2/responses", &principal, body.clone()))
+        .await
+        .unwrap();
+    assert_eq!(retried.headers()["x-cma-response-id"], id);
+    drop(retried);
+    for (binding, conversation, event, status) in [
+        (
+            "binding-responses",
+            "conversation-external",
+            "event-1",
+            StatusCode::OK,
+        ),
+        (
+            "foreign-binding",
+            "conversation-external",
+            "event-1",
+            StatusCode::NOT_FOUND,
+        ),
+        (
+            "binding-responses",
+            "conversation-external",
+            "event-missing",
+            StatusCode::NOT_FOUND,
+        ),
+        (
+            "binding-responses",
+            "missing-conversation",
+            "event-1",
+            StatusCode::NOT_FOUND,
+        ),
+    ] {
+        let path =
+            format!("/api/v1/cmaeg/bindings/{binding}/conversations/{conversation}/events/{event}");
+        let mut get = request(&path, &principal, Value::Null);
+        *get.method_mut() = Method::GET;
+        *get.body_mut() = Body::empty();
+        let response = app.clone().oneshot(get).await.unwrap();
+        assert_eq!(response.status(), status);
+        if status == StatusCode::OK {
+            assert_eq!(response.headers()["cache-control"], "no-store");
+            let payload: Value =
+                serde_json::from_slice(&to_bytes(response.into_body(), 1_048_576).await.unwrap())
+                    .unwrap();
+            assert_eq!(payload, expected);
+        }
+    }
+    let mut changed = body.clone();
+    changed["event_context"]["event_ref"] = "different-reference".into();
+    let response = app
+        .clone()
+        .oneshot(request("/api/v2/responses", &principal, changed))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let mut other_key = request("/api/v2/responses", &principal, body);
+    other_key
+        .headers_mut()
+        .insert("idempotency-key", "other-key".parse().unwrap());
+    assert_eq!(
+        app.oneshot(other_key).await.unwrap().status(),
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        store
+            .get_response_command(&layer2_core::ids::AgentResponseId(id))
+            .await
+            .unwrap()
+            .unwrap(),
+        retained
+    );
+}
+#[test]
+fn malformed_or_oversized_context_is_explicitly_refused() {
+    for (field, value) in [
+        ("schema_version", json!(2)),
+        ("event_ref", json!("")),
+        ("activity", json!({})),
+        ("unknown", json!(true)),
+    ] {
+        let mut context = context();
+        context[field] = value;
+        assert!(super::event_context::parse(context).is_err());
+    }
+    let mut context = context();
+    context["activity"]["retained_extra"] = "x".repeat(1_048_576).into();
+    assert!(super::event_context::parse(context).is_err());
+}

@@ -27,6 +27,7 @@ pub(super) struct CreateV2ResponseRequest {
     stream: bool,
     model: Option<String>,
     metadata: Option<BTreeMap<String, String>>,
+    event_context: Option<super::event_context::EventContext>,
     store: Option<bool>,
 }
 #[utoipa::path(post, path = "/api/v2/responses", tag = "responses v2", request_body = CreateV2ResponseRequest, params(("Idempotency-Key" = Option<String>, Header)), responses((status = 200, body = String, content_type = "text/event-stream"), (status = 422, body = Value)))]
@@ -95,6 +96,14 @@ async fn submit(
     };
     let binding =
         auth.context.credential_source == layer2_core::resource_access::CredentialSource::Binding;
+    if !binding && body.get("event_context").is_some() {
+        return error::error(
+            StatusCode::FORBIDDEN,
+            "binding_key_required",
+            "Event context requires a current binding key.",
+            Some("event_context"),
+        );
+    }
     // A binding's URL and body may use different aliases of the same Agent.
     let parse_alias = if binding && body.get("conversation").is_some() {
         None

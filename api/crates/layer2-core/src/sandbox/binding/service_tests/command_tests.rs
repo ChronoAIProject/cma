@@ -4,7 +4,7 @@ use crate::resource_access::*;
 use crate::sandbox::agent_io::*;
 use crate::sandbox::store::SandboxMutationGuard;
 
-struct LocalAuthority(Arc<BindingAccessService>);
+pub(super) struct LocalAuthority(pub(super) Arc<BindingAccessService>);
 #[async_trait::async_trait]
 impl OrganizationAuthority for LocalAuthority {
     async fn organization_context(
@@ -41,7 +41,7 @@ impl AgentCommandAdmissionAuthority for LocalAuthority {
     }
 }
 
-async fn request(
+pub(super) async fn request(
     f: &Fixture,
     bindings: &Arc<BindingAccessService>,
     access: &ResourceAccessService,

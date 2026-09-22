@@ -10,7 +10,7 @@ pub(in crate::store) fn document(
 ) -> Result<Document, CommandLedgerError> {
     record.validate()?;
     let envelope = &record.receipt.envelope;
-    Ok(doc! {
+    let mut document = doc! {
         "_id": envelope.command_id.as_str(),
         "document_schema_version": DOCUMENT_SCHEMA_VERSION,
         "agent_id": envelope.agent_id.as_str(),
@@ -22,16 +22,21 @@ pub(in crate::store) fn document(
         "queue_deadline": &record.queue_deadline,
         "revision": signed(record.revision, "command revision").map_err(|_| CommandLedgerError::Corrupt)?,
         "record": record_bson(record).map_err(|_| CommandLedgerError::Corrupt)?,
-    })
+    };
+    if let Some(key) = envelope.external_event_key() {
+        document.insert("external_event_key", key);
+    }
+    Ok(document)
 }
 
 pub(in crate::store) fn read(value: &Document) -> Result<AdmittedAgentCommand, CommandLedgerError> {
     let record: AdmittedAgentCommand =
         read_record(value).map_err(|_| CommandLedgerError::Corrupt)?;
     let expected = document(&record)?;
-    if expected
-        .iter()
-        .any(|(key, field)| key != "record" && value.get(key) != Some(field))
+    if value.get("external_event_key") != expected.get("external_event_key")
+        || expected
+            .iter()
+            .any(|(key, field)| key != "record" && value.get(key) != Some(field))
     {
         return Err(CommandLedgerError::Corrupt);
     }
@@ -85,6 +90,18 @@ pub(in crate::store) async fn ensure_indexes(
                     .name("agent_command_response".to_string())
                     .unique(true)
                     .partial_filter_expression(doc! { "response_id": { "$type": "string" } })
+                    .build(),
+            )
+            .build(),
+    );
+    indexes.push(
+        IndexModel::builder()
+            .keys(doc! { "external_event_key": 1 })
+            .options(
+                IndexOptions::builder()
+                    .name("agent_command_external_event".to_string())
+                    .unique(true)
+                    .partial_filter_expression(doc! { "external_event_key": { "$type": "string" } })
                     .build(),
             )
             .build(),
