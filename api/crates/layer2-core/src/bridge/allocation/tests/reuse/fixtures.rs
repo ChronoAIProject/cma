@@ -141,6 +141,7 @@ pub(super) async fn reused(
         original.pin.clone(),
         profiles,
         AuthorizedResource {
+            binding: None,
             snapshot: resources.clone(),
             decision,
         },

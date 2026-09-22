@@ -18,7 +18,11 @@ impl ResourceAccessService {
         };
         let decision = AccessDecision::personal(caller, &subject);
         decision.require(capability)?;
-        Ok(AuthorizedResource { snapshot, decision })
+        Ok(AuthorizedResource {
+            snapshot,
+            decision,
+            binding: None,
+        })
     }
 
     /// Fence a buffered result immediately before release. This does not renew
@@ -50,6 +54,7 @@ impl ResourceAccessService {
         {
             return Err(ResourceAccessStoreError::Conflict.into());
         }
+        self.validate_binding_authority(authorized).await?;
         authorized.decision.require(capability)?;
         Ok(current)
     }

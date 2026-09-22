@@ -35,6 +35,10 @@ pub struct ResourceAuthorityObservation {
 pub enum ResourceAuthorizationBasis {
     PersonalOwner,
     GlobalOperator,
+    ExternalBinding {
+        binding_id: String,
+        generation: u64,
+    },
     Organization {
         issuer: String,
         organization: SubjectId,
@@ -75,6 +79,11 @@ impl ResourceAuthorizationAudit {
             return Err(invalid);
         }
         for observation in &self.observations {
+            if matches!(&observation.basis, ResourceAuthorizationBasis::ExternalBinding { binding_id, generation }
+                if binding_id.trim().is_empty() || *generation == 0 || *generation > i64::MAX as u64)
+            {
+                return Err(invalid);
+            }
             if observation.capabilities.is_empty() {
                 return Err(invalid);
             }

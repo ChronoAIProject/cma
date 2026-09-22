@@ -447,3 +447,5 @@ async fn binding_rejects_invalid_credential_before_reserving_the_identifier() {
 
 mod access;
 mod rotation;
+
+mod resource_access;
