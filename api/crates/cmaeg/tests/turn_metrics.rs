@@ -21,7 +21,8 @@ impl Write for Capture {
     }
 }
 #[tokio::test]
-async fn fake_dispatch_metric_is_under_twenty_ms_and_logs_no_secrets() {
+async fn socket_metric_is_under_twenty_ms_and_logs_no_secrets() {
+    let metrics = cmaeg::telemetry::install().unwrap();
     let mut fixture = Fixture::new(Default::default(), Default::default(), 4).await;
     let capture = Capture(Default::default());
     let writer = capture.clone();
@@ -31,24 +32,20 @@ async fn fake_dispatch_metric_is_under_twenty_ms_and_logs_no_secrets() {
         .with_writer(move || writer.clone())
         .finish();
     tracing::subscriber::set_global_default(subscriber).unwrap();
-    let request = fixture.request("metric");
+    let mut request = fixture.request("metric");
+    let timing = cmaeg::telemetry::timing::IngressTiming::new("custom");
+    timing.received();
+    request.timing = Some(timing.clone());
     let reference = request.event_ref.as_str().to_owned();
     fixture.runner.launch(request).await;
     fixture.terminal().await;
     let logs = String::from_utf8(capture.0.lock().unwrap().clone()).unwrap();
-    let line = logs
+    let scrape = metrics.render();
+    let line = scrape
         .lines()
-        .find(|line| line.contains("cmaeg_ingress_to_provider_seconds"))
-        .unwrap_or_else(|| panic!("missing ingress metric: {logs}"));
-    let seconds: f64 = line
-        .split("duration_seconds=")
-        .nth(1)
-        .unwrap()
-        .split_whitespace()
-        .next()
-        .unwrap()
-        .parse()
+        .find(|line| line.starts_with("cmaeg_ingress_to_provider_seconds_sum{"))
         .unwrap();
+    let seconds: f64 = line.split_whitespace().last().unwrap().parse().unwrap();
     assert!(seconds < 0.020, "{logs}");
     assert!(
         logs.contains("cmaeg_provider_accept_seconds"),
@@ -63,6 +60,22 @@ async fn fake_dispatch_metric_is_under_twenty_ms_and_logs_no_secrets() {
             .drain(std::time::Instant::now() + std::time::Duration::from_secs(1))
             .await
     );
+    assert!(!timing.header().contains("not_written"));
+    let scrape = metrics.render();
+    assert!(
+        scrape.lines().any(
+            |line| line.starts_with("cmaeg_ingress_to_provider_seconds_count{")
+                && line.contains("source=\"custom\"")
+                && line.ends_with(" 1")
+        ),
+        "{scrape}"
+    );
+    assert!(scrape.contains("cmaeg_turns_inflight 0"));
+    assert!(scrape.lines().any(
+        |line| line.starts_with("cmaeg_turn_duration_seconds_count{")
+            && line.contains("completed")
+            && line.ends_with(" 1")
+    ));
     assert_eq!(fixture.fake.requests().len(), 1);
     fixture.fake.close().await;
 }

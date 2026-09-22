@@ -10,7 +10,7 @@ and idempotent. All duration histograms use seconds with buckets
 | --- | --- | --- |
 | `cmaeg_ingress_to_provider_seconds` | `source`, `cold` | Last inbound body byte to first provider request socket write. The transport observation is required before recording a sample. |
 | `cmaeg_restore_duration_seconds` | `outcome` | A shared restore flight, including the bounded CMA fetch, validation, and decryption. |
-| `cmaeg_provider_accept_seconds` | `provider` | Outbound request start through the provider's first valid acceptance frame. |
+| `cmaeg_provider_accept_seconds` | `provider` | First socket write of the accepted attempt through the provider's first valid acceptance frame. |
 | `cmaeg_turn_duration_seconds` | `provider`, `outcome` | Local turn consumer lifetime, including cancellation and timeout. |
 | `cmaeg_delivery_seconds` | `platform`, `outcome` | A logical outbound message or custom terminal delivery, including route pacing and permitted retries. |
 | `cmaeg_tool_call_seconds` | `tool`, `outcome` | Shared REST/MCP tool operation, including authorization and waiting for its receipt. |
@@ -46,7 +46,31 @@ compositions without an observed transport. Such values are not successful
 zero-latency launches. REST and MCP tools responses include `deliver;dur`,
 covering the complete request through the receipt or refusal.
 
-The private listener and operation recording are implemented. The provider
-transport observation and the executable warm/cold latency gate are being added
-in the remaining work for milestone issue #911; request dispatch alone is not
-evidence of a socket write.
+The Responses transport observes successful TCP writes. HTTP/1 connections are
+pooled with up to 64 idle connections per provider and a 90-second idle lifetime.
+HTTP/2 requests share a connection; cleartext `.svc` providers use prior knowledge,
+and HTTPS providers negotiate HTTP/2 or HTTP/1.1 through ALPN. An HTTP/2 frame's
+stream ID associates its first HEADERS byte with the right request; SETTINGS,
+PING, and other control frames cannot produce a launch sample. The observer reads
+only the fixed nine-byte frame header and never decodes credentials or content.
+
+TLS timing is taken below encryption, at the first TCP write of the TLS record
+containing the request's first plaintext segment. Earlier handshake and control
+records are flushed before that segment is armed. Accepting bytes into a TLS
+buffer does not record a write. Provider headers, acceptance, and response content
+arrive afterward and do not affect the ingress sample. Retries retain the first
+attempt's ingress sample; acceptance duration refers to the accepted attempt.
+If acceptance times out before the write, the already-returned header cannot be
+updated; the metric records the later write if the admitted turn reaches it.
+
+Each turn's semaphore remains held for the stream lifetime. Dropping an HTTP/2
+turn resets its stream while other turns keep their connection. HTTP/1 terminal
+frames permit a bounded 100-ms, 16-KiB tail drain for connection reuse; cancelled
+consumers close immediately. Request header deadlines remain independent of
+stream lifetime. Normal certificate verification remains enabled. The transport
+uses the workspace's existing locked Hyper, h2, Tokio, and Rustls dependency
+versions; it does not add an alternative TLS stack.
+
+The executable warm/cold latency gate is the remaining work for milestone issue
+#911. Its budget is p99 at most one second for cached channels and two seconds
+for a restore. Provider processing time is outside both budgets.

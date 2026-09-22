@@ -93,6 +93,7 @@ pub struct FieldRefusal {
 
 #[derive(Debug, Clone)]
 pub struct TurnRequest {
+    pub timing: Option<crate::telemetry::timing::IngressTiming>,
     pub conversation_id: ConversationId,
     pub input: Vec<Value>,
     pub idempotency_key: IdempotencyKey,
@@ -112,6 +113,7 @@ pub struct Accepted {
 pub struct TurnStream {
     pub accepted: oneshot::Receiver<Accepted>,
     pub events: mpsc::Receiver<ResponsesEvent>,
+    /// First successful socket write of this attempt, excluding provider processing.
     pub request_started: Instant,
 }
 
@@ -120,6 +122,7 @@ pub struct TurnStream {
 pub(crate) struct ProviderHandle {
     pub(crate) entry: super::ProviderEntry,
     pub(crate) client: reqwest::Client,
+    pub(crate) responses: std::sync::Arc<super::transport::ResponseTransport>,
     pub(crate) inflight: std::sync::Arc<tokio::sync::Semaphore>,
 }
 

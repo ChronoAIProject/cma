@@ -56,14 +56,6 @@ impl TurnRunner {
                 }
                 _ => (ProblemCode::ProviderUnavailable, "provider_unavailable"),
             })?;
-            tracing::info!(
-                metric = "cmaeg_ingress_to_provider_seconds",
-                duration_seconds = stream
-                    .request_started
-                    .saturating_duration_since(turn.received_at)
-                    .as_secs_f64(),
-                "turn dispatched to provider"
-            );
             consume::consume(stream, turn.clone(), &self.delivery, &mut admitted)
                 .await
                 .map_err(|reason| (ProblemCode::ProviderUnavailable, reason))
@@ -108,6 +100,7 @@ impl TurnRunner {
                 ProviderError::InvalidRequest("channel has no provider credential".into())
             })?;
         let request = TurnRequest {
+            timing: turn.timing.clone(),
             conversation_id: turn.conversation_id.clone(),
             input: render_input::render(&turn.activity, definition),
             idempotency_key: turn.idempotency_key.clone(),
