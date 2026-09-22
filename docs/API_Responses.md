@@ -18,7 +18,7 @@ durable custody. Browser requests retain their existing sign-in incarnation.
 For external API requests, CMA independently encrypts the exact NyxID access
 token presented by the caller until its provider-verified expiry. The token must
 be an ordinary, unrestricted user access token with active introspection, a
-matching subject, current permissions and an explicit expiry. Agent keys,
+matching subject, current permissions and an explicit expiry. Unregistered agent keys,
 service-account, delegated, relay, resource-scoped and sender-constrained tokens
 cannot use this path. API custody neither replaces a browser login nor borrows
 its refresh token; callers obtain a new API token when theirs expires. Current history
@@ -31,6 +31,26 @@ membership, resource policy and the exact admitted credential custody again. San
 revival additionally requires independent `manage_sandbox` authority and uses
 the resource owner's connections. Organization resource creation and credential
 provisioning remain separate capabilities under development.
+
+A supplied key registered to a live provider binding uses local hash lookup and
+only `UseBindingConversations`; no NyxID request or owner login is needed. It can
+read and interact with that binding's mapped Agents. It cannot list the owner's
+other resources, manage Sandboxes, read files, change sharing or answer approvals.
+For these callers, `conversation` may name the external conversation ID or its
+mapped `agt_` ID. The Agent URL alias and body may use different IDs when both
+resolve to the same mapped Agent. Missing and foreign mappings return
+`404 conversation_not_found`; a provisioning mapping returns
+`409 conversation_not_ready`. Conversation GET routes accept the same aliases.
+Responses retain the mapped Agent ID as their conversation identity.
+
+Binding command receipts retain the binding identity and environment generation,
+so rotating its supplied key preserves idempotency and already admitted work.
+Admission, controls, cancellation, dispatch and automatic parent revival fence
+current binding and conversation authority in the same store transaction. The
+worker obtains fresh authority before execution. Retirement or reconfiguration
+refuses old-generation work. Held streams close when their binding proof changes;
+reconnect with the current key. A queued binding command may revive only its
+mapped parent without granting public Sandbox-management authority.
 
 | Method and route | Behavior |
 |---|---|
@@ -58,7 +78,7 @@ The model pinned in the Agent Profile remains authoritative.
 | `input` | Required nonempty text, or one user message with string content or one or more `input_text` parts; adjacent text parts canonicalize |
 | `stream` | Literal `true` required; absent/false returns `stream_required` |
 | `model` | Optional nonempty string; mismatch returns `model_mismatch` |
-| `metadata` | Optional object/null; 16 string pairs, 64 characters per key, 512 per value; visible only to the personal owner |
+| `metadata` | Optional object/null; 16 string pairs, 64 characters per key, 512 per value; visible to the personal owner and the scoped binding |
 | `store` | Omitted or literal `true`; data is retained under Agent history policy |
 | `previous_response_id` | Omitted/null only; predecessor continuation is unsupported; combining a nonnull predecessor with conversation returns `conversation_previous_response_conflict` |
 | `instructions`, `reasoning`, `tools`, `tool_choice` | Refused by name; execution configuration belongs to the pinned profile |

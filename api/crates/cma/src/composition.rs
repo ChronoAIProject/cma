@@ -380,12 +380,7 @@ impl ControlPlaneComposition {
             auth.clone(),
         );
         let projections = projections.with_commands(command_service.clone());
-        let responses_v2 = layer1_public::responses::v2::router(
-            layer1_public::responses::v2::ResponsesV2State::new(
-                command_service,
-                projections.reads(),
-            ),
-        );
+        let responses_v2 = bindings::responses(&stores, command_service, projections.reads());
         let provenance = layer2_core::sandbox::AgentProvenanceService::new(
             stores.sandbox_model.clone(),
             resource_access.clone(),
