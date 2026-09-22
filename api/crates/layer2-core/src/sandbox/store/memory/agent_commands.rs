@@ -60,6 +60,25 @@ impl AgentCommandStore for InMemorySandboxStore {
         Ok(Some(record.clone()))
     }
 
+    async fn get_external_event_command(
+        &self,
+        key: &str,
+    ) -> Result<Option<AdmittedAgentCommand>, CommandLedgerError> {
+        let state = self.lock();
+        let mut matches = state
+            .agent_commands
+            .values()
+            .filter(|record| record.receipt.envelope.external_event_key().as_deref() == Some(key));
+        let record = matches.next().cloned();
+        if matches.next().is_some() {
+            return Err(CommandLedgerError::Corrupt);
+        }
+        if let Some(record) = &record {
+            record.validate()?;
+        }
+        Ok(record)
+    }
+
     async fn get_response_command(
         &self,
         id: &crate::ids::AgentResponseId,
@@ -116,6 +135,15 @@ pub(super) fn reserve(
             .get(id)
             .ok_or(CommandLedgerError::Corrupt)?;
         return request.replay(current.clone());
+    }
+    if let Some(event) = request.envelope.external_event_key() {
+        if state
+            .agent_commands
+            .values()
+            .any(|record| record.receipt.envelope.external_event_key().as_ref() == Some(&event))
+        {
+            return Err(CommandLedgerError::IdempotencyConflict);
+        }
     }
     let agent = state
         .agents

@@ -166,6 +166,15 @@ pub trait AgentCommandStore: Send + Sync {
         Err(CommandLedgerError::Unavailable)
     }
 
+    /// Persistence-only permanent external-event lookup. The service must prove
+    /// current binding and conversation access before exposing the payload.
+    async fn get_external_event_command(
+        &self,
+        _key: &str,
+    ) -> Result<Option<AdmittedAgentCommand>, CommandLedgerError> {
+        Err(CommandLedgerError::Unavailable)
+    }
+
     /// Atomically deduplicate, assign a per-Agent order, check the bounded queue
     /// and retain the receipt. No TTL may silently make an old key reusable.
     async fn reserve_command(
