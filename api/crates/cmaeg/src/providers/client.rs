@@ -67,6 +67,10 @@ impl ProviderClient {
                 ProviderHandle {
                     entry: entry.clone(),
                     client,
+                    responses: Arc::new(super::transport::ResponseTransport::new(
+                        entry.base_url.clone(),
+                        connect_timeout,
+                    )),
                     inflight: Arc::new(Semaphore::new(max_inflight)),
                 },
             );
@@ -222,8 +226,7 @@ impl ProviderClient {
         validate_metadata(&request.metadata)?;
         let handle = self.handle(provider)?;
         let permit = acquire(&handle.inflight).await?;
-        self.start_with_permit(provider, request, handle, permit)
-            .await
+        self.start_with_permit(request, handle, permit).await
     }
 
     /// Runner admission never waits behind another turn's lifetime semaphore.
@@ -239,13 +242,11 @@ impl ProviderClient {
             .clone()
             .try_acquire_owned()
             .map_err(|_| ProviderError::Capacity)?;
-        self.start_with_permit(provider, request, handle, permit)
-            .await
+        self.start_with_permit(request, handle, permit).await
     }
 
     async fn start_with_permit(
         &self,
-        provider: &ProviderSlug,
         request: TurnRequest,
         handle: &ProviderHandle,
         permit: OwnedSemaphorePermit,
@@ -267,31 +268,32 @@ impl ProviderClient {
             body["event_context"] = serde_json::to_value(context)
                 .map_err(|_| ProviderError::InvalidRequest("invalid event context".into()))?;
         }
-        let request_started = Instant::now();
-        tracing::debug!(
-            target: "cmaeg.provider.request_started",
-            provider = %provider,
-            conversation = %request.conversation_id,
-            "provider request started"
-        );
-        let response = tokio::time::timeout(
+        let bytes = serde_json::to_vec(&body)
+            .map_err(|_| ProviderError::InvalidRequest("invalid provider request".into()))?;
+        let observed = tokio::time::timeout(
             self.request_timeout,
-            handle
-                .client
-                .post(url)
-                .bearer_auth(request.agent_key.as_str())
-                .header(reqwest::header::ACCEPT, "text/event-stream")
-                .header("idempotency-key", request.idempotency_key.as_str())
-                .json(&body)
-                .send(),
+            handle.responses.send(
+                url,
+                request.agent_key.as_str(),
+                request.idempotency_key.as_str(),
+                bytes,
+                request.timing,
+            ),
         )
         .await
-        .map_err(|_| ProviderError::Unavailable("provider request timed out".into()))?
-        .map_err(transport_error)?;
+        .map_err(|_| ProviderError::Unavailable("provider request timed out".into()))??;
+        let request_started = observed.written_at;
+        let response = observed.response;
         let response = self.success_or_error(response).await?;
         let (accepted_tx, accepted) = oneshot::channel();
         let (events_tx, events) = mpsc::channel(64);
-        tokio::spawn(forward_turn(response, accepted_tx, events_tx, permit));
+        tokio::spawn(forward_turn(
+            response,
+            accepted_tx,
+            events_tx,
+            permit,
+            observed.complete,
+        ));
         Ok(TurnStream {
             accepted,
             events,
