@@ -53,6 +53,7 @@ mod lifecycle_queue_conflict_tests;
 mod lifecycle_queue_tests;
 mod lifecycle_recovery_tests;
 mod pause_cancellation_tests;
+mod provided_credential_tests;
 mod reconciliation_tests;
 mod retirement_checkpoint_tests;
 mod runtime_attachment_tests;
@@ -174,6 +175,7 @@ impl SandboxCredentialController for MemoryCredentials {
         }
         self.actions.push(format!("mint:{generation}"));
         let material = CredentialMaterial {
+            source: Default::default(),
             sandbox_id: sandbox.id.clone(),
             owner: sandbox.owner.clone(),
             authority: layer2_core::sandbox::SandboxCredentialAuthority {
@@ -1383,6 +1385,7 @@ async fn retirement_keeps_revoke_debt_until_custody_is_deleted() {
     let active = harness.drive_active(&created.id, now).await;
     let authority = active.credential.current.clone().unwrap();
     harness.credentials.restore(CredentialMaterial {
+        source: Default::default(),
         sandbox_id: active.id.clone(),
         owner: active.owner.clone(),
         authority: authority.clone(),
@@ -1443,6 +1446,7 @@ async fn custody_that_appears_after_the_grace_check_blocks_purge_until_revoked()
         SandboxWorkStep::Purge
     );
     harness.credentials.restore(CredentialMaterial {
+        source: Default::default(),
         sandbox_id: active.id.clone(),
         owner: active.owner.clone(),
         authority: layer2_core::sandbox::SandboxCredentialAuthority {

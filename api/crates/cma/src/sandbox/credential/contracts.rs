@@ -7,10 +7,25 @@ use std::time::SystemTime;
 
 #[derive(Debug, Clone)]
 pub(crate) struct CredentialMaterial {
+    pub source: layer2_core::sandbox::SandboxCredentialSource,
     pub sandbox_id: SandboxId,
     pub owner: SubjectId,
     pub authority: SandboxCredentialAuthority,
     pub value: SecretValue,
+}
+
+impl CredentialMaterial {
+    pub(crate) fn matches_source(&self) -> bool {
+        use layer2_core::sandbox::SandboxCredentialSource;
+        use sha2::{Digest, Sha256};
+        self.source.accepts(&self.authority)
+            && match &self.source {
+                SandboxCredentialSource::Managed => true,
+                SandboxCredentialSource::Provided { key_sha256 } => {
+                    &format!("{:x}", Sha256::digest(self.value.expose().as_bytes())) == key_sha256
+                }
+            }
+    }
 }
 
 /// Non-secret outbox entry for a provider key which lost a custody race.

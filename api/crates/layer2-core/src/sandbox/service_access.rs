@@ -59,7 +59,8 @@ impl Sandbox {
         at: String,
     ) -> Result<Option<SandboxServiceGrant>, SandboxModelError> {
         self.validate()?;
-        if owner != &self.owner
+        if !self.credential.source.is_managed()
+            || owner != &self.owner
             || services.is_empty()
             || services.len() > MAX_ADDITIONAL_SERVICES
             || services.iter().any(|service| !valid_service(service))
@@ -106,7 +107,8 @@ impl Sandbox {
     }
 
     pub fn validate_service_access_successor(&self, next: &Self) -> Result<(), SandboxModelError> {
-        if self.credential.reaches != next.credential.reaches
+        if self.credential.source != next.credential.source
+            || self.credential.reaches != next.credential.reaches
             || self.credential.service_grants != next.credential.service_grants
             || next.credential.key_generation < self.credential.key_generation
         {

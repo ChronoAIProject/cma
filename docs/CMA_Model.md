@@ -212,6 +212,17 @@ values. Renewal is recorded; a stale generation cannot install a newer key or
 expand scope. Provider and model access remain Sandbox-wide, including the
 shared own-account sign-in state.
 
+Credential custody records distinguish `managed` keys from `provided` keys.
+An external binding supplies its key through encrypted custody; its source
+records the SHA-256 of the exact bytes. The supplied key's opaque receipt does
+not assert a provider key identifier, verified grant, or expiry. An empty expiry
+means unknown only for this source. CMA delivers the same key after installation
+and again on revival, and never mints a fallback when its custody is missing.
+Its issuer owns rotation and revocation. Retirement removes CMA's encrypted
+copy without revoking the externally owned key. Ordinary service-access grants
+cannot expand a supplied key's scope. Retained records without a source keep
+their existing managed-key behavior.
+
 An own-account Agent records a provider sign-in challenge under its existing
 startup claim while authentication is still pending. This publication preserves
 the open-operation intent, lease and selected skill material and atomically

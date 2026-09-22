@@ -2,6 +2,8 @@
 
 pub(crate) mod channel;
 mod custody;
+#[cfg(test)]
+mod provided_tests;
 mod renewal;
 mod retirement;
 
@@ -32,6 +34,11 @@ struct CredentialDocument {
     sandbox_id: String,
     owner: String,
     generation: i64,
+    #[serde(
+        default,
+        skip_serializing_if = "layer2_core::sandbox::SandboxCredentialSource::is_managed"
+    )]
+    source: layer2_core::sandbox::SandboxCredentialSource,
     provider_key_id: String,
     provider_state_version: i64,
     issued_at: String,
@@ -121,6 +128,7 @@ impl MongoSandboxCredentialStore {
             owner: material.owner.0.clone(),
             generation: i64::try_from(authority.generation)
                 .map_err(|_| StoreError::Malformed("credential generation is too large".into()))?,
+            source: material.source.clone(),
             provider_key_id: authority.provider_key_id.clone(),
             provider_state_version: authority.provider_state_version,
             issued_at: authority.issued_at.clone(),
@@ -152,6 +160,7 @@ impl MongoSandboxCredentialStore {
             ));
         }
         let material = CredentialMaterial {
+            source: document.source,
             sandbox_id: SandboxId(document.sandbox_id),
             owner: SubjectId(document.owner),
             authority: layer2_core::sandbox::SandboxCredentialAuthority {
@@ -212,9 +221,12 @@ fn validate_material(material: &CredentialMaterial) -> Result<(), StoreError> {
         || authority.generation == 0
         || !valid_provider_key_id(&authority.provider_key_id)
         || authority.provider_state_version <= 0
-        || issued
-            .zip(expires)
-            .is_none_or(|(issued, expires)| expires <= issued)
+        || !material.matches_source()
+        || issued.is_none()
+        || (material.source.is_managed()
+            && issued
+                .zip(expires)
+                .is_none_or(|(issued, expires)| expires <= issued))
         || authority.grant_fingerprint.len() != 64
         || !authority
             .grant_fingerprint

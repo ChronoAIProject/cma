@@ -486,6 +486,7 @@ fn sandbox() -> Sandbox {
         failure: None,
         runtime: None,
         credential: SandboxCredentialState {
+            source: Default::default(),
             service_grants: Vec::new(),
             reaches: Vec::new(),
             key_generation: 0,

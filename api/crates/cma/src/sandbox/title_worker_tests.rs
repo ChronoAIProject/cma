@@ -138,6 +138,7 @@ impl Fixture {
         let service = AgentTitleService::new(titles.clone(), "title-worker").unwrap();
         let credentials = Arc::new(Credentials(
             Mutex::new(Some(CredentialMaterial {
+                source: Default::default(),
                 sandbox_id: sandbox.id,
                 owner: sandbox.owner,
                 authority: sandbox.credential.current.unwrap(),

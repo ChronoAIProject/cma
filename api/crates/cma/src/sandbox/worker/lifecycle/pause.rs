@@ -32,10 +32,12 @@ impl SandboxWorker {
                 )
                 .await;
         }
-        let rotation_at =
-            super::super::support::credential_rotation_at(&sandbox).ok_or_else(|| {
-                SandboxStoreError::Corrupt("active credential expiry is absent".into())
-            })?;
+        let rotation_at = if sandbox.credential.source.is_managed() {
+            super::super::support::credential_rotation_at(&sandbox)
+        } else {
+            Some(now)
+        }
+        .ok_or_else(|| SandboxStoreError::Corrupt("active credential expiry is absent".into()))?;
         let stamp = rfc3339_at(now + started.elapsed());
         let lease = lifecycle_lease(&sandbox, &self.config.holder)?;
         let mut next = sandbox.clone();
