@@ -243,7 +243,11 @@ PUT replaces policy, not a merge patch. Omitted/null `credentials` retains all
 credentials. A supplied patch has optional `agent_key`, `channel_key` and
 `hmac_secrets`; omitted/null fields retain prior values, while a supplied HMAC
 list replaces the list. Referenced secrets must still exist. Update cannot change the provider slug and preserves
-channel identity and enforces the optimistic record version. Delete unbinds the provider before removing the record; an unbind failure
+channel identity and enforces the optimistic record version. Every successful PUT
+reconciles the provider binding, including when credentials are retained. This
+repairs a previous update that changed the provider but failed to save the record;
+a GET alone does not establish the provider's credential state.
+Delete unbinds the provider before removing the record; an unbind failure
 preserves the record and is returned to the caller. Rekey re-encrypts the record under the
 current master key and retains `channel_id`; operators must retain keys needed
 to open existing channel pointers.

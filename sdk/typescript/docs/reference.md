@@ -495,3 +495,22 @@ and `rendering` before claiming delivery or native UI support. Typing can return
 and message references remain opaque and must not be logged. No redirect or
 automatic mutation retry is performed. Unknown response properties are ignored;
 CloudEvents extension attributes are retained.
+
+## Owner Bots
+
+`client.bots` exposes `create`, `list`, `get`, `available`, `test`, `disable`,
+`enable`, `rotateKeys` and `delete`. Use the current renewable CMA sign-in with
+`cma:bot:manage`; independent agent keys cannot borrow the owner's stored login.
+The owner must already have registered a personal Telegram bot in NyxID and
+connected the profile/model services plus the `cmaeg` tools service.
+
+Creation takes a name, `nyxid_bot_id`, a published Agent profile reference, an
+admission policy and a reply policy. Retain the creation idempotency key across
+uncertain outcomes. HTTP 201 returns the durable Bot in `creating`; poll `get`
+for `active` or `failed` and inspect `operation.step` for cleanup progress.
+Other mutations return 202 with progress. A deleted Bot becomes 404 only after
+its provider binding, channel, routes and owned credentials have been removed.
+The `test` method runs a synthetic provider turn and sends no Telegram message.
+
+Bot responses contain no credential bytes. Preserve channel IDs and callback
+URLs exactly; never decode, reconstruct or log opaque gateway references.

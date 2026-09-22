@@ -10,6 +10,12 @@ is private and consumed locally by `web/`; the Rust crate is `publish = false` a
 consumed by path. Local package and scratch-consumer checks keep both exported
 surfaces usable.
 
+Both SDKs expose owner Bot management: TypeScript `client.bots` and Rust
+`client.bots()`, with create, list, get, available, test, disable, enable, delete
+and key rotation. Creation requires a retained idempotency key; create and
+mutations return durable progress for polling. Bot tests are synthetic provider
+checks and do not send channel messages. See the SDK reference guides for types.
+
 Those files are versioned beside their SDKs and are the designated source for the
 CMA Developer surface. The public wire contracts remain in the interface documents:
 [REST](API_REST.md), [AG-UI](API_AGUI.md), [Responses](API_Responses.md), [PTY](API_PTY.md), [MCP](API_MCP.md),

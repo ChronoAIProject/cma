@@ -1,5 +1,6 @@
 import { ProviderBindings } from './provider-bindings.js';
 import { GatewayRecords } from './gateway-records.js';
+import { Bots } from './bots.js';
 import { readAgentCard } from './agent-card.js';
 import { resolveConfig, type ClientConfig, type ResolvedConfig } from './config.js';
 import {
@@ -33,6 +34,7 @@ export class Cma {
   readonly #config: ResolvedConfig;
   readonly providerBindings: ProviderBindings;
   readonly gatewayRecords: GatewayRecords;
+  readonly bots: Bots;
   readonly agents: Agents;
   readonly resourceAccess: ResourceAccess;
   readonly bridges: Bridges;
@@ -63,6 +65,7 @@ export class Cma {
     this.#config = resolveConfig(config);
     this.providerBindings = new ProviderBindings(this.#config);
     this.gatewayRecords = new GatewayRecords(this.#config);
+    this.bots = new Bots(this.#config);
     this.agents = new Agents(this.#config);
     this.resourceAccess = new ResourceAccess(this.#config);
     this.bridges = new Bridges(this.#config);
