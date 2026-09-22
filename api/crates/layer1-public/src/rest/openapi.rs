@@ -1,4 +1,3 @@
-//! OpenAPI generation for the currently composed REST boundary.
 use utoipa::openapi::security::SecurityRequirement;
 use utoipa::{openapi, OpenApi};
 mod identity;
@@ -46,6 +45,7 @@ use identity::{anonymous_path, operation_id};
         super::bridge_partitions::usage::read,
         super::bridge_partitions::list,
         super::bridge_partitions::detail,
+        super::bridge_partitions::pending_messages,
         super::bridge_partition_commands::reset,
         super::bridge_partition_commands::detach,
         super::bridge_cleanup::detail,

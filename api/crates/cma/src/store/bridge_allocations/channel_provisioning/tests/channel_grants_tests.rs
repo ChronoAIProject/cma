@@ -7,6 +7,8 @@ use layer2_core::bridge::invoke::*;
 use layer2_core::resource_access::ResourceAccessService;
 use mongodb::bson::Document;
 
+#[path = "channel_retained_validation_tests.rs"]
+mod retained_validation;
 #[path = "channel_grants_usage.rs"]
 mod usage_tests;
 

@@ -72,7 +72,10 @@ export function Composer({
   const inputBlocked = !inputAvailability.allowed;
   const notice = inputAvailability.notice ?? pausedNotice;
   const hasNotice =
-    starting || notice !== undefined || inputAvailability.savingStartedAt !== undefined;
+    starting ||
+    submitting ||
+    notice !== undefined ||
+    inputAvailability.savingStartedAt !== undefined;
   const usable = canMessage(status);
 
   useLayoutEffect(() => {
@@ -150,6 +153,7 @@ export function Composer({
         {!hasNotice ? null : (
           <p id={noticeId} className="agent-composer__notice" role="status">
             {starting ? 'Starting. ' : null}
+            {submitting && !starting ? 'Sending… ' : null}
             {notice}
             {inputAvailability.savingStartedAt === undefined ? null : (
               <>
@@ -221,7 +225,13 @@ export function Composer({
             aria-label={running ? 'Queue message' : 'Send message'}
             title={running ? 'Queue message' : 'Send message'}
             disabled={
-              !usable || busy || starting || inputBlocked || requestPending || content.trim() === ''
+              !usable ||
+              busy ||
+              submitting ||
+              starting ||
+              inputBlocked ||
+              requestPending ||
+              content.trim() === ''
             }
             aria-describedby={hasNotice ? noticeId : undefined}
           />

@@ -22,6 +22,7 @@ struct FixtureState {
     replies: Arc<Mutex<ProviderReplies>>,
     key_patch_on_probe: Arc<Mutex<Option<Value>>>,
     requests: Arc<Mutex<Vec<(String, String, String)>>>,
+    verification_barrier: Arc<Mutex<Option<Arc<tokio::sync::Barrier>>>>,
 }
 
 async fn respond(
@@ -44,6 +45,14 @@ async fn respond(
         && (auth.starts_with("Bearer nyx_") || auth.starts_with("Bearer nyxid_"))
     {
         return StatusCode::FORBIDDEN.into_response();
+    }
+    if path == "/api/v1/users/me/authorization"
+        || path.starts_with("/api/v1/channel-relay/messages/")
+    {
+        let barrier = state.verification_barrier.lock().unwrap().clone();
+        if let Some(barrier) = barrier {
+            barrier.wait().await;
+        }
     }
     let mut replies = state.replies.lock().unwrap();
     let (status, body) = replies
@@ -113,6 +122,7 @@ async fn fixture(replies: BTreeMap<String, (StatusCode, Value)>) -> Fixture {
         replies: Arc::new(Mutex::new(replies)),
         key_patch_on_probe: Arc::new(Mutex::new(None)),
         requests: Arc::new(Mutex::new(vec![])),
+        verification_barrier: Arc::new(Mutex::new(None)),
     };
     let app = Router::new()
         .route("/{*path}", get(respond))
@@ -367,6 +377,7 @@ async fn provider_fractional_and_offset_expirations_bound_the_original_observati
     }
 }
 
+#[path = "tests/custody_tests.rs"]
 mod custody;
 mod custody_semantics;
 

@@ -38,10 +38,25 @@ pub trait AgentCommandExecution: Send + Sync {
     /// Older compositions retain the durable hold. A Channel-aware adapter may
     /// release it only under its own fresh source and invoke transaction.
     async fn release_held(&self, _command: &AdmittedAgentCommand) {}
+    /// Optional one-use authorization handoff within this invocation only.
+    async fn release_held_for_attempt(
+        &self,
+        command: &AdmittedAgentCommand,
+    ) -> Option<ChannelExecutionHandoff> {
+        self.release_held(command).await;
+        None
+    }
     /// Fresh authority and target checks, with no lifecycle or runtime effects.
     async fn check_queued(&self, command: &AdmittedAgentCommand) -> CommandReadiness;
     async fn prepare_queued(&self, command: &AdmittedAgentCommand);
     async fn execute(&self, command: &AdmittedAgentCommand) -> CommandAttempt;
+    async fn execute_with_handoff(
+        &self,
+        command: &AdmittedAgentCommand,
+        _handoff: Option<ChannelExecutionHandoff>,
+    ) -> CommandAttempt {
+        self.execute(command).await
+    }
 }
 
 pub struct AgentCommandWorker {
@@ -106,10 +121,26 @@ impl AgentCommandWorker {
         if candidate.work.dispatch.is_some() {
             return bounded(self.store.reconcile_command(id)).await.map(|_| ());
         }
+        let mut handoff = None;
         if candidate.status == AgentResponseStatus::WaitingAction
             && matches!(candidate.receipt.envelope.actor, AgentActor::Channel { .. })
         {
-            let _ = tokio::time::timeout(IO_BOUND, self.execution.release_held(&candidate)).await;
+            let started = tokio::time::Instant::now();
+            handoff = tokio::time::timeout(
+                IO_BOUND,
+                self.execution.release_held_for_attempt(&candidate),
+            )
+            .await
+            .unwrap_or(None);
+            tracing::info!(
+                event = "channel_operation",
+                operation = "command_execution",
+                stage = "held_release",
+                command_id = %id,
+                idle_handoff = handoff.is_some(),
+                elapsed_ms = started.elapsed().as_millis() as u64,
+                "Channel hold release attempt finished"
+            );
             candidate = bounded(self.store.get_command(id))
                 .await?
                 .ok_or(CommandLedgerError::NotFound)?;
@@ -118,17 +149,35 @@ impl AgentCommandWorker {
         if !candidate.awaiting_claim(&now_rfc3339()) {
             return Ok(());
         }
+        let checked_at = tokio::time::Instant::now();
+        let mut readiness_timed_out = false;
         let readiness = if candidate.queue_expired(&now_rfc3339()) {
             CommandReadiness::Reject(CommandFailureCode::QueueTimeout)
         } else {
             tokio::time::timeout(IO_BOUND, self.execution.check_queued(&candidate))
                 .await
-                .unwrap_or(CommandReadiness::Retry)
+                .unwrap_or_else(|_| {
+                    readiness_timed_out = true;
+                    CommandReadiness::Retry
+                })
         };
         match readiness {
             CommandReadiness::Ready => {}
             CommandReadiness::Retry => {
-                pace_unclaimed(&candidate).await;
+                let delay = unclaimed_recheck_delay(&candidate);
+                if is_channel_message(&candidate) {
+                    tracing::info!(
+                        event = "channel_operation",
+                        operation = "command_readiness",
+                        stage = "check_queued",
+                        outcome = "retry",
+                        timed_out = readiness_timed_out,
+                        elapsed_ms = checked_at.elapsed().as_millis() as u64,
+                        retry_delay_ms = delay.as_millis() as u64,
+                        "Channel readiness will be checked again"
+                    );
+                }
+                pace_unclaimed(&candidate, delay).await;
                 return Ok(());
             }
             CommandReadiness::Reject(code) => {
@@ -167,7 +216,17 @@ impl AgentCommandWorker {
                 return Ok(());
             }
             let _ = tokio::time::timeout(IO_BOUND, self.execution.prepare_queued(&current)).await;
-            pace_unclaimed(&current).await;
+            // Channel preparation may have just interrupted the active turn.
+            // Revisit its replacement promptly, retaining normal backoff for
+            // failed authority checks and non-channel lifecycle preparation.
+            let delay = if matches!(current.receipt.envelope.actor, AgentActor::Channel { .. })
+                && current.receipt.envelope.source.kind == AgentSourceKind::Channel
+            {
+                Duration::from_millis(250)
+            } else {
+                UNCLAIMED_RECHECK_DELAY
+            };
+            pace_unclaimed(&current, delay).await;
             return Ok(());
         };
         command.validate()?;
@@ -202,11 +261,16 @@ impl AgentCommandWorker {
                 )
                 .await;
         }
-        let attempt = self.drive(&command, &claim).await;
+        let attempt = self.drive(&command, &claim, handoff).await;
         self.settle(&command, &claim, attempt).await
     }
 
-    async fn drive(&self, command: &AdmittedAgentCommand, claim: &CommandClaim) -> CommandAttempt {
+    async fn drive(
+        &self,
+        command: &AdmittedAgentCommand,
+        claim: &CommandClaim,
+        handoff: Option<ChannelExecutionHandoff>,
+    ) -> CommandAttempt {
         let renew = async {
             loop {
                 tokio::time::sleep(RENEW_INTERVAL).await;
@@ -226,7 +290,7 @@ impl AgentCommandWorker {
             }
         };
         tokio::select! {
-            result = tokio::time::timeout(ATTEMPT_BOUND, self.execution.execute(command)) => result.unwrap_or(CommandAttempt::Retry),
+            result = tokio::time::timeout(ATTEMPT_BOUND, self.execution.execute_with_handoff(command, handoff)) => result.unwrap_or(CommandAttempt::Retry),
             () = renew => CommandAttempt::Retry,
         }
     }
@@ -272,16 +336,42 @@ impl AgentCommandWorker {
     }
 }
 
+fn is_channel_message(command: &AdmittedAgentCommand) -> bool {
+    matches!(command.receipt.envelope.actor, AgentActor::Channel { .. })
+        && command.receipt.envelope.source.kind == AgentSourceKind::Channel
+        && matches!(
+            command.receipt.envelope.command,
+            AgentCommand::Message { .. }
+        )
+}
+
+fn unclaimed_recheck_delay(command: &AdmittedAgentCommand) -> Duration {
+    if !is_channel_message(command) {
+        return UNCLAIMED_RECHECK_DELAY;
+    }
+    // A transient observation must not add fifteen seconds to a fresh chat
+    // message. Age the retry pace from its immutable admission receipt so a
+    // sustained outage returns to normal polling, including after restarts.
+    let age = crate::seconds_from_rfc3339(&now_rfc3339())
+        .zip(crate::seconds_from_rfc3339(&command.receipt.admitted_at))
+        .and_then(|(now, admitted)| now.checked_sub(admitted));
+    match age {
+        Some(0..30) => Duration::from_secs(1),
+        Some(30..120) => Duration::from_secs(5),
+        _ => UNCLAIMED_RECHECK_DELAY,
+    }
+}
+
 /// The durable queued record and its deadline remain unchanged. The scheduler
 /// retains this task in its per-process in-flight set while waiting, without
 /// an execution lane lease or saved authorization. Cancellation/restart may
 /// shorten pacing; the next sweep must still reread and reauthorize the command.
-async fn pace_unclaimed(command: &AdmittedAgentCommand) {
+async fn pace_unclaimed(command: &AdmittedAgentCommand, delay: Duration) {
     let remaining = crate::seconds_from_rfc3339(&command.queue_deadline)
         .zip(crate::seconds_from_rfc3339(&now_rfc3339()))
         .map(|(deadline, now)| Duration::from_secs(deadline.saturating_sub(now)))
         .unwrap_or_default();
-    tokio::time::sleep(UNCLAIMED_RECHECK_DELAY.min(remaining)).await;
+    tokio::time::sleep(delay.min(remaining)).await;
 }
 
 async fn bounded<T>(

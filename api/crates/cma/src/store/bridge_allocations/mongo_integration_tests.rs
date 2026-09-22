@@ -121,6 +121,31 @@ async fn proposal_with_owner_limit(
     AllocationAuthority,
     BridgeManagementLease,
 ) {
+    proposal_with_conversation(
+        svc,
+        bridges,
+        id,
+        sender,
+        previous,
+        owner_live_sandbox_limit,
+        "group",
+    )
+    .await
+}
+
+async fn proposal_with_conversation(
+    svc: &BridgeService,
+    bridges: &MongoBridgeStore,
+    id: &BridgeId,
+    sender: &str,
+    previous: Option<&AllocationRecord>,
+    owner_live_sandbox_limit: u16,
+    conversation: &str,
+) -> (
+    AllocationAdmission,
+    AllocationAuthority,
+    BridgeManagementLease,
+) {
     let bridge = bridges.bridge(id).await.unwrap().unwrap();
     let config = &bridge.current().unwrap().config;
     let inbox = StoredInbox {
@@ -139,7 +164,7 @@ async fn proposal_with_owner_limit(
                 .into(),
             route_id: "route-1".into(),
             chat_id: "-100123".into(),
-            conversation_type: "group".into(),
+            conversation_type: conversation.into(),
             sender_id: sender.into(),
             sender_display_name: None,
             content_type: "text".into(),

@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use layer2_core::bridge::allocation::{AllocationAuthority, AllocationError, AllocationRecord};
-use layer2_core::sandbox::Workspace;
+use layer2_core::sandbox::{Workspace, WorkspaceWorkStep};
 use layer3_adapter::{
     SandboxAdapter, SetupReceipt, WorkspaceReceipt, WorkspaceRequest, WorkspaceSetupRequest,
 };
@@ -152,7 +152,7 @@ pub(crate) fn prepare_request(
         layer2_core::sandbox::WorkspaceSource::Empty => layer3_adapter::WorkspaceSource::Init,
     };
     WorkspaceRequest::with_clone_depth(
-        format!("{}:workspace-prepare", snapshot.allocation.operation_id),
+        workspace.operation_id(WorkspaceWorkStep::Prepare),
         workspace.id.to_string(),
         workspace.name.clone(),
         source,
@@ -166,7 +166,7 @@ pub(crate) fn setup_request(
 ) -> WorkspaceSetupRequest {
     let execution = snapshot.state.settings.execution;
     WorkspaceSetupRequest::with_timeouts(
-        format!("{}:workspace-setup", snapshot.allocation.operation_id),
+        workspace.operation_id(WorkspaceWorkStep::Setup),
         workspace.id.to_string(),
         workspace.name.clone(),
         workspace.profile.content.setup_commands.clone(),

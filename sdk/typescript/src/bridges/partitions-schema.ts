@@ -236,6 +236,55 @@ export function detail(value: unknown) {
 }
 export type BridgePartitionDetail = Output<typeof detail>;
 export type BridgePartitionActivity = BridgePartitionDetail['activity'];
+const pendingMessage = closed({
+  command_id: boundedId,
+  response_id: boundedId,
+  agent_order: positiveInteger,
+  admitted_at: text,
+  platform: enumeration('telegram', 'telegram-new', 'discord', 'lark', 'feishu'),
+  text,
+  text_truncated: boolean,
+});
+const pendingMessagesValue = tagged(
+  {
+    available: closed({
+      status: enumeration('available'),
+      bridge_id: boundedId,
+      partition_id: allocationId,
+      generation,
+      agent_id: boundedId,
+      through_sequence: integer,
+      messages: array(pendingMessage),
+      pending_truncated: boolean,
+      source_unavailable: boolean,
+      observed_at_ms: integer,
+    }),
+    unavailable: closed({ status: enumeration('unavailable') }),
+    redacted: closed({ status: enumeration('redacted') }),
+  },
+  'status',
+);
+export function pendingMessages(value: unknown) {
+  const result = pendingMessagesValue(value);
+  if (
+    result.status === 'available' &&
+    (result.through_sequence < 0 ||
+      result.observed_at_ms < 0 ||
+      result.messages.length > 64 ||
+      new Set(result.messages.map((item) => item.command_id)).size !== result.messages.length ||
+      new Set(result.messages.map((item) => item.response_id)).size !== result.messages.length ||
+      result.messages.some(
+        (item, i) =>
+          [...item.text].length > 1024 ||
+          !Number.isFinite(Date.parse(item.admitted_at)) ||
+          (i > 0 && item.agent_order <= result.messages[i - 1]!.agent_order),
+      ))
+  )
+    throw new ProtocolError('invalid bounded pending Channel messages');
+  return result;
+}
+export type PendingChannelMessages = Output<typeof pendingMessages>;
+export type PendingChannelMessage = Output<typeof pendingMessage>;
 export const page = closed({ items: array(partition), next_cursor: nullable(cursor) });
 export type BridgePartitionPage = Output<typeof page>;
 

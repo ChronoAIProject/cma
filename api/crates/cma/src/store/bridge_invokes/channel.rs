@@ -24,6 +24,7 @@ mod execution;
 mod refusal;
 mod retained;
 mod retry;
+mod supersession;
 
 pub(crate) struct MongoChannelCommandStore {
     invokes: Arc<MongoBridgeInvokeStore>,
