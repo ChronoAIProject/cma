@@ -69,8 +69,10 @@ pub(super) struct Provider {
 }
 #[derive(Deserialize)]
 pub(super) struct Refusal {
-    pub field: String,
+    #[serde(rename = "field")]
+    pub _field: String,
 }
+
 #[derive(Deserialize)]
 pub(super) struct Endpoints {
     pub nyxid_callback_url: String,

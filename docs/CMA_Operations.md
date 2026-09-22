@@ -475,7 +475,7 @@ The runtime has an optional fixed-endpoint HTTP proxy for provider tool
 connections. `CHRONO_TOOL_PROXY_URL` is unset by default. When supplied at runtime
 creation it must be one canonical HTTPS URL without credentials, query or
 fragment; literal loopback HTTP is accepted for local verification. The proxy
-binds only `127.0.0.3:9093` and accepts `POST /`, with a 128 KiB request limit,
+binds only `127.0.0.1:9093` and accepts `POST /`, with a 128 KiB request limit,
 a five-second request-body deadline, a ten-second upstream deadline and a
 256 KiB response limit. Caller URLs cannot select another destination. Redirects,
 encoded responses and responses exposing the injected credential are refused.
@@ -485,7 +485,7 @@ credential delivery changes subsequent calls without reopening the conversation.
 No credential file or additional shared secret is used. Uncertain upstream
 results are not retried. This transport alone does not attach tools to an Agent:
 binding provenance, retained endpoint configuration and confirmed conversation
-setup must be established before the provider advertises native tools support.
+setup are checked separately before a provider Agent can become ready.
 
 A provider binding can retain one tool endpoint as part of its immutable supplied
 credential authority. Exact replays and key rotation preserve that endpoint;
@@ -494,8 +494,29 @@ Sandbox creation projects the retained endpoint into the runtime environment.
 Records created before this field existed deserialize with no endpoint, and
 ordinary Sandboxes omit the new field and environment variable, preserving their
 existing deployment fingerprints and runtime image pins. The public binding
-handler continues to refuse native tools until attachment and runtime support
-have been verified.
+handler accepts native tools only at the exact `/mcp` endpoint derived from the
+configured CMAEG public origin. Deployments without gateway configuration retain
+the explicit refusal. A different advertised destination is refused before
+credential custody; enabling support never changes the destination on an old
+binding.
+
+A read-only `tool_proxy_status` supervisor operation proves the exact Sandbox,
+provision generation, configured destination and current credential generation.
+It succeeds only while the runtime's own listener is serving, and includes a
+process boot identity. It also works without a persistent home. Older runtimes
+cannot supply this proof and are refused before a tool-enabled Agent opens.
+
+Provider Agent attachment independently checks the durable binding conversation,
+creating manager, Agent creation identity, pinned profiles, complete lineage,
+current runtime and work authority. `provider_tool_opens` stores successful ACP
+opens under an exact creation/runtime/request digest using majority reads and
+writes. Confirmation rechecks and fences both lineage and binding authority.
+No key bytes enter that collection or the ACP descriptor. Fresh sessions require
+HTTP tool capability; loading supplies the local `cmaeg` server again. Rejoining
+an initialized process requires its confirmed conversation and matching boot
+identity. A requested resume ID alone is insufficient. Credential rotation keeps
+the local descriptor and successful-open identity while subsequent calls use the
+new key. This source is independent of legacy bridge records.
 
 ## Delivery Authority
 
@@ -1681,8 +1702,8 @@ bounded calls, complete owner-scoped discovery and idempotent deletion.
 The production adapter, worker scheduling, renewal, activity audit, public Bot
 routes and both Bot SDKs compose this foundation. Local interoperability tests
 run the compiled gateway through creation, restart recovery, policy updates,
-rotation and cleanup with fake NyxID and provider dependencies. The adapter uses
-the scoped NyxID tools service and accepts CMA's explicit refusal of the optional
-native MCP endpoint; refusals of requested profile fields fail creation and
-retain durable cleanup. These checks do not establish real Telegram delivery or
-authorize retiring the existing bridge.
+rotation and cleanup with fake NyxID and provider dependencies. The adapter
+refuses unsupported native tool or profile settings, retaining durable cleanup.
+Bot credentials include the pinned profile's explicit scopes and model service;
+CMA no longer adds an implicit NyxID tools catalogue service. These checks do
+not establish real Telegram delivery or authorize retiring the existing bridge.

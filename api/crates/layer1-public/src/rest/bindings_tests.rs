@@ -47,6 +47,9 @@ impl BindingCredentialCustody for Custody {
     }
 }
 pub(super) fn app() -> (Router, Arc<InMemorySandboxStore>) {
+    app_with_tools(None)
+}
+fn app_with_tools(endpoint: Option<&str>) -> (Router, Arc<InMemorySandboxStore>) {
     let store = Arc::new(InMemorySandboxStore::default());
     let profiles = Arc::new(InMemoryProfileStore::default());
     let resources = BindingResources {
@@ -65,25 +68,34 @@ pub(super) fn app() -> (Router, Arc<InMemorySandboxStore>) {
         ),
     };
     (
-        binding_router(BindingService::new(
-            store.clone(),
-            profiles,
-            resources,
-            Arc::new(Custody),
-            BindingPolicy {
-                provider: AgentProvider::default(),
-                supported_model_api: "responses".into(),
-                bounds: ProfileCapacityBounds {
-                    min_cpu_millis: 250,
-                    max_cpu_millis: 8000,
-                    min_memory_mib: 512,
-                    max_memory_mib: 16384,
+        route_service(
+            BindingService::new(
+                store.clone(),
+                profiles,
+                resources,
+                Arc::new(Custody),
+                BindingPolicy {
+                    provider: AgentProvider::default(),
+                    supported_model_api: "responses".into(),
+                    bounds: ProfileCapacityBounds {
+                        min_cpu_millis: 250,
+                        max_cpu_millis: 8000,
+                        min_memory_mib: 512,
+                        max_memory_mib: 16384,
+                    },
+                    sandbox: Arc::new(SandboxPolicy::default()),
                 },
-                sandbox: Arc::new(SandboxPolicy::default()),
-            },
-        )),
+            ),
+            endpoint,
+        ),
         store,
     )
+}
+fn route_service(service: Arc<BindingService>, endpoint: Option<&str>) -> Router {
+    match endpoint {
+        Some(endpoint) => super::binding_router_with_native_tools(service, endpoint).unwrap(),
+        None => binding_router(service),
+    }
 }
 pub(super) fn request(
     method: &str,
@@ -220,4 +232,56 @@ async fn binding_routes_replay_binding_and_conversation_and_acknowledge_retireme
         .await
         .unwrap();
     assert_eq!(json_body(retired).await["state"], "retired");
+}
+
+#[tokio::test]
+async fn native_tools_accept_only_the_configured_destination_and_retain_it_on_replay() {
+    let (app, store) = app_with_tools(Some("https://gateway.example/mcp"));
+    let path = "/api/v1/cmaeg/bindings/binding-tools";
+    let input = body();
+    for destination in [
+        "https://other.example/mcp",
+        "https://gateway.example/mcp?leak=true",
+        "http://gateway.example/mcp",
+    ] {
+        let mut changed = input.clone();
+        changed["tools"]["native_mcp_url"] = json!(destination);
+        let response = app
+            .clone()
+            .oneshot(request("PUT", path, Some(changed), Some(authority())))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert!(store.binding("binding-tools").await.unwrap().is_none());
+    }
+    let mut first = None;
+    for _ in 0..2 {
+        let response = app
+            .clone()
+            .oneshot(request("PUT", path, Some(input.clone()), Some(authority())))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let value = json_body(response).await;
+        assert!(value["honoured"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("tools.native_mcp_url")));
+        assert!(!value["refused"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["field"] == "tools.native_mcp_url"));
+        let retained = store.binding("binding-tools").await.unwrap().unwrap();
+        if let Some(revision) = first {
+            assert_eq!(retained.revision, revision);
+        } else {
+            first = Some(retained.revision);
+        }
+    }
+    let retained = store.binding("binding-tools").await.unwrap().unwrap();
+    assert_eq!(
+        retained.tool_endpoint.as_deref(),
+        Some("https://gateway.example/mcp")
+    );
 }
