@@ -87,7 +87,7 @@ pub enum CustomAuth {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 pub enum AdmissionPolicy {
-    All,
+    All {},
     Allowlist {
         sender_ids: Vec<String>,
     },
@@ -151,9 +151,9 @@ pub struct ReplyPolicy {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 pub enum Sink {
-    Source,
+    Source {},
     ResultWebhook { url: String, hmac_key_id: String },
-    Sync,
+    Sync {},
 }
 
 /// A secret that only appears in the encrypted channel blob.
@@ -339,7 +339,7 @@ impl ChannelDefinition {
             .reply
             .sinks
             .iter()
-            .any(|sink| matches!(sink, Sink::Source))
+            .any(|sink| matches!(sink, Sink::Source {}))
             && self.sources.is_empty()
         {
             return Err(ValidationError::new(

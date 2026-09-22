@@ -1,0 +1,3393 @@
+{
+  "components": {
+    "schemas": {
+      "AcceptedStatus": {
+        "enum": [
+          "accepted"
+        ],
+        "type": "string"
+      },
+      "ActionMode": {
+        "enum": [
+          "guarded",
+          "autonomous"
+        ],
+        "type": "string"
+      },
+      "Activity": {
+        "additionalProperties": false,
+        "properties": {
+          "actor": {
+            "$ref": "#/components/schemas/Actor"
+          },
+          "conversation": {
+            "$ref": "#/components/schemas/ActivityConversation"
+          },
+          "event_id": {
+            "$ref": "#/components/schemas/EventId"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ActivityKind"
+          },
+          "occurred_at": {
+            "type": "string"
+          },
+          "schema_version": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "source": {
+            "$ref": "#/components/schemas/SourceKind"
+          }
+        },
+        "required": [
+          "schema_version",
+          "event_id",
+          "kind",
+          "actor",
+          "conversation",
+          "occurred_at",
+          "source"
+        ],
+        "type": "object"
+      },
+      "ActivityConversation": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ConversationKind"
+          },
+          "thread_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "kind"
+        ],
+        "type": "object"
+      },
+      "ActivityKind": {
+        "oneOf": [
+          {
+            "properties": {
+              "attachments": {
+                "items": {
+                  "$ref": "#/components/schemas/Attachment"
+                },
+                "type": "array"
+              },
+              "mentions_bot": {
+                "type": "boolean"
+              },
+              "reply_to": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/MessageRef"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "text": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "message"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "text",
+              "mentions_bot",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/InteractionResult"
+              },
+              {
+                "properties": {
+                  "type": {
+                    "enum": [
+                      "interaction"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          {
+            "properties": {
+              "args": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "command"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "args",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "ce": {
+                "$ref": "#/components/schemas/CloudEvent"
+              },
+              "type": {
+                "enum": [
+                  "event"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "ce",
+              "type"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "Actor": {
+        "additionalProperties": false,
+        "properties": {
+          "display_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ActorKind"
+          }
+        },
+        "required": [
+          "id",
+          "kind"
+        ],
+        "type": "object"
+      },
+      "ActorKind": {
+        "enum": [
+          "human",
+          "bot",
+          "system",
+          "unknown"
+        ],
+        "type": "string"
+      },
+      "AdmissionPolicy": {
+        "oneOf": [
+          {
+            "properties": {
+              "type": {
+                "enum": [
+                  "all"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "sender_ids": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "type": {
+                "enum": [
+                  "allowlist"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "sender_ids",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "chats": {
+                "$ref": "#/components/schemas/IdentityAdmission"
+              },
+              "groups": {
+                "$ref": "#/components/schemas/GroupAdmission"
+              },
+              "senders": {
+                "$ref": "#/components/schemas/IdentityAdmission"
+              },
+              "type": {
+                "enum": [
+                  "scoped"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "senders",
+              "chats",
+              "groups",
+              "type"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "AgentProfileSnapshot": {
+        "additionalProperties": false,
+        "properties": {
+          "context": {
+            "$ref": "#/components/schemas/ContextConfig"
+          },
+          "environment": {},
+          "metadata": {
+            "$ref": "#/components/schemas/ProfileMetadata"
+          },
+          "model": {
+            "$ref": "#/components/schemas/ModelConfig"
+          },
+          "permission": {
+            "$ref": "#/components/schemas/PermissionConfig"
+          },
+          "schema_version": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "schema_version",
+          "metadata",
+          "model",
+          "permission",
+          "context"
+        ],
+        "type": "object"
+      },
+      "ApiType": {
+        "enum": [
+          "responses",
+          "chat_completions"
+        ],
+        "type": "string"
+      },
+      "Attachment": {
+        "additionalProperties": false,
+        "properties": {
+          "filename": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "kind": {
+            "$ref": "#/components/schemas/AttachmentKind"
+          },
+          "mime_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reference": {
+            "type": "string"
+          },
+          "size_bytes": {
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "reference",
+          "kind"
+        ],
+        "type": "object"
+      },
+      "AttachmentKind": {
+        "enum": [
+          "image",
+          "file",
+          "audio",
+          "video",
+          "other"
+        ],
+        "type": "string"
+      },
+      "BindingId": {
+        "type": "string"
+      },
+      "Block": {
+        "oneOf": [
+          {
+            "properties": {
+              "text": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "text"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "text",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "body": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "fields": {
+                "items": {
+                  "$ref": "#/components/schemas/Field"
+                },
+                "type": "array"
+              },
+              "image": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "title": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "card"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "title",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "options": {
+                "items": {
+                  "$ref": "#/components/schemas/ChoiceOption"
+                },
+                "type": "array"
+              },
+              "type": {
+                "enum": [
+                  "buttons"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "options",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "multi": {
+                "type": "boolean"
+              },
+              "options": {
+                "items": {
+                  "$ref": "#/components/schemas/ChoiceOption"
+                },
+                "type": "array"
+              },
+              "prompt": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "choice"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "prompt",
+              "options",
+              "multi",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "fields": {
+                "items": {
+                  "$ref": "#/components/schemas/FormField"
+                },
+                "type": "array"
+              },
+              "id": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "form"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "fields",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "caption": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "kind": {
+                "$ref": "#/components/schemas/AttachmentKind"
+              },
+              "reference": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "attachment"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "reference",
+              "kind",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "label": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "type": {
+                "enum": [
+                  "link"
+                ],
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "url",
+              "type"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "BlockRendering": {
+        "additionalProperties": false,
+        "properties": {
+          "index": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/BlockRenderingOutcome"
+          }
+        },
+        "required": [
+          "index",
+          "outcome"
+        ],
+        "type": "object"
+      },
+      "BlockRenderingOutcome": {
+        "oneOf": [
+          {
+            "properties": {
+              "type": {
+                "enum": [
+                  "exact"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "how": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "degraded"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "how",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "type": {
+                "enum": [
+                  "dropped"
+                ],
+                "type": "string"
+              },
+              "why": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "why",
+              "type"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "CallbackPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "agent": {
+            "$ref": "#/components/schemas/RelayAgent"
+          },
+          "content": {
+            "$ref": "#/components/schemas/RelayContent"
+          },
+          "conversation": {
+            "$ref": "#/components/schemas/RelayConversation"
+          },
+          "correlation_id": {
+            "type": "string"
+          },
+          "message_id": {
+            "type": "string"
+          },
+          "platform": {
+            "type": "string"
+          },
+          "raw_platform_data": {},
+          "reply_to_message_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reply_to_platform_message_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reply_token": {
+            "$ref": "#/components/schemas/Secret"
+          },
+          "sender": {
+            "$ref": "#/components/schemas/RelaySender"
+          },
+          "thread_id": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Secret"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "timestamp": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "message_id",
+          "correlation_id",
+          "platform",
+          "reply_token",
+          "agent",
+          "conversation",
+          "sender",
+          "content",
+          "timestamp"
+        ],
+        "type": "object"
+      },
+      "CallbackResponse": {
+        "oneOf": [
+          {
+            "properties": {
+              "conversation_id": {
+                "type": "string"
+              },
+              "event_id": {
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "accepted"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "event_id",
+              "conversation_id",
+              "status"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "reason": {
+                "$ref": "#/components/schemas/Refusal"
+              },
+              "status": {
+                "enum": [
+                  "refused"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "reason",
+              "status"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "Capabilities": {
+        "properties": {
+          "attachments": {
+            "type": "string"
+          },
+          "buttons": {
+            "type": "string"
+          },
+          "cards": {
+            "type": "string"
+          },
+          "edit": {
+            "type": "boolean"
+          },
+          "max_text_chars": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "typing": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "edit",
+          "typing",
+          "buttons",
+          "cards",
+          "attachments",
+          "max_text_chars"
+        ],
+        "type": "object"
+      },
+      "ChannelCreateRequest": {
+        "additionalProperties": false,
+        "description": "Request wrapper used by channel creation.",
+        "properties": {
+          "credentials": {
+            "$ref": "#/components/schemas/CredentialsRequest"
+          },
+          "name": {
+            "type": "string"
+          },
+          "partition": {
+            "$ref": "#/components/schemas/PartitionRule"
+          },
+          "profile": {
+            "$ref": "#/components/schemas/AgentProfileSnapshot"
+          },
+          "provider": {
+            "$ref": "#/components/schemas/ProviderRequest"
+          },
+          "reply": {
+            "$ref": "#/components/schemas/ReplyPolicy"
+          },
+          "schema_version": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/SourceRequest"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "schema_version",
+          "name",
+          "profile",
+          "provider",
+          "sources",
+          "partition",
+          "reply",
+          "credentials"
+        ],
+        "type": "object"
+      },
+      "ChannelId": {
+        "description": "An encrypted pointer to a CMA channel record.",
+        "type": "string"
+      },
+      "ChannelResponse": {
+        "properties": {
+          "channel_id": {
+            "type": "string"
+          },
+          "definition": {
+            "$ref": "#/components/schemas/PublicChannelDefinition"
+          },
+          "endpoints": {
+            "$ref": "#/components/schemas/EndpointResponse"
+          },
+          "provider": {
+            "$ref": "#/components/schemas/ProviderResponse"
+          },
+          "record_id": {
+            "type": "string"
+          },
+          "version": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "channel_id",
+          "record_id",
+          "version",
+          "provider",
+          "endpoints",
+          "definition"
+        ],
+        "type": "object"
+      },
+      "ChannelUpdateRequest": {
+        "additionalProperties": false,
+        "description": "Update body; credentials are retained when this field is absent.",
+        "properties": {
+          "credentials": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CredentialPatch"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expected_version": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "partition": {
+            "$ref": "#/components/schemas/PartitionRule"
+          },
+          "profile": {
+            "$ref": "#/components/schemas/AgentProfileSnapshot"
+          },
+          "provider": {
+            "$ref": "#/components/schemas/ProviderRequest"
+          },
+          "reply": {
+            "$ref": "#/components/schemas/ReplyPolicy"
+          },
+          "schema_version": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/SourceRequest"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "schema_version",
+          "name",
+          "profile",
+          "provider",
+          "sources",
+          "partition",
+          "reply",
+          "expected_version"
+        ],
+        "type": "object"
+      },
+      "ChoiceOption": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "style": {
+            "$ref": "#/components/schemas/OptionStyle"
+          }
+        },
+        "required": [
+          "id",
+          "label"
+        ],
+        "type": "object"
+      },
+      "CloudEvent": {
+        "additionalProperties": {},
+        "properties": {
+          "data": {},
+          "datacontenttype": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "dataschema": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "specversion": {
+            "type": "string"
+          },
+          "subject": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "time": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "specversion",
+          "id",
+          "source",
+          "type"
+        ],
+        "type": "object"
+      },
+      "ConformanceLevel": {
+        "enum": [
+          "l1",
+          "l2",
+          "l3",
+          "l4",
+          "l5"
+        ],
+        "type": "string"
+      },
+      "ContextConfig": {
+        "additionalProperties": false,
+        "properties": {
+          "mcp_servers": {
+            "items": {
+              "$ref": "#/components/schemas/McpServerRef"
+            },
+            "type": "array"
+          },
+          "skills": {
+            "items": {
+              "$ref": "#/components/schemas/SkillRef"
+            },
+            "type": "array"
+          },
+          "system_prompt": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "ContextResponse": {
+        "properties": {
+          "activity": {
+            "$ref": "#/components/schemas/PublicActivity"
+          },
+          "capabilities": {
+            "$ref": "#/components/schemas/Capabilities"
+          },
+          "conversation_id": {
+            "$ref": "#/components/schemas/ConversationId"
+          },
+          "event_id": {
+            "$ref": "#/components/schemas/EventId"
+          }
+        },
+        "required": [
+          "event_id",
+          "conversation_id",
+          "activity",
+          "capabilities"
+        ],
+        "type": "object"
+      },
+      "ConversationId": {
+        "type": "string"
+      },
+      "ConversationKind": {
+        "enum": [
+          "private",
+          "group",
+          "channel",
+          "thread",
+          "custom"
+        ],
+        "type": "string"
+      },
+      "CredentialPatch": {
+        "additionalProperties": false,
+        "properties": {
+          "agent_key": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Secret"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "channel_key": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Secret"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hmac_secrets": {
+            "items": {
+              "$ref": "#/components/schemas/HmacSecretRequest"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "CredentialsRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "agent_key": {
+            "$ref": "#/components/schemas/Secret"
+          },
+          "channel_key": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Secret"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hmac_secrets": {
+            "items": {
+              "$ref": "#/components/schemas/HmacSecretRequest"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "agent_key"
+        ],
+        "type": "object"
+      },
+      "CustomAuth": {
+        "oneOf": [
+          {
+            "properties": {
+              "key_id": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "hmac"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "key_id",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "key_hashes": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "type": {
+                "enum": [
+                  "nyxid_key"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "key_hashes",
+              "type"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "DeliveryOutcome": {
+        "oneOf": [
+          {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "confirmed"
+                ],
+                "type": "string"
+              },
+              "platform_message_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "outcome"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "rejected"
+                ],
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "reason",
+              "outcome"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "rate_limited"
+                ],
+                "type": "string"
+              },
+              "retry_after": {
+                "format": "int64",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "retry_after",
+              "outcome"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "unknown"
+                ],
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "reason",
+              "outcome"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "unsupported"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "outcome"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "EndpointResponse": {
+        "properties": {
+          "custom_event_url": {
+            "type": "string"
+          },
+          "nyxid_callback_url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "nyxid_callback_url",
+          "custom_event_url"
+        ],
+        "type": "object"
+      },
+      "EventAccepted": {
+        "properties": {
+          "conversation_id": {
+            "$ref": "#/components/schemas/ConversationId"
+          },
+          "event_id": {
+            "$ref": "#/components/schemas/EventId"
+          },
+          "status": {
+            "$ref": "#/components/schemas/AcceptedStatus"
+          }
+        },
+        "required": [
+          "status",
+          "event_id",
+          "conversation_id"
+        ],
+        "type": "object"
+      },
+      "EventContextSnapshot": {
+        "additionalProperties": false,
+        "properties": {
+          "activity": {
+            "$ref": "#/components/schemas/Activity"
+          },
+          "channel_id": {
+            "$ref": "#/components/schemas/ChannelId"
+          },
+          "conversation_id": {
+            "$ref": "#/components/schemas/ConversationId"
+          },
+          "event_ref": {
+            "$ref": "#/components/schemas/EventRef"
+          },
+          "schema_version": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "schema_version",
+          "channel_id",
+          "conversation_id",
+          "activity",
+          "event_ref"
+        ],
+        "type": "object"
+      },
+      "EventId": {
+        "type": "string"
+      },
+      "EventRef": {
+        "type": "string"
+      },
+      "Field": {
+        "additionalProperties": false,
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "label",
+          "value"
+        ],
+        "type": "object"
+      },
+      "FieldRefusal": {
+        "properties": {
+          "field": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "field",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "FormField": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/FormFieldKind"
+          },
+          "label": {
+            "type": "string"
+          },
+          "required": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "kind",
+          "required"
+        ],
+        "type": "object"
+      },
+      "FormFieldKind": {
+        "oneOf": [
+          {
+            "properties": {
+              "type": {
+                "enum": [
+                  "text"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "type": {
+                "enum": [
+                  "number"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "options": {
+                "items": {
+                  "$ref": "#/components/schemas/ChoiceOption"
+                },
+                "type": "array"
+              },
+              "type": {
+                "enum": [
+                  "choice"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "options",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "type": {
+                "enum": [
+                  "date"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "GroupAdmission": {
+        "enum": [
+          "deny",
+          "all",
+          "mention",
+          "reply_to_bot",
+          "mention_or_reply_to_bot"
+        ],
+        "type": "string"
+      },
+      "HmacSecretRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "key_id": {
+            "type": "string"
+          },
+          "secret": {
+            "$ref": "#/components/schemas/Secret"
+          }
+        },
+        "required": [
+          "key_id",
+          "secret"
+        ],
+        "type": "object"
+      },
+      "IdentityAdmission": {
+        "oneOf": [
+          {
+            "properties": {
+              "type": {
+                "enum": [
+                  "deny"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "type": {
+                "enum": [
+                  "open"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "ids": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "type": {
+                "enum": [
+                  "allowlist"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "ids",
+              "type"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "IntentReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "delivery": {
+            "$ref": "#/components/schemas/DeliveryOutcome"
+          },
+          "message_ref": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MessageRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rendering": {
+            "$ref": "#/components/schemas/RenderingReport"
+          }
+        },
+        "required": [
+          "rendering",
+          "delivery"
+        ],
+        "type": "object"
+      },
+      "InteractionResult": {
+        "additionalProperties": false,
+        "properties": {
+          "action_id": {
+            "type": "string"
+          },
+          "block_id": {
+            "type": "string"
+          },
+          "values": {
+            "additionalProperties": {},
+            "propertyNames": {
+              "type": "string"
+            },
+            "type": "object"
+          }
+        },
+        "required": [
+          "block_id",
+          "action_id"
+        ],
+        "type": "object"
+      },
+      "McpAuth": {
+        "oneOf": [
+          {
+            "properties": {
+              "type": {
+                "enum": [
+                  "none"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "slug": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "nyxid_service"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "slug",
+              "type"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "McpServerRef": {
+        "additionalProperties": false,
+        "properties": {
+          "auth": {
+            "$ref": "#/components/schemas/McpAuth"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "auth"
+        ],
+        "type": "object"
+      },
+      "MessageRef": {
+        "type": "string"
+      },
+      "ModelAccess": {
+        "enum": [
+          "managed",
+          "custom"
+        ],
+        "type": "string"
+      },
+      "ModelConfig": {
+        "additionalProperties": false,
+        "properties": {
+          "access": {
+            "$ref": "#/components/schemas/ModelAccess"
+          },
+          "api_type": {
+            "$ref": "#/components/schemas/ApiType"
+          },
+          "model": {
+            "type": "string"
+          },
+          "service": {
+            "type": "string"
+          },
+          "thinking_effort": {
+            "$ref": "#/components/schemas/ThinkingEffort"
+          }
+        },
+        "required": [
+          "access",
+          "service",
+          "api_type",
+          "model",
+          "thinking_effort"
+        ],
+        "type": "object"
+      },
+      "NyxIdIdentity": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/NyxIdIdentityKind"
+          },
+          "subject": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "subject"
+        ],
+        "type": "object"
+      },
+      "NyxIdIdentityKind": {
+        "enum": [
+          "human",
+          "service_account",
+          "agent_key"
+        ],
+        "type": "string"
+      },
+      "OptionStyle": {
+        "enum": [
+          "default",
+          "primary",
+          "danger"
+        ],
+        "type": "string"
+      },
+      "OutboundMessage": {
+        "additionalProperties": false,
+        "properties": {
+          "blocks": {
+            "items": {
+              "$ref": "#/components/schemas/Block"
+            },
+            "type": "array"
+          },
+          "reply_to": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MessageRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "PartitionKey": {
+        "enum": [
+          "conversation_and_sender",
+          "conversation",
+          "thread",
+          "fixed",
+          "event_subject",
+          "per_event"
+        ],
+        "type": "string"
+      },
+      "PartitionRule": {
+        "additionalProperties": false,
+        "properties": {
+          "key": {
+            "$ref": "#/components/schemas/PartitionKey"
+          },
+          "version": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "key"
+        ],
+        "type": "object"
+      },
+      "PermissionConfig": {
+        "additionalProperties": false,
+        "properties": {
+          "action_mode": {
+            "$ref": "#/components/schemas/ActionMode"
+          },
+          "service_scope": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "action_mode"
+        ],
+        "type": "object"
+      },
+      "Platform": {
+        "enum": [
+          "telegram"
+        ],
+        "type": "string"
+      },
+      "Problem": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/ProblemCode"
+          },
+          "detail": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "instance": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "status",
+          "code"
+        ],
+        "type": "object"
+      },
+      "ProblemCode": {
+        "enum": [
+          "invalid_request",
+          "not_authenticated",
+          "forbidden",
+          "channel_not_found",
+          "channel_restore_unavailable",
+          "channel_invalid",
+          "provider_unavailable",
+          "provider_rejected",
+          "provider_busy",
+          "draining",
+          "event_ref_invalid",
+          "event_ref_expired",
+          "callback_invalid",
+          "admission_refused",
+          "rate_limited",
+          "conflict",
+          "payload_too_large",
+          "unsupported_media_type",
+          "internal"
+        ],
+        "type": "string"
+      },
+      "ProfileMetadata": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "owner": {
+            "$ref": "#/components/schemas/NyxIdIdentity"
+          },
+          "provider": {
+            "$ref": "#/components/schemas/ProviderSlug"
+          }
+        },
+        "required": [
+          "name",
+          "owner",
+          "provider"
+        ],
+        "type": "object"
+      },
+      "ProviderBinding": {
+        "additionalProperties": false,
+        "properties": {
+          "binding_id": {
+            "$ref": "#/components/schemas/BindingId"
+          },
+          "level": {
+            "$ref": "#/components/schemas/ConformanceLevel"
+          },
+          "slug": {
+            "$ref": "#/components/schemas/ProviderSlug"
+          }
+        },
+        "required": [
+          "slug",
+          "binding_id",
+          "level"
+        ],
+        "type": "object"
+      },
+      "ProviderRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "slug": {
+            "$ref": "#/components/schemas/ProviderSlug"
+          }
+        },
+        "required": [
+          "slug"
+        ],
+        "type": "object"
+      },
+      "ProviderResponse": {
+        "properties": {
+          "binding_id": {
+            "type": "string"
+          },
+          "honoured": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "level": {
+            "$ref": "#/components/schemas/ConformanceLevel"
+          },
+          "refused": {
+            "items": {
+              "$ref": "#/components/schemas/FieldRefusal"
+            },
+            "type": "array"
+          },
+          "slug": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "slug",
+          "binding_id",
+          "level",
+          "honoured",
+          "refused"
+        ],
+        "type": "object"
+      },
+      "ProviderSlug": {
+        "type": "string"
+      },
+      "PublicActivity": {
+        "properties": {
+          "actor": {
+            "$ref": "#/components/schemas/Actor"
+          },
+          "conversation": {
+            "$ref": "#/components/schemas/ActivityConversation"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ActivityKind"
+          },
+          "occurred_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "actor",
+          "conversation",
+          "occurred_at"
+        ],
+        "type": "object"
+      },
+      "PublicChannelDefinition": {
+        "properties": {
+          "created_at": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "owner": {
+            "$ref": "#/components/schemas/NyxIdIdentity"
+          },
+          "partition": {
+            "$ref": "#/components/schemas/PartitionRule"
+          },
+          "profile": {
+            "$ref": "#/components/schemas/AgentProfileSnapshot"
+          },
+          "profile_digest": {
+            "type": "string"
+          },
+          "provider": {
+            "$ref": "#/components/schemas/ProviderBinding"
+          },
+          "record_id": {
+            "$ref": "#/components/schemas/RecordId"
+          },
+          "reply": {
+            "$ref": "#/components/schemas/ReplyPolicy"
+          },
+          "schema_version": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "secrets": {
+            "$ref": "#/components/schemas/PublicSecrets"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/Source"
+            },
+            "type": "array"
+          },
+          "version": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "schema_version",
+          "record_id",
+          "owner",
+          "profile",
+          "profile_digest",
+          "provider",
+          "sources",
+          "partition",
+          "reply",
+          "secrets",
+          "created_at",
+          "version"
+        ],
+        "type": "object"
+      },
+      "PublicSecrets": {
+        "properties": {
+          "agent_key_hash": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "agent_key_hash"
+        ],
+        "type": "object"
+      },
+      "RecordId": {
+        "type": "string"
+      },
+      "Refusal": {
+        "enum": [
+          "bot_sender",
+          "system_sender",
+          "unknown_sender",
+          "message_edit",
+          "interactive_action_unsupported",
+          "system_event",
+          "content_unsupported",
+          "attachment_unsupported",
+          "sender_denied",
+          "chat_denied",
+          "group_denied",
+          "group_not_addressed",
+          "addressing_evidence_unavailable",
+          "thread_evidence_unavailable"
+        ],
+        "type": "string"
+      },
+      "RekeyResponse": {
+        "properties": {
+          "kid": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kid"
+        ],
+        "type": "object"
+      },
+      "RelayAgent": {
+        "additionalProperties": false,
+        "properties": {
+          "api_key_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "api_key_id",
+          "name"
+        ],
+        "type": "object"
+      },
+      "RelayAttachment": {
+        "additionalProperties": false,
+        "properties": {
+          "content_type": {
+            "type": "string"
+          },
+          "file_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "filename": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "image_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "mime_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "platform_message_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "size_bytes": {
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "content_type",
+          "url"
+        ],
+        "type": "object"
+      },
+      "RelayContent": {
+        "additionalProperties": false,
+        "properties": {
+          "attachments": {
+            "items": {
+              "$ref": "#/components/schemas/RelayAttachment"
+            },
+            "type": "array"
+          },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "type": "object"
+      },
+      "RelayConversation": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "platform_id": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "platform_id",
+          "type"
+        ],
+        "type": "object"
+      },
+      "RelaySender": {
+        "additionalProperties": false,
+        "properties": {
+          "display_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "platform_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "platform_id"
+        ],
+        "type": "object"
+      },
+      "RenderingOutcome": {
+        "enum": [
+          "rendered",
+          "degraded",
+          "unsupported"
+        ],
+        "type": "string"
+      },
+      "RenderingReport": {
+        "additionalProperties": false,
+        "properties": {
+          "blocks": {
+            "items": {
+              "$ref": "#/components/schemas/BlockRendering"
+            },
+            "type": "array"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/RenderingOutcome"
+          }
+        },
+        "required": [
+          "outcome"
+        ],
+        "type": "object"
+      },
+      "ReplyPolicy": {
+        "additionalProperties": false,
+        "properties": {
+          "ack_after_ms": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "auto_final": {
+            "type": "boolean"
+          },
+          "sinks": {
+            "items": {
+              "$ref": "#/components/schemas/Sink"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "auto_final",
+          "ack_after_ms"
+        ],
+        "type": "object"
+      },
+      "Secret": {
+        "description": "A secret that only appears in the encrypted channel blob.",
+        "type": "string"
+      },
+      "Sink": {
+        "oneOf": [
+          {
+            "properties": {
+              "type": {
+                "enum": [
+                  "source"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "hmac_key_id": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "result_webhook"
+                ],
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "url",
+              "hmac_key_id",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "type": {
+                "enum": [
+                  "sync"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "SkillRef": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/SkillSource"
+          },
+          "version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "source",
+          "id"
+        ],
+        "type": "object"
+      },
+      "SkillSource": {
+        "enum": [
+          "ornn"
+        ],
+        "type": "string"
+      },
+      "Source": {
+        "oneOf": [
+          {
+            "properties": {
+              "admission": {
+                "$ref": "#/components/schemas/AdmissionPolicy"
+              },
+              "bot_username": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "issuer": {
+                "type": "string"
+              },
+              "jwks_url": {
+                "type": "string"
+              },
+              "key_id": {
+                "type": "string"
+              },
+              "platform": {
+                "$ref": "#/components/schemas/Platform"
+              },
+              "route_ids": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "type": {
+                "enum": [
+                  "nyxid_relay"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "issuer",
+              "jwks_url",
+              "key_id",
+              "route_ids",
+              "platform",
+              "admission",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "auth": {
+                "$ref": "#/components/schemas/CustomAuth"
+              },
+              "prompt_template": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "schema": {},
+              "type": {
+                "enum": [
+                  "custom"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "auth",
+              "type"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "SourceKind": {
+        "oneOf": [
+          {
+            "properties": {
+              "platform": {
+                "$ref": "#/components/schemas/Platform"
+              },
+              "route_id": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "nyxid_relay"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "platform",
+              "route_id",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "type": {
+                "enum": [
+                  "custom"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "SourceRequest": {
+        "oneOf": [
+          {
+            "properties": {
+              "admission": {
+                "$ref": "#/components/schemas/AdmissionPolicy"
+              },
+              "bot_username": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "issuer": {
+                "type": "string"
+              },
+              "key_id": {
+                "type": "string"
+              },
+              "platform": {
+                "$ref": "#/components/schemas/Platform"
+              },
+              "route_ids": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "type": {
+                "enum": [
+                  "nyxid_relay"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "issuer",
+              "key_id",
+              "route_ids",
+              "platform",
+              "admission",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "auth": {
+                "$ref": "#/components/schemas/CustomAuth"
+              },
+              "prompt_template": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "schema": {},
+              "type": {
+                "enum": [
+                  "custom"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "auth",
+              "type"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "TestChannelResponse": {
+        "properties": {
+          "accepted_after_ms": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "first_text": {
+            "type": "string"
+          },
+          "level": {
+            "$ref": "#/components/schemas/ConformanceLevel"
+          }
+        },
+        "required": [
+          "accepted_after_ms",
+          "first_text",
+          "level"
+        ],
+        "type": "object"
+      },
+      "ThinkingEffort": {
+        "enum": [
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "very_high"
+        ],
+        "type": "string"
+      },
+      "TypingOutcome": {
+        "enum": [
+          "sent",
+          "unsupported"
+        ],
+        "type": "string"
+      },
+      "TypingReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "outcome": {
+            "$ref": "#/components/schemas/TypingOutcome"
+          }
+        },
+        "required": [
+          "outcome"
+        ],
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "agentBearer": {
+        "description": "NyxID bot agent key; tools only",
+        "scheme": "bearer",
+        "type": "http"
+      },
+      "creatorBearer": {
+        "description": "NyxID creator bearer token",
+        "scheme": "bearer",
+        "type": "http"
+      },
+      "serviceBearer": {
+        "description": "CMA service token; rekey only",
+        "scheme": "bearer",
+        "type": "http"
+      }
+    }
+  },
+  "info": {
+    "description": "",
+    "license": {
+      "name": ""
+    },
+    "title": "CMA Event Gateway",
+    "version": "1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/callbacks/{channel_id}": {
+      "post": {
+        "operationId": "receiveRelayCallback",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "channel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-nyxid-callback-token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-nyxid-message-id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-nyxid-platform",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-nyxid-timestamp",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-nyxid-user-token",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CallbackPayload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CallbackResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "tags": [
+          "ingress"
+        ]
+      }
+    },
+    "/channels": {
+      "post": {
+        "operationId": "createChannel",
+        "parameters": [
+          {
+            "description": "1..=256 ASCII bytes; identical creates replay locally for ten minutes",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChannelCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "channels"
+        ]
+      }
+    },
+    "/channels/{channel_id}": {
+      "delete": {
+        "operationId": "deleteChannel",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "channel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "expected_version",
+            "required": true,
+            "schema": {
+              "format": "int64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "channels"
+        ]
+      },
+      "get": {
+        "operationId": "getChannel",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "channel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "channels"
+        ]
+      },
+      "put": {
+        "operationId": "updateChannel",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "channel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChannelUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "channels"
+        ]
+      }
+    },
+    "/channels/{channel_id}/events": {
+      "post": {
+        "operationId": "receiveCustomEvent",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "channel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "stream requires a configured Sync sink",
+            "in": "query",
+            "name": "mode",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Required for HMAC authentication",
+            "in": "header",
+            "name": "webhook-id",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "description": "Required for HMAC authentication; Unix seconds within 300 seconds",
+            "in": "header",
+            "name": "webhook-timestamp",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "description": "Required for HMAC authentication; v1,base64 over id.timestamp.raw_body using the retained secret string bytes",
+            "in": "header",
+            "name": "webhook-signature",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "description": "Bearer key required for nyxid_key authentication",
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "description": "Required in binary mode; 1.0",
+            "in": "header",
+            "name": "ce-specversion",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "description": "Required in binary mode",
+            "in": "header",
+            "name": "ce-id",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "description": "Required in binary mode",
+            "in": "header",
+            "name": "ce-source",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "description": "Required in binary mode",
+            "in": "header",
+            "name": "ce-type",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "in": "header",
+            "name": "ce-subject",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "in": "header",
+            "name": "ce-time",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "in": "header",
+            "name": "ce-dataschema",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "in": "header",
+            "name": "ce-datacontenttype",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/cloudevents+json": {
+              "schema": {
+                "$ref": "#/components/schemas/CloudEvent"
+              }
+            },
+            "application/json": {
+              "schema": {}
+            }
+          },
+          "description": "Structured CloudEvent or binary-mode JSON data. Source configuration selects HMAC or bearer authentication.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {}
+            },
+            "description": "Live deltas, messages, and terminal outcome"
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventAccepted"
+                }
+              }
+            },
+            "description": "Provider accepted or acceptance budget elapsed"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "tags": [
+          "ingress"
+        ]
+      }
+    },
+    "/channels/{channel_id}/rekey": {
+      "post": {
+        "operationId": "rekeyChannel",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "channel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RekeyResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "serviceBearer": []
+          }
+        ],
+        "tags": [
+          "channels"
+        ]
+      }
+    },
+    "/channels/{channel_id}/test": {
+      "post": {
+        "operationId": "testChannel",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "channel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestChannelResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "channels"
+        ]
+      }
+    },
+    "/events/{event_ref}/context": {
+      "get": {
+        "operationId": "readEventContext",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "event_ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContextResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "agentBearer": []
+          }
+        ],
+        "tags": [
+          "tools"
+        ]
+      }
+    },
+    "/events/{event_ref}/replies": {
+      "post": {
+        "operationId": "replyToEvent",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "event_ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OutboundMessage"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntentReceipt"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "agentBearer": []
+          }
+        ],
+        "tags": [
+          "tools"
+        ]
+      }
+    },
+    "/events/{event_ref}/typing": {
+      "post": {
+        "operationId": "sendTyping",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "event_ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TypingReceipt"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "agentBearer": []
+          }
+        ],
+        "tags": [
+          "tools"
+        ]
+      }
+    },
+    "/messages/{message_ref}/update": {
+      "post": {
+        "operationId": "updateMessage",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "message_ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OutboundMessage"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntentReceipt"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "agentBearer": []
+          }
+        ],
+        "tags": [
+          "tools"
+        ]
+      }
+    }
+  },
+  "servers": [
+    {
+      "url": "/v1"
+    }
+  ]
+}

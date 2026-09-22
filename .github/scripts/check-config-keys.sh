@@ -24,10 +24,12 @@ fi
 repository_root=$(CDPATH='' cd -- "${root_argument}" && pwd -P)
 readonly repository_root
 
-readonly config_source="${repository_root}/api/crates/cma/src/config.rs"
-readonly config_modules="${repository_root}/api/crates/cma/src/config"
-readonly configmap="${repository_root}/infra/api/configmap.yaml"
-readonly secret_contract="${repository_root}/infra/api/secret.yaml"
+check_project() (
+local crate=$1 deployment=$2
+readonly config_source="${repository_root}/api/crates/${crate}/src/config.rs"
+readonly config_modules="${repository_root}/api/crates/${crate}/src/config"
+readonly configmap="${repository_root}/infra/${deployment}/configmap.yaml"
+readonly secret_contract="${repository_root}/infra/${deployment}/secret.yaml"
 
 require_regular_file() {
   local label=$1
@@ -81,7 +83,7 @@ fi
 awk '
   {
     remaining = $0
-    while (match(remaining, /"CHRONO_[A-Z0-9_]+"/)) {
+    while (match(remaining, /"(CHRONO|CMAEG)_[A-Z0-9_]+"/)) {
       print substr(remaining, RSTART + 1, RLENGTH - 2)
       remaining = substr(remaining, RSTART + RLENGTH)
     }
@@ -100,7 +102,7 @@ if ! awk '
     next
   }
   in_data && /^[^[:space:]#]/ { in_data = 0 }
-  in_data && match($0, /^  CHRONO_[A-Z0-9_]+:/) {
+  in_data && match($0, /^  (CHRONO|CMAEG)_[A-Z0-9_]+:/) {
     print substr($0, 3, RLENGTH - 3)
   }
   END {
@@ -120,7 +122,7 @@ awk '
   {
     reference = $0
     if (sub(/^#   /, "", reference) && \
-        match(reference, /^CHRONO_[A-Z0-9_]+([[:space:]]|$)/)) {
+        match(reference, /^(CHRONO|CMAEG)_[A-Z0-9_]+([[:space:]]|$)/)) {
       key = substr(reference, RSTART, RLENGTH)
       sub(/[[:space:]]$/, "", key)
       print key
@@ -164,3 +166,9 @@ fi
 
 printf 'Configuration key check passed: %d code key(s) match %d manifest key(s).\n' \
   "${code_count}" "${manifest_count}"
+
+)
+check_project cma api
+if [[ -e "${repository_root}/infra/cmaeg/configmap.yaml" || -L "${repository_root}/infra/cmaeg/configmap.yaml" ]]; then
+  check_project cmaeg cmaeg
+fi

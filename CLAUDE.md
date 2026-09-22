@@ -329,6 +329,13 @@ Nothing in `layer1-public`, `layer2-core`, `layer3-adapter`, `layer4-runtime` or
 `cma` may depend on the CMAEG crates, and CMAEG crates may not depend on them;
 CI enforces both directions.
 
+`docs/CMAEG_Protocol.md` is the normative CMAEG protocol authority. Changes under
+`/v1` must be additive: retained operations, fields, enum values and operation IDs
+remain compatible. A non-additive change requires `/v2`. The reviewed baseline
+`api/crates/cmaeg/openapi/v1.json` is a required exception to the generated-artifact
+rule in §8: regenerate it, review the diff against this rule, and commit it with
+the implementation and protocol documentation.
+
 ---
 
 ## 4. `infra/` must never diverge from the code

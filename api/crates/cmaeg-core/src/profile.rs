@@ -98,9 +98,9 @@ pub struct SkillRef {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "snake_case", tag = "type")]
+#[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 pub enum McpAuth {
-    None,
+    None {},
     NyxidService { slug: String },
 }
 
