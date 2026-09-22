@@ -1,0 +1,78 @@
+use super::Scenario;
+use crate::responses::v2::binding_tests as conversation;
+use crate::rest::bindings_tests as management;
+use axum::Extension;
+use layer2_core::{resource_access::CallerContext, sandbox::binding::*, Authorization};
+use serde_json::json;
+use tower::ServiceExt;
+
+pub(super) async fn scenario(name: &str) -> Option<Scenario> {
+    if name == "provider_card" {
+        return Some(Scenario {
+            router: crate::a2a::router("https://cma.example"),
+            subject: None,
+            authorization: Authorization::none(),
+            symbols: Default::default(),
+        });
+    }
+    if name == "binding_event" {
+        let (app, _, _, principal) = conversation::fixture().await;
+        let context = json!({"schema_version":1,"channel_id":"channel-contract","conversation_id":"conversation-external",
+            "activity":{"schema_version":1,"event_id":"event-contract","kind":{"type":"message","text":"Hello"}},"event_ref":"context-reference"});
+        let request = conversation::request(
+            "/api/v2/responses",
+            &principal,
+            json!({"conversation":"conversation-external","stream":true,"input":"Hello","event_context":context}),
+        );
+        let caller = request.extensions().get::<CallerContext>().unwrap().clone();
+        let credential = request
+            .extensions()
+            .get::<crate::DelegatedCredential>()
+            .unwrap()
+            .clone();
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), 200);
+        drop(response);
+        return Some(Scenario {
+            router: app.layer(Extension(caller)).layer(Extension(credential)),
+            subject: Some("owner-a"),
+            authorization: principal.caller().authorization,
+            symbols: Default::default(),
+        });
+    }
+    let mode = name.strip_prefix("binding_management_")?;
+    let (router, store) = management::app();
+    if ["ready", "pending"].contains(&mode) {
+        let response = router
+            .clone()
+            .oneshot(management::request(
+                "PUT",
+                "/api/v1/cmaeg/bindings/binding-contract",
+                Some(management::body()),
+                Some(management::authority()),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        if mode == "ready" {
+            let mut binding = store.binding("binding-contract").await.unwrap().unwrap();
+            let revision = binding.revision;
+            binding.state = BindingState::Ready;
+            binding.work = BindingWork::Idle;
+            binding
+                .advance_revision(layer2_core::now_rfc3339())
+                .unwrap();
+            store.save_binding(Some(revision), binding).await.unwrap();
+        }
+    }
+    Some(Scenario {
+        router,
+        subject: (mode != "anonymous").then_some("manager"),
+        authorization: if mode == "forbidden" {
+            Authorization::none()
+        } else {
+            management::authority()
+        },
+        symbols: Default::default(),
+    })
+}

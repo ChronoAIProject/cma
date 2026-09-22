@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 187,
+  "openapi_operations": 193,
   "operations": {
     "GET /api/v1/organizations": {
       "classification": "openapi",
@@ -2618,6 +2618,65 @@
         "missing_idempotency_key",
         "not_authenticated"
       ]
+    },
+    "PUT /api/v1/cmaeg/bindings/{binding_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bindings.rs# Binding lifecycle or immutable context is exercised through real handlers and both SDKs.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "invalid_binding"
+      ]
+    },
+    "GET /api/v1/cmaeg/bindings/{binding_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bindings.rs# Binding lifecycle or immutable context is exercised through real handlers and both SDKs.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "binding_not_found"
+      ]
+    },
+    "DELETE /api/v1/cmaeg/bindings/{binding_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bindings.rs# Binding lifecycle or immutable context is exercised through real handlers and both SDKs.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden"
+      ]
+    },
+    "PUT /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bindings.rs# Binding lifecycle or immutable context is exercised through real handlers and both SDKs.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "binding_not_found",
+        "binding_not_ready"
+      ]
+    },
+    "DELETE /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bindings.rs# Binding lifecycle or immutable context is exercised through real handlers and both SDKs.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "binding_not_found"
+      ]
+    },
+    "GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/v2/event_context.rs# Binding lifecycle or immutable context is exercised through real handlers and both SDKs.",
+      "required_problems": [
+        "authentication_required",
+        "binding_key_required",
+        "event_context_not_found"
+      ]
+    },
+    "GET /.well-known/agent-card.json": {
+      "classification": "supplemental_asset",
+      "source": "api/crates/layer1-public/src/a2a/mod.rs# Public provider card is anonymous discovery outside the REST OpenAPI document.",
+      "required_problems": []
     }
   }
 }
