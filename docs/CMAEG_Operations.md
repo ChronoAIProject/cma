@@ -165,7 +165,7 @@ The test prints nearest-rank p50/p90/p99 and writes `api/target/cmaeg-latency.tx
 CI's `cmaeg-latency` job runs after `backend`, has a fifteen-minute limit, retries
 the complete harness once on failure, and uploads that report even on failure
 when it exists. The second failure fails the job. No thresholds are relaxed in
-CI. The workflow is committed locally; its hosted result requires a future push.
+CI. Hosted results are recorded on the corresponding pull request's Actions run.
 
 Local evidence on macOS ARM64, 2026-09-22, with the default 50-ms fake CMA delay:
 
@@ -302,32 +302,69 @@ across replicas, changed-content conflicts, owner concealment, and retained
 cleanup identity after provider refusal. These tests do not establish deployed
 provider or Telegram evidence.
 
-### Production preparation on 2026-09-22
+### Production deployment on 2026-09-22
 
-The first gateway image supporting direct Secret environment values is pinned at
-`sha256:8b23d9cf4959a6361d437957e4bee15630f24cf66ddfa44b33f21344c8e770da` in
-`aelf-prod-registry/cma-cmaeg`. It comes from the successful native gateway build
-and scan in Actions run `35712199653`, attempt 1, source revision
-`3adeb5606617deffe1507c50eeac1ac31aa5a914`; the source tree matches commit
-`3ab5570c7ba34332105f526db3b9649c54c9770c`. The artifact checksum, image labels,
-architecture and immutable image configuration were checked before transfer.
-The overall run was superseded by subsequent integration work; its completed
-gateway image job succeeded.
+CMA and CMAEG were deployed to namespace `chrono-bot` in
+`gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northeast1-gke`, with one
+ready replica each. The rollout was verified at 11:50 UTC. PR #922 merged into
+`develop` at `f297f7c98ad9cfa903009eea37089c892b66283f`, closing #917.
 
-CMA production already runs bridge fixes through `2917b8a3` that were absent from
-`develop`. The deployment branch includes that lineage and retains the enabled
-production Bridge flags and the runtime image `bed09cb7` in the API manifests.
-The API update must contain both those fixes and the gateway/provider changes.
-Updating the control plane does not rotate existing Sandbox images.
+Both native `linux/amd64` images came from successful Actions run `35717639418`,
+attempt 1. Their actual source revision is
+`1cbd86a67d24a3f7ab3b510010fd54f4ac60af94`, with tree
+`2529cf609a48d9f07c045e8c15bce7ed85ce238e`, independently verified equal to the
+merged `develop` tree. Archive sizes/checksums, immutable Docker image IDs,
+architecture, labels, OCI layer digests and semantic configuration equality
+were checked before transfer. Registry manifest digests and configurations were
+read back after publication; source labels retain the tested revision.
 
-Native Secret `cmaeg-master-keys` has been provisioned in production directly
-from memory. The maintainer authorized dedicated NyxID provisioning. Non-default
-role `cmaeg-service` and service account `cmaeg-prod` now exist, and the role grants
-exactly the two gateway permissions. Client credentials were saved directly in
-`cmaeg-cma-service-token`, and the issued bearer was verified through userinfo.
-Its measured lifetime is 3,600 seconds, so production requires the renewable
-client-credentials implementation and its updated image before rollout.
-The operator's CLI confirms active admin authority, and role inventory succeeds
-with the CLI request headers. An earlier generic HTTP request received 403; that
-was not evidence of missing account permissions. The existing human CMA roles
-were left unchanged. This preparation record does not attest a completed production rollout or a Telegram round trip.
+The repository prefix is
+`us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry`:
+
+| Component | Repository | Verified deployed digest |
+| --- | --- | --- |
+| CMA API | `cma-api` | `sha256:72a2f622e50dbc2f72afbb2e1e00a9380b7866e324eb3cfd38bacfc211be4d78` |
+| CMAEG | `cma-cmaeg` | `sha256:3a573e6f1d1ee6f21f73a5ec573119e9936db693988c2b354d6afa172dc05f5a` |
+
+All 14 CI jobs passed, including 2,896 regular backend tests, 668 MongoDB
+persistence tests, all four image builds/scans and the gateway latency harness.
+The harness measured warm launch p99 23.374 ms, cold launch p99 65.347 ms,
+cold restore p99 55.969 ms and tool delivery p99 18.211 ms. Those measurements
+use the local fake services in CI; they are not deployed Telegram measurements.
+
+The API image contains the production bridge fixes through `2917b8a3` together
+with the gateway/provider implementation. The live rollout changed only its
+container image and preserved all configuration, enabled bridge flags and the
+runtime default `bed09cb7`. A fresh nine-Sandbox baseline taken immediately
+before rollout retained all nine Pod UIDs, container images, readiness and
+restart counts afterward. This is Pod continuity evidence, not an in-flight
+Telegram restart drill.
+
+The approved non-default NyxID role `cmaeg-service` and service account
+`cmaeg-prod` were provisioned with exactly `cma:gateway:records` and
+`cma:provider:bindings`. Native Kubernetes Secrets supply the stable master key
+ring, client credentials and a separate stable inbound rekey bearer. Values
+were generated or received in memory and sent directly to Kubernetes; no
+gateway credential files were written. The measured outbound token lifetime is
+3,600 seconds, and this image includes automatic client-credentials renewal.
+Startup against real NyxID and the compiled binary's expiry/renewal journey
+passed. No existing human NyxID roles were changed. The earlier role-inventory
+403 was Cloudflare error 1010 rejecting a generic Python client signature;
+the administrator's account has the required authority.
+
+`bot-gateway.chrono-ai.fun` previously had no dedicated DNS record and inherited
+a wildcard pointing at an older ingress. A proxied Cloudflare A record now
+points to the shared production gateway at `136.69.78.214`, matching the API's
+origin. The existing certificate covers the hostname. Both HTTPRoutes are
+accepted with resolved references; the backend and health policies are attached.
+Direct HTTPS and public HTTPS through Cloudflare both return healthy readiness,
+and HTTP redirects to HTTPS. The private metrics listener returns HTTP 200
+through a local port-forward; `/metrics` on the public listener returns 404.
+
+Public read-only smoke checks verified CMA and CMAEG readiness, CMA's exact two
+service-account capabilities, authenticated record listing, typed missing-binding
+and missing-channel responses, and HTTP 401 on unauthenticated record reads.
+The missing-channel request exercised the deployed gateway's renewable service
+credential against CMA without creating user resources. #918 remains open:
+Telegram round trips, deployed latency measurements, failure notices and the
+conversation restart drill have not been performed by this rollout.
