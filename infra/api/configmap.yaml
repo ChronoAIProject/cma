@@ -7,14 +7,15 @@ metadata:
     app.kubernetes.io/name: cma-api
     app.kubernetes.io/part-of: cma
 data:
-  # Independent process-start Bridge gates; enable only after canary verification.
-  CHRONO_BRIDGE_MANAGEMENT_ENABLED: "false"
-  CHRONO_BRIDGE_INGRESS_ENABLED: "false"
+  # Preserve the active production Bridge gates recorded on 2026-09-22.
+  # Additional gates still require their own canary verification.
+  CHRONO_BRIDGE_MANAGEMENT_ENABLED: "true"
+  CHRONO_BRIDGE_INGRESS_ENABLED: "true"
   CHRONO_BRIDGE_CONTROL_ADMISSION_ENABLED: "false"
-  CHRONO_BRIDGE_ALLOCATION_ENABLED: "false"
-  CHRONO_BRIDGE_EXECUTION_ENABLED: "false"
-  CHRONO_BRIDGE_OUTBOUND_ENABLED: "false"
-  CHRONO_BRIDGE_TELEGRAM_ENABLED: "false"
+  CHRONO_BRIDGE_ALLOCATION_ENABLED: "true"
+  CHRONO_BRIDGE_EXECUTION_ENABLED: "true"
+  CHRONO_BRIDGE_OUTBOUND_ENABLED: "true"
+  CHRONO_BRIDGE_TELEGRAM_ENABLED: "true"
   CHRONO_BRIDGE_TELEGRAM_NEW_ENABLED: "false"
   CHRONO_BRIDGE_DISCORD_ENABLED: "false"
   # New file admissions only; supporting readers/workers must precede enablement.
@@ -90,7 +91,7 @@ data:
   # Default for new allocations. Existing live Sandboxes retain their recorded
   # image across API upgrades and rollback; drift never admits rotation work.
   # Prove retained-runtime compatibility before deploying any new API image.
-  CHRONO_SANDBOX_IMAGE: "us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-runtime@sha256:7c06fd035664675a5b66c559c0f3917c81f9ffc529e4ff3bdbe8dad5cfeb5ba8"
+  CHRONO_SANDBOX_IMAGE: "us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-runtime@sha256:bed09cb7956f948ae22af8992d38d2a1746f250ccc39db34b9ed8e175e3bc665"
   # Public Profile availability controls credential-free warm runtime counts
   # (1-5 per Profile) in MongoDB. The worker pins this image, the service floor
   # and install bounds; changed pins retire old unowned reservations before

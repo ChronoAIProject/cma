@@ -1,0 +1,36 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cmaeg
+  namespace: chrono-bot
+  labels:
+    app.kubernetes.io/name: cmaeg
+    app.kubernetes.io/part-of: cma
+data:
+  CMAEG_LISTEN: "0.0.0.0:8090"
+  CMAEG_METRICS_LISTEN: "0.0.0.0:9091"
+  CMAEG_PUBLIC_URL: "https://bot-gateway.chrono-ai.fun"
+  CMAEG_CMA_BASE_URL: "http://cma-api.chrono-bot.svc"
+  CMAEG_NYXID_BASE_URL: "https://nyx-api.chrono-ai.fun"
+  CMAEG_TOOLS_NYXID_SLUG: "cmaeg"
+  CMAEG_PROVIDERS: >-
+    [{"slug":"cma_codex","base_url":"http://cma-api.chrono-bot.svc","kind":"responses_http","paths":{"agent_card":"/.well-known/agent-card.json","binding":"/api/v1/cmaeg/bindings/{binding_id}","conversation":"/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}","responses":"/api/v2/responses"},"max_inflight":256}]
+  CMAEG_PROVIDER_CONNECT_TIMEOUT_MS: "2000"
+  CMAEG_PROVIDER_REQUEST_TIMEOUT_MS: "30000"
+  CMAEG_PROVIDER_MAX_INFLIGHT: "256"
+  CMAEG_CHANNEL_CACHE_TTL_MS: "60000"
+  CMAEG_CHANNEL_NEGATIVE_TTL_MS: "10000"
+  CMAEG_CHANNEL_CACHE_MAX: "50000"
+  CMAEG_RESTORE_RATE_PER_MINUTE: "10"
+  CMAEG_RESTORE_TIMEOUT_MS: "800"
+  CMAEG_JWKS_TTL_MS: "600000"
+  CMAEG_INGRESS_MAX_BODY: "1048576"
+  CMAEG_INGRESS_INFLIGHT: "256"
+  CMAEG_ACCEPT_BUDGET_MS: "20000"
+  CMAEG_TURN_TIMEOUT_MS: "600000"
+  CMAEG_NYXID_REPLY_TIMEOUT_MS: "5000"
+  CMAEG_ACK_TEXT: "Working on it…"
+  CMAEG_HEARTBEAT_MS: "60000"
+  CMAEG_FAILURE_TEXT: "Sorry, I couldn’t finish that request. Please try again."
+  CMAEG_DRAIN_SECONDS: "600"
+  CMAEG_BUSY_RETRY_MAX_MS: "15000"

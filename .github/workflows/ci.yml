@@ -156,7 +156,11 @@ jobs:
             infra/api/serviceaccount.yaml infra/api/secretproviderclass.yaml \
             infra/api/httproute.yaml infra/api/healthcheckpolicy.yaml \
             infra/api/gcpbackendpolicy.yaml \
-            infra/cmaeg/Dockerfile \
+            infra/cmaeg/Dockerfile infra/cmaeg/configmap.yaml infra/cmaeg/deployment.yaml \
+            infra/cmaeg/secret.yaml infra/cmaeg/service.yaml \
+            infra/cmaeg/serviceaccount.yaml \
+            infra/cmaeg/httproute.yaml infra/cmaeg/healthcheckpolicy.yaml \
+            infra/cmaeg/gcpbackendpolicy.yaml \
             infra/runtime/Dockerfile \
             infra/storage/home-seed.yaml infra/storage/home-template.yaml \
             infra/web/Dockerfile infra/web/configmap.yaml infra/web/deployment.yaml \
@@ -493,7 +497,7 @@ jobs:
           ./kubeconform -strict -summary -output text \
             -schema-location default \
             -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
-            infra/api/*.yaml infra/web/*.yaml infra/storage/*.yaml
+            infra/api/*.yaml infra/cmaeg/*.yaml infra/web/*.yaml infra/storage/*.yaml
       - name: kube-linter
         uses: stackrox/kube-linter-action@v1
         with:
