@@ -5,6 +5,7 @@ mod lifecycle;
 mod nyxid_fixture;
 mod provider_fixture;
 mod rest;
+mod web;
 use fixture::*;
 
 fn secrets() -> BotSecrets {
