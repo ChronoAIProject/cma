@@ -93,3 +93,6 @@ export { readAgentCard, type ProviderAgentCard } from './agent-card.js';
 export * from './gateway-records.js';
 
 export * from './provider-bindings.js';
+
+export { Cmaeg, type CmaegConfig } from './cmaeg/index.js';
+export * as cmaeg from './cmaeg/index.js';

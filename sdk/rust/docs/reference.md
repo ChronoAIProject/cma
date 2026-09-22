@@ -158,3 +158,53 @@ card; older servers' named refusals remain typed API errors.
 Encrypted gateway records are available through `client.gateway_records().put/get/list/delete`. These operations require gateway management authority. `blob` is base64 ciphertext; creation uses `expected_version: null`, and replacement supplies the retained version. They use version preconditions without an Idempotency-Key header.
 
 Provider binding management uses `client.provider_bindings().put/get/delete/ensure_conversation/delete_conversation`. Supply the complete profile snapshot and digest for PUT. These gateway-only operations require both management capabilities; use the scoped binding credential for Responses and immutable event-context reads. Binding responses never contain the supplied credential.
+
+## CMA Event Gateway
+
+`cma_sdk::cmaeg::Cmaeg` is an independent client configured with the gateway origin,
+without `/v1`. Methods are `create_channel`, `get_channel`, `recover_channel`,
+`update_channel`, `delete_channel`, `test_channel`, `rekey_channel`, `post_event`,
+`stream_event`, `reply_to_event`, `update_message`, `send_typing` and
+`read_event_context`. Wire types live in `cma_sdk::cmaeg::types`.
+
+```rust
+use cma_sdk::cmaeg::{Cmaeg, types::OutboundMessage};
+
+async fn reply(origin: &str, agent_key: &str, event_ref: &str) -> cma_sdk::Result<()> {
+    let gateway = Cmaeg::builder(origin)?.bearer_token(agent_key)?.build()?;
+    let receipt = gateway.reply_to_event(event_ref, &OutboundMessage {
+        text: Some("Received".into()), blocks: None, reply_to: None,
+    }).await?;
+    // Inspect receipt.delivery and receipt.rendering before claiming delivery.
+    let _ = receipt;
+    Ok(())
+}
+```
+
+Configure a separate creator-token client for management, and a dedicated CMA
+service-token client for `rekey_channel`. Channel requests contain a redacted
+`Secret` wrapper for credential strings. Other gateway documents omit `Debug`
+because they can contain opaque channel, event or message references. Never log
+those references or credentials.
+
+`create_channel(&body, Option<&str>)` accepts a replica-local idempotency key;
+reserve `record_id` in the body for durable creation recovery. After an uncertain
+response, retain the complete request and reconcile with `recover_channel`.
+Updates require the complete policy and `expected_version`; deletes require the
+observed `u64` version. Omitted update credentials retain their values. HTTP
+problems use `Error::Api`, preserving `code`, status and retry metadata.
+
+Custom events use structured CloudEvents. `EventOptions::default()` uses the
+configured source-key bearer; `EventOptions { webhook: Some(WebhookAuth { ... }) }`
+signs the exact serialized event and omits that bearer. `sign_webhook` uses the
+UTF-8 secret string directly, never base64-decodes it. The SDK adds a direct
+reference to the already-pinned `ring` dependency for HMAC-SHA256.
+
+`GatewayStream::next()` returns `Option<Result<GatewayEvent>>` and checks event
+and conversation identity. The stream retains typed terminal failures and the
+separate `Backpressure` outcome. EOF before a terminal frame returns a transport
+error. Dropping the reader ends observation without cancelling the provider turn;
+there is no automatic reconnect or Last-Event-ID replay. The configured request
+timeout covers the complete stream. Requests do not follow redirects or retry
+uncertain mutations. Context reads retain the full persisted activity; typing and
+message-update receipts explicitly report unsupported transports.

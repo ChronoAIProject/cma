@@ -443,3 +443,55 @@ child `remove_child` retains its original Workspace-preserving scope. See
 Encrypted gateway records are available through `client.gatewayRecords.put/get/list/delete`. These operations require gateway management authority. `blob` is base64 ciphertext; creation uses `expected_version: null`, and replacement supplies the retained version. They use version preconditions without an Idempotency-Key header.
 
 Provider binding management uses `client.providerBindings.put/get/delete/ensureConversation/deleteConversation`. Supply the complete profile snapshot and digest for PUT. These gateway-only operations require both management capabilities; use the scoped binding credential for Responses and immutable event-context reads. Binding responses never contain the supplied credential.
+
+## CMA Event Gateway
+
+`Cmaeg` is an independent client configured with the gateway origin, without a
+`/v1` suffix. Its operations are `createChannel`, `getChannel`, `recoverChannel`,
+`updateChannel`, `deleteChannel`, `testChannel`, `rekeyChannel`, `postEvent`,
+`streamEvent`, `replyToEvent`, `updateMessage`, `sendTyping` and `readEventContext`.
+Gateway wire types and `signWebhook` are exported under `cmaeg`.
+
+```ts
+import { Cmaeg, type cmaeg } from '@chronoai/cma-sdk';
+
+export async function reply(
+  gatewayOrigin: string,
+  agentKey: string,
+  eventRef: string,
+  text: string,
+) {
+  const gateway = new Cmaeg({ baseUrl: gatewayOrigin, credential: () => agentKey });
+  const message: cmaeg.OutboundMessage = { text };
+  return gateway.replyToEvent(eventRef, message);
+}
+```
+
+Use a separate creator-token client for management. `createChannel` accepts an
+optional `{idempotencyKey}`; reserve `record_id` in its body for recovery across
+replicas. Keep the complete request after uncertainty and reconcile with
+`recoverChannel(recordId)`. `updateChannel` replaces the complete policy and
+requires `expected_version`; `deleteChannel(id, expectedVersion)` sends that
+version in the query. Omitted/null update credentials retain their current values.
+A stale mutation throws `ApiError` with `code === 'conflict'`.
+
+`postEvent` and `streamEvent` accept a structured `cmaeg.CloudEvent` plus optional
+`{webhook:{secret,id,timestamp}}`. The timestamp is decimal Unix seconds; the
+configured base64 secret string is used as UTF-8 without decoding it. The client
+snapshots the event before signing and sends those exact JSON bytes. HMAC requests
+omit creator credentials and cookies. `cmaeg.signWebhook(secret,id,timestamp,body)`
+returns the three Standard Webhooks headers for caller-owned exact body bytes.
+
+`streamEvent` is an async iterator of `GatewayStreamEvent`. It preserves delta,
+message, completed, failed and terminal `sync_backpressure` outcomes, validates
+stable event/conversation identity, and treats EOF before completion as uncertain.
+`timeoutMs` bounds the complete stream, and `signal` cancels observation. Neither
+cancellation nor early iterator return cancels the admitted provider turn. Streams
+have no Last-Event-ID replay and are never automatically retried or reconnected.
+
+Replies and updates return delivery/rendering receipts; inspect `delivery.outcome`
+and `rendering` before claiming delivery or native UI support. Typing can return
+`unsupported`. Event context contains the full persisted activity. Channel, event
+and message references remain opaque and must not be logged. No redirect or
+automatic mutation retry is performed. Unknown response properties are ignored;
+CloudEvents extension attributes are retained.
