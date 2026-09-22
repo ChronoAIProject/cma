@@ -9,6 +9,13 @@ pub trait SandboxCredentialPrerequisite: Send + Sync {
         &self,
         sandbox: &super::Sandbox,
     ) -> Result<(), SandboxCredentialPrerequisiteError> {
+        if !sandbox.credential.source.is_managed() {
+            return if sandbox.credential.validate() && sandbox.credential.current.is_some() {
+                Ok(())
+            } else {
+                Err(SandboxCredentialPrerequisiteError::SetupRequired)
+            };
+        }
         self.check_services(
             &sandbox.owner,
             &sandbox

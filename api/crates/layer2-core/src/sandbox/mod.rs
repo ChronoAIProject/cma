@@ -40,6 +40,7 @@ pub use provenance_inventory::{
 pub use provenance_service::{
     AgentProvenanceDetails, AgentProvenanceReading, AgentProvenanceService,
 };
+mod binding_creation;
 mod credential;
 mod credential_prerequisite;
 mod error;

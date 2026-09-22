@@ -255,6 +255,31 @@ The pinned programs are Codex 0.147.0 and codex-acp 1.4.0. Historical Agent-home
 evidence is recorded in [Sandbox Provider](Sandbox_Provider.md#8-agent-home-evidence)
 and must be repeated on the final rebuilt image, not inherited from an old tag.
 
+## External Bindings
+
+A provider binding records a management principal separately from its resource
+owner. Its external profile is mapped to private, published CMA profile revisions;
+instances pin those revisions so dashboard profile links remain meaningful.
+One binding reserves a Sandbox and Workspace. Each external conversation reserves
+one Agent and Worktree within its binding generation. The binding stores the
+supplied key's SHA-256; encrypted credential custody owns the secret bytes.
+
+Binding admission, reconfiguration, retirement, and conversation changes use
+compare-and-swap revisions. Sandbox, Workspace, and Agent admission rechecks the
+binding reservation in the resource transaction. Conversation admission also
+checks its exact reservation. A worker that loses a retirement or reconfiguration
+race cannot create a late resource. Binding admissions preserve their reserved
+Sandbox identifiers and do not claim a warm Sandbox with a different identifier.
+
+The controller discovers durable pending phases after restart. It retains the
+previous environment until cleanup completes, stops and deletes conversation
+Agents through the existing lifecycle, and reuses compatible immutable Sandbox
+and Workspace snapshots. Retired identifiers are tombstones. Supplied credential
+admission and cleanup share a binding transaction fence, including when a binding
+is deleted before its Sandbox is inserted; a delayed request cannot recreate
+cleaned-up key custody. Supplied authority permits child admission and revival
+without requiring an unrelated owner refresh token.
+
 ## Conversation And Delivery
 
 The Agent owns a durable, append-only, monotonic conversation log. Sandbox

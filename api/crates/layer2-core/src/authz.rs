@@ -38,6 +38,8 @@ pub enum Capability {
     ConfigurePlatform,
     /// Manage opaque CMA event-gateway channel records.
     ManageGatewayRecords,
+    /// Manage externally provisioned environments and conversations.
+    ManageProviderBindings,
 }
 
 /// A closed set of capabilities established by the authentication boundary.
