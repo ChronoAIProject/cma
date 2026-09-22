@@ -89,3 +89,6 @@ pub(super) fn permits_request(method: &axum::http::Method, path: &str, binding: 
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod command_tests;

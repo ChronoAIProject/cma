@@ -11,6 +11,8 @@ pub(super) fn apply(
 ) -> Result<QueuedCancellationOutcome, CommandLedgerError> {
     request.validate()?;
     let mut state = store.lock();
+    super::bindings::require_conversation_authority(&state, request.command.binding.as_ref())
+        .map_err(|_| CommandLedgerError::Conflict)?;
     let key = (request.command.scope(), request.command.key_sha256.clone());
     let existing = state
         .agent_command_keys

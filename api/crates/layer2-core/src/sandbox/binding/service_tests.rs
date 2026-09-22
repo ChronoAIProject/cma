@@ -449,3 +449,5 @@ mod access;
 mod rotation;
 
 mod resource_access;
+
+mod command_tests;
