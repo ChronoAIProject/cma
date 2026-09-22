@@ -1,3 +1,5 @@
+import type { V2EventContext } from './event-context.js';
+export type { V2EventContext } from './event-context.js';
 import { v2QueuedCancellationCapability } from './queued-cancellation-types.js';
 import { ProtocolError } from '../errors.js';
 import {
@@ -164,6 +166,7 @@ export const v2Capabilities = object({
 });
 export type V2Capabilities = Output<typeof v2Capabilities>;
 export interface V2ResponseInput {
+  readonly event_context?: V2EventContext;
   readonly input:
     | string
     | readonly [

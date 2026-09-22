@@ -129,6 +129,17 @@ and closes on lost authority. Nested v2 HTTP errors retain their code,
 shared REST middleware envelope remains supported as well. See the
 [API contract](../../../docs/API_Responses.md).
 
+Binding-key callers may supply an external conversation ID; the returned
+conversation identifies the mapped Agent. The Agent alias and request conversation
+may differ when the server resolves both to the same Agent. Known Agent IDs still
+receive exact identity validation. An optional `event_context` retains the complete
+schema-version-1 event snapshot atomically with admission. Preserve the original
+body and idempotency key on retry. Changed context or another key for the same event
+conflicts. The runtime receives its `event_ref`, while the complete object is read
+with `responses_v2().read_event_context(binding_id, conversation_id, event_id)`.
+The helper requires binding authentication and validates conversation/event identity.
+The snapshot limit is 1 MiB; metadata and runtime input limits remain independent.
+
 ## Response-targeted controls
 
 `responses_v2().observe_controls(agent_id, response_id)` returns the original
