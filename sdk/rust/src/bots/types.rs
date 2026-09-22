@@ -67,7 +67,7 @@ pub struct BotReply {
     pub ack_after_ms: u32,
 }
 /// Bot creation request. No credential values are accepted or returned.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateBot {
     /// Owner-facing label.
     pub name: String,
@@ -81,7 +81,7 @@ pub struct CreateBot {
     pub reply: BotReply,
 }
 /// Durable Bot state, including an explicit unknown value for future additions.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BotState {
     /// Creation is still running.
@@ -101,7 +101,7 @@ pub enum BotState {
     Unknown,
 }
 /// Durable progress without worker claims or credential material.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BotOperation {
     /// Operation kind.
     pub operation: String,
@@ -109,7 +109,7 @@ pub struct BotOperation {
     pub step: String,
 }
 /// CMAEG channel identity and public ingress endpoints. Treat references as opaque.
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct BotChannel {
     /// Complete opaque channel reference; do not decode or log it.
     pub channel_id: String,
@@ -127,7 +127,7 @@ pub struct BotChannel {
     pub event_url: String,
 }
 /// A synthetic provider test result; not proof of external channel delivery.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BotTest {
     /// Time until provider acceptance.
     pub accepted_after_ms: u64,
@@ -139,7 +139,7 @@ pub struct BotTest {
     pub tested_at: String,
 }
 /// Owner-facing Bot projection.
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Bot {
     /// CMA Bot identifier.
     pub bot_id: String,
@@ -171,7 +171,7 @@ pub struct Bot {
     pub last_test: Option<BotTest>,
 }
 /// Personally owned channel bot available for selection.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExternalBot {
     /// NyxID channel bot identifier.
     pub id: String,
@@ -181,7 +181,7 @@ pub struct ExternalBot {
     pub platform: String,
 }
 /// One page of owned bots.
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct BotPage {
     /// Bots in stable identity order.
     pub items: Vec<Bot>,
