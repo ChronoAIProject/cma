@@ -23,6 +23,7 @@ use std::{
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "executes the warm/cold/socket and paced tool delivery budgets"]
 async fn latency_budget() {
+    cmaeg::init_logging();
     let metrics = cmaeg::telemetry::install().unwrap();
     let mut app = App::new().await;
     measure(app.callback("prime", 0).await, 202).await;
