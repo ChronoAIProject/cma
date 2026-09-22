@@ -133,12 +133,14 @@ async fn rejects_each_payload_and_reply_binding() {
         ("aud", json!("channel-relay/callback"), "token_audience"),
         ("token_type", json!("relay_callback"), "token_type"),
         ("iss", json!("https://other.example"), "token_issuer"),
-        ("exp", json!(now() + 1801), "token_time"),
     ] {
         let mut envelope = Envelope::new();
         envelope.reply[field] = value;
         problem(fixture.send(&envelope).await, 401, reason).await;
     }
+    let mut too_long = Envelope::new();
+    too_long.reply["exp"] = (too_long.reply["iat"].as_i64().unwrap() + 1801).into();
+    problem(fixture.send(&too_long).await, 401, "token_time").await;
     let mut expired = Envelope::new();
     expired.reply["iat"] = (now() - 100).into();
     expired.reply["exp"] = (now() - 1).into();
