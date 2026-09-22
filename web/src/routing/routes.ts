@@ -11,6 +11,9 @@ export type AppRoute =
   | { readonly kind: 'bridges'; readonly organization?: string }
   | { readonly kind: 'bridge_new'; readonly organization?: string }
   | { readonly kind: 'bridge'; readonly bridgeId: string }
+  | { readonly kind: 'bots' }
+  | { readonly kind: 'bot_new' }
+  | { readonly kind: 'bot'; readonly botId: string }
   | { readonly kind: 'profiles' }
   | { readonly kind: 'profile'; readonly profileKind: ProfileKind; readonly profileId: string }
   | { readonly kind: 'marketplace' }
@@ -65,6 +68,8 @@ export function parseRoute(pathname: string): AppRoute {
         return { kind: 'inventory' };
       case 'bridges':
         return { kind: 'bridges' };
+      case 'bots':
+        return { kind: 'bots' };
       case 'profiles':
         return { kind: 'profiles' };
       case 'marketplace':
@@ -84,6 +89,7 @@ export function parseRoute(pathname: string): AppRoute {
     if (resource === 'sandboxes') return { kind: 'sandbox', sandboxId: id };
     if (resource === 'workspaces') return { kind: 'workspace', workspaceId: id };
     if (resource === 'agents') return { kind: 'agent', agentId: id };
+    if (resource === 'bots') return id === 'new' ? { kind: 'bot_new' } : { kind: 'bot', botId: id };
     if (resource === 'bridges')
       return id === 'new' ? { kind: 'bridge_new' } : { kind: 'bridge', bridgeId: id };
     if (resource === 'launches') return { kind: 'launch', launchId: id };
@@ -156,6 +162,12 @@ export function routePath(route: AppRoute): string {
         : `/organizations/${segment(route.organization)}/bridges/new`;
     case 'bridge':
       return `/bridges/${segment(route.bridgeId)}`;
+    case 'bots':
+      return '/bots';
+    case 'bot_new':
+      return '/bots/new';
+    case 'bot':
+      return `/bots/${segment(route.botId)}`;
     case 'profiles':
       return '/profiles';
     case 'profile':

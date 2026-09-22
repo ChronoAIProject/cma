@@ -469,6 +469,32 @@ Local interoperability tests under `cma::gateway::tests` execute the compiled
 gateway binary with HTTP fixtures and CMA's actual profile mapper. Build `cmaeg`
 before running these tests in isolation; full CI builds the workspace first.
 
+The dashboard's personal **Bots** entry requires the `manage_own_bots` browser
+capability. `/bots/new` selects an available Telegram bot, an exact published
+Agent Profile revision, explicit message admission and reply settings, then
+reviews the request. Detail pages show durable setup checkpoints, provider level,
+callback URL, access expiry and the last synthetic test. They expose explicit
+enable/disable, key rotation and confirmed deletion. Credential values are never
+returned to the dashboard. Deletion is complete only after the accepted operation
+finishes and the public resource disappears; existing conversations are retained.
+
+Before sending a creation request, the dashboard retains its exact configuration
+and idempotency key in browser session storage, scoped to the origin and signed-in
+owner. After an uncertain response or reload, **Recover creation** resubmits that
+same request only on an explicit click. Other lifecycle commands are never
+automatically repeated after uncertainty. Visible pages poll every five seconds;
+stale observations disable actions, temporary read failures retain known data,
+and access denial clears protected records.
+
+For local browser verification, install the web dependencies and Playwright
+browser, build `web/` and `cmaeg`, then run from `api/`:
+`cargo test -p cma dashboard_creates_tests_and_deletes_through_real_cma_and_compiled_gateway -- --ignored --nocapture`.
+The browser drives real CMA Bot routes, its durable worker and compiled CMAEG
+through creation, synthetic test, disable/enable, rotation and confirmed cleanup.
+Identity, profile catalogue and provider execution use loopback fixtures and the
+Bot store is in memory. This test proves local integration, not production login,
+Telegram delivery, database durability or restart continuity.
+
 ## Delivery Authority
 
 For the 2026-09-22 gateway deployment, the maintainer additionally authorizes a
