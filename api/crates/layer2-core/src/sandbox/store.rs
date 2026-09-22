@@ -11,6 +11,7 @@ use super::{
 };
 
 mod service_traits;
+pub use super::binding::BindingStore;
 pub use service_traits::*;
 
 mod agent;
@@ -397,6 +398,8 @@ pub struct InMemorySandboxStore {
 
 #[derive(Clone, Default)]
 struct State {
+    bindings: std::collections::BTreeMap<String, super::binding::ProviderBinding>,
+    binding_conversations: std::collections::BTreeMap<String, super::binding::BindingConversation>,
     agent_artifacts: HashMap<String, super::agent_artifacts::StoredAgentArtifact>,
     agent_channel_usage: HashMap<AgentId, super::channel_usage::StoredAgentChannelUsage>,
     channel_usage_events:
