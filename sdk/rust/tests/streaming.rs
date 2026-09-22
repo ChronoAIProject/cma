@@ -346,6 +346,30 @@ async fn auth_dependency_failure_retains_correlation_and_public_signup_omits_cre
     server.assert_drained();
 }
 
+#[tokio::test]
+async fn authenticated_bot_owner_capability_is_preserved() {
+    use cma_sdk::auth::{AuthSession, Capability};
+    let server = WireServer::new().await;
+    server.expect(wire::json(
+        "GET",
+        "/auth/session",
+        None,
+        200,
+        json!({"authenticated":true,"subject":"bot-owner","visitor":false,
+            "capabilities":["manage_own_bots","manage_own_profiles"]}),
+        true,
+    ));
+    let AuthSession::SignedIn(identity) = server.client.auth().read_session().await.unwrap() else {
+        panic!("expected authenticated owner")
+    };
+    assert_eq!(identity.subject, "bot-owner");
+    assert_eq!(
+        identity.capabilities,
+        vec![Capability::ManageOwnBots, Capability::ManageOwnProfiles]
+    );
+    server.assert_drained();
+}
+
 #[test]
 fn response_input_models_cover_all_supported_single_message_forms_and_reject_other_roles() {
     for input in [
