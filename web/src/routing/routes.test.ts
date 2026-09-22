@@ -4,6 +4,9 @@ import { parseRoute, routePath, useAppRouter, type AppRoute } from './routes';
 
 const ROUTES: readonly AppRoute[] = [
   { kind: 'home' },
+  { kind: 'bots' },
+  { kind: 'bot_new' },
+  { kind: 'bot', botId: 'bot_123' },
   { kind: 'sandbox', sandboxId: 'sbx_123' },
   { kind: 'workspace', workspaceId: 'wks_123' },
   { kind: 'agent', agentId: 'agt_123' },
