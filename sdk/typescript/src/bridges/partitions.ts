@@ -13,6 +13,24 @@ function path(id: string) {
 }
 /** Historical partition generations and exact Channel response status. Reads admit no work. */
 export class BridgePartitions extends BridgeSourceControls {
+  /** Manager-authorized user-text previews before a Channel command starts a turn. */
+  pendingMessages(id: string, allocation: string, options: OperationOptions = {}) {
+    input(allocationId, allocation);
+    return read(
+      this.config,
+      `${path(id)}/${segment(allocation)}/pending-messages`,
+      (value) => {
+        const result = schema.pendingMessages(value);
+        if (
+          result.status === 'available' &&
+          (result.bridge_id !== id || result.partition_id !== allocation)
+        )
+          throw new ProtocolError('pending messages changed Bridge or allocation');
+        return result;
+      },
+      options,
+    );
+  }
   listPartitions(id: string, options: PageOptions = {}) {
     const endpoint = path(id);
     const limit = options.limit ?? 25;

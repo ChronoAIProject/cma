@@ -1,5 +1,6 @@
 //! Real runtime startup precedes the ordinary connection-publication handoff.
 pub(crate) mod model;
+pub(crate) mod prompt;
 #[cfg(test)]
 pub(crate) mod test_support;
 use super::{
@@ -53,7 +54,7 @@ impl ChannelStartupDriver {
             let options =
                 super::runtime_options(&context.agent, &snapshot.sandbox, &context.worktree);
             ChannelStartupPlan {
-                schema_version: 1,
+                schema_version: prompt::SCHEMA_VERSION,
                 allocation_id: snapshot.allocation.id.clone(),
                 skills: material,
                 worktree: WorktreeRequest::new(
@@ -68,7 +69,10 @@ impl ChannelStartupDriver {
                 home: AgentHomeRequest::new(
                     format!("agent:{}:home:create:v1", context.agent.id),
                     options.clone(),
-                    context.agent.profile.content.system_prompt.clone(),
+                    prompt::system_prompt(
+                        prompt::SCHEMA_VERSION,
+                        &context.agent.profile.content.system_prompt,
+                    )?,
                     skills,
                 ),
                 open: AgentOpenRequest::new(

@@ -117,6 +117,14 @@ infra/api/httproute.yaml
 infra/api/healthcheckpolicy.yaml
 infra/api/gcpbackendpolicy.yaml
 infra/cmaeg/Dockerfile
+infra/cmaeg/deployment.yaml
+infra/cmaeg/configmap.yaml
+infra/cmaeg/secret.yaml
+infra/cmaeg/service.yaml
+infra/cmaeg/serviceaccount.yaml
+infra/cmaeg/httproute.yaml
+infra/cmaeg/healthcheckpolicy.yaml
+infra/cmaeg/gcpbackendpolicy.yaml
 infra/runtime/Dockerfile
 infra/storage/home-seed.yaml
 infra/storage/home-template.yaml
@@ -157,7 +165,8 @@ infrastructure this repository consumes rather than owns.
 `infra/runtime/` is an image and nothing else. It carries no `deployment.yaml`, no `service.yaml` and no config, and that absence is the point: the Sandbox pod is scheduled by the sandbox provider, not by this repository. CMA hands the provider an image URI and an entrypoint and gets an isolated runtime back. A Deployment here would mean the control plane was scheduling agent workloads itself, which §1 forbids.
 
 `infra/cmaeg/` is the CMA Event Gateway, a separate stateless service in the
-same namespace; its manifests are added in a later issue.
+same namespace. CMA and CMAEG each run one replica. Kubernetes Secrets inject
+the gateway's master keys and CMA service credential as environment variables.
 
 ### `docs/`
 

@@ -1076,6 +1076,7 @@ SDKs expose this scope through their accessible Sandbox list method.
 | `GET /api/v1/bridges/{id}/usage` | Current Bridge management; bounded retained allocation totals and authorized distinct target-resource counts. |
 | `GET /api/v1/bridges/{id}/partitions` | Current Bridge management and per-target access; scoped cursor, limit 1–25. |
 | `GET /api/v1/bridges/{id}/partitions/{allocation}` | Exact retained partition generation, bounded pending commands and latest correlated response. |
+| `GET /api/v1/bridges/{id}/partitions/{allocation}/pending-messages` | Authorized text previews for accepted channel messages whose Agent turn has not started. |
 | `GET /api/v1/bridges/{id}/allocations/{allocation}/child-cleanup` | Retained child cleanup acceptance, proved progress and observed holds. |
 | `POST /api/v1/bridges/{id}/allocations/{allocation}/child-cleanup` | Explicit remove_child acceptance with current revisions and retained Idempotency-Key; 202 does not mean physical removal. |
 | `GET /api/v1/bridges/{id}/allocations/{allocation}/workspace-cleanup` | Exact allocation-owned Workspace status, reviewed consent inputs, current eligibility and retained completion. |
@@ -1312,6 +1313,17 @@ Agent permissions. Responses distinguish reserved, available and redacted
 targets, unavailable source evidence, and truncated pending work. Source labels
 describe the first accepted message and must be rendered as text. These reads
 admit no work and do not assert current runtime connectivity.
+
+GET `/api/v1/bridges/{id}/partitions/{allocation}/pending-messages` returns
+`available`, `unavailable`, or `redacted`. Available results contain the exact
+Bridge, partition generation and Agent, its durable `through_sequence`, and up
+to 64 unstarted messages in Agent order. Each preview includes the command and
+response IDs, admission time, platform, original user text bounded to 1,024
+Unicode characters, and `text_truncated`. Result-level `pending_truncated` and
+`source_unavailable` report incomplete evidence. Current management and target
+authority are checked again before returning; redacted results expose no text.
+Delivery instructions, attachments and reply credentials are never included.
+This read admits no work.
 
 ### Explicit partition reset and detach
 

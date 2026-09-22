@@ -10,6 +10,7 @@ pub mod mcp;
 pub mod openapi;
 pub mod providers;
 pub mod records;
+mod service_auth;
 pub mod telemetry;
 pub mod tools;
 pub mod turns;
@@ -24,15 +25,15 @@ use utoipa::OpenApi;
 
 pub use config::{
     ChannelCacheConfig, Config, ConfigError, DeliveryConfig, IngressConfig, ManagementConfig,
-    TurnConfig, CMAEG_ACCEPT_BUDGET_MS, CMAEG_ACK_TEXT, CMAEG_BUSY_RETRY_MAX_MS,
-    CMAEG_CHANNEL_CACHE_MAX, CMAEG_CHANNEL_CACHE_TTL_MS, CMAEG_CHANNEL_NEGATIVE_TTL_MS,
-    CMAEG_CMA_BASE_URL, CMAEG_CMA_SERVICE_TOKEN_FILE, CMAEG_DRAIN_SECONDS, CMAEG_FAILURE_TEXT,
-    CMAEG_HEARTBEAT_MS, CMAEG_INGRESS_INFLIGHT, CMAEG_INGRESS_MAX_BODY, CMAEG_JWKS_TTL_MS,
-    CMAEG_LISTEN, CMAEG_MASTER_KEYS_FILE, CMAEG_METRICS_LISTEN, CMAEG_NYXID_BASE_URL,
-    CMAEG_NYXID_REPLY_TIMEOUT_MS, CMAEG_PROVIDERS, CMAEG_PROVIDER_CONNECT_TIMEOUT_MS,
-    CMAEG_PROVIDER_MAX_INFLIGHT, CMAEG_PROVIDER_REQUEST_TIMEOUT_MS, CMAEG_PUBLIC_URL,
-    CMAEG_RESTORE_RATE_PER_MINUTE, CMAEG_RESTORE_TIMEOUT_MS, CMAEG_TOOLS_NYXID_SLUG,
-    CMAEG_TURN_TIMEOUT_MS,
+    ServiceAccountConfig, TurnConfig, CMAEG_ACCEPT_BUDGET_MS, CMAEG_ACK_TEXT,
+    CMAEG_BUSY_RETRY_MAX_MS, CMAEG_CHANNEL_CACHE_MAX, CMAEG_CHANNEL_CACHE_TTL_MS,
+    CMAEG_CHANNEL_NEGATIVE_TTL_MS, CMAEG_CMA_BASE_URL, CMAEG_CMA_SERVICE_TOKEN_FILE,
+    CMAEG_DRAIN_SECONDS, CMAEG_FAILURE_TEXT, CMAEG_HEARTBEAT_MS, CMAEG_INGRESS_INFLIGHT,
+    CMAEG_INGRESS_MAX_BODY, CMAEG_JWKS_TTL_MS, CMAEG_LISTEN, CMAEG_MASTER_KEYS_FILE,
+    CMAEG_METRICS_LISTEN, CMAEG_NYXID_BASE_URL, CMAEG_NYXID_REPLY_TIMEOUT_MS, CMAEG_PROVIDERS,
+    CMAEG_PROVIDER_CONNECT_TIMEOUT_MS, CMAEG_PROVIDER_MAX_INFLIGHT,
+    CMAEG_PROVIDER_REQUEST_TIMEOUT_MS, CMAEG_PUBLIC_URL, CMAEG_RESTORE_RATE_PER_MINUTE,
+    CMAEG_RESTORE_TIMEOUT_MS, CMAEG_TOOLS_NYXID_SLUG, CMAEG_TURN_TIMEOUT_MS,
 };
 
 const REQUEST_BODY_LIMIT_BYTES: usize = 1024 * 1024;
@@ -87,11 +88,19 @@ async fn openapi() -> Json<utoipa::openapi::OpenApi> {
 /// Run CMAEG until a process termination signal arrives.
 pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let config = Config::from_env()?;
-    let providers = std::sync::Arc::new(providers::ProviderClient::from_config(&config)?);
-    let records = std::sync::Arc::new(records::RecordClient::new(
-        &config.management.cma_base_url,
-        config.management.cma_service_token.as_str(),
-    )?);
+    let service_auth = service_auth::ServiceAuth::from_config(&config)?;
+    // Prove the renewable credential before advertising gateway readiness.
+    service_auth.bearer().await?;
+    let providers = std::sync::Arc::new(
+        providers::ProviderClient::from_config(&config)?.with_service_auth(service_auth.clone()),
+    );
+    let records = std::sync::Arc::new(
+        records::RecordClient::new(
+            &config.management.cma_base_url,
+            config.management.cma_service_token.as_str(),
+        )?
+        .with_service_auth(service_auth),
+    );
     let creator_auth = std::sync::Arc::new(auth::CreatorAuthenticator::new(
         &config.management.nyxid_base_url,
     )?);

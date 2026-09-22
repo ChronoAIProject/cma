@@ -6,6 +6,7 @@ use super::authority::{authorize, BridgeAuthority};
 use super::store::digest;
 use super::*;
 
+mod connection;
 mod placement;
 
 #[derive(Clone)]
@@ -192,21 +193,6 @@ impl BridgeService {
         }
         authority.require(true)?;
         validation.require(&record.owner, &record.current()?.config)
-    }
-
-    pub(super) async fn connection(
-        &self,
-        owner: &ResourceOwner,
-        config: &BridgeConfig,
-    ) -> Result<BridgeValidation, BridgeError> {
-        let result = tokio::time::timeout(
-            Duration::from_secs(5),
-            self.connections.validate_connection(owner, config),
-        )
-        .await
-        .map_err(|_| BridgeError::AuthorityUnavailable)??;
-        result.require(owner, config)?;
-        Ok(result)
     }
 
     pub async fn mutate(

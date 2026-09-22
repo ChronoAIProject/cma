@@ -10,7 +10,8 @@ public routes are in [REST](API_REST.md).
 CMAEG (CMA Event Gateway) is a separate stateless service that receives
 external event channels and call agent providers. Its management service
 listens on `CMAEG_LISTEN`, defaulting to `0.0.0.0:8090`. The deployment image is
-`cma-cmaeg`; deployment manifests are added with the gateway rollout issue.
+`cma-cmaeg`; `infra/cmaeg/` declares one replica in `chrono-bot`, with credentials
+injected from Kubernetes Secrets as environment variables.
 
 The gateway loads its outbound provider policy once at startup. `CMAEG_PROVIDERS`
 is a JSON array; an empty array is the default and means that no provider calls
@@ -409,6 +410,12 @@ and observes the ten-second background probe through both reachability changes.
 The `/resolve` route in that harness exists only in the test server.
 
 ## Delivery Authority
+
+For the 2026-09-22 gateway deployment, the maintainer additionally authorizes a
+non-default `cmaeg-service` NyxID role with exactly `cma:gateway:records` and
+`cma:provider:bindings`, a dedicated `cmaeg-prod` service account assigned that
+role, and credential storage directly in Kubernetes Secrets. This is a narrow
+exception to the earlier milestone's NyxID restriction below.
 
 For this milestone, the maintainer's explicit instructions override the release
 step in #832: deliver changes to `develop`, build images and deploy directly to

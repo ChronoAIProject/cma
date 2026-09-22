@@ -190,22 +190,9 @@ impl BridgeCredentialResolver for ManagedBridgeCredentials {
         {
             return Err(unavailable());
         }
-        let control_plane = self.resolve_control_plane(owner, config).await?;
-        let verified = self
-            .provider
-            .verify_secret(
-                owner,
-                &material.value,
-                &config.connector,
-                control_plane.actor_subject(),
-                control_plane.credential(),
-            )
-            .await
-            .inspect_err(|_| {
-                super::operations::health::authority_failure(
-                    super::operations::health::AuthorityFailure::CredentialVerificationFailed,
-                );
-            })?;
+        let (control_plane, verified) = self
+            .resolve_control_plane_and_key(owner, config, &material.value)
+            .await?;
         if verified.key_state_version < metadata.key_state_version
             || metadata.key_authority_v1.as_ref() != Some(&verified.key_authority)
             || verified.scopes != metadata.scopes

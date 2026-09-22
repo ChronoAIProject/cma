@@ -26,6 +26,11 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
                 .read_partition(c.param("id"), c.param("allocation"))
                 .await,
         ),
+        "GET /api/v1/bridges/{id}/partitions/{allocation}/pending-messages" => c.check(
+            bridges
+                .pending_messages(c.param("id"), c.param("allocation"))
+                .await,
+        ),
         "GET /api/v1/bridges/{id}/allocations/{allocation}/workspace-cleanup" => c.check(
             bridges
                 .read_workspace_cleanup(c.param("id"), c.param("allocation"))

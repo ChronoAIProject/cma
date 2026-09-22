@@ -1,0 +1,19 @@
+apiVersion: networking.gke.io/v1
+kind: HealthCheckPolicy
+metadata:
+  name: cmaeg
+  namespace: chrono-bot
+  labels:
+    app.kubernetes.io/name: cmaeg
+    app.kubernetes.io/part-of: cma
+spec:
+  targetRef:
+    group: ""
+    kind: Service
+    name: cmaeg
+  default:
+    config:
+      type: HTTP
+      httpHealthCheck:
+        port: 8090
+        requestPath: /readyz

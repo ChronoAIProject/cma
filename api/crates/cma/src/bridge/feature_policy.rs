@@ -112,6 +112,13 @@ impl BridgeConnectionValidator for ConfiguredBridgeConnections {
         // current authorization even when new stage effects are disabled.
         self.inner.validate_connection(owner, config).await
     }
+
+    async fn validate_retained_channel(
+        &self,
+        request: &layer2_core::bridge::RetainedChannelConnection,
+    ) -> Result<BridgeValidation, BridgeError> {
+        self.inner.validate_retained_channel(request).await
+    }
 }
 
 #[cfg(test)]

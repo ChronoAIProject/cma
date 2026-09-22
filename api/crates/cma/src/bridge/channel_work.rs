@@ -80,12 +80,12 @@ impl ChannelWorkPort for ChannelAllocationWork {
         self.definitions
             .check_feature_for_pin(layer2_core::bridge::BridgeFeature::Allocation, &record.pin)
             .await
-            .map_err(|_| Error::Suspended)?;
+            .map_err(|error| bridge_failure("allocation_feature", error))?;
         let (authority, lease) = self
             .authority
             .resolve(&self.definitions, &record)
             .await
-            .map_err(|_| Error::Suspended)?;
+            .map_err(|error| bridge_failure("allocation_authority", error))?;
         if matches!(record.placement, AllocationPlacement::ReuseParent { .. }) {
             self.reuse
                 .run_one(record, &authority, &lease)
@@ -151,18 +151,19 @@ impl ChannelWorkPort for ChannelInboxWork {
     }
     async fn run_one(&self, id: &str) -> Result<(), Error> {
         let result = self.advance(id).await;
-        let (delay, state) = match result {
-            Ok(()) => (Duration::from_secs(1), "waiting_allocation"),
-            Err(Error::Changed) => (Duration::from_secs(1), "changed"),
-            Err(Error::Unsupported) => (Duration::from_secs(30), "unsupported"),
-            Err(Error::Suspended) => (Duration::from_secs(30), "authority_required"),
-            Err(Error::Corrupt) => (Duration::from_secs(30), "inconsistent"),
-            Err(Error::AttachmentExpired) => (Duration::from_secs(30), "text_attachment_expired"),
-            Err(Error::AttachmentUnavailable) => {
-                (Duration::from_secs(5), "text_attachment_unavailable")
-            }
-            Err(Error::Unavailable) => (Duration::from_secs(5), "unavailable"),
+        let state = match result {
+            Ok(()) => "waiting_allocation",
+            Err(Error::Changed) => "changed",
+            Err(Error::Unsupported) => "unsupported",
+            Err(Error::Suspended) => "authority_required",
+            Err(Error::Corrupt) => "inconsistent",
+            Err(Error::AttachmentExpired) => "text_attachment_expired",
+            Err(Error::AttachmentUnavailable) => "text_attachment_unavailable",
+            Err(Error::Unavailable) => "unavailable",
         };
+        let delay = result
+            .err()
+            .map_or(Duration::from_secs(1), Error::retry_delay);
         self.inbox
             .defer_channel_input(id, delay, state)
             .await
@@ -212,7 +213,7 @@ impl ChannelInboxWork {
                         &inbox.pin,
                     )
                     .await
-                    .map_err(|_| Error::Suspended)?;
+                    .map_err(|error| bridge_failure("allocation_feature", error))?;
                 let config = self
                     .credentials
                     .bridges
@@ -231,7 +232,7 @@ impl ChannelInboxWork {
                         self.authority
                             .prepare_accepted(&self.definitions, admission.identity(), &inbox.pin)
                             .await
-                            .map_err(|_| Error::Suspended)?
+                            .map_err(|error| bridge_failure("prepare_allocation", error))?
                             .0
                     }
                     BridgePlacementPolicy::ExistingAgent { target } => {
@@ -250,7 +251,7 @@ impl ChannelInboxWork {
                                 },
                             })
                             .await
-                            .map_err(|_| Error::Suspended)?;
+                            .map_err(|error| invoke_failure("bind_existing_target", error))?;
                         AllocationAuthority::Existing(Box::new(proof))
                     }
                 };
@@ -273,7 +274,7 @@ impl ChannelInboxWork {
         self.definitions
             .check_feature_for_pin(layer2_core::bridge::BridgeFeature::Execution, &inbox.pin)
             .await
-            .map_err(|_| Error::Suspended)?;
+            .map_err(|error| bridge_failure("execution_feature", error))?;
         if record.pin != inbox.pin
             && matches!(record.placement, AllocationPlacement::ExistingAgent { .. })
         {
@@ -284,16 +285,21 @@ impl ChannelInboxWork {
                 BridgeInvokeGrantId(grant_id.clone())
             }
             AllocationPlacement::NewSandbox { .. } | AllocationPlacement::ReuseParent { .. } => {
-                let (authority, lease) = self
-                    .authority
-                    .resolve(&self.definitions, &record)
-                    .await
-                    .map_err(|_| Error::Suspended)?;
-                self.invokes
-                    .issue_channel(Arc::new(lease), &record.id, &inbox.pin, authority)
-                    .await
-                    .map_err(|_| Error::Suspended)?
-                    .id
+                match self.retained_channel_grant(inbox, &record).await? {
+                    Some(grant) => grant,
+                    None => {
+                        let (authority, lease) = self
+                            .authority
+                            .resolve(&self.definitions, &record)
+                            .await
+                            .map_err(|error| bridge_failure("channel_authority", error))?;
+                        self.invokes
+                            .issue_channel(Arc::new(lease), &record.id, &inbox.pin, authority)
+                            .await
+                            .map_err(|error| invoke_failure("issue_channel_grant", error))?
+                            .id
+                    }
+                }
             }
         };
         let proof = self
@@ -307,7 +313,7 @@ impl ChannelInboxWork {
                 },
             })
             .await
-            .map_err(|_| Error::Suspended)?;
+            .map_err(|error| invoke_failure("authorize_channel_input", error))?;
         let inbox = super::attachments::capture(
             inbox,
             &proof,
@@ -326,6 +332,42 @@ impl ChannelInboxWork {
                 _ => Error::Unavailable,
             })?;
         Ok(())
+    }
+
+    async fn retained_channel_grant(
+        &self,
+        inbox: &StoredInbox,
+        allocation: &AllocationRecord,
+    ) -> Result<Option<BridgeInvokeGrantId>, Error> {
+        let mut after = None;
+        loop {
+            let rows = self
+                .invoke_store
+                .list(&inbox.pin.bridge_id, after.as_ref(), 100)
+                .await
+                .map_err(|error| invoke_failure("retained_channel_grant", error))?;
+            if rows.len() > 101 {
+                return Err(Error::Corrupt);
+            }
+            for grant in rows.iter().take(100) {
+                grant.validate().map_err(|_| Error::Corrupt)?;
+                if matches_retained_channel_grant(grant, inbox, allocation) {
+                    // A retained grant selects identity only. Fresh authorize
+                    // below and the admission transaction still check current
+                    // custody, revocation, resource ownership and provenance.
+                    // Return revoked matches too: never remint to bypass denial.
+                    return Ok(Some(grant.id.clone()));
+                }
+            }
+            if rows.len() <= 100 {
+                return Ok(None);
+            }
+            let next = rows[99].id.clone();
+            if after.as_ref().is_some_and(|prior| prior >= &next) {
+                return Err(Error::Corrupt);
+            }
+            after = Some(next);
+        }
     }
 
     async fn existing_grant(
@@ -365,3 +407,54 @@ impl ChannelInboxWork {
 fn now_ms() -> i64 {
     mongodb::bson::DateTime::now().timestamp_millis()
 }
+
+pub(crate) fn matches_retained_channel_grant(
+    grant: &layer2_core::bridge::invoke::BridgeInvokeGrant,
+    inbox: &StoredInbox,
+    allocation: &AllocationRecord,
+) -> bool {
+    grant.pin == inbox.pin
+        && grant.owner == inbox.owner
+        && grant.target.ids == *allocation.placement.target()
+        && grant.channel.as_ref().is_some_and(|basis| {
+            basis.allocation.id == allocation.id
+                && basis.allocation.identity == allocation.identity
+                && basis.allocation.pin == allocation.pin
+        })
+}
+
+fn bridge_failure(stage: &'static str, failure: layer2_core::bridge::BridgeError) -> Error {
+    use layer2_core::bridge::BridgeError;
+    let classified = match failure {
+        BridgeError::Unavailable | BridgeError::AuthorityUnavailable => Error::Unavailable,
+        BridgeError::Conflict => Error::Changed,
+        BridgeError::Corrupt => Error::Corrupt,
+        _ => Error::Suspended,
+    };
+    tracing::info!(target: "cma::bridge::operations", operation="admission_failure", stage,
+        failure=%failure, classification=?classified, "channel_admission_failure");
+    classified
+}
+
+fn invoke_failure(
+    stage: &'static str,
+    failure: layer2_core::bridge::invoke::BridgeInvokeError,
+) -> Error {
+    use layer2_core::bridge::invoke::BridgeInvokeError;
+    if let BridgeInvokeError::Bridge(error) = failure {
+        return bridge_failure(stage, error);
+    }
+    let classified = match failure {
+        BridgeInvokeError::Unavailable => Error::Unavailable,
+        BridgeInvokeError::Conflict => Error::Changed,
+        BridgeInvokeError::Corrupt => Error::Corrupt,
+        _ => Error::Suspended,
+    };
+    tracing::info!(target: "cma::bridge::operations", operation="admission_failure", stage,
+        failure=%failure, classification=?classified, "channel_admission_failure");
+    classified
+}
+
+#[cfg(test)]
+#[path = "channel_work_tests.rs"]
+mod tests;

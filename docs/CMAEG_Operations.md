@@ -15,9 +15,13 @@ procedure to apply changes. Configuration is operator-owned.
 | `CMAEG_PROVIDER_REQUEST_TIMEOUT_MS` | positive integer, ms | `30000` | Deadline for provider setup and probe requests, and receipt of streaming HTTP response headers. Active streams are owned and bounded by their consumer. |
 | `CMAEG_PROVIDER_MAX_INFLIGHT` | positive integer | `256` | Deployment-wide upper bound applied to each provider's semaphore. Calls wait at most 50 ms for a provider permit before returning a typed busy result. |
 | `CMAEG_PUBLIC_URL` | origin URL | Required | Externally reachable origin used in channel callback and tool URLs, without a trailing slash. HTTPS, or loopback HTTP for local tests. |
-| `CMAEG_MASTER_KEYS_FILE` | file path | Required | Mounted file containing one `kid:base64key[,kid:base64key]` line; each key decodes to 32 bytes and the first key is current. |
+| `CMAEG_MASTER_KEYS` | secret string | Required unless file source is set | Kubernetes Secret environment value containing `kid:base64key[,kid:base64key]`; each key decodes to 32 bytes and the first key is current. |
+| `CMAEG_MASTER_KEYS_FILE` | file path | Optional alternative | Compatibility file source for the same key ring; mutually exclusive with `CMAEG_MASTER_KEYS`. |
 | `CMAEG_CMA_BASE_URL` | origin URL | Required | CMA record-store origin. HTTPS, or loopback/`.svc` HTTP; no credentials, path, query, fragment, or trailing slash. |
-| `CMAEG_CMA_SERVICE_TOKEN_FILE` | file path | Required | Mounted file containing the service-account bearer for CMA channel records, gateway rekey requests, and CMA provider binding/conversation management. Grant both `cma:gateway:records` and `cma:provider:bindings`. |
+| `CMAEG_CMA_SERVICE_TOKEN` | secret string | Required unless file source is set | Kubernetes Secret environment value authenticating inbound gateway rekey. Also used for outbound CMA authentication when the service-account client pair is absent. |
+| `CMAEG_CMA_CLIENT_ID` | string | Optional pair | Dedicated NyxID service-account client ID, injected from Kubernetes Secret. Must be set together with its client secret. |
+| `CMAEG_CMA_CLIENT_SECRET` | secret string | Optional pair | Exchanges renewable outbound CMA tokens at the configured NyxID origin using `client_credentials` and `openid roles`. The account role grants `cma:gateway:records` and `cma:provider:bindings`. |
+| `CMAEG_CMA_SERVICE_TOKEN_FILE` | file path | Optional alternative | Compatibility file source for the same bearer; mutually exclusive with `CMAEG_CMA_SERVICE_TOKEN`. |
 | `CMAEG_NYXID_BASE_URL` | origin URL | Required | NyxID origin for creator authentication, with the same URL restrictions as the CMA origin. |
 | `CMAEG_TOOLS_NYXID_SLUG` | string | `cmaeg` | NyxID service slug in the provider tools advertisement, matching `[a-z0-9_]{1,32}`. |
 | `CMAEG_CHANNEL_CACHE_TTL_MS` | positive integer, ms | `60000` | Fresh lifetime of a resolved channel on this replica. |
@@ -39,7 +43,8 @@ procedure to apply changes. Configuration is operator-owned.
 
 Provider entry shapes and outbound policy are described in
 [CMA operations](CMA_Operations.md#cmaeg). Public URL must have no trailing slash.
-Master keys and the CMA service bearer are mounted files, never ConfigMap values.
+Master keys and the CMA service bearer are Kubernetes Secret environment values,
+never ConfigMap values.
 Master key IDs are unsigned bytes; each base64 key decodes to 32 bytes, and the
 first key is current. RUST_LOG controls the tracing filter through the standard
 tracing subscriber. The latency harness has a separate test-only delay setting
@@ -184,15 +189,52 @@ private metrics listener on separate service ports. Readiness is `/readyz`;
 liveness is `/healthz`. Readiness gates loaded master keys, parsed provider policy and draining state.
 Its CMA reachability field is diagnostic only; remote outages do not remove a
 warm replica from service. A public route must never forward the private scrape port.
-`infra/cmaeg/Dockerfile` builds the gateway image; the dedicated deployment issue
-adds Kubernetes manifests. No deployment is performed by the protocol checks.
+`infra/cmaeg/` declares a separate `cmaeg` Deployment with **one replica** in
+`chrono-bot`, matching the maintainer's 2026-09-22 deployment decision. CMA API
+also keeps one replica. The gateway listens on 8090; its private metrics listener
+uses 9091 and is not exposed through the public Service. The HTTPRoute attaches
+to `gateway-infra/chronoai-gateway` at `bot-gateway.chrono-ai.fun`; public DNS and
+certificate coverage remain cloud-side prerequisites. The single-label hostname
+fits the existing wildcard certificate.
 
-Mount the master-key ring and CMA service token read-only. Grant the service token
-only the CMA channel-record and gateway management authority it needs. Register
+Use native Kubernetes Secrets, injected as environment variables through explicit
+`secretKeyRef` entries. `cmaeg-master-keys` supplies `CMAEG_MASTER_KEYS`, and
+`cmaeg-cma-service-token` supplies `CMAEG_CMA_SERVICE_TOKEN`,
+`CMAEG_CMA_CLIENT_ID`, and `CMAEG_CMA_CLIENT_SECRET`. Populate both Secrets
+out of band. `secret.yaml` contains names and key contracts only, never values.
+There are no credential file mounts, CSI resources, or Google Secret Manager
+dependencies for the gateway. Its service account has no RBAC grants and does not
+mount a Kubernetes API token. Existing `_FILE` inputs remain optional for other
+installations; setting both sources for a credential fails startup.
+
+Secrets are read at process startup. Preserve the key ring across pod replacements.
+Production supplies the service-account client pair because NyxID access tokens
+expire after one hour. CMAEG obtains a token before opening its listener and
+shares its cache across records and provider management. Requests renew the token
+within the final minute of its lifetime; concurrent callers share one exchange.
+A failed refresh can use the existing token only until expiry, and retries are
+bounded. Exchange responses and credentials are never logged, and redirects are
+refused. Renewal requires no Secret update, file, pod restart, or extra workload.
+
+`CMAEG_CMA_SERVICE_TOKEN` remains a separate stable inbound rekey credential when
+renewable authentication is enabled. It is not sent to CMA in that mode. Static
+outbound bearer configuration remains available for other installations; those
+operators must renew it and restart before expiry. Client-secret rotation also
+requires a Secret update and a gateway rollout. Retain the same service-account
+subject so stored CMA records and provider bindings remain accessible. Grant the
+account only the two gateway permissions. Register
 the tools service under `CMAEG_TOOLS_NYXID_SLUG` with the four protocol operation
 IDs. Configure provider paths explicitly and retain provider/binding ownership.
 A channel's bot agent key supplies provider and tool authority; a relay user token
 is never used as a provider credential.
+
+The deployment permits a rolling replacement with one surge pod and zero
+unavailable pods. Its 615-second termination grace covers the five-second
+load-balancer propagation delay, the 600-second application drain, and teardown.
+Apply ConfigMap and populated Secrets before starting the Deployment. Confirm
+`/healthz`, `/readyz`, accepted HTTPRoute/health policy status, authenticated CMA
+record access, and the public HTTPS route after rollout. A ready gateway alone
+does not prove a deployed Telegram round trip.
 
 For shutdown, remove the instance from new ingress through readiness, send SIGTERM
 or SIGINT, and allow at least `CMAEG_DRAIN_SECONDS` plus load-balancer propagation
@@ -202,7 +244,7 @@ can be lost if the deadline expires. A rollout does not stop provider Sandboxes;
 the provider remains responsible for their durable lifecycle and admission.
 
 For a restore failure, inspect `cmaeg_restore_duration_seconds` outcomes and
-`cmaeg_refusals_total`, then check CMA reachability, the service-token mount,
+`cmaeg_refusals_total`, then check CMA reachability, the injected service token,
 record ownership, and the retained key IDs. Repeated misses can consume the
 per-channel restore burst; wait for its refill instead of raising the global
 limits first. Invalid records fail closed. Positive stale entries can be served
@@ -259,3 +301,33 @@ Local fake-service tests cover recovery after gateway restart, exact identities
 across replicas, changed-content conflicts, owner concealment, and retained
 cleanup identity after provider refusal. These tests do not establish deployed
 provider or Telegram evidence.
+
+### Production preparation on 2026-09-22
+
+The first gateway image supporting direct Secret environment values is pinned at
+`sha256:8b23d9cf4959a6361d437957e4bee15630f24cf66ddfa44b33f21344c8e770da` in
+`example-registry-02/cma-cmaeg`. It comes from the successful native gateway build
+and scan in Actions run `35712199653`, attempt 1, source revision
+`3adeb5606617deffe1507c50eeac1ac31aa5a914`; the source tree matches commit
+`3ab5570c7ba34332105f526db3b9649c54c9770c`. The artifact checksum, image labels,
+architecture and immutable image configuration were checked before transfer.
+The overall run was superseded by subsequent integration work; its completed
+gateway image job succeeded.
+
+CMA production already runs bridge fixes through `2917b8a3` that were absent from
+`develop`. The deployment branch includes that lineage and retains the enabled
+production Bridge flags and the runtime image `bed09cb7` in the API manifests.
+The API update must contain both those fixes and the gateway/provider changes.
+Updating the control plane does not rotate existing Sandbox images.
+
+Native Secret `cmaeg-master-keys` has been provisioned in production directly
+from memory. The maintainer authorized dedicated NyxID provisioning. Non-default
+role `cmaeg-service` and service account `cmaeg-prod` now exist, and the role grants
+exactly the two gateway permissions. Client credentials were saved directly in
+`cmaeg-cma-service-token`, and the issued bearer was verified through userinfo.
+Its measured lifetime is 3,600 seconds, so production requires the renewable
+client-credentials implementation and its updated image before rollout.
+The operator's CLI confirms active admin authority, and role inventory succeeds
+with the CLI request headers. An earlier generic HTTP request received 403; that
+was not evidence of missing account permissions. The existing human CMA roles
+were left unchanged. This preparation record does not attest a completed production rollout or a Telegram round trip.
