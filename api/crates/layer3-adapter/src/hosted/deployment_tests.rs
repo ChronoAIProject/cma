@@ -1,5 +1,49 @@
 use super::*;
 
+#[test]
+fn only_explicit_retained_tool_authority_changes_the_runtime_specification() {
+    let deployment = HostedDeployment::default();
+    let spec = SandboxSpec {
+        sandbox_id: "ordinary-sandbox".into(),
+        ..SandboxSpec::default()
+    };
+    let old = deployment.render(&spec).unwrap();
+    assert!(!old.env.contains_key("CHRONO_TOOL_PROXY_URL"));
+    let old_json = serde_json::to_value(&spec).unwrap();
+    assert!(old_json.get("tool_proxy_url").is_none());
+    let recovered: SandboxSpec = serde_json::from_value(old_json).unwrap();
+    assert_eq!(deployment.render(&recovered).unwrap(), old);
+    let mut supplied = spec.clone();
+    supplied.environment.insert(
+        "CHRONO_TOOL_PROXY_URL".into(),
+        "https://untrusted.example/mcp".into(),
+    );
+    assert!(deployment.render(&supplied).is_err());
+    let mut native = spec;
+    native.tool_proxy_url = Some("https://gateway.example/mcp".into());
+    let retained: SandboxSpec =
+        serde_json::from_value(serde_json::to_value(&native).unwrap()).unwrap();
+    let rendered = deployment.render(&retained).unwrap();
+    assert_eq!(
+        rendered.env["CHRONO_TOOL_PROXY_URL"],
+        "https://gateway.example/mcp"
+    );
+    assert_ne!(
+        rendered.metadata[SPEC_FINGERPRINT_METADATA],
+        old.metadata[SPEC_FINGERPRINT_METADATA]
+    );
+    let mut expected = old;
+    expected.env.insert(
+        "CHRONO_TOOL_PROXY_URL".into(),
+        "https://gateway.example/mcp".into(),
+    );
+    expected.metadata.insert(
+        SPEC_FINGERPRINT_METADATA.into(),
+        rendered.metadata[SPEC_FINGERPRINT_METADATA].clone(),
+    );
+    assert_eq!(rendered, expected);
+}
+
 fn request() -> ProviderSandboxRequest {
     ProviderSandboxRequest {
         image: ProviderImage {

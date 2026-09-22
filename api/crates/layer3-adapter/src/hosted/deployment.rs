@@ -138,6 +138,9 @@ impl HostedDeployment {
         if spec.home_volume.is_some() {
             env.insert("TMPDIR".into(), super::home::TRANSFER_ROOT.into());
         }
+        if let Some(endpoint) = &spec.tool_proxy_url {
+            env.insert("CHRONO_TOOL_PROXY_URL".into(), endpoint.clone());
+        }
         for (name, value) in &spec.environment {
             if env.contains_key(name) || name.starts_with("CHRONO_") || name.starts_with("NYXID_") {
                 return Err(AdapterError::Rejected(format!(
