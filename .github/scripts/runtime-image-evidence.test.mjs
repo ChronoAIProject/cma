@@ -3,7 +3,7 @@ import test from 'node:test';
 import { existsSync, mkdtempSync, readFileSync, rmSync, mkdirSync, writeFileSync, symlinkSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assertAgentShellPath, assertCheckpointHoldReceipt, checks, diagnosticStages, installedCodexVersion, installRequest } from './runtime-image-probe.mjs';
+import { assertAgentShellPath, assertCheckpointHoldReceipt, checks, diagnosticStages, installedCodexVersion, installRequest, waitForWriterProgress } from './runtime-image-probe.mjs';
 import { campaign, pins, safeFailureStage, source, validateEvidence, validateImage } from './runtime-image-evidence.mjs';
 
 const commit = 'c'.repeat(40);
@@ -23,6 +23,22 @@ const proof = { checks, artifacts: {
   gh: '3'.repeat(64), ghVersion: expected.GH_VERSION,
 } };
 const record = () => structuredClone({ schema: 'cma-runtime-image-v1', scope: 'local-contract-3-no-provider-or-model', commit, image, sourceReference: null, result: 'pass', cleanup: { containers: 0, volumes: 0 }, proof });
+
+test('writer progress waits for scheduling and refuses stopped or truncated counters', async () => {
+  let value = '1';
+  const started = performance.now();
+  const writer = setTimeout(() => { value = '2'; }, 250);
+  try {
+    assert.equal(await waitForWriterProgress(() => value), '2');
+    assert.ok(performance.now() - started >= 200);
+  } finally { clearTimeout(writer); }
+  for (const frozen of ['1', '', 'invalid']) {
+    await assert.rejects(waitForWriterProgress(() => frozen, { timeoutMs: 30, intervalMs: 5 }),
+      /background writer did not advance/);
+  }
+  const observations = ['1', '', '1', '2'];
+  assert.equal(await waitForWriterProgress(() => observations.shift(), { intervalMs: 1 }), '2');
+});
 
 test('closed runtime evidence requires every real probe and exact cleanup', () => {
   validateEvidence(record(), commit, image.Id, expected);
