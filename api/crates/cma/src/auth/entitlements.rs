@@ -7,6 +7,7 @@ pub(crate) fn wire_name(capability: Capability) -> &'static str {
         Capability::CreateSandbox => "create_sandbox",
         Capability::UseOwnSandboxes => "use_own_sandboxes",
         Capability::DeleteOwnSandbox => "delete_own_sandbox",
+        Capability::ManageOwnBots => "manage_own_bots",
         Capability::ManageOwnProfiles => "manage_own_profiles",
         Capability::PublishTriggers => "publish_triggers",
         Capability::LaunchTriggers => "launch_triggers",
@@ -31,11 +32,12 @@ pub(crate) fn reported(authorization: &Authorization) -> Vec<&'static str> {
 mod tests {
     use super::*;
 
-    const ALL: [Capability; 16] = [
+    const ALL: [Capability; 17] = [
         Capability::CreateSandbox,
         Capability::UseOwnSandboxes,
         Capability::DeleteOwnSandbox,
         Capability::ManageOwnProfiles,
+        Capability::ManageOwnBots,
         Capability::PublishTriggers,
         Capability::LaunchTriggers,
         Capability::ReadAllSandboxes,

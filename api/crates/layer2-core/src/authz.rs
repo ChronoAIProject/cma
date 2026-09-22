@@ -18,6 +18,8 @@ pub enum Capability {
     DeleteOwnSandbox,
     /// Author and revise Profiles owned by the caller.
     ManageOwnProfiles,
+    /// Create and manage external Bots owned by the caller.
+    ManageOwnBots,
     /// Publish Triggers owned by the caller.
     PublishTriggers,
     /// Launch a published Trigger into the caller's own resources.
