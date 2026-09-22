@@ -224,6 +224,7 @@ impl WorkspaceAdmissionKind {
 
 #[derive(Debug, Clone)]
 pub struct WorkspaceAdmission {
+    pub binding: Option<super::binding::BindingAdmissionFence>,
     pub workspace: Workspace,
     pub kind: WorkspaceAdmissionKind,
     pub event_at: String,

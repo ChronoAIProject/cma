@@ -8,6 +8,13 @@ impl WorkspaceAdmissionStore for InMemorySandboxStore {
         admission: WorkspaceAdmission,
     ) -> Result<WorkspaceAdmissionResult, SandboxStoreError> {
         let mut state = self.lock();
+        if let Some(fence) = &admission.binding {
+            let binding = state
+                .bindings
+                .get(&fence.binding_id)
+                .ok_or(SandboxStoreError::Conflict)?;
+            fence.require_workspace(binding, &admission.workspace)?;
+        }
         let workspace = admission.workspace;
         let sandbox = state
             .sandboxes

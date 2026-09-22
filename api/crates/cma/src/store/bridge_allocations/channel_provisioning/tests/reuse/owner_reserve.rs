@@ -24,6 +24,7 @@ enum OrdinaryRequest {
 fn request(f: &ReuseFixture, shared_workspace: bool, trigger: bool, key: &str) -> OrdinaryRequest {
     if shared_workspace {
         OrdinaryRequest::Agent(Box::new(AgentAdmission {
+            binding: None,
             created_by: Some(caller().actor),
             owner: f.workspace.owner.clone(),
             workspace_id: f.workspace.id.clone(),
@@ -69,6 +70,7 @@ fn request(f: &ReuseFixture, shared_workspace: bool, trigger: bool, key: &str) -
             ..f.workspace.clone()
         };
         OrdinaryRequest::Workspace(Box::new(WorkspaceAdmission {
+            binding: None,
             workspace: candidate,
             kind: if trigger {
                 WorkspaceAdmissionKind::Trigger

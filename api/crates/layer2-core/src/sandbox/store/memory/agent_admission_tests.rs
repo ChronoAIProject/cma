@@ -133,6 +133,7 @@ fn profile() -> AgentProfileSnapshot {
 
 pub(super) fn admission(key: &str) -> AgentAdmission {
     AgentAdmission {
+        binding: None,
         created_by: None,
         owner: SubjectId::new("owner"),
         workspace_id: WorkspaceId("wks_agent_admission".into()),

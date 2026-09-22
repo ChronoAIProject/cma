@@ -40,6 +40,25 @@ impl InMemorySandboxStore {
             initiation.require_agent_admission(&admission)?;
         }
         let mut state = self.lock();
+        if let Some(fence) = &admission.binding {
+            let binding = state
+                .bindings
+                .get(&fence.binding_id)
+                .ok_or(SandboxStoreError::Conflict)?;
+            let proof = fence
+                .conversation
+                .as_ref()
+                .ok_or(SandboxStoreError::Conflict)?;
+            let key = format!(
+                "{}:{:020}:{}",
+                fence.binding_id, fence.generation, proof.conversation_id
+            );
+            let conversation = state
+                .binding_conversations
+                .get(&key)
+                .ok_or(SandboxStoreError::Conflict)?;
+            fence.require_agent(binding, conversation, &admission)?;
+        }
         let binding = state
             .agent_reuse_bindings
             .get(&(admission.owner.clone(), admission.creation_key.clone()))

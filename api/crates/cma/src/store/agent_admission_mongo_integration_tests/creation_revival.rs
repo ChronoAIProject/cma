@@ -132,6 +132,7 @@ async fn paused_workspace_name_conflict_does_not_revive_and_create_is_durable() 
     candidate.ready_at = None;
     candidate.work = WorkspaceWorkState::new(WorkspaceWorkStep::Prepare, NOW.into());
     let mut request = WorkspaceAdmission {
+        binding: None,
         workspace: candidate,
         kind: WorkspaceAdmissionKind::Manual,
         event_at: NOW.into(),
