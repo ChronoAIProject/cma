@@ -153,7 +153,7 @@ impl BridgePartitionService {
             PartitionActivityView::Redacted
         } else if let Some(agent) = agent {
             let records = self.store.activity(&manager, &evidence.allocation).await?;
-            activity_view(manager.record(), &evidence.allocation, agent, records)?
+            activity_view(manager.record(), &evidence.allocation, agent, &records)?
         } else {
             PartitionActivityView::Unavailable
         };
@@ -167,7 +167,7 @@ impl BridgePartitionService {
             activity,
         })
     }
-    async fn unchanged(
+    pub(super) async fn unchanged(
         &self,
         manager: &BridgeManagementLease,
         original: &PartitionEvidence,
@@ -263,11 +263,11 @@ fn project(
     })
 }
 
-fn activity_view(
+pub(super) fn activity_view(
     bridge: &crate::bridge::BridgeRecord,
     allocation: &crate::bridge::allocation::AllocationRecord,
     agent: &crate::sandbox::Agent,
-    records: PartitionActivityEvidence,
+    records: &PartitionActivityEvidence,
 ) -> Result<PartitionActivityView, PartitionStatusError> {
     if records.pending.len() > MAX_PARTITION_PENDING + 1 || records.observed_at_ms < 0 {
         return Err(PartitionStatusError::Corrupt);
@@ -321,7 +321,7 @@ fn activity_view(
     })
 }
 
-fn allocation_id(value: &str) -> bool {
+pub(super) fn allocation_id(value: &str) -> bool {
     value.strip_prefix("bral_").is_some_and(|hash| {
         hash.len() == 64
             && hash

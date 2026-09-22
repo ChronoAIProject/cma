@@ -43,7 +43,7 @@ impl Probe {
     fn scheduler(self: &Arc<Self>, concurrency: usize) -> CommandScheduler {
         CommandScheduler {
             worker: self.clone(),
-            interval: Duration::from_secs(1),
+            interval: POLL_INTERVAL,
             concurrency,
             drain_timeout: Duration::from_secs(5),
         }
@@ -108,6 +108,23 @@ async fn settle() {
     for _ in 0..30 {
         tokio::task::yield_now().await;
     }
+}
+
+#[tokio::test(start_paused = true)]
+async fn new_command_starts_within_quarter_second_without_busy_polling() {
+    let probe = Arc::new(Probe::default());
+    let (shutdown, signal) = watch::channel(false);
+    let scheduler = probe.scheduler(2).spawn(signal);
+    settle().await;
+    let visitor = probe.put("cmd_fresh", Behavior::Complete);
+    tokio::time::advance(Duration::from_millis(249)).await;
+    settle().await;
+    assert_eq!(probe.count(&visitor), 0);
+    tokio::time::advance(Duration::from_millis(1)).await;
+    settle().await;
+    assert_eq!(probe.count(&visitor), 1);
+    shutdown.send(true).unwrap();
+    scheduler.await.unwrap();
 }
 
 #[tokio::test(start_paused = true)]

@@ -68,6 +68,18 @@ fn sign(claims: Value) -> String {
 pub(super) fn callback(message: &str, text: &str) -> (Vec<u8>, String, String) {
     callback_for_sender(message, text, 12345)
 }
+pub(super) fn private_callback(message: &str, text: &str) -> (Vec<u8>, String, String) {
+    let (body, _, reply) = callback(message, text);
+    let mut value: Value = serde_json::from_slice(&body).unwrap();
+    value["raw_platform_data"]["message"]["chat"]["type"] = json!("private");
+    let body = serde_json::to_vec(&value).unwrap();
+    let signed = sign(
+        json!({"iss":"https://nyx.example","aud":"channel-relay/callback","iat":now(),"exp":now()+300,
+        "jti":"callback-1","token_type":"relay_callback","api_key_id":"key-1","message_id":message,
+        "platform":"telegram","body_sha256":format!("{:x}",Sha256::digest(&body))}),
+    );
+    (body, signed, reply)
+}
 pub(super) fn callback_for_sender(
     message: &str,
     text: &str,

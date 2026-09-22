@@ -428,7 +428,10 @@ mod tests {
             },
             None,
         );
-        let app = router(auth);
+        let app = router(auth.clone()).layer(axum::middleware::from_fn_with_state(
+            auth,
+            crate::auth::attach_subject,
+        ));
         let login = app
             .clone()
             .oneshot(Request::get("/auth/login").body(Body::empty()).unwrap())

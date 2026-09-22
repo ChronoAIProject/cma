@@ -19,6 +19,42 @@ pub enum BridgeInvokeConsentStatus {
 }
 
 impl BridgeInvokeService {
+    /// Advisory local queue observation only. This never creates an effect
+    /// proof: execution and lifecycle preparation must authorize independently.
+    pub(crate) async fn observe_execution_readiness(
+        &self,
+        request: BridgeInvokeRequest,
+    ) -> Result<crate::resource_access::ResourceAccessSnapshot, BridgeInvokeError> {
+        request.grant_id.validate()?;
+        request.effect.validate()?;
+        if !matches!(request.effect, BridgeInvokeEffect::ExecuteCommand { .. }) {
+            return Err(BridgeInvokeError::Invalid("readiness_effect"));
+        }
+        let grant = self
+            .store
+            .grant(&request.grant_id)
+            .await?
+            .ok_or(BridgeInvokeError::NotFound)?;
+        grant.require_active()?;
+        if grant.pin != request.pin || grant.target.ids != request.target {
+            return Err(BridgeInvokeError::TargetMismatch);
+        }
+        let bridge = self
+            .definitions
+            .store
+            .bridge(&grant.pin.bridge_id)
+            .await?
+            .ok_or(BridgeInvokeError::NotFound)?;
+        super::proof::require_bridge(&bridge, &grant, &request.effect)?;
+        let resources = self
+            .resources
+            .resource_access_snapshot(&grant.target.resource())
+            .await
+            .map_err(super::service::resource_store_error)?;
+        super::service::require_resource_owner(&grant, &resources)?;
+        Ok(resources)
+    }
+
     /// Only reports explicit grant consent. Connection, enablement, allocation
     /// and deferred execution each retain their separate current checks.
     pub async fn readiness(

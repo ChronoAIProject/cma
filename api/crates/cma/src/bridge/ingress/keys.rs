@@ -1,8 +1,10 @@
-use std::{sync::Arc, time::Duration};
+use std::{future::Future, sync::Arc, time::Duration};
 
 use futures_util::StreamExt;
 use layer2_core::bridge::ingress::{CallbackError, CallbackKeySet};
 use tokio::{sync::Mutex, time::Instant};
+
+pub(super) const CALLBACK_ACCEPT_BUDGET: Duration = Duration::from_secs(5);
 
 /// Deployment-pinned HTTPS JWKS. JWT jku/x5u and redirects cannot choose a URL.
 /// Failed/expired refreshes never extend the previous key lease.
@@ -74,12 +76,28 @@ impl PinnedCallbackKeys {
     }
 
     pub(crate) async fn get(&self, force: bool) -> Result<Arc<CallbackKeySet>, CallbackError> {
+        self.get_using(force, |started| self.fetch(started)).await
+    }
+
+    async fn get_using<F, Fut>(
+        &self,
+        force: bool,
+        fetch: F,
+    ) -> Result<Arc<CallbackKeySet>, CallbackError>
+    where
+        F: FnOnce(Instant) -> Fut,
+        Fut: Future<Output = Result<CallbackKeySet, CallbackError>>,
+    {
         let mut cache = self.cache.lock().await;
         let now = Instant::now();
+        // Signed callbacks inherit this lease as their acceptance deadline.
+        // Refresh before its final operation budget, otherwise a valid callback
+        // can time out partway through binding or its durable inbox transaction.
+        // An old lease is never extended to make it eligible for another call.
         let available = cache
             .value
             .as_ref()
-            .filter(|(_, deadline)| *deadline > now)
+            .filter(|(_, deadline)| *deadline > now + CALLBACK_ACCEPT_BUDGET)
             .map(|(keys, _)| Arc::clone(keys));
         if !force && available.is_some() {
             return available.ok_or(CallbackError::KeysUnavailable);
@@ -88,7 +106,7 @@ impl PinnedCallbackKeys {
             return available.ok_or(CallbackError::KeysUnavailable);
         }
         cache.next_refresh = Some(now + Duration::from_secs(5));
-        match self.fetch(now).await {
+        match fetch(now).await {
             Ok(value) => {
                 let value = Arc::new(value);
                 cache.value = Some((Arc::clone(&value), now + Duration::from_secs(60)));
@@ -131,6 +149,70 @@ impl PinnedCallbackKeys {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn fixture_keys(deadline: Instant) -> CallbackKeySet {
+        CallbackKeySet::from_pinned_jwks(
+            "https://nyx.example".into(),
+            include_bytes!("../../../../layer2-core/src/bridge/ingress/fixtures/jwks.json"),
+            deadline,
+        )
+        .unwrap()
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn near_expiry_cache_refreshes_before_another_callback_uses_its_lease() {
+        let keys = PinnedCallbackKeys::new(
+            "https://nyx.example".into(),
+            "https://127.0.0.1:1/jwks".into(),
+        )
+        .unwrap();
+        let now = Instant::now();
+        let original = Arc::new(fixture_keys(now + Duration::from_secs(60)));
+        *keys.cache.lock().await = Cache {
+            value: Some((Arc::clone(&original), now + Duration::from_secs(60))),
+            next_refresh: Some(now + Duration::from_secs(5)),
+        };
+        assert!(Arc::ptr_eq(&keys.get(false).await.unwrap(), &original));
+
+        // A following message arrives with 800 ms left on the first lease.
+        tokio::time::advance(Duration::from_millis(59_200)).await;
+        let refreshed = keys
+            .get_using(false, |started| async move {
+                Ok(fixture_keys(started + Duration::from_secs(60)))
+            })
+            .await
+            .unwrap();
+        assert!(!Arc::ptr_eq(&refreshed, &original));
+        assert!(
+            keys.cache.lock().await.value.as_ref().unwrap().1
+                > Instant::now() + CALLBACK_ACCEPT_BUDGET
+        );
+
+        tokio::time::advance(Duration::from_secs(1)).await;
+        assert!(Arc::ptr_eq(&keys.get(false).await.unwrap(), &refreshed));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn failed_proactive_refresh_never_returns_the_short_old_lease() {
+        let keys = PinnedCallbackKeys::new(
+            "https://nyx.example".into(),
+            "https://127.0.0.1:1/jwks".into(),
+        )
+        .unwrap();
+        let now = Instant::now();
+        let deadline = now + CALLBACK_ACCEPT_BUDGET;
+        *keys.cache.lock().await = Cache {
+            value: Some((Arc::new(fixture_keys(deadline)), deadline)),
+            next_refresh: None,
+        };
+        assert!(matches!(
+            keys.get_using(false, |_| async { Err(CallbackError::KeysUnavailable) })
+                .await,
+            Err(CallbackError::KeysUnavailable)
+        ));
+        assert!(keys.cache.lock().await.value.is_none());
+    }
+
     #[tokio::test(start_paused = true)]
     async fn expired_cache_and_failed_refresh_never_extend_old_keys() {
         let keys = PinnedCallbackKeys::new(
@@ -149,7 +231,12 @@ mod tests {
             value: Some((Arc::new(keyset), now + Duration::from_secs(1))),
             next_refresh: Some(now + Duration::from_secs(5)),
         };
-        assert!(keys.get(false).await.is_ok());
+        // Refresh throttling cannot authorize a cached lease too short to
+        // cover one callback, even while that lease has not yet expired.
+        assert!(matches!(
+            keys.get(false).await,
+            Err(CallbackError::KeysUnavailable)
+        ));
         tokio::time::advance(Duration::from_secs(2)).await;
         assert!(matches!(
             keys.get(false).await,
