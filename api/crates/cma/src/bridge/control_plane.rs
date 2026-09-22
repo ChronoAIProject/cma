@@ -131,6 +131,7 @@ impl BridgeControlPlaneLease {
 }
 
 impl ManagedBridgeCredentials {
+    #[cfg(test)]
     pub(crate) async fn resolve_control_plane(
         &self,
         owner: &ResourceOwner,
