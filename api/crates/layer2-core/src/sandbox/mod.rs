@@ -153,8 +153,8 @@ pub use conversation_recorder::{
     AgentLiveFragment, AgentLiveFragmentKind, AgentLiveSubscription, DurableAgentUpdateRecorder,
 };
 pub use credential::{
-    SandboxCredentialAuthority, SandboxCredentialState, SandboxRevokeDebt, SandboxServiceGrant,
-    SandboxSignInState,
+    SandboxCredentialAuthority, SandboxCredentialSource, SandboxCredentialState, SandboxRevokeDebt,
+    SandboxServiceGrant, SandboxSignInState,
 };
 pub use credential_prerequisite::{
     FixedSandboxCredentialPrerequisite, SandboxCredentialPrerequisite,

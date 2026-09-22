@@ -209,6 +209,7 @@ impl SandboxService {
             failure: None,
             runtime: None,
             credential: SandboxCredentialState {
+                source: Default::default(),
                 service_grants: Vec::new(),
                 reaches,
                 key_generation: 0,

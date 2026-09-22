@@ -1882,6 +1882,7 @@ fn sandbox(profiles: &ResolvedTriggerProfiles, status: SandboxStatus) -> Sandbox
         failure: None,
         runtime: None,
         credential: SandboxCredentialState {
+            source: Default::default(),
             service_grants: Vec::new(),
             reaches: profiles.sandbox.content.nyxid_services.clone(),
             key_generation: 0,

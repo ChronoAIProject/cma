@@ -205,6 +205,7 @@ fn fingerprint(
         name,
         profile: &sandbox.profile,
         reaches: &reaches,
+        credential_source: &sandbox.credential.source,
         sign_in: AdmissionSignInMode::from(sandbox.credential.sign_in),
         limits: sandbox.limits,
     })
@@ -218,6 +219,8 @@ struct AdmissionIdentity<'a> {
     name: &'a SandboxAdmissionName,
     profile: &'a SandboxProfileSnapshot,
     reaches: &'a [crate::ids::ServiceId],
+    #[serde(skip_serializing_if = "crate::sandbox::SandboxCredentialSource::is_managed")]
+    credential_source: &'a crate::sandbox::SandboxCredentialSource,
     sign_in: AdmissionSignInMode,
     limits: SandboxLimits,
 }

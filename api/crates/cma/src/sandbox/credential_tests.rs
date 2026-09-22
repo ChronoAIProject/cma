@@ -18,6 +18,9 @@ use layer2_core::{SandboxId, SandboxProfileId, ServiceId, SubjectId};
 
 use super::*;
 
+#[path = "credential/provided_tests.rs"]
+mod provided_tests;
+
 #[derive(Default)]
 struct Tokens {
     calls: AtomicUsize,
@@ -316,6 +319,7 @@ fn sandbox() -> layer2_core::sandbox::Sandbox {
         failure: None,
         runtime: None,
         credential: SandboxCredentialState {
+            source: Default::default(),
             service_grants: Vec::new(),
             reaches: vec![ServiceId::new("service-a")],
             key_generation: 0,
@@ -342,6 +346,7 @@ fn sandbox() -> layer2_core::sandbox::Sandbox {
 
 fn material(owner: SubjectId, provider_key_id: &str) -> CredentialMaterial {
     CredentialMaterial {
+        source: Default::default(),
         sandbox_id: SandboxId("sbx_credential_test".into()),
         owner,
         authority: SandboxCredentialAuthority {
