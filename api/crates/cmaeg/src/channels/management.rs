@@ -25,6 +25,9 @@ pub async fn create(
     request: ChannelCreateRequest,
 ) -> Result<CreatedChannel, ManagementError> {
     validate_create_request(&request).map_err(ManagementError::Invalid)?;
+    if let Some(record_id) = request.record_id.clone() {
+        return super::creation::create(state, creator, request, record_id).await;
+    }
     let provider = request.provider.slug.clone();
     let record_id = RecordId::new(Uuid::new_v4().to_string()).map_err(ManagementError::Invalid)?;
     let binding_id = BindingId::new(format!("bnd_{}", Uuid::new_v4().simple()))
@@ -108,6 +111,17 @@ pub async fn update(
     validate_update_request(&request).map_err(ManagementError::Invalid)?;
     let _guard = state.mutation_guard(channel_id.as_str()).await;
     let current = load(state, creator, channel_id).await?;
+    if current
+        .definition
+        .creation
+        .as_ref()
+        .is_some_and(|value| !value.ready)
+    {
+        return Err(ManagementError::Conflict {
+            expected: request.expected_version,
+            actual: Some(current.record.version),
+        });
+    }
     if current.record.version != request.expected_version {
         return Err(ManagementError::Conflict {
             expected: request.expected_version,
@@ -287,7 +301,7 @@ async fn load_unowned(
     })
 }
 
-fn seal_definition(
+pub(super) fn seal_definition(
     ring: &MasterKeyRing,
     definition: &ChannelDefinition,
 ) -> Result<Vec<u8>, ManagementError> {
@@ -301,7 +315,7 @@ fn seal_definition(
     })
 }
 
-fn binding_request(
+pub(super) fn binding_request(
     state: &ManagementState,
     definition: &ChannelDefinition,
 ) -> Result<BindingRequest, ManagementError> {

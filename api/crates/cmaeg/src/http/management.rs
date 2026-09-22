@@ -26,6 +26,10 @@ pub fn management_router(state: ManagementState) -> Router {
     Router::new()
         .route("/v1/channels", post(create_channel))
         .route(
+            "/v1/channel-records/{record_id}",
+            get(super::creation::recover_channel),
+        )
+        .route(
             "/v1/channels/{channel_id}",
             get(get_channel).put(update_channel).delete(delete_channel),
         )

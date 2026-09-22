@@ -184,7 +184,7 @@ async fn compiled_binary_loads_mounted_secrets_and_serves_curl_without_leaking_c
     let read = curl("GET", &format!("{base}/v1/channels/{id}"), None, 200).await;
     assert_eq!(read["definition"]["name"], "support-bot");
     let document = curl("GET", &format!("{base}/openapi.json"), None, 200).await;
-    assert_eq!(document["paths"].as_object().unwrap().len(), 10);
+    assert_eq!(document["paths"].as_object().unwrap().len(), 11);
     let output = Command::new("curl")
         .args([
             "--silent",

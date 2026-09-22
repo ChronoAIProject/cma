@@ -205,6 +205,8 @@ pub struct ChannelDefinition {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub name: String,
     pub record_id: RecordId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub creation: Option<ChannelCreation>,
     pub owner: NyxIdIdentity,
     pub profile: AgentProfileSnapshot,
     pub profile_digest: String,
@@ -216,6 +218,15 @@ pub struct ChannelDefinition {
     pub secrets: ChannelSecrets,
     pub created_at: String,
     pub version: u64,
+}
+
+/// Retained management admission, independent of process-local idempotency caches.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ChannelCreation {
+    pub channel_id: crate::ids::ChannelId,
+    pub fingerprint: String,
+    pub ready: bool,
 }
 
 impl ChannelDefinition {
