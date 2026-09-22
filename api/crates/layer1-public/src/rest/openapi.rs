@@ -192,7 +192,7 @@ use identity::{anonymous_path, operation_id};
         super::admin::triggers::resume,
         super::admin::runtime_inventory,
         super::admin::activity,
-        super::gateway_records::put_record, super::gateway_records::get_record,
+        super::bindings::put_binding, super::bindings::get_binding, super::bindings::delete_binding, super::bindings::put_conversation, super::bindings::delete_conversation, super::gateway_records::put_record, super::gateway_records::get_record,
         super::gateway_records::delete_record, super::gateway_records::list,
     ),
     components(schemas(
@@ -423,7 +423,7 @@ use identity::{anonymous_path, operation_id};
         RuntimeInventoryView,
         ActivityView,
         ActivityPageView,
-        PutGatewayRequest, PutGateway, GatewayRecord, GatewayRecordHead, GatewayRecordPage,
+        super::bindings::PutBindingRequest, super::bindings::BindingTools, super::bindings::BindingView, super::bindings::BindingRefusal, super::bindings::BindingConversationView, PutGatewayRequest, PutGateway, GatewayRecord, GatewayRecordHead, GatewayRecordPage,
     )),
     tags(
         (name = "discovery", description = "Anonymous deployment discovery"),

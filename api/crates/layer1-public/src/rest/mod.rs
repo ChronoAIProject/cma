@@ -106,6 +106,10 @@ pub use resource_access::resource_access_router;
 #[cfg(test)]
 mod trigger_assets_test_support;
 
+mod bindings;
+#[cfg(test)]
+mod bindings_tests;
+pub use bindings::binding_router;
 mod gateway_records;
 #[cfg(test)]
 mod gateway_records_tests;

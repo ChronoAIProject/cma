@@ -1,5 +1,6 @@
 //! Encrypted custody for one-time NyxID values awaiting sandbox delivery.
 
+mod binding;
 pub(crate) mod channel;
 mod custody;
 #[cfg(test)]

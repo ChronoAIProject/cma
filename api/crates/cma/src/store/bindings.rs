@@ -17,6 +17,8 @@ use super::sandbox_mongo::{is_duplicate_key, MongoSandboxStore};
 use super::schema::{initialize_collections, DOCUMENT_SCHEMA_VERSION};
 mod admission;
 mod conversations;
+mod custody;
+pub(crate) use custody::MongoBindingCredentials;
 mod documents;
 use documents::*;
 #[cfg(test)]
@@ -203,3 +205,6 @@ fn driver(error: mongodb::error::Error) -> SandboxStoreError {
         SandboxStoreError::Unavailable(error.to_string())
     }
 }
+
+#[cfg(test)]
+mod custody_tests;
