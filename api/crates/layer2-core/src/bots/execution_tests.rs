@@ -7,6 +7,35 @@ mod fixture;
 use fixture::Fixture;
 
 #[tokio::test]
+async fn scheduled_renewal_preserves_disabled_state_and_does_not_rotate_fresh_keys() {
+    let f = Fixture::new().await;
+    f.worker.run_due(&f.bot_id).await.unwrap();
+    let initial = f.bot().await;
+    f.worker.run_due(&f.bot_id).await.unwrap();
+    assert_eq!(f.bot().await, initial);
+    f.admit(BotOperation::Disable).await;
+    f.worker.run_due(&f.bot_id).await.unwrap();
+    let mut bot = f.bot().await;
+    let prior = bot.revision;
+    bot.revision += 1;
+    bot.resources.credentials.expires_at = Some(crate::rfc3339_at(
+        SystemTime::now() + Duration::from_secs(86400),
+    ));
+    f.store.replace(prior, &bot).await.unwrap();
+    f.worker.run_due(&f.bot_id).await.unwrap();
+    let renewed = f.bot().await;
+    assert_eq!(renewed.state, BotState::Disabled);
+    assert_ne!(renewed.resources.credentials, initial.resources.credentials);
+    assert_eq!(
+        renewed.resources.channel.as_ref().unwrap().channel_id,
+        initial.resources.channel.as_ref().unwrap().channel_id
+    );
+    assert_eq!(f.external.0.lock().unwrap().keys.len(), 2);
+    f.worker.run_due(&f.bot_id).await.unwrap();
+    assert_eq!(f.bot().await, renewed);
+}
+
+#[tokio::test]
 async fn create_policy_rotation_and_delete_follow_external_resource_order() {
     let f = Fixture::new().await;
     f.worker.run(&f.bot_id).await.unwrap();

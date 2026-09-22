@@ -141,20 +141,19 @@ pub async fn update(
     definition.version = current.record.version;
     // Validate the complete definition and its storage bound before the provider sees a mutation.
     seal_definition(&state.master_keys, &definition)?;
-    let rebind = definition.profile_digest != current.definition.profile_digest
-        || definition.secrets.agent_key_hash != current.definition.secrets.agent_key_hash;
-    if rebind {
-        let binding = state
-            .providers
-            .bind(
-                &definition.provider.slug,
-                &definition.provider.binding_id,
-                &binding_request(state, &definition)?,
-            )
-            .await
-            .map_err(ManagementError::Provider)?;
-        definition.provider.level = binding.level;
-    }
+    // A previous PUT may have updated the provider but failed to persist the
+    // record. Even unchanged policy must reconcile the retained credentials;
+    // comparing two copies of the record cannot establish provider state.
+    let binding = state
+        .providers
+        .bind(
+            &definition.provider.slug,
+            &definition.provider.binding_id,
+            &binding_request(state, &definition)?,
+        )
+        .await
+        .map_err(ManagementError::Provider)?;
+    definition.provider.level = binding.level;
     let blob = seal_definition(&state.master_keys, &definition)?;
     // A failed CAS must never unbind a retained channel. The provider and CMA record store
     // do not share a transaction; retry with a freshly read version to reconcile a rebind.
