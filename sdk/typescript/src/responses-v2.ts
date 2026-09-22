@@ -1,3 +1,4 @@
+import { v2EventContext } from './responses-v2/event-context.js';
 import type { ResolvedConfig } from './config.js';
 import { ProtocolError, ValidationError } from './errors.js';
 import type { OperationOptions } from './http.js';
@@ -86,11 +87,29 @@ export class ResponsesV2 {
       options,
     );
   }
+  readEventContext(
+    binding: string,
+    conversation: string,
+    event: string,
+    options: OperationOptions = {},
+  ) {
+    return read(
+      this.config,
+      `/api/v1/cmaeg/bindings/${segment(binding)}/conversations/${segment(conversation)}/events/${segment(event)}`,
+      (value) => {
+        const context = v2EventContext(value);
+        if (context.conversation_id !== conversation || context.activity.event_id !== event)
+          throw new ProtocolError('Event context response identity mismatch');
+        return context;
+      },
+      options,
+    );
+  }
   readConversation(id: string, options: OperationOptions = {}) {
     return read(
       this.config,
       `/api/v2/conversations/${segment(id)}`,
-      identity(v2Conversation, id),
+      id.startsWith('agt_') ? identity(v2Conversation, id) : v2Conversation,
       options,
     );
   }
@@ -183,7 +202,10 @@ export class ResponsesV2 {
       path,
       options,
       (response, signal) =>
-        v2ResponseFrames(response, signal, { conversation, onReceipt: options.onReceipt }),
+        v2ResponseFrames(response, signal, {
+          conversation: conversation?.startsWith('agt_') ? conversation : undefined,
+          onReceipt: options.onReceipt,
+        }),
       'Responses v2',
       body,
       key === undefined ? undefined : { 'Idempotency-Key': key },
