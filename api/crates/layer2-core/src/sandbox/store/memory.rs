@@ -51,6 +51,7 @@ mod agent_lifecycle;
 #[cfg(test)]
 mod agent_lifecycle_tests;
 mod agent_reads;
+mod bindings;
 mod channel_usage;
 mod command_audit;
 mod command_revival;
