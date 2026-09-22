@@ -34,3 +34,50 @@ pub(super) fn operation_id(method: &str, path: &str) -> String {
     }
     id
 }
+
+/// Attach public operation identities and credential schemes to every projection.
+pub(super) fn secure_operations(document: &mut utoipa::openapi::OpenApi) {
+    use utoipa::openapi::{self, security::SecurityRequirement};
+    let components = document
+        .components
+        .get_or_insert_with(openapi::Components::new);
+    components.add_security_scheme(
+        "bearerAuth",
+        openapi::security::SecurityScheme::Http(
+            openapi::security::HttpBuilder::new()
+                .scheme(openapi::security::HttpAuthScheme::Bearer)
+                .build(),
+        ),
+    );
+    components.add_security_scheme(
+        "sessionCookie",
+        openapi::security::SecurityScheme::ApiKey(openapi::security::ApiKey::Cookie(
+            openapi::security::ApiKeyValue::with_description(
+                "cma_session",
+                "CMA browser session cookie",
+            ),
+        )),
+    );
+    for (path, item) in &mut document.paths.paths {
+        for (method, operation) in [
+            ("get", item.get.as_mut()),
+            ("put", item.put.as_mut()),
+            ("post", item.post.as_mut()),
+            ("delete", item.delete.as_mut()),
+            ("patch", item.patch.as_mut()),
+        ]
+        .into_iter()
+        .filter_map(|(method, operation)| operation.map(|operation| (method, operation)))
+        {
+            operation.operation_id = Some(operation_id(method, path));
+            operation.security = Some(if anonymous_path(path) {
+                Vec::new()
+            } else {
+                vec![
+                    SecurityRequirement::new("bearerAuth", std::iter::empty::<String>()),
+                    SecurityRequirement::new("sessionCookie", std::iter::empty::<String>()),
+                ]
+            });
+        }
+    }
+}
