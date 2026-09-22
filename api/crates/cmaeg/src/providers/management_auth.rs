@@ -4,7 +4,7 @@ use url::Url;
 
 pub(super) struct CmaManagementAuth {
     origin: url::Origin,
-    token: Secret,
+    token: crate::service_auth::ServiceAuth,
 }
 impl CmaManagementAuth {
     pub(super) fn new(origin: &str, token: Secret) -> Result<Self, ProviderError> {
@@ -23,7 +23,7 @@ impl CmaManagementAuth {
         }
         Ok(Self {
             origin: url.origin(),
-            token,
+            token: crate::service_auth::ServiceAuth::Static(token),
         })
     }
     fn permits(&self, provider: &ProviderSlug, url: &Url) -> bool {
@@ -50,15 +50,26 @@ impl CmaManagementAuth {
     }
 }
 impl ProviderClient {
-    pub(super) fn management_bearer<'a>(
-        &'a self,
+    pub(crate) fn with_service_auth(mut self, token: crate::service_auth::ServiceAuth) -> Self {
+        if let Some(auth) = &mut self.management_auth {
+            auth.token = token;
+        }
+        self
+    }
+
+    pub(super) async fn management_bearer(
+        &self,
         provider: &ProviderSlug,
         url: &Url,
-        agent_key: &'a Secret,
-    ) -> &'a str {
+        agent_key: &Secret,
+    ) -> Result<Secret, ProviderError> {
         match &self.management_auth {
-            Some(auth) if auth.permits(provider, url) => auth.token.as_str(),
-            _ => agent_key.as_str(),
+            Some(auth) if auth.permits(provider, url) => auth
+                .token
+                .bearer()
+                .await
+                .map_err(|error| ProviderError::Unavailable(error.to_string())),
+            _ => Ok(agent_key.clone()),
         }
     }
 }

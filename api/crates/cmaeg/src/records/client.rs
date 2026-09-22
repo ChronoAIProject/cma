@@ -60,7 +60,7 @@ impl std::error::Error for RecordError {}
 pub struct RecordClient {
     client: Client,
     base_url: Url,
-    service_token: Secret,
+    service_token: crate::service_auth::ServiceAuth,
 }
 
 impl RecordClient {
@@ -94,8 +94,13 @@ impl RecordClient {
         Ok(Self {
             client,
             base_url,
-            service_token: Secret::new(service_token),
+            service_token: crate::service_auth::ServiceAuth::Static(Secret::new(service_token)),
         })
+    }
+
+    pub(crate) fn with_service_auth(mut self, auth: crate::service_auth::ServiceAuth) -> Self {
+        self.service_token = auth;
+        self
     }
 
     /// Probe CMA's readiness endpoint without inspecting or mutating channel records.
@@ -140,7 +145,13 @@ impl RecordClient {
         let response = self
             .client
             .put(url)
-            .bearer_auth(self.service_token.as_str())
+            .bearer_auth(
+                self.service_token
+                    .bearer()
+                    .await
+                    .map_err(|error| RecordError::Unavailable(error.to_string()))?
+                    .as_str(),
+            )
             .json(&PutRequest {
                 owner,
                 blob: STANDARD.encode(blob),
@@ -177,7 +188,13 @@ impl RecordClient {
         let response = self
             .client
             .get(url)
-            .bearer_auth(self.service_token.as_str())
+            .bearer_auth(
+                self.service_token
+                    .bearer()
+                    .await
+                    .map_err(|error| RecordError::Unavailable(error.to_string()))?
+                    .as_str(),
+            )
             .timeout(Duration::from_millis(1_500))
             .send()
             .await
@@ -208,7 +225,13 @@ impl RecordClient {
         let response = self
             .client
             .delete(url)
-            .bearer_auth(self.service_token.as_str())
+            .bearer_auth(
+                self.service_token
+                    .bearer()
+                    .await
+                    .map_err(|error| RecordError::Unavailable(error.to_string()))?
+                    .as_str(),
+            )
             .query(&[("expected_version", expected_version)])
             .timeout(Duration::from_secs(5))
             .send()
@@ -244,7 +267,13 @@ impl RecordClient {
         let response = self
             .client
             .get(url)
-            .bearer_auth(self.service_token.as_str())
+            .bearer_auth(
+                self.service_token
+                    .bearer()
+                    .await
+                    .map_err(|error| RecordError::Unavailable(error.to_string()))?
+                    .as_str(),
+            )
             .query(&query)
             .timeout(Duration::from_secs(5))
             .send()

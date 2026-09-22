@@ -33,6 +33,8 @@ impl MountedSecrets {
         command.kill_on_drop(true)
             .env_remove("CMAEG_MASTER_KEYS")
             .env_remove("CMAEG_CMA_SERVICE_TOKEN")
+            .env_remove("CMAEG_CMA_CLIENT_ID")
+            .env_remove("CMAEG_CMA_CLIENT_SECRET")
             .env("CMAEG_LISTEN", address)
             .env("CMAEG_METRICS_LISTEN", "127.0.0.1:0")
             .env("CMAEG_PUBLIC_URL", format!("http://{address}"))
@@ -84,6 +86,8 @@ fn assert_no_secrets(value: &str) {
         "hmac-secret",
         "cma-service",
         "token-alice",
+        "fixture-client-secret",
+        "gateway-rekey-fixture",
     ] {
         assert!(
             !value.contains(secret),
@@ -138,17 +142,44 @@ async fn curl(
 
 #[tokio::test]
 async fn compiled_binary_loads_mounted_secrets_and_serves_curl_without_leaking_credentials() {
+    binary_journey(false).await;
+}
+
+#[tokio::test]
+async fn compiled_binary_renews_cma_auth_from_secret_environment_without_restart() {
+    binary_journey(true).await;
+}
+
+async fn binary_journey(renewable: bool) {
     let provider = FakeProvider::start(FakeProviderConfig::default()).await;
     let cma = FakeCma::start(false).await;
     let nyxid = FakeNyxid::start().await;
+    if renewable {
+        nyxid
+            .service_tokens
+            .expires_in
+            .store(3, std::sync::atomic::Ordering::SeqCst);
+    }
     let files = MountedSecrets::new();
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap().to_string();
     drop(listener);
     let log_path = files.dir.join("trace.log");
     let log = fs::File::create(&log_path).unwrap();
-    let mut child = files
-        .command(&address, &cma, &nyxid, &provider)
+    let mut command = files.command(&address, &cma, &nyxid, &provider);
+    if renewable {
+        command
+            .env_remove("CMAEG_MASTER_KEYS_FILE")
+            .env_remove("CMAEG_CMA_SERVICE_TOKEN_FILE")
+            .env(
+                "CMAEG_MASTER_KEYS",
+                format!("1:{}", STANDARD_NO_PAD.encode([1_u8; 32])),
+            )
+            .env("CMAEG_CMA_SERVICE_TOKEN", "gateway-rekey-fixture")
+            .env("CMAEG_CMA_CLIENT_ID", "fixture-client")
+            .env("CMAEG_CMA_CLIENT_SECRET", "fixture-client-secret");
+    }
+    let mut child = command
         .stdout(Stdio::from(log.try_clone().unwrap()))
         .stderr(Stdio::from(log))
         .spawn()
@@ -183,7 +214,19 @@ async fn compiled_binary_loads_mounted_secrets_and_serves_curl_without_leaking_c
     .await;
     let id = created["channel_id"].as_str().unwrap();
     assert!(id.starts_with("cmaeg1.ch."));
+    if renewable {
+        tokio::time::sleep(Duration::from_millis(3100)).await;
+    }
     let read = curl("GET", &format!("{base}/v1/channels/{id}"), None, 200).await;
+    if renewable {
+        assert!(
+            nyxid
+                .service_tokens
+                .calls
+                .load(std::sync::atomic::Ordering::SeqCst)
+                >= 2
+        );
+    }
     assert_eq!(read["definition"]["name"], "support-bot");
     let document = curl("GET", &format!("{base}/openapi.json"), None, 200).await;
     assert_eq!(document["paths"].as_object().unwrap().len(), 11);
@@ -246,6 +289,43 @@ async fn compiled_binary_loads_mounted_secrets_and_serves_curl_without_leaking_c
     let logs = fs::read_to_string(log_path).unwrap();
     assert!(logs.contains("CMAEG listening"));
     assert_no_secrets(&logs);
+    provider.close().await;
+    cma.close().await;
+    nyxid.close().await;
+}
+
+#[tokio::test]
+async fn compiled_binary_refuses_incomplete_or_malformed_service_account_environment() {
+    let provider = FakeProvider::start(FakeProviderConfig::default()).await;
+    let cma = FakeCma::start(false).await;
+    let nyxid = FakeNyxid::start().await;
+    let files = MountedSecrets::new();
+    let secret = uuid::Uuid::new_v4().to_string();
+    for (id, value) in [
+        (Some("fixture-client"), None),
+        (None, Some(secret.as_str())),
+        (Some(""), Some(secret.as_str())),
+        (Some("fixture-client"), Some("")),
+        (Some("fixture-client"), Some("line-one\nline-two")),
+    ] {
+        let mut command = files.command("127.0.0.1:0", &cma, &nyxid, &provider);
+        if let Some(id) = id {
+            command.env("CMAEG_CMA_CLIENT_ID", id);
+        }
+        if let Some(value) = value {
+            command.env("CMAEG_CMA_CLIENT_SECRET", value);
+        }
+        let output = command.output().await.unwrap();
+        assert!(!output.status.success());
+        let logs = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(logs.contains("client ID and secret must both be printable"));
+        assert!(!logs.contains(&secret));
+        assert!(!logs.contains("line-one"));
+    }
     provider.close().await;
     cma.close().await;
     nyxid.close().await;

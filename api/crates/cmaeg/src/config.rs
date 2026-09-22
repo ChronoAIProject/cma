@@ -10,10 +10,12 @@ mod cache;
 mod delivery;
 mod ingress;
 mod secrets;
+mod service_account;
 mod turns;
 pub use cache::*;
 pub use delivery::*;
 pub use ingress::*;
+pub use service_account::*;
 pub use turns::*;
 
 /// The listener address used by CMAEG.
@@ -98,6 +100,7 @@ pub struct Config {
     pub provider_max_inflight: usize,
     /// Configuration required to expose the channel management API.
     pub management: ManagementConfig,
+    pub cma_service_account: Option<ServiceAccountConfig>,
     pub channel_cache: ChannelCacheConfig,
     pub ingress: IngressConfig,
     pub turns: TurnConfig,
@@ -152,6 +155,7 @@ impl Config {
             provider_request_timeout,
             provider_max_inflight,
             management,
+            cma_service_account: ServiceAccountConfig::from_env()?,
             channel_cache: ChannelCacheConfig::from_env()?,
             ingress: IngressConfig::from_env()?,
             turns: TurnConfig::from_env()?,
