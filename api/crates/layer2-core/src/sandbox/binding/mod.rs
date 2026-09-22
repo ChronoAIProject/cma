@@ -4,6 +4,9 @@ mod fence;
 mod model;
 mod profile;
 mod profile_input;
+mod profiles;
+mod recovery;
+mod service;
 pub mod store;
 pub use credential::{BindingCredentialCustody, ProvidedCredential};
 pub use fence::{BindingAdmissionFence, BindingConversationFence};
@@ -18,3 +21,11 @@ pub use store::BindingStore;
 mod model_tests;
 #[cfg(test)]
 mod profile_tests;
+
+pub use profiles::BindingProfileStore;
+pub use service::{
+    BindingError, BindingPolicy, BindingResources, BindingService, BindingServiceStore,
+};
+
+#[cfg(test)]
+mod service_tests;
