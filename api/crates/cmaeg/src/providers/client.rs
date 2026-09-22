@@ -27,6 +27,7 @@ use super::{
 pub struct ProviderClient {
     providers: BTreeMap<ProviderSlug, ProviderHandle>,
     request_timeout: Duration,
+    pub(super) management_auth: Option<super::management_auth::CmaManagementAuth>,
 }
 
 impl ProviderClient {
@@ -78,16 +79,22 @@ impl ProviderClient {
         Ok(Self {
             providers,
             request_timeout,
+            management_auth: None,
         })
     }
 
     pub fn from_config(config: &crate::Config) -> Result<Self, ProviderError> {
-        Self::new(
+        let mut client = Self::new(
             config.providers.clone(),
             config.provider_connect_timeout,
             config.provider_request_timeout,
             config.provider_max_inflight,
-        )
+        )?;
+        client.management_auth = Some(super::management_auth::CmaManagementAuth::new(
+            &config.management.cma_base_url,
+            config.management.cma_service_token.clone(),
+        )?);
+        Ok(client)
     }
 
     pub fn provider_count(&self) -> usize {
@@ -113,10 +120,11 @@ impl ProviderClient {
             "agent_key": request.agent_key.as_str(),
             "tools": request.tools,
         });
+        let bearer = self.management_bearer(provider, &url, &request.agent_key);
         let response = handle
             .client
             .put(url)
-            .bearer_auth(request.agent_key.as_str())
+            .bearer_auth(bearer)
             .json(&body)
             .timeout(self.request_timeout)
             .send()
@@ -141,10 +149,11 @@ impl ProviderClient {
             .entry
             .url("binding", &[("binding_id", binding_id.as_str())])
             .map_err(|error| ProviderError::InvalidRequest(error.to_string()))?;
+        let bearer = self.management_bearer(provider, &url, agent_key);
         let response = handle
             .client
             .delete(url)
-            .bearer_auth(agent_key.as_str())
+            .bearer_auth(bearer)
             .timeout(self.request_timeout)
             .send()
             .await
@@ -197,17 +206,14 @@ impl ProviderClient {
                 ],
             )
             .map_err(|error| ProviderError::InvalidRequest(error.to_string()))?;
+        let bearer = self.management_bearer(provider, &url, agent_key);
         let request = if delete {
-            handle
-                .client
-                .delete(url)
-                .bearer_auth(agent_key.as_str())
-                .send()
+            handle.client.delete(url).bearer_auth(bearer).send()
         } else {
             handle
                 .client
                 .put(url)
-                .bearer_auth(agent_key.as_str())
+                .bearer_auth(bearer)
                 .json(&json!({}))
                 .send()
         };

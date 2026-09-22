@@ -17,7 +17,7 @@ procedure to apply changes. Configuration is operator-owned.
 | `CMAEG_PUBLIC_URL` | origin URL | Required | Externally reachable origin used in channel callback and tool URLs, without a trailing slash. HTTPS, or loopback HTTP for local tests. |
 | `CMAEG_MASTER_KEYS_FILE` | file path | Required | Mounted file containing one `kid:base64key[,kid:base64key]` line; each key decodes to 32 bytes and the first key is current. |
 | `CMAEG_CMA_BASE_URL` | origin URL | Required | CMA record-store origin. HTTPS, or loopback/`.svc` HTTP; no credentials, path, query, fragment, or trailing slash. |
-| `CMAEG_CMA_SERVICE_TOKEN_FILE` | file path | Required | Mounted file containing the service-account bearer for CMA channel records and gateway rekey requests. |
+| `CMAEG_CMA_SERVICE_TOKEN_FILE` | file path | Required | Mounted file containing the service-account bearer for CMA channel records, gateway rekey requests, and CMA provider binding/conversation management. Grant both `cma:gateway:records` and `cma:provider:bindings`. |
 | `CMAEG_NYXID_BASE_URL` | origin URL | Required | NyxID origin for creator authentication, with the same URL restrictions as the CMA origin. |
 | `CMAEG_TOOLS_NYXID_SLUG` | string | `cmaeg` | NyxID service slug in the provider tools advertisement, matching `[a-z0-9_]{1,32}`. |
 | `CMAEG_CHANNEL_CACHE_TTL_MS` | positive integer, ms | `60000` | Fresh lifetime of a resolved channel on this replica. |
