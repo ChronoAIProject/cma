@@ -16,7 +16,9 @@ use crate::{
 };
 
 const MAX_REQUEST_BYTES: usize = 128 * 1024;
-const MAX_RESPONSE_BYTES: usize = 256 * 1024;
+// Full context can occupy 1 MiB before a tool result carries both structured
+// JSON and its escaped text encoding. Retain a finite bound for that envelope.
+const MAX_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
 const BODY_DEADLINE: Duration = Duration::from_secs(5);
 const UPSTREAM_DEADLINE: Duration = Duration::from_secs(10);
 
