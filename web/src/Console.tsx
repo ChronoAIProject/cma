@@ -1,5 +1,5 @@
 import { Presence } from './ui/Presence';
-import { BridgeEntry } from './bridges/BridgeEntry';
+import { ChannelManagement, isChannelRoute, canManageBots } from './ChannelManagement';
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { LandingCharacter } from './landing/LandingCharacter';
 import {
@@ -141,211 +141,209 @@ export function Console({
     deleteSandbox: user.capabilities.includes('delete_own_sandbox'),
   };
   const ready = agent.state.status === 'ready' ? agent.state : undefined;
-  const content =
-    route.kind === 'bridges' || route.kind === 'bridge' || route.kind === 'bridge_new' ? (
-      <BridgeEntry
-        client={user.visitor ? undefined : client.bridgeViews}
-        viewerId={user.id}
-        route={route}
+  const content = isChannelRoute(route) ? (
+    <ChannelManagement
+      user={user}
+      route={route}
+      onNavigate={(next) => {
+        if (next.kind === 'bridges' || next.kind === 'bridge_new')
+          setNavigationScope(scopeValue(next.organization));
+        onNavigate(next);
+      }}
+    />
+  ) : route.kind === 'inventory' ? (
+    client.resourceViews === undefined ? (
+      <section className="console__empty">
+        <h1>Agent inventory unavailable</h1>
+      </section>
+    ) : (
+      <AgentInventory
+        client={client.resourceViews}
+        organization={route.organization}
+        shared={route.shared}
         onNavigate={(next) => {
-          if (next.kind === 'bridges' || next.kind === 'bridge_new')
-            setNavigationScope(scopeValue(next.organization));
+          if (next.kind === 'inventory')
+            setNavigationScope(scopeValue(next.organization, next.shared));
           onNavigate(next);
         }}
       />
-    ) : route.kind === 'inventory' ? (
-      client.resourceViews === undefined ? (
-        <section className="console__empty">
-          <h1>Agent inventory unavailable</h1>
-        </section>
-      ) : (
-        <AgentInventory
-          client={client.resourceViews}
-          organization={route.organization}
-          shared={route.shared}
-          onNavigate={(next) => {
-            if (next.kind === 'inventory')
-              setNavigationScope(scopeValue(next.organization, next.shared));
-            onNavigate(next);
-          }}
+    )
+  ) : route.kind === 'agent' && shared !== undefined && client.resourceViews !== undefined ? (
+    <SharedAgent
+      publicationScope={artifactPublicationScope}
+      key={shared.id}
+      client={client.resourceViews}
+      web={client}
+      detail={shared}
+      onAccessChanged={agentAccess.reload}
+    />
+  ) : route.kind === 'agent' &&
+    client.resourceViews !== undefined &&
+    personalAgentId === undefined &&
+    agentAccess.state.status !== 'ready' ? (
+    <section
+      className="console__empty"
+      role={agentAccess.state.status === 'error' ? 'alert' : 'status'}
+    >
+      <h1>{agentAccess.state.status === 'error' ? 'Agent unavailable' : 'Opening Agent'}</h1>
+      {agentAccess.state.status === 'error' ? (
+        <>
+          <p>{agentAccess.state.message}</p>
+          <Button onClick={agentAccess.reload}>Check access again</Button>
+        </>
+      ) : null}
+    </section>
+  ) : route.kind === 'agent' ? (
+    <AgentSurface
+      key={route.agentId}
+      draft={draft}
+      agentId={route.agentId}
+      viewerId={user.id}
+      controller={agent}
+      detailsOpen={detailsOpen}
+      onDetailsOpenChange={setDetailsOpen}
+      onNavigate={onNavigate}
+    />
+  ) : route.kind === 'sandbox' ? (
+    <SandboxAccessPage
+      key={route.sandboxId}
+      client={client.resourceViews}
+      id={route.sandboxId}
+      commandScope={sandboxCommandScope}
+      onNavigate={onNavigate}
+      personal={
+        <SandboxPage
+          key={route.sandboxId}
+          client={client}
+          sandboxId={route.sandboxId}
+          viewerId={user.id}
+          revision={revision}
+          permissions={permissions}
+          busy={actions.pending}
+          onAction={actions.select}
+          onNavigate={onNavigate}
         />
-      )
-    ) : route.kind === 'agent' && shared !== undefined && client.resourceViews !== undefined ? (
-      <SharedAgent
-        publicationScope={artifactPublicationScope}
-        key={shared.id}
-        client={client.resourceViews}
-        web={client}
-        detail={shared}
-        onAccessChanged={agentAccess.reload}
-      />
-    ) : route.kind === 'agent' &&
-      client.resourceViews !== undefined &&
-      personalAgentId === undefined &&
-      agentAccess.state.status !== 'ready' ? (
-      <section
-        className="console__empty"
-        role={agentAccess.state.status === 'error' ? 'alert' : 'status'}
-      >
-        <h1>{agentAccess.state.status === 'error' ? 'Agent unavailable' : 'Opening Agent'}</h1>
-        {agentAccess.state.status === 'error' ? (
-          <>
-            <p>{agentAccess.state.message}</p>
-            <Button onClick={agentAccess.reload}>Check access again</Button>
-          </>
-        ) : null}
-      </section>
-    ) : route.kind === 'agent' ? (
-      <AgentSurface
-        key={route.agentId}
-        draft={draft}
-        agentId={route.agentId}
-        viewerId={user.id}
-        controller={agent}
-        detailsOpen={detailsOpen}
-        onDetailsOpenChange={setDetailsOpen}
-        onNavigate={onNavigate}
-      />
-    ) : route.kind === 'sandbox' ? (
-      <SandboxAccessPage
-        key={route.sandboxId}
-        client={client.resourceViews}
-        id={route.sandboxId}
-        commandScope={sandboxCommandScope}
-        onNavigate={onNavigate}
-        personal={
-          <SandboxPage
-            key={route.sandboxId}
-            client={client}
-            sandboxId={route.sandboxId}
-            viewerId={user.id}
-            revision={revision}
-            permissions={permissions}
-            busy={actions.pending}
-            onAction={actions.select}
+      }
+    />
+  ) : route.kind === 'workspace' ? (
+    <section className="shared-hierarchy">
+      <header>
+        <h1>Workspace</h1>
+      </header>
+      <div className="shared-hierarchy__body">
+        {client.resourceViews === undefined ? (
+          <p>Workspace unavailable</p>
+        ) : (
+          <WorkspaceContents
+            key={route.workspaceId}
+            client={client.resourceViews}
+            id={route.workspaceId}
             onNavigate={onNavigate}
           />
-        }
-      />
-    ) : route.kind === 'workspace' ? (
-      <section className="shared-hierarchy">
-        <header>
-          <h1>Workspace</h1>
-        </header>
-        <div className="shared-hierarchy__body">
-          {client.resourceViews === undefined ? (
-            <p>Workspace unavailable</p>
-          ) : (
-            <WorkspaceContents
-              key={route.workspaceId}
-              client={client.resourceViews}
-              id={route.workspaceId}
-              onNavigate={onNavigate}
-            />
-          )}
-        </div>
-      </section>
-    ) : route.kind === 'profiles' ||
-      route.kind === 'profile' ||
-      route.kind === 'marketplace' ||
-      route.kind === 'marketplace_profile' ? (
-      profiles === undefined ? (
-        <section className="console__empty">
-          <h1>Profiles unavailable</h1>
-        </section>
-      ) : (
-        <Suspense
-          fallback={
-            <section className="console__empty" role="status">
-              Loading profiles
-            </section>
-          }
-        >
-          <ProfileViews
-            key={JSON.stringify(route)}
-            route={route}
-            client={profiles}
-            onNavigate={onNavigate}
-            canManage={!user.visitor && user.capabilities.includes('manage_own_profiles')}
-            onUse={
-              canCreate &&
-              (route.kind !== 'marketplace_profile' ||
-                route.profileKind !== 'sandbox' ||
-                canCreateSandbox)
-                ? onUseProfile
-                : undefined
-            }
-          />
-        </Suspense>
-      )
-    ) : route.kind === 'operations' ? (
-      operator !== undefined && canOpenOperations(user.capabilities) ? (
-        <Suspense
-          fallback={
-            <section className="console__empty" role="status">
-              Loading Operations
-            </section>
-          }
-        >
-          <Operations client={operator} capabilities={user.capabilities} />
-        </Suspense>
-      ) : (
-        <section className="console__empty">
-          <h1>Operations unavailable</h1>
-        </section>
-      )
-    ) : route.kind === 'triggers' || route.kind === 'trigger' || route.kind === 'trigger_embed' ? (
-      publisher !== undefined && !user.visitor && user.capabilities.includes('publish_triggers') ? (
-        <Suspense
-          fallback={
-            <section className="console__empty" role="status">
-              Loading CMA Trigger
-            </section>
-          }
-        >
-          <TriggerPublisherPage
-            key={route.kind === 'triggers' ? 'new' : route.triggerId}
-            client={publisher}
-            triggerId={route.kind === 'triggers' ? undefined : route.triggerId}
-            view={route.kind === 'trigger_embed' ? 'embed' : 'wizard'}
-            onNavigate={onNavigate}
-          />
-        </Suspense>
-      ) : (
-        <section className="console__empty">
-          <h1>Publishing unavailable</h1>
-        </section>
-      )
-    ) : route.kind === 'not_found' ? (
-      <section className="console__empty" aria-labelledby="not-found-title">
-        <p className="console__eyebrow">404</p>
-        <h1 id="not-found-title">Page not found</h1>
-        <a href="/">Return to CMA</a>
+        )}
+      </div>
+    </section>
+  ) : route.kind === 'profiles' ||
+    route.kind === 'profile' ||
+    route.kind === 'marketplace' ||
+    route.kind === 'marketplace_profile' ? (
+    profiles === undefined ? (
+      <section className="console__empty">
+        <h1>Profiles unavailable</h1>
       </section>
     ) : (
-      <section className="console__empty" aria-labelledby="empty-title">
-        <div className="brand-home brand-home--compact">
-          <LandingCharacter autoRotate />
-        </div>
-        <h1 id="empty-title">
-          {route.kind === 'home' ? 'Welcome to CMA' : route.kind.replaceAll('_', ' ')}
-        </h1>
-        {route.kind === 'home' && canCreate ? (
-          <div className="console__empty-actions">
-            <Button
-              variant="primary"
-              icon={<IconNewChatOutline16 />}
-              onClick={() => onCreate?.({ kind: 'new_agent' })}
-            >
-              New agent
-            </Button>
-            {canCreateSandbox ? (
-              <Button onClick={() => onCreate?.({ kind: 'new_sandbox' })}>New sandbox</Button>
-            ) : null}
-          </div>
-        ) : null}
+      <Suspense
+        fallback={
+          <section className="console__empty" role="status">
+            Loading profiles
+          </section>
+        }
+      >
+        <ProfileViews
+          key={JSON.stringify(route)}
+          route={route}
+          client={profiles}
+          onNavigate={onNavigate}
+          canManage={!user.visitor && user.capabilities.includes('manage_own_profiles')}
+          onUse={
+            canCreate &&
+            (route.kind !== 'marketplace_profile' ||
+              route.profileKind !== 'sandbox' ||
+              canCreateSandbox)
+              ? onUseProfile
+              : undefined
+          }
+        />
+      </Suspense>
+    )
+  ) : route.kind === 'operations' ? (
+    operator !== undefined && canOpenOperations(user.capabilities) ? (
+      <Suspense
+        fallback={
+          <section className="console__empty" role="status">
+            Loading Operations
+          </section>
+        }
+      >
+        <Operations client={operator} capabilities={user.capabilities} />
+      </Suspense>
+    ) : (
+      <section className="console__empty">
+        <h1>Operations unavailable</h1>
       </section>
-    );
+    )
+  ) : route.kind === 'triggers' || route.kind === 'trigger' || route.kind === 'trigger_embed' ? (
+    publisher !== undefined && !user.visitor && user.capabilities.includes('publish_triggers') ? (
+      <Suspense
+        fallback={
+          <section className="console__empty" role="status">
+            Loading CMA Trigger
+          </section>
+        }
+      >
+        <TriggerPublisherPage
+          key={route.kind === 'triggers' ? 'new' : route.triggerId}
+          client={publisher}
+          triggerId={route.kind === 'triggers' ? undefined : route.triggerId}
+          view={route.kind === 'trigger_embed' ? 'embed' : 'wizard'}
+          onNavigate={onNavigate}
+        />
+      </Suspense>
+    ) : (
+      <section className="console__empty">
+        <h1>Publishing unavailable</h1>
+      </section>
+    )
+  ) : route.kind === 'not_found' ? (
+    <section className="console__empty" aria-labelledby="not-found-title">
+      <p className="console__eyebrow">404</p>
+      <h1 id="not-found-title">Page not found</h1>
+      <a href="/">Return to CMA</a>
+    </section>
+  ) : (
+    <section className="console__empty" aria-labelledby="empty-title">
+      <div className="brand-home brand-home--compact">
+        <LandingCharacter autoRotate />
+      </div>
+      <h1 id="empty-title">
+        {route.kind === 'home' ? 'Welcome to CMA' : route.kind.replaceAll('_', ' ')}
+      </h1>
+      {route.kind === 'home' && canCreate ? (
+        <div className="console__empty-actions">
+          <Button
+            variant="primary"
+            icon={<IconNewChatOutline16 />}
+            onClick={() => onCreate?.({ kind: 'new_agent' })}
+          >
+            New agent
+          </Button>
+          {canCreateSandbox ? (
+            <Button onClick={() => onCreate?.({ kind: 'new_sandbox' })}>New sandbox</Button>
+          ) : null}
+        </div>
+      ) : null}
+    </section>
+  );
 
   return (
     <AppFrame
@@ -422,6 +420,7 @@ export function Console({
             <ScopedNavigation
               client={user.visitor ? undefined : client.resourceViews}
               bridges={!user.visitor && client.bridgeViews !== undefined}
+              bots={canManageBots(user, client)}
               scope={navigationScope}
               onScopeChange={setNavigationScope}
               onNavigate={(next) => {
