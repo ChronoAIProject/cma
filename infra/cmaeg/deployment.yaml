@@ -67,6 +67,16 @@ spec:
                 secretKeyRef:
                   name: cmaeg-cma-service-token
                   key: CMAEG_CMA_SERVICE_TOKEN
+            - name: CMAEG_CMA_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: cmaeg-cma-service-token
+                  key: CMAEG_CMA_CLIENT_ID
+            - name: CMAEG_CMA_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: cmaeg-cma-service-token
+                  key: CMAEG_CMA_CLIENT_SECRET
           securityContext:
             allowPrivilegeEscalation: false
             privileged: false
