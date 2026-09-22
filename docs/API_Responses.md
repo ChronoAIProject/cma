@@ -61,6 +61,10 @@ activity must have schema version 1 and a nonempty event ID. The channel ID is
 independent of the binding ID. A different context under the same idempotency key,
 or a second key for the same binding/conversation/event, returns a conflict.
 Neither can overwrite the original object or enqueue another turn.
+Command admission retries transient database contention with backoff for up to
+five seconds between completed attempts, bounded by the original authorization
+deadline. An active transaction or commit is allowed to finish; the retry budget
+does not cancel it or renew authorization.
 
 The Agent receives the ordinary input followed by `event_ref: <reference>`.
 The full activity is retrieved through authenticated
