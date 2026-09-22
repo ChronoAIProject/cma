@@ -41,6 +41,33 @@ impl std::fmt::Debug for ProvidedCredential {
 /// A Sandbox's first generation is immutable: retries must present the same key.
 #[async_trait::async_trait]
 pub trait BindingCredentialCustody: Send + Sync {
+    /// Refuse unusable credential formats before reserving a binding identifier.
+    fn validate(&self, _credential: &ProvidedCredential) -> Result<(), CoreError> {
+        Ok(())
+    }
+
+    /// Implementations fence the persisted binding revision in the credential
+    /// transaction. A late caller must not repopulate retired custody.
+    async fn retain_binding(
+        &self,
+        _binding: &super::ProviderBinding,
+        _credential: &ProvidedCredential,
+    ) -> Result<(), CoreError> {
+        Err(CoreError::RuntimeUnavailable(
+            "binding credential admission is unavailable".into(),
+        ))
+    }
+
+    async fn forget_binding(
+        &self,
+        _binding: &super::ProviderBinding,
+        _sandbox_id: &SandboxId,
+    ) -> Result<(), CoreError> {
+        Err(CoreError::RuntimeUnavailable(
+            "binding credential retirement is unavailable".into(),
+        ))
+    }
+
     async fn retain(
         &self,
         sandbox_id: &SandboxId,
@@ -48,4 +75,41 @@ pub trait BindingCredentialCustody: Send + Sync {
         services: &[ServiceId],
         credential: &ProvidedCredential,
     ) -> Result<(), CoreError>;
+}
+
+impl super::ProviderBinding {
+    pub fn require_credential_admission(
+        &self,
+        credential: &ProvidedCredential,
+    ) -> Result<(), CoreError> {
+        self.validate().map_err(CoreError::InvalidState)?;
+        if self.state != super::BindingState::Provisioning
+            || self.work != super::BindingWork::AwaitingCredential
+            || credential.sha256() != self.key_sha256
+            || self.profile.environment.is_none()
+        {
+            return Err(CoreError::InvalidState(
+                "binding does not admit credentials".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn require_credential_retirement(&self, id: &SandboxId) -> Result<(), CoreError> {
+        self.validate().map_err(CoreError::InvalidState)?;
+        let allowed = (self.state == super::BindingState::Retired
+            && self.work == super::BindingWork::RetireCurrentSandbox
+            && *id == self.sandbox_id)
+            || (self.work == super::BindingWork::RetirePreviousSandbox
+                && self
+                    .previous
+                    .as_ref()
+                    .is_some_and(|old| old.retire_sandbox && old.sandbox_id == *id));
+        if !allowed {
+            return Err(CoreError::InvalidState(
+                "binding does not retire credentials".into(),
+            ));
+        }
+        Ok(())
+    }
 }
