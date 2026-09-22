@@ -292,12 +292,13 @@ RUN set -eux; \
 COPY --from=build /out/layer4-runtime /usr/local/bin/layer4-runtime
 
 # Persist untouched provider conversations before publishing an Agent as Ready.
-# This exact-source patch and restart proof use no credential or model request.
+# These exact-source patches and restart proofs use synthetic credentials and
+# local model/tool fixtures only. Native tools must survive rotation and reload.
 RUN --mount=type=bind,source=api/crates/layer3-adapter/src/codex,target=/tmp/cma-codex-source,readonly \
     node /tmp/cma-codex-source/persist_conversations.cjs \
     && node /tmp/cma-codex-source/subscription_auth.cjs \
     && echo "${CODEX_ACP_SHA256}  /usr/local/lib/node_modules/@agentclientprotocol/codex-acp/dist/index.js" | sha256sum -c - \
-    && node --test /tmp/cma-codex-source/persist_conversations.test.cjs /tmp/cma-codex-source/subscription_auth.test.cjs
+    && node --test /tmp/cma-codex-source/persist_conversations.test.cjs /tmp/cma-codex-source/subscription_auth.test.cjs /tmp/cma-codex-source/native_tools.test.cjs
 
 # Refresh the final filesystem after expensive dependency layers are cached.
 # CI and release builds vary this value so cached OS packages cannot hide a
@@ -341,6 +342,10 @@ const fallback = [
 fs.writeFileSync('/etc/profile', profile.replace(defaults, fallback));
 NODE
 
+# Optional CHRONO_TOOL_PROXY_URL selects one external HTTP tool endpoint.
+# When absent no tool proxy binds. When present it listens only at 127.0.0.1:9093,
+# accepts POST /, and uses the current in-memory Sandbox credential on each call.
+# The control plane must retain the endpoint with the binding before enabling it.
 WORKDIR /home/cma
 USER 10001:10001
 ENV HOME=/home/cma \

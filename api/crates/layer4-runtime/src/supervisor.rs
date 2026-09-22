@@ -154,6 +154,12 @@ impl Supervisor {
     pub(crate) async fn dispatch(&self, request: RequestFrame) -> ResponseFrame {
         let operation = request.operation();
         // Observation must not repair journals or wait for archive capture/export.
+        if let RequestFrame::ToolProxyStatus(request) = request {
+            return match self.tool_proxy_status(request).await {
+                Ok(status) => ResponseFrame::ToolProxyStatus(status),
+                Err(error) => error.response(operation),
+            };
+        }
         if let RequestFrame::RuntimeStatus(request) = request {
             return match self.runtime_status(request).await {
                 Ok(status) => ResponseFrame::RuntimeStatus(status),
@@ -323,7 +329,8 @@ impl Supervisor {
             )),
             RequestFrame::WorkspaceRemovalSupport(_)
             | RequestFrame::ReconcileWorkspaceRemoval(_)
-            | RequestFrame::RuntimeStatus(_) => {
+            | RequestFrame::RuntimeStatus(_)
+            | RequestFrame::ToolProxyStatus(_) => {
                 unreachable!("status requests observe without mutation")
             }
         }
@@ -467,3 +474,6 @@ mod restore_tests;
 #[cfg(test)]
 #[path = "supervisor_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "supervisor_tool_proxy_tests.rs"]
+mod tool_proxy_tests;

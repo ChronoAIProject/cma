@@ -37,3 +37,12 @@ mod service_tests;
 pub(super) fn valid_binding_id(id: &str) -> bool {
     model::valid_id(id, 1)
 }
+
+// Transport parsing belongs to the interface and adapter. Retained authority
+// still requires one bounded, nonempty destination without control characters.
+pub(super) fn valid_tool_endpoint(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 4096
+        && !value.chars().any(char::is_whitespace)
+        && !value.chars().any(char::is_control)
+}

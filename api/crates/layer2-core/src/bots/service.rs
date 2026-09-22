@@ -11,7 +11,7 @@ pub trait BotProfileResolver: Send + Sync {
     async fn resolve(
         &self,
         owner: &SubjectId,
-        reference: &crate::profiles::AgentProfileRef,
+        request: &CreateBot,
     ) -> Result<BotProfiles, BotError>;
 }
 pub struct BotService {
@@ -48,10 +48,7 @@ impl BotService {
         if let Some(current) = self.store.creation(&caller.subject, &key_hash).await? {
             return replay(current, &fingerprint);
         }
-        let profiles = self
-            .profiles
-            .resolve(&caller.subject, &request.profile)
-            .await?;
+        let profiles = self.profiles.resolve(&caller.subject, &request).await?;
         let now = crate::now_rfc3339();
         let bot = Bot {
             bot_id: format!("bot_{}", uuid::Uuid::new_v4().simple()),

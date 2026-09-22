@@ -60,7 +60,50 @@ pub struct BindingConversationView {
     pub state: String,
 }
 
+#[derive(Clone)]
+struct BindingRouteState {
+    service: Arc<BindingService>,
+    native_endpoint: Option<String>,
+}
+
 pub fn binding_router(service: Arc<BindingService>) -> Router {
+    routes(BindingRouteState {
+        service,
+        native_endpoint: None,
+    })
+}
+
+/// The configured destination is trusted deployment authority, never request data.
+/// Agent startup additionally requires the actual runtime's proxy support proof.
+pub fn binding_router_with_native_tools(
+    service: Arc<BindingService>,
+    endpoint: &str,
+) -> Result<Router, String> {
+    let url = url::Url::parse(endpoint).map_err(|_| "invalid native tools endpoint")?;
+    let loopback = url.host_str().is_some_and(|host| {
+        host.trim_matches(['[', ']'])
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback())
+    });
+    if endpoint.len() > 2_048
+        || url.as_str() != endpoint
+        || url.host_str().is_none()
+        || !(url.scheme() == "https" || (url.scheme() == "http" && loopback))
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || url.port() == Some(0)
+    {
+        return Err("invalid native tools endpoint".into());
+    }
+    Ok(routes(BindingRouteState {
+        service,
+        native_endpoint: Some(endpoint.into()),
+    }))
+}
+
+fn routes(state: BindingRouteState) -> Router {
     Router::new()
         .route(
             "/api/v1/cmaeg/bindings/{binding_id}",
@@ -70,7 +113,7 @@ pub fn binding_router(service: Arc<BindingService>) -> Router {
             "/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}",
             put(put_conversation).delete(delete_conversation),
         )
-        .with_state(service)
+        .with_state(state)
         .layer(axum::middleware::from_fn(no_store))
 }
 async fn no_store(request: axum::extract::Request, next: axum::middleware::Next) -> Response {
@@ -85,7 +128,7 @@ async fn no_store(request: axum::extract::Request, next: axum::middleware::Next)
     params(("binding_id" = String, Path)), request_body = PutBindingRequest,
     responses((status = 200, body = BindingView), (status = 400), (status = 401), (status = 403), (status = 409), (status = 503)))]
 async fn put_binding(
-    State(service): State<Arc<BindingService>>,
+    State(state): State<BindingRouteState>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     Path(id): Path<String>,
     body: Result<Json<PutBindingRequest>, axum::extract::rejection::JsonRejection>,
@@ -112,13 +155,24 @@ async fn put_binding(
             "invalid binding schema or tools advertisement".into(),
         ));
     }
-    match service
-        .put(
+    if state
+        .native_endpoint
+        .as_ref()
+        .is_some_and(|expected| expected != &body.tools.native_mcp_url)
+    {
+        return error(BindingError::InvalidRequest(
+            "tools advertisement differs from the configured gateway".into(),
+        ));
+    }
+    match state
+        .service
+        .put_with_tool_endpoint(
             &caller,
             &id,
             body.profile,
             &body.profile_digest,
             &credential,
+            state.native_endpoint,
         )
         .await
     {
@@ -130,11 +184,11 @@ async fn put_binding(
 #[utoipa::path(get, path = "/api/v1/cmaeg/bindings/{binding_id}", tag = "provider bindings",
     params(("binding_id" = String, Path)), responses((status = 200, body = BindingView), (status = 401), (status = 403), (status = 404), (status = 503)))]
 async fn get_binding(
-    State(service): State<Arc<BindingService>>,
+    State(state): State<BindingRouteState>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     Path(id): Path<String>,
 ) -> Response {
-    match service.read(&caller, &id).await {
+    match state.service.read(&caller, &id).await {
         Ok(value) => Json(BindingView::from(value)).into_response(),
         Err(value) => error(value),
     }
@@ -142,11 +196,11 @@ async fn get_binding(
 #[utoipa::path(delete, path = "/api/v1/cmaeg/bindings/{binding_id}", tag = "provider bindings",
     params(("binding_id" = String, Path)), responses((status = 204), (status = 401), (status = 403), (status = 409), (status = 503)))]
 async fn delete_binding(
-    State(service): State<Arc<BindingService>>,
+    State(state): State<BindingRouteState>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     Path(id): Path<String>,
 ) -> Response {
-    match service.retire(&caller, &id).await {
+    match state.service.retire(&caller, &id).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(value) => error(value),
     }
@@ -155,11 +209,12 @@ async fn delete_binding(
     params(("binding_id" = String, Path), ("conversation_id" = String, Path)),
     responses((status = 201, body = BindingConversationView), (status = 200, body = BindingConversationView), (status = 400), (status = 401), (status = 403), (status = 404), (status = 409), (status = 503)))]
 async fn put_conversation(
-    State(service): State<Arc<BindingService>>,
+    State(state): State<BindingRouteState>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     Path((id, conversation)): Path<(String, String)>,
 ) -> Response {
-    match service
+    match state
+        .service
         .ensure_conversation(&caller, &id, &conversation)
         .await
     {
@@ -179,11 +234,12 @@ async fn put_conversation(
     params(("binding_id" = String, Path), ("conversation_id" = String, Path)),
     responses((status = 204), (status = 400), (status = 401), (status = 403), (status = 404), (status = 409), (status = 503)))]
 async fn delete_conversation(
-    State(service): State<Arc<BindingService>>,
+    State(state): State<BindingRouteState>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     Path((id, conversation)): Path<(String, String)>,
 ) -> Response {
-    match service
+    match state
+        .service
         .retire_conversation(&caller, &id, &conversation)
         .await
     {

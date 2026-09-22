@@ -57,9 +57,7 @@ impl ManagedSandboxCredentials {
             .nyxid_services;
         let mut material =
             Self::provided_material(&binding.sandbox_id, &binding.owner, services, credential)?;
-        material.source = SandboxCredentialSource::Binding {
-            binding_id: binding.binding_id.clone(),
-        };
+        material.source = binding.credential_source();
         Ok(material)
     }
 
