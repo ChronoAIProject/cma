@@ -217,7 +217,7 @@ export function BotCreate({
               </dl>
               <p>
                 The Bot uses your account and the current default Sandbox and Workspace profiles.
-                Connect the profile’s services and CMAEG in NyxID before creating it.
+                Connect the profile’s services and managed model in NyxID before creating it.
               </p>
               {intent === undefined ? null : (
                 <p role="status">
