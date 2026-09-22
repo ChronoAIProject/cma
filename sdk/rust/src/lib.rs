@@ -23,6 +23,7 @@ pub mod agents;
 pub mod agui;
 pub mod assets;
 pub mod auth;
+pub mod bots;
 pub mod bridges;
 mod client;
 mod conformance;
