@@ -23,6 +23,7 @@ pub(super) fn response_operation(response: &ResponseFrame) -> WireOperation {
     match response {
         ResponseFrame::CacheSkillArchive { .. } => WireOperation::CacheSkillArchive,
         ResponseFrame::RuntimeStatus(_) => WireOperation::RuntimeStatus,
+        ResponseFrame::ToolProxyStatus(_) => WireOperation::ToolProxyStatus,
         ResponseFrame::WorkspaceRemovalSupport(_) => WireOperation::WorkspaceRemovalSupport,
         ResponseFrame::ReconcileWorkspaceRemoval(_) => WireOperation::ReconcileWorkspaceRemoval,
         ResponseFrame::Install(_) => WireOperation::Install,
@@ -62,6 +63,7 @@ pub(super) const fn operation_name(operation: WireOperation) -> &'static str {
     match operation {
         WireOperation::CacheSkillArchive => "cache skill archive",
         WireOperation::RuntimeStatus => "runtime status",
+        WireOperation::ToolProxyStatus => "runtime tool endpoint status",
         WireOperation::WorkspaceRemovalSupport => "Workspace removal support",
         WireOperation::ReconcileWorkspaceRemoval => "Workspace removal observation",
         WireOperation::Install => "install",

@@ -23,7 +23,6 @@ pub(super) fn routes(state: Identity) -> Router {
             get(|| async {
                 Json(json!({"services":[
                 {"id":"model-service","slug":"chrono-llm-public","is_active":true,"credential_source":{"type":"personal"}},
-                {"id":"tools-service","slug":"cmaeg","is_active":true,"credential_source":{"type":"personal"}},
                 {"id":"skills-service","slug":"ornn-api","is_active":true,"credential_source":{"type":"personal"}}]}))
             }),
         )
@@ -75,7 +74,7 @@ async fn mint(State(state): State<Identity>, Json(mut body): Json<Value>) -> Res
     if role == "mint_agent" {
         assert_eq!(
             body["allowed_service_ids"],
-            json!(["model-service", "tools-service", "skills-service"])
+            json!(["model-service", "skills-service"])
         );
     } else {
         assert_eq!(body["allowed_service_ids"], json!([]));

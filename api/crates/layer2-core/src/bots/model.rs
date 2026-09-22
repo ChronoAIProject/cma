@@ -1,7 +1,8 @@
 //! Owner-managed external channels with durable resource and credential identities.
 use crate::{
     profiles::{
-        AgentProfileRef, AgentProfileRevision, SandboxProfileRevision, WorkspaceProfileRevision,
+        AgentProfileRef, AgentProfileRevision, SandboxProfileRef, SandboxProfileRevision,
+        WorkspaceProfileRef, WorkspaceProfileRevision,
     },
     SubjectId,
 };
@@ -53,6 +54,10 @@ pub struct CreateBot {
     pub name: String,
     pub external_bot_id: String,
     pub profile: AgentProfileRef,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sandbox_profile: Option<SandboxProfileRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_profile: Option<WorkspaceProfileRef>,
     pub admission: BotAdmission,
     pub reply: BotReply,
 }
@@ -153,6 +158,14 @@ impl CreateBot {
             || self.external_bot_id.len() > 512
             || self.external_bot_id.chars().any(char::is_control)
             || self.profile.revision == 0
+            || self
+                .sandbox_profile
+                .as_ref()
+                .is_some_and(|p| p.revision == 0)
+            || self
+                .workspace_profile
+                .as_ref()
+                .is_some_and(|p| p.revision == 0)
             || self.reply.ack_after_ms > 60_000
         {
             return Err(super::BotError::Invalid("invalid bot configuration".into()));
@@ -245,6 +258,14 @@ impl Bot {
             || !hash(&self.request_fingerprint)
             || self.profiles.agent.profile_id != self.request.profile.id
             || self.profiles.agent.revision != self.request.profile.revision
+            || self.request.sandbox_profile.as_ref().is_some_and(|p| {
+                p.id != self.profiles.sandbox.profile_id
+                    || p.revision != self.profiles.sandbox.revision
+            })
+            || self.request.workspace_profile.as_ref().is_some_and(|p| {
+                p.id != self.profiles.workspace.profile_id
+                    || p.revision != self.profiles.workspace.revision
+            })
         {
             return Err(super::BotError::Invalid("invalid bot record".into()));
         }

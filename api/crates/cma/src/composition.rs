@@ -101,16 +101,7 @@ impl ControlPlaneComposition {
         ));
         let subscriptions =
             crate::connections::CodexSubscriptions::new(stores.codex_subscriptions.clone());
-        let channel_tools = Arc::new(
-            crate::store::MongoChannelToolStore::open(
-                stores.sandbox_model.clone(),
-                &config.deployment_id,
-                &config.auth_encryption_key,
-                &config.public_url,
-            )
-            .await
-            .map_err(|error| format!("channel tool storage is not usable: {error}"))?,
-        );
+        let channel_tools = adapter::channel_tool_source(&stores, config).await?;
         let adapter = production_adapter(
             config,
             Arc::clone(&stores.checkpoint_objects),
@@ -119,6 +110,7 @@ impl ControlPlaneComposition {
                 subscriptions.clone(),
             ),
             channel_tools.clone(),
+            crate::store::MongoProviderToolSource::new(stores.sandbox_model.clone()),
         )
         .await?;
         let checkpoint_export = if config.runtime.home_policy.is_some() {
@@ -437,7 +429,11 @@ impl ControlPlaneComposition {
             )
             .merge(trigger_routes)
             .merge(layer1_public::rest::admin::router(admin));
-        let resource_routes = resource_routes.merge(bindings.router(&stores, activity.clone()));
+        let resource_routes = resource_routes.merge(bindings.router(
+            &stores,
+            activity.clone(),
+            config.gateway.as_ref(),
+        )?);
         let (bot_routes, bots) =
             bots::BotComposition::build(config, &stores, auth.clone(), settings)?;
         let resource_routes = resource_routes.merge(bot_routes);
