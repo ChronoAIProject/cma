@@ -553,3 +553,19 @@ identity after readiness and replay. Gateway coverage also exercises a missing
 conversation followed by busy preparation and eventual acceptance with one PUT
 and unchanged POST bodies/keys. This follow-up still needs its own successful
 CI, rollout and fresh live acceptance; it is not part of the image record above.
+
+A second disposable custom channel at 22:36 UTC reproduced the refusal. An
+independent attempt to inspect its prepared conversation found the Agent had
+failed with `agent_runtime_rejected` before any turn. The native-tool authority
+check required a Ready Worktree even though Agent startup deliberately keeps its
+Worktree Creating until the conversation opens. The original Mongo fixture had
+advanced the Worktree too early and therefore missed this integration mismatch.
+The corrected fixture retains the real startup state and tests the first tool
+attachment as well as retirement and authority fences. Creating Worktrees may
+attach tools only while their Starting Agent opens its conversation or recovers
+the pending ready publication; other preparation and removal states still refuse.
+
+Neither disposable attempt establishes native-tool, full-context, restart or
+Telegram acceptance. Both channels and their temporary keys were removed; the
+second test's runtime teardown was verified at 22:42 UTC. The existing Telegram
+route and original Sandbox were unchanged.
