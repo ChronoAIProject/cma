@@ -245,6 +245,7 @@ impl AgentCommandService {
         }
         let command_id = AgentCommandId::generate();
         let request = CommandReservation {
+            binding: authorized.binding_authority().cloned(),
             envelope: AgentCommandEnvelope {
                 schema_version: AGENT_IO_SCHEMA_VERSION,
                 command_id: command_id.clone(),

@@ -36,6 +36,7 @@ impl ResourceFixture {
         let result = self
             .store
             .reserve_command(CommandReservation {
+                binding: None,
                 envelope: self.envelope.clone(),
                 key_sha256: command_key_digest("revival").unwrap(),
                 response_id: Some(layer2_core::ids::AgentResponseId::generate()),

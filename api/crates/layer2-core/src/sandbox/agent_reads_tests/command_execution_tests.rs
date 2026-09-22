@@ -78,6 +78,7 @@ async fn claim(store: &InMemorySandboxStore, agent: &Agent, actor: &str) -> Admi
     let command = AgentCommand::message("shared execution");
     store
         .reserve_command(CommandReservation {
+            binding: None,
             envelope: AgentCommandEnvelope {
                 schema_version: AGENT_IO_SCHEMA_VERSION,
                 command_id: AgentCommandId::generate(),

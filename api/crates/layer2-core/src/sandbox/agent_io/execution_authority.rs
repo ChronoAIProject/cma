@@ -105,6 +105,15 @@ impl ResourceAccessService {
         if authorized.snapshot.scope(&target(envelope))?.owner != envelope.owner {
             return Err(AccessError::NotFound.into());
         }
+        match authorized.binding_authority() {
+            Some(proof) => proof
+                .require_command(envelope)
+                .map_err(|_| ResourceAccessStoreError::Conflict)?,
+            None if envelope.authorization.authority_id.starts_with("binding:") => {
+                return Err(AccessError::NotFound.into())
+            }
+            None => {}
+        }
         let capability = super::admission_service::command_capability(&envelope.command);
         let deadline = authorized
             .decision
@@ -152,6 +161,12 @@ impl CommandExecutionAuthorization {
 }
 
 impl CommandExecutionFence {
+    pub fn binding_authority(
+        &self,
+    ) -> Option<&crate::sandbox::binding::BindingConversationAuthority> {
+        self.authorized.binding_authority()
+    }
+
     pub fn authorization_audit(
         &self,
     ) -> Result<crate::resource_access::ResourceAuthorizationAudit, ResourceAccessError> {
@@ -210,7 +225,11 @@ fn validate_actor(
             envelope.source.kind,
             AgentSourceKind::Api | AgentSourceKind::UserInterface
         )
-        || !caller.authorization.allows(Capability::UseOwnSandboxes)
+        || !(caller.authorization.allows(Capability::UseOwnSandboxes)
+            || caller.authorization
+                == crate::Authorization::new([Capability::UseBindingConversations])
+                && envelope.authorization.authority_id.starts_with("binding:")
+                && envelope.source.kind == AgentSourceKind::Api)
         || !matches!(&envelope.actor,
             AgentActor::Human { subject } | AgentActor::Api { subject, delegation_id: None }
             if *subject == caller.subject)

@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::{AgentId, Caller, Capability};
+use crate::{AgentId, Caller};
 
 use super::super::{
     AgentApprovalDecision, AgentMessageOutcome, AgentOperationError, AgentOperationReceipt,
@@ -37,9 +37,7 @@ impl AgentOperationService {
         id: &AgentId,
         command: AgentCommand,
     ) -> Result<AgentMessageOutcome, AgentOperationError> {
-        caller
-            .require(Capability::UseOwnSandboxes)
-            .map_err(|_| AgentOperationError::Forbidden)?;
+        self.require_owner_authority(caller)?;
         match command.canonical()? {
             AgentCommand::Message {
                 input,

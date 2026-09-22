@@ -33,6 +33,7 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
     // official SDK tests; these cases cover recovery of existing durable work.
     f.store
         .reserve_command(CommandReservation {
+            binding: None,
             envelope: AgentCommandEnvelope {
                 schema_version: AGENT_IO_SCHEMA_VERSION,
                 command_id: AgentCommandId("cmd_contract".into()),

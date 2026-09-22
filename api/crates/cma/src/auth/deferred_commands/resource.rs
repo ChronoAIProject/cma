@@ -14,6 +14,12 @@ impl AuthState {
         ResourceCommandAuthorizationError,
     > {
         let envelope = &command.receipt.envelope;
+        if envelope.authorization.authority_id.starts_with("binding:") {
+            let context = self.retained_binding_context(envelope).await?;
+            return Ok(access
+                .authorize_command_revival(&context, "", command)
+                .await?);
+        }
         let state = self.retained_command_state(envelope).await?;
         let request = self.verify_command_custody(&state).await?;
         let mut context = self.resource_request_context(&request);
@@ -87,6 +93,12 @@ impl AuthState {
         access: &ResourceAccessService,
         envelope: &AgentCommandEnvelope,
     ) -> Result<CommandExecutionAuthorization, ResourceCommandAuthorizationError> {
+        if envelope.authorization.authority_id.starts_with("binding:") {
+            let context = self.retained_binding_context(envelope).await?;
+            return Ok(access
+                .authorize_command_execution(&context, "", envelope)
+                .await?);
+        }
         let state = self.retained_command_state(envelope).await?;
         let request = self.verify_command_custody(&state).await?;
         let mut context = self.resource_request_context(&request);

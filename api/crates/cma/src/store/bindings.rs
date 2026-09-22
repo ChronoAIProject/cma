@@ -16,6 +16,7 @@ use super::durability::majority_collection;
 use super::sandbox_mongo::{is_duplicate_key, MongoSandboxStore};
 use super::schema::{initialize_collections, DOCUMENT_SCHEMA_VERSION};
 mod admission;
+mod commands;
 mod conversations;
 mod custody;
 mod rotation;
