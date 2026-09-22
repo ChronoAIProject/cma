@@ -29,6 +29,20 @@ pub async fn attach_subject(
         }
     };
     if let Some(resolved) = resolved {
+        if request.uri().path() == "/api/v1/bots"
+            || request.uri().path().starts_with("/api/v1/bots/")
+        {
+            match auth.authorize_bot_request(&resolved).await {
+                Ok(true) => {},
+                Ok(false) => return (
+                    StatusCode::FORBIDDEN,
+                    [(axum::http::header::CONTENT_TYPE, "application/problem+json")],
+                    Json(serde_json::json!({"type":"about:blank","title":"renewable owner authority required","status":403,
+                        "detail":"Sign in to CMA with this account to authorize renewable Bot credentials.","code":"bot_owner_authority_required"})),
+                ).into_response(),
+                Err(_) => return store_failure(),
+            }
+        }
         if let Some(binding) = &resolved.binding {
             if !super::binding::permits_request(
                 request.method(),

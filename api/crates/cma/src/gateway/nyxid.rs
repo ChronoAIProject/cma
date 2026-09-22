@@ -1,0 +1,226 @@
+//! Owner-only channel metadata and bounded route mutations.
+use crate::auth::{keys::valid_provider_key_id, provider_http::read_json};
+use layer2_core::bots::{Bot, BotError, ExternalBot};
+use reqwest::{Client, Method};
+use serde::{de::DeserializeOwned, Deserialize};
+use serde_json::{json, Value};
+
+pub(super) struct NyxidClient {
+    pub http: Client,
+    pub base: String,
+}
+#[derive(Deserialize)]
+struct Bots {
+    bots: Vec<ChannelBot>,
+    total: u64,
+}
+#[derive(Deserialize)]
+pub(super) struct ChannelBot {
+    pub id: String,
+    pub user_id: String,
+    pub platform: String,
+    pub label: String,
+    pub platform_bot_username: String,
+    pub is_active: bool,
+}
+#[derive(Deserialize)]
+pub(super) struct Routes {
+    pub conversations: Vec<Route>,
+    pub total: u64,
+}
+#[derive(Deserialize)]
+pub(super) struct Route {
+    pub id: String,
+    pub channel_bot_id: Option<String>,
+    pub platform: String,
+    pub agent_api_key_id: String,
+    pub platform_conversation_id: String,
+    pub default_agent: bool,
+    pub is_active: bool,
+}
+impl NyxidClient {
+    pub async fn json<T: DeserializeOwned>(
+        &self,
+        token: &str,
+        method: Method,
+        path: &str,
+        body: Option<Value>,
+    ) -> Result<T, BotError> {
+        let request = self
+            .http
+            .request(method, format!("{}{}", self.base, path))
+            .bearer_auth(token);
+        let request = if let Some(body) = body {
+            request.json(&body)
+        } else {
+            request
+        };
+        read_json(request.send().await.map_err(|_| BotError::Unavailable)?)
+            .await
+            .map_err(|_| BotError::Unavailable)
+    }
+    pub async fn available(&self, token: &str, owner: &str) -> Result<Vec<ExternalBot>, BotError> {
+        let result: Bots = self
+            .json(token, Method::GET, "/api/v1/channel-bots", None)
+            .await?;
+        complete(result.total, result.bots.iter().map(|b| b.id.as_str()))?;
+        Ok(result
+            .bots
+            .into_iter()
+            .filter(|b| b.user_id == owner && b.is_active && b.platform == "telegram")
+            .map(|b| ExternalBot {
+                id: b.id,
+                name: b.label,
+                platform: b.platform,
+            })
+            .collect())
+    }
+    pub async fn bot(&self, token: &str, bot: &Bot) -> Result<ChannelBot, BotError> {
+        identifier(&bot.request.external_bot_id)?;
+        let result: ChannelBot = self
+            .json(
+                token,
+                Method::GET,
+                &format!("/api/v1/channel-bots/{}", bot.request.external_bot_id),
+                None,
+            )
+            .await?;
+        if result.id != bot.request.external_bot_id
+            || result.user_id != bot.owner.as_str()
+            || !result.is_active
+            || result.platform != "telegram"
+        {
+            return Err(BotError::Forbidden);
+        }
+        Ok(result)
+    }
+    pub async fn routes(&self, token: &str) -> Result<Vec<Route>, BotError> {
+        let result: Routes = self
+            .json(token, Method::GET, "/api/v1/channel-conversations", None)
+            .await?;
+        complete(
+            result.total,
+            result.conversations.iter().map(|r| r.id.as_str()),
+        )?;
+        Ok(result.conversations)
+    }
+    pub async fn create_route(
+        &self,
+        token: &str,
+        bot: &Bot,
+        key: &str,
+    ) -> Result<String, BotError> {
+        // No route owned by another integration may be silently overridden.
+        if self.routes(token).await?.iter().any(|r| {
+            r.channel_bot_id.as_deref() == Some(&bot.request.external_bot_id) && r.is_active
+        }) {
+            return Err(BotError::Invalid(
+                "the selected external bot already has an active route".into(),
+            ));
+        }
+        let route: Route = self.json(token, Method::POST, "/api/v1/channel-conversations", Some(json!({
+            "channel_bot_id":bot.request.external_bot_id,"agent_api_key_id":key,"default_agent":true,"platform_conversation_id":"*"
+        }))).await?;
+        route.require(bot, &[key.to_owned()])?;
+        Ok(route.id)
+    }
+    pub async fn set_route_key(
+        &self,
+        token: &str,
+        bot: &Bot,
+        route: &str,
+        key: &str,
+        owned: &[String],
+    ) -> Result<(), BotError> {
+        identifier(route)?;
+        let routes = self.routes(token).await?;
+        let current = routes
+            .iter()
+            .find(|r| r.id == route)
+            .ok_or(BotError::Unavailable)?;
+        current.require(bot, owned)?;
+        let updated: Route = self
+            .json(
+                token,
+                Method::PATCH,
+                &format!("/api/v1/channel-conversations/{route}"),
+                Some(json!({"agent_api_key_id":key})),
+            )
+            .await?;
+        updated.require(bot, &[key.to_owned()])
+    }
+    pub async fn delete_routes(
+        &self,
+        token: &str,
+        bot: &Bot,
+        keys: &[String],
+    ) -> Result<(), BotError> {
+        let routes = self.routes(token).await?;
+        let selected: Vec<_> = routes
+            .iter()
+            .filter(|r| keys.contains(&r.agent_api_key_id))
+            .collect();
+        for route in &selected {
+            route.require(bot, keys)?;
+        }
+        for route in selected {
+            self.delete(
+                token,
+                &format!("/api/v1/channel-conversations/{}", route.id),
+            )
+            .await?;
+        }
+        Ok(())
+    }
+    pub async fn delete(&self, token: &str, path: &str) -> Result<(), BotError> {
+        let response = self
+            .http
+            .delete(format!("{}{}", self.base, path))
+            .bearer_auth(token)
+            .send()
+            .await
+            .map_err(|_| BotError::Unavailable)?;
+        if response.status().is_success() || response.status() == 404 {
+            Ok(())
+        } else {
+            Err(BotError::Unavailable)
+        }
+    }
+}
+impl Route {
+    pub fn require(&self, bot: &Bot, keys: &[String]) -> Result<(), BotError> {
+        identifier(&self.id)?;
+        if self.channel_bot_id.as_deref() != Some(&bot.request.external_bot_id)
+            || self.platform != "telegram"
+            || !keys.contains(&self.agent_api_key_id)
+            || self.platform_conversation_id != "*"
+            || !self.default_agent
+        {
+            return Err(BotError::Invalid(
+                "route ownership or routing conflicts with this bot".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+pub(super) fn identifier(value: &str) -> Result<(), BotError> {
+    if valid_provider_key_id(value) && value != "." && value != ".." {
+        Ok(())
+    } else {
+        Err(BotError::Unavailable)
+    }
+}
+pub(super) fn complete<'a>(total: u64, ids: impl Iterator<Item = &'a str>) -> Result<(), BotError> {
+    let mut seen = std::collections::BTreeSet::new();
+    for id in ids {
+        identifier(id)?;
+        if !seen.insert(id) {
+            return Err(BotError::Unavailable);
+        }
+    }
+    if total as usize != seen.len() || total > 1000 {
+        Err(BotError::Unavailable)
+    } else {
+        Ok(())
+    }
+}
