@@ -52,6 +52,26 @@ refuses old-generation work. Held streams close when their binding proof changes
 reconnect with the current key. A queued binding command may revive only its
 mapped parent without granting public Sandbox-management authority.
 
+Binding requests may include `event_context` with
+`{schema_version:1,channel_id,conversation_id,activity,event_ref}`. The full object
+(up to 1 MiB when serialized) is retained atomically with admission and is part of
+the command fingerprint. `conversation_id` must be the binding's external
+conversation ID, including when the request uses the mapped Agent alias. The
+activity must have schema version 1 and a nonempty event ID. The channel ID is
+independent of the binding ID. A different context under the same idempotency key,
+or a second key for the same binding/conversation/event, returns a conflict.
+Neither can overwrite the original object or enqueue another turn.
+
+The Agent receives the ordinary input followed by `event_ref: <reference>`.
+The full activity is retrieved through authenticated
+`GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}`.
+This read requires a current key for the exact binding and mapped conversation,
+revalidates authority before releasing the object, and returns `Cache-Control:
+no-store`. Missing context returns `404 event_context_not_found`; unavailable
+storage fails explicitly. Owner credentials do not grant access to this binding
+route. The existing 256 KiB runtime input limit includes the reference; the large
+context does not consume metadata capacity or become prompt text.
+
 | Method and route | Behavior |
 |---|---|
 | `GET /api/v2` | Discover the supported subset, replay extension and companion stream |

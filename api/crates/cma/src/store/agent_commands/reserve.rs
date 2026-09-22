@@ -28,6 +28,17 @@ pub(in crate::store) async fn apply(
     {
         return Ok(request.replay(records::read(&existing)?)?);
     }
+    if let Some(key) = request.envelope.external_event_key() {
+        if store
+            .agent_commands
+            .find_one(doc! { "external_event_key": key })
+            .session(&mut *session)
+            .await?
+            .is_some()
+        {
+            return Err(CommandLedgerError::IdempotencyConflict.into());
+        }
+    }
     let agent_row = store
         .agents
         .find_one(doc! { "_id": request.envelope.agent_id.as_str() })

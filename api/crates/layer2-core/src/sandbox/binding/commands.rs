@@ -49,6 +49,13 @@ impl BindingConversationAuthority {
     ) -> Result<(), CommandLedgerError> {
         self.require_current(&self.binding, &self.conversation)
             .map_err(|_| CommandLedgerError::Conflict)?;
+        if envelope
+            .command
+            .external_event()
+            .is_some_and(|context| context.conversation_id != self.conversation.conversation_id)
+        {
+            return Err(CommandLedgerError::Invalid);
+        }
         if envelope.authorization != authority(&self.binding.binding_id, self.binding.generation)
             || envelope.agent_id != self.conversation.agent_id
             || envelope.owner
@@ -78,6 +85,9 @@ impl CommandReservation {
                 .authority_id
                 .starts_with("binding:") =>
             {
+                Err(CommandLedgerError::Invalid)
+            }
+            None if self.envelope.command.external_event().is_some() => {
                 Err(CommandLedgerError::Invalid)
             }
             None => Ok(()),
