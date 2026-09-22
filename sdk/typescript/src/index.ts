@@ -89,3 +89,5 @@ export {
 } from './http.js';
 
 export { readAgentCard, type ProviderAgentCard } from './agent-card.js';
+
+export * from './gateway-records.js';

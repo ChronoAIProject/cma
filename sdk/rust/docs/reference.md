@@ -154,3 +154,5 @@ child `remove_child` retains its original Workspace-preserving scope. See
 `read_agent_card()` reads typed public provider discovery without credentials.
 `unsupported().agent_card()` remains a compatibility alias and returns the same
 card; older servers' named refusals remain typed API errors.
+
+Encrypted gateway records are available through `client.gateway_records().put/get/list/delete`. These operations require gateway management authority. `blob` is base64 ciphertext; creation uses `expected_version: null`, and replacement supplies the retained version. They use version preconditions without an Idempotency-Key header.
