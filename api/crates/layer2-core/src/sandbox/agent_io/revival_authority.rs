@@ -41,9 +41,20 @@ impl ResourceAccessService {
         let execution = self
             .authorize_command_execution(context, credential, &command.receipt.envelope)
             .await?;
-        let snapshot = execution.current_snapshot().await?;
-        let parent = self
-            .authorize(
+        let mut snapshot = execution.current_snapshot().await?;
+        let parent = if let Some(binding) = execution.fence().binding_authority() {
+            // Only this admitted Agent command may revive its proved parent.
+            // The public binding principal still cannot target a Sandbox.
+            snapshot.lineage.agent = None;
+            snapshot.lineage.worktree = None;
+            snapshot.lineage.workspace = None;
+            AuthorizedResource {
+                snapshot,
+                decision: crate::resource_access::AccessDecision::binding(binding, true),
+                binding: Some(binding.clone()),
+            }
+        } else {
+            self.authorize(
                 context,
                 Some(credential),
                 &ResourceTarget::Sandbox {
@@ -54,7 +65,8 @@ impl ResourceAccessService {
                     started_at: SystemTime::now(),
                 },
             )
-            .await?;
+            .await?
+        };
         finish(execution, parent, command, deadline).await
     }
 
@@ -103,6 +115,12 @@ async fn finish(
 }
 
 impl CommandRevivalAuthorization {
+    pub fn binding_authority(
+        &self,
+    ) -> Option<&crate::sandbox::binding::BindingConversationAuthority> {
+        self.parent.binding_authority()
+    }
+
     pub fn authorization_audits(
         &self,
     ) -> Result<Vec<crate::resource_access::ResourceAuthorizationAudit>, ResourceAccessError> {

@@ -23,6 +23,10 @@ pub(super) async fn fence(
 ) -> Result<Option<Receipt>, ApplyError> {
     let Some(proof) = proof else { return Ok(None) };
     proof.require_current().map_err(|_| conflict())?;
+    store
+        .bindings
+        .conversation_authority(proof.binding_authority(), session)
+        .await?;
     let snapshot = resource_access::read_execution_snapshot(store, &proof.target(), session)
         .await
         .map_err(|error| match error {

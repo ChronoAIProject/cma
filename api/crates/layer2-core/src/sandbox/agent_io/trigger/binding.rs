@@ -92,6 +92,7 @@ impl TriggerFirstMessageBinding {
         let at =
             crate::seconds_from_rfc3339(&admission.event_at).ok_or(CommandLedgerError::Invalid)?;
         let request = CommandReservation {
+            binding: None,
             envelope: AgentCommandEnvelope {
                 schema_version: AGENT_IO_SCHEMA_VERSION,
                 command_id: AgentCommandId::generate(),

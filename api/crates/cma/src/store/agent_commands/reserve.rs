@@ -16,6 +16,10 @@ pub(in crate::store) async fn apply(
     request: &CommandReservation,
     session: &mut ClientSession,
 ) -> Result<CommandReservationResult, ApplyError> {
+    store
+        .bindings
+        .conversation_authority(request.binding.as_ref(), session)
+        .await?;
     if let Some(existing) = store
         .agent_commands
         .find_one(doc! { "scope": request.scope(), "key_sha256": &request.key_sha256 })

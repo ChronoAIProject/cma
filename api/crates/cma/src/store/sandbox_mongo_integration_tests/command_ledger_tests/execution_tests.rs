@@ -358,3 +358,6 @@ async fn replaced_control_turn_has_typed_refusal_before_runtime_or_lifecycle_wor
         client.database(&name).drop().await.unwrap();
     }
 }
+
+#[path = "binding_execution_tests.rs"]
+mod binding_execution;

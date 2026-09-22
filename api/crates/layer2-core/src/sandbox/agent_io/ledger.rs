@@ -16,6 +16,8 @@ pub const MAX_COMMAND_QUEUE_CAPACITY: u16 = 64;
 
 #[derive(Debug, Clone)]
 pub struct CommandReservation {
+    /// Live binding/conversation proof, consumed inside the reservation transaction.
+    pub binding: Option<crate::sandbox::binding::BindingConversationAuthority>,
     pub envelope: AgentCommandEnvelope,
     pub key_sha256: String,
     pub response_id: Option<AgentResponseId>,
@@ -201,6 +203,7 @@ impl CommandReservation {
 
     pub fn validate(&self) -> Result<(), CommandLedgerError> {
         self.require_current_authority()?;
+        self.validate_binding()?;
         self.envelope
             .validate_integrity()
             .map_err(|_| CommandLedgerError::Invalid)?;

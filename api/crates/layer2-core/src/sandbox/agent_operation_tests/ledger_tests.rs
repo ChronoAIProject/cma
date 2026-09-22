@@ -9,6 +9,7 @@ use crate::sandbox::*;
 pub(super) fn reservation(agent: &Agent, parent: &Sandbox, key: &str) -> CommandReservation {
     let command = AgentCommand::message("Inspect this.");
     CommandReservation {
+        binding: None,
         authority_deadline: None,
         admission_audit: None,
         envelope: AgentCommandEnvelope {

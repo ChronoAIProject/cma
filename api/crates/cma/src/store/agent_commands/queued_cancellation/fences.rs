@@ -14,6 +14,10 @@ pub(super) async fn current(
     request: &QueuedCancellationReservation,
     session: &mut ClientSession,
 ) -> Result<(Agent, Sandbox), ApplyError> {
+    store
+        .bindings
+        .conversation_authority(request.command.binding.as_ref(), session)
+        .await?;
     let agent = store
         .agents
         .find_one(doc! {"_id": request.command.envelope.agent_id.as_str()})

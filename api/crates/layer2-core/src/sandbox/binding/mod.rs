@@ -1,5 +1,6 @@
 //! Durable external environment bindings and conversation ownership.
 mod access;
+mod commands;
 mod credential;
 pub use access::{BindingAccessService, BindingConversationAuthority, BindingPrincipal};
 mod fence;

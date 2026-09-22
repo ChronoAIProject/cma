@@ -18,6 +18,16 @@ pub fn bind_command_dispatch(
     mutation: &AgentConversationMutation,
     now: &str,
 ) -> Result<CommandDispatch, CommandLedgerError> {
+    if command
+        .receipt
+        .envelope
+        .authorization
+        .authority_id
+        .starts_with("binding:")
+        && mutation.execution_fence.is_none()
+    {
+        return Err(CommandLedgerError::Conflict);
+    }
     let claim = mutation
         .command_claim
         .as_ref()

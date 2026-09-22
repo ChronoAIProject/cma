@@ -107,6 +107,8 @@ pub(super) fn reserve(
     request: &CommandReservation,
 ) -> Result<CommandReservationResult, CommandLedgerError> {
     request.require_current_authority()?;
+    super::bindings::require_conversation_authority(state, request.binding.as_ref())
+        .map_err(|_| CommandLedgerError::Conflict)?;
     let key = (request.scope(), request.key_sha256.clone());
     if let Some(id) = state.agent_command_keys.get(&key) {
         let current = state
