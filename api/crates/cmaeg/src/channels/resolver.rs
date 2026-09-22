@@ -306,6 +306,13 @@ impl ChannelResolver {
         {
             return Err(ResolveError::InvalidDefinition);
         }
+        if definition
+            .creation
+            .as_ref()
+            .is_some_and(|value| !value.ready)
+        {
+            return Err(ResolveError::Unavailable);
+        }
         let mut agent_key_hash = [0; 32];
         for (index, byte) in agent_key_hash.iter_mut().enumerate() {
             *byte = u8::from_str_radix(

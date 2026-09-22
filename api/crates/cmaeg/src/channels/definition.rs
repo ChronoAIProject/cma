@@ -22,6 +22,9 @@ use utoipa::ToSchema;
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ChannelCreateRequest {
+    /// Optional UUID reserved by a durable creator before issuing the request.
+    #[serde(default)]
+    pub record_id: Option<RecordId>,
     pub schema_version: u16,
     pub name: String,
     pub profile: AgentProfileSnapshot,
@@ -121,6 +124,7 @@ pub fn build_definition(
         schema_version: request.schema_version,
         name: request.name.clone(),
         record_id,
+        creation: None,
         owner: NyxIdIdentity {
             kind: NyxIdIdentityKind::Human,
             subject: owner.to_owned(),
@@ -227,6 +231,7 @@ pub fn build_update(
         schema_version: request.schema_version,
         name: request.name.clone(),
         record_id: current.record_id.clone(),
+        creation: current.creation.clone(),
         owner: current.owner.clone(),
         profile: request.profile.clone(),
         profile_digest: request.profile.digest(),
@@ -460,6 +465,7 @@ fn validate_definition(definition: &ChannelDefinition) -> Result<(), ValidationE
 impl ChannelCreateRequest {
     pub(crate) fn fingerprint(&self) -> String {
         let value = serde_json::json!({
+            "record_id": self.record_id,
             "schema_version": self.schema_version, "name": self.name, "profile": self.profile,
             "provider": self.provider, "sources": self.sources, "partition": self.partition,
             "reply": self.reply, "agent_key": hash_secret(self.credentials.agent_key.as_str()),
