@@ -1,6 +1,7 @@
 //! HTTP projections for CMAEG management operations.
 
 pub mod callbacks;
+pub mod creation;
 pub mod events;
 pub mod management;
 mod management_responses;

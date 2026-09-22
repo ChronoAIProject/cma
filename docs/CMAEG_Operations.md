@@ -240,3 +240,22 @@ admission; that can create another turn. For uncertain platform delivery, inspec
 the receipt's `unknown` outcome and the sink, then reconcile manually if needed.
 The gateway does not blindly resend unknown Telegram sends. Webhook receivers
 must deduplicate stable webhook IDs across the four bounded attempts.
+
+### Recovering channel creation
+
+A durable creator can reserve a UUID, save it with its own operation, and include
+it as `record_id` in `POST /v1/channels`. CMAEG writes the encrypted pending
+record before calling the provider. Recover a lost response through
+`GET /v1/channel-records/{record_id}` with the same owner's bearer. The response
+retains the original opaque channel ID, callback URL, binding ID, and record
+version. `definition.creation.ready=false` means provider binding has not been
+committed; event ingress and policy updates remain unavailable. Retry the exact
+create body or delete the recovered channel with its current version. A creator
+that has discarded transient credentials must recover and clean up the pending
+record, then start a new operation with a fresh UUID. Never reuse a retired UUID
+or run cleanup concurrently with an outstanding create.
+
+Local fake-service tests cover recovery after gateway restart, exact identities
+across replicas, changed-content conflicts, owner concealment, and retained
+cleanup identity after provider refusal. These tests do not establish deployed
+provider or Telegram evidence.
