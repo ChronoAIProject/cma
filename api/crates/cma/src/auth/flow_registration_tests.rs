@@ -290,7 +290,10 @@ async fn unseen_identity_callback_records_sign_in_without_aggregate_bootstrap() 
             userinfo_endpoint: Some(format!("{base_url}/userinfo")),
             introspection_endpoint: None,
         });
-        let app = router(auth);
+        let app = router(auth.clone()).layer(axum::middleware::from_fn_with_state(
+            auth,
+            crate::auth::attach_subject,
+        ));
         let subject = SubjectId::new("unseen-cma-identity");
         assert!(store.subject(&subject).await.unwrap().is_none());
         let login_path = return_to.map_or_else(

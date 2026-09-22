@@ -53,11 +53,20 @@ pub fn validate_agent_conversation_admission(
     {
         return Err(SandboxStoreError::Conflict);
     }
+    let supersession = mutation
+        .channel_execution_fence
+        .as_ref()
+        .filter(|fence| fence.superseding_command().is_some());
+    if let Some(fence) = supersession {
+        fence.validate_supersession(current, mutation)?;
+    }
     if (mutation.execution_fence.is_some()
         || mutation.channel_execution_fence.is_some()
         || mutation.channel_control_execution_fence.is_some()
         || mutation.trigger_execution_fence.is_some())
-        && (mutation.command_claim.is_none() || mutation.admission_guard.is_none() || !admission)
+        && ((mutation.command_claim.is_none() && supersession.is_none())
+            || mutation.admission_guard.is_none()
+            || !admission)
     {
         return Err(SandboxStoreError::Conflict);
     }
@@ -83,7 +92,7 @@ pub fn validate_agent_conversation_admission(
     // Recheck inside the dispatch transaction, even if a caller observed an
     // active parent before lifecycle work started. Legacy lifecycle queues do
     // not carry a common command claim and retain their existing admission.
-    if mutation.command_claim.is_some()
+    if (mutation.command_claim.is_some() || supersession.is_some())
         && !matches!(
             parent.status,
             SandboxStatus::Active | SandboxStatus::CredentialRotating

@@ -13,6 +13,7 @@ use crate::auth::persistence::SecretValue;
 
 mod relay;
 mod setup;
+mod verification;
 
 const MAX_ROWS: usize = 1_000;
 const DEADLINE: Duration = Duration::from_secs(5);
@@ -35,74 +36,6 @@ pub(crate) struct VerifiedProviderBinding {
 }
 
 impl NyxBridgeProvider {
-    /// Prove possession of the exact selected key with a read that NyxID fences
-    /// against the authenticated API-key ID. Returned messages are ignored.
-    pub async fn verify_secret(
-        &self,
-        owner: &ResourceOwner,
-        secret: &SecretValue,
-        connector: &BridgeConnector,
-        human_subject: &SubjectId,
-        human_credential: &str,
-    ) -> Result<VerifiedProviderBinding, BridgeError> {
-        if !raw_agent_key(secret.expose()) {
-            return Err(binding_mismatch());
-        }
-        tokio::time::timeout(DEADLINE, async {
-            let start = tokio::time::Instant::now();
-            self.verify_human(human_subject, human_credential).await?;
-            let binding = self
-                .read_binding(
-                    owner,
-                    human_subject,
-                    &SecretValue::new(human_credential.to_owned()),
-                    connector,
-                )
-                .await?;
-            let mut endpoint = self.base_url.clone();
-            endpoint.set_path("/api/v1/channel-relay/messages");
-            endpoint
-                .path_segments_mut()
-                .map_err(|_| binding_mismatch())?
-                .push(&connector.route_ids[0]);
-            endpoint
-                .query_pairs_mut()
-                .append_pair("page", "1")
-                .append_pair("per_page", "1");
-            let probe: BindingProbe = self.fetch(endpoint, secret).await?;
-            if probe.page != 1
-                || probe.per_page != 1
-                || probe.messages.len() > 1
-                || probe.total < probe.messages.len() as u64
-            {
-                return Err(binding_mismatch());
-            }
-            // Possession reads update NyxID's last_used_at and row version.
-            // Recheck all current authority after that IO, within this same
-            // timeout; a counter increase alone cannot identify its cause.
-            let mut current = self
-                .read_binding(
-                    owner,
-                    human_subject,
-                    &SecretValue::new(human_credential.to_owned()),
-                    connector,
-                )
-                .await?;
-            if current.key_state_version < binding.key_state_version
-                || current.key_authority != binding.key_authority
-            {
-                return Err(binding_mismatch());
-            }
-            current.deadline = current
-                .deadline
-                .min(binding.deadline)
-                .min(start + Duration::from_secs(60));
-            Ok(current)
-        })
-        .await
-        .map_err(|_| BridgeError::AuthorityUnavailable)?
-    }
-
     /// NyxID fences this route against API keys, service accounts, delegation
     /// and relay credentials. Its subject must remain the actual human actor.
     pub(crate) async fn verify_human(
@@ -345,6 +278,14 @@ impl NyxBridgeProvider {
         endpoint: reqwest::Url,
         credential: &SecretValue,
     ) -> Result<T, BridgeError> {
+        // Fixed categories only; never log URLs, IDs, credentials or bodies.
+        let stage = match endpoint.path() {
+            "/api/v1/users/me/authorization" => "human_authority",
+            "/api/v1/channel-bots" => "bot_inventory",
+            "/api/v1/api-keys" => "key_inventory",
+            "/api/v1/channel-conversations" => "route_inventory",
+            _ => "provider_read",
+        };
         let response = self
             .http
             .get(endpoint)
@@ -354,6 +295,11 @@ impl NyxBridgeProvider {
             .map_err(|_| BridgeError::AuthorityUnavailable)?;
         // Preserve the bridge's exact-status and fail-closed metadata contract.
         if response.status().as_u16() != 200 {
+            tracing::warn!(
+                stage,
+                status = response.status().as_u16(),
+                "Channel provider verification read failed"
+            );
             return Err(match response.status().as_u16() {
                 401 | 403 | 404 => binding_mismatch(),
                 _ => BridgeError::AuthorityUnavailable,
@@ -368,6 +314,10 @@ impl NyxBridgeProvider {
                 _ => binding_mismatch(),
             })
     }
+}
+
+fn binding_failure(stage: &'static str, error: &BridgeError) {
+    tracing::warn!(stage, failure = %error, "Channel provider binding verification failed");
 }
 
 fn raw_agent_key(value: &str) -> bool {
