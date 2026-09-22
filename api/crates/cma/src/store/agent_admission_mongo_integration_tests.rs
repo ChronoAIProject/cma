@@ -344,6 +344,7 @@ fn workspace(sandbox: &Sandbox, suffix: &str) -> Workspace {
 
 fn admission(workspace: &Workspace, suffix: &str) -> AgentAdmission {
     AgentAdmission {
+        binding: None,
         created_by: None,
         owner: workspace.owner.clone(),
         workspace_id: workspace.id.clone(),

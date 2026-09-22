@@ -270,6 +270,7 @@ impl AgentService {
             .transpose()
             .map_err(|error| AgentServiceError::InvalidRequest(error.to_string()))?;
         let admission = AgentAdmission {
+            binding: None,
             created_by: Some(attribution.actor),
             owner: caller.subject.clone(),
             workspace_id: workspace.id,
