@@ -93,10 +93,40 @@ async fn submit(
             },
         }
     };
-    let submission = match super::parse::parse(body, alias, key) {
+    let binding =
+        auth.context.credential_source == layer2_core::resource_access::CredentialSource::Binding;
+    // A binding's URL and body may use different aliases of the same Agent.
+    let parse_alias = if binding && body.get("conversation").is_some() {
+        None
+    } else {
+        alias.clone()
+    };
+    let mut submission = match super::parse::parse(body, parse_alias, key) {
         Ok(value) => value,
         Err(error) => return *error,
     };
+    submission.agent_id = match state
+        .resolve_conversation(&auth, &submission.agent_id)
+        .await
+    {
+        Ok(id) => id,
+        Err(error) => return *error,
+    };
+    if binding {
+        if let Some(alias) = alias {
+            let alias = match state.resolve_conversation(&auth, &alias).await {
+                Ok(id) => id,
+                Err(error) => return *error,
+            };
+            if alias != submission.agent_id {
+                return error::field(
+                    "conversation",
+                    "conversation_alias_mismatch",
+                    "conversation must match the Agent selected by the URL.",
+                );
+            }
+        }
+    }
     let admitted = match state
         .commands
         .admit(
