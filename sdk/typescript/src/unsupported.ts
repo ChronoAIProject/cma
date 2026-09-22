@@ -1,8 +1,9 @@
+import { readAgentCard } from './agent-card.js';
 import type { ResolvedConfig } from './config.js';
 import { ProtocolError } from './errors.js';
 import { request, type OperationOptions } from './http.js';
 
-/** Probe declared refusals; these methods do not implement either protocol. */
+/** Protocol refusal probes and the retained provider-discovery alias. */
 export class UnsupportedInterfaces {
   constructor(private readonly config: ResolvedConfig) {}
 
@@ -14,13 +15,9 @@ export class UnsupportedInterfaces {
     return requireRefusal(this.config, '/api/v1/a2a', 'POST', options);
   }
 
-  agentCard(options: OperationOptions = {}): Promise<never> {
-    return requireRefusal(
-      { ...this.config, credential: undefined, cookies: false },
-      '/.well-known/agent-card.json',
-      'GET',
-      options,
-    );
+  /** Compatibility alias for the public provider card; does not advertise A2A messages. */
+  agentCard(options: OperationOptions = {}) {
+    return readAgentCard(this.config, options);
   }
 }
 

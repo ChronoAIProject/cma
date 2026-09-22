@@ -33,8 +33,10 @@ exact target consent, current authority, revision and cancellation semantics.
 its schemas, operation annotations and extensions.
 
 `agents.terminal(id)` preserves the named `capability_unsupported` refusal, or
-the owner-scoped not-found response. `unsupported.mcp()`, `unsupported.a2a()` and
-`unsupported.agentCard()` probe the explicit `interface_not_available` responses.
+the owner-scoped not-found response. `unsupported.mcp()` and `unsupported.a2a()` probe the explicit
+`interface_not_available` responses. `readAgentCard()` reads the typed public
+provider card anonymously; `unsupported.agentCard()` remains a compatibility
+alias and now returns that card. Older servers' named refusals remain `ApiError`.
 These helpers reject with `ApiError`; they do not provide a terminal or implement
 either protocol. An unexpected successful response is a `ProtocolError`.
 

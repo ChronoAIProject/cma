@@ -73,7 +73,15 @@ pub(super) async fn completed(
         public["conversation"]["id"],
         original.receipt.envelope.agent_id.as_str()
     );
-    assert_eq!(public["output"][0]["content"][0]["text"], "Hello from CMA");
+    assert_eq!(
+        public["output"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["type"] == "message")
+            .unwrap()["content"][0]["text"],
+        "Hello from CMA"
+    );
     worker
         .run_one(&original.receipt.envelope.command_id)
         .await
