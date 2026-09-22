@@ -1,6 +1,6 @@
 //! Environment configuration for the CMA Event Gateway.
 
-use std::{env, fs, net::SocketAddr, path::Path, sync::Arc};
+use std::{env, net::SocketAddr, sync::Arc};
 
 use crate::providers::ProviderRegistry;
 use cmaeg_core::{channel::Secret, seal::MasterKeyRing};
@@ -9,6 +9,7 @@ use reqwest::Url;
 mod cache;
 mod delivery;
 mod ingress;
+mod secrets;
 mod turns;
 pub use cache::*;
 pub use delivery::*;
@@ -23,8 +24,10 @@ pub const CMAEG_PROVIDER_CONNECT_TIMEOUT_MS: &str = "CMAEG_PROVIDER_CONNECT_TIME
 pub const CMAEG_PROVIDER_REQUEST_TIMEOUT_MS: &str = "CMAEG_PROVIDER_REQUEST_TIMEOUT_MS";
 pub const CMAEG_PROVIDER_MAX_INFLIGHT: &str = "CMAEG_PROVIDER_MAX_INFLIGHT";
 pub const CMAEG_PUBLIC_URL: &str = "CMAEG_PUBLIC_URL";
+pub const CMAEG_MASTER_KEYS: &str = "CMAEG_MASTER_KEYS";
 pub const CMAEG_MASTER_KEYS_FILE: &str = "CMAEG_MASTER_KEYS_FILE";
 pub const CMAEG_CMA_BASE_URL: &str = "CMAEG_CMA_BASE_URL";
+pub const CMAEG_CMA_SERVICE_TOKEN: &str = "CMAEG_CMA_SERVICE_TOKEN";
 pub const CMAEG_CMA_SERVICE_TOKEN_FILE: &str = "CMAEG_CMA_SERVICE_TOKEN_FILE";
 pub const CMAEG_NYXID_BASE_URL: &str = "CMAEG_NYXID_BASE_URL";
 pub const CMAEG_TOOLS_NYXID_SLUG: &str = "CMAEG_TOOLS_NYXID_SLUG";
@@ -44,7 +47,7 @@ pub enum ConfigError {
     InvalidDuration { name: &'static str, value: String },
     /// The global provider concurrency cap was invalid.
     InvalidMaxInflight { value: String },
-    /// A management-plane origin, mounted secret, or slug was invalid.
+    /// A management-plane origin, secret, or slug was invalid.
     InvalidManagement { detail: String },
 }
 
@@ -162,14 +165,22 @@ impl ManagementConfig {
         let public_url = required_origin(CMAEG_PUBLIC_URL)?;
         let cma_base_url = required_origin(CMAEG_CMA_BASE_URL)?;
         let nyxid_base_url = required_origin(CMAEG_NYXID_BASE_URL)?;
-        let key_file = required_path(CMAEG_MASTER_KEYS_FILE)?;
-        let key_spec = read_first_line(&key_file, CMAEG_MASTER_KEYS_FILE)?;
+        let key_spec = secrets::read(CMAEG_MASTER_KEYS, CMAEG_MASTER_KEYS_FILE)?;
         let master_keys =
             MasterKeyRing::parse(&key_spec).map_err(|error| ConfigError::InvalidManagement {
-                detail: format!("{CMAEG_MASTER_KEYS_FILE} is not a valid key ring: {error}"),
+                detail: format!("{CMAEG_MASTER_KEYS} is not a valid key ring: {error}"),
             })?;
-        let token_file = required_path(CMAEG_CMA_SERVICE_TOKEN_FILE)?;
-        let cma_service_token = read_secret_file(&token_file, CMAEG_CMA_SERVICE_TOKEN_FILE)?;
+        let cma_service_token =
+            secrets::read(CMAEG_CMA_SERVICE_TOKEN, CMAEG_CMA_SERVICE_TOKEN_FILE)?;
+        if cma_service_token.len() > 16_384
+            || !cma_service_token
+                .bytes()
+                .all(|byte| (33..=126).contains(&byte))
+        {
+            return Err(ConfigError::InvalidManagement {
+                detail: format!("{CMAEG_CMA_SERVICE_TOKEN} must contain a printable bearer token"),
+            });
+        }
         let tools_nyxid_slug =
             env::var(CMAEG_TOOLS_NYXID_SLUG).unwrap_or_else(|_| "cmaeg".to_owned());
         if !(1..=32).contains(&tools_nyxid_slug.len())
@@ -190,18 +201,6 @@ impl ManagementConfig {
             tools_nyxid_slug,
         })
     }
-}
-
-fn required_path(name: &'static str) -> Result<String, ConfigError> {
-    let value = env::var(name).map_err(|_| ConfigError::InvalidManagement {
-        detail: format!("{name} must be set"),
-    })?;
-    if value.is_empty() {
-        return Err(ConfigError::InvalidManagement {
-            detail: format!("{name} must not be empty"),
-        });
-    }
-    Ok(value)
 }
 
 fn required_origin(name: &'static str) -> Result<String, ConfigError> {
@@ -245,37 +244,6 @@ pub(crate) fn validate_origin(name: &'static str, value: &str) -> Result<String,
         });
     }
     Ok(url.as_str().trim_end_matches('/').to_owned())
-}
-
-fn read_first_line(path: &str, name: &'static str) -> Result<String, ConfigError> {
-    let content =
-        fs::read_to_string(Path::new(path)).map_err(|error| ConfigError::InvalidManagement {
-            detail: format!("cannot read {name}: {error}"),
-        })?;
-    let line = content.trim().to_owned();
-    if line.is_empty() || line.lines().count() != 1 {
-        return Err(ConfigError::InvalidManagement {
-            detail: format!("{name} must contain one non-empty line"),
-        });
-    }
-    Ok(line)
-}
-
-fn read_secret_file(path: &str, name: &'static str) -> Result<String, ConfigError> {
-    let content =
-        fs::read_to_string(Path::new(path)).map_err(|error| ConfigError::InvalidManagement {
-            detail: format!("cannot read {name}: {error}"),
-        })?;
-    let value = content.trim().to_owned();
-    if value.is_empty()
-        || value.len() > 16_384
-        || !value.bytes().all(|byte| (33..=126).contains(&byte))
-    {
-        return Err(ConfigError::InvalidManagement {
-            detail: format!("{name} must contain a non-empty printable bearer token"),
-        });
-    }
-    Ok(value)
 }
 
 fn positive_duration(

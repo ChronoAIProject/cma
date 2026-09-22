@@ -31,6 +31,8 @@ impl MountedSecrets {
     ) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_cmaeg"));
         command.kill_on_drop(true)
+            .env_remove("CMAEG_MASTER_KEYS")
+            .env_remove("CMAEG_CMA_SERVICE_TOKEN")
             .env("CMAEG_LISTEN", address)
             .env("CMAEG_METRICS_LISTEN", "127.0.0.1:0")
             .env("CMAEG_PUBLIC_URL", format!("http://{address}"))
@@ -330,6 +332,53 @@ async fn compiled_binary_refuses_missing_and_invalid_mounted_secrets() {
             assert!(!logs.contains(bad));
         }
         fs::write(path, original).unwrap();
+    }
+    for (name, bad) in [
+        ("CMAEG_MASTER_KEYS", "invalid-master-fixture"),
+        ("CMAEG_MASTER_KEYS", "1:broken\n2:broken"),
+        ("CMAEG_CMA_SERVICE_TOKEN", ""),
+        ("CMAEG_CMA_SERVICE_TOKEN", "invalid token"),
+    ] {
+        let output = files
+            .command("127.0.0.1:0", &cma, &nyxid, &provider)
+            .env_remove("CMAEG_MASTER_KEYS_FILE")
+            .env_remove("CMAEG_CMA_SERVICE_TOKEN_FILE")
+            .env(
+                "CMAEG_MASTER_KEYS",
+                format!("1:{}", STANDARD_NO_PAD.encode([1_u8; 32])),
+            )
+            .env("CMAEG_CMA_SERVICE_TOKEN", "cma-service")
+            .env(name, bad)
+            .output()
+            .await
+            .unwrap();
+        assert!(!output.status.success());
+        let logs = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(logs.contains(name));
+        if !bad.is_empty() {
+            assert!(!logs.contains(bad));
+        }
+        assert_no_secrets(&logs);
+    }
+    for name in ["CMAEG_MASTER_KEYS", "CMAEG_CMA_SERVICE_TOKEN"] {
+        let output = files
+            .command("127.0.0.1:0", &cma, &nyxid, &provider)
+            .env(name, "ambiguous-secret-fixture")
+            .output()
+            .await
+            .unwrap();
+        assert!(!output.status.success());
+        let logs = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(logs.contains("set only one"));
+        assert!(!logs.contains("ambiguous-secret-fixture"));
     }
     provider.close().await;
     cma.close().await;
