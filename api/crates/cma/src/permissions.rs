@@ -32,6 +32,7 @@ const OWN_WORK: [Capability; 6] = [
     Capability::LaunchTriggers,
 ];
 
+// Binding conversation authority is established from custody, never provider RBAC.
 const ALL_CAPABILITIES: [Capability; 15] = [
     Capability::CreateSandbox,
     Capability::UseOwnSandboxes,
@@ -119,6 +120,7 @@ mod tests {
             assert!(authority.allows(capability), "missing {capability:?}");
         }
         assert_eq!(authority.iter().count(), ALL_CAPABILITIES.len());
+        assert!(!authority.allows(Capability::UseBindingConversations));
     }
 
     #[test]

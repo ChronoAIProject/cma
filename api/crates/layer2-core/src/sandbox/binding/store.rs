@@ -7,6 +7,18 @@ use crate::sandbox::store::SandboxStoreError;
 /// additionally fences the exact parent revision in the same transaction.
 #[async_trait::async_trait]
 pub trait BindingStore: Send + Sync {
+    /// Unique hash lookup. Retired bindings never authenticate.
+    async fn find_by_key_hash(
+        &self,
+        hash: &str,
+    ) -> Result<Option<ProviderBinding>, SandboxStoreError>;
+    async fn binding_conversation_for_agent(
+        &self,
+        binding: &str,
+        generation: u64,
+        agent: &crate::AgentId,
+    ) -> Result<Option<BindingConversation>, SandboxStoreError>;
+
     async fn binding(&self, id: &str) -> Result<Option<ProviderBinding>, SandboxStoreError>;
     async fn save_binding(
         &self,
