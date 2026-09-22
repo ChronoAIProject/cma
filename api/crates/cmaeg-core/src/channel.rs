@@ -270,11 +270,14 @@ impl ChannelDefinition {
                     require_string(issuer, &format!("{pointer}/issuer"), 1, 512)?;
                     require_string(key_id, &format!("{pointer}/key_id"), 1, 512)?;
                     validate_https_url(jwks_url, &format!("{pointer}/jwks_url"))?;
-                    validate_nonempty_unique(
-                        route_ids,
-                        &format!("{pointer}/route_ids"),
-                        MAX_ROUTE_IDS,
-                    )?;
+                    // An unbound source admits no callbacks until its owner attaches routes.
+                    if !route_ids.is_empty() {
+                        validate_nonempty_unique(
+                            route_ids,
+                            &format!("{pointer}/route_ids"),
+                            MAX_ROUTE_IDS,
+                        )?;
+                    }
                     if let Some(username) = bot_username {
                         if !(5..=32).contains(&username.len())
                             || !username
