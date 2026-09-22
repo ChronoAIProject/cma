@@ -471,7 +471,12 @@ key, 403 mismatched authority, 410 expired reference and restore errors from §3
 ## 9. Provider contract
 
 Provider URLs are operator-allowlisted templates, never source-controlled URLs.
-All binding/conversation/turn/context calls use the retained agent bearer.
+External provider calls use the retained agent bearer. For the `cma_codex`
+provider, binding and conversation management use the configured CMA service
+bearer only when both the origin exactly matches `CMAEG_CMA_BASE_URL` and the
+path is a CMA binding or conversation management path. Turns and event context
+reads continue to use the retained agent bearer. Redirects are disabled; another
+allowlisted provider never receives the CMA service bearer.
 `PUT <binding-path/{binding_id}>` receives
 `{schema_version:1,profile,profile_digest,agent_key,tools:{native_mcp_url,nyxid_service_slug}}`.
 The provider MUST authenticate the agent identity, bind ownership, idempotently
