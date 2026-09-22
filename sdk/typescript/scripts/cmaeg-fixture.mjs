@@ -55,8 +55,12 @@ try {
     throw new Error('provider did not retain the admitted event');
   }
   const ref = await reference(event.id);
+  assert.ok(Buffer.byteLength(ref) <= 4096);
   const context = await tools.readEventContext(ref);
   assert.ok(context.activity.kind.ce.data.text === event.data.text);
+  const restarted = await fetch(`${root}/restart`, { method: 'POST' });
+  assert.ok(restarted.ok && (await restarted.json()).replaced === true);
+  assert.deepEqual(await tools.readEventContext(ref), context);
   assert.ok((await tools.sendTyping(ref)).outcome === 'unsupported');
   const streamEvent = { ...event, id: randomUUID() };
   const stream = creator.streamEvent(id, streamEvent, options());
@@ -82,5 +86,5 @@ await assert.rejects(
   (error) => error.code === 'channel_not_found',
 );
 console.log(
-  'CMAEG TypeScript SDK: create, recover, update, test, signed event, full context, typing, streamed reply and delete passed',
+  'CMAEG TypeScript SDK: create, recover, update, test, signed event, full context after process replacement, typing, streamed reply and delete passed',
 );

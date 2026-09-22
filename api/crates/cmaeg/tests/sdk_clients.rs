@@ -7,18 +7,60 @@ pub mod fake_provider;
 
 use axum::{
     extract::{Path, State},
-    routing::get,
+    routing::{get, post},
     Json, Router,
 };
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde_json::{json, Value};
 use std::{path::PathBuf, process::Stdio, sync::Arc, time::Duration};
-use tokio::process::Command;
+use tokio::{
+    process::{Child, Command},
+    sync::Mutex,
+};
 
 #[derive(Clone)]
 struct Fixture {
     provider: Arc<fake_provider::FakeProvider>,
     config: Value,
+    gateway: Arc<Mutex<(Command, Child)>>,
+}
+
+async fn ready(gateway: &mut Child, base: &str) {
+    let http = reqwest::Client::builder()
+        .timeout(Duration::from_secs(2))
+        .build()
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if http
+                .get(format!("{base}/readyz"))
+                .send()
+                .await
+                .is_ok_and(|r| r.status().is_success())
+            {
+                break;
+            }
+            assert!(
+                gateway.try_wait().unwrap().is_none(),
+                "gateway exited before readiness"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+}
+
+async fn restart(State(state): State<Fixture>) -> Json<Value> {
+    let mut process = state.gateway.lock().await;
+    let (command, gateway) = &mut *process;
+    let old_pid = gateway.id().unwrap();
+    gateway.kill().await.unwrap();
+    gateway.wait().await.unwrap();
+    *gateway = command.spawn().unwrap();
+    assert_ne!(gateway.id().unwrap(), old_pid);
+    ready(gateway, state.config["gateway"].as_str().unwrap()).await;
+    Json(json!({"replaced":true}))
 }
 
 async fn event_ref(State(state): State<Fixture>, Path(id): Path<String>) -> Json<Value> {
@@ -65,7 +107,8 @@ async fn both_sdk_clients_create_sign_stream_reply_read_context_and_delete() {
     let registry = json!([{"slug":"cma_codex","base_url":provider.base_url(),"kind":"responses_http","paths":{
         "agent_card":"/.well-known/agent-card.json","binding":"/api/v1/cmaeg/bindings/{binding_id}",
         "conversation":"/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}","responses":"/api/v2/responses"},"max_inflight":8}]);
-    let mut gateway = Command::new(env!("CARGO_BIN_EXE_cmaeg"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_cmaeg"));
+    command
         .kill_on_drop(true)
         .env_clear()
         .env("CMAEG_LISTEN", address.to_string())
@@ -77,36 +120,15 @@ async fn both_sdk_clients_create_sign_stream_reply_read_context_and_delete() {
         .env("CMAEG_NYXID_BASE_URL", &nyxid.base_url)
         .env("CMAEG_PROVIDERS", registry.to_string())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
-    let http = reqwest::Client::builder()
-        .timeout(Duration::from_secs(2))
-        .build()
-        .unwrap();
-    tokio::time::timeout(Duration::from_secs(10), async {
-        loop {
-            if http
-                .get(format!("{base}/readyz"))
-                .send()
-                .await
-                .is_ok_and(|r| r.status().is_success())
-            {
-                break;
-            }
-            assert!(
-                gateway.try_wait().unwrap().is_none(),
-                "gateway exited before readiness"
-            );
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-    })
-    .await
-    .unwrap();
+        .stderr(Stdio::null());
+    let mut gateway = command.spawn().unwrap();
+    ready(&mut gateway, &base).await;
+    let gateway = Arc::new(Mutex::new((command, gateway)));
     let agent_key = format!("nyx_{}", uuid::Uuid::new_v4().simple());
     let signing = STANDARD.encode(uuid::Uuid::new_v4().as_bytes());
     let fixture = Fixture {
         provider: provider.clone(),
+        gateway: gateway.clone(),
         config: json!({
             "gateway":base,"creator":"token-alice","agent_key":agent_key,"signing":signing,"create":create(&agent_key,&signing)
         }),
@@ -117,6 +139,7 @@ async fn both_sdk_clients_create_sign_stream_reply_read_context_and_delete() {
             get(|State(state): State<Fixture>| async move { Json(state.config) }),
         )
         .route("/event-ref/{id}", get(event_ref))
+        .route("/restart", post(restart))
         .with_state(fixture);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let root = format!("http://{}", listener.local_addr().unwrap());
@@ -168,8 +191,9 @@ async fn both_sdk_clients_create_sign_stream_reply_read_context_and_delete() {
     }
     server.abort();
     let _ = server.await;
-    gateway.kill().await.unwrap();
-    gateway.wait().await.unwrap();
+    let mut process = gateway.lock().await;
+    process.1.kill().await.unwrap();
+    process.1.wait().await.unwrap();
     cma.close().await;
     nyxid.close().await;
     Arc::try_unwrap(provider).ok().unwrap().close().await;
