@@ -112,6 +112,7 @@ mod worktrees;
 
 pub use activity::MongoActivityStore;
 pub use auth::MongoAuthStore;
+pub(crate) use bindings::MongoBindingCredentials;
 pub(crate) use bridge_allocations::MongoBridgeAllocationStore;
 pub(crate) use bridge_credentials::MongoBridgeCredentialStore;
 pub use bridge_definitions::MongoBridgeStore;
