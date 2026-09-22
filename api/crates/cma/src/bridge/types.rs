@@ -3,22 +3,8 @@ use layer2_core::resource_access::ResourceOwner;
 use layer2_core::SubjectId;
 use serde::{Deserialize, Serialize};
 
-/// Metadata projections of NyxID 9a3938364a11ab65f3b341e69e2b8c124aefba81.
-/// Unknown row fields are discarded; lists must use the complete, unpaginated
-/// envelope documented at that revision. Extra pagination metadata fails closed.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct Bots {
-    pub bots: Vec<Bot>,
-    pub total: u64,
-}
-#[derive(Deserialize)]
-pub(super) struct Bot {
-    pub id: String,
-    pub user_id: String,
-    pub platform: String,
-    pub is_active: bool,
-}
+pub(super) use crate::auth::channel_metadata::{Bots, Routes};
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Keys {
@@ -110,23 +96,6 @@ impl CredentialSource {
         };
         matches.then_some(()).ok_or_else(binding_mismatch)
     }
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct Routes {
-    pub conversations: Vec<Route>,
-    pub total: u64,
-}
-#[derive(Deserialize)]
-pub(super) struct Route {
-    pub id: String,
-    pub channel_bot_id: Option<String>,
-    /// Device routes can share a key and must remain visible to the conflict
-    /// scan, even though device bridges are not an admitted platform here.
-    pub platform: String,
-    pub agent_api_key_id: String,
-    pub is_active: bool,
 }
 
 pub(super) fn owner_subject(owner: &ResourceOwner) -> &SubjectId {
