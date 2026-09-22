@@ -219,7 +219,7 @@ impl BotService {
                     && bot.resources.credentials.expires_at.is_some()
             }
             (BotOperation::Delete, BotState::Deleted) => bot.resources == BotResources::default(),
-            (_, BotState::Failed { .. }) => true,
+            (_, BotState::Failed { .. }) => bot.resources == BotResources::default(),
             _ => false,
         };
         if !allowed {
@@ -230,12 +230,28 @@ impl BotService {
         self.save(bot).await
     }
     pub async fn retry(&self, bot: &mut Bot, holder: &str, step: &str) -> Result<(), BotError> {
+        self.defer(bot, holder, step, 15).await
+    }
+    pub async fn defer(
+        &self,
+        bot: &mut Bot,
+        holder: &str,
+        step: &str,
+        seconds: u64,
+    ) -> Result<(), BotError> {
         self.checkpoint(bot, holder, step).await?;
         let work = bot.work.as_mut().ok_or(BotError::Conflict)?;
         work.holder = None;
         work.expires_at = Some(crate::rfc3339_at(
-            SystemTime::now() + Duration::from_secs(15),
+            SystemTime::now() + Duration::from_secs(seconds),
         ));
+        self.save(bot).await
+    }
+    pub async fn begin_cleanup(&self, bot: &mut Bot, holder: &str) -> Result<(), BotError> {
+        let reason = bot.work.as_ref().ok_or(BotError::Conflict)?.step.clone();
+        self.checkpoint(bot, holder, "creation_failed").await?;
+        bot.work.as_mut().ok_or(BotError::Conflict)?.operation = BotOperation::Cleanup;
+        bot.state = BotState::Failed { reason };
         self.save(bot).await
     }
     pub async fn record_test(

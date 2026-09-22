@@ -1571,3 +1571,18 @@ completing. Pending mutations block incompatible commands, and expired writers
 cannot save progress over a replacement worker. `cma:bot:manage` maps to the
 owner-only `ManageOwnBots` capability; it grants no binding or gateway record
 management authority.
+
+The core worker checkpoints create, policy changes, rotation and deletion before
+external effects. A failed create remains durable cleanup work, including a
+120-second settling interval before discovery of uncertain key, channel and route
+creations. Cleanup verifies absence before completing; dependency failures retain
+retryable work. Rotation reconciles both the retained provider binding and route
+before revoking obsolete keys, including when a provider accepted a replacement
+before the channel record write failed. Its external execution port requires
+bounded calls, complete owner-scoped discovery and idempotent deletion.
+
+This is an implementation foundation for #915. Production external adapters,
+controller scheduling, renewal and audit integration, public Bot routes and Bot
+SDK methods are still pending. The worker is exercised with failure-injection
+doubles; it is not wired into the running control plane. Existing channel and
+binding management APIs remain the implemented external surfaces.
