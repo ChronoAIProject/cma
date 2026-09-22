@@ -3,6 +3,42 @@ import type { AgentProvenanceInventoryOptions } from '../../src/agents.js';
 import type { AccessibleSandboxListOptions } from '../../src/sandboxes.js';
 
 export const resourceDispatch: Record<string, Dispatch> = {
+  'PUT /api/v1/cmaeg/bindings/{binding_id}': ({ client, param, body }) =>
+    client.providerBindings.put(param('binding_id'), body),
+  'GET /api/v1/cmaeg/bindings/{binding_id}': ({ client, param }) =>
+    client.providerBindings.get(param('binding_id')),
+  'DELETE /api/v1/cmaeg/bindings/{binding_id}': ({ client, param }) =>
+    client.providerBindings.delete(param('binding_id')),
+  'PUT /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}': ({ client, param }) =>
+    client.providerBindings.ensureConversation(param('binding_id'), param('conversation_id')),
+  'DELETE /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}': ({
+    client,
+    param,
+  }) => client.providerBindings.deleteConversation(param('binding_id'), param('conversation_id')),
+  'GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}': ({
+    client,
+    param,
+  }) =>
+    client.responsesV2.readEventContext(
+      param('binding_id'),
+      param('conversation_id'),
+      param('event_id'),
+    ),
+  'PUT /api/v1/gateway/channel-records/{record_id}': ({ client, param, body }) =>
+    client.gatewayRecords.put(param('record_id'), body),
+  'GET /api/v1/gateway/channel-records/{record_id}': ({ client, param }) =>
+    client.gatewayRecords.get(param('record_id')),
+  'GET /api/v1/gateway/channel-records': ({ client, query }) =>
+    client.gatewayRecords.list({
+      owner: query.get('owner') ?? undefined,
+      after: query.get('after') ?? undefined,
+      limit: query.has('limit') ? Number(query.get('limit')) : undefined,
+    }),
+  'DELETE /api/v1/gateway/channel-records/{record_id}': ({ client, param, query }) =>
+    client.gatewayRecords.delete(
+      param('record_id'),
+      query.has('expected_version') ? Number(query.get('expected_version')) : undefined,
+    ),
   'GET /api/v1/bridge-creation-target': ({ client, query, command }) =>
     client.bridges.creationTarget({
       organization: query.get('organization') ?? undefined,

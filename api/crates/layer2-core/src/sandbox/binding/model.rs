@@ -1,0 +1,298 @@
+use super::{BindingFieldRefusal, BindingProfilePlan};
+use crate::{seconds_from_rfc3339, AgentId, SandboxId, SubjectId, WorkspaceId, WorktreeId};
+use serde::{Deserialize, Serialize};
+
+pub const BINDING_CONFORMANCE_LEVEL: u8 = 2;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
+pub enum BindingState {
+    Provisioning,
+    Ready,
+    Failed { reason: String },
+    Retired,
+}
+
+/// Durable work remains discoverable after a control-plane restart. Credential
+/// admission is completed before acknowledging the initial caller request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BindingWork {
+    AwaitingCredential,
+    DeliverCredential,
+    RetirePreviousConversations,
+    RetirePreviousSandbox,
+    ProvisionSandbox,
+    ProvisionWorkspace,
+    RetireCurrentConversations,
+    RetireCurrentSandbox,
+    Idle,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PreviousBindingEnvironment {
+    pub generation: u64,
+    pub sandbox_id: SandboxId,
+    pub workspace_id: WorkspaceId,
+    /// Only compatible immutable environment and credential snapshots can reuse
+    /// the parent; old conversation Agents are retired in either case.
+    pub retire_sandbox: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderBinding {
+    pub binding_id: String,
+    /// The management principal is independent of the resource owner.
+    pub manager: SubjectId,
+    pub owner: SubjectId,
+    pub profile_digest: String,
+    pub sandbox_id: SandboxId,
+    pub workspace_id: WorkspaceId,
+    pub state: BindingState,
+    pub level: u8,
+    pub honoured: Vec<String>,
+    pub refused: Vec<BindingFieldRefusal>,
+    pub profile: BindingProfilePlan,
+    pub key_sha256: String,
+    pub generation: u64,
+    pub work: BindingWork,
+    pub previous: Option<PreviousBindingEnvironment>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub revision: u64,
+}
+
+impl ProviderBinding {
+    pub fn new(
+        binding_id: String,
+        manager: SubjectId,
+        profile: BindingProfilePlan,
+        key_sha256: String,
+        at: String,
+    ) -> Result<Self, String> {
+        let (state, work) = if profile.environment.is_some() {
+            (BindingState::Provisioning, BindingWork::AwaitingCredential)
+        } else {
+            (
+                BindingState::Failed {
+                    reason: "environment is required".into(),
+                },
+                BindingWork::Idle,
+            )
+        };
+        let result = Self {
+            binding_id,
+            manager,
+            owner: profile.owner.clone(),
+            profile_digest: profile.profile_digest.clone(),
+            sandbox_id: SandboxId::generate(),
+            workspace_id: WorkspaceId::generate(),
+            state,
+            level: BINDING_CONFORMANCE_LEVEL,
+            honoured: profile.honoured.clone(),
+            refused: profile.refused.clone(),
+            profile,
+            key_sha256,
+            generation: 1,
+            work,
+            previous: None,
+            created_at: at.clone(),
+            updated_at: at,
+            revision: 1,
+        };
+        result.validate()?;
+        Ok(result)
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        if !valid_id(&self.binding_id, 1)
+            || self.manager.as_str().is_empty()
+            || self.owner.as_str().is_empty()
+            || self.owner != self.profile.owner
+            || self.profile_digest != self.profile.profile_digest
+            || !self
+                .profile_digest
+                .strip_prefix("sha256:")
+                .is_some_and(valid_sha256)
+            || !valid_sha256(&self.key_sha256)
+            || self.revision == 0
+            || self.generation == 0
+            || !(1..=BINDING_CONFORMANCE_LEVEL).contains(&self.level)
+            || self.honoured != self.profile.honoured
+            || self.refused != self.profile.refused
+            || self.sandbox_id.as_str().is_empty()
+            || self.workspace_id.as_str().is_empty()
+            || seconds_from_rfc3339(&self.created_at)
+                .zip(seconds_from_rfc3339(&self.updated_at))
+                .is_none_or(|(created, updated)| updated < created)
+            || self
+                .previous
+                .as_ref()
+                .is_some_and(|old| old.generation >= self.generation)
+            || (self.state == BindingState::Ready
+                && (self.work != BindingWork::Idle || self.previous.is_some()))
+            || (self.state == BindingState::Provisioning
+                && (self.work == BindingWork::Idle || self.profile.environment.is_none()))
+        {
+            return Err("invalid provider binding record".into());
+        }
+        Ok(())
+    }
+
+    /// A reconfiguration waits for prior admission work to settle. Its retained
+    /// cleanup reference prevents losing old resources when new provisioning fails.
+    pub fn reconfigure(
+        &self,
+        profile: BindingProfilePlan,
+        key_sha256: String,
+        at: String,
+    ) -> Result<Self, String> {
+        if self.state == BindingState::Retired
+            || self.work != BindingWork::Idle
+            || self.previous.is_some()
+            || self.owner != profile.owner
+        {
+            return Err("binding is retired, busy, or has another owner".into());
+        }
+        let compatible = self.profile.environment.is_some()
+            && self.profile.environment == profile.environment
+            && self.key_sha256 == key_sha256;
+        let mut next = self.clone();
+        next.previous = Some(PreviousBindingEnvironment {
+            generation: self.generation,
+            sandbox_id: self.sandbox_id.clone(),
+            workspace_id: self.workspace_id.clone(),
+            retire_sandbox: !compatible,
+        });
+        if !compatible {
+            next.sandbox_id = SandboxId::generate();
+            next.workspace_id = WorkspaceId::generate();
+        }
+        next.generation = self
+            .generation
+            .checked_add(1)
+            .ok_or("binding generation exhausted")?;
+        next.profile_digest = profile.profile_digest.clone();
+        next.honoured = profile.honoured.clone();
+        next.refused = profile.refused.clone();
+        next.profile = profile;
+        next.key_sha256 = key_sha256;
+        next.state = if next.profile.environment.is_some() {
+            BindingState::Provisioning
+        } else {
+            BindingState::Failed {
+                reason: "environment is required".into(),
+            }
+        };
+        next.work = if compatible {
+            BindingWork::RetirePreviousConversations
+        } else if next.profile.environment.is_some() {
+            BindingWork::AwaitingCredential
+        } else {
+            BindingWork::RetirePreviousConversations
+        };
+        next.advance_revision(at)?;
+        Ok(next)
+    }
+
+    pub fn advance_revision(&mut self, at: String) -> Result<(), String> {
+        self.revision = self
+            .revision
+            .checked_add(1)
+            .ok_or("binding revision exhausted")?;
+        self.updated_at = at;
+        self.validate()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BindingConversationState {
+    Provisioning,
+    Ready,
+    Failed,
+    Retiring,
+    Retired,
+}
+
+/// A generation-scoped external identifier has exactly one durable Agent/Worktree
+/// pair, even when admission is retried after an unknown store result.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BindingConversation {
+    pub binding_id: String,
+    pub generation: u64,
+    pub conversation_id: String,
+    pub owner: SubjectId,
+    pub sandbox_id: SandboxId,
+    pub workspace_id: WorkspaceId,
+    pub agent_id: AgentId,
+    pub worktree_id: WorktreeId,
+    pub state: BindingConversationState,
+    pub created_at: String,
+    pub updated_at: String,
+    pub revision: u64,
+}
+
+impl BindingConversation {
+    pub fn new(
+        binding: &ProviderBinding,
+        conversation_id: String,
+        at: String,
+    ) -> Result<Self, String> {
+        if binding.state != BindingState::Ready {
+            return Err("binding is not ready".into());
+        }
+        let result = Self {
+            binding_id: binding.binding_id.clone(),
+            generation: binding.generation,
+            conversation_id,
+            owner: binding.owner.clone(),
+            sandbox_id: binding.sandbox_id.clone(),
+            workspace_id: binding.workspace_id.clone(),
+            agent_id: AgentId::generate(),
+            worktree_id: WorktreeId::generate(),
+            state: BindingConversationState::Provisioning,
+            created_at: at.clone(),
+            updated_at: at,
+            revision: 1,
+        };
+        result.validate()?;
+        Ok(result)
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        if !valid_id(&self.binding_id, 1)
+            || !valid_id(&self.conversation_id, 8)
+            || self.generation == 0
+            || self.revision == 0
+            || self.owner.as_str().is_empty()
+            || self.sandbox_id.as_str().is_empty()
+            || self.workspace_id.as_str().is_empty()
+            || self.agent_id.as_str().is_empty()
+            || self.worktree_id.as_str().is_empty()
+            || seconds_from_rfc3339(&self.created_at)
+                .zip(seconds_from_rfc3339(&self.updated_at))
+                .is_none_or(|(created, updated)| updated < created)
+        {
+            return Err("invalid binding conversation record".into());
+        }
+        Ok(())
+    }
+}
+
+pub fn valid_id(value: &str, minimum: usize) -> bool {
+    (minimum..=128).contains(&value.len())
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+}
+
+fn valid_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+}

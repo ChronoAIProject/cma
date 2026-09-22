@@ -22,7 +22,7 @@ exact target consent, current authority, revision and cancellation semantics.
 | `triggerAuthoring`                                      | `list`, `read`, `create`, `save`, `delete`, `publish`, `retire`, `listRevisions`, `listPlacements`, `createPlacement`, `retirePlacement`, `embed`, `stats`                                                                                        |
 | `launches`                                              | `preview`, `createOrResume`, `read`, `list`, `start`, `cancel`, `requirements`, `events`, `stream`, `createConnection`, `readConnection`                                                                                                          |
 | `agui`                                                  | `run`, `replay`, `readCapabilities`, `readSandboxSnapshot`, `streamLaunchEvents`                                                                                                                                                                  |
-| `responsesV2`                                           | `readCapabilities`, `create`, `createForAgent`, `read`, `readConversation`, `listConversationItems`, `replay`, `observeControls`, `submitControl`, `readCommand`, `observeQueuedCancellation`, `cancelQueuedResponse`                             |
+| `responsesV2`                                           | `readCapabilities`, `create`, `createForAgent`, `read`, `readEventContext`, `readConversation`, `listConversationItems`, `replay`, `observeControls`, `submitControl`, `readCommand`, `observeQueuedCancellation`, `cancelQueuedResponse`         |
 | `agentEventsV2`                                         | `readTransportEligibility`, `snapshot`, `events` with acknowledgement after consumer success                                                                                                                                                      |
 | `responses`                                             | `createConversation`, `readConversation`, `listConversationItems`, `create`, `read`, `delete`, `cancel`                                                                                                                                           |
 | `auth`                                                  | `readSession`, `readSignupOptions`, `loginUrl`, `logoutUrl`                                                                                                                                                                                       |
@@ -33,8 +33,10 @@ exact target consent, current authority, revision and cancellation semantics.
 its schemas, operation annotations and extensions.
 
 `agents.terminal(id)` preserves the named `capability_unsupported` refusal, or
-the owner-scoped not-found response. `unsupported.mcp()`, `unsupported.a2a()` and
-`unsupported.agentCard()` probe the explicit `interface_not_available` responses.
+the owner-scoped not-found response. `unsupported.mcp()` and `unsupported.a2a()` probe the explicit
+`interface_not_available` responses. `readAgentCard()` reads the typed public
+provider card anonymously; `unsupported.agentCard()` remains a compatibility
+alias and now returns that card. Older servers' named refusals remain `ApiError`.
 These helpers reject with `ApiError`; they do not provide a terminal or implement
 either protocol. An unexpected successful response is a `ProtocolError`.
 
@@ -437,3 +439,7 @@ child `remove_child` retains its original Workspace-preserving scope. See
 ## Source-control consent
 
 `bridges.readSourceControls(grantId, options?)` and `bridges.setSourceControls(grantId, request, command)` observe and record separate original-sender consent. Types: `BridgeSourceControlAction`, `BridgeSourceControlRequest`, `BridgeSourceControlPolicy`, `BridgeSourceControlState`, `BridgeSourceControlReceipt`, `BridgeSourceControlScope`, and `BridgeSourceControlApprovalMode`. Read absence is required null. PUT returns exactly 200. Consent never demonstrates runtime control support. See [Bridges](bridges.md) for revision bounds and exact-request recovery.
+
+Encrypted gateway records are available through `client.gatewayRecords.put/get/list/delete`. These operations require gateway management authority. `blob` is base64 ciphertext; creation uses `expected_version: null`, and replacement supplies the retained version. They use version preconditions without an Idempotency-Key header.
+
+Provider binding management uses `client.providerBindings.put/get/delete/ensureConversation/deleteConversation`. Supply the complete profile snapshot and digest for PUT. These gateway-only operations require both management capabilities; use the scoped binding credential for Responses and immutable event-context reads. Binding responses never contain the supplied credential.

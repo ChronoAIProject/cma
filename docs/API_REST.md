@@ -90,13 +90,78 @@ The composed identity/discovery/static routes also include:
 | `POST /auth/logout` | Revoke browser login and expire cookie; redirect to `/` |
 | `GET /embed/v1.js` | Fixed versioned-by-integrity embed script; no credential access |
 | `POST /api/v1/mcp` | Typed 501 `interface_not_available` |
-| `GET /.well-known/agent-card.json` | Typed 501 `interface_not_available` for A2A |
+| `GET /.well-known/agent-card.json` | Public provider card for binding Responses; A2A JSON-RPC remains unavailable |
 | `/api/v1/a2a` | Typed 501 `interface_not_available` |
 
 `GET /auth/signup-options` appears in the checked inventory. Its four-field
 response is exactly `{ email_signup, social_providers, invite_code_required,
 register_available }`. CMA reports registration availability but never creates
 NyxID users or roles. Anonymous preview/badge GETs and OAuth callbacks are inert.
+
+## Event Gateway Channel Records
+
+The `/api/v1/gateway/channel-records` routes store opaque, base64-encoded CMAEG
+channel-definition blobs for callers with the NyxID permission
+`cma:gateway:records`. CMA does not decrypt or interpret the blob. Record ids
+are canonical UUID v4 values, blobs contain 1 to 65,536 decoded bytes, and all
+responses carry `Cache-Control: no-store`.
+
+`PUT /api/v1/gateway/channel-records/{record_id}` accepts
+`{ owner, blob, expected_version }` and returns the new version and update time.
+An omitted expected version creates a record; a supplied version performs a
+compare-and-set update. A stale version returns `409 conflict`. `GET` returns
+the full base64 blob and returns `404 gateway_record_not_found` when absent.
+`DELETE` accepts the optional `expected_version` query parameter and returns
+`204` on deletion, `404 gateway_record_not_found` when absent, or `409 conflict`
+for a stale version.
+
+`GET /api/v1/gateway/channel-records?owner=&after=&limit=` lists stable
+record-id order and returns `{ items, next_after }`. The default limit is 100
+and valid limits are 1 through 200. Listing and all mutations require the same
+capability; an authenticated caller without it receives `403 forbidden`.
+
+## Provider Bindings
+
+The CMAEG service principal manages bindings under `/api/v1/cmaeg/bindings`.
+Every operation requires both `cma:gateway:records` and `cma:provider:bindings`.
+The binding records the authenticated manager separately from the resource owner
+in the profile. A different manager cannot read or replace that binding.
+Responses use `Cache-Control: no-store` and never contain supplied key material.
+
+`PUT /api/v1/cmaeg/bindings/{binding_id}` accepts
+`{schema_version:1,profile,profile_digest,agent_key,tools:{native_mcp_url,nyxid_service_slug}}`.
+The digest is `sha256:` followed by the canonical profile digest. The response
+contains `binding_id`, `owner`, `profile_digest`, `sandbox_id`, `workspace_id`,
+`level`, `honoured`, `refused`, `state`, `generation`, and timestamps. The current
+turn-contract level is `l2` (text and informational activity items). Native external tool endpoints are explicitly refused. Resource
+provisioning is asynchronous: `GET` reports `provisioning`, `ready`, `failed`
+(with a reason), or `retired`. Repeating the same digest and key returns the
+retained reservation. A supplied key hash can belong to only one binding;
+retired records retain that reservation. Reusing the key on another binding
+returns a conflict. A changed profile waits for prior work to settle, retires
+old conversation Agents, and keeps compatible Sandbox and Workspace snapshots.
+
+`PUT /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}` accepts
+an empty body or `{}` and returns `{conversation_id,agent_id,state}` with 201
+for a new reservation or 200 for a replay. Conversation ids contain 8–128 ASCII
+letters, digits, underscores or hyphens. Each generation retains exactly one
+Agent and Worktree per conversation id. Resource admission revives a paused
+Sandbox through the existing lifecycle transaction. A binding that is not ready
+returns `409 binding_not_ready`; malformed ids return `400 invalid_binding`.
+
+Both DELETE operations return 204 after durable retirement admission. Conversation
+cleanup stops the Agent and removes its Worktree through the existing workers;
+binding cleanup also retires its Sandbox. Once retired, a binding or conversation
+id cannot be resurrected in the same generation. Supplied keys use encrypted
+custody and are never minted, renewed, or revoked by the managed-key controller.
+
+Binding PUT with the same profile digest and a changed supplied key rotates the
+credential in place. The response reports `provisioning` until the replacement is
+delivered (or retained for a fully paused Sandbox's revival); callers poll GET
+until `ready` before revoking the previous externally managed key. Replays retain
+the same credential generation. Existing Sandbox, Workspace and conversation
+identifiers are preserved. A busy Sandbox lifecycle returns a conflict that can
+be retried after the operation settles.
 
 ## Errors, Retry And Concurrency
 
@@ -682,6 +747,16 @@ above applies even when an operation annotates only its principal responses.
 | `GET /api/v1/resource-shares/{kind}/{id}/{share_id}` | - | - | 200 ResourceShareView |
 | `PATCH /api/v1/resource-shares/{kind}/{id}/{share_id}` | UpdateShareBody; key | - | 200 ShareReceiptView |
 | `DELETE /api/v1/resource-shares/{kind}/{id}/{share_id}` | -; key | expected_revision* | 200 ShareReceiptView |
+| `PUT /api/v1/cmaeg/bindings/{binding_id}` | PutBindingRequest | - | 200 BindingView; 400/401/403/409/503 ProblemDocument |
+| `GET /api/v1/cmaeg/bindings/{binding_id}` | - | - | 200 BindingView; 401/403/404/503 ProblemDocument |
+| `DELETE /api/v1/cmaeg/bindings/{binding_id}` | - | - | 204 empty; 401/403/409/503 ProblemDocument |
+| `PUT /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}` | optional empty object | - | 200/201 BindingConversationView; 400/401/403/404/409/503 ProblemDocument |
+| `DELETE /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}` | - | - | 204 empty; 400/401/403/404/409/503 ProblemDocument |
+| `GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}` | - | - | 200 EventContext; 401/403/404/503 Responses error |
+| `GET /api/v1/gateway/channel-records` | - | owner, after, limit | 200 GatewayRecordPageView |
+| `PUT /api/v1/gateway/channel-records/{record_id}` | PutGatewayRecordRequest | - | 200 PutGatewayRecordView |
+| `GET /api/v1/gateway/channel-records/{record_id}` | - | - | 200 GatewayRecordView; 404 ProblemDocument |
+| `DELETE /api/v1/gateway/channel-records/{record_id}` | - | expected_version | 204 empty; 404/409 ProblemDocument |
 
 ### Administration
 

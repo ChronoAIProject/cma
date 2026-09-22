@@ -211,6 +211,7 @@ impl AgentReadService {
     ) -> Result<AuthorizedResource, AgentReadError> {
         if ![
             Capability::UseOwnSandboxes,
+            Capability::UseBindingConversations,
             Capability::ReadAllSandboxes,
             Capability::ControlAnySandbox,
         ]
@@ -260,6 +261,9 @@ impl AgentReadService {
 }
 
 pub(super) fn is_personal(authorized: &AuthorizedResource, context: &CallerContext) -> bool {
+    if authorized.binding_authority().is_some() {
+        return false;
+    }
     match &authorized.snapshot.policy {
         Some(policy) => {
             matches!(&policy.owner, ResourceOwner::Person { subject } if subject == &context.caller.subject)

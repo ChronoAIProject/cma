@@ -27,6 +27,7 @@ pub(super) fn bind_dispatch(
         .get(&claim.agent_id)
         .ok_or(SandboxStoreError::Conflict)?;
     if let Some(fence) = &mutation.execution_fence {
+        super::bindings::require_conversation_authority(state, fence.binding_authority())?;
         let snapshot = super::resource_access::snapshot(state, &fence.target())
             .map_err(|_| SandboxStoreError::Conflict)?;
         fence

@@ -20,6 +20,7 @@ use crate::store::sandbox_maintenance::mongo_integration_tests::{
 fn request(agent: &Agent, parent: &Sandbox, key: &str) -> CommandReservation {
     let command = AgentCommand::message("Inspect this.");
     CommandReservation {
+        binding: None,
         authority_deadline: None,
         admission_audit: None,
         envelope: AgentCommandEnvelope {

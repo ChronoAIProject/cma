@@ -3,7 +3,7 @@ use crate::resource_access::{AccessDecision, ResourceCapability};
 use crate::Capability;
 
 impl AgentOperationService {
-    pub(super) fn require_owner_authority(
+    pub(in crate::sandbox) fn require_owner_authority(
         &self,
         caller: &Caller,
     ) -> Result<(), AgentOperationError> {
@@ -15,6 +15,7 @@ impl AgentOperationService {
                 .fence()
                 .require_current()
                 .map_err(|_| AgentOperationError::Forbidden)?;
+            return Ok(());
         }
         caller
             .authorization

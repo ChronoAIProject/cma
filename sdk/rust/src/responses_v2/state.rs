@@ -1,4 +1,5 @@
-use super::{OutputStatus, ResponseEvent, ResponseEventPayload as P, ResponseStatus};
+use super::activity_state::ActivityState;
+use super::{OutputItem, OutputStatus, ResponseEvent, ResponseEventPayload as P, ResponseStatus};
 use crate::{Error, Result};
 use std::collections::BTreeMap;
 
@@ -8,6 +9,7 @@ struct Item {
     text: Option<String>,
     stage: Option<u8>,
     done: bool,
+    activity: Option<ActivityState>,
 }
 pub(super) struct State {
     response: String,
@@ -84,6 +86,18 @@ impl State {
                     self.ended = true;
                     for (index, item) in &self.items {
                         let output = response.output.get(*index).ok_or_else(invalid)?;
+                        if let Some(activity) = &item.activity {
+                            let OutputItem::Activity(output) = output else {
+                                return Err(invalid());
+                            };
+                            if output.id != item.id || !activity.matches(output) {
+                                return Err(invalid());
+                            }
+                            continue;
+                        }
+                        let OutputItem::Message(output) = output else {
+                            return Err(invalid());
+                        };
                         if !item.done
                             || output.id != item.id
                             || output.status != OutputStatus::Completed
@@ -107,7 +121,19 @@ impl State {
         }
         let (index, id, content) = match payload {
             P::OutputItemAdded { output_index, item }
-            | P::OutputItemDone { output_index, item } => (*output_index, item.id.as_str(), None),
+            | P::OutputItemDone { output_index, item } => (*output_index, item.id(), None),
+            P::McpCallInProgress {
+                output_index,
+                item_id,
+            }
+            | P::McpCallCompleted {
+                output_index,
+                item_id,
+            }
+            | P::McpCallFailed {
+                output_index,
+                item_id,
+            } => (*output_index, item_id.as_str(), None),
             P::ContentPartAdded {
                 output_index,
                 item_id,
@@ -161,6 +187,30 @@ impl State {
         if item.id != id || item.done {
             return Err(invalid());
         }
+        let activity = matches!(
+            payload,
+            P::OutputItemAdded {
+                item: OutputItem::Activity(_),
+                ..
+            } | P::OutputItemDone {
+                item: OutputItem::Activity(_),
+                ..
+            } | P::McpCallInProgress { .. }
+                | P::McpCallCompleted { .. }
+                | P::McpCallFailed { .. }
+        );
+        if activity {
+            if item.stage.is_some() {
+                return Err(invalid());
+            }
+            return item
+                .activity
+                .get_or_insert_with(Default::default)
+                .accept(payload, self.replay);
+        }
+        if item.activity.is_some() {
+            return Err(invalid());
+        }
         let require = |actual: Option<u8>, expected: u8| {
             if actual == Some(expected) || (self.replay && actual.is_none()) {
                 Ok(())
@@ -169,7 +219,10 @@ impl State {
             }
         };
         match payload {
-            P::OutputItemAdded { item: output, .. } => {
+            P::OutputItemAdded {
+                item: OutputItem::Message(output),
+                ..
+            } => {
                 if item.stage.is_some()
                     || output.status != OutputStatus::InProgress
                     || !output.content.is_empty()
@@ -209,7 +262,10 @@ impl State {
                 item.text = Some(part.text.clone());
                 item.stage = Some(3);
             }
-            P::OutputItemDone { item: output, .. } => {
+            P::OutputItemDone {
+                item: OutputItem::Message(output),
+                ..
+            } => {
                 require(item.stage, 3)?;
                 if output.status != OutputStatus::Completed
                     || output.content.len() != 1

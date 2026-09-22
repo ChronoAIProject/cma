@@ -110,6 +110,7 @@ impl AgentProjectionServices {
         &self,
         context: Arc<AgentContextService>,
         updates: Arc<dyn AgentUpdateRecorder>,
+        public_base: &str,
     ) -> Router {
         let state = layer1_public::AgentConversationState::new(
             self.reads.clone(),
@@ -124,7 +125,7 @@ impl AgentProjectionServices {
         layer1_public::agui::router(state.clone())
             .merge(layer1_public::responses::router(state))
             .merge(layer1_public::mcp::router())
-            .merge(layer1_public::a2a::router())
+            .merge(layer1_public::a2a::router(public_base))
     }
 }
 

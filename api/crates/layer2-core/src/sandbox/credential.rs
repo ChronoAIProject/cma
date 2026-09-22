@@ -2,6 +2,67 @@ use serde::{Deserialize, Serialize};
 
 use crate::ids::{ServiceId, SubjectId};
 
+/// Who owns credential rotation and provider revocation. Supplied values are
+/// delivered from encrypted custody; their issuer retains those responsibilities.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum SandboxCredentialSource {
+    #[default]
+    Managed,
+    Provided {
+        key_sha256: String,
+    },
+    /// Stable supplied-key authority; each custody generation pins its own hash.
+    Binding {
+        binding_id: String,
+    },
+}
+
+impl SandboxCredentialSource {
+    pub fn is_managed(&self) -> bool {
+        matches!(self, Self::Managed)
+    }
+
+    pub fn validate(&self) -> bool {
+        match self {
+            Self::Managed => true,
+            Self::Binding { binding_id } => super::binding::valid_binding_id(binding_id),
+            Self::Provided { key_sha256 } => {
+                key_sha256.len() == 64
+                    && key_sha256
+                        .bytes()
+                        .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+            }
+        }
+    }
+
+    pub fn accepts(&self, authority: &SandboxCredentialAuthority) -> bool {
+        match self {
+            Self::Managed => !authority.expires_at.is_empty(),
+            Self::Binding { .. } => {
+                self.validate()
+                    && authority
+                        .provider_key_id
+                        .strip_prefix("provided-")
+                        .is_some_and(|hash| {
+                            hash.len() == 64
+                                && hash
+                                    .bytes()
+                                    .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+                        })
+                    && authority.provider_state_version == 1
+                    && authority.expires_at.is_empty()
+            }
+            Self::Provided { key_sha256 } => {
+                self.validate()
+                    && authority.provider_key_id == format!("provided-{key_sha256}")
+                    && authority.provider_state_version == 1
+                    && authority.expires_at.is_empty()
+            }
+        }
+    }
+}
+
 /// Explicit owner authorization added after the immutable creation scope.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -13,7 +74,8 @@ pub struct SandboxServiceGrant {
     pub credential_generation_floor: u64,
 }
 
-/// Non-secret evidence for one NyxID key minted for a sandbox.
+/// Non-secret evidence for one sandbox credential. For supplied credentials the
+/// key id is a hash receipt, state version is one and expiry is unknown (empty).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SandboxCredentialAuthority {
@@ -47,6 +109,8 @@ pub enum SandboxSignInState {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SandboxCredentialState {
+    #[serde(default, skip_serializing_if = "SandboxCredentialSource::is_managed")]
+    pub source: SandboxCredentialSource,
     #[serde(default)]
     pub reaches: Vec<ServiceId>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -82,7 +146,8 @@ impl SandboxCredentialState {
 
     pub fn validate(&self) -> bool {
         let authority_valid = |authority: &SandboxCredentialAuthority| {
-            authority.generation > 0
+            self.source.accepts(authority)
+                && authority.generation > 0
                 && authority.generation <= self.key_generation
                 && !authority.provider_key_id.trim().is_empty()
                 && authority.provider_state_version > 0
@@ -92,7 +157,9 @@ impl SandboxCredentialState {
                     .bytes()
                     .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
         };
-        self.current.as_ref().is_none_or(authority_valid)
+        self.source.validate()
+            && (self.source.is_managed() || self.service_grants.is_empty())
+            && self.current.as_ref().is_none_or(authority_valid)
             && self.pending.as_ref().is_none_or(authority_valid)
             && self.delivered == self.current.is_some()
             && self

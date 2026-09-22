@@ -159,6 +159,7 @@ impl WorkspaceFixture {
     }
     pub fn manual(&self, workspace: &Workspace, key: &str) -> AgentAdmission {
         AgentAdmission {
+            binding: None,
             created_by: Some(caller().actor),
             owner: workspace.owner.clone(),
             workspace_id: workspace.id.clone(),

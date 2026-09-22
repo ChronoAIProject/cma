@@ -27,6 +27,7 @@ pub(super) struct CreateV2ResponseRequest {
     stream: bool,
     model: Option<String>,
     metadata: Option<BTreeMap<String, String>>,
+    event_context: Option<super::event_context::EventContext>,
     store: Option<bool>,
 }
 #[utoipa::path(post, path = "/api/v2/responses", tag = "responses v2", request_body = CreateV2ResponseRequest, params(("Idempotency-Key" = Option<String>, Header)), responses((status = 200, body = String, content_type = "text/event-stream"), (status = 422, body = Value)))]
@@ -93,10 +94,48 @@ async fn submit(
             },
         }
     };
-    let submission = match super::parse::parse(body, alias, key) {
+    let binding =
+        auth.context.credential_source == layer2_core::resource_access::CredentialSource::Binding;
+    if !binding && body.get("event_context").is_some() {
+        return error::error(
+            StatusCode::FORBIDDEN,
+            "binding_key_required",
+            "Event context requires a current binding key.",
+            Some("event_context"),
+        );
+    }
+    // A binding's URL and body may use different aliases of the same Agent.
+    let parse_alias = if binding && body.get("conversation").is_some() {
+        None
+    } else {
+        alias.clone()
+    };
+    let mut submission = match super::parse::parse(body, parse_alias, key) {
         Ok(value) => value,
         Err(error) => return *error,
     };
+    submission.agent_id = match state
+        .resolve_conversation(&auth, &submission.agent_id)
+        .await
+    {
+        Ok(id) => id,
+        Err(error) => return *error,
+    };
+    if binding {
+        if let Some(alias) = alias {
+            let alias = match state.resolve_conversation(&auth, &alias).await {
+                Ok(id) => id,
+                Err(error) => return *error,
+            };
+            if alias != submission.agent_id {
+                return error::field(
+                    "conversation",
+                    "conversation_alias_mismatch",
+                    "conversation must match the Agent selected by the URL.",
+                );
+            }
+        }
+    }
     let admitted = match state
         .commands
         .admit(
@@ -253,7 +292,7 @@ pub(super) async fn capabilities(auth: Auth) -> Response {
             "target":"unbound_response_command","completion":"source_cancelled"},
         "replay":{"path":"/api/v2/responses/{response_id}/events","cursor":"starting_after","header":"Last-Event-ID","durable":true},
         "creation":{"stream":true,"conversation":"existing_agent","previous_response_id":false,"store":true,"input":"user_text","model":"pinned_agent_profile","idempotency_header":"Idempotency-Key"},
-        "output":{"standard_items":["message"],"text_deltas":"durable_message_commits","tools":"agui_companion"},
+        "output":{"standard_items":["message","mcp_call"],"text_deltas":"durable_message_commits","tools":"activity_only"},
         "companion":"/api/v1/agui/events?thread_id={agent_id}",
         "documentation":"https://github.com/ChronoAIProject/cma/blob/main/docs/API_Responses.md"
     })).into_response()

@@ -1,0 +1,88 @@
+//! Public activity and opaque reply reference created after authentication and admission.
+use super::{telegram::TelegramFacts, verify::VerifiedCallback};
+use crate::{channels::resolver::ResolvedChannel, ingress::launch::LaunchRequest};
+use cmaeg_core::{
+    activity::{Activity, ActivityConversation, ActivityKind, Actor, ActorKind, SourceKind},
+    channel::Platform,
+    ids::{ConversationId, EventId, IdempotencyKey, MessageRef},
+    seal::{EventRef, EventRefPayload, MasterKeyRing, ReplyAddress},
+};
+use std::{sync::Arc, time::Instant};
+pub fn launch_request(
+    channel: Arc<ResolvedChannel>,
+    verified: VerifiedCallback,
+    facts: TelegramFacts,
+    keys: &MasterKeyRing,
+    received_at: Instant,
+    now: i64,
+) -> Result<LaunchRequest, &'static str> {
+    let payload = verified.payload;
+    let event_id = EventId::new(payload.message_id.clone()).map_err(|_| "activity_invalid")?;
+    let activity = Activity {
+        schema_version: 1,
+        event_id: event_id.clone(),
+        kind: ActivityKind::Message {
+            text: payload.content.text.unwrap_or_default(),
+            attachments: Vec::new(),
+            mentions_bot: facts.mentioned == Some(true),
+            reply_to: payload
+                .reply_to_message_id
+                .map(MessageRef::new)
+                .transpose()
+                .map_err(|_| "activity_invalid")?,
+        },
+        actor: Actor {
+            id: payload.sender.platform_id,
+            display_name: payload.sender.display_name,
+            kind: ActorKind::Human,
+        },
+        conversation: ActivityConversation {
+            id: payload.conversation.platform_id,
+            kind: facts.conversation,
+            thread_id: facts.thread_id,
+        },
+        occurred_at: payload.timestamp,
+        source: SourceKind::NyxidRelay {
+            platform: Platform::Telegram,
+            route_id: payload.conversation.id.clone(),
+        },
+    };
+    activity.validate().map_err(|_| "activity_invalid")?;
+    let partition_key = activity.partition_key(&channel.definition.partition);
+    let conversation_id = ConversationId::derive(
+        keys,
+        &channel.id,
+        channel.definition.partition.version,
+        &partition_key,
+    );
+    let event_ref = EventRef::seal(
+        &EventRefPayload {
+            v: 1,
+            channel_id: channel.id.clone(),
+            record_id: channel.pointer.record_id.clone(),
+            event_id: event_id.clone(),
+            partition_key,
+            conversation_id: conversation_id.clone(),
+            expires_at: verified.reply_expires_at.min(now.saturating_add(1800)),
+            reply: ReplyAddress::NyxidRelay {
+                message_id: payload.message_id,
+                route_id: payload.conversation.id,
+                platform: Platform::Telegram,
+                reply_token: verified.reply_token,
+                reply_token_expires_at: verified.reply_expires_at,
+            },
+        },
+        keys,
+    )
+    .map_err(|_| "event_ref_too_large")?;
+    Ok(LaunchRequest {
+        timing: None,
+        trace: tracing::Span::current(),
+        channel,
+        activity,
+        conversation_id,
+        event_ref,
+        idempotency_key: IdempotencyKey::from_event(&event_id),
+        received_at,
+    })
+}

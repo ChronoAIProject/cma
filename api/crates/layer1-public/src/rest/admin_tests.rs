@@ -324,6 +324,7 @@ pub(crate) fn sandbox(id: &str, owner: &str, version: &str) -> Sandbox {
             bound_at: NOW.into(),
         }),
         credential: SandboxCredentialState {
+            source: Default::default(),
             service_grants: Vec::new(),
             reaches: vec![],
             key_generation: 0,

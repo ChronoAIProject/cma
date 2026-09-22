@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
 import type { Cma, CommandOptions } from '../../src/index.js';
 
@@ -134,7 +135,8 @@ export function loadCorpus(): ContractCase[] {
       );
       ids.add(fixture.id);
       let scope = symbols.get(fixture.scenario);
-      if (!scope) symbols.set(fixture.scenario, (scope = new Map()));
+      if (!scope)
+        symbols.set(fixture.scenario, (scope = new Map([['ephemeral_credential', randomUUID()]])));
       for (const [name, header] of Object.entries(fixture.headerCaptures ?? {})) {
         const value = fixture.response.headers[header];
         assert(typeof value === 'string', `Missing receipt header ${header}`);

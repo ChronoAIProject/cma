@@ -1,5 +1,5 @@
 //! Typed v2 lifecycle and durable output events.
-use super::{OutputMessage, OutputText, ResponseObject};
+use super::{OutputItem, OutputText, ResponseObject};
 use serde::Deserialize;
 
 /// A standard event with a durable sequence, or a connection-only observation error.
@@ -11,7 +11,7 @@ pub struct ResponseEvent {
     #[serde(flatten)]
     pub payload: ResponseEventPayload,
 }
-/// Standard message projection; provider tools remain in the AG-UI companion.
+/// Standard messages and informational provider activity.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(tag = "type")]
 pub enum ResponseEventPayload {
@@ -50,16 +50,40 @@ pub enum ResponseEventPayload {
     OutputItemAdded {
         /// Position in output.
         output_index: usize,
-        /// Initial message.
-        item: OutputMessage,
+        /// Initial message or activity.
+        item: OutputItem,
     },
     /// Finish one output item.
     #[serde(rename = "response.output_item.done")]
     OutputItemDone {
         /// Position in output.
         output_index: usize,
-        /// Committed message.
-        item: OutputMessage,
+        /// Committed message or terminal activity.
+        item: OutputItem,
+    },
+    /// Started informational provider activity.
+    #[serde(rename = "response.mcp_call.in_progress")]
+    McpCallInProgress {
+        /// Position in output.
+        output_index: usize,
+        /// Stable activity identity.
+        item_id: String,
+    },
+    /// Completed informational provider activity.
+    #[serde(rename = "response.mcp_call.completed")]
+    McpCallCompleted {
+        /// Position in output.
+        output_index: usize,
+        /// Stable activity identity.
+        item_id: String,
+    },
+    /// Failed informational provider activity.
+    #[serde(rename = "response.mcp_call.failed")]
+    McpCallFailed {
+        /// Position in output.
+        output_index: usize,
+        /// Stable activity identity.
+        item_id: String,
     },
     /// Start one text content part.
     #[serde(rename = "response.content_part.added")]
@@ -139,6 +163,9 @@ impl ResponseEventPayload {
             Self::ContentPartDone { .. } => "response.content_part.done",
             Self::OutputTextDelta { .. } => "response.output_text.delta",
             Self::OutputTextDone { .. } => "response.output_text.done",
+            Self::McpCallInProgress { .. } => "response.mcp_call.in_progress",
+            Self::McpCallCompleted { .. } => "response.mcp_call.completed",
+            Self::McpCallFailed { .. } => "response.mcp_call.failed",
             Self::Error { .. } => "error",
         }
     }

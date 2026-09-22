@@ -6,6 +6,8 @@ members = [
     "crates/layer3-adapter",
     "crates/layer4-runtime",
     "crates/cma",
+    "crates/cmaeg-core",
+    "crates/cmaeg",
 ]
 
 [workspace.package]
@@ -34,6 +36,14 @@ agent-client-protocol-schema = { version = "1.5", features = [
 ] }
 async-trait = "0.1"
 axum = { version = "0.8", features = ["ws", "macros"] }
+bytes = "1"
+h2 = "0.4.19"
+http-body-util = "0.1"
+hyper = { version = "1", features = ["client", "http1", "http2"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+webpki-roots = "1"
 futures-util = "0.3"
 flate2 = "1"
 governor = { version = "0.10", default-features = false, features = ["std", "dashmap"] }
@@ -47,6 +57,10 @@ kube = { version = "4.2", default-features = false, features = [
     "ws",
 ] }
 libc = "0.2"
+# CMAEG's bounded metrics facade and pull-format renderer; the service owns its
+# private Axum listener, so the exporter's extra servers and push client stay off.
+metrics = "0.24.6"
+metrics-exporter-prometheus = { version = "0.18.3", default-features = false }
 mongodb = { version = "3", default-features = false, features = [
     "bson-3",
     "compat-3-3-0",
@@ -61,18 +75,23 @@ mongodb = { version = "3", default-features = false, features = [
 portable-pty = "0.9"
 reqwest = { version = "0.12", default-features = false, features = [
     "json",
+    # CMAEG talks to cleartext Kubernetes `.svc` providers with HTTP/2 prior
+    # knowledge; reqwest's HTTP/2 feature is required for that transport.
+    "http2",
     "rustls-tls",
     "stream",
 ] }
 ring = "0.17.14"
 base64 = "0.22"
+dashmap = "6"
+subtle = "2.6"
 serde = { version = "1", features = ["derive"] }
 sha2 = "0.10"
 sha1 = "0.10"
 serde_json = "1"
 similar = "2.7"
 thiserror = "2"
-time = { version = "0.3", features = ["parsing"] }
+time = { version = "0.3", features = ["formatting", "parsing"] }
 tokio = { version = "1", features = [
     "macros",
     "rt-multi-thread",
@@ -84,7 +103,7 @@ tokio = { version = "1", features = [
     "process",
 ] }
 tokio-tungstenite = "0.24"
-tower-http = { version = "0.6", features = ["cors", "trace", "fs", "request-id"] }
+tower-http = { version = "0.6", features = ["cors", "trace", "fs", "request-id", "limit"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 unicode-normalization = "0.1"

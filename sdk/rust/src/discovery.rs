@@ -33,12 +33,9 @@ impl UnsupportedInterfaces<'_> {
             .await
     }
 
-    /// Probe anonymous agent-card discovery without sending the configured credential.
-    pub async fn agent_card(&self) -> Result<()> {
-        let mut request = Request::get(&[".well-known", "agent-card.json"]);
-        request.root = true;
-        request.anonymous = true;
-        self.client.refusal(request).await
+    /// Compatibility alias for public provider discovery; A2A messages remain unsupported.
+    pub async fn agent_card(&self) -> Result<crate::agent_card::ProviderAgentCard> {
+        self.client.read_agent_card().await
     }
 }
 

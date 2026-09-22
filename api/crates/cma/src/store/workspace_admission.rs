@@ -193,6 +193,11 @@ async fn apply_admission(
     admission: &WorkspaceAdmission,
     session: &mut mongodb::ClientSession,
 ) -> Result<AdmissionReceipt, ApplyError> {
+    store
+        .bindings
+        .admit_workspace(admission, session)
+        .await
+        .map_err(ApplyError::Domain)?;
     let candidate = &admission.workspace;
     lock_sandbox(store, candidate.sandbox_id.as_str(), session).await?;
     let sandbox = store

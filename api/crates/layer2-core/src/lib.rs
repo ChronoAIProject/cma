@@ -9,6 +9,7 @@ pub mod activity;
 pub mod activity_detail;
 pub mod activity_service;
 pub mod authz;
+pub mod bots;
 pub mod bridge;
 pub mod capabilities;
 pub mod capacity_bounds;
@@ -18,6 +19,7 @@ pub mod directory;
 pub mod error;
 pub mod event;
 mod event_kinds;
+pub mod gateway_records;
 pub mod ids;
 pub mod inventory;
 pub mod limits;
@@ -50,6 +52,10 @@ pub use directory::{
 };
 pub use error::CoreError;
 pub use event::{Event, EventKind, PressureDimension};
+pub use gateway_records::{
+    GatewayRecord, GatewayRecordHead, GatewayRecordService, GatewayRecordStore,
+    MAX_GATEWAY_RECORD_BLOB_BYTES, MAX_GATEWAY_RECORD_PAGE_SIZE, MIN_GATEWAY_RECORD_BLOB_BYTES,
+};
 pub use ids::{
     AgentId, AgentProfileId, LaunchId, SandboxId, SandboxProfileId, ServiceHandoffId, ServiceId,
     SkillId, SubjectId, WorkspaceId, WorkspaceProfileId, WorktreeId,

@@ -86,6 +86,7 @@ impl SandboxControlAuthorization {
         Ok(Arc::new(Self {
             access: self.access.clone(),
             authorized: AuthorizedResource {
+                binding: self.authorized.binding.clone(),
                 snapshot: self.authorized.snapshot.clone(),
                 decision: self.authorized.decision.clone(),
             },

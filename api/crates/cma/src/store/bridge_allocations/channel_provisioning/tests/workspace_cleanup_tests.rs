@@ -206,6 +206,7 @@ async fn owned_workspace_cleanup_closure_fences_ordinary_and_prepared_admission(
     successor.resolved_commit = None;
     assert!(resources
         .admit_workspace(WorkspaceAdmission {
+            binding: None,
             workspace: successor,
             kind: WorkspaceAdmissionKind::Manual,
             event_at: layer2_core::now_rfc3339()

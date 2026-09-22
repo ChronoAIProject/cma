@@ -1041,6 +1041,7 @@ pub(super) fn sandbox_resource(
             bound_at: stamp(0),
         }),
         credential: SandboxCredentialState {
+            source: Default::default(),
             service_grants: Vec::new(),
             reaches: Vec::new(),
             key_generation: 0,

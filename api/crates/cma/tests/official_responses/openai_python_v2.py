@@ -22,6 +22,13 @@ assert frames[-1].type == "response.completed"
 assert [frame.sequence_number for frame in frames] == list(range(len(frames)))
 assert all("cma_chat" not in frame.type and "reasoning" not in frame.type for frame in frames)
 first = frames[-1].response
+activity = [item for item in first.output if item.type == "mcp_call"]
+assert len(activity) == 1 and activity[0].status == "completed"
+assert activity[0].server_label == "cma" and activity[0].name == "Check proof"
+assert activity[0].arguments == "" and activity[0].output is None and activity[0].error is None
+activity_frames = [frame.type for frame in frames if getattr(frame, "item_id", None) == activity[0].id or getattr(getattr(frame, "item", None), "id", None) == activity[0].id]
+assert activity_frames == ["response.output_item.added", "response.mcp_call.in_progress", "response.mcp_call.completed", "response.output_item.done"]
+first_message = next(item for item in first.output if item.type == "message")
 assert first.conversation.id == conversation.id and first.previous_response_id is None
 first_read = client.responses.retrieve(first.id)
 assert first_read.output == first.output and first_read.output_text == "Hello from CMA"
@@ -39,7 +46,7 @@ second_read = client.responses.retrieve(final.id)
 assert second_read.output_text == final.output_text and second_read.output[0].id == final.output[0].id
 items = list(client.conversations.items.list(conversation.id, limit=1))
 assert len(items) == 4 and all(item.type == "message" for item in items)
-assert {first.output[0].id, final.output[0].id} <= {item.id for item in items}
+assert {first_message.id, final.output[0].id} <= {item.id for item in items}
 for body, code in [
     ({"conversation": conversation.id, "previous_response_id": first.id, "input": "invalid", "stream": True}, "conversation_previous_response_conflict"),
     ({"conversation": conversation.id, "input": "invalid", "stream": False}, "stream_required"),

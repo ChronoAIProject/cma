@@ -1,0 +1,16 @@
+//! NyxID relay authentication and Telegram event normalization.
+pub mod activity;
+pub mod jwks;
+mod jwt;
+pub mod payload;
+pub mod telegram;
+pub mod verify;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VerificationError(pub &'static str);
+impl std::fmt::Display for VerificationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.0)
+    }
+}
+impl std::error::Error for VerificationError {}

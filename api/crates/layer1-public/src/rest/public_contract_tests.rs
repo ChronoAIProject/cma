@@ -12,6 +12,7 @@ mod agent_cases;
 mod agent_event_cases;
 mod artifact_cases;
 mod authoring_cases;
+mod binding_cases;
 mod bridge_cases;
 mod channel_usage_cases;
 mod cleanup_cases;
@@ -20,6 +21,7 @@ mod credential_cases;
 mod domains;
 mod experience_cases;
 mod fault_cases;
+mod gateway_cases;
 mod inventory;
 mod inventory_cases;
 mod invoke_cases;
@@ -143,6 +145,9 @@ fn paths() -> Vec<PathBuf> {
 }
 
 async fn scenario(name: &str) -> Scenario {
+    if let Some(scenario) = binding_cases::scenario(name).await {
+        return scenario;
+    }
     if let Some(scenario) = partition_command_cases::scenario(name).await {
         return scenario;
     }
@@ -231,6 +236,9 @@ async fn scenario(name: &str) -> Scenario {
         return scenario;
     }
     if let Some(scenario) = fault_cases::scenario(name).await {
+        return scenario;
+    }
+    if let Some(scenario) = gateway_cases::scenario(name).await {
         return scenario;
     }
     if let Some(scenario) = agent_cases::scenario(name).await {

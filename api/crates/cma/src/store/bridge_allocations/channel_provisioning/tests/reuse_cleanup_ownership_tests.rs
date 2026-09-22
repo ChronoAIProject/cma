@@ -23,6 +23,7 @@ fn fresh_workspace(previous: &Workspace) -> Workspace {
 
 fn manual_agent(f: &CleanupFixture, workspace: &Workspace, key: &str) -> AgentAdmission {
     AgentAdmission {
+        binding: None,
         created_by: Some(caller().actor),
         owner: workspace.owner.clone(),
         workspace_id: workspace.id.clone(),
@@ -72,6 +73,7 @@ async fn shared_child_cleanup_execution_excludes_new_ordinary_child_admission() 
     new_workspace.path = "/home/cma/during-cleanup".into();
     assert!(resources
         .admit_workspace(WorkspaceAdmission {
+            binding: None,
             workspace: new_workspace,
             kind: WorkspaceAdmissionKind::Manual,
             event_at: layer2_core::now_rfc3339(),
@@ -135,6 +137,7 @@ async fn shared_child_cleanup_restore_refuses_a_recreated_workspace_with_the_sam
     let next = fresh_workspace(&workspace);
     resources
         .admit_workspace(WorkspaceAdmission {
+            binding: None,
             workspace: next.clone(),
             kind: WorkspaceAdmissionKind::Manual,
             event_at: layer2_core::now_rfc3339(),

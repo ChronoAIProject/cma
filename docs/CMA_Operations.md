@@ -5,6 +5,409 @@ The current runtime contract is **3**, not the contract-2 image named in the
 original #832 plan. Product semantics are defined in [CMA Model](CMA_Model.md);
 public routes are in [REST](API_REST.md).
 
+## CMAEG
+
+CMAEG (CMA Event Gateway) is a separate stateless service that receives
+external event channels and call agent providers. Its management service
+listens on `CMAEG_LISTEN`, defaulting to `0.0.0.0:8090`. The deployment image is
+`cma-cmaeg`; deployment manifests are added with the gateway rollout issue.
+
+The gateway loads its outbound provider policy once at startup. `CMAEG_PROVIDERS`
+is a JSON array; an empty array is the default and means that no provider calls
+are permitted. Each entry has this shape:
+
+```json
+[
+  {
+    "slug": "cma_codex",
+    "base_url": "https://provider.example",
+    "kind": "responses_http",
+    "paths": {
+      "agent_card": "/.well-known/agent-card.json",
+      "binding": "/api/v1/cmaeg/bindings/{binding_id}",
+      "conversation": "/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}",
+      "responses": "/api/v2/responses"
+    },
+    "max_inflight": 256
+  }
+]
+```
+
+Provider slugs are lowercase names of up to 32 characters. The registry accepts
+HTTPS origins and cleartext HTTP only for loopback or Kubernetes `.svc` hosts;
+credentials, queries, fragments, unresolved placeholders, traversal segments
+and duplicate slugs are rejected before the service starts. Path variables are
+percent-encoded as single segments, and redirects are disabled. Keep provider
+credentials in the runtime secret mechanism; the allowlist contains origins
+and route templates, never bearer keys.
+
+The gateway startup settings are:
+
+The metrics implementation uses `metrics` 0.24 and
+`metrics-exporter-prometheus` 0.18 (MIT / Apache-2.0), with the exporter's optional
+HTTP server and push client disabled. CMAEG owns the separate Axum scrape listener.
+Registration is process-wide and idempotent. Histogram buckets are 0.005, 0.01,
+0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, and 10 seconds. See
+[CMAEG observability](CMAEG_Operations.md) for metric definitions, request tracing,
+timing headers, and the status of the socket timing and latency harness.
+
+Gateway configuration keys, their types/defaults, and runbooks are maintained in
+[CMAEG operations](CMAEG_Operations.md).
+
+Each allowlisted provider gets its own pooled HTTP client with a bounded idle
+pool, no redirects and the CMAEG user agent. Cleartext `.svc` clients use HTTP/2
+prior knowledge. Changes to any of these keys require a normal deployment and
+startup validation; malformed policy or non-positive limits fail closed.
+
+Both mounted secrets are read before the listener binds. Missing files, invalid key
+rings, empty tokens, and invalid origins stop startup. No mounted secret belongs
+in the provider allowlist or environment values. The image expects these mounts;
+Kubernetes resources remain scheduled for the dedicated gateway rollout issue.
+
+Creator authentication calls NyxID `GET /api/v1/users/me` with a three-second
+deadline. Only token hashes are cached: successes for 60 seconds and failures for
+10 seconds, with oldest-entry eviction at 10,000 entries. A cached success can
+continue during a short NyxID outage; an uncached unreachable check returns 503.
+Invalid bearers return 401. The record client sends the service bearer only to
+the configured canonical CMA record URL, with no redirects or retries and a
+1.5-second read deadline (five seconds for writes and lists).
+
+The management implementation uses `dashmap` for the bounded authentication
+cache and `subtle` for constant-time service-token comparison. It uses the
+workspace's existing `time` and `uuid` dependencies for timestamps and resource
+IDs. The pure protocol library uses `url` to validate record pointers, including
+IPv6 loopback and operator-configured cluster addresses.
+
+### Relay callbacks
+
+`POST /v1/callbacks/{channel_id}` accepts JSON NyxID Telegram relay callbacks.
+The gateway verifies single-valued callback token, message ID, timestamp and
+platform headers, RS256 signature and pinned issuer/audience, exact body digest,
+route membership, and the bound reply token before normalizing any activity.
+An optional relay user token can corroborate the owner and key; it grants no
+additional authority. JWT headers cannot supply a signing-key endpoint.
+
+JWKS requests use only the resolved channel's retained URL, with no redirects,
+a three-second timeout, a 32 KiB response limit and at most sixteen RSA keys.
+The cache holds at most 4,096 URLs, removes expired idle entries at capacity,
+and refuses new URLs when every slot is live. Failed fetches clear stale keys;
+repeated misses and unknown key IDs are throttled for five seconds.
+
+Only human text messages are admitted. Bot/system/unknown senders, edits,
+interactive actions, system events, nontext content and attachments return
+`202 {"status":"refused","reason":"..."}` with a stable reason. Sender and chat
+allowlists and group admission are evaluated after verification. Mention gating
+requires the pinned `bot_username` and Telegram mention entities (UTF-16 offsets);
+missing identity evidence refuses the group message. Reply gating requires
+`reply_to_message.from.is_bot == true`. Raw chat types and verified forum topic
+IDs govern partitioning; normalized route metadata cannot supply a topic.
+
+Admitted messages produce a neutral activity, deterministic conversation ID and
+sealed event reference expiring no later than the reply token or thirty minutes.
+Duplicate callbacks are handed through to provider idempotency. Accepted and
+deferred launcher outcomes both return 202 with event and conversation IDs;
+launcher refusals return explicit RFC 9457 problems. Ingress timing is defined by [CMAEG protocol §11](CMAEG_Protocol.md#11-s3-latency-and-server-timing).
+
+### Provider turns and shutdown
+
+Confirmed delivery references use a distinct authenticated token kind,
+`cmaeg1.mr.<kid>.<sealed-data>`, carrying channel, event, route and platform message
+identifiers. They are capped at 4 KiB and cannot be substituted for event refs.
+Agent tool callers must present a single NyxID agent-key bearer (`nyxid_ag_` or
+`nyx_` plus 16–128 URL-safe key characters); the gateway hashes it and compares
+the channel's retained key hash in constant time without a NyxID request.
+
+The production callback route starts a provider turn with the channel's retained
+agent credential, deterministic conversation ID, and the same event idempotency
+key on every retry. A missing conversation is created once before retrying the
+turn. Upstream busy responses are retried within the configured deadline with
+jitter; local provider capacity returns 503 `provider_busy` immediately with
+`Retry-After: 2`. Header setup and the entire turn have separate deadlines.
+
+The gateway acknowledges when the provider accepts, or at the acceptance budget
+with a deferred 202. Deferred turns and turns whose HTTP caller disconnects keep
+consuming the stream under the total turn deadline. Named outcomes cover
+acceptance, deltas, committed messages, tools, completion, failure and incomplete
+responses. Telegram and custom sinks consume these outcomes through the delivery engine. Stream loss and timeout remain explicit
+`stream_lost` and `turn_timeout` failures.
+
+Turn metadata carries hashed channel/partition identifiers, event and actor IDs.
+Event references longer than the provider's 512-byte metadata limit are omitted
+with a content-free warning. The reference still travels in the provider
+`event_context` extension and the internal delivery context. No credential or source envelope is
+rendered into provider input. Text assembly is bounded to 256 KiB and 256 items;
+local tracked turns are bounded to 4,096 and tool-reply dedupe to 50,000 live refs.
+
+On SIGTERM the listener continues answering `/readyz` with 503 `draining` while
+tracked consumers finish; new launches return a typed 503 `draining`. HTTP drain
+then completes within the same deadline. The deadline cancels remaining local
+consumers and releases their provider permits; it cannot cancel work already
+admitted remotely. Duplicate relay events may have separate consumers, with
+provider idempotency deciding the actual turn. Tool-reply markers contain only
+reference hashes and expire with their authenticated event reference.
+
+The runner emits `cmaeg_ingress_to_provider_seconds` and
+`cmaeg_provider_accept_seconds` as structured tracing measurements. The current
+provider start timestamp marks HTTP dispatch; the observability work adds the
+socket-write measurement required by the final latency harness.
+
+### Agent tools and native MCP
+
+Agent tools are available as REST and as stateless MCP streamable HTTP at
+`POST /mcp` (protocol `2025-06-18`, JSON responses). The two interfaces call the
+same authenticated operations. `initialize`, `ping`, `tools/list` and `tools/call`
+are supported; other JSON-RPC methods return `-32601`. Notifications return 202
+without performing a tool send. MCP validates the public Origin when present;
+GET and DELETE return 405. Tool schemas are generated from the Rust request types,
+with all four tools requiring `event_ref`; updates also require `message_ref`.
+
+| REST operation | Frozen operation ID / native MCP tool | Result |
+| --- | --- | --- |
+| `POST /v1/events/{event_ref}/replies` | `replyToEvent` | Await the delivery receipt, including rendering and confirmed/rejected/unknown outcome. |
+| `POST /v1/messages/{message_ref}/update` | `updateMessage` | Await an update receipt; Telegram relay edits are unsupported. |
+| `POST /v1/events/{event_ref}/typing` | `sendTyping` | `sent` or `unsupported`; Telegram relay typing is unsupported. |
+| `GET /v1/events/{event_ref}/context` | `readEventContext` | Public activity and reply capabilities, excluding credentials and the raw source envelope. |
+
+NyxID exposes these as `cmaeg__replyToEvent`, `cmaeg__updateMessage`,
+`cmaeg__sendTyping` and `cmaeg__readEventContext`. Reply/update REST bodies use
+`OutboundMessage`; their MCP arguments wrap that same body in `message`.
+A 20 KiB text reply is supported; text over 32 KiB returns 413. Tool HTTP bodies
+are limited to 128 KiB. Delivery enqueue and receipt together have an eight-second
+deadline; expiry returns 504 `internal` with `delivery_timeout`. A timeout does
+not confirm whether delivery happened. Confirmed tool replies mark the exact
+reference hash to suppress automatic final delivery. Telegram replies use NyxID's
+relay reply endpoint; edits and typing return `unsupported`.
+
+The Telegram renderer preserves escape atoms while splitting at 4,000 UTF-16
+units, preferring paragraph boundaries. It breaks mentions with a zero-width
+space and strips bidi controls. Cards become text, buttons and choices become
+numbered text, forms become labelled lines, and attachments become placeholders
+with HTTPS links where available. Rendering reports name each block degradation;
+index `65535` denotes a whole-message `chunked:<count>` transformation.
+
+Eight bounded workers serialize commands for each channel/event pair. Acknowledgements
+do not suppress the final answer. Committed messages and tool replies suppress the
+terminal fallback, and tool replies suppress failure notices. A tool send with an
+unknown outcome also suppresses automatic output to avoid a possible duplicate.
+Per-event state expires 30 seconds after the terminal outcome; hashes of consumed
+single-use tokens remain until token expiry. These are local safeguards; gateway
+restarts and multiple replicas rely on NyxID's single-use token enforcement and the
+provider's durable turn idempotency.
+Already-admitted internal turns retain delivery authority through completion even
+when their event references expire; new tool calls still enforce reference expiry.
+Expired reply tokens are replaced by the channel route key at dispatch time.
+
+The first send uses an unexpired reply token; later parts and sends use the retained
+channel route key. Each route has a three-second minimum interval on this replica.
+A 429 delays one retry (Retry-After capped at ten seconds) using the channel key;
+a second 429 or a malformed/lost response has an unknown outcome and is not retried.
+Chunked sends stop on the first unconfirmed part and report partial delivery as
+unknown. Their receipt contains the first confirmed platform message reference.
+During shutdown the gateway drains provider consumers and then queued delivery
+within the same deadline, so a terminal event cannot be discarded merely because
+its stream consumer has exited.
+
+Missing/invalid bearers return 401 and a channel key-hash mismatch returns 403.
+Malformed/tampered event refs return 400 `event_ref_invalid`; expired refs return
+410 `event_ref_expired`. Channel resolution still applies its deletion, restore
+and cache rules. MCP tool failures include the same Problem document in JSON-RPC
+`error.data`. An MCP update must bind both supplied references to the same channel
+and event.
+
+### Custom CloudEvents and sinks
+
+`POST /v1/channels/{channel_id}/events` accepts structured
+`application/cloudevents+json` and binary `application/json` with `ce-*` headers,
+up to 256 KiB. Without `mode=stream`, it returns 202 after provider acceptance or
+the configured acceptance budget, while work continues in the tracked runner.
+The channel must have a custom source; malformed events and unsupported query
+modes return 400. Custom ingress shares the callback concurrency limit.
+
+Custom-source authentication uses the exact retained HMAC secret bytes and Standard
+Webhooks `webhook-id`, `webhook-timestamp`, and `webhook-signature: v1,<base64>`
+headers. Timestamps must be within five minutes; duplicate authentication headers
+are refused. NyxID source keys are checked locally against the configured SHA-256
+hashes. Custom channels admit only `fixed`, `event_subject`, or `per_event`
+partitioning. Long URI subjects retain their full activity value and conversation
+derivation; sealed references carry a digest when the partition exceeds 512 bytes.
+Actor URIs over the provider metadata limit also use a digest in metadata; the
+provider's stored activity and public context retain the complete URI.
+Templates substitute known placeholders once, cap canonical data at 8 KiB and
+total output at 32 KiB with `[truncated]`, and leave unknown placeholders intact.
+
+A configured Sync sink enables `?mode=stream`: 200 SSE carries `cmaeg.text.delta`,
+`cmaeg.message`, and terminal `cmaeg.completed` or `cmaeg.failed`, with keepalive
+comments every 15 seconds. Disconnecting does not cancel the admitted turn.
+Waiters are local to the replica, capped at 4096 with eight queued frames each and
+a shared 32 MiB payload budget. Slow consumers receive `sync_backpressure` and
+close. A sync tool receipt confirms acceptance into that local stream buffer;
+the protocol does not acknowledge consumption by the caller. Tool replies on a
+replica without the waiter still use the channel's other configured sinks.
+
+Result-webhook sinks receive a signed CloudEvent on every tool reply and on
+Completed, Failed, or Incomplete. Neutral messages remain verbatim in
+`data.message`. The types are `cmaeg.response.message`, `cmaeg.response.completed`,
+and `cmaeg.response.failed`. The source contains a channel hash prefix, not a
+sealed reference. Provider diagnostics and credentials are excluded. A Source
+sink on a custom channel delivers nowhere; it does not imply a webhook.
+
+Webhook targets require HTTPS without user information or fragments. Each attempt
+resolves DNS, rejects private/special-use addresses, pins the accepted addresses
+for TLS connection, and refuses redirects and proxy environment settings. Each
+attempt has a five-second total budget. Transient failures retry at 1, 4, and 16
+seconds, keeping the same webhook ID and body and refreshing the signed timestamp.
+Receivers must deduplicate that ID; retries can repeat a previously accepted send.
+These retries are in process and share the delivery drain deadline. HTTP 4xx
+other than 429, redirects, and invalid destinations are definitive refusals.
+
+### Provider event-context extension
+
+The 4 KiB sealed reference cannot contain an entire permitted 32 KiB activity.
+To make context readable after a gateway restart, a turn's existing Responses
+POST also carries `event_context` with schema version 1, `channel_id`,
+`conversation_id`, the full normalized `activity`, and the opaque `event_ref`.
+The provider must store it atomically with turn admission/idempotency and expose
+its reference to the bound agent. This adds no network operation to ingress.
+Synthetic management turns omit the extension.
+
+Authenticated context reads use GET at the configured provider conversation path
+plus `/events/{event_id}`. The gateway uses the retained agent credential, keeps
+the request on the allowlisted origin, refuses redirects, and bounds response
+time to three seconds and size to 1 MiB. Returned channel, conversation and event
+identities must match the authorized reference. Unsupported or unavailable
+provider context returns 503 `event_context_unavailable`; gateway memory is not a
+fallback authority. The CMA provider implementation must implement this additive
+contract before real context reads can succeed. Local tests cover a complete
+32 KiB Unicode message read through a new gateway resolver.
+
+### Channel management
+
+The management API is available at `/v1/channels`; `/openapi.json` describes all
+six operations, their authentication schemes, and the RFC 9457 error schema.
+Every HTTP response, including health, routing errors and body-limit refusals,
+carries `CMAEG-Protocol-Version: 1` and `Cache-Control: no-store`. Problem bodies
+use `application/problem+json`; readiness failures retain their diagnostic JSON. The request body limit is 1 MiB; the sealed
+channel definition must fit CMA's 65,536-byte record limit.
+
+| Method and path | Authorization | Result |
+| --- | --- | --- |
+| `POST /v1/channels` | Creator bearer | Validate, bind the provider, encrypt and store the definition, return 201 with the channel ID, record ID, provider result and endpoints. |
+| `GET /v1/channels/{channel_id}` | Owning creator | Return the public definition, current record version and endpoints. |
+| `PUT /v1/channels/{channel_id}` | Owning creator | Replace channel policy with the required `expected_version`; return 200 or 409 on a stale version. |
+| `DELETE /v1/channels/{channel_id}?expected_version=N` | Owning creator | Unbind the provider, delete the matching record and return 204. |
+| `POST /v1/channels/{channel_id}/test` | Owning creator | Run one synthetic provider turn under a 30-second total deadline; return acceptance latency, up to 200 Unicode characters and the provider level. |
+| `POST /v1/channels/{channel_id}/rekey` | CMA service bearer | Reseal the stored definition under the current master key with a version check and return its `kid`. |
+
+Create requires schema version 1, a name of 1–80 bytes, an Agent Profile snapshot,
+a registered provider slug, sources, partition and reply policies, and
+credentials. The provider receives the profile, its canonical digest, the agent
+key and the gateway tools advertisement. The channel key and HMAC secrets remain
+inside the encrypted definition. A profile's author metadata is independent of
+the authenticated channel owner. Relay sources require a channel key; custom
+HMAC sources must reference a supplied base64 HMAC secret. The gateway derives
+each relay JWKS URL from its HTTPS issuer origin.
+
+Relay sources may pin an optional `bot_username` (5–32 ASCII letters, digits or
+underscores, without `@`). This is the Telegram bot identity for mention matching;
+the callback's agent name does not establish that identity. Scoped admission uses
+`{"type":"deny"}`, `{"type":"open"}` or
+`{"type":"allowlist","ids":["platform-id"]}` for sender and chat policies.
+
+The returned endpoints identify the NyxID callback and custom-event URL that the
+creator registers elsewhere. The callback route is available; the custom-event route is reserved for its
+source implementation. Management creation does not register a NyxID route. After deleting a channel,
+**the creator must also remove its NyxID route**. The gateway does not list
+channels for creators; the creator keeps its channel IDs.
+
+The optional create `Idempotency-Key` header is limited to 256 ASCII bytes.
+Successful responses replay for ten minutes **on the same replica only**.
+Concurrent equal requests on that replica allocate one record and binding;
+reusing the key with another payload returns 409. A different replica or a
+process restart has no replay entry. Keep creation requests on one replica when
+using this guarantee. At 10,000 live replay entries, new keyed creates return
+503 until entries expire.
+
+Read/update/delete/test enforce the sealed definition's owner; another subject
+receives 404. Malformed channel IDs return 400, while authenticated tampering or
+an unknown key ID returns 404. CMA's record version is authoritative and is
+returned both at the top level and in the public definition. Newly stored
+records begin at version 1.
+
+Updates preserve the channel ID, record ID, binding ID and creation timestamp.
+The provider slug cannot change on an existing channel. Omitted credentials
+are retained; explicitly supplied credential fields replace only those fields.
+Changing either the profile digest or the agent key rebinds the provider before
+the record write. A failed create record write triggers a best-effort unbind;
+a failed update record write never unbinds the existing channel.
+
+Provider mutation and CMA record storage do not share a transaction. Mutation
+locks serialize changes within a replica, and CMA version checks detect racing
+record writes across replicas. A failed write after rebind can leave the provider
+with the attempted profile until the caller rereads and retries its intended
+update with the latest version. A failed record delete after unbind should be
+retried with the current version. Coordinate management writes for a channel
+when multiple replicas serve creators.
+
+For master-key rotation, put the new key first while retaining old keys, restart
+the gateway through the normal deployment process, then invoke rekey for each
+retained channel. Rekey rewrites the blob and advances its record version; the
+channel ID remains stable. Retain the old key while any channel ID sealed with
+it remains in use, even after its stored blob has been rekeyed.
+
+Local verification is reproducible with
+`cargo test -p cmaeg --test management` from `api/`. It starts fake CMA, NyxID
+and provider services, launches the actual gateway binary with mounted test
+files, exercises create/read/delete/OpenAPI using `curl`, and checks responses
+and captured tracing output for the supplied credential fixtures. Other cases
+cover provider refusal, record-store rollback, ownership, version conflicts,
+credential retention, idempotency, Unicode output, truncated streams and rekey.
+
+### Channel restoration and readiness
+
+Ingress and tools use the shared channel resolver. A fresh entry is an in-memory
+lookup with no outbound request. A cold entry opens the sealed pointer, checks
+its exact CMA record URL, fetches one encrypted record, validates the definition
+and decodes the agent-key hash. Concurrent misses for the same channel share
+one restore, including when the initiating caller disconnects. The record
+version overrides the version inside the encrypted definition.
+
+Only record-not-found responses are negatively cached. CMA timeouts and server
+failures return 503 `channel_restore_unavailable` and can be retried. Invalid
+stored definitions return 503 `channel_invalid`; malformed IDs return 400 and
+authenticated tampering returns 404 before CMA is contacted. Restore attempts
+are rate limited per channel, returning 429 `rate_limited` after the available
+burst is consumed. Warm hits do not consume this allowance.
+
+An expired positive entry can be served while one background refresh is running,
+for at most one additional TTL. Negative entries never get this grace period.
+At capacity, insertion removes expired entries and then evicts the oldest entry
+in a bounded sample of 32. There is no external cache or persistent replica
+state. Update, delete and rekey invalidate the local cache, and an in-flight
+restore cannot republish a definition invalidated by that operation. Other
+replicas discover changes at the next TTL refresh; an outage can extend stale
+serving to the single additional TTL described above.
+
+`/readyz` reports `ready`, `reasons` and `cma_reachable`. Missing master keys or an
+unparsed provider registry make readiness false with HTTP 503. Production
+startup validates both before binding the listener. CMA reachability is probed
+at `/ready` immediately and every ten seconds and is diagnostic only: a CMA
+outage does not remove a locally initialized gateway from service. Unreachable
+CMA can still prevent cold channel restoration while cached channels remain
+available.
+
+Each restore emits a `cmaeg.restore` span with its record ID and pointer key ID,
+and an elapsed-seconds event carrying the reserved metric name
+`cmaeg_restore_duration_seconds`. Opening a blob under an older key logs its
+rekey need. Histogram export is added by the observability issue. No channel
+credentials or decrypted record bodies are included in these events.
+
+`cargo test -p cmaeg --test restore` exercises concurrent restoration, TTLs,
+rate limits, capacity, cancellation, invalidation races and the latency bound.
+Its HTTP harness submits 100 concurrent misses and checks one restore span and
+100 responses. Its `curl` readiness test stops and restarts the local fake CMA
+and observes the ten-second background probe through both reachability changes.
+The `/resolve` route in that harness exists only in the test server.
+
 ## Delivery Authority
 
 For this milestone, the maintainer's explicit instructions override the release
@@ -1143,3 +1546,43 @@ failures retry through discovery; terminal rejection does not schedule runtime I
 Applied receipts describe durable transitions, whose runtime work is completed
 by the existing lifecycle recovery loop. Public reads and same-key retries recover
 lost acknowledgments without adding another transition.
+
+### Bot lifecycle records
+
+The `bots` collection stores owner-scoped creation receipts, immutable profile
+revisions, reserved channel-record UUIDs, external resource IDs, credential hashes
+and worker progress. Credential bytes are not part of this aggregate. Writes and
+reads require majority acknowledgement. A unique `(owner, creation_key_hash)`
+index prevents concurrent requests with one creation key from admitting two Bots;
+changed request content conflicts. Deleted records retain this receipt so a late
+retry cannot silently recreate external resources.
+
+The selected Agent Profile revision is pinned with the current published Sandbox
+and Workspace defaults. Agent profiles do not reference parent environments in
+the CMA model. Later default or draft changes cannot rewrite an admitted Bot.
+Every reference must be readable by the owner and must identify a published
+revision. An omitted Agent model pins the deployment's configured default model.
+
+Bot commands and worker claims share the aggregate's revision fence. A claim
+expires after 120 seconds; successful checkpoints renew it. An abandoned create
+is reclaimed as cleanup work because its transient key values cannot be recovered
+from the Bot record. Cleanup must resolve any reserved external resource before
+completing. Pending mutations block incompatible commands, and expired writers
+cannot save progress over a replacement worker. `cma:bot:manage` maps to the
+owner-only `ManageOwnBots` capability; it grants no binding or gateway record
+management authority.
+
+The core worker checkpoints create, policy changes, rotation and deletion before
+external effects. A failed create remains durable cleanup work, including a
+120-second settling interval before discovery of uncertain key, channel and route
+creations. Cleanup verifies absence before completing; dependency failures retain
+retryable work. Rotation reconciles both the retained provider binding and route
+before revoking obsolete keys, including when a provider accepted a replacement
+before the channel record write failed. Its external execution port requires
+bounded calls, complete owner-scoped discovery and idempotent deletion.
+
+This is an implementation foundation for #915. Production external adapters,
+controller scheduling, renewal and audit integration, public Bot routes and Bot
+SDK methods are still pending. The worker is exercised with failure-injection
+doubles; it is not wired into the running control plane. Existing channel and
+binding management APIs remain the implemented external surfaces.

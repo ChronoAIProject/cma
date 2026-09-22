@@ -6,9 +6,12 @@ use crate::{
 };
 use reqwest::{Method, StatusCode, header::HeaderValue};
 use serde::de::DeserializeOwned;
+mod activity_state;
 mod controls;
 mod controls_types;
+mod event_context;
 mod events;
+pub use event_context::EventContext;
 mod input;
 mod queued_cancellation_types;
 mod resources;
@@ -41,7 +44,9 @@ impl ResponsesV2<'_> {
     /// Read an existing Agent conversation.
     pub async fn read_conversation(&self, id: &str) -> Result<Conversation> {
         let conversation: Conversation = self.get(&["api", "v2", "conversations", id], &[]).await?;
-        identity(&conversation.id, id)?;
+        if id.starts_with("agt_") {
+            identity(&conversation.id, id)?;
+        }
         Ok(conversation)
     }
     /// Read committed standard messages with exclusive cursor pagination.
@@ -152,7 +157,10 @@ impl ResponsesV2<'_> {
         }
         ResponseStream::new(
             crate::stream::open(&self.client.inner, request).await?,
-            Some(conversation),
+            alias
+                .filter(|id| id.starts_with("agt_"))
+                .map(str::to_owned)
+                .or_else(|| conversation.starts_with("agt_").then_some(conversation)),
             None,
             None,
         )

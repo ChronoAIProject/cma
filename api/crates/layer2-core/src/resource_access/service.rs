@@ -22,11 +22,13 @@ pub enum ResourceAccessError {
 pub struct AuthorizedResource {
     pub snapshot: ResourceAccessSnapshot,
     pub decision: AccessDecision,
+    pub(crate) binding: Option<crate::sandbox::binding::BindingConversationAuthority>,
 }
 
 #[derive(Clone)]
 pub struct ResourceAccessService {
     pub(super) store: Arc<dyn ResourceShareStore>,
+    pub(super) bindings: Option<Arc<crate::sandbox::binding::BindingAccessService>>,
     pub(super) organizations: Arc<dyn OrganizationAuthority>,
 }
 
@@ -38,6 +40,7 @@ impl ResourceAccessService {
         Self {
             store,
             organizations,
+            bindings: None,
         }
     }
 
@@ -53,6 +56,9 @@ impl ResourceAccessService {
     ) -> Result<AuthorizedResource, ResourceAccessError> {
         if !context.validate_principal() {
             return Err(AccessError::NotFound.into());
+        }
+        if context.credential_source == CredentialSource::Binding {
+            return self.authorize_binding(context, target, capability).await;
         }
         let snapshot = self.store.resource_access_snapshot(target).await?;
         let scope = snapshot.scope(target)?;
@@ -71,6 +77,7 @@ impl ResourceAccessService {
             return Ok(AuthorizedResource {
                 snapshot,
                 decision: independent,
+                binding: None,
             });
         }
         let organizations: BTreeSet<_> = snapshot
@@ -147,6 +154,7 @@ impl ResourceAccessService {
         }
         Ok(AuthorizedResource {
             snapshot: refreshed,
+            binding: None,
             decision,
         })
     }

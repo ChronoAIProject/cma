@@ -42,8 +42,8 @@ async fn assert_named_refusal(response: Response<Body>, expect_body: bool) {
 }
 
 #[tokio::test]
-async fn agent_card_discovery_preserves_the_named_refusal_shape() {
-    let response = router()
+async fn agent_card_discovery_advertises_the_verified_provider_contract() {
+    let response = router("https://cma.example")
         .oneshot(
             Request::get("/.well-known/agent-card.json")
                 .body(Body::empty())
@@ -51,7 +51,19 @@ async fn agent_card_discovery_preserves_the_named_refusal_shape() {
         )
         .await
         .unwrap();
-    assert_named_refusal(response, true).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+    let body: serde_json::Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 64 * 1024).await.unwrap()).unwrap();
+    assert_eq!(
+        body,
+        serde_json::json!({
+            "name":"CMA Codex provider", "version":env!("CARGO_PKG_VERSION"), "url":"https://cma.example",
+            "capabilities":{"streaming":true,"activity_items":true,"client_tools":false,"cancel":true,"rich_input":false},
+            "provider_contract":{"binding":"/api/v1/cmaeg/bindings/{binding_id}","conversation":"/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}","responses":"/api/v2/responses"},
+            "authentication":{"schemes":["bearer-agent-key"]}
+        })
+    );
 }
 
 #[tokio::test]
@@ -68,7 +80,7 @@ async fn every_method_on_the_documented_binding_refuses_by_name() {
         Method::TRACE,
     ] {
         let expect_body = method != Method::HEAD;
-        let response = router()
+        let response = router("https://cma.example")
             .oneshot(
                 Request::builder()
                     .method(method)
@@ -84,7 +96,7 @@ async fn every_method_on_the_documented_binding_refuses_by_name() {
 
 #[tokio::test]
 async fn an_undocumented_subpath_remains_not_found() {
-    let response = router()
+    let response = router("https://cma.example")
         .oneshot(
             Request::post("/api/v1/a2a/unknown")
                 .body(Body::empty())

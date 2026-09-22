@@ -31,6 +31,31 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
         };
     }
     match op {
+        "PUT /api/v1/gateway/channel-records/{record_id}" => c.check(
+            client
+                .gateway_records()
+                .put(c.param("record_id"), &c.body()?)
+                .await,
+        ),
+        "GET /api/v1/gateway/channel-records/{record_id}" => {
+            c.check(client.gateway_records().get(c.param("record_id")).await)
+        }
+        "GET /api/v1/gateway/channel-records" => c.check(
+            client
+                .gateway_records()
+                .list(&cma_sdk::gateway_records::GatewayRecordListOptions {
+                    owner: c.q("owner"),
+                    after: c.q("after"),
+                    limit: c.number("limit")?,
+                })
+                .await,
+        ),
+        "DELETE /api/v1/gateway/channel-records/{record_id}" => c.check(
+            client
+                .gateway_records()
+                .delete(c.param("record_id"), c.number("expected_version")?)
+                .await,
+        ),
         "GET /api/v1/agents/{id}/channel-usage" => {
             c.check(client.agents().channel_usage(c.param("id")).await)
         }

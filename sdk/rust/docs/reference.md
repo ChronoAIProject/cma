@@ -32,7 +32,7 @@ returns `Conformance`, containing `service`, `status`, and the currently exposed
 | `responses()` | `create_conversation`, `read_conversation`, `list_items`, `create`, `read`, unsupported `delete`, `cancel` |
 | `admin()` | `list_sandboxes`, `read_sandbox`, `sandbox_events`, `retire_sandbox`, `list_profiles`, `retire_profile`, `read_settings`, `replace_settings`, `patch_settings`, `reset_settings`, `pause_triggers`, `resume_triggers`, `read_runtime_inventory`, `list_activity` |
 | `Client` reads | `read_conformance`, `read_openapi`, `read_defaults`, `read_trigger_preview`, `read_trigger_badge` |
-| Explicit refusals | `agents().terminal`, `unsupported().mcp`, `unsupported().a2a`, `unsupported().agent_card` |
+| Explicit refusals | `agents().terminal`, `unsupported().mcp`, `unsupported().a2a` |
 
 `C` is one of `AgentProfileContent`, `WorkspaceProfileContent`, or
 `SandboxProfileContent` from `cma_sdk::profiles`. Profile drafts and immutable
@@ -150,3 +150,11 @@ child `remove_child` retains its original Workspace-preserving scope. See
 ## Source-control consent
 
 `bridges().read_source_controls(grant_id)` and `bridges().set_source_controls(grant_id, &request, &key)` observe and record separate original-sender consent. Types: `BridgeSourceControlAction`, `BridgeSourceControlRequest`, `BridgeSourceControlPolicy`, `BridgeSourceControlState`, `BridgeSourceControlReceipt`, `BridgeSourceControlScope`, and `BridgeSourceControlApprovalMode`. Read absence is required null. PUT returns exactly 200. Consent never demonstrates runtime control support. See [Bridges](bridges.md) for revision bounds and exact-request recovery.
+
+`read_agent_card()` reads typed public provider discovery without credentials.
+`unsupported().agent_card()` remains a compatibility alias and returns the same
+card; older servers' named refusals remain typed API errors.
+
+Encrypted gateway records are available through `client.gateway_records().put/get/list/delete`. These operations require gateway management authority. `blob` is base64 ciphertext; creation uses `expected_version: null`, and replacement supplies the retained version. They use version preconditions without an Idempotency-Key header.
+
+Provider binding management uses `client.provider_bindings().put/get/delete/ensure_conversation/delete_conversation`. Supply the complete profile snapshot and digest for PUT. These gateway-only operations require both management capabilities; use the scoped binding credential for Responses and immutable event-context reads. Binding responses never contain the supplied credential.

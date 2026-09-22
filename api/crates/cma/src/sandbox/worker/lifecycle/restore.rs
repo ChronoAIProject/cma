@@ -349,7 +349,12 @@ impl SandboxWorker {
                 )
                 .await;
         }
-        let Some(rotation_at) = credential_rotation_at(&sandbox) else {
+        let rotation_at = if sandbox.credential.source.is_managed() {
+            credential_rotation_at(&sandbox)
+        } else {
+            Some(now)
+        };
+        let Some(rotation_at) = rotation_at else {
             return self
                 .handle_lifecycle_failure(
                     sandbox,

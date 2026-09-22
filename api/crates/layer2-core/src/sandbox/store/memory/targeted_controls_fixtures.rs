@@ -31,6 +31,7 @@ pub(in crate::sandbox::store::memory) async fn fixture() -> (
         .clone();
     let command = AgentCommand::Interrupt;
     let ordinary = CommandReservation {
+        binding: None,
         envelope: AgentCommandEnvelope {
             schema_version: AGENT_IO_SCHEMA_VERSION,
             command_id: AgentCommandId::generate(),

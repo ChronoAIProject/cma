@@ -82,7 +82,7 @@ async fn probe(client: &Client, path: &str) -> Result<()> {
     match path {
         "/api/v1/mcp" => client.unsupported().mcp().await,
         "/api/v1/a2a" => client.unsupported().a2a().await,
-        "/.well-known/agent-card.json" => client.unsupported().agent_card().await,
+        "/.well-known/agent-card.json" => client.unsupported().agent_card().await.map(|_| ()),
         _ => panic!("unexpected discovery path"),
     }
 }
@@ -133,7 +133,10 @@ async fn unsupported_probes_preserve_credentials_policy_and_named_typed_problems
 #[tokio::test]
 async fn unsupported_probes_refuse_unexpected_success() {
     let server = WireServer::new().await;
-    for (method, path, _, authenticated) in PROBES {
+    for (method, path, _, authenticated) in PROBES
+        .into_iter()
+        .filter(|(_, path, _, _)| *path != "/.well-known/agent-card.json")
+    {
         server.expect(wire::json(
             method,
             path,
@@ -149,6 +152,35 @@ async fn unsupported_probes_refuse_unexpected_success() {
             }
         );
     }
-    assert_eq!(server.request_count(), 3);
+    assert_eq!(server.request_count(), 2);
+    server.assert_drained();
+}
+
+#[tokio::test]
+async fn provider_card_is_typed_and_anonymous_through_both_entry_points() {
+    let server = WireServer::new().await;
+    let document = json!({"name":"CMA Codex provider","version":"0.1.0","url":"https://cma.example",
+        "capabilities":{"streaming":true,"activity_items":true,"client_tools":false,"cancel":true,"rich_input":false},
+        "provider_contract":{"binding":"/api/v1/cmaeg/bindings/{binding_id}","conversation":"/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}","responses":"/api/v2/responses"},
+        "authentication":{"schemes":["bearer-agent-key"]}});
+    for alias in [false, true] {
+        server.expect(wire::json(
+            "GET",
+            "/.well-known/agent-card.json",
+            None,
+            200,
+            document.clone(),
+            false,
+        ));
+        let card = if alias {
+            server.client.unsupported().agent_card().await.unwrap()
+        } else {
+            server.client.read_agent_card().await.unwrap()
+        };
+        assert_eq!(card.name, "CMA Codex provider");
+        assert!(card.capabilities.activity_items && card.capabilities.cancel);
+        assert!(!card.capabilities.client_tools);
+        assert_eq!(card.provider_contract.responses, "/api/v2/responses");
+    }
     server.assert_drained();
 }

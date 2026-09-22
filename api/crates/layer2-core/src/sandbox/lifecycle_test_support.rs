@@ -47,6 +47,7 @@ pub(super) fn sandbox() -> Sandbox {
             bound_at: "2026-09-05T00:00:00Z".into(),
         }),
         credential: SandboxCredentialState {
+            source: Default::default(),
             service_grants: Vec::new(),
             reaches: vec![],
             key_generation: 1,

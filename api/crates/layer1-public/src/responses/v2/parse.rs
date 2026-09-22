@@ -36,6 +36,7 @@ pub(super) fn parse(
                 | "input"
                 | "stream"
                 | "metadata"
+                | "event_context"
                 | "model"
                 | "store"
         ) {
@@ -125,7 +126,19 @@ pub(super) fn parse(
             "metadata allows 16 pairs with at most 64 characters per key and 512 per value.",
         ));
     }
-    let input = text_input(body.remove("input").unwrap_or(Value::Null))?;
+    let mut input = text_input(body.remove("input").unwrap_or(Value::Null))?;
+    if let Some(value) = body.remove("event_context") {
+        input.content.push(AgentContent::ExternalEvent {
+            context: super::event_context::parse(value)?,
+        });
+        input = input.canonical().map_err(|_| {
+            refusal(
+                "event_context",
+                "invalid_event_context",
+                "Input and event reference exceed the runtime input limit.",
+            )
+        })?;
+    }
     Ok(CommandSubmission {
         agent_id: conversation,
         command: AgentCommand::Message {

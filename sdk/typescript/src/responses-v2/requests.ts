@@ -1,3 +1,4 @@
+import { v2EventContext } from './event-context.js';
 import { ProtocolError } from '../errors.js';
 import { dictionary, record, text } from '../schema.js';
 import type { CreateV2AgentResponseRequest } from './types.js';
@@ -22,13 +23,14 @@ export function v2Request(value: unknown, agent?: string): CreateV2AgentResponse
           'model',
           'store',
           'previous_response_id',
+          'event_context',
         ].includes(key),
     )
   )
     throw new ProtocolError('Responses field is unsupported');
   if (body.conversation !== undefined) {
     const id = conversationId(body.conversation);
-    if (agent !== undefined && id !== agent)
+    if (agent !== undefined && id !== agent && id.startsWith('agt_') && agent.startsWith('agt_'))
       throw new ProtocolError('conversation must match the Agent alias');
   } else if (agent === undefined) throw new ProtocolError('conversation is required');
   if (body.stream !== true || (body.store !== undefined && body.store !== true))
@@ -66,6 +68,7 @@ export function v2Request(value: unknown, agent?: string): CreateV2AgentResponse
     }
   }
   if (!text(content).length) throw new ProtocolError('input must not be empty');
+  if (body.event_context !== undefined) v2EventContext(body.event_context);
   if (body.metadata !== undefined && body.metadata !== null) {
     const entries = Object.entries(dictionary(text)(body.metadata));
     if (

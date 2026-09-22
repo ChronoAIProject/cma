@@ -65,3 +65,33 @@ describe('explicit unsupported operations', () => {
     );
   });
 });
+
+it('reads typed provider discovery anonymously through both entry points', async () => {
+  const card = {
+    name: 'CMA Codex provider',
+    version: '0.1.0',
+    url: 'https://cma.example',
+    capabilities: {
+      streaming: true,
+      activity_items: true,
+      client_tools: false,
+      cancel: true,
+      rich_input: false,
+    },
+    provider_contract: {
+      binding: '/api/v1/cmaeg/bindings/{binding_id}',
+      conversation: '/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}',
+      responses: '/api/v2/responses',
+    },
+    authentication: { schemes: ['bearer-agent-key'] },
+  };
+  const credential = vi.fn(() => {
+    throw new Error('public discovery must not resolve credentials');
+  });
+  const fetch = vi.fn(async () => new Response(JSON.stringify(card)));
+  const client = createClient({ credential, cookies: true, fetch });
+  expect(await client.readAgentCard()).toEqual(card);
+  expect(await client.unsupported.agentCard()).toEqual(card);
+  expect(credential).not.toHaveBeenCalled();
+  expect(fetch.mock.calls).toHaveLength(2);
+});
