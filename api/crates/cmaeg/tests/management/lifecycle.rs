@@ -190,3 +190,48 @@ async fn update_preserves_identity_credentials_and_rejects_stale_or_invalid_writ
     cma.close().await;
     nyxid.close().await;
 }
+
+#[tokio::test]
+async fn channel_can_be_created_pending_then_attached_to_a_route() {
+    let provider = FakeProvider::start(FakeProviderConfig::default()).await;
+    let cma = FakeCma::start(false).await;
+    let nyxid = FakeNyxid::start().await;
+    let (base, shutdown, task) = app(&provider, &cma, &nyxid).await;
+    let client = Client::new();
+    let mut request = create_body();
+    request["credentials"] = json!({"agent_key":uuid::Uuid::new_v4().to_string(),"channel_key":uuid::Uuid::new_v4().to_string()});
+    request["sources"][0]["route_ids"] = json!([]);
+    let response = client
+        .post(format!("{base}/v1/channels"))
+        .bearer_auth("token-alice")
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 201);
+    let created: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(created["definition"]["sources"][0]["route_ids"], json!([]));
+    let url = format!(
+        "{base}/v1/channels/{}",
+        created["channel_id"].as_str().unwrap()
+    );
+    request.as_object_mut().unwrap().remove("credentials");
+    request["expected_version"] = created["version"].clone();
+    request["sources"][0]["route_ids"] = json!(["new-route"]);
+    let response = client
+        .put(url)
+        .bearer_auth("token-alice")
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let updated: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(
+        updated["definition"]["sources"][0]["route_ids"],
+        json!(["new-route"])
+    );
+    assert_eq!(updated["channel_id"], created["channel_id"]);
+    shutdown.send(()).unwrap();
+    task.await.unwrap();
+}
