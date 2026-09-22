@@ -221,7 +221,12 @@ CMAEG tools natively with the Bot's own agent key; no separate tools catalogue
 connection is required.
 
 Creation takes a name, `nyxid_bot_id`, a published Agent profile reference, an
-admission policy and a reply policy. Retain the creation idempotency key across
+admission policy and a reply policy. Optional `sandbox_profile` and
+`workspace_profile` references select personally owned published environments;
+each omitted reference pins its platform default. Bot responses include the
+pinned environment references (older servers may omit them). Custom profiles
+preserve installed software, service access, repository and setup commands.
+Retain the creation idempotency key across
 uncertain outcomes. HTTP 201 returns the durable Bot in `creating`; poll `get`
 for `active` or `failed` and inspect `operation.step` for cleanup progress.
 Other mutations return 202 with progress. A deleted Bot becomes 404 only after

@@ -438,8 +438,13 @@ required.
 `POST /api/v1/bots` accepts `{name,nyxid_bot_id,profile:{id,revision},admission,reply}`
 and an `Idempotency-Key`. It returns 201 with a durable `creating` resource;
 poll its GET route until `active` or `failed`. HTTP disconnects do not cancel
-admitted work. The selected Agent revision and the published platform-default
-Sandbox and Workspace revisions are pinned at admission. Managed model access is
+admitted work. Optional `sandbox_profile:{id,revision}` and
+`workspace_profile:{id,revision}` select personally owned published environments;
+each omitted reference uses its published platform default. All three profile
+revisions are pinned at admission and returned by the Bot read projection.
+Explicit environment references must belong to the owner, including when public;
+foreign public profiles require a personal fork before selection. This preserves
+custom resources, repository, installation and setup without changing global defaults. Managed model access is
 required. Environment resources, workspace location, setup commands, service
 scope, skills, prompt, permissions and thinking effort follow the CMAEG profile
 schema; unsupported access is explicitly refused.
@@ -473,8 +478,8 @@ before running these tests in isolation; full CI builds the workspace first.
 
 The dashboard's personal **Bots** entry requires the `manage_own_bots` browser
 capability. `/bots/new` selects an available Telegram bot, an exact published
-Agent Profile revision, explicit message admission and reply settings, then
-reviews the request. Detail pages show durable setup checkpoints, provider level,
+Agent Profile revision, optional personally owned Sandbox and Workspace revisions,
+explicit message admission and reply settings, then reviews the request. Detail pages show durable setup checkpoints, provider level,
 callback URL, access expiry and the last synthetic test. They expose explicit
 enable/disable, key rotation and confirmed deletion. Credential values are never
 returned to the dashboard. Deletion is complete only after the accepted operation

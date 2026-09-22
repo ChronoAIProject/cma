@@ -6,8 +6,17 @@ use std::sync::Arc;
 struct Profiles;
 #[async_trait::async_trait]
 impl BotProfileResolver for Profiles {
-    async fn resolve(&self, _: &SubjectId, _: &AgentProfileRef) -> Result<BotProfiles, BotError> {
-        Ok(profiles())
+    async fn resolve(&self, _: &SubjectId, request: &CreateBot) -> Result<BotProfiles, BotError> {
+        let mut pinned = profiles();
+        if let Some(reference) = &request.sandbox_profile {
+            pinned.sandbox.profile_id = reference.id.clone();
+            pinned.sandbox.revision = reference.revision;
+        }
+        if let Some(reference) = &request.workspace_profile {
+            pinned.workspace.profile_id = reference.id.clone();
+            pinned.workspace.revision = reference.revision;
+        }
+        Ok(pinned)
     }
 }
 fn profiles() -> BotProfiles {
@@ -125,6 +134,8 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
             id: layer2_core::AgentProfileId("agp_bot".into()),
             revision: 1,
         },
+        sandbox_profile: None,
+        workspace_profile: None,
         admission: BotAdmission::All,
         reply: BotReply {
             auto_final: true,

@@ -738,6 +738,13 @@ above applies even when an operation annotates only its principal responses.
 
 ### Bots
 
+Creation optionally accepts `sandbox_profile:{id,revision}` and
+`workspace_profile:{id,revision}` alongside the required Agent `profile`.
+Explicit environment profiles must be personally owned and published; an omitted
+reference pins the corresponding platform default. Bot responses expose all three
+pinned references. Reusing a creation key with different environment references
+returns 409, including changing an omitted default into an explicit reference.
+
 | Operation | Behavior |
 |---|---|
 | `POST /api/v1/bots` | Create a durable owner Bot with an Idempotency-Key; 201 returns creation progress. |
