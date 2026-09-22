@@ -68,7 +68,7 @@ async fn profile_resolution_pins_published_defaults_and_conceals_private_agent_r
         .unwrap();
     let mut sandbox = metadata;
     sandbox["id"] = json!(defaults.sandbox_profile.id);
-    sandbox["draft"] = json!({"cpu_millis":1000,"memory_mib":2048,"nyxid_services":[],"agent_provider":"codex","model_access":"chronoai_managed","max_workspaces":1,"max_agents_per_workspace":1,"workspace_profiles":[],"software_install_commands":[],"environment_variables":[]});
+    sandbox["draft"] = json!({"cpu_millis":1000,"memory_mib":2048,"nyxid_services":[],"agent_provider":AgentProvider::default(),"model_access":"chronoai_managed","max_workspaces":1,"max_agents_per_workspace":1,"workspace_profiles":[],"software_install_commands":[],"environment_variables":[]});
     store
         .create_sandbox_profile(serde_json::from_value(sandbox).unwrap())
         .await
