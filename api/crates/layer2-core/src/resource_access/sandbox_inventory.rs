@@ -126,7 +126,11 @@ impl ResourceAccessService {
                 SystemTime::now(),
             )?;
             decision.require(ResourceCapability::ViewDetails)?;
-            items.push(AuthorizedResource { snapshot, decision });
+            items.push(AuthorizedResource {
+                snapshot,
+                decision,
+                binding: None,
+            });
         }
         membership.require(self)?;
         Ok(SandboxInventoryCandidates { membership, items })

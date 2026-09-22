@@ -196,10 +196,7 @@ impl ControlPlaneComposition {
         )
         .with_connections(connection_prerequisite.clone());
         let live_agents = Arc::new(LiveAgentRegistry::default());
-        let resource_access = Arc::new(layer2_core::resource_access::ResourceAccessService::new(
-            stores.sandbox_model.clone(),
-            auth.clone(),
-        ));
+        let resource_access = bindings::resource_access(&stores, auth.clone());
         let projections = AgentProjectionServices::new(
             stores.sandbox_model.clone(),
             stores.sandbox_profiles.clone(),

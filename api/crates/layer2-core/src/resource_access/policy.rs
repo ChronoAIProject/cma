@@ -228,6 +228,29 @@ impl AccessDecision {
         result
     }
 
+    pub(crate) fn binding(
+        proof: &crate::sandbox::binding::BindingConversationAuthority,
+        revive_parent: bool,
+    ) -> Self {
+        let mut result = Self::empty();
+        result.capabilities.extend(if revive_parent {
+            vec![ResourceCapability::ManageSandbox]
+        } else {
+            vec![
+                ResourceCapability::ViewDetails,
+                ResourceCapability::ViewHistory,
+                ResourceCapability::Interact,
+                ResourceCapability::OperateAgent,
+            ]
+        });
+        result.independent = result.capabilities.clone();
+        result.observe_independent(super::ResourceAuthorizationBasis::ExternalBinding {
+            binding_id: proof.binding.binding_id.clone(),
+            generation: proof.binding.generation,
+        });
+        result
+    }
+
     fn empty() -> Self {
         Self {
             capabilities: BTreeSet::new(),
