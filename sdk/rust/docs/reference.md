@@ -166,7 +166,9 @@ Provider binding management uses `client.provider_bindings().put/get/delete/ensu
 `enable`, `rotate_keys` and `delete`. Use the current renewable CMA sign-in with
 `cma:bot:manage`; independent agent keys cannot borrow the owner's stored login.
 The owner must already have registered a personal Telegram bot in NyxID and
-connected the profile/model services plus the `cmaeg` tools service.
+connected the profile's explicit services and managed model service. CMA attaches
+CMAEG tools natively with the Bot's own agent key; no separate tools catalogue
+connection is required.
 
 Creation takes a name, `nyxid_bot_id`, a published Agent profile reference, an
 admission policy and a reply policy. Retain the creation idempotency key across

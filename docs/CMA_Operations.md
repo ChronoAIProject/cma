@@ -173,9 +173,10 @@ with all four tools requiring `event_ref`; updates also require `message_ref`.
 | `POST /v1/events/{event_ref}/typing` | `sendTyping` | `sent` or `unsupported`; Telegram relay typing is unsupported. |
 | `GET /v1/events/{event_ref}/context` | `readEventContext` | Public activity and reply capabilities, excluding credentials and the raw source envelope. |
 
-NyxID exposes these as `cmaeg__replyToEvent`, `cmaeg__updateMessage`,
-`cmaeg__sendTyping` and `cmaeg__readEventContext`. Reply/update REST bodies use
-`OutboundMessage`; their MCP arguments wrap that same body in `message`.
+CMA attaches the native MCP server as `cmaeg`; Codex exposes the four names
+under its `mcp__cmaeg__` prefix. This path requires no NyxID tools catalogue
+registration. Reply/update REST bodies use `OutboundMessage`; their MCP
+arguments wrap that same body in `message`.
 A 20 KiB text reply is supported; text over 32 KiB returns 413. Tool HTTP bodies
 are limited to 128 KiB. Delivery enqueue and receipt together have an eight-second
 deadline; expiry returns 504 `internal` with `delivery_timeout`. A timeout does
@@ -428,10 +429,11 @@ requires the owner to reconnect; it does not cause a fallback to the gateway
 service identity.
 
 The owner first registers a personal Telegram bot with NyxID and connects the
-profile's services, the managed model service, and the `cmaeg` tools service.
+profile's explicit services and the managed model service. CMA attaches CMAEG
+tools through the binding's native endpoint using that Bot's own agent key.
 CMA will refuse a bot that already has an active NyxID route, preserving existing
-bridge routing. The `cmaeg` catalogue service must expose CMAEG's protocol tools;
-its presence is a provisioning requirement, not something CMA creates implicitly.
+bridge routing. No separate `cmaeg` catalogue service or shared tool credential is
+required.
 
 `POST /api/v1/bots` accepts `{name,nyxid_bot_id,profile:{id,revision},admission,reply}`
 and an `Idempotency-Key`. It returns 201 with a durable `creating` resource;
@@ -444,7 +446,7 @@ schema; unsupported access is explicitly refused.
 
 Creation mints separate 30-day agent and route keys in the exact
 `cma:bot:<bot_id>:<agent|route>:<generation>` namespace. The agent key has only the
-resolved profile/model/tool service grants. The route key has no service or node
+resolved profile and model service grants. The route key has no service or node
 grants. Plaintext exists only during bounded requests; Bot records retain IDs,
 hashes and the earliest expiry. The channel reserves a durable record UUID,
 starts with no admitted relay routes, then receives the exact route ID after
