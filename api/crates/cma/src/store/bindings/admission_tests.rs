@@ -54,7 +54,7 @@ pub(super) fn sandbox(value: &ProviderBinding) -> Sandbox {
     }
 }
 
-fn workspace(value: &ProviderBinding) -> Workspace {
+pub(super) fn workspace(value: &ProviderBinding) -> Workspace {
     let content = value
         .profile
         .environment
