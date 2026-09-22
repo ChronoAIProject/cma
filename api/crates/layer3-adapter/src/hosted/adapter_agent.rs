@@ -251,7 +251,7 @@ pub(super) async fn open_agent(
     settings.recovered_prompt = recovered_prompt;
     // Provider rendering has no authority to add channel tools. Only the
     // configured control-plane source can prove an eligible creation record.
-    if settings.channel_tool.is_some() {
+    if settings.channel_tool.is_some() || settings.provider_tool.is_some() {
         return Err(AdapterError::Rejected(
             "runtime supplied channel tool authority".into(),
         ));
@@ -267,6 +267,18 @@ pub(super) async fn open_agent(
     if let Some(binding) = &settings.channel_tool {
         binding.require_request(handle, request, authority_fence)?;
     }
+    settings.provider_tool = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        adapter.resolve_provider_tools(handle, request, authority_fence),
+    )
+    .await
+    .map_err(|_| AdapterError::Unavailable("provider tool authority timed out".into()))??;
+    if settings.channel_tool.is_some() && settings.provider_tool.is_some() {
+        return Err(AdapterError::Rejected(
+            "Agent has conflicting tool authorities".into(),
+        ));
+    }
+    let provider_tool = settings.provider_tool.clone();
     let tool_binding = settings.channel_tool.clone();
     if settings.own_credential != request.options.own_credential {
         return Err(AdapterError::Rejected(
@@ -318,6 +330,17 @@ pub(super) async fn open_agent(
         )
         .await
         .map_err(|_| AdapterError::Unavailable("channel tool open receipt timed out".into()))??;
+    }
+    if let (Some(source), Some(binding)) = (&adapter.provider_tools, provider_tool) {
+        let conversation = channel.conversation_id.as_deref().ok_or_else(|| {
+            AdapterError::Rejected("provider tool session has no conversation identity".into())
+        })?;
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            source.confirm_open(&binding, conversation),
+        )
+        .await
+        .map_err(|_| AdapterError::Unavailable("provider tool open receipt timed out".into()))??;
     }
     Ok(channel)
 }
