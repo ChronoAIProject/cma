@@ -162,7 +162,7 @@ async fn binding_routes_replay_binding_and_conversation_and_acknowledge_retireme
     assert_eq!(response.status(), StatusCode::OK);
     let first = json_body(response).await;
     assert_eq!(first["state"], "provisioning");
-    assert_eq!(first["level"], "l1");
+    assert_eq!(first["level"], "l2");
     assert!(!first
         .to_string()
         .contains(input["agent_key"].as_str().unwrap()));

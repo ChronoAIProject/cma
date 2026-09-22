@@ -2,7 +2,7 @@ use super::{BindingFieldRefusal, BindingProfilePlan};
 use crate::{seconds_from_rfc3339, AgentId, SandboxId, SubjectId, WorkspaceId, WorktreeId};
 use serde::{Deserialize, Serialize};
 
-pub const BINDING_CONFORMANCE_LEVEL: u8 = 1;
+pub const BINDING_CONFORMANCE_LEVEL: u8 = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]

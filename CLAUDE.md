@@ -192,7 +192,7 @@ Interfaces expose semantic operations in their protocol's own idiom:
 | 3 | **REST** | resource management, profiles, marketplace, Triggers and Launches | `layer1-public/src/rest/` |
 | 4 | **PTY** | absent in this release; no terminal plane | `layer1-public/src/pty/` (typed refusal only) |
 | 5 | **MCP** | explicit unsupported-operation response; no invented Agent tools | `layer1-public/src/mcp/` |
-| 6 | **A2A** | explicit unsupported-operation response; no invented Agent tasks | `layer1-public/src/a2a/` |
+| 6 | **A2A** | public provider card; JSON-RPC explicitly unsupported, no invented Agent tasks | `layer1-public/src/a2a/` |
 
 Each interface is a **projection** of the same core model. It may expose a
 subset of core operations, but must never invent an operation absent from
