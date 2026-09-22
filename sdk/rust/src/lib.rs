@@ -29,6 +29,7 @@ mod conformance;
 pub mod defaults;
 pub mod discovery;
 mod error;
+pub mod gateway_records;
 mod http;
 pub mod instances;
 pub mod launches;
