@@ -11,6 +11,8 @@ use axum::{
 use layer2_core::StoreError;
 
 pub mod admin;
+mod bots;
+pub use bots::bot_router;
 mod agent_artifacts;
 mod agent_openapi_shapes;
 pub use agent_artifacts::agent_artifacts_router;

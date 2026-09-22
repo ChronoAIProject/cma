@@ -92,6 +92,41 @@ pub struct BotWorker {
     pub(super) holder: String,
 }
 impl BotWorker {
+    /// A previously admitted Bot renews its own expiring credentials. Adapters
+    /// still verify the owner's current authority before each external effect.
+    pub async fn run_due(&self, id: &str) -> Result<(), BotError> {
+        let bot = self
+            .service
+            .store
+            .get(id)
+            .await?
+            .ok_or(BotError::NotFound)?;
+        if bot.work.is_none() {
+            let now = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .map_err(|_| BotError::Unavailable)?
+                .as_secs();
+            if !matches!(bot.state, BotState::Active | BotState::Disabled)
+                || bot
+                    .resources
+                    .credentials
+                    .expires_at
+                    .as_deref()
+                    .and_then(crate::seconds_from_rfc3339)
+                    .is_none_or(|expiry| expiry > now.saturating_add(3 * 24 * 60 * 60))
+            {
+                return Ok(());
+            }
+            let caller = crate::Caller::new(
+                bot.owner,
+                crate::Authorization::new([crate::Capability::ManageOwnBots]),
+            );
+            self.service
+                .admit(&caller, id, BotOperation::Rotate)
+                .await?;
+        }
+        self.run(id).await
+    }
     pub fn new(service: Arc<BotService>, external: Arc<dyn BotExternal>, holder: String) -> Self {
         Self {
             service,

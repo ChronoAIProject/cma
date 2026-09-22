@@ -1,8 +1,6 @@
 //! Deployment configuration retained across the resource-model rebuild.
 //!
-//! Every setting here belongs to process transport, authentication, durable
-//! infrastructure, or request protection. Resource, provider, and workflow
-//! configuration returns with the issue that owns the replacement model.
+//! Process transport, authentication, durable infrastructure and protection.
 
 use std::{collections::BTreeSet, net::SocketAddr, num::NonZeroU32, time::Duration};
 
@@ -14,12 +12,14 @@ use crate::{auth::AuthMode, store::AuthEncryptionKey};
 
 pub(crate) mod bridge_flags;
 mod execution;
+mod gateway;
 mod home;
 mod profiles;
 mod runtime;
 mod storage;
 
 pub(crate) use bridge_flags::BridgeFeatureFlags;
+pub(crate) use gateway::GatewayConfig;
 pub(crate) use profiles::DefaultProfileConfig;
 pub(crate) use runtime::RuntimeConfig;
 pub(crate) use storage::CheckpointStorageConfig;
@@ -150,6 +150,7 @@ pub struct Config {
     pub default_profiles: DefaultProfileConfig,
     pub auth_mode: AuthMode,
     pub bridge_flags: BridgeFeatureFlags,
+    pub gateway: Option<GatewayConfig>,
 }
 
 impl std::fmt::Debug for Config {
@@ -310,6 +311,7 @@ impl Config {
             default_profiles,
             auth_mode,
             bridge_flags,
+            gateway: GatewayConfig::from_lookup(&mut lookup)?,
         })
     }
 
