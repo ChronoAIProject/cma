@@ -157,8 +157,20 @@ async fn warm_verification_is_local_and_total_includes_launcher_wait() {
     .await;
     fixture.recorder.outcome.store(2, Ordering::SeqCst);
     let (body, token) = Envelope::new().signed();
+    let before = fixture.recorder.requests.lock().unwrap().len();
     let pending = tokio::spawn(fixture.request(body, &token).send());
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while fixture.recorder.requests.lock().unwrap().len() == before {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .unwrap();
+    // Measure the complete wait after launcher entry, independently of client scheduling.
+    let waiting = std::time::Instant::now();
+    while let Some(remaining) = Duration::from_millis(100).checked_sub(waiting.elapsed()) {
+        tokio::time::sleep(remaining).await;
+    }
     fixture.recorder.wait.notify_one();
     let response = pending.await.unwrap().unwrap();
     let timing = timing(&response);
