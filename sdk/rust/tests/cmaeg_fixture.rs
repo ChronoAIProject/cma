@@ -108,10 +108,26 @@ async fn gateway_management_custom_events_and_tools_interoperate() {
     let accepted = creator.post_event(id, &event, &options).await.unwrap();
     assert!(accepted.event_id == event.id);
     let reference_id = reference(&http, &root, &event.id).await;
+    assert!(reference_id.len() <= 4096);
     let context = tools.read_event_context(&reference_id).await.unwrap();
+    let original = serde_json::to_value(&context).unwrap();
     assert!(
         matches!(context.activity.kind,ActivityKind::Event { ce } if ce.data.as_ref().unwrap()["text"] == text)
     );
+    let replaced = http
+        .post(format!("{root}/restart"))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .bytes()
+        .await
+        .unwrap();
+    let replaced: Value = serde_json::from_slice(&replaced).unwrap();
+    assert_eq!(replaced["replaced"], true);
+    let recovered = tools.read_event_context(&reference_id).await.unwrap();
+    assert_eq!(serde_json::to_value(recovered).unwrap(), original);
     assert!(matches!(
         tools.send_typing(&reference_id).await.unwrap().outcome,
         TypingOutcome::Unsupported
