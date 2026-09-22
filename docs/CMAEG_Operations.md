@@ -386,3 +386,98 @@ The missing-channel request exercised the deployed gateway's renewable service
 credential against CMA without creating user resources. #918 remains open:
 Telegram round trips, deployed latency measurements, failure notices and the
 conversation restart drill have not been performed by this rollout.
+
+### Production Bot integration rollout on 2026-09-22
+
+The production CMA API and CMAEG were updated in `chrono-bot`, with one ready
+replica each. Backend Bot integration PR #924 merged into `develop`, and PR #926
+records the deployed image pins. Both public readiness endpoints return HTTP 200;
+CMAEG reports `cma_reachable: true`.
+
+The registry prefix is
+`us-central1-docker.pkg.dev/example-project-01/example-registry-02`:
+
+| Component | Repository | Deployed digest |
+| --- | --- | --- |
+| CMA API | `cma-api` | `sha256:34450d1e649a38f06239f721a082ac26c43d3ae50aa2446aae4d7c47d02100ca` |
+| CMAEG | `cma-cmaeg` | `sha256:e6b41876feeb2e1857a44600a1fab4576154a80c902e13a3ef9a78e09c74b0e0` |
+
+The images came from successful CI run `35743231350`, tested revision
+`72f42ffce333dcc67fd99df6fc0ee8422615e2b7`. The tested tree was verified equal
+to the merged PR #924 tree before deployment. Archive checksums, image
+configuration and labels, OCI blobs, and registry digests were verified.
+Native Kubernetes Secrets continue to supply gateway credentials.
+
+The API now has `CHRONO_CMAEG_BASE_URL=http://cmaeg` and
+`CHRONO_CMAEG_PUBLIC_URL=https://bot-gateway.chrono-ai.fun`. All nine existing
+Sandbox Pod UIDs and image pins were preserved. A before/after comparison for
+seven owner Agents passed for public lineage, profile pins, durable event
+prefixes, and runtime Pod/container identity. It does not establish continuous
+availability between samples, native conversation identity, dirty-file
+preservation, duplicate-input absence, browser drafts/reconnect, or cleanup
+safety. A subsequent read-only public API inventory found one operator-visible
+Bridge in the `enabled` state. The production configuration still enables
+management, ingress, allocation, execution, outbound and Telegram bridge
+switches. This owner-scoped inventory is not a global bridge-absence check.
+
+Read-only verification at 2026-09-22 17:24 UTC found no `cmaeg` catalogue service
+or owner connection in NyxID. The maintainer authorized the existing personal
+Telegram bot for testing and directed that NyxID configuration and deployment
+remain unchanged. The current CMA Bot flow requires that service connection,
+and CMA's provider reports `tools.native_mcp_url` as unsupported. Therefore the
+real Telegram tools, latency, restart and failure campaign has not run, and #918
+remains open. No bridge migration or removal is established by this rollout.
+
+At this rollout, the Bot dashboard and standalone gateway SDKs were still
+awaiting merge. This deployment record does not establish their production
+acceptance.
+
+### Production timing evidence rollout on 2026-09-22
+
+At 18:07 UTC, CMAEG was updated to
+`cma-cmaeg@sha256:952e60116d5db599e7516e48bcd48d9762c87078b3a6ba8f94353978dfa6a25f`
+under the same registry prefix. The Deployment has one desired, ready and
+available replica. The nine existing Sandbox Pod UIDs, container identities,
+images and restart counts were unchanged across the rollout.
+
+All 14 jobs in CI run `35759943816` passed, including real MongoDB persistence
+contracts and the latency gate with the production logger enabled. Its native
+gateway image has source revision `1fd368a43fa353b1de1740e79d6d1fd9cb06f546`,
+whose tree `571b515ee746340c2b5a2cdb4a95452eefe3d63f` equals PR #929's merged
+`develop` tree at `dd5f84ead36a9693928e8bcd4f5734db387686df`. Archive, image
+configuration, labels and OCI blobs were checked, and the registry manifest and
+configuration were read back before applying the conditional image patch.
+
+The CI fixture measured warm launch p99 26.225 ms, cold launch p99 61.616 ms,
+cold restore p99 54.632 ms and tool delivery p99 13.060 ms. These are fixture
+measurements, not production Telegram evidence. Both public readiness checks
+passed after deployment. An unauthenticated tool-context request returned 401,
+and its `Server-Timing` header matched the production request-completion log
+under the supplied request ID. This confirms deployed response timing logging;
+it does not establish a provider-write sample or Telegram delivery. No NyxID
+configuration or deployment changed, and no legacy bridge was migrated or
+removed by this rollout.
+
+
+### Production Bot dashboard rollout on 2026-09-22
+
+PR #928 merged into `develop` as `5dbe75d0`. All 14 jobs in CI run
+`35765699875` passed, including the gateway latency gate. The tested revision
+`ea917d215d2f5cffdaba6f8680ced0253877e0c0` and merged commit share tree
+`9d3d48af2fdc1effcd882dfc19659272f75f74fe`. The CI archive, source labels,
+OCI blobs, manifest and registry configuration were verified before deployment.
+
+At 18:58 UTC, `cma-web` was ready on the deployed image
+`us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-web@sha256:d79f5c2331a4bb3d401a33f1e44d06d30f58b6ca034d3de3cdf811ce83b39ef4`.
+Only the web container image was patched, using deployment UID, resource version,
+replica count and prior-image preconditions. CMA API, CMAEG and web each have
+one ready replica in production `chrono-bot`. Public API/gateway readiness and
+web HTML checks passed. All nine Sandbox Pod UIDs, container IDs, restart
+counts, readiness and runtime images matched the fresh pre-rollout baseline;
+the runtime default also remained unchanged.
+
+This deploys Bot creation, list, status and lifecycle controls and closes #916.
+It does not establish the real Telegram acceptance campaign in #918. Native
+provider tool attachment is being implemented in CMA to respect the maintainer's
+instruction to leave NyxID unchanged; that path is not enabled by this web rollout.
+The original bridge is still retained pending migration and acceptance evidence.

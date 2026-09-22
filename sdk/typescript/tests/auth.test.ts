@@ -13,7 +13,7 @@ describe('public authentication helpers', () => {
       authenticated: true,
       subject: 'owner-1',
       visitor: false,
-      capabilities: ['create_sandbox', 'launch_triggers'],
+      capabilities: ['create_sandbox', 'launch_triggers', 'manage_own_bots'],
       display_name: 'Example owner',
     };
     t.answer(body);

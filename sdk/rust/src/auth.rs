@@ -10,7 +10,7 @@ use serde::Deserialize;
 string_enum! { /// Public entitlement reported by the identity endpoint.
     pub enum Capability {
         CreateSandbox => "create_sandbox", UseOwnSandboxes => "use_own_sandboxes", DeleteOwnSandbox => "delete_own_sandbox",
-        ManageOwnProfiles => "manage_own_profiles", PublishTriggers => "publish_triggers", LaunchTriggers => "launch_triggers",
+        ManageOwnProfiles => "manage_own_profiles", ManageOwnBots => "manage_own_bots", PublishTriggers => "publish_triggers", LaunchTriggers => "launch_triggers",
         ReadAllSandboxes => "read_all_sandboxes", ControlAnySandbox => "control_any_sandbox", ReadRuntimeInventory => "read_runtime_inventory",
         ReadEventLog => "read_event_log", ReadActivityLog => "read_activity_log", ReadUserDirectory => "read_user_directory", ConfigurePlatform => "configure_platform"
     }
