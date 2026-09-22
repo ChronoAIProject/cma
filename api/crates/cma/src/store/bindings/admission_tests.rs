@@ -12,7 +12,7 @@ use layer2_core::{
     AgentProfileId, RuntimeCapabilities, RuntimeCapability, SandboxProfileId, WorkspaceProfileId,
 };
 
-fn sandbox(value: &ProviderBinding) -> Sandbox {
+pub(super) fn sandbox(value: &ProviderBinding) -> Sandbox {
     let content = value.profile.environment.as_ref().unwrap().sandbox.clone();
     Sandbox {
         id: value.sandbox_id.clone(),
@@ -29,8 +29,8 @@ fn sandbox(value: &ProviderBinding) -> Sandbox {
         failure: None,
         runtime: None,
         credential: SandboxCredentialState {
-            source: SandboxCredentialSource::Provided {
-                key_sha256: value.key_sha256.clone(),
+            source: SandboxCredentialSource::Binding {
+                binding_id: value.binding_id.clone(),
             },
             service_grants: vec![],
             reaches: content.nyxid_services,

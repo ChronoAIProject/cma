@@ -50,6 +50,29 @@ impl BindingService {
         let mut next = binding.clone();
         match binding.work {
             AwaitingCredential | Idle => return Ok(()),
+            DeliverCredential => {
+                let sandbox = self
+                    .store
+                    .get_sandbox(&binding.sandbox_id)
+                    .await?
+                    .ok_or(BindingError::NotFound)?;
+                if matches!(
+                    sandbox.status,
+                    SandboxStatus::Failed | SandboxStatus::Retiring | SandboxStatus::Retired
+                ) {
+                    return self
+                        .fail(
+                            binding,
+                            "binding credential delivery failed or sandbox was retired",
+                        )
+                        .await;
+                }
+                if !binding.credential_delivery_complete(&sandbox) {
+                    return Ok(());
+                }
+                next.state = BindingState::Ready;
+                next.work = Idle;
+            }
             RetirePreviousConversations => {
                 let old = binding
                     .previous
@@ -234,8 +257,9 @@ impl BindingService {
         if value.state == Retired {
             return Ok(());
         }
-        let parent_live =
-            binding.state == BindingState::Ready && binding.generation == value.generation;
+        let parent_live = (binding.state == BindingState::Ready
+            || binding.work == BindingWork::DeliverCredential)
+            && binding.generation == value.generation;
         if (!parent_live || value.state == Retiring) && value.state != Retiring {
             return self.save_conversation_state(binding, value, Retiring).await;
         }
@@ -252,7 +276,7 @@ impl BindingService {
             }
             return Ok(());
         }
-        if value.state != Provisioning {
+        if value.state != Provisioning || binding.work == BindingWork::DeliverCredential {
             return Ok(());
         }
         let profile = self.profiles.agent(binding).await.map_err(unavailable)?;

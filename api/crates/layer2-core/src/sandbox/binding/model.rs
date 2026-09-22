@@ -19,6 +19,7 @@ pub enum BindingState {
 #[serde(rename_all = "snake_case")]
 pub enum BindingWork {
     AwaitingCredential,
+    DeliverCredential,
     RetirePreviousConversations,
     RetirePreviousSandbox,
     ProvisionSandbox,
@@ -185,7 +186,9 @@ impl ProviderBinding {
                 reason: "environment is required".into(),
             }
         };
-        next.work = if next.profile.environment.is_some() {
+        next.work = if compatible {
+            BindingWork::RetirePreviousConversations
+        } else if next.profile.environment.is_some() {
             BindingWork::AwaitingCredential
         } else {
             BindingWork::RetirePreviousConversations

@@ -8,8 +8,8 @@ use mongodb::ClientSession;
 use std::sync::Arc;
 
 pub(crate) struct MongoBindingCredentials {
-    store: Arc<MongoSandboxStore>,
-    custody: Arc<MongoSandboxCredentialStore>,
+    pub(super) store: Arc<MongoSandboxStore>,
+    pub(super) custody: Arc<MongoSandboxCredentialStore>,
 }
 
 impl MongoBindingCredentials {
@@ -20,7 +20,7 @@ impl MongoBindingCredentials {
         Arc::new(Self { store, custody })
     }
 
-    async fn fence(
+    pub(super) async fn fence(
         &self,
         expected: &ProviderBinding,
         session: &mut ClientSession,
@@ -68,21 +68,7 @@ impl MongoBindingCredentials {
             let database = self.store.bindings.records.namespace().db;
             if let Some(credential) = credential {
                 binding.require_credential_admission(credential)?;
-                let services = &binding
-                    .profile
-                    .environment
-                    .as_ref()
-                    .ok_or_else(|| {
-                        CoreError::InvalidState("binding environment is missing".into())
-                    })?
-                    .sandbox
-                    .nyxid_services;
-                let material = ManagedSandboxCredentials::provided_material(
-                    id,
-                    &binding.owner,
-                    services,
-                    credential,
-                )?;
+                let material = ManagedSandboxCredentials::binding_material(binding, credential)?;
                 self.custody
                     .retain_binding_material(&database, &material, &mut session)
                     .await
@@ -140,6 +126,14 @@ impl BindingCredentialCustody for MongoBindingCredentials {
     ) -> Result<(), CoreError> {
         self.apply(binding, Some(credential), &binding.sandbox_id)
             .await
+    }
+
+    async fn rotate_binding(
+        &self,
+        binding: &ProviderBinding,
+        credential: &ProvidedCredential,
+    ) -> Result<ProviderBinding, CoreError> {
+        self.rotate(binding, credential).await
     }
 
     async fn forget_binding(

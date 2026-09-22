@@ -21,6 +21,12 @@ impl CredentialMaterial {
         self.source.accepts(&self.authority)
             && match &self.source {
                 SandboxCredentialSource::Managed => true,
+                SandboxCredentialSource::Binding { .. } => {
+                    format!(
+                        "provided-{:x}",
+                        Sha256::digest(self.value.expose().as_bytes())
+                    ) == self.authority.provider_key_id
+                }
                 SandboxCredentialSource::Provided { key_sha256 } => {
                     &format!("{:x}", Sha256::digest(self.value.expose().as_bytes())) == key_sha256
                 }
