@@ -1,0 +1,1576 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "bots-create-success",
+      "operation": "POST /api/v1/bots",
+      "scenario": "bot_contract_active_create",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/bots",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-create"
+        },
+        "body": {
+          "name": "Example bot",
+          "nyxid_bot_id": "external-bot",
+          "profile": {
+            "id": "agp_bot",
+            "revision": 1
+          },
+          "admission": {
+            "type": "all"
+          },
+          "reply": {
+            "auto_final": true,
+            "ack_after_ms": 0
+          }
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "bot_id": "bot_created_contract",
+          "owner": "owner",
+          "name": "Example bot",
+          "nyxid_bot_id": "external-bot",
+          "profile": {
+            "id": "agp_bot",
+            "revision": 1
+          },
+          "provider": "cma_codex",
+          "state": "creating",
+          "failure": null,
+          "operation": {
+            "operation": "create",
+            "step": "admitted"
+          },
+          "channel": null,
+          "credentials_expire_at": null,
+          "created_at": "2026-01-02T00:00:00Z",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "last_test": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "created_at": "/created_at",
+        "created_bot": "/bot_id",
+        "updated_at": "/updated_at"
+      }
+    },
+    {
+      "id": "bots-create-anonymous",
+      "operation": "POST /api/v1/bots",
+      "scenario": "bot_contract_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/bots",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-create"
+        },
+        "body": {
+          "name": "Example bot",
+          "nyxid_bot_id": "external-bot",
+          "profile": {
+            "id": "agp_bot",
+            "revision": 1
+          },
+          "admission": {
+            "type": "all"
+          },
+          "reply": {
+            "auto_final": true,
+            "ack_after_ms": 0
+          }
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "bots-create-forbidden",
+      "operation": "POST /api/v1/bots",
+      "scenario": "bot_contract_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/bots",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-create"
+        },
+        "body": {
+          "name": "Example bot",
+          "nyxid_bot_id": "external-bot",
+          "profile": {
+            "id": "agp_bot",
+            "revision": 1
+          },
+          "admission": {
+            "type": "all"
+          },
+          "reply": {
+            "auto_final": true,
+            "ack_after_ms": 0
+          }
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/bot_forbidden",
+          "title": "bot_forbidden",
+          "status": 403,
+          "detail": "bot management is forbidden",
+          "code": "bot_forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "bots-create-unavailable",
+      "operation": "POST /api/v1/bots",
+      "scenario": "bot_contract_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/bots",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-create"
+        },
+        "body": {
+          "name": "Example bot",
+          "nyxid_bot_id": "external-bot",
+          "profile": {
+            "id": "agp_bot",
+            "revision": 1
+          },
+          "admission": {
+            "type": "all"
+          },
+          "reply": {
+            "auto_final": true,
+            "ack_after_ms": 0
+          }
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/bot_unavailable",
+          "title": "bot_unavailable",
+          "status": 503,
+          "detail": "bot dependency is unavailable",
+          "code": "bot_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "bots-create-conflict",
+      "operation": "POST /api/v1/bots",
+      "scenario": "bot_contract_creation_conflict",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/bots",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-create"
+        },
+        "body": {
+          "name": "Example bot",
+          "nyxid_bot_id": "external-bot",
+          "profile": {
+            "id": "agp_bot",
+            "revision": 1
+          },
+          "admission": {
+            "type": "all"
+          },
+          "reply": {
+            "auto_final": true,
+            "ack_after_ms": 0
+          }
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/bot_conflict",
+          "title": "bot_conflict",
+          "status": 409,
+          "detail": "bot operation conflicts with current work",
+          "code": "bot_conflict"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "bots-create-invalid",
+      "operation": "POST /api/v1/bots",
+      "scenario": "bot_contract_invalid",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/bots",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-create"
+        },
+        "body": {
+          "name": "",
+          "nyxid_bot_id": "external-bot",
+          "profile": {
+            "id": "agp_bot",
+            "revision": 1
+          },
+          "admission": {
+            "type": "all"
+          },
+          "reply": {
+            "auto_final": true,
+            "ack_after_ms": 0
+          }
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_bot",
+          "title": "invalid_bot",
+          "status": 400,
+          "detail": "invalid bot configuration",
+          "code": "invalid_bot"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "bots-list-success",
+      "operation": "GET /api/v1/bots",
+      "scenario": "bot_contract_active_list",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/bots",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "bot_id": "bot_contract",
+              "owner": "owner",
+              "name": "Example bot",
+              "nyxid_bot_id": "external-bot",
+              "profile": {
+                "id": "agp_bot",
+                "revision": 1
+              },
+              "provider": "cma_codex",
+              "state": "active",
+              "failure": null,
+              "operation": null,
+              "channel": {
+                "channel_id": "opaque-channel",
+                "record_id": "8ace3890-01ba-4b93-9cc5-fba8fa496bfa",
+                "version": 1,
+                "binding_id": "binding-contract",
+                "level": "l2",
+                "callback_url": "https://gateway.example/v1/callbacks/opaque-channel",
+                "event_url": "https://gateway.example/v1/channels/opaque-channel/events"
+              },
+              "credentials_expire_at": "2026-02-01T00:00:00Z",
+              "created_at": "2026-01-01T00:00:00Z",
+              "updated_at": "2026-01-01T00:00:00Z",
+              "last_test": null
+            }
+          ],
+          "next_after": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "bots-list-anonymous",
+      "operation": "GET /api/v1/bots",
+      "scenario": "bot_contract_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/bots",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "bots-list-forbidden",
+      "operation": "GET /api/v1/bots",
+      "scenario": "bot_contract_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/bots",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/bot_forbidden",
+          "title": "bot_forbidden",
+          "status": 403,
+          "detail": "bot management is forbidden",
+          "code": "bot_forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "bots-list-unavailable",
+      "operation": "GET /api/v1/bots",
+      "scenario": "bot_contract_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/bots",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/bot_unavailable",
+          "title": "bot_unavailable",
+          "status": 503,
+          "detail": "bot dependency is unavailable",
+          "code": "bot_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "bots-list-invalid",
+      "operation": "GET /api/v1/bots",
+      "scenario": "bot_contract_invalid",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/bots?limit=0",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_bot",
+          "title": "invalid_bot",
+          "status": 400,
+          "detail": "limit must be between 1 and 200",
+          "code": "invalid_bot"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "bots-available-success",
+      "operation": "GET /api/v1/bots/nyxid-bots",
+      "scenario": "bot_contract_active_available",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/bots/nyxid-bots",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/json"
+        },
+        "body": [
+          {
+            "id": "external-bot",
+            "name": "Example bot",
+            "platform": "telegram"
+          }
+        ],
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "bots-available-anonymous",
+      "operation": "GET /api/v1/bots/nyxid-bots",
+      "scenario": "bot_contract_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/bots/nyxid-bots",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "bots-available-forbidden",
+      "operation": "GET /api/v1/bots/nyxid-bots",
+      "scenario": "bot_contract_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/bots/nyxid-bots",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/bot_forbidden",
+          "title": "bot_forbidden",
+          "status": 403,
+          "detail": "bot management is forbidden",
+          "code": "bot_forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "bots-available-unavailable",
+      "operation": "GET /api/v1/bots/nyxid-bots",
+      "scenario": "bot_contract_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/bots/nyxid-bots",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/bot_unavailable",
+          "title": "bot_unavailable",
+          "status": 503,
+          "detail": "bot dependency is unavailable",
+          "code": "bot_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "bots-get-success",
+      "operation": "GET /api/v1/bots/{bot_id}",
+      "scenario": "bot_contract_active_get",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/bots/bot_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "bot_id": "bot_contract",
+          "owner": "owner",
+          "name": "Example bot",
+          "nyxid_bot_id": "external-bot",
+          "profile": {
+            "id": "agp_bot",
+            "revision": 1
+          },
+          "provider": "cma_codex",
+          "state": "active",
+          "failure": null,
+          "operation": null,
+          "channel": {
+            "channel_id": "opaque-channel",
+            "record_id": "8ace3890-01ba-4b93-9cc5-fba8fa496bfa",
+            "version": 1,
+            "binding_id": "binding-contract",
+            "level": "l2",
+            "callback_url": "https://gateway.example/v1/callbacks/opaque-channel",
+            "event_url": "https://gateway.example/v1/channels/opaque-channel/events"
+          },
+          "credentials_expire_at": "2026-02-01T00:00:00Z",
+          "created_at": "2026-01-01T00:00:00Z",
+          "updated_at": "2026-01-01T00:00:00Z",
+          "last_test": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "bots-get-anonymous",
+      "operation": "GET /api/v1/bots/{bot_id}",
+      "scenario": "bot_contract_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/bots/bot_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "bots-get-forbidden",
+      "operation": "GET /api/v1/bots/{bot_id}",
+      "scenario": "bot_contract_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/bots/bot_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/bot_forbidden",
+          "title": "bot_forbidden",
+          "status": 403,
+          "detail": "bot management is forbidden",
+          "code": "bot_forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "bots-get-unavailable",
+      "operation": "GET /api/v1/bots/{bot_id}",
+      "scenario": "bot_contract_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/bots/bot_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/bot_unavailable",
+          "title": "bot_unavailable",
+          "status": 503,
+          "detail": "bot dependency is unavailable",
+          "code": "bot_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "bots-get-other-owner",
+      "operation": "GET /api/v1/bots/{bot_id}",
+      "scenario": "bot_contract_foreign",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/bots/bot_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/bot_not_found",
+          "title": "bot_not_found",
+          "status": 404,
+          "detail": "bot not found",
+          "code": "bot_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "bots-test-success",
+      "operation": "POST /api/v1/bots/{bot_id}/test",
+      "scenario": "bot_contract_active_test",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/bots/bot_contract/test",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "accepted_after_ms": 12,
+          "first_text": "Ready",
+          "level": "l2",
+          "tested_at": "2026-01-02T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "bots-test-anonymous",
+      "operation": "POST /api/v1/bots/{bot_id}/test",
+      "scenario": "bot_contract_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/bots/bot_contract/test",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "bots-test-forbidden",
+      "operation": "POST /api/v1/bots/{bot_id}/test",
+      "scenario": "bot_contract_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/bots/bot_contract/test",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/bot_forbidden",
+          "title": "bot_forbidden",
+          "status": 403,
+          "detail": "bot management is forbidden",
+          "code": "bot_forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "bots-test-unavailable",
+      "operation": "POST /api/v1/bots/{bot_id}/test",
+      "scenario": "bot_contract_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/bots/bot_contract/test",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/bot_unavailable",
+          "title": "bot_unavailable",
+          "status": 503,
+          "detail": "bot dependency is unavailable",
+          "code": "bot_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "bots-test-other-owner",
+      "operation": "POST /api/v1/bots/{bot_id}/test",
+      "scenario": "bot_contract_foreign",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/bots/bot_contract/test",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/bot_not_found",
+          "title": "bot_not_found",
+          "status": 404,
+          "detail": "bot not found",
+          "code": "bot_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "bots-test-conflict",
+      "operation": "POST /api/v1/bots/{bot_id}/test",
+      "scenario": "bot_contract_failed",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/bots/bot_contract/test",
+        "headers": {}
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/bot_conflict",
+          "title": "bot_conflict",
+          "status": 409,
+          "detail": "bot operation conflicts with current work",
+          "code": "bot_conflict"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "bots-disable-success",
+      "operation": "POST /api/v1/bots/{bot_id}/disable",
+      "scenario": "bot_contract_active_disable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/bots/bot_contract/disable",
+        "headers": {}
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "bot_id": "bot_contract",
+          "owner": "owner",
+          "name": "Example bot",
+          "nyxid_bot_id": "external-bot",
+          "profile": {
+            "id": "agp_bot",
+            "revision": 1
+          },
+          "provider": "cma_codex",
+          "state": "active",
+          "failure": null,
+          "operation": {
+            "operation": "disable",
+            "step": "admitted"
+          },
+          "channel": {
+            "channel_id": "opaque-channel",
+            "record_id": "8ace3890-01ba-4b93-9cc5-fba8fa496bfa",
+            "version": 1,
+            "binding_id": "binding-contract",
+            "level": "l2",
+            "callback_url": "https://gateway.example/v1/callbacks/opaque-channel",
+            "event_url": "https://gateway.example/v1/channels/opaque-channel/events"
+          },
+          "credentials_expire_at": "2026-02-01T00:00:00Z",
+          "created_at": "2026-01-01T00:00:00Z",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "last_test": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "updated_at": "/updated_at"
+      }
+    },
+    {
+      "id": "bots-disable-anonymous",
+      "operation": "POST /api/v1/bots/{bot_id}/disable",
+      "scenario": "bot_contract_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/bots/bot_contract/disable",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "bots-disable-forbidden",
+      "operation": "POST /api/v1/bots/{bot_id}/disable",
+      "scenario": "bot_contract_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/bots/bot_contract/disable",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/bot_forbidden",
+          "title": "bot_forbidden",
+          "status": 403,
+          "detail": "bot management is forbidden",
+          "code": "bot_forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "bots-disable-unavailable",
+      "operation": "POST /api/v1/bots/{bot_id}/disable",
+      "scenario": "bot_contract_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/bots/bot_contract/disable",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/bot_unavailable",
+          "title": "bot_unavailable",
+          "status": 503,
+          "detail": "bot dependency is unavailable",
+          "code": "bot_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "bots-disable-other-owner",
+      "operation": "POST /api/v1/bots/{bot_id}/disable",
+      "scenario": "bot_contract_foreign",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/bots/bot_contract/disable",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/bot_not_found",
+          "title": "bot_not_found",
+          "status": 404,
+          "detail": "bot not found",
+          "code": "bot_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "bots-disable-conflict",
+      "operation": "POST /api/v1/bots/{bot_id}/disable",
+      "scenario": "bot_contract_failed",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/bots/bot_contract/disable",
+        "headers": {}
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/bot_conflict",
+          "title": "bot_conflict",
+          "status": 409,
+          "detail": "bot operation conflicts with current work",
+          "code": "bot_conflict"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "bots-enable-success",
+      "operation": "POST /api/v1/bots/{bot_id}/enable",
+      "scenario": "bot_contract_disabled_enable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/bots/bot_contract/enable",
+        "headers": {}
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "bot_id": "bot_contract",
+          "owner": "owner",
+          "name": "Example bot",
+          "nyxid_bot_id": "external-bot",
+          "profile": {
+            "id": "agp_bot",
+            "revision": 1
+          },
+          "provider": "cma_codex",
+          "state": "disabled",
+          "failure": null,
+          "operation": {
+            "operation": "enable",
+            "step": "admitted"
+          },
+          "channel": {
+            "channel_id": "opaque-channel",
+            "record_id": "8ace3890-01ba-4b93-9cc5-fba8fa496bfa",
+            "version": 1,
+            "binding_id": "binding-contract",
+            "level": "l2",
+            "callback_url": "https://gateway.example/v1/callbacks/opaque-channel",
+            "event_url": "https://gateway.example/v1/channels/opaque-channel/events"
+          },
+          "credentials_expire_at": "2026-02-01T00:00:00Z",
+          "created_at": "2026-01-01T00:00:00Z",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "last_test": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "updated_at": "/updated_at"
+      }
+    },
+    {
+      "id": "bots-enable-anonymous",
+      "operation": "POST /api/v1/bots/{bot_id}/enable",
+      "scenario": "bot_contract_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/bots/bot_contract/enable",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "bots-enable-forbidden",
+      "operation": "POST /api/v1/bots/{bot_id}/enable",
+      "scenario": "bot_contract_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/bots/bot_contract/enable",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/bot_forbidden",
+          "title": "bot_forbidden",
+          "status": 403,
+          "detail": "bot management is forbidden",
+          "code": "bot_forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "bots-enable-unavailable",
+      "operation": "POST /api/v1/bots/{bot_id}/enable",
+      "scenario": "bot_contract_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/bots/bot_contract/enable",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/bot_unavailable",
+          "title": "bot_unavailable",
+          "status": 503,
+          "detail": "bot dependency is unavailable",
+          "code": "bot_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "bots-enable-other-owner",
+      "operation": "POST /api/v1/bots/{bot_id}/enable",
+      "scenario": "bot_contract_foreign",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/bots/bot_contract/enable",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/bot_not_found",
+          "title": "bot_not_found",
+          "status": 404,
+          "detail": "bot not found",
+          "code": "bot_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "bots-enable-conflict",
+      "operation": "POST /api/v1/bots/{bot_id}/enable",
+      "scenario": "bot_contract_failed",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/bots/bot_contract/enable",
+        "headers": {}
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/bot_conflict",
+          "title": "bot_conflict",
+          "status": 409,
+          "detail": "bot operation conflicts with current work",
+          "code": "bot_conflict"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "bots-rotate-success",
+      "operation": "POST /api/v1/bots/{bot_id}/rotate-keys",
+      "scenario": "bot_contract_active_rotate",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/bots/bot_contract/rotate-keys",
+        "headers": {}
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "bot_id": "bot_contract",
+          "owner": "owner",
+          "name": "Example bot",
+          "nyxid_bot_id": "external-bot",
+          "profile": {
+            "id": "agp_bot",
+            "revision": 1
+          },
+          "provider": "cma_codex",
+          "state": "active",
+          "failure": null,
+          "operation": {
+            "operation": "rotate",
+            "step": "admitted"
+          },
+          "channel": {
+            "channel_id": "opaque-channel",
+            "record_id": "8ace3890-01ba-4b93-9cc5-fba8fa496bfa",
+            "version": 1,
+            "binding_id": "binding-contract",
+            "level": "l2",
+            "callback_url": "https://gateway.example/v1/callbacks/opaque-channel",
+            "event_url": "https://gateway.example/v1/channels/opaque-channel/events"
+          },
+          "credentials_expire_at": "2026-02-01T00:00:00Z",
+          "created_at": "2026-01-01T00:00:00Z",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "last_test": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "updated_at": "/updated_at"
+      }
+    },
+    {
+      "id": "bots-rotate-anonymous",
+      "operation": "POST /api/v1/bots/{bot_id}/rotate-keys",
+      "scenario": "bot_contract_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/bots/bot_contract/rotate-keys",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "bots-rotate-forbidden",
+      "operation": "POST /api/v1/bots/{bot_id}/rotate-keys",
+      "scenario": "bot_contract_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/bots/bot_contract/rotate-keys",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/bot_forbidden",
+          "title": "bot_forbidden",
+          "status": 403,
+          "detail": "bot management is forbidden",
+          "code": "bot_forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "bots-rotate-unavailable",
+      "operation": "POST /api/v1/bots/{bot_id}/rotate-keys",
+      "scenario": "bot_contract_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/bots/bot_contract/rotate-keys",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/bot_unavailable",
+          "title": "bot_unavailable",
+          "status": 503,
+          "detail": "bot dependency is unavailable",
+          "code": "bot_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "bots-rotate-other-owner",
+      "operation": "POST /api/v1/bots/{bot_id}/rotate-keys",
+      "scenario": "bot_contract_foreign",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/bots/bot_contract/rotate-keys",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/bot_not_found",
+          "title": "bot_not_found",
+          "status": 404,
+          "detail": "bot not found",
+          "code": "bot_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "bots-rotate-conflict",
+      "operation": "POST /api/v1/bots/{bot_id}/rotate-keys",
+      "scenario": "bot_contract_failed",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/bots/bot_contract/rotate-keys",
+        "headers": {}
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/bot_conflict",
+          "title": "bot_conflict",
+          "status": 409,
+          "detail": "bot operation conflicts with current work",
+          "code": "bot_conflict"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "bots-delete-success",
+      "operation": "DELETE /api/v1/bots/{bot_id}",
+      "scenario": "bot_contract_active_delete",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/bots/bot_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "bot_id": "bot_contract",
+          "owner": "owner",
+          "name": "Example bot",
+          "nyxid_bot_id": "external-bot",
+          "profile": {
+            "id": "agp_bot",
+            "revision": 1
+          },
+          "provider": "cma_codex",
+          "state": "deleting",
+          "failure": null,
+          "operation": {
+            "operation": "delete",
+            "step": "admitted"
+          },
+          "channel": {
+            "channel_id": "opaque-channel",
+            "record_id": "8ace3890-01ba-4b93-9cc5-fba8fa496bfa",
+            "version": 1,
+            "binding_id": "binding-contract",
+            "level": "l2",
+            "callback_url": "https://gateway.example/v1/callbacks/opaque-channel",
+            "event_url": "https://gateway.example/v1/channels/opaque-channel/events"
+          },
+          "credentials_expire_at": "2026-02-01T00:00:00Z",
+          "created_at": "2026-01-01T00:00:00Z",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "last_test": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "updated_at": "/updated_at"
+      }
+    },
+    {
+      "id": "bots-delete-anonymous",
+      "operation": "DELETE /api/v1/bots/{bot_id}",
+      "scenario": "bot_contract_anonymous",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/bots/bot_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "bots-delete-forbidden",
+      "operation": "DELETE /api/v1/bots/{bot_id}",
+      "scenario": "bot_contract_forbidden",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/bots/bot_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/bot_forbidden",
+          "title": "bot_forbidden",
+          "status": 403,
+          "detail": "bot management is forbidden",
+          "code": "bot_forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "bots-delete-unavailable",
+      "operation": "DELETE /api/v1/bots/{bot_id}",
+      "scenario": "bot_contract_unavailable",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/bots/bot_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/bot_unavailable",
+          "title": "bot_unavailable",
+          "status": 503,
+          "detail": "bot dependency is unavailable",
+          "code": "bot_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "bots-delete-other-owner",
+      "operation": "DELETE /api/v1/bots/{bot_id}",
+      "scenario": "bot_contract_foreign",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/bots/bot_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/bot_not_found",
+          "title": "bot_not_found",
+          "status": 404,
+          "detail": "bot not found",
+          "code": "bot_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "bots-delete-conflict",
+      "operation": "DELETE /api/v1/bots/{bot_id}",
+      "scenario": "bot_contract_busy",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/bots/bot_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/bot_conflict",
+          "title": "bot_conflict",
+          "status": 409,
+          "detail": "bot operation conflicts with current work",
+          "code": "bot_conflict"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

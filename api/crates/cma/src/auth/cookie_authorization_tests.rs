@@ -16,6 +16,8 @@ use crate::auth::{profile::Profile, AuthMode};
 
 #[path = "cookie_authorization_tests/bearer_availability_tests.rs"]
 mod bearer_availability_tests;
+#[path = "cookie_authorization_tests/bots_tests.rs"]
+mod bots_tests;
 #[path = "cookie_authorization_tests/bridge_grants.rs"]
 mod bridge_grants;
 #[path = "cookie_authorization_tests/concurrency_tests.rs"]
