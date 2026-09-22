@@ -78,7 +78,11 @@ fn bypasses_ambient_auth(path: &str) -> bool {
     // Recovery routes validate their own authority without requiring an old login.
     if matches!(
         path,
-        "/auth/signup-options" | "/auth/login" | "/auth/callback" | "/auth/logout"
+        "/auth/signup-options"
+            | "/auth/login"
+            | "/auth/callback"
+            | "/auth/logout"
+            | "/.well-known/agent-card.json"
     ) {
         return true;
     }
@@ -144,6 +148,7 @@ mod tests {
     #[test]
     fn only_explicit_routes_bypass_ambient_auth() {
         for path in [
+            "/.well-known/agent-card.json",
             "/auth/signup-options",
             "/auth/login",
             "/auth/callback",

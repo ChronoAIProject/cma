@@ -87,3 +87,5 @@ export {
   type OperationOptions,
   type RequestOptions,
 } from './http.js';
+
+export { readAgentCard, type ProviderAgentCard } from './agent-card.js';

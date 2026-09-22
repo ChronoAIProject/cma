@@ -1,3 +1,4 @@
+import { readAgentCard } from './agent-card.js';
 import { resolveConfig, type ClientConfig, type ResolvedConfig } from './config.js';
 import {
   readConformance,
@@ -95,6 +96,10 @@ export class Cma {
 
   readOpenApi(options: OperationOptions = {}): Promise<OpenApiDocument> {
     return readOpenApi(this.#config, options);
+  }
+
+  readAgentCard(options: OperationOptions = {}) {
+    return readAgentCard(this.#config, options);
   }
 
   readDefaults(options: OperationOptions = {}): Promise<PlatformDefaults> {

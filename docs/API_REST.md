@@ -90,7 +90,7 @@ The composed identity/discovery/static routes also include:
 | `POST /auth/logout` | Revoke browser login and expire cookie; redirect to `/` |
 | `GET /embed/v1.js` | Fixed versioned-by-integrity embed script; no credential access |
 | `POST /api/v1/mcp` | Typed 501 `interface_not_available` |
-| `GET /.well-known/agent-card.json` | Typed 501 `interface_not_available` for A2A |
+| `GET /.well-known/agent-card.json` | Public provider card for binding Responses; A2A JSON-RPC remains unavailable |
 | `/api/v1/a2a` | Typed 501 `interface_not_available` |
 
 `GET /auth/signup-options` appears in the checked inventory. Its four-field
@@ -133,7 +133,7 @@ Responses use `Cache-Control: no-store` and never contain supplied key material.
 The digest is `sha256:` followed by the canonical profile digest. The response
 contains `binding_id`, `owner`, `profile_digest`, `sandbox_id`, `workspace_id`,
 `level`, `honoured`, `refused`, `state`, `generation`, and timestamps. The current
-level is `l1`. Native external tool endpoints are explicitly refused. Resource
+turn-contract level is `l2` (text and informational activity items). Native external tool endpoints are explicitly refused. Resource
 provisioning is asynchronous: `GET` reports `provisioning`, `ready`, `failed`
 (with a reason), or `retired`. Repeating the same digest and key returns the
 retained reservation. A supplied key hash can belong to only one binding;
