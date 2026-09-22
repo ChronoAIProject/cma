@@ -487,6 +487,16 @@ results are not retried. This transport alone does not attach tools to an Agent:
 binding provenance, retained endpoint configuration and confirmed conversation
 setup must be established before the provider advertises native tools support.
 
+A provider binding can retain one tool endpoint as part of its immutable supplied
+credential authority. Exact replays and key rotation preserve that endpoint;
+changing or removing it under the same binding identity is refused. Binding
+Sandbox creation projects the retained endpoint into the runtime environment.
+Records created before this field existed deserialize with no endpoint, and
+ordinary Sandboxes omit the new field and environment variable, preserving their
+existing deployment fingerprints and runtime image pins. The public binding
+handler continues to refuse native tools until attachment and runtime support
+have been verified.
+
 ## Delivery Authority
 
 For the 2026-09-22 gateway deployment, the maintainer additionally authorizes a
