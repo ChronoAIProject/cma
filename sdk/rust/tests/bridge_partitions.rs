@@ -18,6 +18,67 @@ fn detail() -> Value {
         .unwrap()["response"]["body"]
         .clone()
 }
+
+#[tokio::test]
+async fn pending_previews_reject_leaked_content_duplicate_commands_and_scope_changes() {
+    let server = WireServer::new().await;
+    let bridge = "brg_pending";
+    let allocation = format!("bral_{}", "a".repeat(64));
+    let path = format!("/api/v1/bridges/{bridge}/partitions/{allocation}/pending-messages");
+    let value = json!({
+        "status":"available", "bridge_id":bridge, "partition_id":allocation,
+        "generation":1, "agent_id":"agt_pending", "through_sequence":42,
+        "messages":[{"command_id":"cmd_one", "response_id":"resp_one",
+            "agent_order":1, "admitted_at":"2026-09-18T03:04:20Z",
+            "platform":"telegram", "text":"Incoming message", "text_truncated":false}],
+        "pending_truncated":false, "source_unavailable":false, "observed_at_ms":1000
+    });
+    server.expect(wire::json("GET", &path, None, 200, value.clone(), true));
+    server
+        .client
+        .bridges()
+        .pending_messages(bridge, &allocation)
+        .await
+        .unwrap();
+    for (pointer, invalid) in [
+        ("/bridge_id", json!("brg_other")),
+        ("/through_sequence", json!(-1)),
+        ("/messages/0/text", json!("😀".repeat(1025))),
+        (
+            "/messages",
+            json!([value["messages"][0], value["messages"][0]]),
+        ),
+    ] {
+        let mut bad = value.clone();
+        *bad.pointer_mut(pointer).unwrap() = invalid;
+        server.expect(wire::json("GET", &path, None, 200, bad, true));
+        assert!(matches!(
+            server
+                .client
+                .bridges()
+                .pending_messages(bridge, &allocation)
+                .await,
+            Err(Error::Protocol { .. })
+        ));
+    }
+    server.expect(wire::json(
+        "GET",
+        &path,
+        None,
+        200,
+        json!({"status":"redacted", "messages":value["messages"]}),
+        true,
+    ));
+    assert!(matches!(
+        server
+            .client
+            .bridges()
+            .pending_messages(bridge, &allocation)
+            .await,
+        Err(Error::Protocol { .. })
+    ));
+    server.assert_drained();
+}
 #[tokio::test]
 async fn partition_gets_are_exact_read_only_and_reject_inconsistent_redaction() {
     let server = WireServer::new().await;

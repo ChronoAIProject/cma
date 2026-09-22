@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 193,
+  "openapi_operations": 194,
   "operations": {
     "GET /api/v1/organizations": {
       "classification": "openapi",
@@ -2677,6 +2677,14 @@
       "classification": "supplemental_asset",
       "source": "api/crates/layer1-public/src/a2a/mod.rs# Public provider card is anonymous discovery outside the REST OpenAPI document.",
       "required_problems": []
+    },
+    "GET /api/v1/bridges/{id}/partitions/{allocation}/pending-messages": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bridge_partitions/mod.rs# Current Bridge management and exact resource access authorize bounded read-only partition status.",
+      "required_problems": [
+        "bridge_not_found",
+        "bridge_partition_unavailable"
+      ]
     }
   }
 }
