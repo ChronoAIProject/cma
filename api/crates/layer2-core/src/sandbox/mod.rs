@@ -17,6 +17,7 @@ mod agent_runtime;
 mod agent_service;
 mod agent_work;
 mod background_checkpoint;
+pub mod binding;
 pub mod channel_usage;
 mod checkpoint;
 mod checkpoint_capture;
