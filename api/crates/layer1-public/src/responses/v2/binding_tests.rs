@@ -125,6 +125,17 @@ pub(crate) async fn fixture() -> (
     Arc<BindingAccessService>,
     BindingPrincipal,
 ) {
+    fixture_with_conversation_state(BindingConversationState::Ready).await
+}
+
+async fn fixture_with_conversation_state(
+    conversation_state: BindingConversationState,
+) -> (
+    axum::Router,
+    Arc<InMemorySandboxStore>,
+    Arc<BindingAccessService>,
+    BindingPrincipal,
+) {
     let (state, store) = fixtures::conversation_fixture().await;
     let agent = fixtures::seeded_agent("agt_fixture", AgentStatus::Ready, 2, None);
     fixtures::insert_agent(&store, agent.clone(), vec![]).await;
@@ -144,7 +155,7 @@ pub(crate) async fn fixture() -> (
         .save_binding_conversation(binding.revision, None, conversation.clone())
         .await
         .unwrap();
-    conversation.state = BindingConversationState::Ready;
+    conversation.state = conversation_state;
     conversation.revision += 1;
     store
         .save_binding_conversation(binding.revision, Some(1), conversation)
@@ -167,6 +178,62 @@ pub(crate) async fn fixture() -> (
             .with_bindings(bindings.clone()),
     );
     (app, store, bindings, principal)
+}
+
+#[tokio::test]
+async fn provisioning_conversation_is_retryable_then_admits_the_same_turn_once() {
+    let (app, store, _, principal) =
+        fixture_with_conversation_state(BindingConversationState::Provisioning).await;
+    let body = json!({"conversation":"conversation-external","stream":true,"input":"First event"});
+    let response = app
+        .clone()
+        .oneshot(request("/api/v2/responses", &principal, body.clone()))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(response.headers()["retry-after"], "1");
+    assert!(response.headers().get("x-cma-response-id").is_none());
+    let bytes = axum::body::to_bytes(response.into_body(), 4096)
+        .await
+        .unwrap();
+    let problem: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(problem["error"]["code"], "conversation_not_ready");
+
+    let binding = store
+        .binding(principal.binding_id())
+        .await
+        .unwrap()
+        .unwrap();
+    let mut conversation = store
+        .binding_conversation(
+            principal.binding_id(),
+            principal.generation(),
+            "conversation-external",
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    let prior_revision = conversation.revision;
+    conversation.state = BindingConversationState::Ready;
+    conversation.revision += 1;
+    store
+        .save_binding_conversation(binding.revision, Some(prior_revision), conversation)
+        .await
+        .unwrap();
+    let mut response_id = None;
+    for _ in 0..2 {
+        let response = app
+            .clone()
+            .oneshot(request("/api/v2/responses", &principal, body.clone()))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let id = response.headers()["x-cma-response-id"]
+            .to_str()
+            .unwrap()
+            .to_owned();
+        assert_eq!(response_id.get_or_insert(id.clone()), &id);
+    }
 }
 #[tokio::test]
 async fn binding_aliases_and_agent_ids_share_receipts_and_conceal_foreign_conversations() {

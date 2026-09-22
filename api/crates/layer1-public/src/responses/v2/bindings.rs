@@ -42,8 +42,11 @@ fn not_found() -> Box<Response> {
 fn binding_error(error: BindingError) -> Box<Response> {
     match error {
         BindingError::NotFound | BindingError::Forbidden => not_found(),
+        // A reserved conversation is not admissible until its Agent is ready.
+        // Use the provider contract's retryable capacity response so a gateway
+        // keeps the original event and idempotency key during preparation.
         BindingError::Conflict => Box::new(super::error::error(
-            StatusCode::CONFLICT,
+            StatusCode::TOO_MANY_REQUESTS,
             "conversation_not_ready",
             "The binding conversation is not ready.",
             Some("conversation"),
