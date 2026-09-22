@@ -75,3 +75,15 @@ pub(super) fn resource_access(
         )),
     )
 }
+
+pub(super) fn responses(
+    stores: &MongoStores,
+    commands: Arc<layer2_core::sandbox::agent_io::AgentCommandService>,
+    reads: Arc<layer2_core::sandbox::AgentReadService>,
+) -> Router {
+    layer1_public::responses::v2::router(
+        layer1_public::responses::v2::ResponsesV2State::new(commands, reads).with_bindings(
+            layer2_core::sandbox::binding::BindingAccessService::new(stores.sandbox_model.clone()),
+        ),
+    )
+}

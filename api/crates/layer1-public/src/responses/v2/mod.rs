@@ -7,6 +7,9 @@ use axum::{
 use layer2_core::sandbox::{agent_io::AgentCommandService, AgentReadService};
 use std::sync::Arc;
 
+#[cfg(test)]
+mod binding_tests;
+mod bindings;
 pub(crate) mod controls;
 mod conversation;
 mod error;
@@ -26,10 +29,23 @@ pub use projection::{ResponseConversation, V2ResponseObject, V2ResponseStatus};
 pub struct ResponsesV2State {
     commands: Arc<AgentCommandService>,
     reads: Arc<AgentReadService>,
+    bindings: Option<Arc<layer2_core::sandbox::binding::BindingAccessService>>,
 }
 impl ResponsesV2State {
+    pub fn with_bindings(
+        mut self,
+        bindings: Arc<layer2_core::sandbox::binding::BindingAccessService>,
+    ) -> Self {
+        self.bindings = Some(bindings);
+        self
+    }
+
     pub fn new(commands: Arc<AgentCommandService>, reads: Arc<AgentReadService>) -> Self {
-        Self { commands, reads }
+        Self {
+            commands,
+            reads,
+            bindings: None,
+        }
     }
 }
 pub fn router(state: ResponsesV2State) -> Router {
