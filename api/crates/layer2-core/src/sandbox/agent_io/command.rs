@@ -88,9 +88,14 @@ impl AgentCommand {
                     metadata: metadata.clone(),
                 }
             }
-            Self::Steer { input } => Self::Steer {
-                input: input.canonical()?,
-            },
+            Self::Steer { input } => {
+                if input.external_event().is_some() {
+                    return Err(invalid("external events require a message"));
+                }
+                Self::Steer {
+                    input: input.canonical()?,
+                }
+            }
             Self::Interrupt => Self::Interrupt,
             Self::AnswerApproval {
                 approval_id,

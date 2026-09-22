@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "provider-agent-card",
+      "operation": "GET /.well-known/agent-card.json",
+      "scenario": "provider_card",
+      "request": {
+        "method": "GET",
+        "path": "/.well-known/agent-card.json",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "name": "CMA Codex provider",
+          "version": "0.1.0",
+          "url": "https://cma.example",
+          "capabilities": {
+            "streaming": true,
+            "activity_items": true,
+            "client_tools": false,
+            "cancel": true,
+            "rich_input": false
+          },
+          "provider_contract": {
+            "binding": "/api/v1/cmaeg/bindings/{binding_id}",
+            "conversation": "/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}",
+            "responses": "/api/v2/responses"
+          },
+          "authentication": {
+            "schemes": [
+              "bearer-agent-key"
+            ]
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

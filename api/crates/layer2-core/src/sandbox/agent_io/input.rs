@@ -17,8 +17,15 @@ pub struct AgentAttachmentReference {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum AgentContent {
-    Text { text: String },
-    Attachment { reference: AgentAttachmentReference },
+    Text {
+        text: String,
+    },
+    ExternalEvent {
+        context: super::ExternalEventContext,
+    },
+    Attachment {
+        reference: AgentAttachmentReference,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -42,6 +49,7 @@ impl AgentInput {
         let mut content = Vec::new();
         let mut bytes = 0usize;
         let mut meaningful = false;
+        let mut external = false;
         for item in &self.content {
             match item {
                 AgentContent::Text { text } => {
@@ -57,6 +65,15 @@ impl AgentInput {
                     } else {
                         content.push(item.clone());
                     }
+                }
+                AgentContent::ExternalEvent { context } => {
+                    if external {
+                        return Err(invalid("only one external event is allowed"));
+                    }
+                    external = true;
+                    context.validate()?;
+                    bytes += context.runtime_reference().len();
+                    content.push(item.clone());
                 }
                 AgentContent::Attachment { reference } => {
                     if !valid_label(&reference.id, 256)
@@ -76,6 +93,9 @@ impl AgentInput {
                 }
             }
         }
+        if bytes > MAX_AGENT_MESSAGE_BYTES {
+            return Err(invalid("input is too large"));
+        }
         if !meaningful {
             return Err(invalid("input must contain content"));
         }
@@ -86,17 +106,19 @@ impl AgentInput {
     /// silently dropping them would change both the prompt and its fingerprint.
     pub(super) fn into_text(self) -> Result<String, AgentOperationError> {
         let canonical = self.canonical()?;
-        if canonical
-            .content
-            .iter()
-            .any(|item| matches!(item, AgentContent::Attachment { .. }))
-        {
-            return Err(AgentOperationError::ContentUnsupported);
+        let mut text = String::new();
+        for item in canonical.content {
+            match item {
+                AgentContent::Text { text: part } => text.push_str(&part),
+                AgentContent::ExternalEvent { context } => {
+                    text.push_str(&context.runtime_reference())
+                }
+                AgentContent::Attachment { .. } => {
+                    return Err(AgentOperationError::ContentUnsupported)
+                }
+            }
         }
-        match canonical.content.into_iter().next() {
-            Some(AgentContent::Text { text }) => Ok(text),
-            _ => Err(invalid("input must contain text")),
-        }
+        Ok(text)
     }
 }
 

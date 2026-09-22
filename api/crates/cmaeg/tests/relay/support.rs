@@ -1,0 +1,264 @@
+use super::signer::Signer;
+use axum::{
+    extract::State,
+    http::StatusCode,
+    response::{IntoResponse, Response},
+    routing::get,
+    Json, Router,
+};
+use base64::{engine::general_purpose::STANDARD, Engine as _};
+use cmaeg::{
+    channels::resolver::ChannelResolver,
+    http::callbacks,
+    ingress::{
+        launch::{LaunchOutcome, LaunchRequest, TurnLauncher},
+        IngressState,
+    },
+    records::RecordClient,
+    ChannelCacheConfig, IngressConfig,
+};
+use cmaeg_core::{
+    channel::ChannelDefinition,
+    ids::ChannelId,
+    seal::{seal_blob, ChannelPointer, MasterKeyRing},
+};
+use futures_util::future::BoxFuture;
+use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc, Mutex,
+};
+use tokio::task::JoinHandle;
+
+pub const ISSUER: &str = "https://nyx.example";
+#[derive(Default)]
+pub struct Recorder {
+    pub requests: Mutex<Vec<LaunchRequest>>,
+    pub outcome: AtomicUsize,
+    pub wait: tokio::sync::Notify,
+}
+impl TurnLauncher for Recorder {
+    fn launch(&self, request: LaunchRequest) -> BoxFuture<'_, LaunchOutcome> {
+        self.requests.lock().unwrap().push(request);
+        Box::pin(async {
+            match self.outcome.load(Ordering::SeqCst) {
+                1 => LaunchOutcome::Accepted {
+                    response_id: "response-1".into(),
+                },
+                2 => {
+                    self.wait.notified().await;
+                    LaunchOutcome::Deferred
+                }
+                3 => LaunchOutcome::Refused(cmaeg_core::problem::Problem::new(
+                    cmaeg_core::problem::ProblemCode::ProviderUnavailable,
+                    503,
+                    "provider offline",
+                )),
+                _ => LaunchOutcome::Deferred,
+            }
+        })
+    }
+}
+#[derive(Clone)]
+pub struct Backend {
+    pub jwks: Arc<Mutex<Value>>,
+    pub gets: Arc<AtomicUsize>,
+    pub records: Arc<AtomicUsize>,
+    pub record_status: Arc<AtomicUsize>,
+    pub status: Arc<AtomicUsize>,
+    pub delay_ms: Arc<AtomicUsize>,
+    pub blob: Arc<Mutex<Vec<u8>>>,
+}
+async fn jwks(State(state): State<Backend>) -> Response {
+    state.gets.fetch_add(1, Ordering::SeqCst);
+    tokio::time::sleep(std::time::Duration::from_millis(
+        state.delay_ms.load(Ordering::SeqCst) as u64,
+    ))
+    .await;
+    let status = StatusCode::from_u16(state.status.load(Ordering::SeqCst) as u16).unwrap();
+    (
+        status,
+        [("location", "/trap")],
+        Json(state.jwks.lock().unwrap().clone()),
+    )
+        .into_response()
+}
+async fn record(State(state): State<Backend>) -> Response {
+    state.records.fetch_add(1, Ordering::SeqCst);
+    let status = state.record_status.load(Ordering::SeqCst) as u16;
+    if status != 200 {
+        return StatusCode::from_u16(status).unwrap().into_response();
+    }
+    Json(json!({"blob":STANDARD.encode(state.blob.lock().unwrap().as_slice()),"version":1}))
+        .into_response()
+}
+pub struct Fixture {
+    pub state: IngressState,
+    pub backend: Backend,
+    pub recorder: Arc<Recorder>,
+    pub id: ChannelId,
+    pub url: String,
+    pub client: reqwest::Client,
+    tasks: Vec<JoinHandle<()>>,
+}
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        for task in &self.tasks {
+            task.abort();
+        }
+    }
+}
+impl Fixture {
+    pub async fn new(edit: impl FnOnce(&mut Value), config: IngressConfig) -> Self {
+        let signer = Signer::shared();
+        let backend = Backend {
+            jwks: Arc::new(Mutex::new(signer.jwks())),
+            gets: Arc::new(0.into()),
+            records: Arc::new(0.into()),
+            record_status: Arc::new(200.into()),
+            status: Arc::new(200.into()),
+            delay_ms: Arc::new(0.into()),
+            blob: Arc::new(Mutex::new(Vec::new())),
+        };
+        let (base, server) = serve(
+            Router::new()
+                .route("/jwks", get(jwks))
+                .route("/trap", get(jwks))
+                .route("/api/v1/gateway/channel-records/{id}", get(record))
+                .with_state(backend.clone()),
+        )
+        .await;
+        let keys =
+            Arc::new(MasterKeyRing::parse(&format!("1:{}", STANDARD.encode([1; 32]))).unwrap());
+        let records = Arc::new(RecordClient::new(&base, "test-service-bearer").unwrap());
+        let mut value: Value = serde_json::from_str(include_str!(
+            "../../../cmaeg-core/tests/fixtures/channel.json"
+        ))
+        .unwrap();
+        value["record_id"] = uuid::Uuid::new_v4().to_string().into();
+        value["sources"] = json!([{"type":"nyxid_relay","issuer":ISSUER,"jwks_url":format!("{base}/jwks"),"key_id":"key-1","route_ids":["route-1"],"platform":"telegram","bot_username":"support_bot","admission":{"type":"all"}}]);
+        value["partition"]["key"] = "conversation_and_sender".into();
+        edit(&mut value);
+        let mut definition: ChannelDefinition = serde_json::from_value(value).unwrap();
+        definition.profile_digest = definition.profile.digest();
+        definition.validate().unwrap();
+        let pointer = ChannelPointer {
+            v: 1,
+            record_id: definition.record_id.clone(),
+            record_url: records
+                .record_url(definition.record_id.as_str())
+                .unwrap()
+                .to_string(),
+        };
+        let id = pointer.seal_id(&keys).unwrap();
+        *backend.blob.lock().unwrap() =
+            seal_blob(&keys, definition.to_blob_json().to_string().as_bytes()).unwrap();
+        let resolver = ChannelResolver::new(records, keys.clone(), ChannelCacheConfig::default());
+        let recorder = Arc::new(Recorder::default());
+        let state = IngressState::new(resolver, keys, config, recorder.clone()).unwrap();
+        let (gateway, app) = serve(callbacks::router(state.clone())).await;
+        Self {
+            url: format!("{gateway}/v1/callbacks/{id}"),
+            state,
+            backend,
+            recorder,
+            id,
+            client: reqwest::Client::new(),
+            tasks: vec![server, app],
+        }
+    }
+    pub fn request(&self, body: Vec<u8>, token: &str) -> reqwest::RequestBuilder {
+        self.client
+            .post(&self.url)
+            .header("content-type", "application/json")
+            .header("x-nyxid-callback-token", token)
+            .header("x-nyxid-platform", "telegram")
+            .header("x-nyxid-message-id", "message-1")
+            .header("x-nyxid-timestamp", now_rfc3339())
+            .body(body)
+    }
+    pub async fn send(&self, envelope: &Envelope) -> reqwest::Response {
+        let (body, token) = envelope.signed();
+        self.request(body, &token).send().await.unwrap()
+    }
+}
+async fn serve(router: Router) -> (String, JoinHandle<()>) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    (
+        base,
+        tokio::spawn(async move {
+            axum::serve(listener, router).await.unwrap();
+        }),
+    )
+}
+pub fn now() -> i64 {
+    time::OffsetDateTime::now_utc().unix_timestamp()
+}
+pub fn now_rfc3339() -> String {
+    time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap()
+}
+pub fn claims(aud: &str, kind: &str, ttl: i64) -> Value {
+    json!({"iss":ISSUER,"aud":aud,"token_type":kind,"iat":now(),"exp":now()+ttl,"jti":"correlation-1"})
+}
+pub struct Envelope {
+    pub payload: Value,
+    pub callback: Value,
+    pub reply: Value,
+}
+impl Default for Envelope {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+impl Envelope {
+    pub fn new() -> Self {
+        let mut callback = claims("channel-relay/callback", "relay_callback", 300);
+        callback["api_key_id"] = "key-1".into();
+        callback["message_id"] = "message-1".into();
+        callback["platform"] = "telegram".into();
+        let mut reply = claims("channel-relay/reply", "relay_reply", 1800);
+        reply["api_key_id"] = "key-1".into();
+        reply["inbound_message_id"] = "message-1".into();
+        reply["conversation_id"] = "route-1".into();
+        reply["platform"] = "telegram".into();
+        Self {
+            callback,
+            reply,
+            payload: json!({"message_id":"message-1","correlation_id":"correlation-1","platform":"telegram","agent":{"api_key_id":"key-1","name":"A display name"},"conversation":{"id":"route-1","platform_id":"42","type":"private"},"sender":{"platform_id":"7","display_name":"Alice"},"content":{"type":"text","text":"hello"},"timestamp":now_rfc3339(),"raw_platform_data":{"message":{"message_id":11,"chat":{"id":42,"type":"private"},"from":{"id":7,"is_bot":false},"text":"hello"}}}),
+        }
+    }
+    pub fn signed(&self) -> (Vec<u8>, String) {
+        let mut payload = self.payload.clone();
+        if payload.get("reply_token").is_none() {
+            payload["reply_token"] = Signer::shared().token(&self.reply).into();
+        }
+        let body = serde_json::to_vec(&payload).unwrap();
+        let mut claims = self.callback.clone();
+        claims["body_sha256"] = format!("{:x}", Sha256::digest(&body)).into();
+        (body, Signer::shared().token(&claims))
+    }
+    pub fn group(&mut self) {
+        self.payload["raw_platform_data"]["message"]["chat"]["type"] = "supergroup".into();
+    }
+}
+pub async fn problem(response: reqwest::Response, status: u16, reason: &str) {
+    assert_eq!(response.status().as_u16(), status);
+    assert_eq!(response.headers()["cmaeg-protocol-version"], "1");
+    assert!(response.headers()["server-timing"]
+        .to_str()
+        .unwrap()
+        .starts_with("restore;dur="));
+    assert!(response.headers()["content-type"]
+        .to_str()
+        .unwrap()
+        .starts_with("application/problem+json"));
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(body["detail"], reason, "{body}");
+    if status == 401 {
+        assert_eq!(body["code"], "callback_invalid");
+    }
+}

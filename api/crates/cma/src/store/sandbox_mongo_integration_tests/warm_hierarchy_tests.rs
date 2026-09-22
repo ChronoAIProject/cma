@@ -73,6 +73,7 @@ async fn fixture() -> (
 async fn admit_workspace(store: &MongoSandboxStore, candidate: Workspace) -> Workspace {
     let WorkspaceAdmissionResult::Created(mut workspace) = store
         .admit_workspace(WorkspaceAdmission {
+            binding: None,
             workspace: candidate,
             kind: WorkspaceAdmissionKind::SandboxProfile,
             event_at: NOW.into(),
@@ -181,6 +182,7 @@ async fn warm_hierarchy_adopts_once_replays_and_reserves_worktree_numbers() {
     assert_eq!(
         store
             .admit_workspace(WorkspaceAdmission {
+                binding: None,
                 workspace: candidate,
                 kind: WorkspaceAdmissionKind::SandboxProfile,
                 event_at: NOW.into(),

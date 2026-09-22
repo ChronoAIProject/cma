@@ -115,6 +115,7 @@ impl ChannelCommandReservation {
         let command_id = AgentCommandId(format!("cmd_{}", identity("command", &inbox.id)));
         let response_id = AgentResponseId(format!("resp_{}", identity("response", &inbox.id)));
         let reservation = CommandReservation {
+            binding: None,
             envelope: AgentCommandEnvelope {
                 schema_version: AGENT_IO_SCHEMA_VERSION,
                 command_id,

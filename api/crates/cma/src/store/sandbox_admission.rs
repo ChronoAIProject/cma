@@ -147,6 +147,11 @@ async fn apply(
     admission: &SandboxAdmission,
     session: &mut mongodb::ClientSession,
 ) -> Result<AdmissionReceipt, AdmissionError> {
+    store
+        .bindings
+        .admit_sandbox(admission, session)
+        .await
+        .map_err(AdmissionError::Domain)?;
     let owner = admission.sandbox.owner.as_str();
     store
         .sandbox_admissions
@@ -184,7 +189,10 @@ async fn apply(
     }
     let mut sandbox = admission.sandbox.clone();
     sandbox.name = choose_name(store, session, owner, &admission.name).await?;
-    super::warm_sandboxes::claim_ready(store, &mut sandbox, &admission.event_at, session).await?;
+    if admission.binding.is_none() {
+        super::warm_sandboxes::claim_ready(store, &mut sandbox, &admission.event_at, session)
+            .await?;
+    }
     let event = SandboxEvent {
         sandbox_id: sandbox.id.clone(),
         seq: 1,

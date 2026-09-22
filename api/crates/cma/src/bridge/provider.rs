@@ -7,7 +7,6 @@ use layer2_core::bridge::{BridgeConnector, BridgeError, BridgeRouteObservation, 
 use layer2_core::resource_access::ResourceOwner;
 use layer2_core::SubjectId;
 use serde::de::DeserializeOwned;
-use zeroize::Zeroizing;
 
 use super::types::*;
 use crate::auth::persistence::SecretValue;
@@ -15,7 +14,6 @@ use crate::auth::persistence::SecretValue;
 mod relay;
 mod setup;
 
-const MAX_BYTES: usize = 1_048_576;
 const MAX_ROWS: usize = 1_000;
 const DEADLINE: Duration = Duration::from_secs(5);
 
@@ -347,43 +345,28 @@ impl NyxBridgeProvider {
         endpoint: reqwest::Url,
         credential: &SecretValue,
     ) -> Result<T, BridgeError> {
-        let mut response = self
+        let response = self
             .http
             .get(endpoint)
             .bearer_auth(credential.expose())
             .send()
             .await
             .map_err(|_| BridgeError::AuthorityUnavailable)?;
-        match response.status().as_u16() {
-            200 => {}
-            401 | 403 | 404 => return Err(binding_mismatch()),
-            _ => return Err(BridgeError::AuthorityUnavailable),
+        // Preserve the bridge's exact-status and fail-closed metadata contract.
+        if response.status().as_u16() != 200 {
+            return Err(match response.status().as_u16() {
+                401 | 403 | 404 => binding_mismatch(),
+                _ => BridgeError::AuthorityUnavailable,
+            });
         }
-        if response.headers().contains_key(reqwest::header::LINK)
-            || response
-                .headers()
-                .contains_key(reqwest::header::CONTENT_RANGE)
-        {
-            return Err(binding_mismatch());
-        }
-        if response
-            .content_length()
-            .is_some_and(|size| size > MAX_BYTES as u64)
-        {
-            return Err(binding_mismatch());
-        }
-        let mut bytes = Zeroizing::new(Vec::new());
-        while let Some(chunk) = response
-            .chunk()
+        crate::auth::provider_http::read_json(response)
             .await
-            .map_err(|_| BridgeError::AuthorityUnavailable)?
-        {
-            if bytes.len().saturating_add(chunk.len()) > MAX_BYTES {
-                return Err(binding_mismatch());
-            }
-            bytes.extend_from_slice(&chunk);
-        }
-        serde_json::from_slice(&bytes).map_err(|_| binding_mismatch())
+            .map_err(|error| match error {
+                crate::auth::provider_http::ProviderReadError::Unavailable => {
+                    BridgeError::AuthorityUnavailable
+                }
+                _ => binding_mismatch(),
+            })
     }
 }
 

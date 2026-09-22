@@ -116,20 +116,18 @@ pub(super) fn fold_agent_log(
                 operation_sequence,
                 operation: AgentOperationKind::Steer,
                 state: AgentOperationDelivery::DispatchFenced,
-            } => {
-                if *operation_sequence != entry.seq
-                    || transcript
-                        .active
-                        .as_ref()
-                        .is_none_or(|turn| turn.owner_message.is_none())
-                    || !entries.get(index + 1).is_some_and(|next| {
-                        entry.seq.checked_add(1) == Some(next.seq)
-                            && entry.appended_at == next.appended_at
-                            && matches!(next.kind, AgentLogKind::OwnerMessage { .. })
-                    })
-                {
-                    return Err("agent steering fence has no matching active-turn input".into());
-                }
+            } if *operation_sequence != entry.seq
+                || transcript
+                    .active
+                    .as_ref()
+                    .is_none_or(|turn| turn.owner_message.is_none())
+                || !entries.get(index + 1).is_some_and(|next| {
+                    entry.seq.checked_add(1) == Some(next.seq)
+                        && entry.appended_at == next.appended_at
+                        && matches!(next.kind, AgentLogKind::OwnerMessage { .. })
+                }) =>
+            {
+                return Err("agent steering fence has no matching active-turn input".into());
             }
             AgentLogKind::OwnerMessage { .. } => {
                 let steering = index.checked_sub(1).is_some_and(|previous| {

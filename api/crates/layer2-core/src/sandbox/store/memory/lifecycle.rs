@@ -16,6 +16,13 @@ impl SandboxAdmissionStore for InMemorySandboxStore {
     ) -> Result<SandboxAdmissionResult, SandboxStoreError> {
         admission.validate()?;
         let mut state = self.lock();
+        if let Some(fence) = &admission.binding {
+            let binding = state
+                .bindings
+                .get(&fence.binding_id)
+                .ok_or(SandboxStoreError::Conflict)?;
+            fence.require_sandbox(binding, &admission.sandbox)?;
+        }
         let replay_key = admission
             .trigger_launch_id()
             .map(|launch_id| (admission.sandbox.owner.clone(), launch_id.to_string()));

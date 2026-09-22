@@ -61,6 +61,10 @@ pub(super) async fn validate_and_fence(
         return Ok(());
     };
     if let Some(fence) = &mutation.execution_fence {
+        store
+            .bindings
+            .conversation_authority(fence.binding_authority(), session)
+            .await?;
         use super::super::resource_access::{read_execution_snapshot, ReadError};
         let snapshot = read_execution_snapshot(store, &fence.target(), session)
             .await

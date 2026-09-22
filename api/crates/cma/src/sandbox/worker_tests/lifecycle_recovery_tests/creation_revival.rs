@@ -50,6 +50,7 @@ async fn paused_create_scenario() {
     );
     let revive_at = pause_at + Duration::from_secs(1);
     let request = AgentAdmission {
+        binding: None,
         created_by: None,
         owner: active.owner.clone(),
         workspace_id: workspace.id.clone(),
@@ -286,6 +287,7 @@ async fn paused_workspace_create_restores_before_prepare_and_setup() {
     harness
         .store
         .admit_workspace(WorkspaceAdmission {
+            binding: None,
             workspace: workspace.clone(),
             kind: WorkspaceAdmissionKind::Manual,
             event_at: rfc3339_at(revive_at),

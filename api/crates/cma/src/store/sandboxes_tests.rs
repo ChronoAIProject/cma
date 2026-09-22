@@ -47,6 +47,7 @@ fn sandbox(origin: SandboxOrigin) -> Sandbox {
         failure: None,
         runtime: None,
         credential: SandboxCredentialState {
+            source: Default::default(),
             service_grants: Vec::new(),
             reaches: vec![ServiceId::new("profile-service")],
             key_generation: 0,

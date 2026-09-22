@@ -4,6 +4,7 @@
 
 mod audit;
 mod authority;
+mod binding;
 mod context;
 mod identity;
 mod inventory;

@@ -12,7 +12,6 @@ use layer2_core::trigger_domain::*;
 use layer2_core::{
     Authorization, Caller, Capability, RuntimeCapabilities, RuntimeCapability, WorktreeId,
 };
-
 mod common_execution;
 mod input_protocol;
 
@@ -291,6 +290,7 @@ impl Fixture {
             launch_id: launch.id.to_string(),
         };
         AgentAdmission {
+            binding: None,
             created_by: Some(ResourceActor::Trigger {
                 subject: launch.owner.clone(),
                 launch_id: launch.id.clone(),

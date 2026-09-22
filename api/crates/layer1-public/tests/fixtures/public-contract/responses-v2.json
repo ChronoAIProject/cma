@@ -40,10 +40,11 @@
           },
           "output": {
             "standard_items": [
-              "message"
+              "message",
+              "mcp_call"
             ],
             "text_deltas": "durable_message_commits",
-            "tools": "agui_companion"
+            "tools": "activity_only"
           },
           "companion": "/api/v1/agui/events?thread_id={agent_id}",
           "documentation": "https://github.com/ChronoAIProject/cma/blob/main/docs/API_Responses.md",

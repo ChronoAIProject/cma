@@ -52,6 +52,7 @@ impl AgentService {
                     })?;
                     let revision = self.exact_revision(reference).await?;
                     let admission = AgentAdmission {
+                        binding: None,
                         created_by: None,
                         owner: workspace.owner.clone(),
                         workspace_id: workspace.id.clone(),

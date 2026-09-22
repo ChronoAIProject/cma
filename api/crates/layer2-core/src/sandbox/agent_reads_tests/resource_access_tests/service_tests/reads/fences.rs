@@ -307,7 +307,11 @@ async fn buffered_result_cannot_extend_expired_membership() {
     )
     .unwrap();
     decision.require(ResourceCapability::ViewHistory).unwrap();
-    let held = AuthorizedResource { snapshot, decision };
+    let held = AuthorizedResource {
+        snapshot,
+        decision,
+        binding: None,
+    };
     tokio::time::sleep(Duration::from_millis(30)).await;
     assert_eq!(
         access

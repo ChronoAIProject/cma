@@ -1,0 +1,174 @@
+//! Durable resource orchestration. Adapters perform bounded, owner-scoped effects.
+use super::*;
+use crate::{sandbox::binding::ProvidedCredential, SubjectId};
+use std::{sync::Arc, time::SystemTime};
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ExternalBot {
+    pub id: String,
+    pub name: String,
+    pub platform: String,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BotKeyRole {
+    Agent,
+    Route,
+}
+#[derive(Debug)]
+pub struct BotKey {
+    pub id: String,
+    pub value: ProvidedCredential,
+    pub expires_at: String,
+}
+#[derive(Debug, Clone)]
+pub struct BotKeyRef {
+    pub id: String,
+    pub role: BotKeyRole,
+}
+pub struct BotSecrets {
+    pub agent: ProvidedCredential,
+    pub route: ProvidedCredential,
+}
+#[derive(Debug, Clone)]
+pub struct BotChannelObservation {
+    pub channel: BotChannel,
+    pub agent_key_hash: String,
+    pub route_key_id: String,
+    pub route_ids: Vec<String>,
+}
+impl BotChannelObservation {
+    pub fn uses(&self, keys: &BotCredentialSet) -> bool {
+        keys.agent_key_hash.as_deref() == Some(self.agent_key_hash.as_str())
+            && keys.route_key_id.as_deref() == Some(self.route_key_id.as_str())
+    }
+}
+
+/// Mutations must never be retried by the transport. Every call has a deadline
+/// below the worker claim lifetime. Enumeration must be complete and reject
+/// ambiguous ownership; absence is only authoritative after a successful read.
+#[async_trait::async_trait]
+pub trait BotExternal: Send + Sync {
+    async fn available(&self, owner: &SubjectId) -> Result<Vec<ExternalBot>, BotError>;
+    async fn verify(&self, bot: &Bot) -> Result<(), BotError>;
+    async fn mint(&self, bot: &Bot, role: BotKeyRole) -> Result<BotKey, BotError>;
+    /// All generations, restricted to this Bot's exact owner and name namespace.
+    async fn keys(&self, bot: &Bot) -> Result<Vec<BotKeyRef>, BotError>;
+    async fn revoke(&self, bot: &Bot, id: &str) -> Result<(), BotError>;
+    async fn create_channel(
+        &self,
+        bot: &Bot,
+        secrets: &BotSecrets,
+    ) -> Result<BotChannelObservation, BotError>;
+    /// Recover through the Bot's preallocated record identity, including pending creation.
+    async fn channel(&self, bot: &Bot) -> Result<Option<BotChannelObservation>, BotError>;
+    /// Success confirms both the retained channel and provider binding use the
+    /// selected credentials. With no secrets, reconcile the retained credentials
+    /// even if an earlier failed update changed the provider before persistence.
+    async fn configure_channel(
+        &self,
+        bot: &Bot,
+        current: &BotChannelObservation,
+        keys: &BotCredentialSet,
+        secrets: Option<&BotSecrets>,
+        enabled: bool,
+    ) -> Result<BotChannelObservation, BotError>;
+    async fn delete_channel(
+        &self,
+        bot: &Bot,
+        current: &BotChannelObservation,
+    ) -> Result<(), BotError>;
+    async fn set_callback(&self, bot: &Bot, key_id: &str, url: &str) -> Result<(), BotError>;
+    async fn create_route(&self, bot: &Bot, key_id: &str) -> Result<String, BotError>;
+    async fn set_route_key(&self, bot: &Bot, route: &str, key: &str) -> Result<(), BotError>;
+    /// Discover and delete routes only for the selected external bot and these
+    /// owned keys. Refuse any conflicting use rather than deleting another route.
+    async fn delete_routes(&self, bot: &Bot, key_ids: &[String]) -> Result<(), BotError>;
+    async fn test(&self, bot: &Bot) -> Result<BotTestResult, BotError>;
+}
+
+pub struct BotWorker {
+    pub(super) service: Arc<BotService>,
+    pub(super) external: Arc<dyn BotExternal>,
+    pub(super) holder: String,
+}
+impl BotWorker {
+    pub fn new(service: Arc<BotService>, external: Arc<dyn BotExternal>, holder: String) -> Self {
+        Self {
+            service,
+            external,
+            holder,
+        }
+    }
+    pub async fn run(&self, id: &str) -> Result<(), BotError> {
+        let Some(mut bot) = self
+            .service
+            .claim(id, &self.holder, SystemTime::now())
+            .await?
+        else {
+            return Ok(());
+        };
+        let operation = bot.work.as_ref().ok_or(BotError::Conflict)?.operation;
+        let result = match operation {
+            BotOperation::Create => self.create(&mut bot).await,
+            BotOperation::Cleanup | BotOperation::Delete => self.cleanup(&mut bot).await,
+            BotOperation::Disable | BotOperation::Enable => self.policy(&mut bot, operation).await,
+            BotOperation::Rotate => self.rotate(&mut bot).await,
+        };
+        if let Err(error) = result {
+            // A rejected revision fence belongs to another worker. Never issue
+            // compensating effects from this stale copy of the aggregate.
+            if error == BotError::Conflict {
+                return Err(error);
+            }
+            if operation == BotOperation::Create {
+                self.service.begin_cleanup(&mut bot, &self.holder).await?;
+                // Keep admission failures reviewable and cleanup durable. The
+                // next claim waits for in-flight dependency deadlines to settle.
+                self.service
+                    .defer(&mut bot, &self.holder, "cleanup_pending", 120)
+                    .await?;
+            } else {
+                self.service
+                    .retry(&mut bot, &self.holder, "dependency_retry")
+                    .await?;
+            }
+            return Err(error);
+        }
+        Ok(())
+    }
+    pub(super) async fn step(&self, bot: &mut Bot, step: &str) -> Result<(), BotError> {
+        self.service.checkpoint(bot, &self.holder, step).await
+    }
+    async fn policy(&self, bot: &mut Bot, operation: BotOperation) -> Result<(), BotError> {
+        self.step(bot, "read_channel").await?;
+        let current = self
+            .external
+            .channel(bot)
+            .await?
+            .ok_or(BotError::Unavailable)?;
+        if !current.uses(&bot.resources.credentials) {
+            return Err(BotError::Unavailable);
+        }
+        let enabled = operation == BotOperation::Enable;
+        self.step(bot, "configure_admission").await?;
+        let channel = self
+            .external
+            .configure_channel(bot, &current, &bot.resources.credentials, None, enabled)
+            .await?;
+        if !channel.uses(&bot.resources.credentials) {
+            return Err(BotError::Unavailable);
+        }
+        bot.resources.channel = Some(channel.channel);
+        self.service
+            .complete(
+                bot,
+                &self.holder,
+                if enabled {
+                    BotState::Active
+                } else {
+                    BotState::Disabled
+                },
+            )
+            .await
+    }
+}

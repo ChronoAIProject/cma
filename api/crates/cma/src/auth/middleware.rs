@@ -29,6 +29,20 @@ pub async fn attach_subject(
         }
     };
     if let Some(resolved) = resolved {
+        if let Some(binding) = &resolved.binding {
+            if !super::binding::permits_request(
+                request.method(),
+                request.uri().path(),
+                binding.binding_id(),
+            ) {
+                return (StatusCode::FORBIDDEN, Json(serde_json::json!({"error":{"code":"binding_key_scope","message":"Binding keys are limited to their conversation interface.","type":"permission_error"}}))).into_response();
+            }
+            request
+                .extensions_mut()
+                .insert(layer1_public::AuthMethod::BindingKey {
+                    binding_id: binding.binding_id().into(),
+                });
+        }
         request
             .extensions_mut()
             .insert(auth.resource_request_context(&resolved));
@@ -64,7 +78,11 @@ fn bypasses_ambient_auth(path: &str) -> bool {
     // Recovery routes validate their own authority without requiring an old login.
     if matches!(
         path,
-        "/auth/signup-options" | "/auth/login" | "/auth/callback" | "/auth/logout"
+        "/auth/signup-options"
+            | "/auth/login"
+            | "/auth/callback"
+            | "/auth/logout"
+            | "/.well-known/agent-card.json"
     ) {
         return true;
     }
@@ -130,6 +148,7 @@ mod tests {
     #[test]
     fn only_explicit_routes_bypass_ambient_auth() {
         for path in [
+            "/.well-known/agent-card.json",
             "/auth/signup-options",
             "/auth/login",
             "/auth/callback",

@@ -7,9 +7,18 @@ use axum::{
 use layer2_core::sandbox::{agent_io::AgentCommandService, AgentReadService};
 use std::sync::Arc;
 
+#[cfg(test)]
+mod activity_tests;
+#[cfg(test)]
+pub(crate) mod binding_tests;
+mod bindings;
 pub(crate) mod controls;
 mod conversation;
 mod error;
+mod event_context;
+#[cfg(test)]
+mod event_context_tests;
+mod output;
 #[cfg(test)]
 mod output_gap_tests;
 mod parse;
@@ -20,16 +29,30 @@ mod stream;
 #[cfg(test)]
 pub(crate) mod tests;
 
+pub use output::{ActivityItem, V2OutputItem};
 pub use projection::{ResponseConversation, V2ResponseObject, V2ResponseStatus};
 
 #[derive(Clone)]
 pub struct ResponsesV2State {
     commands: Arc<AgentCommandService>,
     reads: Arc<AgentReadService>,
+    bindings: Option<Arc<layer2_core::sandbox::binding::BindingAccessService>>,
 }
 impl ResponsesV2State {
+    pub fn with_bindings(
+        mut self,
+        bindings: Arc<layer2_core::sandbox::binding::BindingAccessService>,
+    ) -> Self {
+        self.bindings = Some(bindings);
+        self
+    }
+
     pub fn new(commands: Arc<AgentCommandService>, reads: Arc<AgentReadService>) -> Self {
-        Self { commands, reads }
+        Self {
+            commands,
+            reads,
+            bindings: None,
+        }
     }
 }
 pub fn router(state: ResponsesV2State) -> Router {
@@ -62,6 +85,10 @@ pub fn router(state: ResponsesV2State) -> Router {
             "/api/v2/conversations/{conversation_id}/items",
             get(conversation::items),
         )
+        .route(
+            "/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}",
+            get(event_context::retrieve),
+        )
         .with_state(state)
 }
 pub(super) fn document() -> utoipa::openapi::OpenApi {
@@ -69,6 +96,7 @@ pub(super) fn document() -> utoipa::openapi::OpenApi {
     #[derive(OpenApi)]
     #[openapi(
         paths(
+            event_context::retrieve,
             routes::capabilities,
             routes::create,
             routes::create_alias,

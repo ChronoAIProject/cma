@@ -39,6 +39,8 @@ fn execute(
 ) -> Result<TargetedControlInspection, CommandLedgerError> {
     request.validate()?;
     let mut state = store.lock();
+    super::bindings::require_conversation_authority(&state, request.command.binding.as_ref())
+        .map_err(|_| CommandLedgerError::Conflict)?;
     request.command.require_current_authority()?;
     let key = (request.command.scope(), request.command.key_sha256.clone());
     let existing = state

@@ -16,6 +16,8 @@ pub const MAX_COMMAND_QUEUE_CAPACITY: u16 = 64;
 
 #[derive(Debug, Clone)]
 pub struct CommandReservation {
+    /// Live binding/conversation proof, consumed inside the reservation transaction.
+    pub binding: Option<crate::sandbox::binding::BindingConversationAuthority>,
     pub envelope: AgentCommandEnvelope,
     pub key_sha256: String,
     pub response_id: Option<AgentResponseId>,
@@ -164,6 +166,15 @@ pub trait AgentCommandStore: Send + Sync {
         Err(CommandLedgerError::Unavailable)
     }
 
+    /// Persistence-only permanent external-event lookup. The service must prove
+    /// current binding and conversation access before exposing the payload.
+    async fn get_external_event_command(
+        &self,
+        _key: &str,
+    ) -> Result<Option<AdmittedAgentCommand>, CommandLedgerError> {
+        Err(CommandLedgerError::Unavailable)
+    }
+
     /// Atomically deduplicate, assign a per-Agent order, check the bounded queue
     /// and retain the receipt. No TTL may silently make an old key reusable.
     async fn reserve_command(
@@ -201,6 +212,7 @@ impl CommandReservation {
 
     pub fn validate(&self) -> Result<(), CommandLedgerError> {
         self.require_current_authority()?;
+        self.validate_binding()?;
         self.envelope
             .validate_integrity()
             .map_err(|_| CommandLedgerError::Invalid)?;

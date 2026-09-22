@@ -12,7 +12,7 @@ pub mod responses;
 pub mod rest;
 pub mod tickets;
 
-pub use auth::{AuthenticatedCaller, AuthenticatedSubject, DelegatedCredential};
+pub use auth::{AuthMethod, AuthenticatedCaller, AuthenticatedSubject, DelegatedCredential};
 pub use conversation::AgentConversationState;
 pub use resource_auth::AuthenticatedResourceCaller;
 pub use tickets::{

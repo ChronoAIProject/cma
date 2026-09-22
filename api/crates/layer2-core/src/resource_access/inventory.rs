@@ -154,7 +154,11 @@ impl ResourceAccessService {
                 SystemTime::now(),
             )?;
             decision.require(ResourceCapability::ViewDetails)?;
-            authorized.push(AuthorizedResource { snapshot, decision });
+            authorized.push(AuthorizedResource {
+                snapshot,
+                decision,
+                binding: None,
+            });
         }
         // Validate the hidden lookahead as well: the presence of `next` must not
         // disclose an Agent whose grant has just disappeared.

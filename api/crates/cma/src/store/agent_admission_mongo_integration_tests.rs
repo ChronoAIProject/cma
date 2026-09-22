@@ -277,6 +277,7 @@ fn sandbox(suffix: &str) -> Sandbox {
         failure: None,
         runtime: None,
         credential: SandboxCredentialState {
+            source: Default::default(),
             service_grants: Vec::new(),
             reaches: vec![],
             key_generation: 1,
@@ -343,6 +344,7 @@ fn workspace(sandbox: &Sandbox, suffix: &str) -> Workspace {
 
 fn admission(workspace: &Workspace, suffix: &str) -> AgentAdmission {
     AgentAdmission {
+        binding: None,
         created_by: None,
         owner: workspace.owner.clone(),
         workspace_id: workspace.id.clone(),
