@@ -124,6 +124,7 @@ pub(super) fn authorize_candidates(
         };
         decision.require(READ_CAPABILITY)?;
         result.push(AuthorizedResource {
+            binding: None,
             snapshot: snapshot.resource.clone(),
             decision,
         });
