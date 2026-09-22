@@ -238,9 +238,11 @@ outbound bearer configuration remains available for other installations; those
 operators must renew it and restart before expiry. Client-secret rotation also
 requires a Secret update and a gateway rollout. Retain the same service-account
 subject so stored CMA records and provider bindings remain accessible. Grant the
-account only the two gateway permissions. Register
-the tools service under `CMAEG_TOOLS_NYXID_SLUG` with the four protocol operation
-IDs. Configure provider paths explicitly and retain provider/binding ownership.
+account only the two gateway permissions. CMA uses the advertised native `/mcp`
+endpoint with a runtime-local credential proxy; no NyxID tools catalogue entry
+or owner connection is needed. `CMAEG_TOOLS_NYXID_SLUG` remains in the provider
+advertisement for providers that use catalogue integration. Configure provider
+paths explicitly and retain provider/binding ownership.
 A channel's bot agent key supplies provider and tool authority; a relay user token
 is never used as a provider credential.
 

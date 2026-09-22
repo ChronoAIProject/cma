@@ -14,12 +14,14 @@ export function ProfilePicker({
   value,
   onChange,
   disabled = false,
+  personalOnly = false,
 }: {
   readonly client: CreationClient;
   readonly kind: ProfileKind;
   readonly value?: CreationProfile;
   readonly onChange: (value: CreationProfile | undefined) => void;
   readonly disabled?: boolean;
+  readonly personalOnly?: boolean;
 }) {
   const [source, setSource] = useState<ProfileSource>('own');
   const [choices, setChoices] = useState<readonly ProfileChoice[]>([]);
@@ -95,23 +97,27 @@ export function ProfilePicker({
   };
   return (
     <div className="create-profile-picker">
-      <ChoiceGroup
-        label="Profile source"
-        value={source}
-        options={[
-          { value: 'own', label: 'My profiles' },
-          { value: 'public', label: 'Public' },
-          { value: 'default', label: 'Default' },
-        ]}
-        disabled={disabled}
-        onChange={(source) => {
-          setSource(source);
-          setChoices([]);
-          setNext(undefined);
-          setLoading(true);
-          setError(undefined);
-        }}
-      />
+      {personalOnly ? (
+        <p>Your published profiles</p>
+      ) : (
+        <ChoiceGroup
+          label="Profile source"
+          value={source}
+          options={[
+            { value: 'own', label: 'My profiles' },
+            { value: 'public', label: 'Public' },
+            { value: 'default', label: 'Default' },
+          ]}
+          disabled={disabled}
+          onChange={(source) => {
+            setSource(source);
+            setChoices([]);
+            setNext(undefined);
+            setLoading(true);
+            setError(undefined);
+          }}
+        />
+      )}
       {loading ? <p role="status">Loading profiles</p> : null}
       <Presence>
         {error === undefined ? null : (

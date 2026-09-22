@@ -30,6 +30,8 @@ mod checkpoint;
 mod exchange;
 #[path = "adapter_install.rs"]
 mod install;
+#[path = "adapter_provider_tools.rs"]
+mod provider_tools;
 #[path = "adapter_runtime.rs"]
 mod runtime_lifecycle;
 #[path = "adapter_workspace.rs"]
@@ -52,6 +54,7 @@ pub struct HostedAdapter {
     deployment: HostedDeployment,
     home_volumes: Option<Arc<dyn crate::HomeVolumeStore>>,
     channel_tools: Option<Arc<dyn super::HostedChannelToolSource>>,
+    provider_tools: Option<Arc<dyn super::HostedProviderToolSource>>,
     states: Mutex<BTreeMap<RuntimeHandle, RuntimeState>>,
 }
 
@@ -67,6 +70,7 @@ impl HostedAdapter {
             deployment,
             home_volumes: None,
             channel_tools: None,
+            provider_tools: None,
             states: Mutex::new(BTreeMap::new()),
         }
     }

@@ -84,6 +84,7 @@ pub fn validate_binding_write(
             if current.binding_id != next.binding_id
                 || current.owner != next.owner
                 || current.manager != next.manager
+                || current.tool_endpoint != next.tool_endpoint
                 || current.created_at != next.created_at
                 || crate::seconds_from_rfc3339(&next.updated_at)
                     < crate::seconds_from_rfc3339(&current.updated_at)

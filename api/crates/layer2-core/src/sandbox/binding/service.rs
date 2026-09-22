@@ -91,7 +91,28 @@ impl BindingService {
         digest: &str,
         credential: &ProvidedCredential,
     ) -> Result<ProviderBinding, BindingError> {
+        self.put_with_tool_endpoint(caller, id, profile, digest, credential, None)
+            .await
+    }
+
+    /// The interface must first prove support for the advertised endpoint. Its
+    /// destination becomes immutable authority for the entire binding lifetime.
+    pub async fn put_with_tool_endpoint(
+        &self,
+        caller: &Caller,
+        id: &str,
+        profile: serde_json::Value,
+        digest: &str,
+        credential: &ProvidedCredential,
+        tool_endpoint: Option<String>,
+    ) -> Result<ProviderBinding, BindingError> {
         require(caller)?;
+        if tool_endpoint
+            .as_deref()
+            .is_some_and(|value| !super::valid_tool_endpoint(value))
+        {
+            return Err(BindingError::InvalidRequest("invalid tool endpoint".into()));
+        }
         self.credentials
             .validate(credential)
             .map_err(credential_error)?;
@@ -114,10 +135,14 @@ impl BindingService {
             .current_sandbox_policy()
             .await
             .map_err(unavailable)?;
-        plan.refused.push(BindingFieldRefusal {
-            field: "tools.native_mcp_url".into(),
-            reason: "external tool endpoints are not supported".into(),
-        });
+        if tool_endpoint.is_some() {
+            plan.honoured.push("tools.native_mcp_url".into());
+        } else {
+            plan.refused.push(BindingFieldRefusal {
+                field: "tools.native_mcp_url".into(),
+                reason: "external tool endpoints are not supported".into(),
+            });
+        }
         if let Some(environment) = &mut plan.environment {
             // Pin the effective floor once. Replays keep the original reservation
             // even when the deployment policy changes between attempts.
@@ -139,6 +164,12 @@ impl BindingService {
                 .is_some_and(|value| value.manager != caller.subject)
             {
                 return Err(BindingError::NotFound);
+            }
+            if current
+                .as_ref()
+                .is_some_and(|value| value.tool_endpoint != tool_endpoint)
+            {
+                return Err(BindingError::Conflict);
             }
             let binding = match current {
                 Some(value) if value.state == BindingState::Retired => {
@@ -172,11 +203,12 @@ impl BindingService {
                     }
                 }
                 None => {
-                    let next = ProviderBinding::new(
+                    let next = ProviderBinding::new_with_tool_endpoint(
                         id.into(),
                         caller.subject.clone(),
                         plan.clone(),
                         credential.sha256(),
+                        tool_endpoint.clone(),
                         now_rfc3339(),
                     )
                     .map_err(BindingError::InvalidRequest)?;

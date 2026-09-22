@@ -54,7 +54,94 @@
           "credentials_expire_at": null,
           "created_at": "2026-01-02T00:00:00Z",
           "updated_at": "2026-01-02T00:00:00Z",
-          "last_test": null
+          "last_test": null,
+          "sandbox_profile": {
+            "id": "sbp_bot",
+            "revision": 1
+          },
+          "workspace_profile": {
+            "id": "wkp_bot",
+            "revision": 1
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "created_at": "/created_at",
+        "created_bot": "/bot_id",
+        "updated_at": "/updated_at"
+      }
+    },
+    {
+      "id": "bots-create-selected-environments",
+      "operation": "POST /api/v1/bots",
+      "scenario": "bot_contract_active_create_environment",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/bots",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-create-environment"
+        },
+        "body": {
+          "name": "Example bot",
+          "nyxid_bot_id": "external-bot",
+          "profile": {
+            "id": "agp_bot",
+            "revision": 1
+          },
+          "admission": {
+            "type": "all"
+          },
+          "reply": {
+            "auto_final": true,
+            "ack_after_ms": 0
+          },
+          "sandbox_profile": {
+            "id": "sbp_research",
+            "revision": 2
+          },
+          "workspace_profile": {
+            "id": "wkp_research",
+            "revision": 3
+          }
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "bot_id": "bot_created_contract",
+          "owner": "owner",
+          "name": "Example bot",
+          "nyxid_bot_id": "external-bot",
+          "profile": {
+            "id": "agp_bot",
+            "revision": 1
+          },
+          "provider": "cma_codex",
+          "state": "creating",
+          "failure": null,
+          "operation": {
+            "operation": "create",
+            "step": "admitted"
+          },
+          "channel": null,
+          "credentials_expire_at": null,
+          "created_at": "2026-01-02T00:00:00Z",
+          "updated_at": "2026-01-02T00:00:00Z",
+          "last_test": null,
+          "sandbox_profile": {
+            "id": "sbp_research",
+            "revision": 2
+          },
+          "workspace_profile": {
+            "id": "wkp_research",
+            "revision": 3
+          }
         },
         "bodyKind": "json"
       },
@@ -326,7 +413,15 @@
               "credentials_expire_at": "2026-02-01T00:00:00Z",
               "created_at": "2026-01-01T00:00:00Z",
               "updated_at": "2026-01-01T00:00:00Z",
-              "last_test": null
+              "last_test": null,
+              "sandbox_profile": {
+                "id": "sbp_bot",
+                "revision": 1
+              },
+              "workspace_profile": {
+                "id": "wkp_bot",
+                "revision": 1
+              }
             }
           ],
           "next_after": null
@@ -583,7 +678,15 @@
           "credentials_expire_at": "2026-02-01T00:00:00Z",
           "created_at": "2026-01-01T00:00:00Z",
           "updated_at": "2026-01-01T00:00:00Z",
-          "last_test": null
+          "last_test": null,
+          "sandbox_profile": {
+            "id": "sbp_bot",
+            "revision": 1
+          },
+          "workspace_profile": {
+            "id": "wkp_bot",
+            "revision": 1
+          }
         },
         "bodyKind": "json"
       },
@@ -891,7 +994,15 @@
           "credentials_expire_at": "2026-02-01T00:00:00Z",
           "created_at": "2026-01-01T00:00:00Z",
           "updated_at": "2026-01-02T00:00:00Z",
-          "last_test": null
+          "last_test": null,
+          "sandbox_profile": {
+            "id": "sbp_bot",
+            "revision": 1
+          },
+          "workspace_profile": {
+            "id": "wkp_bot",
+            "revision": 1
+          }
         },
         "bodyKind": "json"
       },
@@ -1072,7 +1183,15 @@
           "credentials_expire_at": "2026-02-01T00:00:00Z",
           "created_at": "2026-01-01T00:00:00Z",
           "updated_at": "2026-01-02T00:00:00Z",
-          "last_test": null
+          "last_test": null,
+          "sandbox_profile": {
+            "id": "sbp_bot",
+            "revision": 1
+          },
+          "workspace_profile": {
+            "id": "wkp_bot",
+            "revision": 1
+          }
         },
         "bodyKind": "json"
       },
@@ -1253,7 +1372,15 @@
           "credentials_expire_at": "2026-02-01T00:00:00Z",
           "created_at": "2026-01-01T00:00:00Z",
           "updated_at": "2026-01-02T00:00:00Z",
-          "last_test": null
+          "last_test": null,
+          "sandbox_profile": {
+            "id": "sbp_bot",
+            "revision": 1
+          },
+          "workspace_profile": {
+            "id": "wkp_bot",
+            "revision": 1
+          }
         },
         "bodyKind": "json"
       },
@@ -1434,7 +1561,15 @@
           "credentials_expire_at": "2026-02-01T00:00:00Z",
           "created_at": "2026-01-01T00:00:00Z",
           "updated_at": "2026-01-02T00:00:00Z",
-          "last_test": null
+          "last_test": null,
+          "sandbox_profile": {
+            "id": "sbp_bot",
+            "revision": 1
+          },
+          "workspace_profile": {
+            "id": "wkp_bot",
+            "revision": 1
+          }
         },
         "bodyKind": "json"
       },
