@@ -93,7 +93,7 @@ data:
   # Default for new allocations. Existing live Sandboxes retain their recorded
   # image across API upgrades and rollback; drift never admits rotation work.
   # Prove retained-runtime compatibility before deploying any new API image.
-  CHRONO_SANDBOX_IMAGE: "us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-runtime@sha256:bed09cb7956f948ae22af8992d38d2a1746f250ccc39db34b9ed8e175e3bc665"
+  CHRONO_SANDBOX_IMAGE: "us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-runtime@sha256:bf7fe30a8259015115beb81e8a8d6fbb4394d85e83dcef67e30ca8637e735905"
   # Public Profile availability controls credential-free warm runtime counts
   # (1-5 per Profile) in MongoDB. The worker pins this image, the service floor
   # and install bounds; changed pins retire old unowned reservations before
