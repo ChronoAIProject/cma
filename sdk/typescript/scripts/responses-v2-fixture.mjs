@@ -12,7 +12,11 @@ const client = createClient({ baseUrl: root, credential: async () => 'local-sdk-
 const conversation = await client.responses.createConversation();
 let prior;
 for (let turn = 0; turn < 2; turn++) {
-  const body = { conversation: conversation.id, input: 'sdk-helper-text', stream: true };
+  const body = {
+    conversation: conversation.id,
+    input: turn === 0 ? 'sdk-raw-with-tools' : 'sdk-helper-text',
+    stream: true,
+  };
   const events = [];
   let receipt;
   const options = {
@@ -25,8 +29,13 @@ for (let turn = 0; turn < 2; turn++) {
     },
   };
   const completed = await client.responsesV2.create(body, options);
-  assert.equal(completed.output[0].content[0].text, 'Hello from CMA');
-  assert.equal(events.length, 9);
+  assert.equal(
+    completed.output.find((item) => item.type === 'message').content[0].text,
+    'Hello from CMA',
+  );
+  assert.equal(events.length, turn === 0 ? 13 : 9);
+  if (turn === 0)
+    assert.equal(completed.output.find((item) => item.type === 'mcp_call').status, 'completed');
   assert.notEqual(receipt.responseId, prior);
   assert.deepEqual(await client.responsesV2.read(receipt.responseId), completed);
   const alias = [];

@@ -22,8 +22,27 @@ export const v2ResponseStatus = enumeration(
   'failed',
   'incomplete',
 );
+export const v2ActivityItem = variant('mcp_call', {
+  id: text,
+  server_label: enumeration('cma'),
+  name: text,
+  arguments: enumeration(''),
+  output: (value: unknown) => {
+    if (value !== null) throw new ProtocolError('Activity output must be absent');
+    return null;
+  },
+  error: (value: unknown) => {
+    if (value !== null) throw new ProtocolError('Activity error body must be absent');
+    return null;
+  },
+  status: enumeration('in_progress', 'completed', 'failed'),
+});
+export type V2ActivityItem = Output<typeof v2ActivityItem>;
+export const v2OutputItem = tagged({ message: outputMessage, mcp_call: v2ActivityItem });
+export type V2OutputItem = Output<typeof v2OutputItem>;
 export const v2ResponseObject = object({
   ...responseFields,
+  output: array(v2OutputItem),
   status: v2ResponseStatus,
   conversation: object({ id: text }),
   completed_at: nullable(integer),
@@ -65,11 +84,23 @@ export const v2ResponseEvent = tagged({
   'response.incomplete': variant('response.incomplete', lifecycle),
   'response.output_item.added': variant('response.output_item.added', {
     ...output,
-    item: outputMessage,
+    item: v2OutputItem,
   }),
   'response.output_item.done': variant('response.output_item.done', {
     ...output,
-    item: outputMessage,
+    item: v2OutputItem,
+  }),
+  'response.mcp_call.in_progress': variant('response.mcp_call.in_progress', {
+    ...output,
+    item_id: text,
+  }),
+  'response.mcp_call.completed': variant('response.mcp_call.completed', {
+    ...output,
+    item_id: text,
+  }),
+  'response.mcp_call.failed': variant('response.mcp_call.failed', {
+    ...output,
+    item_id: text,
   }),
   'response.content_part.added': variant('response.content_part.added', {
     ...content,

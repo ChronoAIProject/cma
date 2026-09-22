@@ -111,16 +111,23 @@ uncertain.
 |---|---|
 | `response.created` | Exactly once in a full replay; stable ID, creation time and initial queued status |
 | `response.in_progress` | Once execution is bound to a durable turn |
-| `response.output_item.added`, `response.output_item.done` | Standard assistant message items with stable indexes and IDs |
+| `response.output_item.added`, `response.output_item.done` | Standard assistant message and informational `mcp_call` items with stable indexes and IDs |
+| `response.mcp_call.in_progress`, `response.mcp_call.completed`, `response.mcp_call.failed` | Durable provider activity transitions; no client tool execution |
 | `response.content_part.added`, `response.content_part.done` | Standard `output_text` parts |
 | `response.output_text.delta`, `response.output_text.done` | Text emitted at durable message commit boundaries; done contains the complete text |
 | `response.completed`, `response.failed`, `response.incomplete` | Terminal projection from durable command/turn state |
 | `error` | Observation failure after headers; does not change the command's durable outcome |
 
 This version streams committed messages, not transient provider token fragments.
-Tool activity, reasoning fragments, approval and steer details stay in the
-separately authorized AG-UI companion discovered by `GET /api/v2`; v2 does not
-mislabel them as standard output items. `GET` and terminal SSE output agree on
+Provider tool activity uses standard `mcp_call` items with `server_label: "cma"`,
+a display `name` bounded to 200 Unicode characters, empty `arguments`, and null
+`output` and `error` bodies. These items describe provider activity; they do not
+request client tool execution. Their status is `in_progress`, `completed` or
+`failed`. Tool starts and terminal updates follow immutable log order, so tools
+may overlap and text may appear before a tool completes without rewriting the
+replay prefix. Message IDs remain identical to conversation item IDs. Reasoning
+fragments, approvals and steer details use the separately authorized AG-UI
+companion discovered by `GET /api/v2`. `GET` and terminal SSE output agree on
 response IDs, item IDs, metadata, text and usage. `previous_response_id` in v2
 response objects is null because the primary mode uses conversation identity.
 
