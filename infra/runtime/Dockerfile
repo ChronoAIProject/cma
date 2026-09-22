@@ -342,7 +342,7 @@ fs.writeFileSync('/etc/profile', profile.replace(defaults, fallback));
 NODE
 
 # Optional CHRONO_TOOL_PROXY_URL selects one external HTTP tool endpoint.
-# When absent no tool proxy binds. When present it listens only at 127.0.0.3:9093,
+# When absent no tool proxy binds. When present it listens only at 127.0.0.1:9093,
 # accepts POST /, and uses the current in-memory Sandbox credential on each call.
 # The control plane must retain the endpoint with the binding before enabling it.
 WORKDIR /home/cma
