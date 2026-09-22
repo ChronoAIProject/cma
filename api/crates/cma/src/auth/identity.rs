@@ -37,6 +37,7 @@ pub(super) async fn request_for_bearer(
     match super::bearer_authorization::verify_subject(auth, &metadata, &token).await {
         Ok(verified) => match &verified.permissions {
             permissions::PermissionEvidence::Active(permission_names) => Ok(Some(RequestAuth {
+                binding: None,
                 credential_source: layer2_core::resource_access::CredentialSource::Independent {
                     expires_at: verified.api_expires_at,
                 },

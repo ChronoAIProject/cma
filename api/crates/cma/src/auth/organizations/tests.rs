@@ -143,6 +143,7 @@ async fn authenticated_request_context_matches_fresh_provider_evidence_without_e
     let fixture = Fixture::new().await;
     let caller = caller();
     let resolved = crate::auth::RequestAuth {
+        binding: None,
         credential_source: layer2_core::resource_access::CredentialSource::Retained,
         subject: caller.subject.clone(),
         authorization: caller.authorization.clone(),
