@@ -14,11 +14,9 @@ pub(super) fn services(bot: &Bot) -> Result<Vec<ServiceId>, BotError> {
         ));
     }
     let mut services = sandbox.nyxid_services.clone();
-    for service in [model_service(bot), "cmaeg"] {
-        let service = ServiceId::new(service);
-        if !services.contains(&service) {
-            services.push(service);
-        }
+    let model = ServiceId::new(model_service(bot));
+    if !services.contains(&model) {
+        services.push(model);
     }
     services.sort();
     Ok(services)

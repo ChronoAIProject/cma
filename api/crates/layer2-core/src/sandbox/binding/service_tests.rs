@@ -178,7 +178,23 @@ impl Fixture {
             .unwrap()
     }
     async fn ready(&self) -> ProviderBinding {
-        let binding = self.put("binding-one", "Original instruction").await;
+        self.ready_with_tool_endpoint(None).await
+    }
+    async fn ready_with_tool_endpoint(&self, endpoint: Option<String>) -> ProviderBinding {
+        let profile = profile("Original instruction");
+        let digest = format!("sha256:{}", content_digest(&profile).unwrap());
+        let binding = self
+            .service
+            .put_with_tool_endpoint(
+                &self.caller,
+                "binding-one",
+                profile,
+                &digest,
+                &self.key,
+                endpoint,
+            )
+            .await
+            .unwrap();
         self.service.reconcile_binding(&binding).await.unwrap();
         let mut sandbox = self
             .store
@@ -226,6 +242,8 @@ impl Fixture {
         binding
     }
 }
+
+mod tools;
 
 #[tokio::test]
 async fn binding_service_recovers_pinned_private_profiles_and_replays_conversation_identity() {

@@ -10,12 +10,15 @@ import { Picker } from '../ui/Picker';
 import { admissionFor, definiteRefusal, problem, type BotClient } from './model';
 import { BotPolicy, type PolicyDraft } from './BotPolicy';
 import { useBotRead } from './useBotRead';
+import { BotEnvironment, environmentReady, type EnvironmentDraft } from './BotEnvironment';
 
 export interface CreationIntent {
   readonly body: CreateBot;
   readonly key: string;
   readonly profileName: string;
   readonly botName: string;
+  readonly sandboxProfileName?: string;
+  readonly workspaceProfileName?: string;
 }
 export function BotCreate({
   client,
@@ -34,6 +37,7 @@ export function BotCreate({
   const [name, setName] = useState('');
   const [botId, setBotId] = useState('');
   const [profile, setProfile] = useState<CreationProfile>();
+  const [environment, setEnvironment] = useState<EnvironmentDraft>({ mode: 'default' });
   const [policy, setPolicy] = useState<PolicyDraft>({
     admission: '',
     senders: '',
@@ -59,7 +63,7 @@ export function BotCreate({
     ack <= 60000;
   const ready = [
     validName && selected !== undefined && choices.fresh,
-    profile?.kind === 'agent',
+    profile?.kind === 'agent' && environmentReady(environment),
     validPolicy,
   ];
   useEffect(() => () => active.current?.abort(), []);
@@ -76,10 +80,28 @@ export function BotCreate({
             key: crypto.randomUUID(),
             profileName: profile.name,
             botName: selected.name,
+            ...(environment.mode === 'custom'
+              ? {
+                  sandboxProfileName: environment.sandbox?.name,
+                  workspaceProfileName: environment.workspace?.name,
+                }
+              : {}),
             body: {
               name,
               nyxid_bot_id: selected.id,
               profile: { id: profile.revision.profileId, revision: profile.revision.revision },
+              ...(environment.mode === 'custom' && environment.sandbox && environment.workspace
+                ? {
+                    sandbox_profile: {
+                      id: environment.sandbox.revision.profileId,
+                      revision: environment.sandbox.revision.revision,
+                    },
+                    workspace_profile: {
+                      id: environment.workspace.revision.profileId,
+                      revision: environment.workspace.revision.revision,
+                    },
+                  }
+                : {}),
               admission,
               reply: { auto_final: policy.autoFinal, ack_after_ms: ack },
             },
@@ -185,6 +207,7 @@ export function BotCreate({
             <>
               <p>Choose a published profile for the Agent’s model, instructions and skills.</p>
               <ProfilePicker client={profiles} kind="agent" value={profile} onChange={setProfile} />
+              <BotEnvironment client={profiles} value={environment} onChange={setEnvironment} />
             </>
           )}
           {step !== 2 ? null : <BotPolicy value={policy} onChange={setPolicy} />}
@@ -199,6 +222,22 @@ export function BotCreate({
                 <dd>
                   {intent?.profileName ?? profile?.name} · Version{' '}
                   {intent?.body.profile.revision ?? profile?.revision.revision}
+                </dd>
+                <dt>Sandbox profile</dt>
+                <dd>
+                  {intent?.body.sandbox_profile
+                    ? `${intent.sandboxProfileName ?? intent.body.sandbox_profile.id} · Version ${intent.body.sandbox_profile.revision}`
+                    : intent === undefined && environment.mode === 'custom'
+                      ? `${environment.sandbox?.name} · Version ${environment.sandbox?.revision.revision}`
+                      : 'Platform default at creation'}
+                </dd>
+                <dt>Workspace profile</dt>
+                <dd>
+                  {intent?.body.workspace_profile
+                    ? `${intent.workspaceProfileName ?? intent.body.workspace_profile.id} · Version ${intent.body.workspace_profile.revision}`
+                    : intent === undefined && environment.mode === 'custom'
+                      ? `${environment.workspace?.name} · Version ${environment.workspace?.revision.revision}`
+                      : 'Platform default at creation'}
                 </dd>
                 <dt>Message access</dt>
                 <dd>
@@ -216,8 +255,8 @@ export function BotCreate({
                 <dd>{(intent?.body.reply.ack_after_ms ?? ack) / 1000} seconds</dd>
               </dl>
               <p>
-                The Bot uses your account and the current default Sandbox and Workspace profiles.
-                Connect the profile’s services and CMAEG in NyxID before creating it.
+                The Bot uses your account and the selected environment profiles. Connect the
+                profile’s services and managed model in NyxID before creating it.
               </p>
               {intent === undefined ? null : (
                 <p role="status">

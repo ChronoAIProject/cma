@@ -2,7 +2,12 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ApiError } from '@chronoai/cma-sdk';
 import { expect, it, vi } from 'vitest';
-import { creationClient, CREATION_AGENT } from '../test/creation';
+import {
+  creationClient,
+  CREATION_AGENT,
+  CREATION_SANDBOX,
+  CREATION_WORKSPACE,
+} from '../test/creation';
 import { chooseOption } from '../test/select';
 import { BotCreate } from './BotCreate';
 import { useCreationIntent } from './creationIntent';
@@ -21,7 +26,7 @@ function Form({ client, navigate }: { client: BotClient; navigate: () => void })
     />
   );
 }
-async function fill() {
+async function fill(custom = false) {
   const user = userEvent.setup();
   await screen.findByRole('button', { name: 'Telegram bot' });
   expect(screen.getByRole('button', { name: 'Continue' })).toBeDisabled();
@@ -32,6 +37,20 @@ async function fill() {
   await user.click(
     await screen.findByRole('button', { name: `Select ${CREATION_AGENT.name} Version 1` }),
   );
+  if (custom) {
+    await user.click(screen.getByRole('radio', { name: 'Choose my published profiles' }));
+    expect(screen.getByRole('button', { name: 'Continue' })).toBeDisabled();
+    await user.click(
+      await screen.findByRole('button', { name: `Select ${CREATION_SANDBOX.name} Version 1` }),
+    );
+    expect(screen.getByRole('button', { name: 'Continue' })).toBeDisabled();
+    await user.click(
+      await screen.findByRole('button', { name: `Select ${CREATION_WORKSPACE.name} Version 1` }),
+    );
+    for (const checkbox of screen.getAllByRole('checkbox', { name: 'I trust this profile' })) {
+      await user.click(checkbox);
+    }
+  }
   await user.click(screen.getByRole('button', { name: 'Continue' }));
   expect(screen.getByRole('button', { name: 'Continue' })).toBeDisabled();
   await chooseOption(user, 'Admission policy', 'Selected senders in private chats');
@@ -52,7 +71,7 @@ it('requires all choices and preserves the exact create request after an uncerta
   const navigate = vi.fn();
   const client = botClient({ create });
   const view = render(<Form client={client} navigate={navigate} />);
-  const user = await fill();
+  const user = await fill(true);
   await user.click(screen.getByRole('button', { name: 'Create Bot' }));
   await screen.findByRole('button', { name: 'Recover creation' });
   view.unmount();
@@ -69,6 +88,14 @@ it('requires all choices and preserves the exact create request after an uncerta
     groups: 'deny',
   });
   expect(create.mock.calls[0]?.[0].reply.ack_after_ms).toBe(1001);
+  expect(create.mock.calls[0]?.[0].sandbox_profile).toEqual({
+    id: CREATION_SANDBOX.revision.profileId,
+    revision: 1,
+  });
+  expect(create.mock.calls[0]?.[0].workspace_profile).toEqual({
+    id: CREATION_WORKSPACE.revision.profileId,
+    revision: 1,
+  });
   expect(navigate).toHaveBeenCalledWith({ kind: 'bot', botId: bot.bot_id });
   expect(sessionStorage.length).toBe(0);
 });

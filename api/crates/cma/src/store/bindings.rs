@@ -20,7 +20,9 @@ mod commands;
 mod conversations;
 mod custody;
 mod rotation;
+mod tools;
 pub(crate) use custody::MongoBindingCredentials;
+pub(crate) use tools::MongoProviderToolSource;
 mod documents;
 use documents::*;
 #[cfg(test)]
@@ -30,19 +32,22 @@ mod mongo_tests;
 
 const BINDINGS: &str = "provider_bindings";
 const CONVERSATIONS: &str = "binding_conversations";
+const TOOL_OPENS: &str = "provider_tool_opens";
 
 #[derive(Clone)]
 pub(super) struct BindingCollections {
     pub(super) records: Collection<Document>,
     pub(super) conversations: Collection<Document>,
+    pub(super) tool_opens: Collection<Document>,
 }
 
 impl BindingCollections {
     pub(super) async fn open(database: &Database) -> Result<Self, StoreError> {
-        initialize_collections(database, &[BINDINGS, CONVERSATIONS]).await?;
+        initialize_collections(database, &[BINDINGS, CONVERSATIONS, TOOL_OPENS]).await?;
         let value = Self {
             records: majority_collection(database, BINDINGS),
             conversations: majority_collection(database, CONVERSATIONS),
+            tool_opens: majority_collection(database, TOOL_OPENS),
         };
         for (collection, keys) in [
             (&value.records, doc! {"pending": 1, "_id": 1}),

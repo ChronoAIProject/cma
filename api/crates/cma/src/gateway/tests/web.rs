@@ -7,11 +7,8 @@ use std::path::Path;
 struct Profiles(BotProfiles);
 #[async_trait::async_trait]
 impl BotProfileResolver for Profiles {
-    async fn resolve(
-        &self,
-        _: &SubjectId,
-        reference: &layer2_core::profiles::AgentProfileRef,
-    ) -> Result<BotProfiles, BotError> {
+    async fn resolve(&self, _: &SubjectId, request: &CreateBot) -> Result<BotProfiles, BotError> {
+        let reference = &request.profile;
         assert_eq!(reference.id, self.0.agent.profile_id);
         assert_eq!(reference.revision, self.0.agent.revision);
         Ok(self.0.clone())

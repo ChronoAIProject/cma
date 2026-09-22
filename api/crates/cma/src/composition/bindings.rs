@@ -29,10 +29,22 @@ impl BindingComposition {
             ),
         }
     }
-    pub(super) fn router(&self, stores: &MongoStores, activity: Arc<ActivityService>) -> Router {
-        rest::binding_router(self.service.clone()).merge(rest::gateway_record_router(
+    pub(super) fn router(
+        &self,
+        stores: &MongoStores,
+        activity: Arc<ActivityService>,
+        gateway: Option<&crate::config::GatewayConfig>,
+    ) -> Result<Router, String> {
+        let routes = match gateway {
+            Some(gateway) => rest::binding_router_with_native_tools(
+                self.service.clone(),
+                &format!("{}/mcp", gateway.public_url.trim_end_matches('/')),
+            )?,
+            None => rest::binding_router(self.service.clone()),
+        };
+        Ok(routes.merge(rest::gateway_record_router(
             layer2_core::GatewayRecordService::new(stores.gateway_records.clone(), activity),
-        ))
+        )))
     }
     pub(crate) fn spawn(
         self,

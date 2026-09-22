@@ -56,6 +56,8 @@ pub struct ProviderBinding {
     pub refused: Vec<BindingFieldRefusal>,
     pub profile: BindingProfilePlan,
     pub key_sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_endpoint: Option<String>,
     pub generation: u64,
     pub work: BindingWork,
     pub previous: Option<PreviousBindingEnvironment>,
@@ -70,6 +72,17 @@ impl ProviderBinding {
         manager: SubjectId,
         profile: BindingProfilePlan,
         key_sha256: String,
+        at: String,
+    ) -> Result<Self, String> {
+        Self::new_with_tool_endpoint(binding_id, manager, profile, key_sha256, None, at)
+    }
+
+    pub fn new_with_tool_endpoint(
+        binding_id: String,
+        manager: SubjectId,
+        profile: BindingProfilePlan,
+        key_sha256: String,
+        tool_endpoint: Option<String>,
         at: String,
     ) -> Result<Self, String> {
         let (state, work) = if profile.environment.is_some() {
@@ -95,6 +108,7 @@ impl ProviderBinding {
             refused: profile.refused.clone(),
             profile,
             key_sha256,
+            tool_endpoint,
             generation: 1,
             work,
             previous: None,
@@ -117,6 +131,10 @@ impl ProviderBinding {
                 .strip_prefix("sha256:")
                 .is_some_and(valid_sha256)
             || !valid_sha256(&self.key_sha256)
+            || self
+                .tool_endpoint
+                .as_deref()
+                .is_some_and(|value| !super::valid_tool_endpoint(value))
             || self.revision == 0
             || self.generation == 0
             || !(1..=BINDING_CONFORMANCE_LEVEL).contains(&self.level)
@@ -139,6 +157,13 @@ impl ProviderBinding {
             return Err("invalid provider binding record".into());
         }
         Ok(())
+    }
+
+    pub fn credential_source(&self) -> crate::sandbox::SandboxCredentialSource {
+        crate::sandbox::SandboxCredentialSource::Binding {
+            binding_id: self.binding_id.clone(),
+            tool_endpoint: self.tool_endpoint.clone(),
+        }
     }
 
     /// A reconfiguration waits for prior admission work to settle. Its retained
