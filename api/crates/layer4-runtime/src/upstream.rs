@@ -25,6 +25,7 @@ struct Credential {
 #[derive(Clone, Default)]
 pub(crate) struct CredentialHolder {
     inner: Arc<RwLock<Option<Credential>>>,
+    pub(crate) tool_proxy_serving: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl CredentialHolder {
@@ -86,6 +87,16 @@ impl CredentialHolder {
 
     async fn get(&self) -> Option<Credential> {
         self.inner.read().await.clone()
+    }
+
+    pub(crate) async fn tool_proxy_generation(&self) -> Option<u64> {
+        if !self
+            .tool_proxy_serving
+            .load(std::sync::atomic::Ordering::Acquire)
+        {
+            return None;
+        }
+        self.get().await.and_then(|value| value.generation)
     }
 
     pub(crate) async fn current(&self) -> Option<layer3_adapter::RuntimeCredential> {

@@ -66,7 +66,7 @@ pub(crate) struct PreparedToolProxy {
 
 impl PreparedToolProxy {
     pub(crate) async fn bind(config: &ToolProxyConfig) -> Result<Self> {
-        let bind: SocketAddr = "127.0.0.3:9093".parse().expect("literal loopback address");
+        let bind: SocketAddr = "127.0.0.1:9093".parse().expect("literal loopback address");
         let listener = tokio::net::TcpListener::bind(bind).await.map_err(|_| {
             RuntimeError::unavailable(
                 "tool_proxy_bind_failed",
@@ -80,12 +80,23 @@ impl PreparedToolProxy {
     }
 
     pub(crate) fn start(self, credential: CredentialHolder) {
+        let serving = Serving(credential.tool_proxy_serving.clone());
+        serving.0.store(true, std::sync::atomic::Ordering::Release);
         let app = router(self.config, credential);
         tokio::spawn(async move {
+            let _serving = serving;
             if axum::serve(self.listener, app).await.is_err() {
                 tracing::error!("local tool endpoint stopped");
             }
         });
+    }
+}
+
+struct Serving(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+impl Drop for Serving {
+    fn drop(&mut self) {
+        self.0.store(false, std::sync::atomic::Ordering::Release);
     }
 }
 

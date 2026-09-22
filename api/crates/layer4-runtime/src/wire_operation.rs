@@ -4,6 +4,7 @@ pub(crate) fn for_tag(tag: &str) -> Option<WireOperation> {
     Some(match tag {
         "cache_skill_archive" => WireOperation::CacheSkillArchive,
         "runtime_status" => WireOperation::RuntimeStatus,
+        "tool_proxy_status" => WireOperation::ToolProxyStatus,
         "workspace_removal_support" => WireOperation::WorkspaceRemovalSupport,
         "reconcile_workspace_removal" => WireOperation::ReconcileWorkspaceRemoval,
         "install" => WireOperation::Install,
