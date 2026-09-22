@@ -158,7 +158,7 @@ mod tests {
                 "\"reply_context\":\"<returned reply_context>\"",
                 "\"request_key\":\"<unique message key>\"",
                 "\"text\":\"Received — ...\"",
-                "no NyxID CLI, skill loading, bootstrap, or network discovery",
+                "no identity-provider CLI, skill loading, bootstrap, or network discovery",
                 "within 3 seconds",
                 "more than 5 seconds",
                 "explain every substantive tool call",
