@@ -14,6 +14,7 @@ use super::{
 
 /// Aggregate-neutral stores opened atomically at process startup.
 pub struct MongoStores {
+    pub(crate) bots: Arc<super::bots::MongoBotStore>,
     /// Sandbox -> Workspace -> Worktree -> Agent aggregates and logs.
     pub sandbox_model: Arc<MongoSandboxStore>,
     /// Profile drafts, immutable revisions, and ownership indexes.
@@ -98,10 +99,13 @@ impl MongoStores {
         let settings = Arc::new(MongoPlatformSettingsStore::open(&client, database).await?);
         let operations = Arc::new(MongoOperationStore::open(&client, database).await?);
         let gateway_records = Arc::new(MongoGatewayRecordStore::open(&client, database).await?);
-        super::bots::MongoBotStore::open(&client, database)
-            .await
-            .map_err(|_| StoreError::Unavailable("open bot store".into()))?;
+        let bots = Arc::new(
+            super::bots::MongoBotStore::open(&client, database)
+                .await
+                .map_err(|_| StoreError::Unavailable("open bot store".into()))?,
+        );
         let stores = Self {
+            bots,
             sandbox_model,
             sandbox_profiles,
             sandbox_credentials,
