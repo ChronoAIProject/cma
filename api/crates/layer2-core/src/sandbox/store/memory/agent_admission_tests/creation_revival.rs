@@ -29,6 +29,7 @@ fn workspace_request(name: &str) -> WorkspaceAdmission {
     value.resolved_commit = None;
     value.ready_at = None;
     WorkspaceAdmission {
+        binding: None,
         workspace: value,
         kind: WorkspaceAdmissionKind::Manual,
         event_at: NOW.into(),

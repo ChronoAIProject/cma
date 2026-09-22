@@ -21,6 +21,7 @@ impl CleanupFixture {
             layer2_core::profiles::content_digest(&origin).unwrap()
         );
         AgentAdmission {
+            binding: None,
             created_by: Some(caller().actor),
             owner: agent.owner,
             workspace_id: agent.workspace_id,

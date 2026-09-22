@@ -7,9 +7,9 @@ use layer2_core::SubjectId;
 use mongodb::Client;
 use serde_json::json;
 
-const NOW: &str = "2026-09-22T00:00:00Z";
+pub(super) const NOW: &str = "2026-09-22T00:00:00Z";
 
-async fn fixture() -> (Client, String, MongoSandboxStore) {
+pub(super) async fn fixture() -> (Client, String, MongoSandboxStore) {
     let uri =
         std::env::var("CHRONO_TEST_MONGODB_URI").expect("local Mongo replica set is required");
     let client = Client::with_uri_str(uri).await.unwrap();
@@ -18,7 +18,7 @@ async fn fixture() -> (Client, String, MongoSandboxStore) {
     (client, database, store)
 }
 
-fn binding() -> ProviderBinding {
+pub(super) fn binding() -> ProviderBinding {
     let value = json!({
         "schema_version":1,
         "metadata":{"name":"stored-binding", "owner":{"kind":"human", "subject":"owner"}, "provider":"registered"},

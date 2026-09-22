@@ -48,6 +48,7 @@ impl InterleavingBackend {
         let result = self
             .store
             .admit_agent_reusing_profile(AgentAdmission {
+                binding: None,
                 created_by: None,
                 owner: self.agent.owner.clone(),
                 workspace_id: self.agent.workspace_id.clone(),

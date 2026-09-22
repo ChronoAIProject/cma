@@ -15,9 +15,12 @@ use mongodb::{
 use super::durability::majority_collection;
 use super::sandbox_mongo::{is_duplicate_key, MongoSandboxStore};
 use super::schema::{initialize_collections, DOCUMENT_SCHEMA_VERSION};
+mod admission;
 mod conversations;
 mod documents;
 use documents::*;
+#[cfg(test)]
+mod admission_tests;
 #[cfg(test)]
 mod mongo_tests;
 
