@@ -13,14 +13,24 @@ impl Signer {
         static SIGNER: OnceLock<Signer> = OnceLock::new();
         SIGNER.get_or_init(|| {
             let output = Command::new("openssl")
-                .args(["genrsa", "-traditional", "2048"])
+                .args(["genrsa", "2048"])
                 .output()
                 .expect("openssl generates ephemeral test RSA key");
-            assert!(output.status.success());
+            assert!(
+                output.status.success(),
+                "ephemeral RSA generation failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
             let pem = String::from_utf8(output.stdout).unwrap();
             let encoded: String = pem.lines().filter(|line| !line.starts_with('-')).collect();
             use base64::engine::general_purpose::STANDARD;
-            Self(RsaKeyPair::from_der(&STANDARD.decode(encoded).unwrap()).unwrap())
+            let der = STANDARD.decode(encoded).unwrap();
+            let key = if pem.starts_with("-----BEGIN PRIVATE KEY-----") {
+                RsaKeyPair::from_pkcs8(&der)
+            } else {
+                RsaKeyPair::from_der(&der)
+            };
+            Self(key.unwrap())
         })
     }
     pub fn token(&self, claims: &Value) -> String {

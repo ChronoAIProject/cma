@@ -270,6 +270,10 @@ nonnegative Unix times, `exp > iat`, and 60-second clock tolerance. Callback JWT
 additional claims `api_key_id,message_id,platform,body_sha256` bind the exact
 raw body using lowercase SHA-256 hex. `correlation_id == jti`; header/body/key
 and platform identities must agree; `conversation.id` must be in `route_ids`.
+An empty `route_ids` list is a pending route binding and admits no callbacks.
+Creators may create the channel, set the route key callback URL, create the
+identity-provider route, then update the channel with its exact route ID.
+This does not broaden sender or chat admission policies.
 Reply JWT: `aud:"channel-relay/reply"`, `token_type:"relay_reply"`, lifetime
 ≤1800s; `api_key_id,conversation_id,inbound_message_id,platform` bind the same
 callback. Its expiry must still be in the future without expiry tolerance.

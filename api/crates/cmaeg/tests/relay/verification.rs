@@ -204,3 +204,14 @@ async fn optional_relay_user_only_corroborates_and_cannot_add_authority() {
     )
     .await;
 }
+
+#[tokio::test]
+async fn pending_route_binding_admits_no_delivery() {
+    let fixture = Fixture::new(
+        |definition| definition["sources"][0]["route_ids"] = json!([]),
+        Default::default(),
+    )
+    .await;
+    problem(fixture.send(&Envelope::new()).await, 401, "route_denied").await;
+    assert!(fixture.recorder.requests.lock().unwrap().is_empty());
+}
