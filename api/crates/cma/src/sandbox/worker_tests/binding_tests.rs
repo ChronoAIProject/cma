@@ -18,7 +18,7 @@ use layer2_core::CoreError;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
-struct BindingCustody(Arc<MemoryCredentials>);
+struct BindingCustody(Arc<MemoryCredentials>, Arc<InMemorySandboxStore>);
 #[async_trait::async_trait]
 impl BindingCredentialCustody for BindingCustody {
     async fn retain(
@@ -36,20 +36,35 @@ impl BindingCredentialCustody for BindingCustody {
         key: &ProvidedCredential,
     ) -> Result<(), CoreError> {
         binding.require_credential_admission(key)?;
-        let material = crate::sandbox::ManagedSandboxCredentials::provided_material(
-            &binding.sandbox_id,
-            &binding.owner,
-            &binding
-                .profile
-                .environment
-                .as_ref()
-                .unwrap()
-                .sandbox
-                .nyxid_services,
-            key,
-        )?;
+        let material = crate::sandbox::ManagedSandboxCredentials::binding_material(binding, key)?;
         self.0.restore(material);
         Ok(())
+    }
+    async fn rotate_binding(
+        &self,
+        binding: &ProviderBinding,
+        key: &ProvidedCredential,
+    ) -> Result<ProviderBinding, CoreError> {
+        let next = binding.rotate_credential(key.sha256(), layer2_core::now_rfc3339())?;
+        let sandbox = self
+            .1
+            .get_sandbox(&binding.sandbox_id)
+            .await
+            .unwrap()
+            .unwrap();
+        let mut material = crate::sandbox::ManagedSandboxCredentials::binding_material(&next, key)?;
+        material.authority.generation = sandbox.credential.next_generation().unwrap();
+        let updated = next.admit_credential_delivery(&sandbox, material.authority.clone())?;
+        self.0.restore(material);
+        self.1
+            .save_sandbox(sandbox.revision, updated)
+            .await
+            .unwrap();
+        self.1
+            .save_binding(Some(binding.revision), next.clone())
+            .await
+            .unwrap();
+        Ok(next)
     }
     async fn forget_binding(
         &self,
@@ -85,7 +100,7 @@ fn service(h: &Harness, profiles: Arc<InMemoryProfileStore>) -> Arc<BindingServi
             )
             .with_connections(prerequisite),
         },
-        Arc::new(BindingCustody(h.credentials.clone())),
+        Arc::new(BindingCustody(h.credentials.clone(), h.store.clone())),
         BindingPolicy {
             provider: AgentProvider::default(),
             supported_model_api: "responses".into(),
@@ -156,7 +171,7 @@ async fn binding_rest_to_hosted_runtime_recovers_and_cleans_up_actual_resources(
     let initial = call(&app, "PUT", path, Some(body.clone()), StatusCode::OK).await;
     assert_eq!(initial["state"], "provisioning");
     assert_eq!(
-        call(&app, "PUT", path, Some(body), StatusCode::OK).await,
+        call(&app, "PUT", path, Some(body.clone()), StatusCode::OK).await,
         initial
     );
     // A fresh control-plane service resumes only the persisted reservation.
@@ -250,6 +265,49 @@ async fn binding_rest_to_hosted_runtime_recovers_and_cleans_up_actual_resources(
             .len(),
         1
     );
+    let before = h.stored(&sandbox_id).await;
+    let rotated_key =
+        ProvidedCredential::new(format!("nyx_{}", uuid::Uuid::new_v4().simple())).unwrap();
+    let mut rotation_body = body;
+    rotation_body["agent_key"] = json!(rotated_key.expose());
+    let rotation = call(
+        &app,
+        "PUT",
+        path,
+        Some(rotation_body.clone()),
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(rotation["state"], "provisioning");
+    assert_eq!(
+        call(&app, "PUT", path, Some(rotation_body), StatusCode::OK).await,
+        rotation
+    );
+    for tick in 70..85 {
+        h.worker
+            .run_one(&sandbox_id, start + Duration::from_secs(tick))
+            .await
+            .unwrap();
+        bindings.reconcile(20).await.unwrap();
+        if call(&app, "GET", path, None, StatusCode::OK).await["state"] == "ready" {
+            break;
+        }
+    }
+    let after = h.stored(&sandbox_id).await;
+    assert_eq!(after.status, SandboxStatus::Active);
+    assert_eq!(after.runtime, before.runtime);
+    assert_eq!(after.credential.key_generation, 2);
+    assert_eq!(h.store.get_agent(&agent_id).await.unwrap().unwrap(), agent);
+    assert_eq!(
+        h.store
+            .binding("binding-runtime")
+            .await
+            .unwrap()
+            .unwrap()
+            .generation,
+        1
+    );
+    assert!(h.backend.requests().await.iter().any(|(_,request)| matches!(request, RequestFrame::Credential(frame) if frame.value.expose() == rotated_key.expose() && frame.custody_generation == Some(2))));
     call(
         &app,
         "DELETE",
@@ -258,7 +316,7 @@ async fn binding_rest_to_hosted_runtime_recovers_and_cleans_up_actual_resources(
         StatusCode::NO_CONTENT,
     )
     .await;
-    for tick in 70..100 {
+    for tick in 85..115 {
         bindings.reconcile(20).await.unwrap();
         agent_worker
             .run_one(&agent_id, start + Duration::from_secs(tick))
@@ -282,7 +340,7 @@ async fn binding_rest_to_hosted_runtime_recovers_and_cleans_up_actual_resources(
         WorktreeStatus::Removed
     );
     call(&app, "DELETE", path, None, StatusCode::NO_CONTENT).await;
-    for tick in 100..145 {
+    for tick in 115..160 {
         bindings.reconcile(20).await.unwrap();
         h.worker
             .run_one(&sandbox_id, start + Duration::from_secs(tick))

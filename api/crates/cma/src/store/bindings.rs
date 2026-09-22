@@ -18,6 +18,7 @@ use super::schema::{initialize_collections, DOCUMENT_SCHEMA_VERSION};
 mod admission;
 mod conversations;
 mod custody;
+mod rotation;
 pub(crate) use custody::MongoBindingCredentials;
 mod documents;
 use documents::*;
@@ -208,3 +209,5 @@ fn driver(error: mongodb::error::Error) -> SandboxStoreError {
 
 #[cfg(test)]
 mod custody_tests;
+#[cfg(test)]
+mod rotation_tests;

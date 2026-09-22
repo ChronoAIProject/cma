@@ -12,6 +12,10 @@ pub enum SandboxCredentialSource {
     Provided {
         key_sha256: String,
     },
+    /// Stable supplied-key authority; each custody generation pins its own hash.
+    Binding {
+        binding_id: String,
+    },
 }
 
 impl SandboxCredentialSource {
@@ -22,6 +26,7 @@ impl SandboxCredentialSource {
     pub fn validate(&self) -> bool {
         match self {
             Self::Managed => true,
+            Self::Binding { binding_id } => super::binding::valid_binding_id(binding_id),
             Self::Provided { key_sha256 } => {
                 key_sha256.len() == 64
                     && key_sha256
@@ -34,6 +39,20 @@ impl SandboxCredentialSource {
     pub fn accepts(&self, authority: &SandboxCredentialAuthority) -> bool {
         match self {
             Self::Managed => !authority.expires_at.is_empty(),
+            Self::Binding { .. } => {
+                self.validate()
+                    && authority
+                        .provider_key_id
+                        .strip_prefix("provided-")
+                        .is_some_and(|hash| {
+                            hash.len() == 64
+                                && hash
+                                    .bytes()
+                                    .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+                        })
+                    && authority.provider_state_version == 1
+                    && authority.expires_at.is_empty()
+            }
             Self::Provided { key_sha256 } => {
                 self.validate()
                     && authority.provider_key_id == format!("provided-{key_sha256}")

@@ -58,6 +58,18 @@ pub trait BindingCredentialCustody: Send + Sync {
         ))
     }
 
+    /// Atomically reserve replacement custody and its Sandbox delivery with the
+    /// current binding revision. Existing conversations keep their generation.
+    async fn rotate_binding(
+        &self,
+        _binding: &super::ProviderBinding,
+        _credential: &ProvidedCredential,
+    ) -> Result<super::ProviderBinding, CoreError> {
+        Err(CoreError::RuntimeUnavailable(
+            "binding credential rotation is unavailable".into(),
+        ))
+    }
+
     async fn forget_binding(
         &self,
         _binding: &super::ProviderBinding,

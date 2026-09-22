@@ -6,6 +6,7 @@ mod profile;
 mod profile_input;
 mod profiles;
 mod recovery;
+mod rotation;
 mod service;
 pub mod store;
 pub use credential::{BindingCredentialCustody, ProvidedCredential};
@@ -29,3 +30,7 @@ pub use service::{
 
 #[cfg(test)]
 mod service_tests;
+
+pub(super) fn valid_binding_id(id: &str) -> bool {
+    model::valid_id(id, 1)
+}
