@@ -1,6 +1,6 @@
 use super::*;
 
-const ENDPOINT: &str = "https://gateway.example/mcp";
+const ENDPOINT: &str = "https://gateway.example/tools";
 
 #[tokio::test]
 async fn tool_endpoint_survives_replay_and_cannot_change_under_a_retained_binding() {
@@ -32,7 +32,7 @@ async fn tool_endpoint_survives_replay_and_cannot_change_under_a_retained_bindin
         .await
         .unwrap();
     assert_eq!(replayed, binding);
-    for changed in [None, Some("https://another.example/mcp".into())] {
+    for changed in [None, Some("https://another.example/tools".into())] {
         assert!(matches!(
             f.service
                 .put_with_tool_endpoint(
@@ -49,7 +49,7 @@ async fn tool_endpoint_survives_replay_and_cannot_change_under_a_retained_bindin
         assert_eq!(f.binding().await, binding);
     }
     let mut changed = binding.clone();
-    changed.tool_endpoint = Some("https://another.example/mcp".into());
+    changed.tool_endpoint = Some("https://another.example/tools".into());
     changed.revision += 1;
     assert!(f
         .store
@@ -86,7 +86,7 @@ async fn supplied_key_rotation_retains_the_exact_tool_destination() {
     let mut another = sandbox.clone();
     another.credential.source = SandboxCredentialSource::Binding {
         binding_id: binding.binding_id.clone(),
-        tool_endpoint: Some("https://another.example/mcp".into()),
+        tool_endpoint: Some("https://another.example/tools".into()),
     };
     another.revision += 1;
     assert!(next.admit_credential_delivery(&another, authority).is_err());
