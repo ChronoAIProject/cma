@@ -13,6 +13,8 @@ pub struct PublicChannelDefinition {
     #[serde(skip_serializing_if = "String::is_empty")]
     pub name: String,
     pub record_id: RecordId,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub creation: Option<cmaeg_core::channel::ChannelCreation>,
     pub owner: NyxIdIdentity,
     pub profile: AgentProfileSnapshot,
     pub profile_digest: String,
@@ -34,6 +36,7 @@ impl PublicChannelDefinition {
             schema_version: value.schema_version,
             name: value.name.clone(),
             record_id: value.record_id.clone(),
+            creation: value.creation.clone(),
             owner: value.owner.clone(),
             profile: value.profile.clone(),
             profile_digest: value.profile_digest.clone(),

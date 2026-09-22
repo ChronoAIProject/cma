@@ -196,6 +196,25 @@ An optional `Idempotency-Key` header of 1–256 ASCII bytes replays an identical
 create for the same creator on the same replica for ten minutes. Different
 content under the same key returns 409. It is not durable or cross-replica.
 
+A creator may additionally reserve a canonical UUID in the optional `record_id`
+create field. CMAEG stores an encrypted pending definition at that identity before
+contacting the provider. The definition retains `creation` with `channel_id`, a
+request `fingerprint`, and `ready`. Pending definitions cannot process events or
+accept policy updates. A successful bind marks the reservation ready. Repeating
+the same body and record identity on another replica or after restart returns the
+same channel and binding identities; changed content returns 409. A ready replay
+reports empty honoured/refused lists, like GET. Record version is opaque and may
+start above one because reservation and binding completion are separate writes.
+
+`GET /v1/channel-records/{record_id}` lets the same owner recover the retained
+channel, including its exact callback URL, after a lost response. Other owners
+receive 404. Failed or uncertain provider calls retain their pending reservation
+for explicit retry or deletion; the caller must reconcile that identity before
+allocating another. This is management recovery, not durable event delivery.
+Deletion releases the reservation; callers must never reuse a retired record UUID
+or race cleanup against an outstanding create attempt.
+
+
 A channel response has this shape (ellipsis denotes the previously supplied
 profile/policy objects, not a literal JSON value):
 
@@ -212,7 +231,8 @@ new binding negotiation. `definition.secrets` contains only `agent_key_hash`.
 
 | Operation | Request | Success | Errors in addition to common management errors |
 | --- | --- | --- | --- |
-| `POST /v1/channels` | Complete create body; optional idempotency header | 201 channel response | 409 reused key with different content; 503 cache capacity |
+| `POST /v1/channels` | Complete create body; optional idempotency header and reserved record UUID | 201 channel response | 409 reused key with different content; 503 cache capacity |
+| `GET /v1/channel-records/{record_id}` | No body | 200 recovered channel response | 404 absent, unreserved, or other owner |
 | `GET /v1/channels/{channel_id}` | No body | 200 channel response | 404 absent or other owner |
 | `PUT /v1/channels/{channel_id}` | Complete create policy plus required `expected_version`; optional credential patch | 200 channel response with incremented version | 409 stale version |
 | `DELETE /v1/channels/{channel_id}?expected_version=N` | Required unsigned version query; no body | 204, empty body | 400 missing/unknown/invalid query; 409 stale version |
@@ -598,6 +618,7 @@ Generated from the reviewed OpenAPI snapshot; effective paths include its server
 | --- | --- |
 | `POST /v1/callbacks/{channel_id}` | `receiveRelayCallback` |
 | `POST /v1/channels` | `createChannel` |
+| `GET /v1/channel-records/{record_id}` | `recoverChannel` |
 | `DELETE /v1/channels/{channel_id}` | `deleteChannel` |
 | `GET /v1/channels/{channel_id}` | `getChannel` |
 | `PUT /v1/channels/{channel_id}` | `updateChannel` |
