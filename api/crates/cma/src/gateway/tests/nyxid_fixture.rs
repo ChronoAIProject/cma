@@ -28,6 +28,7 @@ pub(super) fn routes(state: Identity) -> Router {
             }),
         )
         .route("/api/v1/channel-bots/{id}", get(bot))
+        .route("/api/v1/channel-bots", get(|| async { Json(json!({"bots":[{"id":"external-bot","user_id":"owner","label":"Telegram research","platform":"telegram","platform_bot_username":"fixture_bot","is_active":true}],"total":1})) }))
         .route("/api/v1/api-keys", get(keys).post(mint))
         .route(
             "/api/v1/api-keys/{id}",
