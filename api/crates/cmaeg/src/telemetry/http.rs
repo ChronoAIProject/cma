@@ -43,7 +43,7 @@ async fn observe(mut request: Request, next: Next) -> Response {
         "/v1/channels/{channel_id}/events" => Some("custom"),
         _ => None,
     };
-    let timing = source.map(IngressTiming::new);
+    let timing = span.in_scope(|| source.map(IngressTiming::new));
     if let Some(timing) = &timing {
         request.extensions_mut().insert(timing.clone());
     }
@@ -69,7 +69,10 @@ async fn observe(mut request: Request, next: Next) -> Response {
         } else if tools {
             response.headers_mut().insert("server-timing", format!("deliver;dur={:.3}", started.elapsed().as_secs_f64() * 1000.0).parse().unwrap());
         }
-        tracing::info!(status = response.status().as_u16(), "request finished");
+        let server_timing = response.headers().get("server-timing")
+            .filter(|_| source.is_some() || tools)
+            .and_then(|value| value.to_str().ok());
+        tracing::info!(status = response.status().as_u16(), server_timing, "request finished");
         response
     }.instrument(span).await
 }
