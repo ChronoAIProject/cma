@@ -1,6 +1,4 @@
-use super::super::{
-    InputTokenDetails, OutputMessage, OutputText, OutputTokenDetails, ResponseError, ResponseUsage,
-};
+use super::super::{InputTokenDetails, OutputTokenDetails, ResponseError, ResponseUsage};
 use layer2_core::sandbox::{
     agent_io::{AgentResponseReading, AgentResponseStatus, CommandFailureCode},
     AgentEventStreamSnapshot, AgentLogKind,
@@ -23,7 +21,7 @@ pub enum V2ResponseStatus {
 pub struct ResponseConversation {
     pub id: String,
 }
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, ToSchema)]
 pub struct V2ResponseObject {
     pub id: String,
     pub object: &'static str,
@@ -37,7 +35,11 @@ pub struct V2ResponseObject {
     pub instructions: Option<String>,
     pub max_output_tokens: Option<u64>,
     pub model: String,
-    pub output: Vec<OutputMessage>,
+    pub output: Vec<super::V2OutputItem>,
+    /// Internal deterministic log projection, absent from the public response.
+    #[serde(skip)]
+    #[schema(ignore)]
+    pub(super) output_events: Vec<Value>,
     pub parallel_tool_calls: bool,
     pub previous_response_id: Option<String>,
     pub reasoning: Value,
@@ -98,6 +100,7 @@ pub(super) fn project(
             .clone()
             .unwrap_or_else(|| "deployment-default".into()),
         output: vec![],
+        output_events: vec![],
         parallel_tool_calls: false,
         previous_response_id: None,
         reasoning: json!({"effort":null,"summary":null}),
@@ -115,23 +118,15 @@ pub(super) fn project(
         return Some(response);
     };
     let start = snapshot.history.iter().position(|entry| entry.seq == turn && matches!(entry.kind, Some(AgentLogKind::TurnStarted { turn_sequence, .. }) if turn_sequence == turn))?;
+    let mut output = super::output::OutputProjection::default();
     let mut lost_frames = 0_u64;
     let mut turn_active = true;
     for entry in snapshot.history.iter().skip(start + 1) {
+        if let Some(kind) = &entry.kind {
+            output.observe(kind, &snapshot.id, turn);
+        }
         match &entry.kind {
             Some(AgentLogKind::TurnStarted { .. }) => break,
-            Some(AgentLogKind::AgentMessage { content }) => response.output.push(OutputMessage {
-                id: super::super::retrieve::output_id(&snapshot.id, turn, response.output.len()),
-                kind: "message",
-                status: "completed",
-                role: "assistant",
-                content: vec![OutputText {
-                    kind: "output_text",
-                    text: content.clone(),
-                    annotations: vec![],
-                    logprobs: vec![],
-                }],
-            }),
             Some(AgentLogKind::Usage {
                 input_tokens,
                 output_tokens,
@@ -174,6 +169,8 @@ pub(super) fn project(
             _ => {}
         }
     }
+    response.output = output.items;
+    response.output_events = output.events;
     if lost_frames > 0 && !turn_active {
         response.status = V2ResponseStatus::Incomplete;
         response.incomplete_details =
@@ -215,39 +212,10 @@ pub(super) fn events(response: &V2ResponseObject, bound: bool) -> Vec<Value> {
         opening.status = V2ResponseStatus::InProgress;
         push("response.in_progress", json!({"response":opening}));
     }
-    for (index, item) in response.output.iter().enumerate() {
-        let mut empty = item.clone();
-        empty.status = "in_progress";
-        empty.content.clear();
+    for event in &response.output_events {
         push(
-            "response.output_item.added",
-            json!({"output_index":index,"item":empty}),
-        );
-        for (content_index, part) in item.content.iter().enumerate() {
-            let mut empty = part.clone();
-            empty.text.clear();
-            push(
-                "response.content_part.added",
-                json!({"output_index":index,"item_id":item.id,"content_index":content_index,"part":empty}),
-            );
-            if !part.text.is_empty() {
-                push(
-                    "response.output_text.delta",
-                    json!({"output_index":index,"item_id":item.id,"content_index":content_index,"delta":part.text,"logprobs":[]}),
-                );
-            }
-            push(
-                "response.output_text.done",
-                json!({"output_index":index,"item_id":item.id,"content_index":content_index,"text":part.text,"logprobs":[]}),
-            );
-            push(
-                "response.content_part.done",
-                json!({"output_index":index,"item_id":item.id,"content_index":content_index,"part":part}),
-            );
-        }
-        push(
-            "response.output_item.done",
-            json!({"output_index":index,"item":item}),
+            event["type"].as_str().expect("projected event type"),
+            event.clone(),
         );
     }
     if response.terminal() {
