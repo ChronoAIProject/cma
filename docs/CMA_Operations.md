@@ -413,6 +413,62 @@ Its HTTP harness submits 100 concurrent misses and checks one restore span and
 and observes the ten-second background probe through both reachability changes.
 The `/resolve` route in that harness exists only in the test server.
 
+## Owner Bots through CMAEG
+
+Set `CHRONO_CMAEG_BASE_URL` to the internal gateway origin and
+`CHRONO_CMAEG_PUBLIC_URL` to its public origin. They must be configured together;
+the API refuses malformed origins at startup. Bot routes and the durable worker
+are enabled only when both are present, using NyxID authentication.
+
+An owner signs in to CMA with renewable NyxID credentials and needs
+`cma:bot:manage`. A separate bearer or agent key cannot borrow that owner's
+stored login. Before every background effect, CMA refreshes and verifies the
+owner's current authority. Expired or revoked authority keeps work pending and
+requires the owner to reconnect; it does not cause a fallback to the gateway
+service identity.
+
+The owner first registers a personal Telegram bot with NyxID and connects the
+profile's services, the managed model service, and the `cmaeg` tools service.
+CMA will refuse a bot that already has an active NyxID route, preserving existing
+bridge routing. The `cmaeg` catalogue service must expose CMAEG's protocol tools;
+its presence is a provisioning requirement, not something CMA creates implicitly.
+
+`POST /api/v1/bots` accepts `{name,nyxid_bot_id,profile:{id,revision},admission,reply}`
+and an `Idempotency-Key`. It returns 201 with a durable `creating` resource;
+poll its GET route until `active` or `failed`. HTTP disconnects do not cancel
+admitted work. The selected Agent revision and the published platform-default
+Sandbox and Workspace revisions are pinned at admission. Managed model access is
+required. Environment resources, workspace location, setup commands, service
+scope, skills, prompt, permissions and thinking effort follow the CMAEG profile
+schema; unsupported access is explicitly refused.
+
+Creation mints separate 30-day agent and route keys in the exact
+`cma:bot:<bot_id>:<agent|route>:<generation>` namespace. The agent key has only the
+resolved profile/model/tool service grants. The route key has no service or node
+grants. Plaintext exists only during bounded requests; Bot records retain IDs,
+hashes and the earliest expiry. The channel reserves a durable record UUID,
+starts with no admitted relay routes, then receives the exact route ID after
+the callback and NyxID route are confirmed. Requests use the owner bearer,
+explicit record versions, bounded response reads, no redirects and no automatic
+mutation retries.
+
+Enable, disable, rotation and deletion return 202 with operation progress.
+Disable replaces admission with the protocol's scoped deny policy; enable
+restores the original policy. Rotation retains channel and conversation identity,
+reconciles provider and route credentials before revoking predecessors, and is
+scheduled three days before the earliest key expiry. An interrupted creation
+retains its reserved identity and enters cleanup after its claim expires; lost
+plaintext is never reconstructed. Cleanup discovers only exactly owned keys and
+routes and refuses conflicting use. Existing Sandbox continuity requirements
+continue to apply to provider binding teardown.
+
+The `/test` action performs a synthetic provider turn. It reports acceptance
+latency and first text and does not send a Telegram message. It does not establish
+channel delivery, ingress latency or restart continuity for a real conversation.
+Local interoperability tests under `cma::gateway::tests` execute the compiled
+gateway binary with HTTP fixtures and CMA's actual profile mapper. Build `cmaeg`
+before running these tests in isolation; full CI builds the workspace first.
+
 ## Delivery Authority
 
 For the 2026-09-22 gateway deployment, the maintainer additionally authorizes a
@@ -932,6 +988,8 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED` | New authenticated Launch admission selects common first-message commands under retained personal ownership; false by default. Proven pre-write failure is terminal for new common prompts; ambiguous writes retain the same command/response and refuse legacy recovery. Accepted protocol is immutable; disabling the selector retains accepted common commands and legacy launches retain their original delivery/recovery behavior. Keep false until every worker and permitted rollback version recognizes and transactionally excludes common/legacy dispatch; older workers ignore additive sidecars. |
 | `CHRONO_TRUSTED_SUBJECT` | Local trusted-mode subject; default `local-developer`, irrelevant in provider mode |
 | `CHRONO_NYXID_BASE_URL` | Required API/OAuth HTTP(S) origin in provider mode |
+| `CHRONO_CMAEG_BASE_URL` | CMAEG management HTTP(S) origin; production `http://cmaeg`. Set together with its public origin; omitting both disables Bot routes/workers. |
+| `CHRONO_CMAEG_PUBLIC_URL` | CMAEG public HTTP(S) origin used to validate returned callbacks; production `https://bot-gateway.chrono-ai.fun`. |
 | `CHRONO_NYXID_PUBLIC_URL` | Required exact canonical HTTPS browser origin in provider mode |
 | `CHRONO_NYXID_CLIENT_ID` | Provider-issued OAuth client id, not a chosen display name |
 | `CHRONO_NYXID_CLIENT_SECRET` | Required OAuth client secret reference |
@@ -1592,8 +1650,11 @@ before revoking obsolete keys, including when a provider accepted a replacement
 before the channel record write failed. Its external execution port requires
 bounded calls, complete owner-scoped discovery and idempotent deletion.
 
-This is an implementation foundation for #915. Production external adapters,
-controller scheduling, renewal and audit integration, public Bot routes and Bot
-SDK methods are still pending. The worker is exercised with failure-injection
-doubles; it is not wired into the running control plane. Existing channel and
-binding management APIs remain the implemented external surfaces.
+The production adapter, worker scheduling, renewal, activity audit, public Bot
+routes and both Bot SDKs compose this foundation. Local interoperability tests
+run the compiled gateway through creation, restart recovery, policy updates,
+rotation and cleanup with fake NyxID and provider dependencies. The adapter uses
+the scoped NyxID tools service and accepts CMA's explicit refusal of the optional
+native MCP endpoint; refusals of requested profile fields fail creation and
+retain durable cleanup. These checks do not establish real Telegram delivery or
+authorize retiring the existing bridge.

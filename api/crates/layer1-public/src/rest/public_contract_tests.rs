@@ -13,6 +13,7 @@ mod agent_event_cases;
 mod artifact_cases;
 mod authoring_cases;
 mod binding_cases;
+mod bot_cases;
 mod bridge_cases;
 mod channel_usage_cases;
 mod cleanup_cases;
@@ -145,6 +146,9 @@ fn paths() -> Vec<PathBuf> {
 }
 
 async fn scenario(name: &str) -> Scenario {
+    if let Some(scenario) = bot_cases::scenario(name).await {
+        return scenario;
+    }
     if let Some(scenario) = binding_cases::scenario(name).await {
         return scenario;
     }

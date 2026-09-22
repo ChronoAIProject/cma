@@ -2,6 +2,7 @@
 use std::sync::Arc;
 mod adapter;
 mod bindings;
+mod bots;
 mod bridge;
 mod profiles;
 use adapter::production_adapter;
@@ -36,6 +37,7 @@ use crate::{
 pub(crate) struct ControlPlaneComposition {
     pub router: Router,
     pub bindings: bindings::BindingComposition,
+    pub bots: Option<bots::BotComposition>,
     #[allow(dead_code)]
     pub bridge_definitions: layer2_core::bridge::BridgeService,
     #[allow(dead_code)]
@@ -335,7 +337,7 @@ impl ControlPlaneComposition {
             workspace_service,
             projections.agents(),
             stores.sandbox_profiles.clone(),
-            settings,
+            settings.clone(),
         );
         let command_worker = layer2_core::sandbox::agent_io::AgentCommandWorker::new(
             stores.sandbox_model.clone(),
@@ -436,6 +438,9 @@ impl ControlPlaneComposition {
             .merge(trigger_routes)
             .merge(layer1_public::rest::admin::router(admin));
         let resource_routes = resource_routes.merge(bindings.router(&stores, activity.clone()));
+        let (bot_routes, bots) =
+            bots::BotComposition::build(config, &stores, auth.clone(), settings)?;
+        let resource_routes = resource_routes.merge(bot_routes);
         let public = super::rest_router(resource_routes)
             .merge(crate::connections::router(browser_connections))
             .merge(crate::auth::router(Arc::clone(&auth)))
@@ -477,6 +482,7 @@ impl ControlPlaneComposition {
         Ok(Self {
             router,
             bindings,
+            bots,
             bridge_definitions,
             bridge_credentials,
             bridge_invokes: bridge.invokes,
