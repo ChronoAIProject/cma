@@ -24,6 +24,7 @@ import { LifecycleProgress } from '../sandbox/LifecycleProgress';
 import { AgentSourceLabel, useAgentSource } from './source';
 import { useAgentProvenance } from './provenance';
 import { QueuedMessageNotice } from './QueuedMessageNotice';
+import { ChannelPendingMessages } from './ChannelPendingMessages';
 
 interface AgentSurfaceProps {
   readonly draft?: AgentDraft;
@@ -155,7 +156,7 @@ export function AgentSurface({
     ? 'Loading conversation activity.'
     : state.historyUnavailable
       ? 'Conversation activity is unavailable. Reconnecting.'
-      : controller.actionError;
+      : (connections.error ?? controller.actionError);
   const preparation = agentProgress({ ...detail, status }, state.sandboxEvents ?? []);
 
   return (
@@ -217,7 +218,10 @@ export function AgentSurface({
                 size="sm"
                 icon={<IconCloseOutline16 />}
                 aria-label="Dismiss error"
-                onClick={controller.clearActionError}
+                onClick={() => {
+                  connections.clearError();
+                  controller.clearActionError();
+                }}
               />
             )}
           </div>
@@ -248,6 +252,13 @@ export function AgentSurface({
       )}
 
       <QueuedMessageNotice control={controller.queuedMessage} readOnly={readOnly} />
+      <ChannelPendingMessages
+        agentId={agentId}
+        viewerId={viewerId}
+        provenance={provenance}
+        cursor={conversation.cursor}
+        enabled={!readOnly && !historyIncomplete}
+      />
 
       <div className="agent-surface__conversation">
         {status === 'starting' ||
@@ -303,11 +314,15 @@ export function AgentSurface({
                 : controller.inputAvailability
           }
           busy={
-            historyIncomplete || (controller.pending !== undefined && controller.pending !== 'send')
+            connections.pending ||
+            historyIncomplete ||
+            (controller.pending !== undefined && controller.pending !== 'send')
           }
           onSend={async (content, onAccepted) => {
-            connections.run(
+            if (verified === undefined) return;
+            await connections.checkAndRun(
               { type: 'agent', id: agentId },
+              viewerId ?? verified.owner,
               () => void controller.send(content, onAccepted),
             );
           }}

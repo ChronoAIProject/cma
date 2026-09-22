@@ -82,7 +82,7 @@ impl BridgeInvokeProof {
         require_bridge(&self.bridge, &self.grant, &self.effect)?;
         super::service::require_resource_owner(&self.grant, &self.resources)?;
         self.connection
-            .require(&self.grant.owner, &self.grant.config)?;
+            .require_invocation(&self.grant, &self.effect)?;
         Ok(())
     }
 

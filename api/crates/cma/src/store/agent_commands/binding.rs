@@ -15,6 +15,22 @@ pub(in crate::store) async fn bind(
     mutation: &AgentConversationMutation,
     session: &mut ClientSession,
 ) -> Result<Option<CommandDispatch>, ApplyError> {
+    if let Some(fence) = mutation
+        .channel_execution_fence
+        .as_ref()
+        .filter(|fence| fence.superseding_command().is_some())
+    {
+        let invokes = store
+            .channel_invokes
+            .get()
+            .and_then(std::sync::Weak::upgrade)
+            .ok_or(CommandLedgerError::NotAdmissible)?;
+        invokes
+            .fence_channel_supersession(fence, current, mutation, session)
+            .await
+            .map_err(|_| CommandLedgerError::Conflict)?;
+        return Ok(None);
+    }
     let Some(claim) = &mutation.command_claim else {
         return Ok(None);
     };

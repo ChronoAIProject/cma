@@ -53,15 +53,18 @@ pub(crate) struct Fixture {
 
 impl Fixture {
     pub async fn new() -> Self {
-        Self::build(false, BridgePlatform::Telegram).await
+        Self::build(false, BridgePlatform::Telegram, false).await
     }
     pub async fn with_callback_route() -> Self {
-        Self::build(true, BridgePlatform::Telegram).await
+        Self::build(true, BridgePlatform::Telegram, false).await
     }
     pub async fn with_platform(platform: BridgePlatform) -> Self {
-        Self::build(false, platform).await
+        Self::build(false, platform, false).await
     }
-    async fn build(callback_route: bool, platform: BridgePlatform) -> Self {
+    pub async fn private() -> Self {
+        Self::build(false, BridgePlatform::Telegram, true).await
+    }
+    async fn build(callback_route: bool, platform: BridgePlatform, private: bool) -> Self {
         let (client, database, bridges, svc, id, allocations) =
             setup_with_platform(callback_route, platform).await;
         svc.mutate(
@@ -109,7 +112,16 @@ impl Fixture {
         )
         .await
         .unwrap();
-        let (admission, authority, _) = proposal(&svc, &bridges, &id, "12345", None).await;
+        let (admission, authority, _) = proposal_with_conversation(
+            &svc,
+            &bridges,
+            &id,
+            "12345",
+            None,
+            3,
+            if private { "private" } else { "group" },
+        )
+        .await;
         let record = allocations
             .reserve(AllocationReservation::new(admission, authority.clone(), now()).unwrap())
             .await

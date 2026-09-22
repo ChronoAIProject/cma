@@ -26,6 +26,8 @@ mod deferred_command_tests;
 mod resource_command_tests;
 #[path = "cookie_authorization_tests/resource_fixture.rs"]
 mod resource_fixture;
+#[path = "cookie_authorization_tests/session_routes_tests.rs"]
+mod session_routes_tests;
 
 #[derive(Default)]
 struct Gate {
