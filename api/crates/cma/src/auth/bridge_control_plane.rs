@@ -1,6 +1,6 @@
-//! Explicit Bridge grants select one existing encrypted OAuth sign-in. Refresh
-//! remains owned by AuthState; a second copy of a rotating refresh token is never
-//! created. A browser cookie is unnecessary after deliberate grant admission.
+//! Explicit Bridge grants retain consent from a human independently of browser
+//! sign-ins. Each operation verifies that human's current encrypted OAuth custody;
+//! refresh remains owned by AuthState without copying rotating refresh tokens.
 use std::time::{Duration, SystemTime};
 
 use layer2_core::bridge::{BridgeError, BridgeSetupBlock};
@@ -99,17 +99,17 @@ impl AuthState {
         .map_err(|_| BridgeError::AuthorityUnavailable)?
     }
 
+    /// Called only after validating the retained Bridge grant's subject, owner,
+    /// connector, expiry and revocation. New sign-ins may renew the same human's
+    /// credentials; replacement during this operation still fences its lease.
     pub(crate) async fn resolve_bridge_human(
         &self,
         subject: &SubjectId,
-        incarnation: &str,
         owner: &ResourceOwner,
     ) -> Result<BridgeHumanLease, BridgeError> {
         tokio::time::timeout(IO_TIMEOUT, async {
             let mut state = self.bridge_human_state(subject).await?;
-            if state.incarnation != incarnation {
-                return Err(reconnect());
-            }
+            let incarnation = state.incarnation.clone();
             refresh::refresh_if_needed(self, &mut state)
                 .await
                 .map_err(|_| {

@@ -29,16 +29,17 @@ pub struct ChannelCommandExecutionSource {
 
 #[derive(Clone)]
 pub struct ChannelExecutionAuthorization {
-    invokes: BridgeInvokeService,
-    fence: Arc<ChannelExecutionFence>,
+    pub(super) invokes: BridgeInvokeService,
+    pub(super) fence: Arc<ChannelExecutionFence>,
 }
 
 /// Opaque authority for one Channel message. The common conversation store
 /// consumes it alongside the same command lease, input, log and parent mutation.
 pub struct ChannelExecutionFence {
-    source: ChannelCommandReservation,
-    envelope: AgentCommandEnvelope,
-    sidecar: ChannelCommandSidecar,
+    pub(super) source: ChannelCommandReservation,
+    pub(super) envelope: AgentCommandEnvelope,
+    pub(super) sidecar: ChannelCommandSidecar,
+    pub(super) supersession: Option<super::supersession::ChannelSupersession>,
 }
 
 impl std::fmt::Debug for ChannelExecutionFence {
@@ -48,6 +49,34 @@ impl std::fmt::Debug for ChannelExecutionFence {
 }
 
 impl ChannelAgentCommandService {
+    /// Inspect current queued source and target without provider IO. The result
+    /// carries no execution authority and cannot release, revive or send input.
+    pub async fn observe_execution_readiness(
+        &self,
+        invokes: &BridgeInvokeService,
+        command: &AdmittedAgentCommand,
+    ) -> Result<crate::resource_access::ResourceAccessSnapshot, Error> {
+        command.validate()?;
+        let AgentActor::Channel { grant_id, .. } = &command.receipt.envelope.actor else {
+            return Err(Error::SourceMismatch);
+        };
+        let source = self.store.channel_execution_source(command).await?;
+        if source.sidecar.execution_hold != ChannelCommandHold::Released {
+            return Err(CommandLedgerError::NotAdmissible.into());
+        }
+        invokes
+            .observe_execution_readiness(BridgeInvokeRequest {
+                grant_id: BridgeInvokeGrantId(grant_id.clone()),
+                pin: source.inbox.pin,
+                target: source.allocation.placement.target().clone(),
+                effect: BridgeInvokeEffect::ExecuteCommand {
+                    command_id: command.receipt.envelope.command_id.clone(),
+                },
+            })
+            .await
+            .map_err(Into::into)
+    }
+
     pub async fn authorize_execution(
         &self,
         invokes: &BridgeInvokeService,
@@ -82,6 +111,7 @@ impl ChannelAgentCommandService {
                 source: reservation,
                 envelope: command.receipt.envelope.clone(),
                 sidecar: source.sidecar,
+                supersession: None,
             }),
         };
         authority
@@ -123,6 +153,20 @@ impl ChannelAgentCommandService {
 }
 
 impl ChannelExecutionAuthorization {
+    pub(super) fn with_supersession(
+        &self,
+        supersession: super::supersession::ChannelSupersession,
+    ) -> Self {
+        Self {
+            invokes: self.invokes.clone(),
+            fence: Arc::new(ChannelExecutionFence {
+                source: self.fence.source.clone(),
+                envelope: self.fence.envelope.clone(),
+                sidecar: self.fence.sidecar.clone(),
+                supersession: Some(supersession),
+            }),
+        }
+    }
     pub fn fence(&self) -> Arc<ChannelExecutionFence> {
         self.fence.clone()
     }
@@ -183,6 +227,9 @@ impl ChannelExecutionFence {
         Ok(())
     }
     pub fn require_dispatch(&self, command: &AdmittedAgentCommand) -> Result<(), Error> {
+        if self.supersession.is_some() {
+            return Err(Error::SourceMismatch);
+        }
         self.require_envelope(&command.receipt.envelope)?;
         self.source.require_result(command)?;
         if self.sidecar.execution_hold != ChannelCommandHold::Released {

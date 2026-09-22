@@ -17,6 +17,7 @@ use tokio::sync::{mpsc, Notify, Semaphore};
 
 use super::*;
 
+mod part_deletion;
 mod part_download;
 mod part_recovery;
 

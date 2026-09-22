@@ -150,11 +150,20 @@ impl BridgeInvokeService {
             .await
             .map_err(resource_store_error)?;
         require_resource_owner(&grant, &resources)?;
-        let connection = self
-            .definitions
-            .connection(&grant.owner, &grant.config)
-            .await?;
-        let proof = BridgeInvokeProof {
+        let connection = if grant.channel.is_some()
+            && matches!(
+                request.effect,
+                BridgeInvokeEffect::AdmitMessage { .. } | BridgeInvokeEffect::ExecuteCommand { .. }
+            ) {
+            self.definitions
+                .retained_channel_connection(&grant, &request.effect, &resources)
+                .await?
+        } else {
+            self.definitions
+                .connection(&grant.owner, &grant.config)
+                .await?
+        };
+        let mut proof = BridgeInvokeProof {
             deadline: deadline.min(connection.deadline()),
             grant,
             bridge,
@@ -178,6 +187,24 @@ impl BridgeInvokeService {
             .resource_access_snapshot(&proof.grant.target.resource())
             .await
             .map_err(resource_store_error)?;
+        if matches!(
+            proof.effect,
+            BridgeInvokeEffect::AdmitMessage { .. } | BridgeInvokeEffect::ExecuteCommand { .. }
+        ) {
+            // Connection validation can overlap transcript or background-save
+            // updates. Admission and execution fence the latest resource state;
+            // those updates do not remove channel authority.
+            // Keep the original policy and retained identity; the transaction
+            // and ordered writer still check the exact turn and generation.
+            if current_resources.fence() != proof.resources.fence()
+                || current_resources.policy != proof.resources.policy
+                || current_resources.shares != proof.resources.shares
+            {
+                return Err(BridgeInvokeError::TargetMismatch);
+            }
+            require_resource_owner(&proof.grant, &current_resources)?;
+            proof.resources = current_resources.clone();
+        }
         proof.require_snapshot(&current_bridge, &current_grant, &current_resources)?;
         Ok(proof)
     }
