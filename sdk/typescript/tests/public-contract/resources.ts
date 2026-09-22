@@ -3,6 +3,27 @@ import type { AgentProvenanceInventoryOptions } from '../../src/agents.js';
 import type { AccessibleSandboxListOptions } from '../../src/sandboxes.js';
 
 export const resourceDispatch: Record<string, Dispatch> = {
+  'PUT /api/v1/cmaeg/bindings/{binding_id}': ({ client, param, body }) =>
+    client.providerBindings.put(param('binding_id'), body),
+  'GET /api/v1/cmaeg/bindings/{binding_id}': ({ client, param }) =>
+    client.providerBindings.get(param('binding_id')),
+  'DELETE /api/v1/cmaeg/bindings/{binding_id}': ({ client, param }) =>
+    client.providerBindings.delete(param('binding_id')),
+  'PUT /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}': ({ client, param }) =>
+    client.providerBindings.ensureConversation(param('binding_id'), param('conversation_id')),
+  'DELETE /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}': ({
+    client,
+    param,
+  }) => client.providerBindings.deleteConversation(param('binding_id'), param('conversation_id')),
+  'GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}': ({
+    client,
+    param,
+  }) =>
+    client.responsesV2.readEventContext(
+      param('binding_id'),
+      param('conversation_id'),
+      param('event_id'),
+    ),
   'PUT /api/v1/gateway/channel-records/{record_id}': ({ client, param, body }) =>
     client.gatewayRecords.put(param('record_id'), body),
   'GET /api/v1/gateway/channel-records/{record_id}': ({ client, param }) =>

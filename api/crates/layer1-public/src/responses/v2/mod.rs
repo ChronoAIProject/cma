@@ -10,7 +10,7 @@ use std::sync::Arc;
 #[cfg(test)]
 mod activity_tests;
 #[cfg(test)]
-mod binding_tests;
+pub(crate) mod binding_tests;
 mod bindings;
 pub(crate) mod controls;
 mod conversation;

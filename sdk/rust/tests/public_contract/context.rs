@@ -110,8 +110,16 @@ pub fn load() -> Vec<Case> {
         }
         for case in &mut corpus.cases {
             let _ = case.request.expanded_raw_body();
-            let empty = BTreeMap::new();
-            let symbols = scenes.get(&case.scenario).unwrap_or(&empty);
+            let symbols = scenes.entry(case.scenario.clone()).or_default();
+            symbols
+                .entry("ephemeral_credential".into())
+                .or_insert_with(|| {
+                    use std::hash::{BuildHasher, Hasher};
+                    let value = std::collections::hash_map::RandomState::new()
+                        .build_hasher()
+                        .finish();
+                    Value::String(format!("runtime-{value:016x}-{value:016x}"))
+                });
             case.request.path = resolve(&Value::String(case.request.path.clone()), symbols)
                 .as_str()
                 .unwrap()
