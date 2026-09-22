@@ -36,6 +36,14 @@ agent-client-protocol-schema = { version = "1.5", features = [
 ] }
 async-trait = "0.1"
 axum = { version = "0.8", features = ["ws", "macros"] }
+bytes = "1"
+h2 = "0.4.19"
+http-body-util = "0.1"
+hyper = { version = "1", features = ["client", "http1", "http2"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+webpki-roots = "1"
 futures-util = "0.3"
 flate2 = "1"
 governor = { version = "0.10", default-features = false, features = ["std", "dashmap"] }

@@ -9,6 +9,7 @@ pub(super) async fn forward_turn(
     accepted_tx: oneshot::Sender<Accepted>,
     events_tx: mpsc::Sender<ResponsesEvent>,
     _permit: OwnedSemaphorePermit,
+    complete: super::transport::Completion,
 ) {
     let mut accepted_tx = Some(accepted_tx);
     let mut stream = Box::pin(parse_sse(response.bytes_stream()));
@@ -67,6 +68,7 @@ pub(super) async fn forward_turn(
             break;
         }
         if terminal {
+            complete.complete();
             break;
         }
     }

@@ -8,6 +8,7 @@ mod registry;
 mod responses;
 mod sse;
 mod stream;
+mod transport;
 
 pub use client::ProviderClient;
 pub use client_types::{
