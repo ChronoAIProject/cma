@@ -15,11 +15,7 @@ impl OwnerTokens for Tokens {
 struct Profiles(BotProfiles);
 #[async_trait::async_trait]
 impl BotProfileResolver for Profiles {
-    async fn resolve(
-        &self,
-        _: &SubjectId,
-        _: &layer2_core::profiles::AgentProfileRef,
-    ) -> Result<BotProfiles, BotError> {
+    async fn resolve(&self, _: &SubjectId, _: &CreateBot) -> Result<BotProfiles, BotError> {
         Ok(self.0.clone())
     }
 }
