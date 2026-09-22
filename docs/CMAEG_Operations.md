@@ -71,6 +71,61 @@ stream lifetime. Normal certificate verification remains enabled. The transport
 uses the workspace's existing locked Hyper, h2, Tokio, and Rustls dependency
 versions; it does not add an alternative TLS stack.
 
-The executable warm/cold latency gate is the remaining work for milestone issue
-#911. Its budget is p99 at most one second for cached channels and two seconds
-for a restore. Provider processing time is outside both budgets.
+Run the executable latency gate from `api/`:
+
+```sh
+cargo nextest run -p cmaeg --run-ignored ignored-only -E 'test(latency_budget)' --locked --success-output final
+```
+
+The ignored integration test composes the real management, ingress, turn runner,
+tools, and delivery services with local fake CMA, JWKS, provider, and NyxID
+endpoints. It creates one channel through the management API, then relocates the
+JWKS URL inside the test backend's encrypted record to the local fixture. The
+production signature, issuer, restoration, authorization, and provider IO paths
+remain active. RSA signing keys are generated at runtime.
+
+The warm run sends 500 callbacks with 16 concurrent callers. Its p50 must stay
+below 50 ms and p99 at or below 1000 ms. It asserts there are no CMA reads or
+additional JWKS fetches. The cold run sends 200 callbacks in 25 rounds of eight;
+each caller starts after cache invalidation, and the eight callers share one
+restore flight. It asserts 25 additional CMA reads, no additional JWKS fetches,
+launch p99 at most 2000 ms, and restore wait p99 at most 800 ms. The initiating
+caller owns the `cold=true` metric sample; all eight wait on the cold cache.
+Provider processing time is outside both launch budgets.
+
+The fake CMA read delay defaults to 50 ms and is configurable through the
+test-only `CMAEG_LATENCY_RESTORE_DELAY_MS` environment variable. Forced repeated
+evictions use an elevated configured restore rate so the harness measures the
+restore path; production defaults remain unchanged. The channel uses explicit
+tool replies and disables automatic replies and acknowledgements. The provider
+still streams a message and completes every turn.
+
+The tool run sends 200 authenticated `replyToEvent` requests through the real
+delivery engine to the fake NyxID receiver. Sixteen configured routes run in
+rounds; the next round begins three seconds after the previous receipts. The
+production route pacing is active, every receipt must confirm delivery, and the
+receiver independently checks each route's send interval. Tool `deliver` p99
+must stay at or below 500 ms. This measures the tool request on an available
+route; requests queued behind the same route's previous send include their
+pacing wait and can take longer.
+
+The test prints nearest-rank p50/p90/p99 and writes `api/target/cmaeg-latency.txt`.
+CI's `cmaeg-latency` job runs after `backend`, has a fifteen-minute limit, retries
+the complete harness once on failure, and uploads that report even on failure
+when it exists. The second failure fails the job. No thresholds are relaxed in
+CI. The workflow is committed locally; its hosted result requires a future push.
+
+Local evidence on macOS ARM64, 2026-09-22, with the default 50-ms fake CMA delay:
+
+| Measurement | Samples | p50 ms | p90 ms | p99 ms | p99 limit ms |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Warm launch | 500 | 1.241 | 1.479 | 3.029 | 1000 |
+| Cold launch | 200 | 48.937 | 57.036 | 59.157 | 2000 |
+| Cold restore wait | 200 | 47.174 | 55.824 | 57.984 | 800 |
+| Tool delivery | 200 | 1.887 | 3.807 | 8.678 | 500 |
+
+That run also scraped the private metrics listener with `curl` after the measured
+requests and verified 200 confirmed Telegram deliveries, one cached channel,
+and zero remaining local turns. The scrape is written to
+`api/target/cmaeg-metrics.txt`. These are local fixture measurements; they do not
+claim deployed provider or platform latency.

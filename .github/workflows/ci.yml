@@ -277,6 +277,34 @@ jobs:
           manifest-path: api/Cargo.toml
           command: check advisories licenses bans sources
 
+  cmaeg-latency:
+    name: CMAEG latency budget
+    needs: backend
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      RUST_MIN_STACK: 33554432
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: api
+      - uses: taiki-e/install-action@nextest
+      - name: Enforce the production budgets (one retry)
+        run: |
+          cargo nextest run -p cmaeg --run-ignored ignored-only -E 'test(latency_budget)' --locked --success-output final || \
+            cargo nextest run -p cmaeg --run-ignored ignored-only -E 'test(latency_budget)' --locked --success-output final
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cmaeg-latency
+          path: api/target/cmaeg-latency.txt
+          if-no-files-found: warn
+
   sdk-typescript:
     name: TypeScript SDK
     runs-on: ubuntu-latest
