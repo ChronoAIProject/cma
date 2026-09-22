@@ -26,6 +26,7 @@ pub mod auth;
 pub mod bots;
 pub mod bridges;
 mod client;
+pub mod cmaeg;
 mod conformance;
 pub mod defaults;
 pub mod discovery;

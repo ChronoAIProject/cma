@@ -455,3 +455,27 @@ under the supplied request ID. This confirms deployed response timing logging;
 it does not establish a provider-write sample or Telegram delivery. No NyxID
 configuration or deployment changed, and no legacy bridge was migrated or
 removed by this rollout.
+
+
+### Production Bot dashboard rollout on 2026-09-22
+
+PR #928 merged into `develop` as `5dbe75d0`. All 14 jobs in CI run
+`35765699875` passed, including the gateway latency gate. The tested revision
+`ea917d215d2f5cffdaba6f8680ced0253877e0c0` and merged commit share tree
+`9d3d48af2fdc1effcd882dfc19659272f75f74fe`. The CI archive, source labels,
+OCI blobs, manifest and registry configuration were verified before deployment.
+
+At 18:58 UTC, `cma-web` was ready on the deployed image
+`us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-web@sha256:d79f5c2331a4bb3d401a33f1e44d06d30f58b6ca034d3de3cdf811ce83b39ef4`.
+Only the web container image was patched, using deployment UID, resource version,
+replica count and prior-image preconditions. CMA API, CMAEG and web each have
+one ready replica in production `chrono-bot`. Public API/gateway readiness and
+web HTML checks passed. All nine Sandbox Pod UIDs, container IDs, restart
+counts, readiness and runtime images matched the fresh pre-rollout baseline;
+the runtime default also remained unchanged.
+
+This deploys Bot creation, list, status and lifecycle controls and closes #916.
+It does not establish the real Telegram acceptance campaign in #918. Native
+provider tool attachment is being implemented in CMA to respect the maintainer's
+instruction to leave NyxID unchanged; that path is not enabled by this web rollout.
+The original bridge is still retained pending migration and acceptance evidence.
