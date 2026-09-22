@@ -239,6 +239,11 @@ jobs:
     name: Backend
     runs-on: ubuntu-latest
     env:
+      # Full debug symbols made rust-lld crash linking the aggregate CMA test
+      # binary on the hosted runner. Keep debug assertions and every test while
+      # bounding linker output, as in the verified local workspace build.
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
       # Large unoptimized lifecycle test futures need the same stack budget
       # on Linux as the documented production-source verification suite.
       RUST_MIN_STACK: 33554432
@@ -285,6 +290,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
       RUST_MIN_STACK: 33554432
     defaults:
       run:
