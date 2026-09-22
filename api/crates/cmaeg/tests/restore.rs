@@ -137,8 +137,20 @@ async fn stale_reads_refresh_in_background_and_stop_after_one_extra_ttl() {
     let stale = fixture.resolver.resolve(fixture.id.as_str()).await.unwrap();
     assert!(Arc::ptr_eq(&old, &stale));
     fixture.server.wait_for_gets(2).await;
-    tokio::time::sleep(Duration::from_millis(60)).await;
-    let fresh = fixture.resolver.resolve(fixture.id.as_str()).await.unwrap();
+    // A request reaching the server is not proof that the background restore
+    // has published. Observe publication within the restore budget, including
+    // on a busy test runner, instead of racing a fixed scheduling delay.
+    let fresh = tokio::time::timeout(Duration::from_millis(800), async {
+        loop {
+            let current = fixture.resolver.resolve(fixture.id.as_str()).await.unwrap();
+            if current.version == 2 {
+                break current;
+            }
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .unwrap();
     assert_eq!(fresh.version, 2);
     assert_eq!(fixture.server.count(), 2);
     tokio::time::sleep(Duration::from_millis(220)).await;

@@ -12,6 +12,7 @@ use tokio::sync::RwLock;
 pub mod bearer;
 mod bearer_authorization;
 mod binding;
+mod bots;
 pub(crate) mod bridge_control_plane;
 pub(crate) mod channel_metadata;
 mod cookie_authorization;
