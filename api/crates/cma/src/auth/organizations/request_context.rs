@@ -26,6 +26,9 @@ impl AuthState {
     /// Project only identity already authenticated by the request resolver. No
     /// organization authority is inferred here and no provider IO is required.
     pub(crate) fn resource_request_context(&self, resolved: &RequestAuth) -> CallerContext {
+        if let Some(principal) = &resolved.binding {
+            return crate::auth::binding::context(principal);
+        }
         let credential = match (&self.mode, &resolved.delegated_credential) {
             (AuthMode::Provider { .. }, Some(value)) => self
                 .provider_credential_context(&resolved.subject, value)

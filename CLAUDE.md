@@ -116,6 +116,7 @@ infra/api/secretproviderclass.yaml
 infra/api/httproute.yaml
 infra/api/healthcheckpolicy.yaml
 infra/api/gcpbackendpolicy.yaml
+infra/cmaeg/Dockerfile
 infra/runtime/Dockerfile
 infra/storage/home-seed.yaml
 infra/storage/home-template.yaml
@@ -155,6 +156,9 @@ infrastructure this repository consumes rather than owns.
 
 `infra/runtime/` is an image and nothing else. It carries no `deployment.yaml`, no `service.yaml` and no config, and that absence is the point: the Sandbox pod is scheduled by the sandbox provider, not by this repository. CMA hands the provider an image URI and an entrypoint and gets an isolated runtime back. A Deployment here would mean the control plane was scheduling agent workloads itself, which §1 forbids.
 
+`infra/cmaeg/` is the CMA Event Gateway, a separate stateless service in the
+same namespace; its manifests are added in a later issue.
+
 ### `docs/`
 
 All documentation lives in `docs/`, and every file in it is markdown. The only documentation outside it is this file, `README.md`, and markdown under `sdk/*/docs/`; SDK documentation lives beside its implementation and is the source rendered by the frontend.
@@ -173,6 +177,8 @@ api/crates/
   layer3-adapter/    Layer 3: sandbox adapter              (control plane pod)
   layer4-runtime/    Layer 4: sandbox supervisor           (sandbox pod)
   cma/               binary: composition, persistence and production adapters
+  cmaeg-core/        pure CMA Event Gateway protocol library
+  cmaeg/             CMA Event Gateway service binary
 ```
 
 ### Layer 1: public interfaces
@@ -186,7 +192,7 @@ Interfaces expose semantic operations in their protocol's own idiom:
 | 3 | **REST** | resource management, profiles, marketplace, Triggers and Launches | `layer1-public/src/rest/` |
 | 4 | **PTY** | absent in this release; no terminal plane | `layer1-public/src/pty/` (typed refusal only) |
 | 5 | **MCP** | explicit unsupported-operation response; no invented Agent tools | `layer1-public/src/mcp/` |
-| 6 | **A2A** | explicit unsupported-operation response; no invented Agent tasks | `layer1-public/src/a2a/` |
+| 6 | **A2A** | public provider card; JSON-RPC explicitly unsupported, no invented Agent tasks | `layer1-public/src/a2a/` |
 
 Each interface is a **projection** of the same core model. It may expose a
 subset of core operations, but must never invent an operation absent from
@@ -312,6 +318,23 @@ layer4-runtime (independent; shares only wire-protocol types)
 - Nothing in the control plane may depend on `layer4-runtime`.
 
 A dependency edge not in this list is a CI failure, not a review comment.
+
+### CMAEG crates
+
+CMAEG lives in this repository: `api/crates/cmaeg-core` (pure protocol library,
+depends on no other crate of this workspace) and `api/crates/cmaeg` (the service
+binary, depends only on `cmaeg-core` and third-party crates). It is a separate
+deployment in namespace `chrono-bot` with manifests under `infra/cmaeg/`.
+Nothing in `layer1-public`, `layer2-core`, `layer3-adapter`, `layer4-runtime` or
+`cma` may depend on the CMAEG crates, and CMAEG crates may not depend on them;
+CI enforces both directions.
+
+`docs/CMAEG_Protocol.md` is the normative CMAEG protocol authority. Changes under
+`/v1` must be additive: retained operations, fields, enum values and operation IDs
+remain compatible. A non-additive change requires `/v2`. The reviewed baseline
+`api/crates/cmaeg/openapi/v1.json` is a required exception to the generated-artifact
+rule in §8: regenerate it, review the diff against this rule, and commit it with
+the implementation and protocol documentation.
 
 ---
 

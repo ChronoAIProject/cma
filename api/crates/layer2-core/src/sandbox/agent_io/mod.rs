@@ -19,6 +19,8 @@ mod event;
 mod evidence;
 pub(in crate::sandbox) mod execution_authority;
 pub(in crate::sandbox) mod execution_dispatch;
+mod external_event;
+mod external_event_read;
 mod input;
 mod lane;
 mod ledger;
@@ -68,6 +70,7 @@ pub use event::{
 };
 pub use evidence::CommandEvidence;
 pub use execution_authority::{CommandExecutionAuthorization, CommandExecutionFence};
+pub use external_event::{external_event_key, ExternalEventContext, MAX_EXTERNAL_EVENT_BYTES};
 pub use input::{AgentAttachmentReference, AgentContent, AgentInput};
 pub use lane::{command_ready_for_claim, CommandLane};
 pub use ledger::{
@@ -105,3 +108,6 @@ pub use worker_store::{finish_command_work_page, AgentCommandWorkerStore};
 mod event_tests;
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod external_event_tests;

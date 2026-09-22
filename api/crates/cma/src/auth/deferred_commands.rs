@@ -17,6 +17,7 @@ use super::{
 };
 
 mod api_bearer;
+mod binding;
 mod custody;
 mod resource;
 mod sandbox_controls;
@@ -30,8 +31,16 @@ impl AgentCommandAdmissionAuthority for AuthState {
         &self,
         context: &layer2_core::resource_access::CallerContext,
         credential: &str,
-        _owner: &AgentOwner,
+        owner: &AgentOwner,
     ) -> Result<AgentAuthorizationRevision, CommandAuthorizationError> {
+        if context.credential_source == layer2_core::resource_access::CredentialSource::Binding {
+            return tokio::time::timeout(
+                VERIFICATION_TIMEOUT,
+                self.binding_admission_authority(context, credential, owner),
+            )
+            .await
+            .map_err(|_| CommandAuthorizationError::Unavailable)?;
+        }
         if !context.validate_principal()
             || self
                 .provider_credential_context(&context.caller.subject, credential)
@@ -153,6 +162,9 @@ impl AgentCommandAuthorizer for AuthState {
         envelope: &AgentCommandEnvelope,
     ) -> Result<Caller, CommandAuthorizationError> {
         tokio::time::timeout(VERIFICATION_TIMEOUT, async {
+            if envelope.authorization.authority_id.starts_with("binding:") {
+                return Ok(self.retained_binding_context(envelope).await?.caller);
+            }
             envelope
                 .validate_integrity()
                 .map_err(|_| CommandAuthorizationError::Revoked)?;

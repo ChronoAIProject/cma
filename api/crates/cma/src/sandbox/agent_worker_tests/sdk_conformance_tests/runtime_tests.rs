@@ -117,7 +117,7 @@ impl AgentRuntimeRegistry for SdkRegistry {
                     let ask_approval = outcome == RuntimeOutcome::Approval && matches!(&input, ConversationInput::Prompt(_) | ConversationInput::RecoverablePrompt { .. });
                     let with_tools = match input {
                         ConversationInput::Prompt(_) | ConversationInput::RecoverablePrompt { .. } if outcome == RuntimeOutcome::Interrupted => return Ok(()),
-                        ConversationInput::Prompt(content) | ConversationInput::RecoverablePrompt { content, .. } => content.iter().any(|block| matches!(block, ContentBlock::Text(text) if text.text == "sdk-raw-with-tools")),
+                        ConversationInput::Prompt(content) | ConversationInput::RecoverablePrompt { content, .. } => content.iter().any(|block| matches!(block, ContentBlock::Text(text) if text.text.lines().next() == Some("sdk-raw-with-tools"))),
                         ConversationInput::Cancel if outcome == RuntimeOutcome::Interrupted => false,
                         ConversationInput::PermissionAnswer { id, locator, decision }
                             if outcome == RuntimeOutcome::Approval && id == APPROVAL_ID

@@ -7,6 +7,7 @@ pub(crate) fn wire_name(capability: Capability) -> &'static str {
         Capability::CreateSandbox => "create_sandbox",
         Capability::UseOwnSandboxes => "use_own_sandboxes",
         Capability::DeleteOwnSandbox => "delete_own_sandbox",
+        Capability::ManageOwnBots => "manage_own_bots",
         Capability::ManageOwnProfiles => "manage_own_profiles",
         Capability::PublishTriggers => "publish_triggers",
         Capability::LaunchTriggers => "launch_triggers",
@@ -17,6 +18,9 @@ pub(crate) fn wire_name(capability: Capability) -> &'static str {
         Capability::ReadActivityLog => "read_activity_log",
         Capability::ReadUserDirectory => "read_user_directory",
         Capability::ConfigurePlatform => "configure_platform",
+        Capability::UseBindingConversations => "use_binding_conversations",
+        Capability::ManageProviderBindings => "manage_provider_bindings",
+        Capability::ManageGatewayRecords => "manage_gateway_records",
     }
 }
 
@@ -28,11 +32,12 @@ pub(crate) fn reported(authorization: &Authorization) -> Vec<&'static str> {
 mod tests {
     use super::*;
 
-    const ALL: [Capability; 13] = [
+    const ALL: [Capability; 17] = [
         Capability::CreateSandbox,
         Capability::UseOwnSandboxes,
         Capability::DeleteOwnSandbox,
         Capability::ManageOwnProfiles,
+        Capability::ManageOwnBots,
         Capability::PublishTriggers,
         Capability::LaunchTriggers,
         Capability::ReadAllSandboxes,
@@ -42,6 +47,9 @@ mod tests {
         Capability::ReadActivityLog,
         Capability::ReadUserDirectory,
         Capability::ConfigurePlatform,
+        Capability::ManageGatewayRecords,
+        Capability::ManageProviderBindings,
+        Capability::UseBindingConversations,
     ];
 
     #[test]

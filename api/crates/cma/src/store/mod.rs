@@ -27,6 +27,10 @@ mod agent_worker_store;
 mod agent_worker_transaction;
 mod agents;
 pub mod auth;
+mod bindings;
+pub(crate) mod bots;
+#[cfg(test)]
+mod bots_mongo_integration_tests;
 pub(crate) mod bridge_allocations;
 mod bridge_credentials;
 mod bridge_definitions;
@@ -49,6 +53,9 @@ mod default_profiles;
 pub mod directory;
 mod durability;
 mod encryption;
+mod gateway_records;
+#[cfg(test)]
+mod gateway_records_mongo_integration_tests;
 mod hierarchy;
 mod launch_context;
 #[cfg(test)]
@@ -108,6 +115,7 @@ mod worktrees;
 
 pub use activity::MongoActivityStore;
 pub use auth::MongoAuthStore;
+pub(crate) use bindings::MongoBindingCredentials;
 pub(crate) use bridge_allocations::MongoBridgeAllocationStore;
 pub(crate) use bridge_credentials::MongoBridgeCredentialStore;
 pub use bridge_definitions::MongoBridgeStore;
@@ -122,6 +130,7 @@ pub(crate) use codex_subscriptions::MongoSubscriptionStore;
 pub(crate) use default_profiles::DefaultProfileSpec;
 pub use directory::MongoUserDirectoryStore;
 pub(crate) use encryption::AuthEncryptionKey;
+pub(crate) use gateway_records::MongoGatewayRecordStore;
 pub use mongo::MongoStores;
 pub use operation::MongoOperationStore;
 pub(crate) use sandbox_credentials::MongoSandboxCredentialStore;

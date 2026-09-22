@@ -153,10 +153,24 @@ pub(super) fn compose<S: FixtureStore>(
     worker_holder: &str,
 ) -> (Router, Arc<AgentCommandWorker>) {
     let authority = Arc::new(Authority(harness.workspace.owner.clone()));
-    let access = Arc::new(ResourceAccessService::new(
-        harness.store.clone(),
-        authority.clone(),
-    ));
+    compose_with_authority(harness, services, context, worker_holder, authority, None)
+}
+pub(super) fn compose_with_authority<S: FixtureStore, A>(
+    harness: &Harness<S>,
+    services: AgentProjectionServices,
+    context: Arc<AgentContextService>,
+    worker_holder: &str,
+    authority: Arc<A>,
+    bindings: Option<Arc<layer2_core::sandbox::binding::BindingAccessService>>,
+) -> (Router, Arc<AgentCommandWorker>)
+where
+    A: OrganizationAuthority + AgentCommandAdmissionAuthority + AgentCommandAuthorizer + 'static,
+{
+    let mut access = ResourceAccessService::new(harness.store.clone(), authority.clone());
+    if let Some(bindings) = &bindings {
+        access = access.with_bindings(bindings.clone());
+    }
+    let access = Arc::new(access);
     let services = services.with_resource_access(access.clone());
     let commands =
         AgentCommandService::new(harness.store.clone(), access.clone(), authority.clone());
@@ -177,12 +191,15 @@ pub(super) fn compose<S: FixtureStore>(
         worker_holder.into(),
     )
     .unwrap();
+    let mut responses =
+        layer1_public::responses::v2::ResponsesV2State::new(commands, services.reads());
+    if let Some(bindings) = bindings {
+        responses = responses.with_bindings(bindings);
+    }
     let router = services
-        .conversation_router(context, harness.updates.clone())
+        .conversation_router(context, harness.updates.clone(), "http://127.0.0.1")
         .merge(services.agent_events_router(Default::default(), harness.updates.clone()))
-        .merge(layer1_public::responses::v2::router(
-            layer1_public::responses::v2::ResponsesV2State::new(commands, services.reads()),
-        ));
+        .merge(layer1_public::responses::v2::router(responses));
     (router, worker)
 }
 

@@ -10,6 +10,12 @@ use zeroize::Zeroize;
 
 use crate::rest::{problem_document, problem_response};
 
+/// Additional authentication scope established by trusted middleware.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AuthMethod {
+    BindingKey { binding_id: String },
+}
+
 /// The authenticated principal for the current request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthenticatedSubject(pub SubjectId);

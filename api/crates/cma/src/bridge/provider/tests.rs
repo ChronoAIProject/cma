@@ -347,7 +347,7 @@ async fn redirects_never_receive_the_selected_key_and_pagination_headers_refuse_
 async fn oversized_or_excessive_provider_inventory_cannot_extend_authority() {
     let mut rows = replies("person-one", json!({"type":"personal"}));
     rows.get_mut("/api/v1/api-keys").unwrap().1["keys"][0]["description"] =
-        json!("x".repeat(MAX_BYTES + 1));
+        json!("x".repeat(1_048_577));
     let f = fixture(rows).await;
     assert!(inspect(&f, &personal(), "person-one").await.is_err());
     let mut rows = replies("person-one", json!({"type":"personal"}));

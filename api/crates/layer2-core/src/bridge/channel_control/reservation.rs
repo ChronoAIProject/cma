@@ -25,6 +25,7 @@ impl ChannelControlReservation {
         let command = intent.request.command.command();
         let admitted_at = UNIX_EPOCH + Duration::from_secs(intent.captured_at as u64);
         let reservation = CommandReservation {
+            binding: None,
             envelope: AgentCommandEnvelope {
                 schema_version: AGENT_IO_SCHEMA_VERSION,
                 command_id: intent.command_id()?,

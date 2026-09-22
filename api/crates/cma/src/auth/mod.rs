@@ -11,7 +11,9 @@ use tokio::sync::RwLock;
 
 pub mod bearer;
 mod bearer_authorization;
+mod binding;
 pub(crate) mod bridge_control_plane;
+pub(crate) mod channel_metadata;
 mod cookie_authorization;
 pub mod deferred_commands;
 pub mod entitlements;
@@ -24,6 +26,7 @@ pub mod organizations;
 mod permissions;
 pub mod persistence;
 pub mod profile;
+pub(crate) mod provider_http;
 #[cfg(test)]
 mod public_contract_tests;
 mod records;
@@ -87,6 +90,7 @@ impl std::fmt::Debug for AuthMode {
 }
 
 pub struct AuthState {
+    bindings: Option<Arc<layer2_core::sandbox::binding::BindingAccessService>>,
     pub(super) mode: AuthMode,
     /// Browser-facing NyxID origin used for registration handoffs.
     pub(super) nyxid_public_url: String,
@@ -100,6 +104,7 @@ pub struct AuthState {
 }
 
 pub(super) struct RequestAuth {
+    pub binding: Option<layer2_core::sandbox::binding::BindingPrincipal>,
     pub credential_source: layer2_core::resource_access::CredentialSource,
     pub subject: SubjectId,
     pub authorization: Authorization,
@@ -141,6 +146,7 @@ impl AuthState {
             (AuthMode::Trusted { .. }, _) => String::new(),
         };
         Arc::new(Self {
+            bindings: None,
             mode,
             nyxid_public_url,
             records,
@@ -204,8 +210,16 @@ impl AuthState {
         &self,
         headers: &HeaderMap,
     ) -> Result<Option<RequestAuth>, StoreError> {
+        if self.bindings.is_some() {
+            if let Some(token) = bearer::bearer_token(headers) {
+                if token.starts_with("nyx_") || token.starts_with("nyxid_ag_") {
+                    return self.binding_request(token).await;
+                }
+            }
+        }
         match &self.mode {
             AuthMode::Trusted { subject } => Ok(Some(RequestAuth {
+                binding: None,
                 credential_source: layer2_core::resource_access::CredentialSource::Retained,
                 subject: SubjectId::new(subject),
                 authorization: Self::trusted_authorization(),
@@ -222,6 +236,7 @@ impl AuthState {
                         }
                         let Some(mut state) = self.store.subject(&login.subject).await? else {
                             return Ok(Some(RequestAuth {
+                                binding: None,
                                 credential_source:
                                     layer2_core::resource_access::CredentialSource::Retained,
                                 subject: login.subject,

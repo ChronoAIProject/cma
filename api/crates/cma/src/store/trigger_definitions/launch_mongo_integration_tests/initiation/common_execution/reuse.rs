@@ -147,6 +147,7 @@ pub(super) async fn reserve_human(f: &Fixture, agent: &Agent, key: &str) -> Admi
         .unwrap();
     let command = AgentCommand::message("Subsequent owner input");
     let request = CommandReservation {
+        binding: None,
         envelope: AgentCommandEnvelope {
             schema_version: AGENT_IO_SCHEMA_VERSION,
             command_id: layer2_core::ids::AgentCommandId::generate(),

@@ -189,9 +189,23 @@ async fn exercise(route: Route) -> Vec<Value> {
     assert_eq!(completed["id"], response_id.as_str());
     assert_eq!(completed["conversation"]["id"], agent.id.as_str());
     assert_eq!(
-        completed["output"][0]["content"][0]["text"],
+        completed["output"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["type"] == "message")
+            .unwrap()["content"][0]["text"],
         "Hello from CMA"
     );
+    let activity = completed["output"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["type"] == "mcp_call")
+        .unwrap();
+    assert_eq!(activity["status"], "completed");
+    assert_eq!(activity["arguments"], "");
+    assert_eq!(activity["output"], Value::Null);
     // Public reads can project the committed runtime outcome before the command
     // worker persists its reconciliation. Recover that completion without input.
     replacement.run_one(id).await.unwrap();

@@ -1,10 +1,11 @@
-//! Documented A2A routes, explicitly unavailable until its protocol is implemented.
+//! Public provider discovery; the A2A message protocol remains unavailable.
 
 use axum::{
+    extract::State,
     http::{header, HeaderValue, StatusCode},
     response::Response,
     routing::{any, get},
-    Router,
+    Json, Router,
 };
 
 use crate::rest::{problem_document, problem_response};
@@ -23,10 +24,31 @@ impl InterfaceProfile for A2aInterface {
     }
 }
 
-pub fn router() -> Router {
+pub fn router(public_base: &str) -> Router {
     Router::new()
-        .route("/.well-known/agent-card.json", get(not_available))
+        .route("/.well-known/agent-card.json", get(agent_card))
         .route("/api/v1/a2a", any(not_available))
+        .with_state(public_base.trim_end_matches('/').to_owned())
+}
+async fn agent_card(State(public_base): State<String>) -> impl axum::response::IntoResponse {
+    (
+        [(header::CACHE_CONTROL, "no-store")],
+        Json(serde_json::json!({
+            "name": "CMA Codex provider",
+            "version": env!("CARGO_PKG_VERSION"),
+            "url": public_base,
+            "capabilities": {
+                "streaming": true, "activity_items": true, "client_tools": false,
+                "cancel": true, "rich_input": false
+            },
+            "provider_contract": {
+                "binding": "/api/v1/cmaeg/bindings/{binding_id}",
+                "conversation": "/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}",
+                "responses": "/api/v2/responses"
+            },
+            "authentication": { "schemes": ["bearer-agent-key"] }
+        })),
+    )
 }
 
 async fn not_available() -> Response {

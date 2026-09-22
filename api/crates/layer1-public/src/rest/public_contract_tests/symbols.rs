@@ -2,13 +2,24 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::Value;
 
-#[derive(Default)]
 pub(super) struct Symbols {
     current: BTreeMap<String, Value>,
     captured: Vec<(Value, Value)>,
     pending_seeds: BTreeSet<String>,
 }
 
+impl Default for Symbols {
+    fn default() -> Self {
+        Self {
+            current: BTreeMap::from([(
+                "ephemeral_credential".into(),
+                Value::String(uuid::Uuid::new_v4().simple().to_string()),
+            )]),
+            captured: Vec::new(),
+            pending_seeds: BTreeSet::new(),
+        }
+    }
+}
 impl Symbols {
     pub fn seed(&mut self, name: &str, actual: &Value, canonical: &Value) {
         self.capture(name, actual, canonical);

@@ -16,6 +16,10 @@ pub(in crate::store) async fn apply(
     request: &CommandReservation,
     session: &mut ClientSession,
 ) -> Result<CommandReservationResult, ApplyError> {
+    store
+        .bindings
+        .conversation_authority(request.binding.as_ref(), session)
+        .await?;
     if let Some(existing) = store
         .agent_commands
         .find_one(doc! { "scope": request.scope(), "key_sha256": &request.key_sha256 })
@@ -23,6 +27,17 @@ pub(in crate::store) async fn apply(
         .await?
     {
         return Ok(request.replay(records::read(&existing)?)?);
+    }
+    if let Some(key) = request.envelope.external_event_key() {
+        if store
+            .agent_commands
+            .find_one(doc! { "external_event_key": key })
+            .session(&mut *session)
+            .await?
+            .is_some()
+        {
+            return Err(CommandLedgerError::IdempotencyConflict.into());
+        }
     }
     let agent_row = store
         .agents

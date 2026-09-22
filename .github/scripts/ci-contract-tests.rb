@@ -64,6 +64,11 @@ guarded.each do |workflow, id, name|
 end
 
 if mode == "release"
+  %w[api web runtime cmaeg].each do |component|
+    reject.call("CI omits #{component} image") do |value|
+      value["ci"]["jobs"]["images"]["strategy"]["matrix"]["component"].delete(component)
+    end
+  end
   reject.call("release omits runtime dependency") { |value| value["publish"]["jobs"]["release"]["needs"].delete("runtime-image-gate") }
   reject.call("mutable runtime reference") do |value|
     value["publish"]["jobs"]["runtime-image-gate"]["steps"].find { |row| row["name"] == "Pull verified immutable runtime" }["env"]["RUNTIME_REFERENCE"] = "ghcr.io/chronoaiproject/cma-runtime:latest"

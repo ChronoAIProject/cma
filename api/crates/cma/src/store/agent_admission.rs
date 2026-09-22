@@ -199,6 +199,11 @@ async fn apply_admission(
     initiation: Option<&layer2_core::trigger_domain::LaunchInitiation>,
     session: &mut mongodb::ClientSession,
 ) -> Result<AdmissionReceipt, ApplyError> {
+    store
+        .bindings
+        .admit_agent(admission, session)
+        .await
+        .map_err(ApplyError::Domain)?;
     let common_launch = trigger_protocol::selected(store, admission, session).await?;
     if let Some(launch) = &common_launch {
         if launch.initiation.as_ref() != initiation {

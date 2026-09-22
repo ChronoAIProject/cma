@@ -283,10 +283,15 @@ impl Sandbox {
         fence: u64,
         at: String,
     ) -> Result<(), SandboxModelError> {
+        let next_step = if self.credential.source.is_managed() {
+            SandboxWorkStep::WaitForCredentialRotation
+        } else {
+            SandboxWorkStep::None
+        };
         self.apply_claimed_with_step(
             holder,
             fence,
-            SandboxWorkStep::WaitForCredentialRotation,
+            next_step,
             credential_rotation_at,
             at.clone(),
             |next| {
@@ -330,6 +335,8 @@ impl Sandbox {
             .and_then(|source| source.resume_pause.clone());
         let next_step = if resume_pause.is_some() {
             SandboxWorkStep::RunLifecycleOperation
+        } else if !self.credential.source.is_managed() {
+            SandboxWorkStep::None
         } else {
             SandboxWorkStep::WaitForCredentialRotation
         };
