@@ -236,6 +236,7 @@ fn rejects_remote_http_and_missing_url_hosts() {
         "http://[::1]evil/path",
         "http://[2001:db8::1]/path",
         "http://localhost@example.test/path",
+        "http://example.test\\@localhost/path",
         "https://example.test:invalid/path",
     ] {
         let mut value = relay_channel();
