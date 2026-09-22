@@ -5,12 +5,14 @@ use serde::Deserialize;
 use serde_json::Value;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
+#[schema(as = CallbackPayload)]
 pub struct CallbackPayload {
     pub message_id: String,
     pub correlation_id: String,
     pub platform: String,
+    #[schema(required = true, nullable = false)]
     pub reply_token: Option<Secret>,
     pub agent: Agent,
     pub conversation: Conversation,
@@ -22,28 +24,32 @@ pub struct CallbackPayload {
     pub timestamp: String,
     pub raw_platform_data: Option<Value>,
 }
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
+#[schema(as = RelayAgent)]
 pub struct Agent {
     pub api_key_id: String,
     pub name: String,
 }
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
+#[schema(as = RelayConversation)]
 pub struct Conversation {
     pub id: String,
     pub platform_id: String,
     #[serde(rename = "type")]
     pub kind: String,
 }
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
+#[schema(as = RelaySender)]
 pub struct Sender {
     pub platform_id: String,
     pub display_name: Option<String>,
 }
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
+#[schema(as = RelayContent)]
 pub struct Content {
     #[serde(rename = "type")]
     pub kind: String,
@@ -51,8 +57,9 @@ pub struct Content {
     #[serde(default)]
     pub attachments: Vec<Attachment>,
 }
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
+#[schema(as = RelayAttachment)]
 pub struct Attachment {
     pub content_type: String,
     pub url: String,

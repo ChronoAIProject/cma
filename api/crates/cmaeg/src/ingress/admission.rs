@@ -37,7 +37,7 @@ pub fn admit(policy: &AdmissionPolicy, facts: &AdmissionFacts<'_>) -> Result<(),
         return Err(Refusal::SystemSender);
     }
     let groups = match policy {
-        AdmissionPolicy::All => GroupAdmission::All,
+        AdmissionPolicy::All {} => GroupAdmission::All,
         AdmissionPolicy::Allowlist { sender_ids } => {
             if !sender_ids.iter().any(|id| id == facts.sender_id) {
                 return Err(Refusal::SenderDenied);

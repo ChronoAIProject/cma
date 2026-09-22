@@ -51,36 +51,8 @@ Registration is process-wide and idempotent. Histogram buckets are 0.005, 0.01,
 [CMAEG observability](CMAEG_Operations.md) for metric definitions, request tracing,
 timing headers, and the status of the socket timing and latency harness.
 
-| Environment key | Default | Purpose |
-| --- | ---: | --- |
-| `CMAEG_LISTEN` | `0.0.0.0:8090` | CMAEG listen address. |
-| `CMAEG_METRICS_LISTEN` | `0.0.0.0:9091` | Separate Prometheus scrape listener; `/metrics` is absent from the public router. |
-| `CMAEG_PROVIDERS` | `[]` | Strict JSON provider allowlist described above. |
-| `CMAEG_PROVIDER_CONNECT_TIMEOUT_MS` | `2000` | TCP/TLS connection timeout for each provider pool. |
-| `CMAEG_PROVIDER_REQUEST_TIMEOUT_MS` | `30000` | Deadline for provider setup and probe requests, and receipt of streaming HTTP response headers. Active streams are owned and bounded by their consumer. |
-| `CMAEG_PROVIDER_MAX_INFLIGHT` | `256` | Deployment-wide upper bound applied to each provider's semaphore. Calls wait at most 50 ms for a provider permit before returning a typed busy result. |
-| `CMAEG_PUBLIC_URL` | Required | Externally reachable origin used in channel callback and tool URLs, without a trailing slash. HTTPS, or loopback HTTP for local tests. |
-| `CMAEG_MASTER_KEYS_FILE` | Required | Mounted file containing one `kid:base64key[,kid:base64key]` line; each key decodes to 32 bytes and the first key is current. |
-| `CMAEG_CMA_BASE_URL` | Required | CMA record-store origin. HTTPS, or loopback/`.svc` HTTP; no credentials, path, query, fragment, or trailing slash. |
-| `CMAEG_CMA_SERVICE_TOKEN_FILE` | Required | Mounted file containing the service-account bearer for CMA channel records and gateway rekey requests. |
-| `CMAEG_NYXID_BASE_URL` | Required | NyxID origin for creator authentication, with the same URL restrictions as the CMA origin. |
-| `CMAEG_TOOLS_NYXID_SLUG` | `cmaeg` | NyxID service slug in the provider tools advertisement, matching `[a-z0-9_]{1,32}`. |
-| `CMAEG_CHANNEL_CACHE_TTL_MS` | `60000` | Fresh lifetime of a resolved channel on this replica. |
-| `CMAEG_CHANNEL_NEGATIVE_TTL_MS` | `10000` | Lifetime of a cached CMA record-not-found result; expired negative entries are never served. |
-| `CMAEG_CHANNEL_CACHE_MAX` | `50000` | Maximum positive and negative channel entries on this replica. |
-| `CMAEG_RESTORE_RATE_PER_MINUTE` | `10` | Per-channel restore refill rate, with an initial burst of three. |
-| `CMAEG_RESTORE_TIMEOUT_MS` | `800` | Total cold-restore deadline, inside the record client's 1.5-second HTTP deadline. |
-| `CMAEG_JWKS_TTL_MS` | `600000` | Fresh lifetime of relay signing keys; at most one refresh every five seconds per retained URL. |
-| `CMAEG_INGRESS_MAX_BODY` | `1048576` | Callback body limit, configurable from 1 byte through 16 MiB. |
-| `CMAEG_INGRESS_INFLIGHT` | `256` | Concurrent callbacks per replica; overflow returns immediate 429 with `Retry-After: 1`. |
-| `CMAEG_ACCEPT_BUDGET_MS` | `20000` | Time from the last inbound body byte to acknowledgment; a pending provider request continues after the gateway returns 202. |
-| `CMAEG_TURN_TIMEOUT_MS` | `600000` | Total turn lifetime including provider setup, retry and stream consumption. |
-| `CMAEG_NYXID_REPLY_TIMEOUT_MS` | `5000` | NyxID reply connect/send/read timeout; uncertain sends are never blindly retried. |
-| `CMAEG_ACK_TEXT` | `Working on it…` | Progress acknowledgement for long turns; nonempty text up to 1024 bytes without controls. |
-| `CMAEG_HEARTBEAT_MS` | `60000` | Inactivity after acknowledgement before a heartbeat, capped at five per turn. |
-| `CMAEG_FAILURE_TEXT` | `Sorry, I couldn’t finish that request. Please try again.` | Short failure notice; same bounds as acknowledgement text. |
-| `CMAEG_DRAIN_SECONDS` | `600` | Maximum shutdown drain for tracked turns and HTTP requests. |
-| `CMAEG_BUSY_RETRY_MAX_MS` | `15000` | Maximum interval for retrying upstream busy refusals with jitter. |
+Gateway configuration keys, their types/defaults, and runbooks are maintained in
+[CMAEG operations](CMAEG_Operations.md).
 
 Each allowlisted provider gets its own pooled HTTP client with a bounded idle
 pool, no redirects and the CMAEG user agent. Cleartext `.svc` clients use HTTP/2
@@ -134,10 +106,7 @@ Admitted messages produce a neutral activity, deterministic conversation ID and
 sealed event reference expiring no later than the reply token or thirty minutes.
 Duplicate callbacks are handed through to provider idempotency. Accepted and
 deferred launcher outcomes both return 202 with event and conversation IDs;
-launcher refusals return explicit RFC 9457 problems. Every callback response
-carries `Server-Timing: ingress;dur=...`, measuring request entry through launcher
-handoff and excluding launcher wait. The provider runner will add its own socket
-handoff measurement.
+launcher refusals return explicit RFC 9457 problems. Ingress timing is defined by [CMAEG protocol §11](CMAEG_Protocol.md#11-s3-latency-and-server-timing).
 
 ### Provider turns and shutdown
 
@@ -159,8 +128,7 @@ The gateway acknowledges when the provider accepts, or at the acceptance budget
 with a deferred 202. Deferred turns and turns whose HTTP caller disconnects keep
 consuming the stream under the total turn deadline. Named outcomes cover
 acceptance, deltas, committed messages, tools, completion, failure and incomplete
-responses. The temporary delivery sink logs outcome kinds only; platform delivery
-is added by the delivery implementation. Stream loss and timeout remain explicit
+responses. Telegram and custom sinks consume these outcomes through the delivery engine. Stream loss and timeout remain explicit
 `stream_lost` and `turn_timeout` failures.
 
 Turn metadata carries hashed channel/partition identifiers, event and actor IDs.
