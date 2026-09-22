@@ -96,7 +96,7 @@ async fn ready(store: &InMemorySandboxStore, mut binding: ProviderBinding) -> Pr
     store.save_binding(Some(1), binding.clone()).await.unwrap();
     binding
 }
-pub(super) fn request(path: &str, principal: &BindingPrincipal, body: Value) -> Request<Body> {
+pub(crate) fn request(path: &str, principal: &BindingPrincipal, body: Value) -> Request<Body> {
     let mut request = fixtures::request(
         Method::POST,
         path,
@@ -119,7 +119,7 @@ pub(super) fn request(path: &str, principal: &BindingPrincipal, body: Value) -> 
     request
 }
 
-pub(super) async fn fixture() -> (
+pub(crate) async fn fixture() -> (
     axum::Router,
     Arc<InMemorySandboxStore>,
     Arc<BindingAccessService>,

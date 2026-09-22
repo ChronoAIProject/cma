@@ -1,3 +1,4 @@
+import { ProviderBindings } from './provider-bindings.js';
 import { GatewayRecords } from './gateway-records.js';
 import { readAgentCard } from './agent-card.js';
 import { resolveConfig, type ClientConfig, type ResolvedConfig } from './config.js';
@@ -30,6 +31,7 @@ import { AgentEventsV2 } from './agent-events-v2/index.js';
 /** A configured client for the public CMA resource and discovery APIs. */
 export class Cma {
   readonly #config: ResolvedConfig;
+  readonly providerBindings: ProviderBindings;
   readonly gatewayRecords: GatewayRecords;
   readonly agents: Agents;
   readonly resourceAccess: ResourceAccess;
@@ -59,6 +61,7 @@ export class Cma {
 
   constructor(config: ClientConfig = {}) {
     this.#config = resolveConfig(config);
+    this.providerBindings = new ProviderBindings(this.#config);
     this.gatewayRecords = new GatewayRecords(this.#config);
     this.agents = new Agents(this.#config);
     this.resourceAccess = new ResourceAccess(this.#config);

@@ -46,7 +46,7 @@ impl BindingCredentialCustody for Custody {
         value.require_credential_admission(key)
     }
 }
-fn app() -> (Router, Arc<InMemorySandboxStore>) {
+pub(super) fn app() -> (Router, Arc<InMemorySandboxStore>) {
     let store = Arc::new(InMemorySandboxStore::default());
     let profiles = Arc::new(InMemoryProfileStore::default());
     let resources = BindingResources {
@@ -85,7 +85,7 @@ fn app() -> (Router, Arc<InMemorySandboxStore>) {
         store,
     )
 }
-fn request(
+pub(super) fn request(
     method: &str,
     path: &str,
     body: Option<Value>,
@@ -105,13 +105,13 @@ fn request(
     }
     request
 }
-fn authority() -> Authorization {
+pub(super) fn authority() -> Authorization {
     Authorization::new([
         Capability::ManageGatewayRecords,
         Capability::ManageProviderBindings,
     ])
 }
-fn body() -> Value {
+pub(super) fn body() -> Value {
     let profile = json!({"schema_version":1,"metadata":{"name":"route-test","owner":{"kind":"human","subject":"owner"},"provider":"cma_codex"},
         "model":{"access":"managed","service":AgentProvider::default().connection_services().managed,"api_type":"responses","model":"test","thinking_effort":"medium"},
         "permission":{"action_mode":"guarded"},"context":{},"environment":{"size":{"cpu_cores":1,"memory_gib":2},"workspace":{"type":"directory","name":"project"}}});

@@ -35,6 +35,7 @@ pub mod instances;
 pub mod launches;
 pub mod profile_authoring;
 pub mod profiles;
+pub mod provider_bindings;
 pub mod resource_access;
 mod resources;
 pub mod responses;
