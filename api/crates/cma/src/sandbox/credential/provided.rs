@@ -12,30 +12,7 @@ impl BindingCredentialCustody for ManagedSandboxCredentials {
         services: &[ServiceId],
         credential: &ProvidedCredential,
     ) -> Result<(), CoreError> {
-        let supplied = KeyIssuer::provided(credential.expose())
-            .map_err(|_| CoreError::InvalidRequest("invalid supplied agent key".into()))?;
-        let hash = credential.sha256();
-        let mut services = services.to_vec();
-        services.sort();
-        services.dedup();
-        let material = CredentialMaterial {
-            source: SandboxCredentialSource::Provided {
-                key_sha256: hash.clone(),
-            },
-            sandbox_id: sandbox_id.clone(),
-            owner: owner.clone(),
-            authority: SandboxCredentialAuthority {
-                generation: 1,
-                provider_key_id: format!("provided-{hash}"),
-                provider_state_version: 1,
-                issued_at: layer2_core::now_rfc3339(),
-                expires_at: String::new(),
-                grant_fingerprint: layer2_core::profiles::content_digest(&services).map_err(
-                    |_| CoreError::InvalidRequest("invalid credential service scope".into()),
-                )?,
-            },
-            value: supplied,
-        };
+        let material = Self::provided_material(sandbox_id, owner, services, credential)?;
         match self.custody.insert(material.clone()).await {
             Ok(()) => Ok(()),
             Err(CredentialCustodyError::Duplicate) => {
@@ -63,6 +40,41 @@ impl BindingCredentialCustody for ManagedSandboxCredentials {
             }
             Err(error) => Err(failed(error)),
         }
+    }
+}
+
+impl ManagedSandboxCredentials {
+    pub(crate) fn provided_material(
+        sandbox_id: &SandboxId,
+        owner: &SubjectId,
+        services: &[ServiceId],
+        credential: &ProvidedCredential,
+    ) -> Result<CredentialMaterial, CoreError> {
+        let supplied = KeyIssuer::provided(credential.expose())
+            .map_err(|_| CoreError::InvalidRequest("invalid supplied agent key".into()))?;
+        let hash = credential.sha256();
+        let mut services = services.to_vec();
+        services.sort();
+        services.dedup();
+        let material = CredentialMaterial {
+            source: SandboxCredentialSource::Provided {
+                key_sha256: hash.clone(),
+            },
+            sandbox_id: sandbox_id.clone(),
+            owner: owner.clone(),
+            authority: SandboxCredentialAuthority {
+                generation: 1,
+                provider_key_id: format!("provided-{hash}"),
+                provider_state_version: 1,
+                issued_at: layer2_core::now_rfc3339(),
+                expires_at: String::new(),
+                grant_fingerprint: layer2_core::profiles::content_digest(&services).map_err(
+                    |_| CoreError::InvalidRequest("invalid credential service scope".into()),
+                )?,
+            },
+            value: supplied,
+        };
+        Ok(material)
     }
 }
 

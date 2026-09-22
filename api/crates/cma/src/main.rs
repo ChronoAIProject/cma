@@ -86,6 +86,7 @@ async fn serve() -> Result<(), String> {
         "CMA listening"
     );
     let mut shutdown = ShutdownCoordinator::new();
+    shutdown.push(composition.bindings.spawn(shutdown.subscribe()));
     let worker_signal = shutdown.subscribe();
     shutdown.push(composition.launch_scheduler.spawn(worker_signal));
     shutdown.push(composition.command_scheduler.spawn(shutdown.subscribe()));

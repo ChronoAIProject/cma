@@ -120,6 +120,39 @@ record-id order and returns `{ items, next_after }`. The default limit is 100
 and valid limits are 1 through 200. Listing and all mutations require the same
 capability; an authenticated caller without it receives `403 forbidden`.
 
+## Provider Bindings
+
+The CMAEG service principal manages bindings under `/api/v1/cmaeg/bindings`.
+Every operation requires both `cma:gateway:records` and `cma:provider:bindings`.
+The binding records the authenticated manager separately from the resource owner
+in the profile. A different manager cannot read or replace that binding.
+Responses use `Cache-Control: no-store` and never contain supplied key material.
+
+`PUT /api/v1/cmaeg/bindings/{binding_id}` accepts
+`{schema_version:1,profile,profile_digest,agent_key,tools:{native_mcp_url,nyxid_service_slug}}`.
+The digest is `sha256:` followed by the canonical profile digest. The response
+contains `binding_id`, `owner`, `profile_digest`, `sandbox_id`, `workspace_id`,
+`level`, `honoured`, `refused`, `state`, `generation`, and timestamps. The current
+level is `l1`. Native external tool endpoints are explicitly refused. Resource
+provisioning is asynchronous: `GET` reports `provisioning`, `ready`, `failed`
+(with a reason), or `retired`. Repeating the same digest and key returns the
+retained reservation. A changed profile waits for prior work to settle, retires
+old conversation Agents, and keeps compatible Sandbox and Workspace snapshots.
+
+`PUT /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}` accepts
+an empty body or `{}` and returns `{conversation_id,agent_id,state}` with 201
+for a new reservation or 200 for a replay. Conversation ids contain 8–128 ASCII
+letters, digits, underscores or hyphens. Each generation retains exactly one
+Agent and Worktree per conversation id. Resource admission revives a paused
+Sandbox through the existing lifecycle transaction. A binding that is not ready
+returns `409 binding_not_ready`; malformed ids return `400 invalid_binding`.
+
+Both DELETE operations return 204 after durable retirement admission. Conversation
+cleanup stops the Agent and removes its Worktree through the existing workers;
+binding cleanup also retires its Sandbox. Once retired, a binding or conversation
+id cannot be resurrected in the same generation. Supplied keys use encrypted
+custody and are never minted, renewed, or revoked by the managed-key controller.
+
 ## Errors, Retry And Concurrency
 
 Errors use `application/problem+json` with standard `type`, `title`, `status`,
@@ -704,6 +737,11 @@ above applies even when an operation annotates only its principal responses.
 | `GET /api/v1/resource-shares/{kind}/{id}/{share_id}` | - | - | 200 ResourceShareView |
 | `PATCH /api/v1/resource-shares/{kind}/{id}/{share_id}` | UpdateShareBody; key | - | 200 ShareReceiptView |
 | `DELETE /api/v1/resource-shares/{kind}/{id}/{share_id}` | -; key | expected_revision* | 200 ShareReceiptView |
+| `PUT /api/v1/cmaeg/bindings/{binding_id}` | PutBindingRequest | - | 200 BindingView; 400/401/403/409/503 ProblemDocument |
+| `GET /api/v1/cmaeg/bindings/{binding_id}` | - | - | 200 BindingView; 401/403/404/503 ProblemDocument |
+| `DELETE /api/v1/cmaeg/bindings/{binding_id}` | - | - | 204 empty; 401/403/409/503 ProblemDocument |
+| `PUT /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}` | optional empty object | - | 200/201 BindingConversationView; 400/401/403/404/409/503 ProblemDocument |
+| `DELETE /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}` | - | - | 204 empty; 400/401/403/404/409/503 ProblemDocument |
 | `GET /api/v1/gateway/channel-records` | - | owner, after, limit | 200 GatewayRecordPageView |
 | `PUT /api/v1/gateway/channel-records/{record_id}` | PutGatewayRecordRequest | - | 200 PutGatewayRecordView |
 | `GET /api/v1/gateway/channel-records/{record_id}` | - | - | 200 GatewayRecordView; 404 ProblemDocument |
