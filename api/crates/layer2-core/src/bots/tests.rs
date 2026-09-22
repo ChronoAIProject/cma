@@ -21,7 +21,7 @@ impl BotProfileResolver for Profiles {
             skills: vec![],
             system_prompt: String::new(),
         };
-        let sandbox:SandboxProfileContent=serde_json::from_value(json!({"cpu_millis":1000,"memory_mib":2048,"nyxid_services":[],"agent_provider":"codex","model_access":"chronoai_managed","max_workspaces":1,"max_agents_per_workspace":1,"workspace_profiles":[],"software_install_commands":[],"environment_variables":[]})).unwrap();
+        let sandbox:SandboxProfileContent=serde_json::from_value(json!({"cpu_millis":1000,"memory_mib":2048,"nyxid_services":[],"agent_provider":AgentProvider::default(),"model_access":"chronoai_managed","max_workspaces":1,"max_agents_per_workspace":1,"workspace_profiles":[],"software_install_commands":[],"environment_variables":[]})).unwrap();
         let workspace = WorkspaceProfileContent {
             location: WorkspaceLocation::Directory {
                 name: "bot-workspace".into(),
