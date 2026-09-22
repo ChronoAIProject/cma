@@ -355,6 +355,8 @@ fn app_return_target(value: &str) -> Result<String, ()> {
         ["triggers", "manage", trigger_id, "embed"] if opaque_path_segment(trigger_id) => {}
         ["agents", agent_id] if opaque_path_segment(agent_id) => {}
         ["sandboxes", sandbox_id] if opaque_path_segment(sandbox_id) => {}
+        ["bots"] => {}
+        ["bots", bot_id] if opaque_path_segment(bot_id) => {}
         ["profiles"] | ["marketplace"] => {}
         ["profiles" | "marketplace", kind, profile_id]
             if matches!(*kind, "agent" | "workspace" | "sandbox")
