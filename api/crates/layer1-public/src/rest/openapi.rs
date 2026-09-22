@@ -1,5 +1,4 @@
-use utoipa::openapi::security::SecurityRequirement;
-use utoipa::{openapi, OpenApi};
+use utoipa::OpenApi;
 mod identity;
 mod projections;
 use self::projections::{
@@ -30,10 +29,18 @@ use super::profile_authoring::shapes::*;
 use super::profiles_openapi_shapes::*;
 use super::trigger_openapi_shapes::*;
 #[rustfmt::skip] use super::gateway_records::{GatewayRecordHeadView as GatewayRecordHead, GatewayRecordPageView as GatewayRecordPage, GatewayRecordView as GatewayRecord, PutGatewayRecordRequest as PutGatewayRequest, PutGatewayRecordView as PutGateway};
-use identity::{anonymous_path, operation_id};
 #[derive(OpenApi)]
 #[openapi(
     paths(
+        super::bots::create,
+        super::bots::list,
+        super::bots::read,
+        super::bots::available,
+        super::bots::test,
+        super::bots::disable,
+        super::bots::enable,
+        super::bots::rotate,
+        super::bots::delete,
         super::bridge_invokes::list,
         super::bridge_invokes::issue,
         super::bridge_invokes::detail,
@@ -452,48 +459,7 @@ pub fn document() -> utoipa::openapi::OpenApi {
     document.merge(crate::responses::document());
     document.merge(crate::agui::document());
     document.merge(crate::agent_v2::document());
-    let components = document
-        .components
-        .get_or_insert_with(openapi::Components::new);
-    components.add_security_scheme(
-        "bearerAuth",
-        openapi::security::SecurityScheme::Http(
-            openapi::security::HttpBuilder::new()
-                .scheme(openapi::security::HttpAuthScheme::Bearer)
-                .build(),
-        ),
-    );
-    components.add_security_scheme(
-        "sessionCookie",
-        openapi::security::SecurityScheme::ApiKey(openapi::security::ApiKey::Cookie(
-            openapi::security::ApiKeyValue::with_description(
-                "cma_session",
-                "CMA browser session cookie",
-            ),
-        )),
-    );
-    for (path, item) in &mut document.paths.paths {
-        for (method, operation) in [
-            ("get", item.get.as_mut()),
-            ("put", item.put.as_mut()),
-            ("post", item.post.as_mut()),
-            ("delete", item.delete.as_mut()),
-            ("patch", item.patch.as_mut()),
-        ]
-        .into_iter()
-        .filter_map(|(method, operation)| operation.map(|operation| (method, operation)))
-        {
-            operation.operation_id = Some(operation_id(method, path));
-            operation.security = Some(if anonymous_path(path) {
-                Vec::new()
-            } else {
-                vec![
-                    SecurityRequirement::new("bearerAuth", std::iter::empty::<String>()),
-                    SecurityRequirement::new("sessionCookie", std::iter::empty::<String>()),
-                ]
-            });
-        }
-    }
+    identity::secure_operations(&mut document);
     document
 }
 #[cfg(test)]
