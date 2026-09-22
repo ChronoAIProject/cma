@@ -6,44 +6,42 @@ use axum::{
     extract::State,
     http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
-    Json,
+    Extension, Json,
 };
+use layer1_public::AuthenticatedCaller;
 use layer2_core::{Authorization, Capability};
 
-use super::{entitlements, AuthState, AUTH_COOKIE};
+use super::{entitlements, profile::Profile, AuthState, AUTH_COOKIE};
 
-pub(super) async fn read(State(auth): State<Arc<AuthState>>, headers: HeaderMap) -> Response {
-    match auth.resolve_request(&headers).await {
-        Ok(Some(resolved)) => {
+pub(super) async fn read(
+    caller: Option<AuthenticatedCaller>,
+    profile: Option<Extension<Profile>>,
+) -> Response {
+    // Middleware already verified this request. A second resolution repeats
+    // provider IO without adding a new authorization boundary.
+    match caller {
+        Some(AuthenticatedCaller(caller)) => {
             let mut body = serde_json::json!({
                 "authenticated": true,
-                "subject": resolved.subject.as_str(),
-                "capabilities": entitlements::reported(&resolved.authorization),
-                "visitor": is_visitor(&resolved.authorization),
+                "subject": caller.subject.as_str(),
+                "capabilities": entitlements::reported(&caller.authorization),
+                "visitor": is_visitor(&caller.authorization),
             });
+            let profile = profile
+                .map(|Extension(profile)| profile)
+                .unwrap_or_default();
             if let (Some(map), Ok(serde_json::Value::Object(profile))) =
-                (body.as_object_mut(), serde_json::to_value(resolved.profile))
+                (body.as_object_mut(), serde_json::to_value(profile))
             {
                 map.extend(profile);
             }
             Json(body).into_response()
         }
-        Ok(None) => (
+        None => (
             StatusCode::UNAUTHORIZED,
             Json(serde_json::json!({ "authenticated": false })),
         )
             .into_response(),
-        Err(error) => {
-            tracing::error!(error = %error, "could not inspect browser authentication");
-            (
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(serde_json::json!({
-                    "authenticated": false,
-                    "code": "store_failed",
-                })),
-            )
-                .into_response()
-        }
     }
 }
 

@@ -1,7 +1,9 @@
+mod pending;
 mod types;
 mod validation;
 use super::{Bridges, validation as bridge};
 use crate::{Error, PageOptions, Result};
+pub use pending::*;
 pub use types::*;
 
 impl Bridges<'_> {

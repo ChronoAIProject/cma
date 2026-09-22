@@ -12,7 +12,7 @@ use tokio::{
 
 use super::operations::{elapsed_ms, WorkKind};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ChannelWorkError {
     Unavailable,
     Changed,
@@ -21,6 +21,19 @@ pub(crate) enum ChannelWorkError {
     Corrupt,
     AttachmentExpired,
     AttachmentUnavailable,
+}
+
+impl ChannelWorkError {
+    pub(crate) fn retry_delay(self) -> Duration {
+        match self {
+            Self::Changed => Duration::from_millis(250),
+            Self::Unavailable => Duration::from_secs(1),
+            Self::AttachmentUnavailable => Duration::from_secs(5),
+            Self::Unsupported | Self::Suspended | Self::Corrupt | Self::AttachmentExpired => {
+                FAILURE_RETRY_DELAY
+            }
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -81,6 +94,9 @@ enum Kind {
 type ResultValue = Result<Option<Vec<String>>, ChannelWorkError>;
 type Joined = Result<(Id, ResultValue), tokio::task::JoinError>;
 
+const FAILURE_RETRY_DELAY: Duration = Duration::from_secs(30);
+const MAX_RETRY_ENTRIES: usize = 4096;
+
 struct Scheduled {
     port: Arc<dyn ChannelWorkPort>,
     tasks: JoinSet<ResultValue>,
@@ -91,6 +107,9 @@ struct Scheduled {
     discovering: bool,
     last_warning: Option<tokio::time::Instant>,
     last_observation: Option<tokio::time::Instant>,
+    retry_after: HashMap<String, tokio::time::Instant>,
+    discovery_after: Option<tokio::time::Instant>,
+    capacity_after: Option<tokio::time::Instant>,
 }
 impl Scheduled {
     fn new(port: Arc<dyn ChannelWorkPort>) -> Self {
@@ -104,10 +123,14 @@ impl Scheduled {
             discovering: false,
             last_warning: None,
             last_observation: None,
+            retry_after: HashMap::new(),
+            discovery_after: None,
+            capacity_after: None,
         }
     }
     fn poll(&mut self) {
         let now = tokio::time::Instant::now();
+        self.retry_after.retain(|_, deadline| *deadline > now);
         if self
             .last_observation
             .is_none_or(|prior| now - prior >= Duration::from_secs(30))
@@ -121,7 +144,12 @@ impl Scheduled {
             );
             self.last_observation = Some(now);
         }
-        if self.discovering || !self.queued.is_empty() || self.active.len() >= 4 {
+        if self.discovering
+            || !self.queued.is_empty()
+            || self.active.len() >= 4
+            || self.discovery_after.is_some_and(|deadline| deadline > now)
+            || self.capacity_after.is_some_and(|deadline| deadline > now)
+        {
             return;
         }
         let port = self.port.clone();
@@ -147,11 +175,20 @@ impl Scheduled {
         self.discovering = true;
     }
     fn fill(&mut self) {
+        let now = tokio::time::Instant::now();
+        if self.capacity_after.is_some_and(|deadline| deadline > now) {
+            return;
+        }
         while self.active.len() < 4 {
             let Some(id) = self.queued.pop_front() else {
                 break;
             };
-            if !self.active.insert(id.clone()) {
+            if self
+                .retry_after
+                .get(&id)
+                .is_some_and(|deadline| *deadline > now)
+                || !self.active.insert(id.clone())
+            {
                 continue;
             }
             let port = self.port.clone();
@@ -172,9 +209,38 @@ impl Scheduled {
             Err(error) => error.id(),
         };
         match self.kinds.remove(&id) {
-            Some(Kind::Discover) => self.discovering = false,
+            Some(Kind::Discover) => {
+                self.discovering = false;
+                self.discovery_after = match &joined {
+                    Ok((_, Ok(Some(_)))) => None,
+                    Ok((_, Err(error))) => Some(tokio::time::Instant::now() + error.retry_delay()),
+                    _ => Some(tokio::time::Instant::now() + FAILURE_RETRY_DELAY),
+                };
+            }
             Some(Kind::Work(id, started)) => {
                 self.active.remove(&id);
+                // Discovery is frequent so new messages remain responsive. A
+                // failed row must not reuse that cadence to hammer identity
+                // providers or prevent their rate-limit windows recovering.
+                if !matches!(&joined, Ok((_, Ok(_)))) {
+                    let delay = match &joined {
+                        Ok((_, Err(error))) => error.retry_delay(),
+                        _ => FAILURE_RETRY_DELAY,
+                    };
+                    let deadline = tokio::time::Instant::now() + delay;
+                    if self.retry_after.len() < MAX_RETRY_ENTRIES {
+                        self.retry_after.insert(id.clone(), deadline);
+                    } else {
+                        // Bound process memory without dropping retry delays.
+                        // An exceptional full window pauses this worker only.
+                        self.capacity_after = Some(
+                            self.capacity_after
+                                .map_or(deadline, |prior| prior.max(deadline)),
+                        );
+                    }
+                } else {
+                    self.retry_after.remove(&id);
+                }
                 let outcome = match &joined {
                     Ok((_, Ok(_))) => "observed",
                     Ok((_, Err(ChannelWorkError::Changed))) => "changed",

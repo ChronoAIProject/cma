@@ -27,6 +27,86 @@ mod partition_commands;
 mod partition_status;
 #[path = "channel_reply_reset_tests.rs"]
 mod reset;
+#[path = "channel_supersession_tests.rs"]
+mod supersession;
+
+#[tokio::test]
+#[ignore = "requires the disposable MongoDB replica contract runner"]
+async fn retained_channel_grant_selection_preserves_fresh_authority_and_never_remints_revocation() {
+    use crate::bridge::channel_work::matches_retained_channel_grant;
+    use layer2_core::bridge::invoke::*;
+    let f = ReplyFixture::new().await;
+    let store = crate::store::MongoBridgeInvokeStore::open(
+        f.bridges.clone(),
+        f.resources.clone(),
+        &f.database,
+    )
+    .await
+    .unwrap();
+    let original = store.grant(&f.grant.id).await.unwrap().unwrap();
+    assert!(matches_retained_channel_grant(
+        &original,
+        &f.inbox,
+        &f.allocation
+    ));
+    let mut manual = original.clone();
+    manual.channel = None;
+    assert!(!matches_retained_channel_grant(
+        &manual,
+        &f.inbox,
+        &f.allocation
+    ));
+    let mut another = f.allocation.clone();
+    another.identity.generation += 1;
+    assert!(!matches_retained_channel_grant(
+        &original, &f.inbox, &another
+    ));
+    let mut other_pin = f.inbox.clone();
+    other_pin.pin.config_revision += 1;
+    assert!(!matches_retained_channel_grant(
+        &original,
+        &other_pin,
+        &f.allocation
+    ));
+    let request = || BridgeInvokeRequest {
+        grant_id: original.id.clone(),
+        pin: f.inbox.pin.clone(),
+        target: f.allocation.placement.target().clone(),
+        effect: BridgeInvokeEffect::AdmitMessage {
+            inbox_id: f.inbox.id.clone(),
+        },
+    };
+    let bridge_revision = f
+        .invokes
+        .authorize(request())
+        .await
+        .unwrap()
+        .bridge()
+        .revision;
+    f.invokes
+        .revoke(
+            &caller(),
+            None,
+            RevokeBridgeInvokeGrant {
+                grant_id: original.id.clone(),
+                expected_bridge_revision: bridge_revision,
+                expected_revision: original.revision,
+                idempotency_key: "retain-revoked-grant".into(),
+            },
+        )
+        .await
+        .unwrap();
+    let revoked = store.grant(&original.id).await.unwrap().unwrap();
+    assert!(
+        matches_retained_channel_grant(&revoked, &f.inbox, &f.allocation),
+        "retain denied identity instead of entering grant issuance"
+    );
+    assert!(matches!(
+        f.invokes.authorize(request()).await,
+        Err(BridgeInvokeError::Revoked)
+    ));
+    f.close().await;
+}
 #[path = "wildcard_chat_tests.rs"]
 mod wildcard_chat;
 

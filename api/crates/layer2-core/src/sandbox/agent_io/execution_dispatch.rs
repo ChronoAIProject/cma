@@ -66,11 +66,28 @@ impl ConversationInputGuard for ChannelDispatchGuard {
     async fn check(&self) -> layer3_adapter::Result<()> {
         let refused =
             || AdapterError::Rejected("Channel execution authority is no longer current".into());
-        let proof = self
-            .authority
-            .current_proof()
-            .await
-            .map_err(|_| refused())?;
+        let proof = self.authority.current_proof().await.map_err(|error| {
+            use super::ChannelCommandAdmissionError as Error;
+            use crate::bridge::invoke::BridgeInvokeError;
+            let reason = match error {
+                Error::Invoke(BridgeInvokeError::TargetMismatch) => "target_changed",
+                Error::Invoke(BridgeInvokeError::Revoked) => "grant_revoked",
+                Error::Invoke(BridgeInvokeError::Conflict) => "authority_changed",
+                Error::Invoke(BridgeInvokeError::Unavailable) | Error::Unavailable => "unavailable",
+                Error::SourceMismatch => "source_changed",
+                _ => "authority_refused",
+            };
+            tracing::warn!(
+                event = "channel_operation",
+                operation = "runtime_write",
+                stage = "authority_refresh",
+                reason,
+                "Channel writer refused input"
+            );
+            AdapterError::Rejected(format!(
+                "Channel execution authority refresh refused: {reason}"
+            ))
+        })?;
         let snapshot = proof.resources();
         let agent = snapshot.lineage.agent.as_ref().ok_or_else(refused)?;
         let parent = &snapshot.lineage.sandbox;
@@ -96,6 +113,13 @@ impl ConversationInputGuard for ChannelDispatchGuard {
                         && operation.state == AgentOperationDelivery::DispatchFenced
                 })
         {
+            tracing::warn!(
+                event = "channel_operation",
+                operation = "runtime_write",
+                stage = "dispatch_fence",
+                reason = "target_changed",
+                "Channel writer refused input"
+            );
             return Err(refused());
         }
         self.authority

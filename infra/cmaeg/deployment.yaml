@@ -1,0 +1,111 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cmaeg
+  namespace: chrono-bot
+  labels:
+    app.kubernetes.io/name: cmaeg
+    app.kubernetes.io/part-of: cma
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cmaeg
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cmaeg
+        app.kubernetes.io/part-of: cma
+    spec:
+      serviceAccountName: cmaeg-ksa
+      automountServiceAccountToken: false
+      # Five seconds of routing propagation, 600 seconds of application drain,
+      # and ten seconds for process and kubelet teardown.
+      terminationGracePeriodSeconds: 615
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: cmaeg
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: cmaeg
+          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-cmaeg@sha256:8b23d9cf4959a6361d437957e4bee15630f24cf66ddfa44b33f21344c8e770da
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8090
+              protocol: TCP
+            - name: metrics
+              containerPort: 9091
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: cmaeg
+          env:
+            - name: CMAEG_MASTER_KEYS
+              valueFrom:
+                secretKeyRef:
+                  name: cmaeg-master-keys
+                  key: CMAEG_MASTER_KEYS
+            - name: CMAEG_CMA_SERVICE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: cmaeg-cma-service-token
+                  key: CMAEG_CMA_SERVICE_TOKEN
+            - name: CMAEG_CMA_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: cmaeg-cma-service-token
+                  key: CMAEG_CMA_CLIENT_ID
+            - name: CMAEG_CMA_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: cmaeg-cma-service-token
+                  key: CMAEG_CMA_CLIENT_SECRET
+          securityContext:
+            allowPrivilegeEscalation: false
+            privileged: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: 2000m
+              memory: 1Gi
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            timeoutSeconds: 2
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 2
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sleep", "5"]

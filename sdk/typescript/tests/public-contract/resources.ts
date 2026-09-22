@@ -65,6 +65,8 @@ export const resourceDispatch: Record<string, Dispatch> = {
     client.bridges.listPartitions(param('id'), options),
   'GET /api/v1/bridges/{id}/partitions/{allocation}': ({ client, param }) =>
     client.bridges.readPartition(param('id'), param('allocation')),
+  'GET /api/v1/bridges/{id}/partitions/{allocation}/pending-messages': ({ client, param }) =>
+    client.bridges.pendingMessages(param('id'), param('allocation')),
   'GET /api/v1/bridges/{id}/allocations': ({ client, param, options }) =>
     client.bridges.listAllocations(param('id'), options),
   'GET /api/v1/bridges/{id}/allocations/{allocation}/child-cleanup': ({ client, param }) =>
