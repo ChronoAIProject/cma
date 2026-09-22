@@ -60,10 +60,14 @@ pool, no redirects and the CMAEG user agent. Cleartext `.svc` clients use HTTP/2
 prior knowledge. Changes to any of these keys require a normal deployment and
 startup validation; malformed policy or non-positive limits fail closed.
 
-Both mounted secrets are read before the listener binds. Missing files, invalid key
-rings, empty tokens, and invalid origins stop startup. No mounted secret belongs
-in the provider allowlist or environment values. The image expects these mounts;
-Kubernetes resources remain scheduled for the dedicated gateway rollout issue.
+Credentials are injected from native Kubernetes Secrets as environment variables
+and read before the listener binds. Invalid key rings, empty tokens, incomplete
+service-account credentials, and invalid origins stop startup. The production
+gateway obtains and renews its outbound CMA bearer through NyxID client
+credentials; startup proves that exchange before opening the listener. The
+separate service token authenticates inbound rekey operations. Credential values
+never belong in the provider allowlist or ConfigMap. Optional legacy file inputs
+remain available outside this deployment.
 
 Creator authentication calls NyxID `GET /api/v1/users/me` with a three-second
 deadline. Only token hashes are cached: successes for 60 seconds and failures for
