@@ -200,6 +200,7 @@ impl<S: FixtureStore> Harness<S> {
         let result = self
             .store
             .admit_agent(AgentAdmission {
+                binding: None,
                 created_by: None,
                 owner: self.workspace.owner.clone(),
                 workspace_id: self.workspace.id.clone(),

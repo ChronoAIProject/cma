@@ -29,6 +29,7 @@ impl SandboxAdmissionName {
 
 #[derive(Debug, Clone)]
 pub struct SandboxAdmission {
+    pub binding: Option<crate::sandbox::binding::BindingAdmissionFence>,
     pub sandbox: Sandbox,
     pub name: SandboxAdmissionName,
     pub admission_fingerprint: String,
@@ -45,6 +46,7 @@ impl SandboxAdmission {
     ) -> Result<Self, SandboxStoreError> {
         let admission_fingerprint = fingerprint(&sandbox, &name)?;
         let admission = Self {
+            binding: None,
             sandbox,
             name,
             admission_fingerprint,

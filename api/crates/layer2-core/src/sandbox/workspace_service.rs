@@ -280,6 +280,7 @@ impl WorkspaceService {
         let result = self
             .store
             .admit_workspace(WorkspaceAdmission {
+                binding: None,
                 workspace,
                 kind,
                 event_at: now,

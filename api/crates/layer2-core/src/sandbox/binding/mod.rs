@@ -1,10 +1,12 @@
 //! Durable external environment bindings and conversation ownership.
 mod credential;
+mod fence;
 mod model;
 mod profile;
 mod profile_input;
 pub mod store;
 pub use credential::{BindingCredentialCustody, ProvidedCredential};
+pub use fence::{BindingAdmissionFence, BindingConversationFence};
 pub use model::{
     BindingConversation, BindingConversationState, BindingState, BindingWork,
     PreviousBindingEnvironment, ProviderBinding, BINDING_CONFORMANCE_LEVEL,
