@@ -94,10 +94,10 @@ pub struct ChoiceOption {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 pub enum FormFieldKind {
-    Text,
-    Number,
+    Text {},
+    Number {},
     Choice { options: Vec<ChoiceOption> },
-    Date,
+    Date {},
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]

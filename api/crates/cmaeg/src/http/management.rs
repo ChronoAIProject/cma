@@ -9,7 +9,6 @@ use axum::{
 };
 use cmaeg_core::{channel::ConformanceLevel, problem::ProblemCode};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use utoipa::{IntoParams, ToSchema};
 
 use crate::{
@@ -43,7 +42,7 @@ pub struct ChannelResponse {
     pub version: u64,
     pub provider: ProviderResponse,
     pub endpoints: EndpointResponse,
-    pub definition: Value,
+    pub definition: super::schema::PublicChannelDefinition,
 }
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -74,7 +73,10 @@ pub struct TestChannelResponse {
 }
 
 #[derive(Debug, Clone, Default, Deserialize, IntoParams)]
+#[serde(deny_unknown_fields)]
+#[into_params(parameter_in = Query)]
 pub struct DeleteQuery {
+    #[param(required = true, nullable = false)]
     pub expected_version: Option<u64>,
 }
 
@@ -84,6 +86,7 @@ pub struct DeleteQuery {
     operation_id = "createChannel",
     tag = "channels",
     security(("creatorBearer" = [])),
+    params(("Idempotency-Key" = Option<String>, Header, description = "1..=256 ASCII bytes; identical creates replay locally for ten minutes")),
     request_body = ChannelCreateRequest,
     responses((status = 201, body = ChannelResponse), (status = "default", body = cmaeg_core::problem::Problem, content_type = "application/problem+json"))
 )]

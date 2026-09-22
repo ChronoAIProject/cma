@@ -7,6 +7,7 @@ pub mod delivery;
 pub mod http;
 pub mod ingress;
 pub mod mcp;
+pub mod openapi;
 pub mod providers;
 pub mod records;
 pub mod telemetry;
@@ -42,50 +43,7 @@ struct StatusResponse {
     status: &'static str,
 }
 
-/// The versioned CMAEG management API document.
-#[derive(Debug, OpenApi)]
-#[openapi(
-    info(title = "CMA Event Gateway", version = "0.1.0"),
-    modifiers(&ManagementSecurity),
-    paths(
-        http::management::create_channel,
-        http::management::get_channel,
-        http::management::update_channel,
-        http::management::delete_channel,
-        http::management::test_channel,
-        http::management::rekey_channel,
-        http::callbacks::callback,
-        http::events::receive_event,
-        http::tools::reply_to_event,
-        http::tools::update_message,
-        http::tools::send_typing,
-        http::tools::read_event_context,
-    )
-)]
-pub struct ApiDoc;
-
-struct ManagementSecurity;
-impl utoipa::Modify for ManagementSecurity {
-    fn modify(&self, document: &mut utoipa::openapi::OpenApi) {
-        use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
-        let components = document.components.get_or_insert_with(Default::default);
-        for (name, description) in [
-            ("creatorBearer", "NyxID creator bearer token"),
-            ("serviceBearer", "CMA service token; rekey only"),
-            ("agentBearer", "NyxID bot agent key; tools only"),
-        ] {
-            components.add_security_scheme(
-                name,
-                SecurityScheme::Http(
-                    HttpBuilder::new()
-                        .scheme(HttpAuthScheme::Bearer)
-                        .description(Some(description))
-                        .build(),
-                ),
-            );
-        }
-    }
-}
+pub use openapi::ApiDoc;
 
 /// Build the stateless HTTP router.
 pub fn router() -> Router {
