@@ -127,6 +127,60 @@ async fn tool_calls_preserve_bytes_and_read_rotated_credentials_without_reopenin
 }
 
 #[tokio::test]
+async fn full_context_replies_survive_json_escaping_and_dual_tool_result_encodings() {
+    let activity = serde_json::json!({
+        "kind":{"type":"message","text":"\u{0000}".repeat(32 * 1024),"attachments":[]},
+        "actor":{"id":"sender","kind":"human"},
+        "conversation":{"id":"conversation","kind":"private"},
+        "occurred_at":"2026-09-22T00:00:00Z"
+    });
+    let result = serde_json::json!({
+        "event_id":"event", "conversation_id":"conversation", "activity":activity,
+        "capabilities":{"edit":false,"typing":false,"buttons":"numbered_text",
+            "cards":"text","attachments":"link_text","max_text_chars":4000}
+    });
+    let expected = serde_json::to_vec(&serde_json::json!({
+        "jsonrpc":"2.0","id":1,"result":{
+            "content":[{"type":"text","text":result.to_string()}],
+            "structuredContent":result,"isError":false
+        }
+    }))
+    .unwrap();
+    assert!(expected.len() > 256 * 1024);
+    let reply = expected.clone();
+    let (upstream, server) = serve(Router::new().route(
+        "/mcp",
+        post(move || {
+            let reply = reply.clone();
+            async move { ([(header::CONTENT_TYPE, "application/json")], reply) }
+        }),
+    ))
+    .await;
+    let holder = CredentialHolder::new();
+    install(&holder, 1).await;
+    let (local, proxy) = serve(router(
+        ToolProxyConfig {
+            upstream: format!("{upstream}/mcp").parse().unwrap(),
+        },
+        holder,
+    ))
+    .await;
+    let response = reqwest::Client::new()
+        .post(&local)
+        .json(
+            &serde_json::json!({"jsonrpc":"2.0","id":1,"method":"tools/call",
+            "params":{"name":"readEventContext","arguments":{"event_ref":"fixture-reference"}}}),
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.bytes().await.unwrap(), expected);
+    proxy.abort();
+    server.abort();
+}
+
+#[tokio::test]
 async fn callers_cannot_select_another_endpoint_method_or_oversized_body() {
     let (sent, mut observed) = mpsc::channel(4);
     let (upstream, server) = serve(Router::new().fallback(move || {

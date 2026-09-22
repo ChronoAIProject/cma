@@ -510,7 +510,9 @@ creation it must be one canonical HTTPS URL without credentials, query or
 fragment; literal loopback HTTP is accepted for local verification. The proxy
 binds only `127.0.0.1:9093` and accepts `POST /`, with a 128 KiB request limit,
 a five-second request-body deadline, a ten-second upstream deadline and a
-256 KiB response limit. Caller URLs cannot select another destination. Redirects,
+4 MiB response limit. The response bound accommodates full context in both the
+structured and escaped text representations of a tool result. Caller URLs
+cannot select another destination. Redirects,
 encoded responses and responses exposing the injected credential are refused.
 
 Each request uses the runtime's current in-memory Sandbox credential, so a
