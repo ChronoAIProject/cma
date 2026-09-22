@@ -70,7 +70,7 @@ pub(super) fn validate(
         || binding.work != BindingWork::Idle
         || !parent_may_open(sandbox)
         || workspace.status != layer2_core::sandbox::WorkspaceStatus::Ready
-        || tree.status != layer2_core::sandbox::WorktreeStatus::Ready
+        || !worktree_may_open(agent, tree)
         || !matches!(
             conversation.state,
             BindingConversationState::Provisioning | BindingConversationState::Ready
@@ -153,6 +153,24 @@ fn valid_fence(agent: &Agent, fence: u64) -> bool {
                             > std::time::SystemTime::now()
                     })
             })
+}
+
+fn worktree_may_open(agent: &Agent, tree: &layer2_core::sandbox::Worktree) -> bool {
+    use layer2_core::sandbox::{AgentStatus, AgentWorkStep, WorktreeStatus};
+    match tree.status {
+        WorktreeStatus::Ready => true,
+        // Startup publishes the Worktree ready only after opening the Agent.
+        // Recovery may reconnect that open before completing ready publication.
+        WorktreeStatus::Creating => {
+            agent.status == AgentStatus::Starting
+                && agent.work.lease.is_some()
+                && matches!(
+                    agent.work.step,
+                    AgentWorkStep::OpenConversation | AgentWorkStep::PublishReady
+                )
+        }
+        _ => false,
+    }
 }
 
 fn parent_may_open(sandbox: &layer2_core::sandbox::Sandbox) -> bool {
