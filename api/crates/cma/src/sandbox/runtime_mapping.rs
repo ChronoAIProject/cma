@@ -69,6 +69,11 @@ pub(super) fn sandbox_spec(sandbox: &Sandbox, deployment_id: &str) -> SandboxSpe
         &sandbox.credential.effective_reaches(),
         deployment_id,
     );
+    if let layer2_core::sandbox::SandboxCredentialSource::Binding { tool_endpoint, .. } =
+        &sandbox.credential.source
+    {
+        spec.tool_proxy_url = tool_endpoint.clone();
+    }
     spec.home_volume = sandbox
         .lifecycle
         .home
