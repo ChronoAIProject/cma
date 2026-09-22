@@ -3,6 +3,7 @@
 mod client;
 mod client_types;
 mod context;
+mod management_auth;
 mod probe;
 mod registry;
 mod responses;
