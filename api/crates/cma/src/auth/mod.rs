@@ -13,6 +13,7 @@ pub mod bearer;
 mod bearer_authorization;
 mod binding;
 pub(crate) mod bridge_control_plane;
+pub(crate) mod channel_metadata;
 mod cookie_authorization;
 pub mod deferred_commands;
 pub mod entitlements;
@@ -25,6 +26,7 @@ pub mod organizations;
 mod permissions;
 pub mod persistence;
 pub mod profile;
+pub(crate) mod provider_http;
 #[cfg(test)]
 mod public_contract_tests;
 mod records;
