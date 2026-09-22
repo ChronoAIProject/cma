@@ -14,6 +14,8 @@ type ServerSocket = tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>;
 
 #[path = "acp_channel_tool_tests.rs"]
 mod channel_tool_tests;
+#[path = "acp_provider_tool_tests.rs"]
+mod provider_tool_tests;
 
 #[path = "acp_reconnect_turn_tests.rs"]
 mod reconnect_turn_tests;
@@ -107,6 +109,7 @@ fn settings(permission_mode: Option<&str>, own_credential: bool) -> HostedAgentO
         permission_mode: permission_mode.map(str::to_string),
         own_credential,
         channel_tool: None,
+        provider_tool: None,
         recovered_prompt: None,
     }
 }
