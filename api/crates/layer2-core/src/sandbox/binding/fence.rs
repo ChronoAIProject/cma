@@ -69,8 +69,8 @@ impl BindingAdmissionFence {
             || sandbox.owner != binding.owner
             || sandbox.profile.content != profile.sandbox
             || sandbox.credential.source
-                != (SandboxCredentialSource::Provided {
-                    key_sha256: binding.key_sha256.clone(),
+                != (SandboxCredentialSource::Binding {
+                    binding_id: binding.binding_id.clone(),
                 })
             || sandbox.credential.reaches != profile.sandbox.nyxid_services
         {

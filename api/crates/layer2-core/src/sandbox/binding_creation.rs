@@ -30,8 +30,8 @@ impl SandboxService {
             failure: None,
             runtime: None,
             credential: SandboxCredentialState {
-                source: SandboxCredentialSource::Provided {
-                    key_sha256: binding.key_sha256.clone(),
+                source: SandboxCredentialSource::Binding {
+                    binding_id: binding.binding_id.clone(),
                 },
                 service_grants: vec![],
                 reaches: content.nyxid_services.clone(),

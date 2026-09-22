@@ -79,6 +79,16 @@ pub fn validate_binding_write(
             {
                 return Err(SandboxStoreError::Conflict);
             }
+            if current.generation == next.generation && current.key_sha256 != next.key_sha256 {
+                let proposed = current
+                    .rotate_credential(next.key_sha256.clone(), next.updated_at.clone())
+                    .map_err(|_| SandboxStoreError::Conflict)?;
+                return if &proposed == next {
+                    Ok(())
+                } else {
+                    Err(SandboxStoreError::Conflict)
+                };
+            }
             if current.generation == next.generation {
                 if current.profile != next.profile
                     || current.key_sha256 != next.key_sha256

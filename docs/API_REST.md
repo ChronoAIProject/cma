@@ -153,6 +153,14 @@ binding cleanup also retires its Sandbox. Once retired, a binding or conversatio
 id cannot be resurrected in the same generation. Supplied keys use encrypted
 custody and are never minted, renewed, or revoked by the managed-key controller.
 
+Binding PUT with the same profile digest and a changed supplied key rotates the
+credential in place. The response reports `provisioning` until the replacement is
+delivered (or retained for a fully paused Sandbox's revival); callers poll GET
+until `ready` before revoking the previous externally managed key. Replays retain
+the same credential generation. Existing Sandbox, Workspace and conversation
+identifiers are preserved. A busy Sandbox lifecycle returns a conflict that can
+be retried after the operation settles.
+
 ## Errors, Retry And Concurrency
 
 Errors use `application/problem+json` with standard `type`, `title`, `status`,

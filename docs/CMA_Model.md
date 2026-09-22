@@ -212,9 +212,10 @@ values. Renewal is recorded; a stale generation cannot install a newer key or
 expand scope. Provider and model access remain Sandbox-wide, including the
 shared own-account sign-in state.
 
-Credential custody records distinguish `managed` keys from `provided` keys.
-An external binding supplies its key through encrypted custody; its source
-records the SHA-256 of the exact bytes. The supplied key's opaque receipt does
+Credential custody records distinguish `managed`, fixed `provided`, and
+externally rotated `binding` sources. A binding supplies its key through encrypted
+custody; each generation records the SHA-256 of the exact bytes while its source
+retains the binding identifier. The supplied key's opaque receipt does
 not assert a provider key identifier, verified grant, or expiry. An empty expiry
 means unknown only for this source. CMA delivers the same key after installation
 and again on revival, and never mints a fallback when its custody is missing.
@@ -279,6 +280,16 @@ admission and cleanup share a binding transaction fence, including when a bindin
 is deleted before its Sandbox is inserted; a delayed request cannot recreate
 cleaned-up key custody. Supplied authority permits child admission and revival
 without requiring an unrelated owner refresh token.
+
+Supplied binding key rotation reserves a new encrypted custody generation in the
+same transaction as the binding hash and Sandbox delivery work. The Sandbox,
+Workspace, Worktree, Agent and external conversation generation remain stable.
+The existing credential worker delivers the replacement and retires local custody
+for the old generation; it does not revoke the externally owned key. The binding
+reports provisioning until delivery completes. A fully paused Sandbox updates its
+retained authority for delivery on revival. Busy lifecycle work refuses rotation
+until its current operation settles. Replaying an acknowledged rotation never
+allocates another credential generation.
 
 ## Conversation And Delivery
 
