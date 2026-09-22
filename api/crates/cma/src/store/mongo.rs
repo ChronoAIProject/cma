@@ -98,6 +98,9 @@ impl MongoStores {
         let settings = Arc::new(MongoPlatformSettingsStore::open(&client, database).await?);
         let operations = Arc::new(MongoOperationStore::open(&client, database).await?);
         let gateway_records = Arc::new(MongoGatewayRecordStore::open(&client, database).await?);
+        super::bots::MongoBotStore::open(&client, database)
+            .await
+            .map_err(|_| StoreError::Unavailable("open bot store".into()))?;
         let stores = Self {
             sandbox_model,
             sandbox_profiles,

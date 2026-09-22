@@ -7,6 +7,7 @@ pub mod permission {
     pub const SANDBOX_CREATE: &str = "cma:sandbox:create";
     pub const SANDBOX_USE: &str = "cma:sandbox:use";
     pub const SANDBOX_DELETE: &str = "cma:sandbox:delete";
+    pub const BOT_MANAGE: &str = "cma:bot:manage";
     pub const PROFILE_MANAGE: &str = "cma:profile:manage";
     pub const TRIGGER_PUBLISH: &str = "cma:trigger:publish";
     pub const TRIGGER_LAUNCH: &str = "cma:trigger:launch";
@@ -23,21 +24,23 @@ pub mod permission {
 const PROVIDER_WILDCARD: &str = "*";
 const PRODUCT_WILDCARD: &str = "cma:*";
 
-const OWN_WORK: [Capability; 6] = [
+const OWN_WORK: [Capability; 7] = [
     Capability::CreateSandbox,
     Capability::UseOwnSandboxes,
     Capability::DeleteOwnSandbox,
     Capability::ManageOwnProfiles,
+    Capability::ManageOwnBots,
     Capability::PublishTriggers,
     Capability::LaunchTriggers,
 ];
 
 // Binding conversation authority is established from custody, never provider RBAC.
-const ALL_CAPABILITIES: [Capability; 15] = [
+const ALL_CAPABILITIES: [Capability; 16] = [
     Capability::CreateSandbox,
     Capability::UseOwnSandboxes,
     Capability::DeleteOwnSandbox,
     Capability::ManageOwnProfiles,
+    Capability::ManageOwnBots,
     Capability::PublishTriggers,
     Capability::LaunchTriggers,
     Capability::ReadAllSandboxes,
@@ -63,6 +66,7 @@ pub fn capabilities_from_permissions<S: AsRef<str>>(
             permission::SANDBOX_CREATE => granted.push(Capability::CreateSandbox),
             permission::SANDBOX_USE => granted.push(Capability::UseOwnSandboxes),
             permission::SANDBOX_DELETE => granted.push(Capability::DeleteOwnSandbox),
+            permission::BOT_MANAGE => granted.push(Capability::ManageOwnBots),
             permission::PROFILE_MANAGE => granted.push(Capability::ManageOwnProfiles),
             permission::TRIGGER_PUBLISH => granted.push(Capability::PublishTriggers),
             permission::TRIGGER_LAUNCH => granted.push(Capability::LaunchTriggers),
@@ -100,6 +104,19 @@ mod tests {
         assert!(authority.allows(Capability::LaunchTriggers));
         assert!(authority.allows(Capability::ReadActivityLog));
         assert_eq!(authority.iter().count(), 3);
+    }
+
+    #[test]
+    fn bot_management_grants_only_owner_bot_authority() {
+        let authority = capabilities_from_permissions([permission::BOT_MANAGE]);
+        assert_eq!(
+            authority.iter().collect::<Vec<_>>(),
+            [Capability::ManageOwnBots]
+        );
+        assert!(
+            !capabilities_from_permissions(["cma:bots:manage", "cma:bot:*"])
+                .allows(Capability::ManageOwnBots)
+        );
     }
 
     #[test]

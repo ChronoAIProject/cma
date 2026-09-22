@@ -28,6 +28,9 @@ mod agent_worker_transaction;
 mod agents;
 pub mod auth;
 mod bindings;
+pub(crate) mod bots;
+#[cfg(test)]
+mod bots_mongo_integration_tests;
 pub(crate) mod bridge_allocations;
 mod bridge_credentials;
 mod bridge_definitions;
