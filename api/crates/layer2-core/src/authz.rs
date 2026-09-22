@@ -40,6 +40,8 @@ pub enum Capability {
     ManageGatewayRecords,
     /// Manage externally provisioned environments and conversations.
     ManageProviderBindings,
+    /// Operate only conversations selected by verified binding-key authority.
+    UseBindingConversations,
 }
 
 /// A closed set of capabilities established by the authentication boundary.
