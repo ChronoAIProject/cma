@@ -142,6 +142,7 @@ impl ChannelCredentialRenewalDriver {
             .await
             .map_err(|_| AllocationError::Unavailable)?;
         let material = CredentialMaterial {
+            source: Default::default(),
             sandbox_id: snapshot.sandbox.id.clone(),
             owner: snapshot.sandbox.owner.clone(),
             authority: SandboxCredentialAuthority {

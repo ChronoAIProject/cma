@@ -72,6 +72,7 @@ impl ChannelSandboxReservation {
             failure: None,
             runtime: None,
             credential: SandboxCredentialState {
+                source: Default::default(),
                 reaches: content.credential_services(baseline),
                 service_grants: Vec::new(),
                 key_generation: 0,
