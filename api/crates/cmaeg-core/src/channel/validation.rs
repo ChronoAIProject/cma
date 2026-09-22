@@ -77,29 +77,17 @@ pub(super) fn validate_hash(value: &str, pointer: &str) -> Result<(), Validation
 }
 
 pub(crate) fn validate_https_url(value: &str, pointer: &str) -> Result<(), ValidationError> {
-    let (scheme, rest) = value
-        .split_once("://")
-        .ok_or_else(|| ValidationError::new(pointer, "must be an absolute URL"))?;
-    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
-    let host = authority
-        .rsplit('@')
-        .next()
-        .unwrap_or_default()
-        .split(':')
-        .next()
-        .unwrap_or_default();
-    if authority.is_empty() || host.is_empty() || value.chars().any(char::is_whitespace) {
+    let url = url::Url::parse(value)
+        .map_err(|_| ValidationError::new(pointer, "must be an absolute URL"))?;
+    if url.host_str().is_none() || value.chars().any(char::is_whitespace) {
         return Err(ValidationError::new(
             pointer,
             "must include an absolute host",
         ));
     }
-    if scheme == "https"
-        || (scheme == "http"
-            && matches!(
-                host.trim_matches(['[', ']']),
-                "127.0.0.1" | "localhost" | "::1"
-            ))
+    if url.scheme() == "https"
+        || (url.scheme() == "http"
+            && matches!(url.host_str(), Some("127.0.0.1" | "localhost" | "[::1]")))
     {
         Ok(())
     } else {
