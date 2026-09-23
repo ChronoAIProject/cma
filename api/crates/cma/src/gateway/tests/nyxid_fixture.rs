@@ -63,6 +63,22 @@ async fn key(State(state): State<Identity>, Path(id): Path<String>) -> Response 
         .unwrap_or_else(|| StatusCode::NOT_FOUND.into_response())
 }
 async fn mint(State(state): State<Identity>, Json(mut body): Json<Value>) -> Response {
+    // API-key platform identifies the client; it is not the channel transport.
+    if body["platform"].as_str().is_some_and(|platform| {
+        ![
+            "nyxid-assistant",
+            "claude-code",
+            "cursor",
+            "codex",
+            "openclaw",
+            "generic",
+            "device-code",
+            "device-onboard",
+        ]
+        .contains(&platform)
+    }) {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
     assert_eq!(body["allow_all_services"], false);
     assert_eq!(body["allow_all_nodes"], false);
     assert_eq!(body["allowed_node_ids"], json!([]));
@@ -79,6 +95,7 @@ async fn mint(State(state): State<Identity>, Json(mut body): Json<Value>) -> Res
         );
     } else {
         assert_eq!(body["allowed_service_ids"], json!([]));
+        assert_eq!(body["platform"], "generic");
         assert!(body["callback_url"]
             .as_str()
             .unwrap()
