@@ -34,6 +34,16 @@ pub(super) fn fold_update(
         ));
     }
     let (update, prompt_evidence) = prompt_evidence(update);
+    if !prompt_evidence
+        && current.conversation.active_turn.is_none()
+        && update.turn_evidence().is_some()
+    {
+        // Restoring an idle conversation can emit its previous turn's history.
+        // Persist the runtime receipt without duplicating that history or
+        // inventing a turn. Recovered active turns still consume their output,
+        // and conversation metadata remains valid while the Agent is idle.
+        return Ok(FoldedConversationUpdate::Quiet(assembly.clone()));
+    }
     match update {
         ConversationUpdate::Said(SessionUpdate::AgentMessageChunk(chunk)) => {
             fold_message_chunk(current, assembly, chunk, prompt_evidence, appended_at)
