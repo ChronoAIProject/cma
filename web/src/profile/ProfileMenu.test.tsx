@@ -19,9 +19,10 @@ describe('account menu', () => {
     const actor = userEvent.setup();
     render(<ProfileMenu user={user} bots onSignOut={onSignOut} onNavigate={onNavigate} />);
     await actor.click(screen.getByRole('button', { name: /account menu/i }));
-    for (const name of ['Profiles', 'Bot settings', 'Marketplace', 'Developer']) {
+    for (const name of ['Profiles', 'Bot settings', 'Developer']) {
       expect(screen.getByRole('menuitem', { name })).toBeInTheDocument();
     }
+    expect(screen.queryByRole('menuitem', { name: 'Marketplace' })).not.toBeInTheDocument();
     expect(screen.queryByRole('menuitem', { name: 'Operations' })).not.toBeInTheDocument();
     expect(screen.queryByRole('menuitem', { name: 'CMA Trigger' })).not.toBeInTheDocument();
     expect(screen.getByRole('menuitem', { name: /appearance/i })).toBeInTheDocument();

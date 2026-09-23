@@ -71,7 +71,6 @@ fn app_with_tools(endpoint: Option<&str>) -> (Router, Arc<InMemorySandboxStore>)
         route_service(
             BindingService::new(
                 store.clone(),
-                profiles,
                 resources,
                 Arc::new(Custody),
                 BindingPolicy {

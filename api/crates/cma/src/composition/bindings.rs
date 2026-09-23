@@ -14,7 +14,6 @@ impl BindingComposition {
         Self {
             service: BindingService::new(
                 stores.sandbox_model.clone(),
-                stores.sandbox_profiles.clone(),
                 resources,
                 crate::store::MongoBindingCredentials::new(
                     stores.sandbox_model.clone(),

@@ -4,7 +4,7 @@ use cmaeg_core::{
     cloudevent::{parse_binary, parse_structured, CloudEvent},
     ids::{ConversationId, EventId},
     message::OutboundMessage,
-    profile::{canonical_json, AgentProfileSnapshot},
+    profile::{canonical_json, EventWorkerProfile},
 };
 
 fn event() -> CloudEvent {
@@ -29,7 +29,7 @@ fn rejects_unknown_profile_fields() {
     let mut profile = channel["profile"].as_object().unwrap().clone();
     profile.insert("unexpected".into(), serde_json::json!(true));
     assert!(
-        serde_json::from_value::<AgentProfileSnapshot>(serde_json::Value::Object(profile)).is_err()
+        serde_json::from_value::<EventWorkerProfile>(serde_json::Value::Object(profile)).is_err()
     );
 }
 
@@ -116,7 +116,7 @@ fn relay_bot_username_is_an_optional_bounded_identity_pin() {
         serde_json::from_str(include_str!("fixtures/channel.json")).unwrap();
     value["sources"] = serde_json::json!([{"type":"nyxid_relay", "issuer":"https://nyx.example", "jwks_url":"https://nyx.example/.well-known/jwks.json", "key_id":"key-1", "route_ids":["route-1"], "platform":"telegram", "admission":{"type":"all"}}]);
     value["partition"]["key"] = "conversation".into();
-    let profile: AgentProfileSnapshot = serde_json::from_value(value["profile"].clone()).unwrap();
+    let profile: EventWorkerProfile = serde_json::from_value(value["profile"].clone()).unwrap();
     value["profile_digest"] = profile.digest().into();
     let channel: ChannelDefinition = serde_json::from_value(value.clone()).unwrap();
     channel.validate().unwrap();

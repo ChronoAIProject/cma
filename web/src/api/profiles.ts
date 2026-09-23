@@ -1,3 +1,4 @@
+import { createCreationClient } from './creation';
 import type { Cma } from '@chronoai/cma-sdk';
 import type { ProfileViewsClient } from '../profiles/ProfileViews';
 import { agentContent, sandboxContent, workspaceContent } from './rest/profile-content';
@@ -11,6 +12,8 @@ export function createProfileViewsClient(sdk: Cma): ProfileViewsClient {
     sandbox: sdk.sandboxProfiles,
   };
   return {
+    eventWorkers: sdk.eventWorkerProfiles,
+    creation: createCreationClient(sdk),
     profiles: {
       listProfiles: async (kind, options) => {
         const page = await resources[kind].list(options);

@@ -76,3 +76,90 @@ async fn bot_creation_and_worker_cas_survive_store_reopen() {
     );
     client.database(&database).drop().await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable MongoDB replica set"]
+async fn worker_revisions_are_atomic_owner_fenced_and_survive_reopen() {
+    use super::event_workers::MongoEventWorkerProfileStore;
+    use layer2_core::event_workers::*;
+    let client = Client::with_uri_str(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
+        .await
+        .unwrap();
+    let database = format!("cma_workers_test_{}", uuid::Uuid::new_v4().simple());
+    let a = MongoEventWorkerProfileStore::open(&client, &database)
+        .await
+        .unwrap();
+    let b = MongoEventWorkerProfileStore::open(&client, &database)
+        .await
+        .unwrap();
+    let bot = bot("owner", "a");
+    let source: EventWorkerProfileInput = serde_json::from_value(json!({"name":"Worker","description":"","agent_profile":{"id":"agp_test","revision":1},"workspace_profile":{"id":"wkp_test","revision":1},"sandbox_profile":{"id":"sbp_test","revision":1}})).unwrap();
+    let snapshot = projection::snapshot(&projection::WorkerProjection {
+        name: &source.name,
+        owner: &bot.owner,
+        provider: "cma_codex",
+        profiles: &bot.profiles,
+    })
+    .unwrap();
+    let first = EventWorkerProfile {
+        provider: "cma_codex".into(),
+        id: format!("ewp_{}", uuid::Uuid::new_v4().simple()),
+        owner: bot.owner,
+        revision: 1,
+        source,
+        profiles: bot.profiles,
+        digest: format!("sha256:{}", content_digest(&snapshot).unwrap()),
+        snapshot,
+        created_at: bot.created_at,
+        updated_at: bot.updated_at,
+        retired_at: None,
+        creation_fingerprint: "a".repeat(64),
+    };
+    let (left, right) = tokio::join!(a.save(None, &first), b.save(None, &first));
+    assert_ne!(left.is_ok(), right.is_ok());
+    let mut next = first.clone();
+    next.revision = 2;
+    next.retired_at = Some(next.updated_at.clone());
+    let (left, right) = tokio::join!(a.save(Some(1), &next), b.save(Some(1), &next));
+    assert_ne!(left.is_ok(), right.is_ok());
+    drop(a);
+    drop(b);
+    let reopened = MongoEventWorkerProfileStore::open(&client, &database)
+        .await
+        .unwrap();
+    assert_eq!(
+        reopened.get(&first.id, None).await.unwrap(),
+        Some(next.clone())
+    );
+    assert_eq!(
+        reopened.get(&first.id, Some(1)).await.unwrap(),
+        Some(first.clone())
+    );
+    assert_eq!(reopened.get(&first.id, Some(2)).await.unwrap(), Some(next));
+    assert!(reopened
+        .list(&first.owner, None, 100)
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(reopened
+        .list(&SubjectId::new("foreign"), None, 100)
+        .await
+        .unwrap()
+        .is_empty());
+    // A record under another identity must not become authority for that key.
+    let revisions = client
+        .database(&database)
+        .collection::<mongodb::bson::Document>("event_worker_profile_revisions");
+    let mut corrupt = revisions
+        .find_one(doc! {"_id":format!("{}:1", first.id)})
+        .await
+        .unwrap()
+        .unwrap();
+    corrupt.insert("_id", format!("{}:3", first.id));
+    revisions.insert_one(corrupt).await.unwrap();
+    assert_eq!(
+        reopened.get(&first.id, Some(3)).await,
+        Err(BotError::Unavailable)
+    );
+    client.database(&database).drop().await.unwrap();
+}
