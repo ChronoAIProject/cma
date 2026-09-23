@@ -10,7 +10,6 @@ use layer2_core::ServiceId;
 
 use crate::{auth::AuthMode, store::AuthEncryptionKey};
 
-pub(crate) mod bridge_flags;
 mod execution;
 mod gateway;
 mod home;
@@ -18,7 +17,8 @@ mod profiles;
 mod runtime;
 mod storage;
 
-pub(crate) use bridge_flags::BridgeFeatureFlags;
+mod features;
+pub(crate) use features::FeatureFlags;
 pub(crate) use gateway::GatewayConfig;
 pub(crate) use profiles::DefaultProfileConfig;
 pub(crate) use runtime::RuntimeConfig;
@@ -149,7 +149,7 @@ pub struct Config {
     pub activity_retention: Duration,
     pub default_profiles: DefaultProfileConfig,
     pub auth_mode: AuthMode,
-    pub bridge_flags: BridgeFeatureFlags,
+    pub features: FeatureFlags,
     pub gateway: Option<GatewayConfig>,
 }
 
@@ -174,7 +174,7 @@ impl std::fmt::Debug for Config {
             .field("activity_retention", &self.activity_retention)
             .field("default_profiles", &self.default_profiles)
             .field("auth_mode", &self.auth_mode)
-            .field("bridge_flags", &self.bridge_flags)
+            .field("features", &self.features)
             .finish()
     }
 }
@@ -212,7 +212,7 @@ impl Config {
             return Err("CHRONO_SERVER_CORS_ORIGIN must contain at least one origin".into());
         }
 
-        let bridge_flags = BridgeFeatureFlags::from_lookup(&mut lookup)?;
+        let features = FeatureFlags::from_lookup(&mut lookup)?;
         let rate_limits = RateLimitConfig::from_lookup(&mut lookup)?;
         let trusted_proxies = TrustedProxyConfig::from_lookup(&mut lookup)?;
         let mongodb_uri = required(&mut lookup, "CHRONO_MONGODB_URI")?;
@@ -310,7 +310,7 @@ impl Config {
             activity_retention,
             default_profiles,
             auth_mode,
-            bridge_flags,
+            features,
             gateway: GatewayConfig::from_lookup(&mut lookup)?,
         })
     }
