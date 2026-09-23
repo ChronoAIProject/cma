@@ -397,3 +397,5 @@ mod tests {
         assert!(request_id_from_headers(&headers).is_none());
     }
 }
+
+pub mod event_workers;

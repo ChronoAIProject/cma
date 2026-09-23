@@ -1,3 +1,4 @@
+import { EventWorkerProfiles } from './event-worker-profiles.js';
 import { ProviderBindings } from './provider-bindings.js';
 import { GatewayRecords } from './gateway-records.js';
 import { Bots } from './bots.js';
@@ -34,6 +35,7 @@ export class Cma {
   readonly providerBindings: ProviderBindings;
   readonly gatewayRecords: GatewayRecords;
   readonly bots: Bots;
+  readonly eventWorkerProfiles: EventWorkerProfiles;
   readonly agents: Agents;
   readonly resourceAccess: ResourceAccess;
   readonly sandboxes: Sandboxes;
@@ -64,6 +66,7 @@ export class Cma {
     this.providerBindings = new ProviderBindings(this.#config);
     this.gatewayRecords = new GatewayRecords(this.#config);
     this.bots = new Bots(this.#config);
+    this.eventWorkerProfiles = new EventWorkerProfiles(this.#config);
     this.agents = new Agents(this.#config);
     this.resourceAccess = new ResourceAccess(this.#config);
     this.sandboxes = new Sandboxes(this.#config);

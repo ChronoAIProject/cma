@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 170,
+  "openapi_operations": 176,
   "operations": {
     "GET /api/v1/organizations": {
       "classification": "openapi",
@@ -2413,6 +2413,46 @@
         "bot_not_found",
         "bot_conflict"
       ]
+    },
+    "POST /api/v1/event-worker-profiles": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/event_workers/mod.rs# Public Event Worker Profile management; the web uses these same operations.",
+      "required_problems": [
+        "event_worker_profile_invalid"
+      ]
+    },
+    "GET /api/v1/event-worker-profiles/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/event_workers/mod.rs# Public Event Worker Profile management; the web uses these same operations.",
+      "required_problems": [
+        "event_worker_profile_not_found",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/event-worker-profiles/{id}/revisions/{revision}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/event_workers/mod.rs# Public Event Worker Profile management; the web uses these same operations.",
+      "required_problems": []
+    },
+    "GET /api/v1/event-worker-profiles": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/event_workers/mod.rs# Public Event Worker Profile management; the web uses these same operations.",
+      "required_problems": [
+        "event_worker_profile_forbidden",
+        "event_worker_profile_unavailable"
+      ]
+    },
+    "PUT /api/v1/event-worker-profiles/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/event_workers/mod.rs# Public Event Worker Profile management; the web uses these same operations.",
+      "required_problems": [
+        "event_worker_profile_conflict"
+      ]
+    },
+    "DELETE /api/v1/event-worker-profiles/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/event_workers/mod.rs# Public Event Worker Profile management; the web uses these same operations.",
+      "required_problems": []
     }
   }
 }

@@ -14,6 +14,7 @@ use super::{
 
 /// Aggregate-neutral stores opened atomically at process startup.
 pub struct MongoStores {
+    pub(crate) event_workers: Arc<super::event_workers::MongoEventWorkerProfileStore>,
     pub(crate) bots: Arc<super::bots::MongoBotStore>,
     /// Sandbox -> Workspace -> Worktree -> Agent aggregates and logs.
     pub sandbox_model: Arc<MongoSandboxStore>,
@@ -83,7 +84,13 @@ impl MongoStores {
                 .await
                 .map_err(|_| StoreError::Unavailable("open bot store".into()))?,
         );
+        let event_workers = Arc::new(
+            super::event_workers::MongoEventWorkerProfileStore::open(&client, database)
+                .await
+                .map_err(|_| StoreError::Unavailable("open event worker profiles".into()))?,
+        );
         let stores = Self {
+            event_workers,
             bots,
             sandbox_model,
             sandbox_profiles,

@@ -742,13 +742,36 @@ above applies even when an operation annotates only its principal responses.
 
 <!-- openapi-operations:start -->
 
+### Event Worker Profiles
+
+These owner-scoped resources compose three published CMA profile revisions into
+one full, immutable gateway configuration. All operations require
+`manage_own_profiles`. Creation uses `Idempotency-Key`; updates and retirement
+compare `expected_revision`. Repeating an identical successful update recovers
+that revision; conflicting edits return 409. Retirement preserves revisions and
+existing Bot snapshots. The `profile` field contains the complete
+`EventWorkerProfile`; `source` records the three CMA references and authoring text.
+
+| Operation | Behavior |
+|---|---|
+| `GET /api/v1/event-worker-profiles` | List active owned profiles using `after` and `limit` (1–200). |
+| `POST /api/v1/event-worker-profiles` | Create and pin the complete configuration; return 201. |
+| `GET /api/v1/event-worker-profiles/{id}` | Read the current owned revision, including retirement. |
+| `PUT /api/v1/event-worker-profiles/{id}` | Save a new revision with `expected_revision` and `source`. |
+| `DELETE /api/v1/event-worker-profiles/{id}` | Retire with query `expected_revision`, preserving history. |
+| `GET /api/v1/event-worker-profiles/{id}/revisions/{revision}` | Read an immutable owned historical revision. |
+
+
 ### Bots
 
 Creation optionally accepts `sandbox_profile:{id,revision}` and
 `workspace_profile:{id,revision}` alongside the required Agent `profile`.
 Explicit environment profiles must be personally owned and published; an omitted
 reference pins the corresponding platform default. Bot responses expose all three
-pinned references. Reusing a creation key with different environment references
+pinned references. Alternatively, supply `event_worker_profile:{id,revision}`
+and the three matching source references to pin a saved full worker configuration.
+The Bot retains that snapshot even if the worker is later edited or retired.
+Reusing a creation key with different environment references
 returns 409, including changing an omitted default into an explicit reference.
 
 | Operation | Behavior |

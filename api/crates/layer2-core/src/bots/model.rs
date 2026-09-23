@@ -51,6 +51,8 @@ pub struct BotReply {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CreateBot {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_worker_profile: Option<crate::event_workers::EventWorkerProfileRef>,
     pub name: String,
     pub external_bot_id: String,
     pub profile: AgentProfileRef,
@@ -63,6 +65,8 @@ pub struct CreateBot {
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BotProfiles {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_worker_profile: Option<crate::event_workers::EventWorkerProfilePin>,
     pub resolved_model: String,
     pub agent: AgentProfileRevision,
     pub sandbox: SandboxProfileRevision,
@@ -170,6 +174,14 @@ impl CreateBot {
         {
             return Err(super::BotError::Invalid("invalid bot configuration".into()));
         }
+        if let Some(reference) = &self.event_worker_profile {
+            crate::event_workers::validate_id(&reference.id)?;
+            if reference.revision == 0 {
+                return Err(super::BotError::Invalid(
+                    "worker revision must be positive".into(),
+                ));
+            }
+        }
         let validate = |ids: &[String]| {
             if ids.is_empty()
                 || ids.len() > 512
@@ -225,6 +237,49 @@ impl Bot {
     }
     pub fn validate(&self) -> Result<(), super::BotError> {
         self.request.validate()?;
+        match (
+            &self.request.event_worker_profile,
+            &self.profiles.event_worker_profile,
+        ) {
+            (None, None) => {}
+            (Some(reference), Some(pin)) if reference == &pin.reference => {
+                crate::event_workers::validate_id(&reference.id)?;
+                let name = pin.snapshot["metadata"]["name"]
+                    .as_str()
+                    .ok_or(super::BotError::Unavailable)?;
+                let mut projected = crate::event_workers::projection::snapshot(
+                    &crate::event_workers::projection::WorkerProjection {
+                        name,
+                        owner: &self.owner,
+                        provider: &self.provider,
+                        profiles: &self.profiles,
+                    },
+                )?;
+                projected["metadata"]["description"] =
+                    pin.snapshot["metadata"]["description"].clone();
+                if projected != pin.snapshot
+                    || reference.revision == 0
+                    || pin.snapshot["metadata"]["owner"]["subject"].as_str()
+                        != Some(self.owner.as_str())
+                    || pin.snapshot["metadata"]["provider"].as_str() != Some(self.provider.as_str())
+                    || pin.digest
+                        != format!(
+                            "sha256:{}",
+                            crate::profiles::content_digest(&pin.snapshot)
+                                .map_err(|_| super::BotError::Unavailable)?
+                        )
+                {
+                    return Err(super::BotError::Invalid(
+                        "invalid Event Worker Profile pin".into(),
+                    ));
+                }
+            }
+            _ => {
+                return Err(super::BotError::Invalid(
+                    "Event Worker Profile pin differs from request".into(),
+                ))
+            }
+        }
         if self.profiles.resolved_model.trim().is_empty()
             || crate::profiles::content_digest(&self.profiles.agent.content)
                 .map_err(|_| super::BotError::Unavailable)?
