@@ -9,14 +9,25 @@ use layer2_core::profiles::{content_digest, AgentProvider, ProfileCapacityBounds
 use layer2_core::sandbox::binding::*;
 use layer2_core::{
     resource_access::*,
-    sandbox::{agent_io::*, store::InMemorySandboxStore, AgentStatus},
+    sandbox::{
+        agent_io::*,
+        store::{AgentStore, InMemorySandboxStore},
+        AgentStatus,
+    },
     Caller, SubjectId,
 };
 use serde_json::{json, Value};
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use tower::ServiceExt;
 
-struct BindingAuthority(Arc<BindingAccessService>);
+struct BindingAuthority {
+    bindings: Arc<BindingAccessService>,
+    admission_race: Option<Arc<InMemorySandboxStore>>,
+    changed: AtomicBool,
+}
 #[async_trait]
 impl AgentCommandAdmissionAuthority for BindingAuthority {
     async fn command_admission_authority(
@@ -26,7 +37,7 @@ impl AgentCommandAdmissionAuthority for BindingAuthority {
         owner: &AgentOwner,
     ) -> Result<AgentAuthorizationRevision, CommandAuthorizationError> {
         let principal = self
-            .0
+            .bindings
             .authenticate(&context.credential.credential_id)
             .await
             .unwrap()
@@ -37,6 +48,18 @@ impl AgentCommandAdmissionAuthority for BindingAuthority {
                 subject: principal.owner().clone()
             }
         );
+        if let Some(store) = &self.admission_race {
+            if !self.changed.swap(true, Ordering::SeqCst) {
+                let mut agent = store
+                    .get_agent(&layer2_core::AgentId("agt_fixture".into()))
+                    .await
+                    .unwrap()
+                    .unwrap();
+                let revision = agent.revision;
+                agent.revision += 1;
+                store.save_agent(revision, agent).await.unwrap();
+            }
+        }
         Ok(principal.command_authority())
     }
 }
@@ -136,6 +159,27 @@ async fn fixture_with_conversation_state(
     Arc<BindingAccessService>,
     BindingPrincipal,
 ) {
+    fixture_with_state_and_race(conversation_state, false).await
+}
+
+pub(crate) async fn fixture_with_admission_race() -> (
+    axum::Router,
+    Arc<InMemorySandboxStore>,
+    Arc<BindingAccessService>,
+    BindingPrincipal,
+) {
+    fixture_with_state_and_race(BindingConversationState::Ready, true).await
+}
+
+async fn fixture_with_state_and_race(
+    conversation_state: BindingConversationState,
+    admission_race: bool,
+) -> (
+    axum::Router,
+    Arc<InMemorySandboxStore>,
+    Arc<BindingAccessService>,
+    BindingPrincipal,
+) {
     let (state, store) = fixtures::conversation_fixture().await;
     let agent = fixtures::seeded_agent("agt_fixture", AgentStatus::Ready, 2, None);
     fixtures::insert_agent(&store, agent.clone(), vec![]).await;
@@ -167,7 +211,11 @@ async fn fixture_with_conversation_state(
         .await
         .unwrap()
         .unwrap();
-    let authority = Arc::new(BindingAuthority(bindings.clone()));
+    let authority = Arc::new(BindingAuthority {
+        bindings: bindings.clone(),
+        admission_race: admission_race.then(|| store.clone()),
+        changed: AtomicBool::new(false),
+    });
     let access = Arc::new(
         ResourceAccessService::new(store.clone(), authority.clone())
             .with_bindings(bindings.clone()),

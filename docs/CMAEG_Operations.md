@@ -569,3 +569,71 @@ Neither disposable attempt establishes native-tool, full-context, restart or
 Telegram acceptance. Both channels and their temporary keys were removed; the
 second test's runtime teardown was verified at 22:42 UTC. The existing Telegram
 route and original Sandbox were unchanged.
+
+
+### First-conversation production follow-up — 2026-09-22
+
+PR #932 merged into `develop` as
+`328093cb1e2a496a1662c9b13bf5582bf1d06381` at 23:40 UTC after all 14 jobs in CI
+`35794408644` passed. The merged tree exactly matches the tested merge revision
+`f302ece0b83291abdbab6ed4d68d4833a9e532d4`. Backend recorded 2,961 passing tests;
+the separate disposable Mongo contracts recorded 630 passes, including native
+tool attachment with the real Creating Worktree startup state. The Linux writer
+boundary, image gates, SDK/frontend checks and latency gate passed too.
+
+The verified API archive was copied to the existing production registry and its
+image configuration was compared again by immutable digest. At 23:43 UTC the
+API-only rollout passed readiness with
+`cma-api@sha256:a14cec2c7d63bd1bf8150774bed6ce6d5484bab57b4c14d3cd34ea24d73c4875`
+under the registry prefix in the prior record. UID, resource-version, replica
+count and prior-image checks fenced the server dry-run and update. CMA and CMAEG
+remain at one replica each in `chrono-bot`. The web/gateway deployments, runtime
+default and API configuration did not change; gateway credentials remain native
+Kubernetes Secrets. NyxID configuration, catalogue, code and deployment did not
+change.
+
+All nine observed runtime Pods preserved their UID, full spec hash, container ID,
+image digest, readiness and restart count across this API update. Public
+observations at 23:41:05 and 23:43:14 UTC passed for seven selected Agents' lineage,
+profile pins and durable event prefixes. The same observation limits documented
+above apply; these snapshots do not prove continuous availability or dirty-file,
+native-conversation and browser-reconnect continuity.
+
+CI's fake-provider latency gate recorded warm launch p99 22.470 ms (500 samples),
+cold launch p99 62.301 ms (200), cold restore p99 55.650 ms (200) and tool delivery
+p99 15.253 ms (200). These remain CI measurements, not Telegram acceptance.
+The original bridge remains enabled pending the live acceptance and retirement
+prerequisites in #918 and #920.
+The first follow-up cold custom event at 23:45 UTC progressed past both prior
+startup defects, reached a Ready Agent, then ended with provider HTTP 409 and
+gateway `503 provider_unavailable`. The provider problem code was not retained,
+so its exact cause is unproved. A separate warm event admitted one turn and read
+the full context, but guarded tool approvals and a failed reply call meant it
+was not cold-path or reply acceptance. Its channel and temporary key were
+removed, and its runtime Pod's absence was verified.
+
+### Native custom context and gateway replacement — 2026-09-23
+
+A fresh disposable channel used the intended autonomous permission profile and
+sent one signed custom CloudEvent with exactly 32,768 bytes of text. Cold
+conversation preparation retried with the same event and admitted a turn without
+manual preparation. The stream completed with exactly one `cmaeg.message`
+containing the expected suffix and no failed terminal frame. The public Agent
+log recorded one started/completed turn, successful native `readEventContext`
+and `sendTyping` calls, and a successful `replyToEvent` after one failed tool
+attempt. This does not establish why the first tool attempt failed.
+
+At 00:03:39 UTC, the authenticated CMA context endpoint and the gateway MCP tool
+returned the complete text unchanged, with all four exact tool names and an
+879-byte sealed reference. The idle gateway Pod was then replaced using its exact
+UID and normal termination grace. The replacement kept the same immutable image
+and deployment spec. All ten observed runtime Pods, including the disposable
+Agent, retained exact UID, full spec hash, container ID, image, restart count and
+readiness; API configuration and all deployment specs were unchanged.
+
+At 00:05:54 UTC, the new gateway process returned exactly the same full context:
+SHA-256 `26ee6c7b132630f2a8d05ca131f967584eacf57d024629daf93fe6f23c0b6b19`.
+The before/after digest covers the complete returned context, not just text.
+This proves persisted custom-event context survives gateway replacement. It is
+not Telegram ingress, Telegram delivery, or the required latency campaign.
+The existing Telegram route and original bridge remain unchanged.
