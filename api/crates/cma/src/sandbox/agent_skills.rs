@@ -19,7 +19,6 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 const RESOLUTION_TIMEOUT: Duration = Duration::from_secs(30);
 
 mod authority;
-mod bridge;
 mod http;
 use http::{bounded_body, classify_status};
 mod warmup;

@@ -10,7 +10,6 @@ pub mod activity_detail;
 pub mod activity_service;
 pub mod authz;
 pub mod bots;
-pub mod bridge;
 pub mod capabilities;
 pub mod capacity_bounds;
 pub mod clock;

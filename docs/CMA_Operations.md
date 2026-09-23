@@ -587,257 +587,26 @@ implementation or verification remains outstanding.
 Controlled test enablement for the final journeys is distinct from public
 publication and must be withdrawn if verification fails.
 
-## Bridge Continuity Observation
+## Retired bridge compatibility
 
-If a deleting Sandbox loses its bound runtime, reconciliation confirms absence
-with a fresh complete provider inventory before atomically clearing runtime and
-checkpoint writer authority and stopping its live Agents. Existing stop reasons,
-conversation identities and logs are retained; unfinished turns are interrupted,
-never reported complete. Deletion continues through credential revocation and
-snapshot/home cleanup without starting a replacement runtime. Inventory failures
-retain the original authority for retry.
+CMAEG owns event ingress, channel configuration and delivery. CMA no longer
+composes the legacy Bridge control plane, callback routes, worker pipeline,
+credential minting or renewal, reply tools, or Bridge SDK clients. Use owner Bots
+and the CMAEG provider binding contract described above.
 
-The [owned continuity runners](CMA_Owned_Continuity.md) preserve the prepared
-active-turn, native-history and passive browser-reconnect checks as committed,
-parameterized tooling. They require successful disposable fixture receipts and
-never select ordinary user resources or perform a deployment.
+Persisted provenance, usage and history markers remain readable. Narrow Mongo
+compatibility checks retain retirement seals and late-upload references and
+prevent ordinary lifecycle operations from acquiring old channel authority.
+A historical shared-parent reservation or child-removal journal requires an
+explicit data migration before reuse or restore; the new worker cannot execute
+an old Bridge cleanup command. Retained records are not automatically purged.
 
-Issue #850 is a prerequisite for enabling milestone 17. Use
-`.github/scripts/cma-bridge-continuity-observer.mjs` to capture read-only public
-Agent and Kubernetes evidence for exact selected Agents. The observer issues no
-Agent commands, runtime exec, lifecycle calls, credential changes or cleanup.
-It stores hashes of durable events instead of message/tool bodies, and refuses
-gaps, duplicate sequences, incomplete pagination and unavailable observations.
-
-Keep the configuration and receipts outside Git. The saved NyxID access-token
-file must be owned by the operator and inaccessible to other users. Configuration
-selects the exact verified cluster context, namespace and deployment identity:
-
-```json
-{
-  "schema": "cma-bridge-continuity-config-v1",
-  "origin": "https://your-cma-origin.example",
-  "context": "your-verified-kubernetes-context",
-  "namespace": "your-cma-namespace",
-  "deploymentId": "your-cma-deployment-id",
-  "tokenFile": "/absolute/private/nyxid/access_token",
-  "agentIds": ["agt_selected_existing_agent"],
-  "watch": { "durationMs": 60000, "intervalMs": 2000, "sampleTimeoutMs": 15000 }
-}
-```
-
-```sh
-node .github/scripts/cma-bridge-continuity-observer.mjs capture /private/continuity.json /private/before.json
-node .github/scripts/cma-bridge-continuity-observer.mjs capture /private/continuity.json /private/after.json
-node .github/scripts/cma-bridge-continuity-observer.mjs compare /private/before.json /private/after.json
-node .github/scripts/cma-bridge-continuity-watch.mjs /private/continuity.json /private/watch.json
-```
-
-Capture refuses to overwrite receipts. A comparison fails on changed Agent
-ancestry, creation identity or profile pin, lost/changed historical event prefix,
-loss of live availability, replaced Pod, changed container/image or restart count.
-Normal appended history and transitions among Ready, Working and Waiting for
-approval are permitted. Review identity and history regressions against the
-requirement to resume the exact retained work. A temporary API interruption may
-be allowed by the deployment scope; an observer finding does not create a
-zero-outage permission gate or authorize repairs or cleanup. Record a failed
-command separately and use new receipt paths for its corrected rerun.
-
-The bounded watcher uses the same protected token and exact resource scope. It
-polls sequentially, retains intermediate read failures and later recoveries,
-compares each complete observation with the last complete observation, and
-records public read timings, hashed event prefixes, durable cursors and runtime
-identity. Each poll rereads the event prefix so changed historical records are
-detectable. The receipt explicitly records intervals between samples,
-incomplete samples and scheduled polls skipped by slow observations. Event and
-tool bodies and external exception text are excluded from the receipt.
-
-`durationMs` is between 1 second and 1 hour; `intervalMs` is between 250 ms and
-60 seconds; `sampleTimeoutMs` is between 250 ms and 60 seconds. Neither interval
-nor sample timeout may exceed the duration, and at most 1,200 polls may be
-scheduled. A sample timeout cancels the current read before a later poll starts.
-The total deadline, SIGINT or SIGTERM aborts active HTTP/body reads and kills and
-reaps the active `kubectl` process. No new poll starts after stopping. Cleanup
-and writing the receipt can finish after the sampling deadline.
-
-The watcher reserves a new mode-0600 output file before making reads. Existing
-files and symlinks are refused. Its `completed` status and zero exit code mean
-the bounded observation finished; inspect `assessment`, `findings`, `samples`
-and `gaps` for the recorded evidence. Temporary outages remain findings after
-recovery. Cancellation or setup failure writes an incomplete receipt and exits
-nonzero. These statuses do not decide deployment permission or establish exact
-resume by themselves.
-
-Successful sampled observations prove only their declared coverage. They do not
-prove availability between samples, native conversation identity, dirty-file
-preservation, exactly one runtime input, old-tab drafts, stream reconnect or safe
-cleanup. The result names these unproved properties explicitly. Complete them
-with the disposable previous-version live Agent upgrade/rollback campaign in
-#850/#873, including approval waits, sibling Agents, paused history and Trigger
-origin. Under the current delivery plan, broader live acceptance follows the
-initial production deployment. Keep accepted work and existing runtime cohorts
-intact through both feature disable and rollback; enable individual capabilities
-only within their demonstrated runtime and authority contracts.
-
-The shared IO admission ledger adds `agent_commands` and
-`agent_command_orders` collections without changing the retained Agent or log
-record schemas. Command input, response identity, immutable acceptance facts and
-queue order commit in one Mongo transaction, with unique authority/key and
-Agent/order indexes. Resource observations are fenced in the same transaction.
-There is no TTL on command keys. An unknown commit returns an unavailable
-outcome; only a retry with the same key may resolve that reservation. No runtime
-input is sent by the reservation adapter.
-
-Command workers claim one per-Agent dispatch lane with a bounded 1–60 second
-lease and a monotonic fence. Renewal, release and refusal require the exact live
-claim. A refusal of unclaimed queued work instead compares its exact observed
-revision and proves the absence of both a binding and a live lease atomically;
-this permits revoked/expired work to finish while an Agent is paused or busy.
-Normal messages retain their order while controls retain the active turn
-observed at admission. In one transaction, the conversation store binds the
-claimed command to its exact input, metadata, operation, turn and runtime
-generation, and commits the Agent and semantic logs. Runtime input follows only
-a confirmed commit. Ambiguous-commit verification includes the exact command
-binding, since identical controls can otherwise have identical Agent/log facts.
-A bound command cannot be claimed for dispatch again, including after lease
-expiry or release. Existing queued messages and Trigger first-message delivery
-retain priority. Production admission and credential custody currently accept
-matching personal callers; a channel envelope does not establish a personal caller.
-
-Command outcome recovery reads the complete authoritative Agent log in one
-snapshot and records the observed cursor and delivery separately from the
-immutable dispatch binding. It reconstructs turn completion, interruption and
-approval waits, retains unresolved delivery until runtime evidence arrives, and
-never clears a newer command's lease. Runtime loss preserves uncertain writes
-as typed failures even when retirement logs the turn interruption first. The
-durable Agent log provides the recovery source if the response projection write
-is interrupted; live fragments cannot establish completion.
-
-Initial conversation opening persists the native identity and its open receipt
-before Ready publication appends `ConversationOpened`. History readers accept
-that unpublished generation only when the completion log matches the exact
-Agent's durable open receipt and no Ready state or turn has been published. This
-keeps early Responses admission observable across that startup boundary without
-changing retained identities, log order or worker recovery. Published conversation
-identity and generation still have to match their semantic log.
-
-The production command scheduler scans nonterminal records in stable ID pages
-of 50 through the additive `agent_command_work_scan` index. Successful pages
-advance the cursor even if their work remains blocked. Up to eight tasks run
-concurrently; slow discovery occupies a separate task. Store IO is bounded to
-15 seconds, execution attempts to 45 seconds, and 30-second lane leases renew
-every 10 seconds with a five-second renewal bound. Any uncertain renewal stops
-the attempt. Settlement rereads the ledger before release or refusal: a binding
-always selects reconciliation, and an unavailable read cannot prove an absent
-dispatch. Shutdown stops new work, drains for up to 25 seconds, then cancels
-remaining attempts; their durable leases/bindings support the next replica.
-
-Unclaimed message preparation obtains fresh authority and checks the current
-record again before entering the existing Sandbox revival pipeline. It holds no
-short dispatch lease and sends no input. Preparation is bounded to 15 seconds;
-an admitted revival remains durable if the attempt is cancelled. The resource
-execution adapter checks current owner kind and target state, rereads the renewed
-claim after credential IO, and retains the actual actor. It obtains an opaque
-resource execution proof before dispatch. The proof binds the exact command,
-owner, policy revision, ancestry and pinned profile and has a monotonic lifetime
-of at most 60 seconds. Membership-dependent proof expires at the earlier
-membership deadline. Reads and retries cannot renew an existing proof.
-
-Both in-memory and Mongo conversation commits verify that proof against their
-own current resource snapshot. Mongo retains the real parent write that
-serializes policy changes with dispatch, and checks expiry again before commit.
-The ordered runtime writer checks held policy, lifetime, target conversation,
-runtime generation, operation and turn after queueing and before invoking the
-runtime handler. Refusal before handler invocation returns a pre-write failure
-and leaves the writer usable. Cancelling a pending send also prevents later
-handler invocation without retiring the writer; if its caller disappeared before
-recording the result, the durable binding still requires reconciliation. Once
-handler invocation begins, uncertain delivery retires the writer generation and
-requires reconciliation. Outcome evidence can commit after authority expires or
-is revoked.
-
-The production admission and execution boundaries support an independently
-authorized human actor on a shared or organization-owned Agent. The actor supplies
-their own retained sign-in; runtime and connector credentials remain with the
-resource owner. Preparation obtains separate Agent interaction and Sandbox
-management decisions, fences the exact pending command and schedules one durable
-revival step. Mongo writes a fresh command-row marker alongside the parent and
-event to serialize concurrent claim/refusal writers. Ambiguous commit recovery
-uses that exact marker and remains possible after the proof expires. Organization
-resource creation/credential provisioning and bridge delegation remain incomplete.
-Human command admission and replay use the [Responses v2 contract](API_Responses.md).
-
-`command_authorization_audits` is an additive collection with an immutable audit
-ID and a `(command_id, _id)` index. New human admission, resource dispatch binding
-and command-authorized Sandbox revival append evidence in the same transaction
-as the accepted effect. Admission retries and AlreadyScheduled/AlreadySatisfied
-revival observations retain prior evidence without appending another entry.
-Each entry separates credential custody from the actual resource policy revision,
-owner and actor, and records the capabilities supplied by personal ownership,
-operator authority, organization roles and exact share revisions/modes. Revival
-has separate Agent and Sandbox observations. These are historical observations,
-never current permission; revocation does not delete them or replay accepted work.
-
-No raw access/refresh token, input content, private runtime configuration or native
-conversation identity is copied into audit evidence. Audit persistence is internal
-and does not widen command status or recipient history projections. Audit IO is
-part of acceptance: an audit write failure or expiry before commit rolls back the
-whole effect. Old serialized command receipts and Agent/Sandbox aggregates retain
-their existing formats. Older code can continue reading them during rollback,
-while historical unaudited effects remain explicitly unaudited. There is no audit
-TTL or cleanup migration in this change. Release upgrade/rollback evidence still
-requires the disposable continuity campaign.
-
-New authenticated Trigger launches also retain an immutable initiating-actor
-sidecar, distinct from the Trigger identity that performs resource creation.
-This evidence is fenced with the exact Launch effect when Agent provenance is
-created. Older launches remain valid with an unknown initiating actor. Rollback
-acceptance for these new writes is still open: an older whole-document Launch
-writer can discard the sidecar, and an older provenance validator can reject a
-distinct initiating actor. Before rollout, a compatible rollback writer/reader
-and the previous-version disposable continuity campaign must preserve this
-evidence; deleting or relabeling it is not a recovery procedure.
-
-Ordinary CMA provider authentication refuses NyxID relay access, callback and
-reply tokens, including relay key/scope claims. NyxID userinfo can project the
-bot owner's subject and RBAC from a relay access token; that projection does not
-grant CMA dashboard or owner-operation authority. The local claims inspection
-only denies restricted credentials. Every other credential still goes through
-the existing provider verifier. Bridge ingress must validate its own callback
-and scoped execution authority before admitting work.
-
-The disposable cluster bootstrap is
-`.github/tools/cma-bridge-continuity/bootstrap.py`. Install its pinned Python
-requirements, then supply the repository, a fresh private directory outside Git,
-the verified cluster context and fixture owner subject. It creates a random
-`cma-bridge-e2e-<run>` namespace with a resource quota, a separate Mongo replica
-set Pod, provider server/key, namespace-scoped service accounts and roles, and a
-credential-free home seed. It reads the deployed component pins and copies only
-the existing NyxID application and storage client credentials; it never copies
-production database access, encryption keys, provider keys, user homes or history.
-Runtime NetworkPolicy blocks other namespaces and metadata endpoints.
-
-The bootstrap journal records exact namespace and resource UIDs before later
-mutation. Its guard refuses production namespaces, foreign markers, replacement
-resources, unjournaled resources and broader cluster roles. The only fixture
-cluster role permits reading the named `gvisor` RuntimeClass. `resume.py` accepts
-the same private directory and reconciles exact creation intents; an ambiguous
-create needs the same run marker and creation-spec fingerprint. A disappeared
-journaled object is not silently recreated. Neither tool exposes blanket cleanup.
-
-The operator needs ordinary workload creation plus permission to create/bind
-the declared fixture roles. Bootstrap checks these create permissions with
-SelfSubjectAccessReview before creating resources. A later admission denial
-leaves the completed journal intact and must not be worked around by borrowing
-a more privileged production service account. Resume requires the journaled
-create intent as well as the matching resource fingerprint and namespace UID.
-Initialize only the journaled Mongo Pod's replica set, wait for
-the new home seed, create its snapshot and pin its observed UID before creating
-the saved previous-version API manifests. Checkpoint objects for each run-owned
-Sandbox use the existing `cma/checkpoints/<sha256(sandbox_id)>/` prefix, recorded
-alongside the exact Sandbox identity. Existing-user checkpoint prefixes remain
-outside the campaign's cleanup authority. Creating the environment alone proves
-none of the live upgrade, rollback or browser acceptance cases.
+Before replacing an API that ran the legacy pipeline, verify there is no accepted
+or uncertain legacy work left to drain. Preserve live runtime identifiers,
+conversation state, image pins and all retained history during the rollout.
+The old Bridge continuity harness and switches have been retired with that
+pipeline. The normal lifecycle, checkpoint, Mongo, provider and runtime contracts
+remain required.
 
 ## Prerequisites
 
@@ -925,11 +694,6 @@ new successful CI run. SDK packages, release workflows, registry ACLs and tags
 are unaffected.
 
 ### Lifecycle Scheduling
-
-Bridge ingress, worker occupancy/results and outbound attempts emit bounded
-operational log fields through the existing sink. See
-[Bridge operational signals](BRIDGE_OPERATIONAL_SIGNALS.md) for dimensions,
-latency/age semantics, safe correlation and suggested log-based monitors.
 
 Sandbox lifecycle scheduling permits at most four concurrent sweeps, with
 one new sweep offered per second while capacity remains. Durable per-Sandbox
@@ -1059,24 +823,7 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_SERVER_PUBLIC_URL` | CMA browser origin; default local `http://localhost:8080`, production explicit |
 | `CHRONO_SERVER_CORS_ORIGIN` | Comma-separated exact allowed origins; default local `http://localhost:5173` |
 | `CHRONO_AUTH_MODE` | `provider` in production; `trusted` is local fixed-subject development only |
-| `CHRONO_BRIDGE_MANAGEMENT_ENABLED` | Fresh Bridge setup/configuration/enable/grant/import/retry authority; false by default; retained reads, exact receipts and safe reductions stay available |
-| `CHRONO_BRIDGE_INGRESS_ENABLED` | Fresh signed callback acceptance; false by default; accepted input can drain through independently enabled stages |
-| `CHRONO_BRIDGE_CONTROL_ADMISSION_ENABLED` | Fresh signed cancel/steer admission selector; false by default; existing Message/refusal/control receipts recover first. Fresh admission and advertised operations additionally require current source consent/grants and the exact locally published runtime with Conversation plus Interrupt/Steer. Missing local ownership remains retryably unavailable; no remote owner proxy is composed. |
-| `CHRONO_BRIDGE_ALLOCATION_ENABLED` | New Channel allocation/provisioning/child/start effects; false by default; preserve current phases and in-flight outcomes |
-| `CHRONO_BRIDGE_EXECUTION_ENABLED` | New Channel command admission and held-command release; false by default; already Released commands drain in shared FIFO order |
-| `CHRONO_BRIDGE_OUTBOUND_ENABLED` | Fresh explicit reply-tool admission and provider send attempts; false by default; recover retained receipts/outcomes and never auto-retry Unknown |
-| `CHRONO_BRIDGE_TELEGRAM_ENABLED` | Telegram fresh-effect gate, independent of other platforms and stages; false by default |
-| `CHRONO_BRIDGE_TELEGRAM_NEW_ENABLED` | Telegram-new fresh-effect gate, independent of Telegram and other stages; false by default |
-| `CHRONO_BRIDGE_DISCORD_ENABLED` | Discord fresh-effect gate; false by default |
-| `CHRONO_BRIDGE_DISCORD_TEXT_ATTACHMENTS_ENABLED` | New single Discord text-file admission; false by default. Requires independent Discord/ingress gates and current authority; retrieval/Agent work also requires normal allocation/execution gates. Deploy supporting readers/workers before enablement. Disabling preserves original receipts and lets accepted work drain under normal gates; before rollback, drain it with a supporting worker or retain explicit suspension. See [attachment retrieval](BRIDGE_ATTACHMENT_RETRIEVAL.md). |
-| `CHRONO_BRIDGE_LARK_ENABLED` | Lark fresh-effect gate, independent of Feishu; false by default |
-| `CHRONO_BRIDGE_FEISHU_ENABLED` | Feishu fresh-effect gate, independent of Lark; false by default |
-| `CHRONO_BRIDGE_SLACK_ENABLED` | Slack boundary gate; false by default; missing human/loop evidence still refuses admission |
-| `CHRONO_BRIDGE_WHATSAPP_ENABLED` | WhatsApp boundary gate; false by default; missing human/loop evidence still refuses admission |
-| `CHRONO_BRIDGE_X_ENABLED` | X DM boundary gate; false by default; missing human/loop evidence still refuses admission |
-| `CHRONO_BRIDGE_WORKSPACE_PER_PARTITION_ENABLED` | Fresh shared-Sandbox Workspace placement selection and allocation; false by default; requires complete runtime support and management/allocation/execution gates. Independent operator rollout choice after canary, not continuity attestation; exact receipts, unchanged placement edits and retained work survive disabling. |
-| `CHRONO_BRIDGE_WORKTREE_AGENT_PER_PARTITION_ENABLED` | Fresh shared-Workspace Worktree/Agent placement selection and allocation; false by default; independent of Workspace-per-partition selection with the same runtime and stage requirements. Retained execution, reconciliation and cleanup stay authorized normally. |
-| `CHRONO_BRIDGE_V2_UI_TRANSPORT_ENABLED` | Eligibility for the separately integrated v2 browser transport; false by default; does not disable existing public v2 API routes or change an accepted request protocol |
+| `CHRONO_V2_UI_TRANSPORT_ENABLED` | Eligibility for the separately integrated v2 browser transport; false by default; does not disable existing public v2 API routes or change an accepted request protocol |
 | `CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED` | New authenticated Launch admission selects common first-message commands under retained personal ownership; false by default. Proven pre-write failure is terminal for new common prompts; ambiguous writes retain the same command/response and refuse legacy recovery. Accepted protocol is immutable; disabling the selector retains accepted common commands and legacy launches retain their original delivery/recovery behavior. Keep false until every worker and permitted rollback version recognizes and transactionally excludes common/legacy dispatch; older workers ignore additive sidecars. |
 | `CHRONO_TRUSTED_SUBJECT` | Local trusted-mode subject; default `local-developer`, irrelevant in provider mode |
 | `CHRONO_NYXID_BASE_URL` | Required API/OAuth HTTP(S) origin in provider mode |
@@ -1130,76 +877,6 @@ fingerprint. A changed timeout or clone-depth environment value must not change
 an already admitted replay plan. Existing Sandboxes likewise keep their pinned
 profile and service scope. Startup defaults seed missing default profiles; they
 are not a live rewrite mechanism for published profiles or existing settings.
-
-## Bridge rollout switches
-
-See [Channel operational signals and alert definitions](CMA_Channel_Observability.md)
-for the existing text log format, durable queue/cleanup/authority observations,
-and disabled alert policy definitions. Health observations never authorize replay
-or replace retained recovery evidence.
-
-The registered feature switches are independent process-start booleans. Missing values
-mean false; only the exact strings `true` and `false` are accepted. A stage also
-requires its pinned platform switch. Enabling management does not enable ingress
-or workers. Disabling ingress lets previously accepted work drain when its other
-stages are enabled. Switches supply availability only; current caller, Bridge,
-grant, custody, resource and original-source checks still apply.
-
-Execution disable stops new Channel admission and held-command release. Commands
-already Released into an Agent's shared queue drain in original FIFO order;
-dispatch-bound commands reconcile their existing effect. Do not skip a retained
-Channel head to prioritize another caller, and do not pause the common command
-or lifecycle workers. Held reservations can temporarily consume shared capacity
-until their original deadline or a proven revocation. Immediate clearance needs
-an explicit audited cancellation operation, not a flag-induced silent reorder.
-
-Outbound disable preserves exact tool receipts, pending order, original
-custody/destination, deadlines and attempts. Recover the original receipt before
-refusing a new tool intent. In-flight sends may finish recording; expired Sending
-attempts become Unknown through local reconciliation. Reenabling never supplies
-retry consent or resets an attempt, deadline, source identity or reply token.
-Unknown delivery still requires the explicit recovery command and its duplicate
-risk acknowledgement. Local expiry and outcome bookkeeping must stay available.
-
-Retain accepted-input disposition evidence independently of payload TTL. An
-input paused past its original admission deadline expires truthfully; it must not
-silently disappear or obtain a fresh deadline on reenabling. An already accepted
-or uncertain browser submission retains its protocol, exact body and idempotency
-key even when v2 UI transport eligibility changes. The existing public v2 API
-continues serving SDK callers.
-
-A rollout is globally disabled only after every old replica has stopped starting
-new work and drained its in-flight effects. A process environment change is not
-an instantaneous global cancellation. No runtime image rotation, live Agent pause,
-provider-role expansion, database reset or retained-resource rewrite is required
-to change these control-plane switches.
-
-Channel-created active Sandboxes renew their runtime credential through a
-separate bounded scheduler. Each step verifies the original retained human
-control-plane grant, current selected-key custody, original allocation and
-current resource identity. Renewal replaces the key on the same runtime and
-revokes the previous key after replacement; it does not create another Agent or
-conversation. Renewal audit records retain the actual human actor and hashed
-grant identity without credentials. An unknown mint result stays held and must
-not cause a second mint request.
-
-This maintenance remains available when new-admission switches are disabled.
-The renewal lease prevents concurrent Sandbox lifecycle changes while accepted
-Agent commands continue through their shared queue. A retained Ready allocation
-can renew after reset only under the original resource identity and the current
-`DrainOriginal` policy. `SuspendOriginal`, removed or replaced human consent,
-and retired resources block renewal. Ordinary owner-token issuance never
-substitutes for missing Channel authority.
-
-Dedicated Channel revival and retirement use their retained original-human,
-allocation, resource and runtime authority. Renewal alone does not authorize
-restore or teardown. Fresh retirement can remove its exact owned runtime and
-PVC through existing namespaced authority, then publish Retired with sealed,
-retained history. Missing or ambiguous original receipts hold finalization.
-Underlying disk reclamation belongs to the storage provider; CMA requests no
-additional Kubernetes or cloud permissions. Image rotation remains held. See
-[Channel lifecycle recovery](CMA_Channel_Lifecycle_Recovery.md) for the implemented
-paths and their remaining verification boundaries.
 
 ## Platform Settings
 

@@ -130,7 +130,7 @@ pub(super) async fn apply(
         } => (expected_revision, *sandbox, event),
     };
     if store
-        .channel_reuse_blocks_quiescence(&current, &sandbox, session)
+        .legacy_reuse_blocks_quiescence(&current, &sandbox, session)
         .await
         .map_err(ApplyError::Driver)?
     {

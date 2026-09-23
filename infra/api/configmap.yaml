@@ -9,26 +9,9 @@ metadata:
 data:
   # Preserve the active production Bridge gates recorded on 2026-09-22.
   # Additional gates still require their own canary verification.
-  CHRONO_BRIDGE_MANAGEMENT_ENABLED: "true"
-  CHRONO_BRIDGE_INGRESS_ENABLED: "true"
-  CHRONO_BRIDGE_CONTROL_ADMISSION_ENABLED: "false"
-  CHRONO_BRIDGE_ALLOCATION_ENABLED: "true"
-  CHRONO_BRIDGE_EXECUTION_ENABLED: "true"
-  CHRONO_BRIDGE_OUTBOUND_ENABLED: "true"
-  CHRONO_BRIDGE_TELEGRAM_ENABLED: "true"
-  CHRONO_BRIDGE_TELEGRAM_NEW_ENABLED: "false"
-  CHRONO_BRIDGE_DISCORD_ENABLED: "false"
   # New file admissions only; supporting readers/workers must precede enablement.
-  CHRONO_BRIDGE_DISCORD_TEXT_ATTACHMENTS_ENABLED: "false"
-  CHRONO_BRIDGE_LARK_ENABLED: "false"
-  CHRONO_BRIDGE_FEISHU_ENABLED: "false"
-  CHRONO_BRIDGE_SLACK_ENABLED: "false"
-  CHRONO_BRIDGE_WHATSAPP_ENABLED: "false"
-  CHRONO_BRIDGE_X_ENABLED: "false"
-  CHRONO_BRIDGE_V2_UI_TRANSPORT_ENABLED: "false"
+  CHRONO_V2_UI_TRANSPORT_ENABLED: "false"
   # Independent placement rollout selections; these do not attest continuity.
-  CHRONO_BRIDGE_WORKSPACE_PER_PARTITION_ENABLED: "false"
-  CHRONO_BRIDGE_WORKTREE_AGENT_PER_PARTITION_ENABLED: "false"
   # Admission-only protocol selector. Requires a compatible worker/rollback floor.
   CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED: "false"
   # Bounded policy pinned before each Sandbox/Workspace provisioning effect.

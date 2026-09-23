@@ -35,7 +35,6 @@ ordinary backend clients do not load React.
 - [Authentication](authentication.md): browser identity and backend credentials.
 - [Sandboxes](sandboxes.md): pinned environments and their hierarchy.
 - [Agents](agents.md): conversations, commands and owner-scoped projections.
-- [Bridge setup](bridges.md): configuration, selected credentials and explicit retained-context consent.
 - [Profiles](profiles.md): drafts, immutable revisions and Marketplace entries.
 - [Streaming](streaming.md): acknowledgements, replay and interruption recovery.
 - [Triggers](triggers.md): publishing, embeds and explicit visitor admission.
