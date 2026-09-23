@@ -52,6 +52,7 @@ pub(super) const SANDBOX_PROFILE_REVISIONS: &str = "sandbox_profile_revisions";
 pub(super) const WARM_SANDBOXES: &str = "warm_sandboxes";
 
 const SANDBOX_COLLECTIONS: &[&str] = &[
+    "sandbox_retained_availability",
     SANDBOXES,
     WORKSPACES,
     WORKTREES,
