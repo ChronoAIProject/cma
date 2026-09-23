@@ -5,7 +5,6 @@ import { creationLabels } from '../agent/provenance';
 import type { NavigationSandbox } from './navigation';
 
 export type CreationFacts = ReadonlyMap<string, AgentCreationCategory | 'unavailable'>;
-export type CreationFilter = 'all' | AgentCreationCategory;
 const emptyFacts: CreationFacts = new Map();
 const shortLabels: Readonly<Record<AgentCreationCategory, string>> = {
   manual: 'Manual',
@@ -135,61 +134,5 @@ export function CreationSummary({
     <span className="tree-row__origin" title={`Agent creation origins: ${label}`}>
       {label}
     </span>
-  );
-}
-
-export function filterTreeCreation(
-  items: readonly NavigationSandbox[],
-  facts: CreationFacts,
-  filter: CreationFilter,
-): readonly NavigationSandbox[] {
-  if (filter === 'all') return items;
-  return items.flatMap((item) => {
-    const workspaces = item.workspaces
-      .filter((workspace) => workspace.status !== 'removed')
-      .flatMap((workspace) => {
-        const agents = workspace.agents.filter(
-          (agent) => agent.status !== 'deleted' && facts.get(agent.id) === filter,
-        );
-        return agents.length === 0 ? [] : [{ ...workspace, agents }];
-      });
-    return workspaces.length === 0 ? [] : [{ ...item, workspaces }];
-  });
-}
-
-export function TreeCreationFilter({
-  items,
-  facts,
-  value,
-  onChange,
-}: {
-  readonly items: readonly NavigationSandbox[];
-  readonly facts: CreationFacts;
-  readonly value: CreationFilter;
-  readonly onChange: (value: CreationFilter) => void;
-}) {
-  const ids = agentIds(items);
-  const pending = ids.filter((id) => !facts.has(id)).length;
-  const unavailable = ids.filter((id) => facts.get(id) === 'unavailable').length;
-  return (
-    <div className="resource-tree__filter">
-      <label>
-        Agent creation
-        <select value={value} onChange={(event) => onChange(event.target.value as CreationFilter)}>
-          <option value="all">All origins</option>
-          <option value="manual">Manual</option>
-          <option value="trigger">Trigger</option>
-          <option value="channel_bridge">Channel bridge</option>
-          <option value="legacy_unknown">Unknown origin</option>
-        </select>
-      </label>
-      {value === 'all' ? null : (
-        <p role="status">
-          {pending > 0 ? 'Loading creation origins. ' : ''}
-          {unavailable > 0 ? `${String(unavailable)} Agent origins unavailable. ` : ''}
-          Filtering Agents in this tree.
-        </p>
-      )}
-    </div>
   );
 }
