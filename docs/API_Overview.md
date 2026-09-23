@@ -48,7 +48,7 @@ administration surface, not arbitrary owner impersonation.
 Production uses NyxID. A backend sends a bearer credential; the same-origin web
 client uses CMA's HttpOnly browser cookie. `GET /auth/login` begins OAuth,
 `GET /auth/callback` finishes identity exchange, `GET /auth/session` reads the
-authenticated subject and capabilities, and `POST /auth/logout` ends browser
+authenticated subject and capabilities, and `GET /auth/logout` ends browser
 sign-in. Do not put a bearer credential in URLs, local storage or embed markup.
 
 `GET /auth/signup-options` is anonymous and returns exactly
