@@ -1,6 +1,7 @@
 use super::*;
 use serde_json::{json, Value};
 mod fixture;
+mod key_expiry;
 mod lifecycle;
 mod nyxid_fixture;
 mod provider_fixture;

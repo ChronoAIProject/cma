@@ -14,6 +14,7 @@ pub(super) struct IdentityState {
     pub routes: BTreeMap<String, Value>,
     pub calls: Vec<String>,
     pub fail_after: Option<&'static str>,
+    pub expiry_suffix: Option<&'static str>,
 }
 pub(super) type Identity = Arc<Mutex<IdentityState>>;
 pub(super) fn routes(state: Identity) -> Router {
@@ -31,7 +32,7 @@ pub(super) fn routes(state: Identity) -> Router {
         .route("/api/v1/api-keys", get(keys).post(mint))
         .route(
             "/api/v1/api-keys/{id}",
-            get(key).patch(callback).delete(revoke),
+            get(key).put(callback).delete(revoke),
         )
         .route(
             "/api/v1/channel-conversations",
@@ -39,7 +40,7 @@ pub(super) fn routes(state: Identity) -> Router {
         )
         .route(
             "/api/v1/channel-conversations/{id}",
-            post(route_unused).patch(route_key).delete(delete_route),
+            post(route_unused).put(route_key).delete(delete_route),
         )
         .with_state(state)
 }
@@ -62,6 +63,22 @@ async fn key(State(state): State<Identity>, Path(id): Path<String>) -> Response 
         .unwrap_or_else(|| StatusCode::NOT_FOUND.into_response())
 }
 async fn mint(State(state): State<Identity>, Json(mut body): Json<Value>) -> Response {
+    // API-key platform identifies the client; it is not the channel transport.
+    if body["platform"].as_str().is_some_and(|platform| {
+        ![
+            "nyxid-assistant",
+            "claude-code",
+            "cursor",
+            "codex",
+            "openclaw",
+            "generic",
+            "device-code",
+            "device-onboard",
+        ]
+        .contains(&platform)
+    }) {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
     assert_eq!(body["allow_all_services"], false);
     assert_eq!(body["allow_all_nodes"], false);
     assert_eq!(body["allowed_node_ids"], json!([]));
@@ -78,6 +95,7 @@ async fn mint(State(state): State<Identity>, Json(mut body): Json<Value>) -> Res
         );
     } else {
         assert_eq!(body["allowed_service_ids"], json!([]));
+        assert_eq!(body["platform"], "generic");
         assert!(body["callback_url"]
             .as_str()
             .unwrap()
@@ -91,6 +109,12 @@ async fn mint(State(state): State<Identity>, Json(mut body): Json<Value>) -> Res
     body["purpose"] = "general".into();
     body["scheduled_write_enabled"] = false.into();
     let mut state = state.lock().unwrap();
+    // NyxID serializes UTC metadata with an offset, even when the request uses Z.
+    body["expires_at"] = body["expires_at"]
+        .as_str()
+        .unwrap()
+        .replace('Z', state.expiry_suffix.unwrap_or("+00:00"))
+        .into();
     state.keys.insert(id, body.clone());
     body["full_key"] = format!("nyx_{}", uuid::Uuid::new_v4().simple()).into();
     effect(&mut state, role, body)
