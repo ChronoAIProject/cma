@@ -35,6 +35,7 @@ pub struct EventWorkerProfilePin {
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EventWorkerProfile {
+    pub provider: String,
     pub id: String,
     pub owner: SubjectId,
     pub revision: u32,
@@ -53,7 +54,7 @@ impl EventWorkerProfile {
         let mut expected = projection::snapshot(&projection::WorkerProjection {
             name: &self.source.name,
             owner: &self.owner,
-            provider: "cma_codex",
+            provider: &self.provider,
             profiles: &self.profiles,
         })?;
         expected["metadata"]["description"] = Value::String(self.source.description.clone());

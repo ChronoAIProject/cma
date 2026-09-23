@@ -328,6 +328,7 @@ impl ControlPlaneComposition {
                 settings.clone(),
                 config.default_profiles.agent_model.clone(),
             ),
+            "cma_codex".into(),
         );
         let resource_routes = rest::profiles_router(profiles)
             .merge(rest::event_workers::router(event_workers.clone()))

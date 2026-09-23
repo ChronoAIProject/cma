@@ -8,13 +8,19 @@ use std::sync::Arc;
 pub struct EventWorkerProfileService {
     store: Arc<dyn EventWorkerProfileStore>,
     resolver: Arc<dyn BotProfileResolver>,
+    provider: String,
 }
 impl EventWorkerProfileService {
     pub fn new(
         store: Arc<dyn EventWorkerProfileStore>,
         resolver: Arc<dyn BotProfileResolver>,
+        provider: String,
     ) -> Arc<Self> {
-        Arc::new(Self { store, resolver })
+        Arc::new(Self {
+            store,
+            resolver,
+            provider,
+        })
     }
     pub async fn get(
         &self,
@@ -174,11 +180,12 @@ impl EventWorkerProfileService {
         let mut snapshot = projection::snapshot(&projection::WorkerProjection {
             name: &source.name,
             owner,
-            provider: "cma_codex",
+            provider: &self.provider,
             profiles: &profiles,
         })?;
         snapshot["metadata"]["description"] = Value::String(source.description.clone());
         let row = EventWorkerProfile {
+            provider: self.provider.clone(),
             id,
             owner: owner.clone(),
             revision,
