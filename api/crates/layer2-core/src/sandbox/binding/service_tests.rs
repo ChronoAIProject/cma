@@ -2,7 +2,7 @@ use super::*;
 use crate::profiles::store::{
     AgentProfileStore, InMemoryProfileStore, SandboxProfileStore, WorkspaceProfileStore,
 };
-use crate::profiles::{content_digest, AgentProvider, ProfileCapacityBounds, ProfileVisibility};
+use crate::profiles::{content_digest, AgentProvider, ProfileCapacityBounds};
 use crate::sandbox::store::{AgentStore, SandboxStore, WorkspaceStore, WorktreeStore};
 use crate::sandbox::*;
 use crate::{Authorization, Caller, Capability, CoreError, SandboxId, ServiceId, SubjectId};
@@ -132,7 +132,6 @@ fn fixture() -> Fixture {
     };
     let service = BindingService::new(
         store.clone(),
-        profiles.clone(),
         resources,
         custody.clone(),
         BindingPolicy {
@@ -246,7 +245,8 @@ impl Fixture {
 mod tools;
 
 #[tokio::test]
-async fn binding_service_recovers_pinned_private_profiles_and_replays_conversation_identity() {
+async fn binding_service_pins_profiles_without_catalogue_writes_and_replays_conversation_identity()
+{
     let f = fixture();
     let binding = f.ready().await;
     let sandbox = f
@@ -259,30 +259,34 @@ async fn binding_service_recovers_pinned_private_profiles_and_replays_conversati
         .credential
         .reaches
         .contains(&ServiceId::new("baseline")));
-    assert_eq!(
-        f.profiles
-            .sandbox_profile(&sandbox.profile.id)
-            .await
-            .unwrap()
-            .unwrap()
-            .visibility,
-        ProfileVisibility::Private
-    );
+    assert!(f
+        .profiles
+        .sandbox_profile(&sandbox.profile.id)
+        .await
+        .unwrap()
+        .is_none());
+    let pinned = f.service.profiles.sandbox(&binding).unwrap();
+    assert_eq!(sandbox.profile.id, pinned.profile_id);
+    assert_eq!(sandbox.profile.content, pinned.content);
+    assert_eq!(pinned.published_at, binding.created_at);
+    assert_eq!(pinned.revision, 1);
     let workspace = f
         .store
         .get_workspace(&binding.workspace_id)
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(
-        f.profiles
-            .workspace_profile(&workspace.profile.id)
-            .await
-            .unwrap()
-            .unwrap()
-            .owner,
-        binding.owner
-    );
+    assert!(f
+        .profiles
+        .workspace_profile(&workspace.profile.id)
+        .await
+        .unwrap()
+        .is_none());
+    let pinned = f.service.profiles.workspace(&binding).unwrap();
+    assert_eq!(workspace.profile.id, pinned.profile_id);
+    assert_eq!(workspace.profile.content, pinned.content);
+    assert_eq!(pinned.published_at, binding.created_at);
+    assert_eq!(pinned.revision, 1);
     let replay = f.put("binding-one", "Original instruction").await;
     assert_eq!(replay, binding);
     let (a, b) = tokio::join!(
@@ -306,15 +310,17 @@ async fn binding_service_recovers_pinned_private_profiles_and_replays_conversati
     let agent = f.store.get_agent(&a.agent_id).await.unwrap().unwrap();
     assert_eq!(agent.worktree_id, a.worktree_id);
     assert_eq!(agent.owner, binding.owner);
-    assert_eq!(
-        f.profiles
-            .agent_profile(&agent.profile.id)
-            .await
-            .unwrap()
-            .unwrap()
-            .owner,
-        binding.owner
-    );
+    assert!(f
+        .profiles
+        .agent_profile(&agent.profile.id)
+        .await
+        .unwrap()
+        .is_none());
+    let pinned = f.service.profiles.agent(&binding).unwrap();
+    assert_eq!(agent.profile.id, pinned.profile_id);
+    assert_eq!(agent.profile.content, pinned.content);
+    assert_eq!(pinned.published_at, binding.created_at);
+    assert_eq!(pinned.revision, 1);
     assert!(f
         .store
         .get_worktree(&a.worktree_id)
