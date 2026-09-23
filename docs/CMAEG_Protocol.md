@@ -560,7 +560,10 @@ must fail explicitly; the gateway does not invent a context from the sealed ref.
 are unavailable;
 `Retry-After` is decimal seconds. Other provider refusals retain a typed failure.
 Requests may retry busy admission within the configured budget with the same
-idempotency key. No stream failure may silently create a new logical turn.
+idempotency key. `Retry-After` is a minimum delay; jitter MUST NOT shorten it.
+The default retry budget is 180 seconds so first-conversation preparation can
+outlive the ingress acceptance budget while the detached turn keeps waiting.
+No stream failure may silently create a new logical turn.
 The gateway's total turn timeout bounds consumption; disconnecting an ingress
 caller does not revoke already admitted work.
 

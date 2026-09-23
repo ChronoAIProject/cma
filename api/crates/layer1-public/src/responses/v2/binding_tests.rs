@@ -239,7 +239,7 @@ async fn provisioning_conversation_is_retryable_then_admits_the_same_turn_once()
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
-    assert_eq!(response.headers()["retry-after"], "1");
+    assert_eq!(response.headers()["retry-after"], "6");
     assert!(response.headers().get("x-cma-response-id").is_none());
     let bytes = axum::body::to_bytes(response.into_body(), 4096)
         .await

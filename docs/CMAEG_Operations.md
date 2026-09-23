@@ -39,7 +39,7 @@ procedure to apply changes. Configuration is operator-owned.
 | `CMAEG_HEARTBEAT_MS` | positive integer, ms | `60000` | Inactivity after acknowledgement before a heartbeat, capped at five per turn. |
 | `CMAEG_FAILURE_TEXT` | string | `Sorry, I couldn’t finish that request. Please try again.` | Short failure notice; same bounds as acknowledgement text. |
 | `CMAEG_DRAIN_SECONDS` | positive integer, seconds | `600` | Maximum shutdown drain for tracked turns and HTTP requests. |
-| `CMAEG_BUSY_RETRY_MAX_MS` | positive integer, ms | `15000` | Maximum interval for retrying upstream busy refusals with jitter. |
+| `CMAEG_BUSY_RETRY_MAX_MS` | positive integer, ms | `180000` | Maximum interval for retrying upstream busy refusals, including first-conversation preparation. Jitter is added after the provider's `Retry-After` minimum. |
 
 Provider entry shapes and outbound policy are described in
 [CMA operations](CMA_Operations.md#cmaeg). Public URL must have no trailing slash.
