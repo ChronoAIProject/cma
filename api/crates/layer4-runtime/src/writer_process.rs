@@ -1,4 +1,4 @@
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 use std::collections::{BTreeMap, BTreeSet};
 #[cfg(target_os = "linux")]
 use std::time::{Duration, Instant};
@@ -8,7 +8,7 @@ const TIMEOUT: Duration = Duration::from_secs(2);
 #[cfg(target_os = "linux")]
 const POLL: Duration = Duration::from_millis(10);
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 #[derive(Debug, Clone, Copy)]
 pub(super) struct ProcessRecord {
     pub parent: i32,
@@ -65,7 +65,7 @@ pub(super) fn quiesce(
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 fn writer_states(
     table: &BTreeMap<i32, ProcessRecord>,
     roots: &BTreeSet<i32>,
@@ -102,15 +102,33 @@ fn writer_states(
 
 #[cfg(target_os = "linux")]
 pub(super) fn process_table() -> Result<BTreeMap<i32, ProcessRecord>, String> {
+    process_table_from(std::path::Path::new("/proc"), |path| {
+        std::fs::read_to_string(path)
+    })
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn process_table_from(
+    proc_root: &std::path::Path,
+    mut read_stat: impl FnMut(&std::path::Path) -> std::io::Result<String>,
+) -> Result<BTreeMap<i32, ProcessRecord>, String> {
     let mut table = BTreeMap::new();
-    for entry in std::fs::read_dir("/proc").map_err(|error| format!("inspect /proc: {error}"))? {
+    for entry in std::fs::read_dir(proc_root).map_err(|error| format!("inspect /proc: {error}"))? {
         let entry = entry.map_err(|error| format!("inspect /proc entry: {error}"))?;
         let Ok(pid) = entry.file_name().to_string_lossy().parse::<i32>() else {
             continue;
         };
-        let stat = match std::fs::read_to_string(entry.path().join("stat")) {
+        let stat = match read_stat(&entry.path().join("stat")) {
             Ok(stat) => stat,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            // A task can exit after enumeration. procfs reports either ENOENT
+            // or ESRCH; neither leaves a writer to stop. Other failures must
+            // still refuse the checkpoint instead of hiding an unknown writer.
+            Err(error)
+                if error.kind() == std::io::ErrorKind::NotFound
+                    || error.raw_os_error() == Some(libc::ESRCH) =>
+            {
+                continue;
+            }
             Err(error) => return Err(format!("inspect process {pid}: {error}")),
         };
         let fields = stat
@@ -137,7 +155,7 @@ pub(super) fn process_table() -> Result<BTreeMap<i32, ProcessRecord>, String> {
     Ok(table)
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 fn number<'a>(
     fields: &mut impl Iterator<Item = &'a str>,
     pid: i32,
@@ -210,3 +228,7 @@ pub(super) fn resume_best_effort(_members: &[i32]) {}
 fn resume_best_effort_set(members: &BTreeSet<i32>) {
     resume_best_effort(&members.iter().copied().collect::<Vec<_>>());
 }
+
+#[cfg(test)]
+#[path = "writer_process_tests.rs"]
+mod tests;
