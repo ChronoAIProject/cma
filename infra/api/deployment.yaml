@@ -20,7 +20,7 @@ spec:
     metadata:
       annotations:
         # Reload the environment-bound runtime pin when its ConfigMap changes.
-        cma.chronoai.dev/runtime-image: "sha256:bf7fe30a8259015115beb81e8a8d6fbb4394d85e83dcef67e30ca8637e735905"
+        cma.chronoai.dev/runtime-image: "sha256:532a64cf193957991248d98d82b7a61f6d333a2b87f5e1db0a19ae55f598ed49"
       labels:
         app.kubernetes.io/name: cma-api
         app.kubernetes.io/part-of: cma
@@ -55,7 +55,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: api
-          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-api@sha256:a14cec2c7d63bd1bf8150774bed6ce6d5484bab57b4c14d3cd34ea24d73c4875
+          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-api@sha256:aaf51a96e0720aa98b5789cd6194d392459308dfab0cfe1fd5118e85c3cddee2
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
