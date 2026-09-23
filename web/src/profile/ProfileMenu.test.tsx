@@ -17,9 +17,9 @@ describe('account menu', () => {
     const onSignOut = vi.fn();
     const onNavigate = vi.fn();
     const actor = userEvent.setup();
-    render(<ProfileMenu user={user} onSignOut={onSignOut} onNavigate={onNavigate} />);
+    render(<ProfileMenu user={user} bots onSignOut={onSignOut} onNavigate={onNavigate} />);
     await actor.click(screen.getByRole('button', { name: /account menu/i }));
-    for (const name of ['Profiles', 'Marketplace', 'Developer']) {
+    for (const name of ['Profiles', 'Bot settings', 'Marketplace', 'Developer']) {
       expect(screen.getByRole('menuitem', { name })).toBeInTheDocument();
     }
     expect(screen.queryByRole('menuitem', { name: 'Operations' })).not.toBeInTheDocument();
@@ -28,6 +28,9 @@ describe('account menu', () => {
 
     await actor.click(screen.getByRole('menuitem', { name: 'Profiles' }));
     expect(onNavigate).toHaveBeenCalledWith({ kind: 'profiles' });
+    await actor.click(screen.getByRole('button', { name: /account menu/i }));
+    await actor.click(screen.getByRole('menuitem', { name: 'Bot settings' }));
+    expect(onNavigate).toHaveBeenCalledWith({ kind: 'bots' });
     await actor.click(screen.getByRole('button', { name: /account menu/i }));
     await actor.click(screen.getByRole('menuitem', { name: 'Sign out' }));
     expect(onSignOut).toHaveBeenCalledOnce();
