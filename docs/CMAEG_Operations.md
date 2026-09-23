@@ -693,3 +693,63 @@ by PUT and readback succeeded at 02:18:48 UTC. The provider returned UTC expiry
 with `+00:00`. The disposable key was revoked and its absence verified. No
 channel route or Telegram message was created by this check. CMA's route-key
 request and metadata validation now use `generic`; the channel stays Telegram.
+
+### NyxID client compatibility rollout and capacity refusal — 2026-09-23
+
+PR #934 merged into `develop` at
+`4c06aad4e9ec1870e9d217db0d8c91f4a5f97bf1`. All 14 jobs in CI `35810259814`
+passed, including 2,967 regular backend tests, 669 real Mongo contracts, the
+Linux writer boundary and all image, frontend and SDK gates. The eight gateway
+tests include the dashboard journey through CMA and the compiled gateway,
+lifecycle/restart recovery, equivalent offset expiries and cleanup after altered
+key metadata. CMA now uses NyxID's existing PUT update methods and `generic`
+API-key client platform. It accepts equivalent expiry instants while refusing
+changed fractional values; canonical timestamps in CMA remain unchanged.
+
+The API artifact's tested revision
+`88577a7c066ea93f48d27ac097006dd7a82da682` and merged revision have identical
+tree `cf2e9ed93ab1e181239c23e14d9535162e28d345`. Its archive checksum, image
+configuration, architecture and source labels were verified before transfer,
+and the immutable registry digest and configuration were read back afterward.
+The production API now uses
+`cma-api@sha256:8f80d527535370b2150716608629fa97737c2d4236203b9926872256fa072e4f`
+under the existing production registry prefix.
+
+At 03:14:58 UTC, the API-only rollout passed its settled health checks. CMA API,
+CMAEG and web each had one ready replica. All nine existing runtime Pods retained
+their exact UID, full spec, container identity, image, restart count and readiness;
+configuration, runtime default and the gateway/web deployment specs were unchanged.
+Seven selected Agents passed lineage, profile and durable history-prefix
+comparisons. The first post-rollout public reads returned HTTP 503 before the
+later checks succeeded. These observations do not establish continuous
+availability, and retain the earlier native-conversation, dirty-file, duplicate
+input and browser-reconnect coverage limits.
+
+CI's fake-provider p99 measurements were warm launch 34.270 ms, cold launch
+64.211 ms, cold restore 57.593 ms and tool delivery 17.612 ms. They are not
+Telegram measurements.
+
+The authorized dashboard migration created
+`bot_73405efb35c54f349f2bac6918751a10` at 03:16:05 UTC and reached Active by
+03:16:09 UTC. Its Agent, Sandbox and Workspace profile pins remained versions
+2, 5 and 3 of the original selected profiles. The gateway channel and level-2
+provider binding were created successfully, with all requested profile fields
+honoured and none refused. This verifies the production Bot creation path; it
+does not establish provider readiness or a Telegram round trip.
+
+Provider runtime creation then hit namespace `sandbox-quota`: the new profile
+requests 4 CPUs and 8 GiB, while existing requests used 36,875 millicores and
+74,816 MiB against limits of 40 CPUs and 80 GiB. Kubernetes rejected creation
+of the exact new runtime Pod. The new Bot was disabled and its newly created
+route deactivated. At 03:24:03 UTC the original route was restored with its
+original key, followed by bridge re-enablement at 03:24:13 UTC, revision 9.
+The original Sandbox, Workspace, Worktree, Agent and recorded deliveries remain
+intact. The new Bot and its provisioning binding are retained for a capacity
+decision; no existing user runtime was stopped or resized.
+
+A proposed change to requests of 44 CPUs and 88 GiB passed Kubernetes server
+dry-run but has not been applied. It leaves the quota's CPU/memory limits and Pod
+count unchanged and requires the maintainer's capacity decision. No NyxID
+catalogue, service configuration, role, code or deployment was changed. No
+Telegram test message was sent. The #918 acceptance evidence, #912 independent
+documentation exercise and #920 bridge retirement remain incomplete.
