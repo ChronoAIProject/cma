@@ -81,22 +81,36 @@ export function EventWorkersHome({
               const route: AppRoute = { kind: 'event_worker_profile', profileId: row.id };
               return (
                 <li key={row.id}>
-                  <a
-                    className="profile-card"
-                    href={routePath(route)}
-                    onClick={(event) => {
-                      if (!event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
-                        event.preventDefault();
-                        onNavigate(route);
-                      }
-                    }}
-                  >
-                    <h2>{row.source.name}</h2>
-                    <p>{row.source.description}</p>
-                    <p>
-                      Revision {row.revision} · {row.profile.model.model}
-                    </p>
-                  </a>
+                  <article className="profile-card">
+                    <div className="profile-card__kind">Event worker</div>
+                    <h2>
+                      <a
+                        href={routePath(route)}
+                        onClick={(event) => {
+                          if (
+                            event.button === 0 &&
+                            !event.metaKey &&
+                            !event.ctrlKey &&
+                            !event.shiftKey &&
+                            !event.altKey
+                          ) {
+                            event.preventDefault();
+                            onNavigate(route);
+                          }
+                        }}
+                      >
+                        {row.source.name}
+                      </a>
+                    </h2>
+                    <div className="profile-card__badges">Revision {row.revision}</div>
+                    <p className="profile-card__description">{row.source.description}</p>
+                    <footer className="profile-card__footer">
+                      <span>{row.profile.model.model}</span>
+                      <time dateTime={row.updated_at}>
+                        Updated {new Date(row.updated_at).toLocaleDateString()}
+                      </time>
+                    </footer>
+                  </article>
                 </li>
               );
             })}
