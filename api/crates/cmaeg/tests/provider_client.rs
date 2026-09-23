@@ -11,9 +11,8 @@ use cmaeg_core::{
     channel::Secret,
     ids::{BindingId, ConversationId, IdempotencyKey, ProviderSlug},
     profile::{
-        ActionMode, AgentProfileSnapshot, ApiType, ContextConfig, ModelAccess::Managed,
-        ModelConfig, NyxIdIdentity, NyxIdIdentityKind, PermissionConfig, ProfileMetadata,
-        ThinkingEffort,
+        ActionMode, ApiType, ContextConfig, EventWorkerProfile, ModelAccess::Managed, ModelConfig,
+        NyxIdIdentity, NyxIdIdentityKind, PermissionConfig, ProfileMetadata, ThinkingEffort,
     },
 };
 use fake_provider::{FakeProvider, FakeProviderConfig};
@@ -29,8 +28,8 @@ fn provider() -> ProviderSlug {
     ProviderSlug::new("cma_codex").unwrap()
 }
 
-fn profile() -> AgentProfileSnapshot {
-    AgentProfileSnapshot {
+fn profile() -> EventWorkerProfile {
+    EventWorkerProfile {
         schema_version: 1,
         metadata: ProfileMetadata {
             name: "test".into(),

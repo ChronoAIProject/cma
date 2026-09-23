@@ -1487,5 +1487,51 @@
     {
       "outcome": "sent"
     }
+  ],
+  "EventWorkerProfile": [
+    {
+      "context": {
+        "mcp_servers": [
+          {
+            "auth": {
+              "type": "none"
+            },
+            "url": "fixture"
+          }
+        ],
+        "skills": [
+          {
+            "id": "fixture",
+            "source": "ornn",
+            "version": "fixture"
+          }
+        ],
+        "system_prompt": "fixture"
+      },
+      "environment": true,
+      "metadata": {
+        "description": "fixture",
+        "name": "fixture",
+        "owner": {
+          "kind": "human",
+          "subject": "fixture"
+        },
+        "provider": "fixture"
+      },
+      "model": {
+        "access": "managed",
+        "api_type": "responses",
+        "model": "fixture",
+        "service": "fixture",
+        "thinking_effort": "minimal"
+      },
+      "permission": {
+        "action_mode": "guarded",
+        "service_scope": [
+          "fixture"
+        ]
+      },
+      "schema_version": 1
+    }
   ]
 }
