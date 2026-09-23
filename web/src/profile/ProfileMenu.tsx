@@ -35,7 +35,6 @@ const MENU_ROUTES: Readonly<Record<string, AppRoute>> = {
   inventory: { kind: 'inventory' },
   profiles: { kind: 'profiles' },
   bots: { kind: 'bots' },
-  marketplace: { kind: 'marketplace' },
   triggers: { kind: 'triggers' },
   developer: { kind: 'developer' },
   operations: { kind: 'operations' },
@@ -74,7 +73,6 @@ export function ProfileMenu({
       : []),
     { id: 'profiles', icon: <IconPersonalizationOutline16 />, label: 'Profiles' },
     ...(bots ? [{ id: 'bots', icon: <IconSettingsOutline16 />, label: 'Bot settings' }] : []),
-    { id: 'marketplace', icon: <IconBrowseOutline16 />, label: 'Marketplace' },
     ...(!user.visitor && user.capabilities.includes('publish_triggers')
       ? [{ id: 'triggers', icon: <IconGoalOutline16 />, label: 'CMA Trigger' }]
       : []),

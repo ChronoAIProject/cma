@@ -1,4 +1,4 @@
-use cmaeg_core::profile::AgentProfileSnapshot;
+use cmaeg_core::profile::EventWorkerProfile;
 use serde_json::{json, Value};
 
 fn profile() -> Value {
@@ -11,7 +11,7 @@ fn profile() -> Value {
 }
 
 fn validate(value: Value) -> Result<(), cmaeg_core::ValidationError> {
-    serde_json::from_value::<AgentProfileSnapshot>(value)
+    serde_json::from_value::<EventWorkerProfile>(value)
         .unwrap()
         .validate()
 }
@@ -124,7 +124,7 @@ fn rejects_unknown_fields_in_nested_profile_contracts() {
             .unwrap()
             .insert("unexpected".into(), json!(true));
         assert!(
-            serde_json::from_value::<AgentProfileSnapshot>(value).is_err(),
+            serde_json::from_value::<EventWorkerProfile>(value).is_err(),
             "{pointer}"
         );
     }
@@ -132,7 +132,7 @@ fn rejects_unknown_fields_in_nested_profile_contracts() {
 
 #[test]
 fn digest_pins_semantics_across_json_key_order_and_changes_with_profile_content() {
-    let a: AgentProfileSnapshot = serde_json::from_value(profile()).unwrap();
+    let a: EventWorkerProfile = serde_json::from_value(profile()).unwrap();
     let mut b = a.clone();
     b.environment = Some(serde_json::from_str(r#"{"b":1,"a":[2,3]}"#).unwrap());
     let mut c = a.clone();

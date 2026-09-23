@@ -321,7 +321,17 @@ impl ControlPlaneComposition {
             stores.sandbox_model.clone(),
             resource_access.clone(),
         );
+        let event_workers = layer2_core::event_workers::EventWorkerProfileService::new(
+            stores.event_workers.clone(),
+            layer2_core::bots::PublishedBotProfiles::new(
+                stores.sandbox_profiles.clone(),
+                settings.clone(),
+                config.default_profiles.agent_model.clone(),
+            ),
+            "cma_codex".into(),
+        );
         let resource_routes = rest::profiles_router(profiles)
+            .merge(rest::event_workers::router(event_workers.clone()))
             .merge(layer1_public::rest::agent_artifacts_router(
                 layer2_core::sandbox::agent_artifacts::AgentArtifactService::new(
                     stores.sandbox_model.clone(),
@@ -363,7 +373,7 @@ impl ControlPlaneComposition {
             config.gateway.as_ref(),
         )?);
         let (bot_routes, bots) =
-            bots::BotComposition::build(config, &stores, auth.clone(), settings)?;
+            bots::BotComposition::build(config, &stores, auth.clone(), event_workers)?;
         let resource_routes = resource_routes.merge(bot_routes);
         let public = super::rest_router(resource_routes)
             .merge(crate::connections::router(browser_connections))

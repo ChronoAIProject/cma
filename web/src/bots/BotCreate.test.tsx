@@ -1,5 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import corpus from '../../../api/crates/layer1-public/tests/fixtures/public-contract/event-worker-profiles.json';
+import type { EventWorkerProfileRecord } from '@chronoai/cma-sdk';
 import { ApiError } from '@chronoai/cma-sdk';
 import { expect, it, vi } from 'vitest';
 import {
@@ -114,4 +116,37 @@ it('shows the public problem detail and permits correction after an explicit ref
   await user.click(screen.getByRole('button', { name: 'Create Bot' }));
   await screen.findByText('This Telegram bot already has a route.');
   expect(screen.getByRole('button', { name: 'Back' })).toBeEnabled();
+});
+
+it('pins the complete worker revision and all three source references in Bot creation', async () => {
+  const worker = corpus.cases[0]!.response.body as unknown as EventWorkerProfileRecord;
+  const create = vi.fn().mockResolvedValue(bot);
+  const base = botClient({ create });
+  const client = {
+    ...base,
+    eventWorkerProfiles: { list: vi.fn().mockResolvedValue({ items: [worker], next_after: null }) },
+  } as unknown as BotClient;
+  const user = userEvent.setup();
+  render(<Form client={client} navigate={vi.fn()} />);
+  await screen.findByRole('button', { name: 'Telegram bot' });
+  await user.type(screen.getByLabelText('Bot name'), 'Worker bot');
+  await chooseOption(user, 'Telegram bot', 'Telegram research');
+  await user.click(screen.getByRole('button', { name: 'Continue' }));
+  await user.click(screen.getByRole('radio', { name: 'Event Worker Profile' }));
+  await chooseOption(
+    user,
+    'Event Worker Profile',
+    `${worker.source.name} · Revision ${worker.revision}`,
+  );
+  await user.click(screen.getByRole('button', { name: 'Continue' }));
+  await chooseOption(user, 'Admission policy', 'Selected senders in private chats');
+  await user.type(screen.getByLabelText('Telegram sender IDs'), '111');
+  await user.click(screen.getByRole('button', { name: 'Continue' }));
+  await user.click(screen.getByRole('button', { name: 'Create Bot' }));
+  expect(create.mock.calls[0]?.[0]).toMatchObject({
+    event_worker_profile: { id: worker.id, revision: worker.revision },
+    profile: worker.source.agent_profile,
+    workspace_profile: worker.source.workspace_profile,
+    sandbox_profile: worker.source.sandbox_profile,
+  });
 });

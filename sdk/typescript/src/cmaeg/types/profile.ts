@@ -72,7 +72,7 @@ export const PermissionConfigSchema = object({
 });
 export type PermissionConfig = Output<typeof PermissionConfigSchema>;
 
-export const AgentProfileSnapshotSchema = object({
+export const EventWorkerProfileSchema = object({
   context: ContextConfigSchema,
   environment: optional(anything),
   metadata: ProfileMetadataSchema,
@@ -80,4 +80,8 @@ export const AgentProfileSnapshotSchema = object({
   permission: PermissionConfigSchema,
   schema_version: integer,
 });
-export type AgentProfileSnapshot = Output<typeof AgentProfileSnapshotSchema>;
+export type EventWorkerProfile = Output<typeof EventWorkerProfileSchema>;
+
+/** Compatibility aliases for the original protocol 1 SDK names. */
+export const AgentProfileSnapshotSchema = EventWorkerProfileSchema;
+export type AgentProfileSnapshot = EventWorkerProfile;

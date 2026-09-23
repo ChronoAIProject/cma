@@ -464,7 +464,7 @@ from the authenticated public snapshot, not inferred from a role label.
 
 The account row is the only foot content: avatar, name, and email. Long identity
 lines truncate within the fixed seat. Its upward-opening menu contains Profiles,
-capability-gated Bot settings, Marketplace, CMA Trigger, Developer, capability-gated Operations, appearance,
+capability-gated Bot settings, CMA Trigger, Developer, capability-gated Operations, appearance,
 and sign out. Profiles, Marketplace, publisher, Operations, and Developer use
 their canonical routes and work with refresh and browser history. Bot settings
 opens `/bots` from this menu; it is not a separate sidebar navigation row.
@@ -1348,12 +1348,25 @@ disabled until allowed. Failure stays beside its controls and preserves history.
 
 ## 18. Profiles and Marketplace
 
+The account menu has one Profiles entry. Its shared library navigation contains
+My profiles (`/profiles`), Marketplace (`/marketplace`), and Event workers
+(`/profiles/event-workers`). Navigation uses semantic links with `aria-current`,
+existing brand focus/selection tokens, 12px by 16px link padding, a 2px selected
+underline, and 16px by 24px container padding. It wraps on narrow screens.
+
 Profiles home at `/profiles` has Sandbox, Workspace and Agent tabs. Cards show
 name, latest published revision, visibility and update time, with New profile
 for the active kind. Editors use
 `/profiles/{agent-profiles|workspace-profiles|sandbox-profiles}/{id}`.
 Marketplace uses `/marketplace` and `/marketplace/{kind}/{id}`, with short
 kinds `agent`, `workspace` and `sandbox`.
+
+Event Worker Profile management uses existing Profile cards and editor bands.
+Creation/editing at `/profiles/event-workers/{id}` selects three owned, published
+CMA profiles with the existing ProfilePicker and names the resulting complete
+configuration. Each save creates an immutable revision; existing Bots keep their
+selected snapshot. Retirement requires an inline confirmation and preserves
+existing Bot configurations. Uncertain saves retain their request and key.
 
 ### Editor geometry and controls
 
@@ -1997,3 +2010,7 @@ Check current management access before and after each buffered page and retain
 the initial authority deadline. Changed scope, revoked authority or an expired
 read clears private history. Viewing history preserves the personal composer and
 draft. Summary readers never receive the management history control.
+
+| 2026-09-23 | Merge the Profiles and Marketplace account entries into one Profile library, with My profiles, Marketplace and Event workers navigation. Add versioned Event Worker Profile composition, retirement and Bot selection using existing fields, pickers, cards and editor bands. |
+
+| 2026-09-23 | Retain Event Worker Profile save requests in owner-scoped browser session storage across reloads, require explicit same-request retry, and keep saved workers readable and retireable when source catalogue entries are removed. |

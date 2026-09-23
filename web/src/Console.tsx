@@ -222,7 +222,9 @@ export function Console({
         )}
       </div>
     </section>
-  ) : route.kind === 'profiles' ||
+  ) : route.kind === 'event_worker_profiles' ||
+    route.kind === 'event_worker_profile' ||
+    route.kind === 'profiles' ||
     route.kind === 'profile' ||
     route.kind === 'marketplace' ||
     route.kind === 'marketplace_profile' ? (
@@ -241,6 +243,7 @@ export function Console({
         <ProfileViews
           key={JSON.stringify(route)}
           route={route}
+          viewerId={user.id}
           client={profiles}
           onNavigate={onNavigate}
           canManage={!user.visitor && user.capabilities.includes('manage_own_profiles')}

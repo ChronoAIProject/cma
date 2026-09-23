@@ -1,4 +1,4 @@
-import { AgentProfileSnapshotSchema, NyxIdIdentitySchema } from './profile.js';
+import { EventWorkerProfileSchema, NyxIdIdentitySchema } from './profile.js';
 import {
   BindingIdSchema,
   ChannelIdSchema,
@@ -117,7 +117,7 @@ export const ChannelCreateRequestSchema = object({
   credentials: CredentialsRequestSchema,
   name: text,
   partition: PartitionRuleSchema,
-  profile: AgentProfileSnapshotSchema,
+  profile: EventWorkerProfileSchema,
   provider: ProviderRequestSchema,
   record_id: optional(nullable(RecordIdSchema)),
   reply: ReplyPolicySchema,
@@ -172,7 +172,7 @@ export const PublicChannelDefinitionSchema = object({
   name: optional(text),
   owner: NyxIdIdentitySchema,
   partition: PartitionRuleSchema,
-  profile: AgentProfileSnapshotSchema,
+  profile: EventWorkerProfileSchema,
   profile_digest: text,
   provider: ProviderBindingSchema,
   record_id: RecordIdSchema,
@@ -221,7 +221,7 @@ export const ChannelUpdateRequestSchema = object({
   expected_version: integer,
   name: text,
   partition: PartitionRuleSchema,
-  profile: AgentProfileSnapshotSchema,
+  profile: EventWorkerProfileSchema,
   provider: ProviderRequestSchema,
   reply: ReplyPolicySchema,
   schema_version: integer,

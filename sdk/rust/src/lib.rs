@@ -30,6 +30,7 @@ mod conformance;
 pub mod defaults;
 pub mod discovery;
 mod error;
+pub mod event_worker_profiles;
 pub mod gateway_records;
 mod http;
 pub mod instances;

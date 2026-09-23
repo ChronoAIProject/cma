@@ -137,6 +137,7 @@ impl BotProfileResolver for PublishedBotProfiles {
             ));
         }
         Ok(BotProfiles {
+            event_worker_profile: None,
             agent,
             sandbox,
             workspace,
