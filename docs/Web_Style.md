@@ -1953,6 +1953,7 @@ Append-only. Never edit or delete an entry.
 | 2026-09-17 | Dismiss an open menu before its enclosing dialog on Escape from a row or trigger, preserving the selected value and returning focus to the trigger. |
 | 2026-09-23 | Moved Bot settings into the bottom-left account menu, retaining capability checks and the canonical `/bots` route. |
 | 2026-09-23 | Move the navigation scope Picker between the header build badge and New agent, keep the compact mark and usable controls at narrow sidebar widths, and remove both sidebar Agent filters while retaining resource facts. |
+| 2026-09-23 | Remove the same two sidebar filters from Organization and Shared with me trees, preserving authorized hierarchy expansion and pagination. |
 
 ### Approved Agent artifacts
 
