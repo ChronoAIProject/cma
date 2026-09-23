@@ -14,14 +14,12 @@ export function ScopedNavigation({
   scope,
   choices,
   onNavigate,
-  bridges = false,
 }: {
   readonly client?: ResourceViewsClient;
   readonly personal: ReactNode;
   readonly scope: string;
   readonly choices: NavigationScopeChoices;
   readonly onNavigate: (route: AppRoute) => void;
-  readonly bridges?: boolean;
 }) {
   if (client === undefined) return personal;
   const { organization, shared } = scopeRoute(scope);
@@ -30,11 +28,6 @@ export function ScopedNavigation({
     <div className="scoped-navigation">
       {unavailable ? (
         <p>Organization choices are unavailable. Personal navigation remains available.</p>
-      ) : null}
-      {bridges && shared !== true ? (
-        <ResourceLink route={{ kind: 'bridges', organization }} onNavigate={onNavigate}>
-          Bridges
-        </ResourceLink>
       ) : null}
       {shared === true ? (
         <>

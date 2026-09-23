@@ -1,6 +1,6 @@
 import { Presence } from './ui/Presence';
 import { ProfileViews, Operations, TriggerPublisherPage } from './ConsolePages';
-import { ChannelManagement, isChannelRoute, canManageBots } from './ChannelManagement';
+import { BotManagement, isBotRoute, canManageBots } from './BotManagement';
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { LandingCharacter } from './landing/LandingCharacter';
 import {
@@ -62,11 +62,7 @@ export function Console({
 }: ConsoleProps) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [navigationScope, setNavigationScope] = useState(
-    route.kind === 'inventory'
-      ? scopeValue(route.organization, route.shared)
-      : route.kind === 'bridges' || route.kind === 'bridge_new'
-        ? scopeValue(route.organization)
-        : '',
+    route.kind === 'inventory' ? scopeValue(route.organization, route.shared) : '',
   );
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [artifactPublicationScope] = useState(() => new ArtifactPublicationScope());
@@ -132,16 +128,8 @@ export function Console({
     deleteSandbox: user.capabilities.includes('delete_own_sandbox'),
   };
   const ready = agent.state.status === 'ready' ? agent.state : undefined;
-  const content = isChannelRoute(route) ? (
-    <ChannelManagement
-      user={user}
-      route={route}
-      onNavigate={(next) => {
-        if (next.kind === 'bridges' || next.kind === 'bridge_new')
-          setNavigationScope(scopeValue(next.organization));
-        onNavigate(next);
-      }}
-    />
+  const content = isBotRoute(route) ? (
+    <BotManagement user={user} route={route} onNavigate={onNavigate} />
   ) : route.kind === 'inventory' ? (
     client.resourceViews === undefined ? (
       <section className="console__empty">
@@ -419,7 +407,6 @@ export function Console({
           navigation={
             <ScopedNavigation
               client={user.visitor ? undefined : client.resourceViews}
-              bridges={!user.visitor && client.bridgeViews !== undefined}
               scope={navigationScope}
               choices={scopeChoices}
               onNavigate={(next) => {
