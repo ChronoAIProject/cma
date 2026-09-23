@@ -1404,6 +1404,14 @@ Inspect operator inventories and durable event heads first. Do not repair a log
 by deleting one event, relabeling a checkpoint, editing a lease or changing an
 execution fingerprint. A worker may resume only from its recorded authority.
 
+An idle conversation can replay previous turn activity while reopening. CMA
+acknowledges those runtime output positions without duplicating history or
+opening a new turn when the adapter marks them as lacking prompt evidence.
+Conversation metadata still updates, and a recovered active turn still consumes
+its retained output. Repeated `no turn is active` recorder failures together with
+`queued_message_delivery` indicate this replay path is preventing revival from
+settling; preserve the conversation and deploy the corrected recorder.
+
 ## Restart Drills
 
 Run on disposable owned resources, then repeat the required production proof.
