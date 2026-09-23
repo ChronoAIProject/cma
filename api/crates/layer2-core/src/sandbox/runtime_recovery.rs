@@ -31,6 +31,7 @@ impl Sandbox {
                         | SandboxStatus::Reviving
                         | SandboxStatus::Rotating
                         | SandboxStatus::CredentialRotating
+                        | SandboxStatus::Retiring
                 ))
     }
 
@@ -47,6 +48,17 @@ impl Sandbox {
         let mut next = self.clone();
         next.lifecycle.checkpoint_capture = None;
         next.runtime = None;
+        if self.status == SandboxStatus::Retiring {
+            // Runtime absence settles process authority, but snapshot and home
+            // deletion remain durable retirement work.
+            next.lifecycle.cancel_operation();
+            next.work.schedule(SandboxWorkStep::StopAgents, at.clone());
+            next.updated_at = at;
+            next.revision = self.revision.checked_add(1).ok_or_else(invalid_recovery)?;
+            next.validate()?;
+            *self = next;
+            return Ok(());
+        }
         next.work
             .schedule(SandboxWorkStep::RunLifecycleOperation, at.clone());
         if self.lifecycle.home.is_some() && self.credential.current.is_some() {
