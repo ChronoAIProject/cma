@@ -459,9 +459,10 @@ from the authenticated public snapshot, not inferred from a role label.
 
 The account row is the only foot content: avatar, name, and email. Long identity
 lines truncate within the fixed seat. Its upward-opening menu contains Profiles,
-Marketplace, CMA Trigger, Developer, capability-gated Operations, appearance,
+capability-gated Bot settings, Marketplace, CMA Trigger, Developer, capability-gated Operations, appearance,
 and sign out. Profiles, Marketplace, publisher, Operations, and Developer use
-their canonical routes and work with refresh and browser history.
+their canonical routes and work with refresh and browser history. Bot settings
+opens `/bots` from this menu; it is not a separate sidebar navigation row.
 
 There is no Chat/Agent switch, session group, pricing control, or terminal plane
 choice. Selecting an Agent opens its conversation; selecting a Sandbox opens
@@ -1945,6 +1946,7 @@ Append-only. Never edit or delete an entry.
 | 2026-09-16 | Offer ordinary queued input beside Stop response in Responses v2 tabs, with distinct accessible labels, existing composer controls and draft-preserving admission recovery. |
 | 2026-09-16 | Keep Queue message and Stop response aligned beside the input at every supported viewport, using explicit composer grid columns and existing control sizes and gaps. |
 | 2026-09-17 | Dismiss an open menu before its enclosing dialog on Escape from a row or trigger, preserving the selected value and returning focus to the trigger. |
+| 2026-09-23 | Moved Bot settings into the bottom-left account menu, retaining capability checks and the canonical `/bots` route. |
 
 ### Approved Agent artifacts
 
