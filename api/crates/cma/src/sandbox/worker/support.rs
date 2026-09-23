@@ -367,9 +367,7 @@ pub(super) fn credential_failure(error: CredentialError) -> WorkerFailure {
         CredentialError::Unavailable(_) => {
             WorkerFailure::retryable("credential dependency unavailable")
         }
-        CredentialError::ChannelRetentionHeld(assessment) => {
-            WorkerFailure::new("channel_retention_held", &assessment.hold_detail(), true)
-        }
+
         CredentialError::Security(_) => {
             WorkerFailure::terminal_security("credential authority was refused")
         }

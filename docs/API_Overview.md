@@ -196,3 +196,7 @@ are documented in [Services](Services.md).
 The repository-only [TypeScript SDK](../sdk/typescript/docs/README.md) and
 [Rust SDK](../sdk/rust/docs/README.md) share the public boundary. SDK documentation
 declares each package's implemented subset; neither package is registry-published.
+
+Event ingress and channel delivery belong to the separate
+[CMA Event Gateway](CMAEG_Protocol.md). CMA owns provider bindings, environments
+and Agent conversations; the former in-CMA Bridge execution pipeline is retired.

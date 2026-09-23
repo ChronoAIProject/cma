@@ -1,4 +1,3 @@
-mod source_controls;
 use std::collections::{BTreeSet, HashSet};
 
 use super::identity::operation_id;
@@ -492,51 +491,4 @@ fn operation<'a>(
     path: &str,
 ) -> &'a serde_json::Value {
     &document["paths"][path][method]
-}
-
-#[test]
-fn owned_workspace_cleanup_has_separate_closed_consent_and_required_nullable_observations() {
-    let doc = serde_json::to_value(super::document()).unwrap();
-    let path = "/api/v1/bridges/{id}/allocations/{allocation}/workspace-cleanup";
-    assert!(doc["paths"][path]["get"]["responses"]["200"].is_object());
-    assert!(doc["paths"][path]["post"]["responses"]["202"].is_object());
-    let schemas = &doc["components"]["schemas"];
-    let request = &schemas["WorkspaceCleanupRequestShape"];
-    assert_eq!(request["additionalProperties"], false);
-    assert_eq!(request["properties"].as_object().unwrap().len(), 5);
-    for field in [
-        "expected_bridge_revision",
-        "expected_allocation_revision",
-        "expected_workspace_revision",
-        "child_cleanup_receipt_id",
-        "action",
-    ] {
-        assert!(request["required"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|value| value == field));
-    }
-    assert_eq!(
-        schemas["WorkspaceCleanupActionShape"]["enum"],
-        serde_json::json!(["remove_owned_workspace"])
-    );
-    let status = &schemas["WorkspaceCleanupStatusShape"];
-    assert_eq!(status["additionalProperties"], false);
-    for field in [
-        "workspace_revision",
-        "child_cleanup_receipt_id",
-        "receipt",
-        "observed_at_ms",
-    ] {
-        assert!(status["required"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|value| value == field));
-    }
-    assert_eq!(
-        schemas["ChildCleanupActionShape"]["enum"],
-        serde_json::json!(["remove_child"])
-    );
 }

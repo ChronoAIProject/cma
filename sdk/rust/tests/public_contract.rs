@@ -4,8 +4,6 @@ mod agent_events_v2;
 mod bindings;
 #[path = "public_contract/bots.rs"]
 mod bots;
-#[path = "public_contract/bridges.rs"]
-mod bridges;
 #[path = "public_contract/context.rs"]
 mod context;
 #[path = "public_contract/experience.rs"]
@@ -30,12 +28,6 @@ async fn dispatch(c: &Context<'_>) -> Result<()> {
         bots::dispatch(c).await
     } else if op.contains("/cmaeg/bindings") {
         bindings::dispatch(c).await
-    } else if op.contains("/bridges")
-        || op.contains("/bridge-connectors")
-        || op.contains("/bridge-creation-target")
-        || op.contains("/bridge-invoke-grants")
-    {
-        bridges::dispatch(c).await
     } else if op == "GET /api/v2/ui/transport"
         || op == "GET /api/v2/agents/{agent_id}/events"
         || op == "GET /api/v2/agents/{agent_id}/events/snapshot"
