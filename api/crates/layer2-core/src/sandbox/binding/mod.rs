@@ -26,7 +26,6 @@ mod model_tests;
 #[cfg(test)]
 mod profile_tests;
 
-pub use profiles::BindingProfileStore;
 pub use service::{
     BindingError, BindingPolicy, BindingResources, BindingService, BindingServiceStore,
 };
