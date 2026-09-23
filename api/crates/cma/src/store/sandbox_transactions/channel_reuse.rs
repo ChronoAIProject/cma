@@ -8,7 +8,7 @@ pub(super) async fn require(
     session: &mut mongodb::ClientSession,
 ) -> Result<(), ApplyError> {
     if store
-        .channel_reuse_blocks_quiescence(current, next, session)
+        .legacy_reuse_blocks_quiescence(current, next, session)
         .await
         .map_err(ApplyError::Driver)?
     {

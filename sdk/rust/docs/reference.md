@@ -22,8 +22,6 @@ returns `Conformance`, containing `service`, `status`, and the currently exposed
 | `worktrees()` | `list`, `read` |
 | `agents()` | `list`, `read`, `create`, `input`, `steer`, `interrupt`, `answer_approval`, `stop`, `delete`, `events`, `transcript`, `usage`, `resources` |
 | `auth()` | `read_session`, anonymous `read_signup_options`, navigation-only `login_url`, `logout_url` |
-| `bridges()` | `list`, `read`, `choices`, `configuration`, `create`, `update`, `control`, `validate`, `import_key`, `revoke_key` |
-| `bridges()` explicit consent | `list_invoke_grants`, `read_invoke_grant`, `invoke_readiness`, `issue_invoke_grant`, `revoke_invoke_grant` |
 | `triggers()` | `list`, `read`, `create`, `save`, `delete`, `publish`, `retire`, `list_revisions`, `list_placements`, `create_placement`, `retire_placement`, `embed`, `stats` |
 | `launches()` | `create_or_resume`, `list`, `read`, `start`, `cancel`, `requirements`, `events`, `stream`, `create_connection`, `read_connection` |
 | `agui()` | `read_capabilities`, `read_sandbox`, `run`, `events` |
@@ -52,13 +50,6 @@ marketplace results return `ResourcePage<T>`, whose `next` is the exclusive
 cursor for the next call. Child Workspace and Worktree lists return
 `ResourceList<T>`. `SandboxListOptions` and `AgentListOptions` add typed filters;
 `MarketplaceListOptions` adds search text.
-
-`BridgeListOptions` adds current organization scope. Bridge inventory returns
-`BridgePage::next_cursor`, preserves strict identity ordering and validates the
-requested owner scope. Bridge management keys have a 200-byte bound. Selected
-key import uses a borrowed `ImportBridgeKeyRequest` with redacted Debug; the
-client retains no bot-key value. See [Bridge setup](bridges.md) for configuration,
-explicit context sharing, current custody and accepted-work controls.
 
 `EventOptions` holds an exclusive durable sequence `after` and optional `limit`.
 Sandbox events return `Vec<SandboxEvent>`; Agent events return
@@ -123,33 +114,6 @@ semantics. It does not execute the script and is not a Layer1 API operation.
 Chronological transcript `messages` are required typed entries with sequence,
 user/assistant role, content, and append timestamp; preserve this order rather
 than concatenating the owner/Agent summary fields.
-
-
-`bridges().list_allocations`, `read_child_cleanup` and `request_child_cleanup`
-expose explicit child removal. `BridgeCleanupAllocationPage::next_cursor` stays
-opaque and may be present on empty or short filtered pages. The cleanup request
-pins both observed revisions and `RemoveChild`; HTTP 202 returns an immutable
-`BridgeChildCleanupReceipt` within current `BridgeChildCleanupStatus`. Retain the
-exact request and 200-byte-bounded key after uncertain responses. Capacity is
-released only at `Complete`, with Workspace and history retained. See
-[Bridge setup](bridges.md#explicit-child-cleanup) for consent and replay examples.
-
-
-### Separate owned Workspace cleanup
-
-`bridges.read_workspace_cleanup` reads `BridgeWorkspaceCleanupStatus` for one allocation;
-`bridges.request_workspace_cleanup` submits the independent `BridgeWorkspaceCleanupRequest`.
-The request pins three revisions and the completed child receipt, with only
-`BridgeWorkspaceCleanupAction`'s `remove_owned_workspace` action.
-`BridgeWorkspaceCleanupReceipt`, `BridgeWorkspaceCleanupProgress`, and
-`BridgeWorkspaceCleanupHold` keep acceptance, current eligibility and permanent
-completion distinct. Both methods use the separate `workspace-cleanup` route;
-child `remove_child` retains its original Workspace-preserving scope. See
-[Bridge management](bridges.md#separate-owned-workspace-cleanup).
-
-## Source-control consent
-
-`bridges().read_source_controls(grant_id)` and `bridges().set_source_controls(grant_id, &request, &key)` observe and record separate original-sender consent. Types: `BridgeSourceControlAction`, `BridgeSourceControlRequest`, `BridgeSourceControlPolicy`, `BridgeSourceControlState`, `BridgeSourceControlReceipt`, `BridgeSourceControlScope`, and `BridgeSourceControlApprovalMode`. Read absence is required null. PUT returns exactly 200. Consent never demonstrates runtime control support. See [Bridges](bridges.md) for revision bounds and exact-request recovery.
 
 `read_agent_card()` reads typed public provider discovery without credentials.
 `unsupported().agent_card()` remains a compatibility alias and returns the same

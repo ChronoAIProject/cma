@@ -38,36 +38,10 @@ mod agent_provenance_tests;
 mod agents;
 #[cfg(test)]
 pub(crate) mod agents_tests;
-mod bridges;
-#[cfg(test)]
-mod bridges_tests;
-pub use bridges::bridge_router;
-mod bridge_invokes;
-pub use bridge_invokes::bridge_invoke_router;
-mod bridge_source_controls;
-pub use bridge_source_controls::bridge_source_control_router;
-mod bridge_cleanup;
-mod bridge_partition_commands;
-mod bridge_partitions;
-pub use bridge_partition_commands::bridge_partition_commands_router;
-#[cfg(test)]
-mod bridge_partitions_tests;
-pub use bridge_partitions::bridge_partitions_router;
-#[cfg(test)]
-mod bridge_source_controls_tests;
-pub use bridge_cleanup::bridge_cleanup_router;
-mod bridge_outbox;
-pub use bridge_outbox::bridge_outbox_router;
 mod badge;
 mod badge_mark;
 #[cfg(test)]
 mod badge_tests;
-#[cfg(test)]
-mod bridge_cleanup_tests;
-#[cfg(test)]
-mod bridge_invokes_tests;
-#[cfg(test)]
-mod bridge_outbox_tests;
 mod defaults;
 mod embed;
 #[cfg(test)]
