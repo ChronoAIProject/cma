@@ -23,7 +23,8 @@ impl KeyIssuer {
         });
         if let Some(callback) = callback {
             body["callback_url"] = callback.into();
-            body["platform"] = "telegram".into();
+            // NyxID API-key platform describes the client, not the channel.
+            body["platform"] = "generic".into();
         }
         let response = self
             .http
