@@ -366,3 +366,15 @@ fn ordered_times(start: &str, end: &str) -> bool {
         .zip(crate::seconds_from_rfc3339(end))
         .is_some_and(|(start, end)| end > start)
 }
+
+impl CommandReservation {
+    /// Historical channel receipts remain readable; CMAEG admits new work through provider bindings.
+    pub fn require_non_channel(&self) -> Result<(), CommandLedgerError> {
+        if matches!(self.envelope.actor, super::AgentActor::Channel { .. })
+            || self.envelope.source.kind == super::AgentSourceKind::Channel
+        {
+            return Err(CommandLedgerError::Invalid);
+        }
+        Ok(())
+    }
+}

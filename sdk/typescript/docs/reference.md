@@ -2,12 +2,6 @@
 
 <!-- nav: 11 Reference -->
 
-`bridges` exposes `list`, `read`, `choices`, `creationTarget`, `configuration`, `create`, `update`,
-`control`, `validate`, `importKey` and `revokeKey` for bridge setup. Its explicit
-consent methods are `listInvokeGrants`, `readInvokeGrant`, `invokeReadiness`,
-`issueInvokeGrant` and `revokeInvokeGrant`. See [Bridge setup](bridges.md) for
-exact target consent, current authority, revision and cancellation semantics.
-
 `createClient(config)` returns a `Cma` with the following public resources:
 
 | Resource                                                | Methods                                                                                                                                                                                                                                           |
@@ -414,31 +408,6 @@ background execution, tools and instruction overrides are unsupported. The
 explicit `delete` and `cancel` helpers preserve the server's
 `responses_field_unsupported` problem as `ApiError`; neither operation is
 advertised as a supported Agent action.
-
-`bridges.listAllocations`, `readChildCleanup` and `requestChildCleanup` expose
-explicit child removal. `BridgeCleanupAllocationPage` has a nullable opaque
-`next_cursor`, including on empty or short filtered pages. The cleanup request
-pins both observed revisions and `remove_child`; HTTP 202 returns an immutable
-`BridgeChildCleanupReceipt` within current `BridgeChildCleanupStatus`. Retain the
-exact request and 200-character-bounded key after uncertain responses. Capacity
-is released only at `complete`, with Workspace and history retained. See
-[Bridge setup](bridges.md#explicit-child-cleanup) for consent and replay examples.
-
-### Separate owned Workspace cleanup
-
-`bridges.readWorkspaceCleanup` reads `BridgeWorkspaceCleanupStatus` for one allocation;
-`bridges.requestWorkspaceCleanup` submits the independent `BridgeWorkspaceCleanupRequest`.
-The request pins three revisions and the completed child receipt, with only
-`BridgeWorkspaceCleanupAction`'s `remove_owned_workspace` action.
-`BridgeWorkspaceCleanupReceipt`, `BridgeWorkspaceCleanupProgress`, and
-`BridgeWorkspaceCleanupHold` keep acceptance, current eligibility and permanent
-completion distinct. Both methods use the separate `workspace-cleanup` route;
-child `remove_child` retains its original Workspace-preserving scope. See
-[Bridge management](bridges.md#separate-owned-workspace-cleanup).
-
-## Source-control consent
-
-`bridges.readSourceControls(grantId, options?)` and `bridges.setSourceControls(grantId, request, command)` observe and record separate original-sender consent. Types: `BridgeSourceControlAction`, `BridgeSourceControlRequest`, `BridgeSourceControlPolicy`, `BridgeSourceControlState`, `BridgeSourceControlReceipt`, `BridgeSourceControlScope`, and `BridgeSourceControlApprovalMode`. Read absence is required null. PUT returns exactly 200. Consent never demonstrates runtime control support. See [Bridges](bridges.md) for revision bounds and exact-request recovery.
 
 Encrypted gateway records are available through `client.gatewayRecords.put/get/list/delete`. These operations require gateway management authority. `blob` is base64 ciphertext; creation uses `expected_version: null`, and replacement supplies the retained version. They use version preconditions without an Idempotency-Key header.
 

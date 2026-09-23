@@ -9,7 +9,7 @@ receipt, and render conversation history from the Agent event stream. Response
 
 `GET /api/v2/ui/transport` requires authentication and returns
 `Cache-Control: private, no-store`. Its `enabled` value is the process-start
-`CHRONO_BRIDGE_V2_UI_TRANSPORT_ENABLED` flag combined with composed Responses,
+`CHRONO_V2_UI_TRANSPORT_ENABLED` flag combined with composed Responses,
 targeted controls, Agent replay and live-update dependencies. The flag defaults
 to false. The response has this shape:
 

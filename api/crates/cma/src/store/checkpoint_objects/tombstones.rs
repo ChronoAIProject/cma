@@ -76,7 +76,7 @@ pub(super) async fn retain(
         .session(&mut session)
         .await
         .map_err(|_| unavailable("checkpoint cleanup tombstone admission failed"))?;
-    crate::store::channel_history::tombstone(
+    crate::store::legacy_history::tombstone(
         &store.client.database(&store.manifests.namespace().db),
         &manifest.sandbox_id,
         &document,
