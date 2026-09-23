@@ -420,7 +420,6 @@ export function Console({
             <ScopedNavigation
               client={user.visitor ? undefined : client.resourceViews}
               bridges={!user.visitor && client.bridgeViews !== undefined}
-              bots={canManageBots(user, client)}
               scope={navigationScope}
               onScopeChange={setNavigationScope}
               onNavigate={(next) => {
@@ -473,6 +472,7 @@ export function Console({
           account={
             <ProfileMenu
               user={user}
+              bots={canManageBots(user, client)}
               collapsed={collapsed}
               onSignOut={onSignOut}
               onNavigate={onNavigate}
