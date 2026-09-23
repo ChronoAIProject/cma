@@ -637,3 +637,50 @@ The before/after digest covers the complete returned context, not just text.
 This proves persisted custom-event context survives gateway replacement. It is
 not Telegram ingress, Telegram delivery, or the required latency campaign.
 The existing Telegram route and original bridge remain unchanged.
+
+
+### Admission rollout and restored Telegram migration — 2026-09-23
+
+PR #933 merged into `develop` as
+`1e6dd9ec1fda1d58ea55eb39ce01269026e9347f` after all 14 jobs in CI
+`35802834774` passed. The merged tree matches tested revision
+`9701a51ac982a3db6eb576d2a94c896cef6da66e`. Validation recorded 2,965 regular
+backend tests and 669 real Mongo contracts, plus the Linux writer boundary,
+built runtime execution/cleanup proof, image and SDK/frontend gates. The runtime
+fix skips vanished processes on ENOENT or ESRCH during writer inspection; other
+inspection errors still refuse the fence.
+
+At 01:33:49 UTC, the verified API and future-runtime-default rollout passed with
+`cma-api@sha256:aaf51a96e0720aa98b5789cd6194d392459308dfab0cfe1fd5118e85c3cddee2`
+and
+`cma-runtime@sha256:532a64cf193957991248d98d82b7a61f6d333a2b87f5e1db0a19ae55f598ed49`
+under the existing production registry prefix. All six owned runtime Pods
+retained exact UID, full spec, container identity, image, restart count and
+readiness. Three unowned warm reservations retired and were replaced, with
+majority Mongo ownership checks before and after. Only the runtime-image default
+changed in API configuration. API, web and gateway each had one ready replica.
+
+Seven selected Agents passed lineage, profile and durable history-prefix
+comparisons. The first public continuity read after rollout returned HTTP 503;
+a later observation succeeded. These snapshots do not establish uninterrupted
+availability or explain that first failure, and retain the earlier dirty-file,
+native-conversation, duplicate-input and browser-reconnect limitations.
+CI fake-provider p99 timings were warm launch 13.724 ms, cold launch 59.088 ms,
+cold restore 53.679 ms and tool delivery 9.862 ms; these are not Telegram timings.
+
+The authorized dashboard migration then failed during `mint_agent_key` at
+01:35:41 UTC. The failed Bot completed durable cleanup by 01:37:43 UTC with no
+channel or pending operation; a subsequent exact-namespace key inventory was
+empty. This does not prove key creation itself failed, because cleanup may have
+revoked a minted key. CMA's adapter rejects NyxID's offset-form expiry metadata;
+inspection also found PATCH requests where the existing key and conversation
+update contracts require PUT. These are CMA client compatibility defects.
+
+The original Telegram route was restored active at 01:36:46 UTC with its original
+key and fields and no competing active route. The bridge was re-enabled at
+01:36:57 UTC, revision 7. The original Sandbox, Workspace, Worktree and Agent were
+preserved. No Telegram test message was sent, and no new gateway channel was
+created. NyxID catalogue, service configuration, roles, code and deployment were
+unchanged. Telegram acceptance remains incomplete, although GitHub issue #918
+was closed separately at 01:28:36 UTC without recorded Telegram evidence. Bridge
+retirement in #920 remains open and gated on that evidence.
