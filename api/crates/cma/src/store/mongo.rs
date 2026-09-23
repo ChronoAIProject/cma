@@ -26,13 +26,6 @@ pub struct MongoStores {
     /// Versioned Trigger definitions, placements, and immutable revisions.
     #[allow(dead_code)] // Opened and validated here; #824 composes the public routes.
     pub trigger_definitions: Arc<MongoTriggerDefinitionStore>,
-    /// Durable bridge configuration; public connection/dispatch adapters compose separately.
-    #[allow(dead_code)]
-    pub bridge_definitions: Arc<super::MongoBridgeStore>,
-    pub(crate) bridge_credentials: Arc<super::MongoBridgeCredentialStore>,
-    /// Ingress is closed until selected-key custody and a pinned callback route compose.
-    #[allow(dead_code)]
-    pub(crate) bridge_callback_inbox: Arc<super::MongoCallbackInbox>,
     pub auth: Arc<MongoAuthStore>,
     pub(crate) codex_subscriptions: Arc<super::MongoSubscriptionStore>,
     pub activity: Arc<MongoActivityStore>,
@@ -72,20 +65,6 @@ impl MongoStores {
             MongoTriggerDefinitionStore::open(&client, database, Arc::clone(&sandbox_profiles))
                 .await?,
         );
-        let bridge_definitions = Arc::new(
-            super::MongoBridgeStore::open(&client, database, deployment, auth_encryption_key)
-                .await?,
-        );
-        let bridge_credentials = bridge_definitions.credentials();
-        let bridge_callback_inbox = Arc::new(
-            super::MongoCallbackInbox::open(
-                &bridge_definitions,
-                database,
-                deployment,
-                auth_encryption_key,
-            )
-            .await?,
-        );
         let auth = Arc::new(
             MongoAuthStore::open(&client, database, deployment, auth_encryption_key).await?,
         );
@@ -111,9 +90,6 @@ impl MongoStores {
             sandbox_credentials,
             checkpoint_objects,
             trigger_definitions,
-            bridge_definitions,
-            bridge_credentials,
-            bridge_callback_inbox,
             auth,
             codex_subscriptions,
             activity,

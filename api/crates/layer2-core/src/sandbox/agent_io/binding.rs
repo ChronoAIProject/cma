@@ -41,20 +41,6 @@ pub fn bind_command_dispatch(
         fence
             .require_envelope(&command.receipt.envelope)
             .map_err(|_| CommandLedgerError::Conflict)?;
-    } else if let Some(fence) = &mutation.channel_control_execution_fence {
-        fence
-            .require_dispatch(command)
-            .map_err(|_| CommandLedgerError::Conflict)?;
-        if !matches!(
-            command.receipt.envelope.command,
-            AgentCommand::Steer { .. } | AgentCommand::Interrupt
-        ) {
-            return Err(CommandLedgerError::Conflict);
-        }
-    } else if let Some(fence) = &mutation.channel_execution_fence {
-        fence
-            .require_dispatch(command)
-            .map_err(|_| CommandLedgerError::Conflict)?;
     } else if let Some(fence) = &mutation.trigger_execution_fence {
         fence
             .require_dispatch(command)

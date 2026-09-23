@@ -14,9 +14,7 @@ mod artifact_cases;
 mod authoring_cases;
 mod binding_cases;
 mod bot_cases;
-mod bridge_cases;
 mod channel_usage_cases;
-mod cleanup_cases;
 mod creation_inventory_cases;
 mod credential_cases;
 mod domains;
@@ -25,10 +23,6 @@ mod fault_cases;
 mod gateway_cases;
 mod inventory;
 mod inventory_cases;
-mod invoke_cases;
-mod outbox_cases;
-mod partition_cases;
-mod partition_command_cases;
 mod provenance_cases;
 mod queued_cancellation_cases;
 mod replay;
@@ -43,11 +37,9 @@ mod shared_source_cases;
 mod shared_stream_cases;
 mod snapshot_cases;
 mod source_cases;
-mod source_consent_cases;
 mod state_cases;
 mod symbols;
 mod trigger_cases;
-mod workspace_cleanup_cases;
 
 use symbols::Symbols;
 
@@ -152,21 +144,6 @@ async fn scenario(name: &str) -> Scenario {
     if let Some(scenario) = binding_cases::scenario(name).await {
         return scenario;
     }
-    if let Some(scenario) = partition_command_cases::scenario(name).await {
-        return scenario;
-    }
-    if let Some(scenario) = partition_cases::scenario(name).await {
-        return scenario;
-    }
-    if let Some(scenario) = workspace_cleanup_cases::scenario(name).await {
-        return scenario;
-    }
-    if let Some(scenario) = source_consent_cases::scenario(name).await {
-        return scenario;
-    }
-    if let Some(scenario) = cleanup_cases::scenario(name).await {
-        return scenario;
-    }
     if let Some(scenario) = queued_cancellation_cases::scenario(name).await {
         return scenario;
     }
@@ -174,15 +151,6 @@ async fn scenario(name: &str) -> Scenario {
         return scenario;
     }
     if let Some(scenario) = response_control_cases::scenario(name).await {
-        return scenario;
-    }
-    if let Some(scenario) = outbox_cases::scenario(name).await {
-        return scenario;
-    }
-    if let Some(scenario) = invoke_cases::scenario(name).await {
-        return scenario;
-    }
-    if let Some(scenario) = bridge_cases::scenario(name).await {
         return scenario;
     }
     if let Some(scenario) = channel_usage_cases::scenario(name).await {

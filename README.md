@@ -86,3 +86,7 @@ exception: merge completed work to `develop`, build and deploy directly, and
 verify production without merging to `main` or invoking the release workflow.
 The exact reset/deployment order and safeguards belong to
 [CMA Operations](./docs/CMA_Operations.md).
+
+Event ingress and channel delivery belong to the separate
+[CMA Event Gateway](CMAEG_Protocol.md). CMA owns provider bindings, environments
+and Agent conversations; the former in-CMA Bridge execution pipeline is retired.
