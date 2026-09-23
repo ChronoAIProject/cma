@@ -1,0 +1,781 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "event-workers-create",
+      "operation": "POST /api/v1/event-worker-profiles",
+      "scenario": "event_worker_contract_create",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/event-worker-profiles",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-worker"
+        },
+        "body": {
+          "name": "Example worker",
+          "description": "Complete worker configuration",
+          "agent_profile": {
+            "id": "agp_bot",
+            "revision": 1
+          },
+          "sandbox_profile": {
+            "id": "sbp_bot",
+            "revision": 1
+          },
+          "workspace_profile": {
+            "id": "wkp_bot",
+            "revision": 1
+          }
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "ewp_0fedfdc646ca59c9febd1f33b470c1a1",
+          "owner": "owner",
+          "revision": 1,
+          "source": {
+            "name": "Example worker",
+            "description": "Complete worker configuration",
+            "agent_profile": {
+              "id": "agp_bot",
+              "revision": 1
+            },
+            "workspace_profile": {
+              "id": "wkp_bot",
+              "revision": 1
+            },
+            "sandbox_profile": {
+              "id": "sbp_bot",
+              "revision": 1
+            }
+          },
+          "profile": {
+            "schema_version": 1,
+            "metadata": {
+              "name": "Example worker",
+              "description": "Complete worker configuration",
+              "owner": {
+                "subject": "owner",
+                "kind": "human"
+              },
+              "provider": "cma_codex"
+            },
+            "model": {
+              "access": "managed",
+              "service": "chrono-llm-public",
+              "api_type": "responses",
+              "model": "test",
+              "thinking_effort": "medium"
+            },
+            "permission": {
+              "action_mode": "guarded",
+              "service_scope": [
+                "chrono-llm-public"
+              ]
+            },
+            "context": {
+              "system_prompt": "",
+              "skills": [],
+              "mcp_servers": []
+            },
+            "environment": {
+              "size": {
+                "cpu_cores": 1.0,
+                "memory_gib": 2.0
+              },
+              "workspace": {
+                "type": "directory",
+                "name": "project"
+              },
+              "setup_commands": [],
+              "environment_variables": []
+            }
+          },
+          "digest": "sha256:541e6788b26c325aeb585eb709baadf4408b8261f73655d00c499e0084400443",
+          "created_at": "2026-09-23T00:00:00Z",
+          "updated_at": "2026-09-23T00:00:00Z",
+          "retired_at": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "worker_created_at": "/created_at",
+        "worker_updated_at": "/updated_at"
+      }
+    },
+    {
+      "id": "event-workers-read",
+      "operation": "GET /api/v1/event-worker-profiles/{id}",
+      "scenario": "event_worker_contract_read",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/event-worker-profiles/ewp_0fedfdc646ca59c9febd1f33b470c1a1",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "ewp_0fedfdc646ca59c9febd1f33b470c1a1",
+          "owner": "owner",
+          "revision": 1,
+          "source": {
+            "name": "Example worker",
+            "description": "Complete worker configuration",
+            "agent_profile": {
+              "id": "agp_bot",
+              "revision": 1
+            },
+            "workspace_profile": {
+              "id": "wkp_bot",
+              "revision": 1
+            },
+            "sandbox_profile": {
+              "id": "sbp_bot",
+              "revision": 1
+            }
+          },
+          "profile": {
+            "schema_version": 1,
+            "metadata": {
+              "name": "Example worker",
+              "description": "Complete worker configuration",
+              "owner": {
+                "subject": "owner",
+                "kind": "human"
+              },
+              "provider": "cma_codex"
+            },
+            "model": {
+              "access": "managed",
+              "service": "chrono-llm-public",
+              "api_type": "responses",
+              "model": "test",
+              "thinking_effort": "medium"
+            },
+            "permission": {
+              "action_mode": "guarded",
+              "service_scope": [
+                "chrono-llm-public"
+              ]
+            },
+            "context": {
+              "system_prompt": "",
+              "skills": [],
+              "mcp_servers": []
+            },
+            "environment": {
+              "size": {
+                "cpu_cores": 1.0,
+                "memory_gib": 2.0
+              },
+              "workspace": {
+                "type": "directory",
+                "name": "project"
+              },
+              "setup_commands": [],
+              "environment_variables": []
+            }
+          },
+          "digest": "sha256:541e6788b26c325aeb585eb709baadf4408b8261f73655d00c499e0084400443",
+          "created_at": "2026-09-23T00:00:00Z",
+          "updated_at": "2026-09-23T00:00:00Z",
+          "retired_at": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "worker_created_at": "/created_at",
+        "worker_updated_at": "/updated_at"
+      }
+    },
+    {
+      "id": "event-workers-revision",
+      "operation": "GET /api/v1/event-worker-profiles/{id}/revisions/{revision}",
+      "scenario": "event_worker_contract_revision",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/event-worker-profiles/ewp_0fedfdc646ca59c9febd1f33b470c1a1/revisions/1",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "ewp_0fedfdc646ca59c9febd1f33b470c1a1",
+          "owner": "owner",
+          "revision": 1,
+          "source": {
+            "name": "Example worker",
+            "description": "Complete worker configuration",
+            "agent_profile": {
+              "id": "agp_bot",
+              "revision": 1
+            },
+            "workspace_profile": {
+              "id": "wkp_bot",
+              "revision": 1
+            },
+            "sandbox_profile": {
+              "id": "sbp_bot",
+              "revision": 1
+            }
+          },
+          "profile": {
+            "schema_version": 1,
+            "metadata": {
+              "name": "Example worker",
+              "description": "Complete worker configuration",
+              "owner": {
+                "subject": "owner",
+                "kind": "human"
+              },
+              "provider": "cma_codex"
+            },
+            "model": {
+              "access": "managed",
+              "service": "chrono-llm-public",
+              "api_type": "responses",
+              "model": "test",
+              "thinking_effort": "medium"
+            },
+            "permission": {
+              "action_mode": "guarded",
+              "service_scope": [
+                "chrono-llm-public"
+              ]
+            },
+            "context": {
+              "system_prompt": "",
+              "skills": [],
+              "mcp_servers": []
+            },
+            "environment": {
+              "size": {
+                "cpu_cores": 1.0,
+                "memory_gib": 2.0
+              },
+              "workspace": {
+                "type": "directory",
+                "name": "project"
+              },
+              "setup_commands": [],
+              "environment_variables": []
+            }
+          },
+          "digest": "sha256:541e6788b26c325aeb585eb709baadf4408b8261f73655d00c499e0084400443",
+          "created_at": "2026-09-23T00:00:00Z",
+          "updated_at": "2026-09-23T00:00:00Z",
+          "retired_at": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "worker_created_at": "/created_at",
+        "worker_updated_at": "/updated_at"
+      }
+    },
+    {
+      "id": "event-workers-list",
+      "operation": "GET /api/v1/event-worker-profiles",
+      "scenario": "event_worker_contract_list",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/event-worker-profiles",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "id": "ewp_0fedfdc646ca59c9febd1f33b470c1a1",
+              "owner": "owner",
+              "revision": 1,
+              "source": {
+                "name": "Example worker",
+                "description": "Complete worker configuration",
+                "agent_profile": {
+                  "id": "agp_bot",
+                  "revision": 1
+                },
+                "workspace_profile": {
+                  "id": "wkp_bot",
+                  "revision": 1
+                },
+                "sandbox_profile": {
+                  "id": "sbp_bot",
+                  "revision": 1
+                }
+              },
+              "profile": {
+                "schema_version": 1,
+                "metadata": {
+                  "name": "Example worker",
+                  "description": "Complete worker configuration",
+                  "owner": {
+                    "subject": "owner",
+                    "kind": "human"
+                  },
+                  "provider": "cma_codex"
+                },
+                "model": {
+                  "access": "managed",
+                  "service": "chrono-llm-public",
+                  "api_type": "responses",
+                  "model": "test",
+                  "thinking_effort": "medium"
+                },
+                "permission": {
+                  "action_mode": "guarded",
+                  "service_scope": [
+                    "chrono-llm-public"
+                  ]
+                },
+                "context": {
+                  "system_prompt": "",
+                  "skills": [],
+                  "mcp_servers": []
+                },
+                "environment": {
+                  "size": {
+                    "cpu_cores": 1.0,
+                    "memory_gib": 2.0
+                  },
+                  "workspace": {
+                    "type": "directory",
+                    "name": "project"
+                  },
+                  "setup_commands": [],
+                  "environment_variables": []
+                }
+              },
+              "digest": "sha256:541e6788b26c325aeb585eb709baadf4408b8261f73655d00c499e0084400443",
+              "created_at": "2026-09-23T00:00:00Z",
+              "updated_at": "2026-09-23T00:00:00Z",
+              "retired_at": null
+            }
+          ],
+          "next_after": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "worker_created_at": "/items/0/created_at",
+        "worker_updated_at": "/items/0/updated_at"
+      }
+    },
+    {
+      "id": "event-workers-update",
+      "operation": "PUT /api/v1/event-worker-profiles/{id}",
+      "scenario": "event_worker_contract_update",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/event-worker-profiles/ewp_0fedfdc646ca59c9febd1f33b470c1a1",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "expected_revision": 1,
+          "source": {
+            "name": "Updated worker",
+            "description": "Complete worker configuration",
+            "agent_profile": {
+              "id": "agp_bot",
+              "revision": 1
+            },
+            "sandbox_profile": {
+              "id": "sbp_bot",
+              "revision": 1
+            },
+            "workspace_profile": {
+              "id": "wkp_bot",
+              "revision": 1
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "ewp_0fedfdc646ca59c9febd1f33b470c1a1",
+          "owner": "owner",
+          "revision": 2,
+          "source": {
+            "name": "Updated worker",
+            "description": "Complete worker configuration",
+            "agent_profile": {
+              "id": "agp_bot",
+              "revision": 1
+            },
+            "workspace_profile": {
+              "id": "wkp_bot",
+              "revision": 1
+            },
+            "sandbox_profile": {
+              "id": "sbp_bot",
+              "revision": 1
+            }
+          },
+          "profile": {
+            "schema_version": 1,
+            "metadata": {
+              "name": "Updated worker",
+              "description": "Complete worker configuration",
+              "owner": {
+                "subject": "owner",
+                "kind": "human"
+              },
+              "provider": "cma_codex"
+            },
+            "model": {
+              "access": "managed",
+              "service": "chrono-llm-public",
+              "api_type": "responses",
+              "model": "test",
+              "thinking_effort": "medium"
+            },
+            "permission": {
+              "action_mode": "guarded",
+              "service_scope": [
+                "chrono-llm-public"
+              ]
+            },
+            "context": {
+              "system_prompt": "",
+              "skills": [],
+              "mcp_servers": []
+            },
+            "environment": {
+              "size": {
+                "cpu_cores": 1.0,
+                "memory_gib": 2.0
+              },
+              "workspace": {
+                "type": "directory",
+                "name": "project"
+              },
+              "setup_commands": [],
+              "environment_variables": []
+            }
+          },
+          "digest": "sha256:a408612ec6d2865191abf8ed37c4fa72e16648ca178fc8c6ea34b21707b8044f",
+          "created_at": "2026-09-23T00:00:00Z",
+          "updated_at": "2026-09-23T00:00:00Z",
+          "retired_at": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "worker_created_at": "/created_at",
+        "worker_updated_at": "/updated_at"
+      }
+    },
+    {
+      "id": "event-workers-retire",
+      "operation": "DELETE /api/v1/event-worker-profiles/{id}",
+      "scenario": "event_worker_contract_retire",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/event-worker-profiles/ewp_0fedfdc646ca59c9febd1f33b470c1a1?expected_revision=1",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "ewp_0fedfdc646ca59c9febd1f33b470c1a1",
+          "owner": "owner",
+          "revision": 2,
+          "source": {
+            "name": "Example worker",
+            "description": "Complete worker configuration",
+            "agent_profile": {
+              "id": "agp_bot",
+              "revision": 1
+            },
+            "workspace_profile": {
+              "id": "wkp_bot",
+              "revision": 1
+            },
+            "sandbox_profile": {
+              "id": "sbp_bot",
+              "revision": 1
+            }
+          },
+          "profile": {
+            "schema_version": 1,
+            "metadata": {
+              "name": "Example worker",
+              "description": "Complete worker configuration",
+              "owner": {
+                "subject": "owner",
+                "kind": "human"
+              },
+              "provider": "cma_codex"
+            },
+            "model": {
+              "access": "managed",
+              "service": "chrono-llm-public",
+              "api_type": "responses",
+              "model": "test",
+              "thinking_effort": "medium"
+            },
+            "permission": {
+              "action_mode": "guarded",
+              "service_scope": [
+                "chrono-llm-public"
+              ]
+            },
+            "context": {
+              "system_prompt": "",
+              "skills": [],
+              "mcp_servers": []
+            },
+            "environment": {
+              "size": {
+                "cpu_cores": 1.0,
+                "memory_gib": 2.0
+              },
+              "workspace": {
+                "type": "directory",
+                "name": "project"
+              },
+              "setup_commands": [],
+              "environment_variables": []
+            }
+          },
+          "digest": "sha256:541e6788b26c325aeb585eb709baadf4408b8261f73655d00c499e0084400443",
+          "created_at": "2026-09-23T00:00:00Z",
+          "updated_at": "2026-09-23T00:00:00Z",
+          "retired_at": "2026-09-23T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "worker_created_at": "/created_at",
+        "worker_retired_at": "/retired_at",
+        "worker_updated_at": "/updated_at"
+      }
+    },
+    {
+      "id": "event-workers-foreign",
+      "operation": "GET /api/v1/event-worker-profiles/{id}",
+      "scenario": "event_worker_contract_foreign",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/event-worker-profiles/ewp_0fedfdc646ca59c9febd1f33b470c1a1",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/event_worker_profile_not_found",
+          "title": "event_worker_profile_not_found",
+          "status": 404,
+          "detail": "Event Worker Profile or source revision was not found.",
+          "code": "event_worker_profile_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "event-workers-forbidden",
+      "operation": "GET /api/v1/event-worker-profiles",
+      "scenario": "event_worker_contract_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/event-worker-profiles",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/event_worker_profile_forbidden",
+          "title": "event_worker_profile_forbidden",
+          "status": 403,
+          "detail": "Profile management permission is required.",
+          "code": "event_worker_profile_forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "event-workers-anonymous",
+      "operation": "GET /api/v1/event-worker-profiles/{id}",
+      "scenario": "event_worker_contract_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/event-worker-profiles/ewp_0fedfdc646ca59c9febd1f33b470c1a1",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "event-workers-conflict",
+      "operation": "PUT /api/v1/event-worker-profiles/{id}",
+      "scenario": "event_worker_contract_conflict",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/event-worker-profiles/ewp_0fedfdc646ca59c9febd1f33b470c1a1",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "expected_revision": 2,
+          "source": {
+            "name": "Example worker",
+            "description": "Complete worker configuration",
+            "agent_profile": {
+              "id": "agp_bot",
+              "revision": 1
+            },
+            "sandbox_profile": {
+              "id": "sbp_bot",
+              "revision": 1
+            },
+            "workspace_profile": {
+              "id": "wkp_bot",
+              "revision": 1
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/event_worker_profile_conflict",
+          "title": "event_worker_profile_conflict",
+          "status": 409,
+          "detail": "The revision or idempotency key conflicts with existing work.",
+          "code": "event_worker_profile_conflict"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "event-workers-invalid",
+      "operation": "POST /api/v1/event-worker-profiles",
+      "scenario": "event_worker_contract_invalid",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/event-worker-profiles",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-worker"
+        },
+        "body": {
+          "name": "",
+          "description": "Complete worker configuration",
+          "agent_profile": {
+            "id": "agp_bot",
+            "revision": 1
+          },
+          "sandbox_profile": {
+            "id": "sbp_bot",
+            "revision": 1
+          },
+          "workspace_profile": {
+            "id": "wkp_bot",
+            "revision": 1
+          }
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/event_worker_profile_invalid",
+          "title": "event_worker_profile_invalid",
+          "status": 400,
+          "detail": "Profile name, source revisions, or request parameters are invalid.",
+          "code": "event_worker_profile_invalid"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "event-workers-unavailable",
+      "operation": "GET /api/v1/event-worker-profiles",
+      "scenario": "event_worker_contract_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/event-worker-profiles",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/event_worker_profile_unavailable",
+          "title": "event_worker_profile_unavailable",
+          "status": 503,
+          "detail": "Event Worker Profiles are temporarily unavailable.",
+          "code": "event_worker_profile_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

@@ -191,7 +191,7 @@ async fn keep_alive_and_fence_policy(
         .await
         .map_err(ApplyError::Driver)?
     else {
-        return Ok(false);
+        return super::retained_availability::keep_alive(store, sandbox, session).await;
     };
     let profile = super::super::sandbox_profiles::read_profile(&document)
         .map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error.to_string())))?;

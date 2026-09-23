@@ -4,9 +4,9 @@ use super::{
 };
 use serde::{Deserialize, Serialize};
 
-/// CMAEG `AgentProfileSnapshot` wire shape.
+/// CMAEG `EventWorkerProfile` wire shape.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
-pub struct AgentProfileSnapshot {
+pub struct EventWorkerProfile {
     /// Wire field `context`.
     pub context: ContextConfig,
     /// Wire field `environment`.
@@ -119,3 +119,6 @@ pub struct SkillRef {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
 }
+
+/// Compatibility alias for the original protocol 1 SDK name.
+pub type AgentProfileSnapshot = EventWorkerProfile;

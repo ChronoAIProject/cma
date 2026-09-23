@@ -12,6 +12,8 @@ export type AppRoute =
   | { readonly kind: 'bot_new' }
   | { readonly kind: 'bot'; readonly botId: string }
   | { readonly kind: 'profiles' }
+  | { readonly kind: 'event_worker_profiles' }
+  | { readonly kind: 'event_worker_profile'; readonly profileId: string }
   | { readonly kind: 'profile'; readonly profileKind: ProfileKind; readonly profileId: string }
   | { readonly kind: 'marketplace' }
   | {
@@ -85,6 +87,7 @@ export function parseRoute(pathname: string): AppRoute {
     if (resource === 'workspaces') return { kind: 'workspace', workspaceId: id };
     if (resource === 'agents') return { kind: 'agent', agentId: id };
     if (resource === 'bots') return id === 'new' ? { kind: 'bot_new' } : { kind: 'bot', botId: id };
+    if (resource === 'profiles' && id === 'event-workers') return { kind: 'event_worker_profiles' };
     if (resource === 'launches') return { kind: 'launch', launchId: id };
     if (resource === 't') return { kind: 'public_trigger', publicId: id };
     if (resource === 'triggers' && id === 'manage') return { kind: 'triggers' };
@@ -94,6 +97,8 @@ export function parseRoute(pathname: string): AppRoute {
     const [resource = '', qualifier = '', id = ''] = path;
     if (resource === 'organizations' && id === 'agents')
       return { kind: 'inventory', organization: qualifier };
+    if (resource === 'profiles' && qualifier === 'event-workers')
+      return { kind: 'event_worker_profile', profileId: id };
     if (resource === 'profiles') {
       const profileKind = PROFILE_KINDS.find((kind) => `${kind}-profiles` === qualifier);
       if (profileKind !== undefined) return { kind: 'profile', profileKind, profileId: id };
@@ -143,6 +148,10 @@ export function routePath(route: AppRoute): string {
       return `/bots/${segment(route.botId)}`;
     case 'profiles':
       return '/profiles';
+    case 'event_worker_profiles':
+      return '/profiles/event-workers';
+    case 'event_worker_profile':
+      return `/profiles/event-workers/${segment(route.profileId)}`;
     case 'profile':
       return `/profiles/${route.profileKind}-profiles/${segment(route.profileId)}`;
     case 'marketplace':

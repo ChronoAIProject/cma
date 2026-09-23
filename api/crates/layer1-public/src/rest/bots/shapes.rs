@@ -9,6 +9,7 @@ use utoipa::ToSchema;
 #[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CreateBotBody {
+    pub event_worker_profile: Option<ProfileRef>,
     pub name: String,
     pub nyxid_bot_id: String,
     pub profile: ProfileRef,
@@ -61,6 +62,12 @@ pub struct Reply {
 impl CreateBotBody {
     pub fn into_core(self) -> Result<CreateBot, BotError> {
         Ok(CreateBot {
+            event_worker_profile: self.event_worker_profile.map(|p| {
+                layer2_core::event_workers::EventWorkerProfileRef {
+                    id: p.id,
+                    revision: p.revision,
+                }
+            }),
             name: self.name,
             external_bot_id: self.nyxid_bot_id,
             profile: AgentProfileRef {
@@ -86,6 +93,8 @@ impl CreateBotBody {
 }
 #[derive(Serialize, ToSchema)]
 pub struct BotView {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event_worker_profile: Option<ProfileRef>,
     pub bot_id: String,
     pub owner: String,
     pub name: String,
@@ -157,6 +166,14 @@ impl From<Bot> for BotView {
             BotState::Deleted => ("deleted", None),
         };
         Self {
+            event_worker_profile: bot
+                .profiles
+                .event_worker_profile
+                .as_ref()
+                .map(|p| ProfileRef {
+                    id: p.reference.id.clone(),
+                    revision: p.reference.revision,
+                }),
             bot_id: bot.bot_id,
             owner: bot.owner.to_string(),
             name: bot.request.name,

@@ -1,6 +1,7 @@
 import { ApiError, type Bot, type BotAdmission, type Cma } from '@chronoai/cma-sdk';
 
 export interface BotClient {
+  readonly eventWorkerProfiles?: Cma['eventWorkerProfiles'];
   readonly bots: Pick<
     Cma['bots'],
     | 'list'

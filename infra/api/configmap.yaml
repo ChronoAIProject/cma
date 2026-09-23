@@ -81,8 +81,8 @@ data:
   # (1-5 per Profile) in MongoDB. The worker pins this image, the service floor
   # and install bounds; changed pins retire old unowned reservations before
   # replacement. Owned live runtimes are adopted using their durable image pin.
-  # Default resource profiles are seeded only when no corresponding default
-  # exists. Durable operator settings and published profiles own later choices.
+  # Seed system Profiles only while an operator-selected default still names one.
+  # Custom published defaults prevent removed system catalogue entries returning.
   CHRONO_SANDBOX_CPU: "1"
   CHRONO_SANDBOX_MEMORY: "1Gi"
   CHRONO_DEFAULT_AGENT_MODEL: "gpt-5.6-sol"

@@ -24,6 +24,7 @@ fn expected(method: &str, path: &str, status: u16, response: Value) -> Expected 
 async fn bot_lifecycle_uses_exact_routes_statuses_and_creation_key() {
     let server = WireServer::new().await;
     let body = CreateBot {
+        event_worker_profile: None,
         name: "Test bot".into(),
         nyxid_bot_id: "external-bot".into(),
         profile: BotProfileRef {

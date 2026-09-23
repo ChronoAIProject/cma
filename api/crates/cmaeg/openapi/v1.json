@@ -783,7 +783,7 @@
             "$ref": "#/components/schemas/PartitionRule"
           },
           "profile": {
-            "$ref": "#/components/schemas/AgentProfileSnapshot"
+            "$ref": "#/components/schemas/EventWorkerProfile"
           },
           "provider": {
             "$ref": "#/components/schemas/ProviderRequest"
@@ -910,7 +910,7 @@
             "$ref": "#/components/schemas/PartitionRule"
           },
           "profile": {
-            "$ref": "#/components/schemas/AgentProfileSnapshot"
+            "$ref": "#/components/schemas/EventWorkerProfile"
           },
           "provider": {
             "$ref": "#/components/schemas/ProviderRequest"
@@ -1346,6 +1346,37 @@
       },
       "EventRef": {
         "type": "string"
+      },
+      "EventWorkerProfile": {
+        "additionalProperties": false,
+        "properties": {
+          "context": {
+            "$ref": "#/components/schemas/ContextConfig"
+          },
+          "environment": {},
+          "metadata": {
+            "$ref": "#/components/schemas/ProfileMetadata"
+          },
+          "model": {
+            "$ref": "#/components/schemas/ModelConfig"
+          },
+          "permission": {
+            "$ref": "#/components/schemas/PermissionConfig"
+          },
+          "schema_version": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "schema_version",
+          "metadata",
+          "model",
+          "permission",
+          "context"
+        ],
+        "type": "object"
       },
       "Field": {
         "additionalProperties": false,
@@ -2000,7 +2031,7 @@
             "$ref": "#/components/schemas/PartitionRule"
           },
           "profile": {
-            "$ref": "#/components/schemas/AgentProfileSnapshot"
+            "$ref": "#/components/schemas/EventWorkerProfile"
           },
           "profile_digest": {
             "type": "string"

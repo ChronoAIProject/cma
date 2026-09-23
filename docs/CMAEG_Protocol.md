@@ -1,10 +1,18 @@
 # CMA Event Gateway protocol 1.0
 
+For service ownership, deployment topology and the provider integration sequence,
+see [Event Gateway architecture](CMAEG_Architecture.md). This document remains
+the normative wire contract.
+
+
 ## 1. Scope and terms
 
 This document is the normative contract for CMAEG clients, event sources and
 agent providers. MUST, MUST NOT and SHOULD have their usual RFC 2119 meanings.
-A **channel** binds an immutable profile snapshot, provider binding, source
+An **EventWorkerProfile** is the complete provider-neutral worker configuration:
+model, permission, context and optional environment. It is distinct from CMA’s
+Agent Profile, which configures one Agent within a Workspace. A **channel** binds
+an immutable EventWorkerProfile snapshot, provider binding, source
 policies, partition rule and reply policy. A **source** submits authenticated
 events. An **activity** is the source-neutral event given to the agent. A
 **partition** selects a stable provider conversation. A **turn** is one admitted
