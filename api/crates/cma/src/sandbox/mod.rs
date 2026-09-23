@@ -3,23 +3,12 @@
 mod agent_scheduler;
 mod agent_skills;
 mod agent_worker;
-pub(crate) mod channel_children;
-pub(crate) mod channel_credentials;
-pub(crate) mod channel_lifecycle_credentials;
-pub(crate) mod channel_mint_reconciliation;
-pub(crate) mod channel_renewal;
-pub(crate) mod channel_retirement;
-pub(crate) mod channel_reuse;
 #[allow(
     dead_code,
     reason = "cleanup request seal awaits effect and restore integration"
 )]
-pub(crate) mod channel_reuse_cleanup;
 mod checkpoint_maintenance;
-pub(crate) mod owned_workspace_cleanup;
 pub(crate) use checkpoint_maintenance::ExportDependencies;
-pub(crate) mod channel_provisioning;
-pub(crate) mod channel_startup;
 mod checkpoint_purger;
 mod composition;
 mod credential;
@@ -60,11 +49,9 @@ pub(crate) use unavailable_credentials::UnavailableSandboxCredentials;
 #[cfg(test)]
 pub(crate) use reconciliation::SandboxReconciler;
 #[cfg(test)]
-pub(crate) use workspace_worker::{
-    WorkspaceWorker, WorkspaceWorkerConfig, WorkspaceWorkerDependencies,
-};
-
 #[cfg(test)]
 mod agent_worker_tests;
 #[cfg(test)]
 mod worker_tests;
+
+pub(crate) mod legacy_credentials;

@@ -235,8 +235,6 @@ pub(super) async fn seed_waiting_approval(store: &InMemorySandboxStore) -> Agent
         .commit_agent_conversation(AgentConversationMutation {
             command_claim: None,
             execution_fence: None,
-            channel_control_execution_fence: None,
-            channel_execution_fence: None,
             trigger_execution_fence: None,
             admission_guard: None,
             expected_agent_revision: working.revision,

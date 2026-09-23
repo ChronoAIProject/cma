@@ -60,10 +60,6 @@ fn execution(
         Arc::new(PlatformDefaults::default()),
     );
     Arc::new(crate::commands::ResourceCommandExecution {
-        channel_controls: None,
-        channel_revival: None,
-        channel: None,
-        invokes: None,
         authority: Arc::new(NoAmbientAuthority),
         access: Arc::new(ResourceAccessService::new(
             resources.clone(),

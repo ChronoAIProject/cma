@@ -10,12 +10,10 @@ pub(super) fn require(
     current: &Agent,
     mutation: &AgentConversationMutation,
 ) -> Result<(), SandboxStoreError> {
-    if row.contains_key(crate::sandbox::channel_reuse_cleanup::CLEANUP_EXECUTION_FIELD) {
+    if row.contains_key("channel_reuse_cleanup_execution") {
         return Err(SandboxStoreError::Conflict);
     }
-    if !row.contains_key(crate::sandbox::channel_reuse_cleanup::CLEANUP_ADMISSION_FIELD)
-        || mutation.command_claim.is_some()
-    {
+    if !row.contains_key("channel_reuse_cleanup_admission") || mutation.command_claim.is_some() {
         // A claim is bound to the actual accepted ledger command later in the
         // same transaction. It is not accepted merely because it is present.
         return Ok(());
