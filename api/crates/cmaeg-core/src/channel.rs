@@ -8,7 +8,7 @@ use utoipa::ToSchema;
 
 use crate::{
     ids::{BindingId, ProviderSlug, RecordId},
-    profile::{AgentProfileSnapshot, NyxIdIdentity},
+    profile::{EventWorkerProfile, NyxIdIdentity},
     require_string, ValidationError,
 };
 
@@ -208,7 +208,7 @@ pub struct ChannelDefinition {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub creation: Option<ChannelCreation>,
     pub owner: NyxIdIdentity,
-    pub profile: AgentProfileSnapshot,
+    pub profile: EventWorkerProfile,
     pub profile_digest: String,
     pub provider: ProviderBinding,
     pub sources: Vec<Source>,

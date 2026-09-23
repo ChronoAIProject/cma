@@ -1,6 +1,6 @@
 //! Channels wire types for the independent CMAEG v1 protocol.
 use super::{
-    AgentProfileSnapshot, BindingId, ChannelId, ConformanceLevel, GroupAdmission, NyxIdIdentity,
+    BindingId, ChannelId, ConformanceLevel, EventWorkerProfile, GroupAdmission, NyxIdIdentity,
     PartitionKey, Platform, ProviderSlug, RecordId, Secret,
 };
 use serde::{Deserialize, Serialize};
@@ -40,7 +40,7 @@ pub struct ChannelCreateRequest {
     /// Wire field `partition`.
     pub partition: PartitionRule,
     /// Wire field `profile`.
-    pub profile: AgentProfileSnapshot,
+    pub profile: EventWorkerProfile,
     /// Wire field `provider`.
     pub provider: ProviderRequest,
     /// Wire field `record_id`.
@@ -95,7 +95,7 @@ pub struct ChannelUpdateRequest {
     /// Wire field `partition`.
     pub partition: PartitionRule,
     /// Wire field `profile`.
-    pub profile: AgentProfileSnapshot,
+    pub profile: EventWorkerProfile,
     /// Wire field `provider`.
     pub provider: ProviderRequest,
     /// Wire field `reply`.
@@ -254,7 +254,7 @@ pub struct PublicChannelDefinition {
     /// Wire field `partition`.
     pub partition: PartitionRule,
     /// Wire field `profile`.
-    pub profile: AgentProfileSnapshot,
+    pub profile: EventWorkerProfile,
     /// Wire field `profile_digest`.
     pub profile_digest: String,
     /// Wire field `provider`.
