@@ -1,5 +1,9 @@
 # API Overview
 
+See the [complete method/path inventory](CMA_Public_APIs.md) and the
+[Event Gateway architecture and integration guide](CMAEG_Architecture.md).
+
+
 CMA exposes one Sandbox model through public interfaces. A Sandbox contains
 Workspaces, each Workspace contains Worktrees, and each Worktree has exactly one
 Agent. The Agent owns the conversation; there is no separate Chat resource,

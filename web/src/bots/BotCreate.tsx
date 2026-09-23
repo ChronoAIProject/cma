@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { CreateBot } from '@chronoai/cma-sdk';
+import { ChoiceGroup } from '../profiles/ChoiceGroup';
+import { WorkerProfilePicker } from './WorkerProfilePicker';
+import type { CreateBot, EventWorkerProfileRecord } from '@chronoai/cma-sdk';
 import type { AppRoute } from '../routing/routes';
 import type { CreationClient, CreationProfile } from '../create/client';
 import { ProfilePicker } from '../create/ProfilePicker';
@@ -37,6 +39,8 @@ export function BotCreate({
   const [name, setName] = useState('');
   const [botId, setBotId] = useState('');
   const [profile, setProfile] = useState<CreationProfile>();
+  const [profileMode, setProfileMode] = useState<'profiles' | 'worker'>('profiles');
+  const [worker, setWorker] = useState<EventWorkerProfileRecord>();
   const [environment, setEnvironment] = useState<EnvironmentDraft>({ mode: 'default' });
   const [policy, setPolicy] = useState<PolicyDraft>({
     admission: '',
@@ -63,7 +67,9 @@ export function BotCreate({
     ack <= 60000;
   const ready = [
     validName && selected !== undefined && choices.fresh,
-    profile?.kind === 'agent' && environmentReady(environment),
+    profileMode === 'worker'
+      ? worker !== undefined
+      : profile?.kind === 'agent' && environmentReady(environment),
     validPolicy,
   ];
   useEffect(() => () => active.current?.abort(), []);
@@ -74,13 +80,16 @@ export function BotCreate({
     if (busy || (intent === undefined && !ready.every(Boolean))) return;
     const command =
       intent ??
-      (profile === undefined || admission === undefined || selected === undefined
+      ((profileMode === 'worker' ? worker === undefined : profile === undefined) ||
+      admission === undefined ||
+      selected === undefined
         ? undefined
         : {
             key: crypto.randomUUID(),
-            profileName: profile.name,
+            profileName:
+              profileMode === 'worker' ? (worker?.source.name ?? '') : (profile?.name ?? ''),
             botName: selected.name,
-            ...(environment.mode === 'custom'
+            ...(profileMode === 'profiles' && environment.mode === 'custom'
               ? {
                   sandboxProfileName: environment.sandbox?.name,
                   workspaceProfileName: environment.workspace?.name,
@@ -89,8 +98,24 @@ export function BotCreate({
             body: {
               name,
               nyxid_bot_id: selected.id,
-              profile: { id: profile.revision.profileId, revision: profile.revision.revision },
-              ...(environment.mode === 'custom' && environment.sandbox && environment.workspace
+              profile:
+                profileMode === 'worker' && worker
+                  ? worker.source.agent_profile
+                  : {
+                      id: profile?.revision.profileId ?? '',
+                      revision: profile?.revision.revision ?? 0,
+                    },
+              ...(profileMode === 'worker' && worker
+                ? {
+                    event_worker_profile: { id: worker.id, revision: worker.revision },
+                    sandbox_profile: worker.source.sandbox_profile,
+                    workspace_profile: worker.source.workspace_profile,
+                  }
+                : {}),
+              ...(profileMode === 'profiles' &&
+              environment.mode === 'custom' &&
+              environment.sandbox &&
+              environment.workspace
                 ? {
                     sandbox_profile: {
                       id: environment.sandbox.revision.profileId,
@@ -130,7 +155,7 @@ export function BotCreate({
   };
   const labels = [
     'Choose a Telegram bot',
-    'Choose an Agent profile',
+    'Choose the worker configuration',
     'Choose message rules',
     'Review and create',
   ];
@@ -205,9 +230,35 @@ export function BotCreate({
           )}
           {step !== 1 ? null : (
             <>
-              <p>Choose a published profile for the Agent’s model, instructions and skills.</p>
-              <ProfilePicker client={profiles} kind="agent" value={profile} onChange={setProfile} />
-              <BotEnvironment client={profiles} value={environment} onChange={setEnvironment} />
+              {client.eventWorkerProfiles === undefined ? null : (
+                <ChoiceGroup
+                  label="Worker configuration"
+                  value={profileMode}
+                  onChange={setProfileMode}
+                  options={[
+                    { value: 'profiles', label: 'CMA profiles' },
+                    { value: 'worker', label: 'Event Worker Profile' },
+                  ]}
+                />
+              )}
+              {profileMode === 'worker' && client.eventWorkerProfiles ? (
+                <WorkerProfilePicker
+                  client={client.eventWorkerProfiles}
+                  value={worker}
+                  onChange={setWorker}
+                />
+              ) : (
+                <>
+                  <p>Choose a published profile for the Agent’s model, instructions and skills.</p>
+                  <ProfilePicker
+                    client={profiles}
+                    kind="agent"
+                    value={profile}
+                    onChange={setProfile}
+                  />
+                  <BotEnvironment client={profiles} value={environment} onChange={setEnvironment} />
+                </>
+              )}
             </>
           )}
           {step !== 2 ? null : <BotPolicy value={policy} onChange={setPolicy} />}
@@ -218,10 +269,18 @@ export function BotCreate({
                 <dd>{intent?.body.name ?? name}</dd>
                 <dt>Telegram bot</dt>
                 <dd>{intent?.botName ?? selected?.name ?? 'Unavailable'}</dd>
-                <dt>Agent profile</dt>
+                <dt>
+                  {intent?.body.event_worker_profile || profileMode === 'worker'
+                    ? 'Event Worker Profile'
+                    : 'Agent profile'}
+                </dt>
                 <dd>
-                  {intent?.profileName ?? profile?.name} · Version{' '}
-                  {intent?.body.profile.revision ?? profile?.revision.revision}
+                  {intent?.profileName ??
+                    (profileMode === 'worker' ? worker?.source.name : profile?.name)}{' '}
+                  · Version{' '}
+                  {intent?.body.event_worker_profile?.revision ??
+                    intent?.body.profile.revision ??
+                    (profileMode === 'worker' ? worker?.revision : profile?.revision.revision)}
                 </dd>
                 <dt>Sandbox profile</dt>
                 <dd>
