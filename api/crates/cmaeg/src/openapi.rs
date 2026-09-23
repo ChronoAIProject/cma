@@ -7,7 +7,7 @@ use utoipa::OpenApi;
 #[openapi(
     info(title = "CMA Event Gateway", version = "1.0"),
     servers((url = "/v1")),
-    modifiers(&ManagementSecurity, &ProtocolBase),
+    modifiers(&ManagementSecurity, &ProfileCompatibility, &ProtocolBase),
     components(schemas(crate::providers::EventContextSnapshot)),
     paths(
         http::management::create_channel,
@@ -87,5 +87,21 @@ fn sort(value: &mut serde_json::Value) {
             }
         }
         _ => {}
+    }
+}
+
+// Keep the original v1 schema name available to generated clients.
+struct ProfileCompatibility;
+impl utoipa::Modify for ProfileCompatibility {
+    fn modify(&self, document: &mut utoipa::openapi::OpenApi) {
+        let components = document.components.as_mut().expect("protocol schemas");
+        let profile = components
+            .schemas
+            .get("EventWorkerProfile")
+            .expect("profile schema")
+            .clone();
+        components
+            .schemas
+            .insert("AgentProfileSnapshot".into(), profile);
     }
 }
