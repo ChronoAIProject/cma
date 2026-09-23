@@ -142,7 +142,7 @@ impl NyxidClient {
         let updated: Route = self
             .json(
                 token,
-                Method::PATCH,
+                Method::PUT,
                 &format!("/api/v1/channel-conversations/{route}"),
                 Some(json!({"agent_api_key_id":key})),
             )
