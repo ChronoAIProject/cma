@@ -147,6 +147,7 @@ async fn submit(
         .await
     {
         Ok(value) => value,
+        Err(value) if binding => return error::binding_admission(value),
         Err(value) => return error::admission(value),
     };
     let authorization = match state
