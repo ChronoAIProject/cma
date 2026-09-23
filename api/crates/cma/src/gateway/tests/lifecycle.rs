@@ -122,12 +122,26 @@ async fn production_effects_create_disable_rotate_and_delete_through_compiled_ga
 }
 #[tokio::test]
 async fn unknown_nyxid_creation_outcomes_clean_up_owned_effects_after_gateway_restart() {
-    for failed_step in ["mint_agent", "mint_route", "callback", "create_route"] {
+    for failed_step in [
+        "mint_agent",
+        "mint_route",
+        "callback",
+        "create_route",
+        "changed_expiry",
+    ] {
         let server = Server::start().await;
         let mut gateway = Gateway::start(&server).await;
         let (service, store, worker, initial) = setup(&server, &gateway).await;
         server.identity.lock().unwrap().fail_after = Some(failed_step);
+        if failed_step == "changed_expiry" {
+            server.identity.lock().unwrap().expiry_suffix = Some(".000000001+00:00");
+        }
         assert!(worker.run(&initial.bot_id).await.is_err());
+        if failed_step == "changed_expiry" {
+            let state = server.identity.lock().unwrap();
+            assert_eq!(state.calls, ["mint_agent"]);
+            assert_eq!(state.keys.len(), 1);
+        }
         gateway.restart(&server).await;
         let mut bot = store.get(&initial.bot_id).await.unwrap().unwrap();
         let prior = bot.revision;
