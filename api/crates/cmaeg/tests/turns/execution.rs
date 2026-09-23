@@ -147,6 +147,42 @@ async fn upstream_busy_retries_same_key_and_missing_conversation_is_created_once
     }
 }
 #[tokio::test]
+async fn readiness_retry_honours_retry_after_after_ingress_returns_deferred() {
+    let mut fixture = Fixture::new(
+        FakeProviderConfig {
+            busy_once: true,
+            busy_retry_after: Some(1),
+            ..Default::default()
+        },
+        TurnConfig {
+            accept_budget: Duration::from_millis(100),
+            busy_retry_max: Duration::from_secs(5),
+            ..Default::default()
+        },
+        4,
+    )
+    .await;
+    assert!(matches!(
+        fixture
+            .runner
+            .launch(fixture.request("cold-readiness"))
+            .await,
+        LaunchOutcome::Deferred
+    ));
+    assert!(matches!(
+        fixture.terminal().await.last(),
+        Some(TurnOutcome::Completed { .. })
+    ));
+    let requests = fixture.fake.requests();
+    let posts: Vec<_> = requests.iter().filter(|r| r.method == "POST").collect();
+    assert_eq!(posts.len(), 2);
+    assert!(posts[1].received_at.duration_since(posts[0].received_at) >= Duration::from_secs(1));
+    assert_eq!(posts[0].idempotency_key, posts[1].idempotency_key);
+    assert_eq!(posts[0].body, posts[1].body);
+    fixture.fake.close().await;
+}
+
+#[tokio::test]
 async fn permanent_busy_and_local_capacity_refuse_with_provider_busy() {
     let mut fixture = Fixture::new(
         FakeProviderConfig {
