@@ -5,7 +5,6 @@ pub(super) async fn production_adapter(
     config: &Config,
     checkpoint_objects: Arc<crate::store::MongoCheckpointObjectStore>,
     subscriptions: Arc<dyn layer3_adapter::hosted::HostedSubscriptionSource>,
-    channel_tools: Arc<dyn layer3_adapter::hosted::HostedChannelToolSource>,
     provider_tools: Arc<dyn layer3_adapter::hosted::HostedProviderToolSource>,
 ) -> Result<Arc<dyn layer3_adapter::SandboxAdapter>, String> {
     use layer3_adapter::codex::{CodexAdapter, CodexSandboxSpec};
@@ -49,7 +48,6 @@ pub(super) async fn production_adapter(
             ..CodexSandboxSpec::default()
         },
     )
-    .with_channel_tools(channel_tools)
     .with_provider_tools(provider_tools);
     if let Some(policy) = &config.runtime.home_policy {
         let homes = layer3_adapter::provider::PersistentHomeVolumes::infer_namespaced(
@@ -65,20 +63,4 @@ pub(super) async fn production_adapter(
         adapter = adapter.with_home_volumes(Arc::new(homes));
     }
     Ok(Arc::new(adapter))
-}
-
-pub(super) async fn channel_tool_source(
-    stores: &crate::store::MongoStores,
-    config: &Config,
-) -> Result<Arc<crate::store::MongoChannelToolStore>, String> {
-    Ok(Arc::new(
-        crate::store::MongoChannelToolStore::open(
-            stores.sandbox_model.clone(),
-            &config.deployment_id,
-            &config.auth_encryption_key,
-            &config.public_url,
-        )
-        .await
-        .map_err(|error| format!("channel tool storage is not usable: {error}"))?,
-    ))
 }

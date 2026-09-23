@@ -22,8 +22,6 @@ fn turn(parent: &Sandbox, current: &Agent) -> AgentConversationMutation {
     AgentConversationMutation {
         command_claim: None,
         execution_fence: None,
-        channel_control_execution_fence: None,
-        channel_execution_fence: None,
         trigger_execution_fence: None,
         admission_guard: Some(SandboxMutationGuard::capture(parent)),
         expected_agent_revision: current.revision,
@@ -51,8 +49,6 @@ fn runtime_update(current: &Agent) -> AgentConversationMutation {
     AgentConversationMutation {
         command_claim: None,
         execution_fence: None,
-        channel_control_execution_fence: None,
-        channel_execution_fence: None,
         trigger_execution_fence: None,
         admission_guard: None,
         expected_agent_revision: current.revision,

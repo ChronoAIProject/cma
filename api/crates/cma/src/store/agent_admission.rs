@@ -31,8 +31,6 @@ mod trigger_protocol;
 use parent_fences::{advance_sandbox, advance_workspace};
 
 use reuse::reuse_profile_agent;
-#[cfg(test)]
-pub(in crate::store) use reuse::reuse_profile_agent_in_snapshot;
 
 enum ApplyError {
     Domain(SandboxStoreError),

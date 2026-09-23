@@ -35,28 +35,10 @@ pub enum CommandReadiness {
 /// the envelope owner. Preparation may request revival but may never send input.
 #[async_trait::async_trait]
 pub trait AgentCommandExecution: Send + Sync {
-    /// Older compositions retain the durable hold. A Channel-aware adapter may
-    /// release it only under its own fresh source and invoke transaction.
-    async fn release_held(&self, _command: &AdmittedAgentCommand) {}
-    /// Optional one-use authorization handoff within this invocation only.
-    async fn release_held_for_attempt(
-        &self,
-        command: &AdmittedAgentCommand,
-    ) -> Option<ChannelExecutionHandoff> {
-        self.release_held(command).await;
-        None
-    }
     /// Fresh authority and target checks, with no lifecycle or runtime effects.
     async fn check_queued(&self, command: &AdmittedAgentCommand) -> CommandReadiness;
     async fn prepare_queued(&self, command: &AdmittedAgentCommand);
     async fn execute(&self, command: &AdmittedAgentCommand) -> CommandAttempt;
-    async fn execute_with_handoff(
-        &self,
-        command: &AdmittedAgentCommand,
-        _handoff: Option<ChannelExecutionHandoff>,
-    ) -> CommandAttempt {
-        self.execute(command).await
-    }
 }
 
 pub struct AgentCommandWorker {
@@ -108,7 +90,7 @@ impl AgentCommandWorker {
     }
 
     pub async fn run_one(&self, id: &AgentCommandId) -> Result<(), CommandLedgerError> {
-        let Some(mut candidate) = bounded(self.store.get_command(id)).await? else {
+        let Some(candidate) = bounded(self.store.get_command(id)).await? else {
             return Ok(());
         };
         candidate.validate()?;
@@ -120,31 +102,6 @@ impl AgentCommandWorker {
         }
         if candidate.work.dispatch.is_some() {
             return bounded(self.store.reconcile_command(id)).await.map(|_| ());
-        }
-        let mut handoff = None;
-        if candidate.status == AgentResponseStatus::WaitingAction
-            && matches!(candidate.receipt.envelope.actor, AgentActor::Channel { .. })
-        {
-            let started = tokio::time::Instant::now();
-            handoff = tokio::time::timeout(
-                IO_BOUND,
-                self.execution.release_held_for_attempt(&candidate),
-            )
-            .await
-            .unwrap_or(None);
-            tracing::info!(
-                event = "channel_operation",
-                operation = "command_execution",
-                stage = "held_release",
-                command_id = %id,
-                idle_handoff = handoff.is_some(),
-                elapsed_ms = started.elapsed().as_millis() as u64,
-                "Channel hold release attempt finished"
-            );
-            candidate = bounded(self.store.get_command(id))
-                .await?
-                .ok_or(CommandLedgerError::NotFound)?;
-            candidate.validate()?;
         }
         if !candidate.awaiting_claim(&now_rfc3339()) {
             return Ok(());
@@ -261,16 +218,11 @@ impl AgentCommandWorker {
                 )
                 .await;
         }
-        let attempt = self.drive(&command, &claim, handoff).await;
+        let attempt = self.drive(&command, &claim).await;
         self.settle(&command, &claim, attempt).await
     }
 
-    async fn drive(
-        &self,
-        command: &AdmittedAgentCommand,
-        claim: &CommandClaim,
-        handoff: Option<ChannelExecutionHandoff>,
-    ) -> CommandAttempt {
+    async fn drive(&self, command: &AdmittedAgentCommand, claim: &CommandClaim) -> CommandAttempt {
         let renew = async {
             loop {
                 tokio::time::sleep(RENEW_INTERVAL).await;
@@ -290,7 +242,7 @@ impl AgentCommandWorker {
             }
         };
         tokio::select! {
-            result = tokio::time::timeout(ATTEMPT_BOUND, self.execution.execute_with_handoff(command, handoff)) => result.unwrap_or(CommandAttempt::Retry),
+            result = tokio::time::timeout(ATTEMPT_BOUND, self.execution.execute(command)) => result.unwrap_or(CommandAttempt::Retry),
             () = renew => CommandAttempt::Retry,
         }
     }

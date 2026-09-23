@@ -15,7 +15,6 @@ use super::checkpoint_storage::CheckpointBlobStore;
 use super::durability::majority_collection;
 use super::schema::initialize_collections;
 
-mod channel_retention;
 mod download;
 mod model;
 mod publication;
@@ -24,9 +23,6 @@ mod retention;
 mod tombstones;
 mod upload;
 
-pub(super) use channel_retention::{
-    seal as seal_channel_retention, verify as verify_channel_retention,
-};
 use model::{ensure_indexes, validate_sandbox_id, GATES, MANIFESTS, TOMBSTONES};
 pub(super) use retention::{prune_evicted, RetentionError};
 
@@ -143,6 +139,3 @@ mod tests;
 #[cfg(test)]
 #[path = "checkpoint_objects/mongo_integration_tests.rs"]
 mod mongo_integration_tests;
-
-#[cfg(test)]
-pub(in crate::store) mod history_test_support;

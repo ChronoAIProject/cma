@@ -17,7 +17,6 @@ pub(crate) use identifiers::valid_provider_key_id;
 use identifiers::{credential_of, key_name, validate_credential_id};
 
 mod bots;
-pub(crate) mod bridge;
 mod catalog;
 mod identifiers;
 mod provided;

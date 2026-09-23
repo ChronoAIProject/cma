@@ -66,52 +66,6 @@ pub struct AgentCreationProvenance {
 }
 
 impl AgentCreationProvenance {
-    /// Only an exact current allocation proof admits Channel creation. Legacy
-    /// aggregate discriminators stay readable by older binaries; this sidecar
-    /// is the authoritative creation category.
-    pub fn for_channel_admission(
-        authority: &crate::bridge::allocation::AllocationAuthority,
-        allocation: &crate::bridge::allocation::AllocationRecord,
-        agent: &Agent,
-        parent: &Sandbox,
-    ) -> Result<Self, SandboxStoreError> {
-        authority
-            .require_record(allocation)
-            .map_err(|_| SandboxStoreError::Conflict)?;
-        let target = allocation.placement.target();
-        let profiles = allocation
-            .placement
-            .profiles()
-            .ok_or(SandboxStoreError::Conflict)?;
-        if agent.revision != 1
-            || agent.conversation.last_seq != 1
-            || agent.id != target.agent_id
-            || agent.workspace_id != target.workspace_id
-            || agent.worktree_id != target.worktree_id
-            || parent.id != target.sandbox_id
-            || parent.profile != profiles.sandbox
-            || agent.profile != profiles.agent
-            || agent.creation_key != format!("channel-allocation:{}", allocation.id)
-            || agent.creation_fingerprint != channel_fingerprint(allocation)?
-        {
-            return Err(SandboxStoreError::Conflict);
-        }
-        let record = Self::capture(
-            agent,
-            parent,
-            allocation.owner.clone(),
-            AgentCreationOrigin::ChannelBridge {
-                bridge_id: allocation.identity.bridge_id.as_str().to_owned(),
-                partition_id: allocation.identity.key.hash().to_owned(),
-                generation: allocation.identity.generation,
-                source_reference: allocation.first_source.inbox_id().to_owned(),
-            },
-            Some(profiles.approved_by.clone()),
-        );
-        record.validate_against(agent, parent)?;
-        Ok(record)
-    }
-
     /// Trusted creation transaction only. Legacy aggregate formats are retained.
     /// Channel creation requires its separate bridge allocation authority and is
     /// deliberately unavailable through ordinary manual/Trigger admission.
@@ -315,21 +269,6 @@ impl AgentCreationProvenance {
         }
         Ok(())
     }
-}
-
-pub fn channel_fingerprint(
-    allocation: &crate::bridge::allocation::AllocationRecord,
-) -> Result<String, SandboxStoreError> {
-    allocation.validate().map_err(|_| corrupt())?;
-    crate::profiles::content_digest(&(
-        "cma.bridge.agent-creation.v1",
-        &allocation.id,
-        &allocation.operation_id,
-        allocation.placement.target(),
-        allocation.profiles_digest(),
-        &allocation.first_source,
-    ))
-    .map_err(|_| corrupt())
 }
 
 fn corrupt() -> SandboxStoreError {
