@@ -684,3 +684,12 @@ created. NyxID catalogue, service configuration, roles, code and deployment were
 unchanged. Telegram acceptance remains incomplete, although GitHub issue #918
 was closed separately at 01:28:36 UTC without recorded Telegram evidence. Bridge
 retirement in #920 remains open and gated on that evidence.
+
+A subsequent disposable live key check reproduced a further CMA contract
+mismatch: NyxID rejects API-key `platform: telegram`; this metadata identifies
+the client, independently of the Telegram channel platform. With the supported
+`generic` value, key creation, exact expiry-instant comparison, callback update
+by PUT and readback succeeded at 02:18:48 UTC. The provider returned UTC expiry
+with `+00:00`. The disposable key was revoked and its absence verified. No
+channel route or Telegram message was created by this check. CMA's route-key
+request and metadata validation now use `generic`; the channel stays Telegram.
