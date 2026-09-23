@@ -1,4 +1,4 @@
-use super::profiles::{BindingProfileStore, BindingProfiles};
+use super::profiles::BindingProfiles;
 use super::*;
 use crate::profiles::{AgentProvider, ProfileCapacityBounds};
 use crate::sandbox::store::{AgentStore, SandboxStore, SandboxStoreError, WorkspaceStore};
@@ -47,23 +47,18 @@ pub enum BindingError {
 }
 
 impl BindingService {
-    pub fn new<S, P>(
+    pub fn new<S>(
         store: Arc<S>,
-        profiles: Arc<P>,
         resources: BindingResources,
         credentials: Arc<dyn BindingCredentialCustody>,
         policy: BindingPolicy,
     ) -> Arc<Self>
     where
         S: BindingServiceStore + 'static,
-        P: BindingProfileStore + 'static,
     {
         Arc::new(Self {
             store,
-            profiles: BindingProfiles {
-                store: profiles,
-                bounds: policy.bounds,
-            },
+            profiles: BindingProfiles,
             resources,
             credentials,
             policy,
