@@ -31,9 +31,7 @@ mod creation_admission;
 mod provenance;
 mod provenance_inventory;
 mod provenance_service;
-pub use provenance::{
-    channel_fingerprint, AgentCreationCategory, AgentCreationOrigin, AgentCreationProvenance,
-};
+pub use provenance::{AgentCreationCategory, AgentCreationOrigin, AgentCreationProvenance};
 pub use provenance_inventory::{
     AgentProvenanceInventoryQuery, AgentProvenanceInventoryRow, AgentProvenanceInventoryService,
 };

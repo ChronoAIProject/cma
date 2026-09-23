@@ -2,19 +2,13 @@
 //! Callers hold the existing parent transaction fence and handle replay first.
 use std::collections::BTreeSet;
 
-use layer2_core::{
-    bridge::allocation::{AllocationError, AllocationPlacement},
-    sandbox::store::SandboxStoreError,
-    SandboxId, WorkspaceId,
-};
+use layer2_core::{sandbox::store::SandboxStoreError, SandboxId, WorkspaceId};
 use mongodb::{
     bson::{doc, Bson},
     ClientSession,
 };
 
-use super::{
-    bridge_allocations::MutationError, sandbox_mongo::MongoSandboxStore, MongoBridgeAllocationStore,
-};
+use super::sandbox_mongo::MongoSandboxStore;
 
 pub(super) enum CapacityError {
     Domain(SandboxStoreError),
@@ -30,25 +24,6 @@ impl From<mongodb::error::Error> for CapacityError {
 impl From<SandboxStoreError> for CapacityError {
     fn from(error: SandboxStoreError) -> Self {
         Self::Domain(error)
-    }
-}
-
-impl From<MutationError> for CapacityError {
-    fn from(error: MutationError) -> Self {
-        match error {
-            MutationError::Mongo(error) => Self::Driver(error),
-            MutationError::Core(AllocationError::Capacity) => {
-                Self::Domain(SandboxStoreError::Unavailable(
-                    "shared child reservation inventory is incomplete".into(),
-                ))
-            }
-            MutationError::Core(AllocationError::Conflict) => {
-                Self::Domain(SandboxStoreError::Conflict)
-            }
-            MutationError::Core(_) => Self::Domain(SandboxStoreError::Corrupt(
-                "shared child reservation evidence is invalid".into(),
-            )),
-        }
     }
 }
 
@@ -72,15 +47,16 @@ pub(super) async fn workspaces(
         return Ok(ids.len() as u64);
     }
     let database = store.client.database(&store.sandboxes.namespace().db);
-    for (record, _, released) in
-        MongoBridgeAllocationStore::retained_reuse_reservations(&database, sandbox_id, session)
-            .await?
-    {
-        if let AllocationPlacement::ReuseParent { target, parent, .. } = record.placement {
-            if parent.workspace_created_at.is_none() && !released {
-                ids.insert(target.workspace_id);
-            }
-        }
+    // Old accepted child reservations remain capacity authority until an explicit migration.
+    // Presence (including malformed records) must not make capacity appear available.
+    let retained = database.collection::<mongodb::bson::Document>("bridge_allocations")
+        .find_one(doc! {"record.placement.target.sandbox_id": sandbox_id.as_str(), "record.placement.kind":"reuse_parent"})
+        .projection(doc! {"_id":1}).session(&mut *session).await?;
+    if retained.is_some() {
+        return Err(SandboxStoreError::Unavailable(
+            "retained legacy child reservations require migration".into(),
+        )
+        .into());
     }
     Ok(ids.len() as u64)
 }
@@ -108,14 +84,16 @@ pub(super) async fn agents(
         return Ok(ids.len() as u64);
     }
     let database = store.client.database(&store.sandboxes.namespace().db);
-    for (record, released, _) in
-        MongoBridgeAllocationStore::retained_reuse_reservations(&database, sandbox_id, session)
-            .await?
-    {
-        let target = record.placement.target();
-        if target.workspace_id == *workspace_id && !released {
-            ids.insert(target.agent_id.clone());
-        }
+    // Old accepted child reservations remain capacity authority until an explicit migration.
+    // Presence (including malformed records) must not make capacity appear available.
+    let retained = database.collection::<mongodb::bson::Document>("bridge_allocations")
+        .find_one(doc! {"record.placement.target.sandbox_id": sandbox_id.as_str(), "record.placement.kind":"reuse_parent"})
+        .projection(doc! {"_id":1}).session(&mut *session).await?;
+    if retained.is_some() {
+        return Err(SandboxStoreError::Unavailable(
+            "retained legacy child reservations require migration".into(),
+        )
+        .into());
     }
     Ok(ids.len() as u64)
 }

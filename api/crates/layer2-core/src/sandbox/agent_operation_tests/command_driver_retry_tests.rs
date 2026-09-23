@@ -1,8 +1,5 @@
 use super::*;
 
-#[path = "command_driver_channel_pacing_tests.rs"]
-mod channel_pacing;
-
 struct UnavailableOnce {
     inner: Arc<Execution>,
     checks: AtomicUsize,
