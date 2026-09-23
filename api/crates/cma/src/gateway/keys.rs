@@ -29,6 +29,28 @@ pub(super) struct Key {
     #[serde(default)]
     pub bindings_count: u64,
 }
+pub(super) fn matches_expiry(observed: Option<&str>, requested: &str) -> bool {
+    let Some(observed) = observed else {
+        return false;
+    };
+    // Bot creation sends whole seconds. Refuse any fractional change before
+    // BSON's millisecond parser can truncate it, but accept equivalent offsets.
+    if observed.split_once('.').is_some_and(|(_, fraction)| {
+        fraction
+            .bytes()
+            .take_while(u8::is_ascii_digit)
+            .any(|digit| digit != b'0')
+    }) {
+        return false;
+    }
+    match (
+        mongodb::bson::DateTime::parse_rfc3339_str(observed),
+        mongodb::bson::DateTime::parse_rfc3339_str(requested),
+    ) {
+        (Ok(observed), Ok(requested)) => observed == requested,
+        _ => false,
+    }
+}
 pub(super) fn name(bot: &Bot, role: BotKeyRole) -> String {
     format!(
         "cma:bot:{}:{}:{}",
@@ -141,7 +163,7 @@ impl NyxidClient {
         let updated: Key = self
             .json(
                 token,
-                Method::PATCH,
+                Method::PUT,
                 &format!("/api/v1/api-keys/{id}"),
                 Some(json!({"callback_url":url})),
             )
