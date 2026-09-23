@@ -75,7 +75,11 @@ review, and follows recorded preparation. A GET or OAuth callback never starts
 work. Reuse always concerns the visitor's resources, never the publisher's.
 
 See [CMA Model](./docs/CMA_Model.md), [CMA Trigger](./docs/CMA_Trigger.md),
-[API Overview](./docs/API_Overview.md) and [REST API](./docs/API_REST.md).
+[API Overview](./docs/API_Overview.md), [REST API](./docs/API_REST.md), and the
+[complete public API list](./docs/CMA_Public_APIs.md).
+
+For the separate event gateway, see [architecture and integration](./docs/CMAEG_Architecture.md),
+[protocol](./docs/CMAEG_Protocol.md), and [operations](./docs/CMAEG_Operations.md).
 
 ## Branches And Deployment
 
