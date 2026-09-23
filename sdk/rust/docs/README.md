@@ -4,7 +4,7 @@
 
 The repository-only Rust SDK provides typed async access to CMA discovery,
 Agent/Workspace/Sandbox profiles, the profile marketplace, Sandboxes,
-Workspaces, Worktrees, Agents, bridge setup, Triggers, Launches, operator settings, and live
+Workspaces, Worktrees, Agents, Bots, Triggers, Launches, operator settings, and live
 conversation protocols. It is a standalone client package with no
 service-crate dependencies and is not published to a package registry.
 
@@ -39,8 +39,3 @@ MCP, and A2A are explicit named-refusal probes, not executable interfaces.
 REST acceptance does not prove that provisioning, input execution, or a
 lifecycle operation has finished. Poll the returned resource and durable events
 for the relevant status.
-
-The Bridge client also exposes `bridges().pending_messages(bridge_id, allocation_id)`
-for authorized, bounded previews of accepted channel inputs before their Agent
-turn starts. Results distinguish available, unavailable and redacted content and
-retain the exact partition generation and durable Agent sequence.

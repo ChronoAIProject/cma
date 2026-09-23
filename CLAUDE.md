@@ -338,6 +338,11 @@ Nothing in `layer1-public`, `layer2-core`, `layer3-adapter`, `layer4-runtime` or
 `cma` may depend on the CMAEG crates, and CMAEG crates may not depend on them;
 CI enforces both directions.
 
+CMAEG owns event ingress, channel configuration and delivery; CMA exposes the
+provider binding contract and owner Bot management. The legacy in-CMA Bridge
+execution pipeline and its public routes have been retired. Persisted history
+readers retain the original schemas and never authorize new legacy work.
+
 `docs/CMAEG_Protocol.md` is the normative CMAEG protocol authority. Changes under
 `/v1` must be additive: retained operations, fields, enum values and operation IDs
 remain compatible. A non-additive change requires `/v2`. The reviewed baseline

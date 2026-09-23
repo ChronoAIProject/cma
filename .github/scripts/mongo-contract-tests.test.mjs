@@ -21,12 +21,6 @@ const requiredPrefixes = [
   'store::sandbox_mongo_integration_tests::command_ledger_tests::',
   'store::sandbox_mongo_integration_tests::resource_access_tests::',
   'store::sandbox_maintenance::mongo_integration_tests::',
-  'store::bridge_definitions::mongo_integration_tests::',
-  'store::bridge_invokes::tests::',
-  'store::bridge_invokes::outbox::tests::',
-  'store::bridge_invokes::outbox::rate::tests::',
-  'store::bridge_invokes::outbox::snapshot::grant::tests::',
-  'store::bridge_allocations::mongo_integration_tests::',
   'store::sandbox_reconciliation::mongo_integration_tests::channel_home_retention::',
   'sandbox::agent_worker_tests::sdk_conformance_tests::mongo_tests::',
 ];
