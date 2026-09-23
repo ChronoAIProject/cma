@@ -18,6 +18,7 @@ mod channel_usage_cases;
 mod creation_inventory_cases;
 mod credential_cases;
 mod domains;
+mod event_worker_cases;
 mod experience_cases;
 mod fault_cases;
 mod gateway_cases;
@@ -138,6 +139,9 @@ fn paths() -> Vec<PathBuf> {
 }
 
 async fn scenario(name: &str) -> Scenario {
+    if let Some(scenario) = event_worker_cases::scenario(name).await {
+        return scenario;
+    }
     if let Some(scenario) = bot_cases::scenario(name).await {
         return scenario;
     }
