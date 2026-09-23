@@ -255,26 +255,44 @@ impl SandboxCheckpointMaintenance {
             .as_ref()
             .ok_or(SandboxStoreError::Conflict)?;
         let result = tokio::time::timeout(lease::FINALIZE_TIMEOUT, async {
+            if claimed.status == SandboxStatus::Retiring
+                && claimed.runtime.as_ref() == Some(&capture.runtime)
+                && !self
+                    .adapter
+                    .runtime_inventory()
+                    .await?
+                    .iter()
+                    .any(|runtime| {
+                        runtime.handle.0 == capture.runtime.runtime_id
+                            || runtime.sandbox_id == claimed.id.as_str()
+                    })
+            {
+                // Owner deletion can outlive its runtime. Confirmed absence leaves
+                // no writers to release; retaining this debt would block retirement.
+                return Ok(true);
+            }
             let handle =
                 adopt_bound_runtime(self.adapter.as_ref(), claimed, &self.deployment_id).await?;
-            self.adapter
+            let receipt = self
+                .adapter
                 .resume_checkpoint_writers(
                     &handle,
                     &CheckpointWriterResumeRequest {
                         writer_resume_token: token.clone(),
                     },
                 )
-                .await
+                .await?;
+            Ok::<_, layer3_adapter::AdapterError>(
+                receipt.writers_resumed
+                    && writer_resume_tokens_match(&receipt.writer_resume_token, token),
+            )
         })
         .await;
         let now = clock.now();
         let mut next = claimed.clone();
         let stamp = rfc3339_at(now);
         match result {
-            Ok(Ok(receipt))
-                if receipt.writers_resumed
-                    && writer_resume_tokens_match(&receipt.writer_resume_token, token) =>
-            {
+            Ok(Ok(true)) => {
                 next.complete_checkpoint_writer_resume(&lease.holder, lease.fence, stamp.clone())
                     .map_err(model_error)?;
             }
