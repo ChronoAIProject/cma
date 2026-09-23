@@ -8,7 +8,9 @@ import { agentClient } from '../test/agent';
 import { WIRE_AGENT, WIRE_SANDBOX_DETAIL } from '../test/rest';
 import { chooseOption } from '../test/select';
 import { loadSandbox, loadWorkspace } from './loadHierarchy';
-import { ScopedNavigation } from './ScopedNavigation';
+import { ScopedNavigation as ScopedNavigationTree } from './ScopedNavigation';
+import { useNavigationScope } from './NavigationScope';
+import type { ComponentProps } from 'react';
 import { SandboxAccessPage } from './SandboxAccessPage';
 
 const at = '2026-09-01T00:00:00Z';
@@ -218,7 +220,6 @@ it.each([false, true])(
       <ScopedNavigation
         client={test.sdk}
         scope={shared ? 'shared' : 'organization:org_research'}
-        onScopeChange={vi.fn()}
         onNavigate={test.navigate}
         personal={<p>Personal tree</p>}
       />,
@@ -255,7 +256,6 @@ it.each([false, true])(
     );
     const props = {
       client: test.sdk,
-      onScopeChange: vi.fn(),
       onNavigate: test.navigate,
       personal: <p>Personal tree</p>,
     };
@@ -385,7 +385,6 @@ it('pages shared navigation without parent reads and clears it on revocation', a
     <ScopedNavigation
       client={sdk}
       scope="shared"
-      onScopeChange={vi.fn()}
       onNavigate={vi.fn()}
       personal={<p>Personal tree</p>}
     />,
@@ -409,3 +408,8 @@ it('pages shared navigation without parent reads and clears it on revocation', a
   expect(screen.queryByText('Narrow shared Agent')).not.toBeInTheDocument();
   await screen.findByText('Access removed');
 });
+
+function ScopedNavigation(props: Omit<ComponentProps<typeof ScopedNavigationTree>, 'choices'>) {
+  const choices = useNavigationScope(props.client, props.scope);
+  return <ScopedNavigationTree {...props} choices={choices} />;
+}

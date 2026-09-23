@@ -2,8 +2,7 @@ import { act, render, renderHook, screen, waitFor } from '@testing-library/react
 import { createClient } from '@chronoai/cma-sdk';
 import { expect, it } from 'vitest';
 import { useChannelFacts } from '../resources/useChannelFacts';
-import { ChannelSummary, filterTreeChannel } from './treeChannel';
-import { navigationFixture, workspaceFixture } from '../test/hierarchy';
+import { ChannelSummary } from './treeChannel';
 
 const active = { active: true, has_history: true, first_used_at: null, last_used_at: null };
 const historical = { ...active, active: false };
@@ -49,28 +48,10 @@ it('bounds optional reads, drops private binding refs and clears the prior viewe
 });
 
 it('keeps siblings separate and suppresses derived counts when any child fact is unavailable', () => {
-  const workspace = workspaceFixture();
-  const agent = workspace.agents[0]!;
-  const items = navigationFixture().map((item) => ({
-    ...item,
-    workspaces: [
-      {
-        ...workspace,
-        agents: [
-          { ...agent, id: 'agt_active' },
-          { ...agent, id: 'agt_past' },
-          { ...agent, id: 'agt_unknown' },
-        ],
-      },
-    ],
-  }));
   const facts = new Map([
     ['agt_active', active],
     ['agt_past', historical],
   ]);
-  const filtered = filterTreeChannel(items, facts, 'detached');
-  expect(filtered[0]?.workspaces[0]?.agents.map((value) => value.id)).toEqual(['agt_past']);
-  expect(items[0]?.workspaces[0]?.agents).toHaveLength(3);
   const view = render(
     <ChannelSummary ids={['agt_active', 'agt_past', 'agt_unknown']} facts={facts} />,
   );

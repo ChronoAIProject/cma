@@ -17,25 +17,12 @@ import {
 import type { NavigationSandbox } from './navigation';
 import { TreeRow } from './TreeRow';
 import { agentActions, sandboxActions, workspaceActions } from './treeActions';
-import {
-  CreationBadge,
-  filterTreeCreation,
-  TreeCreationFilter,
-  useTreeCreation,
-  type CreationFilter,
-} from './treeCreation';
+import { CreationBadge, useTreeCreation } from './treeCreation';
 import './Tree.css';
 import { statusLabel } from '../vocabulary/status';
 import type { ResourceViewsClient } from '../resources/client';
 import { useChannelFacts } from '../resources/useChannelFacts';
-import type { ChannelFilter } from '../resources/channelLabels';
-import {
-  ChannelBadge,
-  TreeFactsSummary,
-  TreeChannelFilter,
-  filterTreeChannel,
-  treeAgentIds,
-} from './treeChannel';
+import { ChannelBadge, TreeFactsSummary, treeAgentIds } from './treeChannel';
 
 export interface TreePermissions {
   readonly createWorkspace: boolean;
@@ -184,18 +171,7 @@ export function Tree({
     refreshError === undefined,
     viewerId,
   );
-  const [channelSelection, setChannelSelection] = useState({
-    viewerId,
-    value: 'all' as ChannelFilter,
-  });
-  const channelFilter = channelSelection.viewerId === viewerId ? channelSelection.value : 'all';
-  const [selection, setSelection] = useState({ viewerId, value: 'all' as CreationFilter });
-  const filter = selection.viewerId === viewerId ? selection.value : 'all';
-  const visibleItems = filterTreeChannel(
-    filterTreeCreation(items, facts, filter),
-    channelFacts,
-    channelFilter,
-  ).filter(({ sandbox }) => sandbox.status !== 'retired');
+  const visibleItems = items.filter(({ sandbox }) => sandbox.status !== 'retired');
   const groupId = useId();
   const groups = [
     {
@@ -222,20 +198,6 @@ export function Tree({
 
   return (
     <div className="resource-tree">
-      <TreeCreationFilter
-        items={items}
-        facts={facts}
-        value={filter}
-        onChange={(value) => setSelection({ viewerId, value })}
-      />
-      {resourceClient === undefined ? null : (
-        <TreeChannelFilter
-          ids={channelIds}
-          facts={channelFacts}
-          value={channelFilter}
-          onChange={(value) => setChannelSelection({ viewerId, value })}
-        />
-      )}
       <Presence>
         {refreshError === undefined ? null : (
           <p className="resource-tree__notice" role="alert">
@@ -469,13 +431,7 @@ export function Tree({
           </section>
         );
       })}
-      {visibleItems.length === 0 ? (
-        <p className="resource-tree__empty">
-          {filter === 'all' && channelFilter === 'all'
-            ? 'No Sandboxes'
-            : 'No matching Agents in this tree'}
-        </p>
-      ) : null}
+      {visibleItems.length === 0 ? <p className="resource-tree__empty">No Sandboxes</p> : null}
     </div>
   );
 }

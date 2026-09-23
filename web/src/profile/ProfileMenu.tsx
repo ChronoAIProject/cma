@@ -28,11 +28,13 @@ interface ProfileMenuProps {
   readonly onSignOut: () => void;
   readonly onNavigate?: (route: AppRoute) => void;
   readonly collapsed?: boolean;
+  readonly bots?: boolean;
 }
 
 const MENU_ROUTES: Readonly<Record<string, AppRoute>> = {
   inventory: { kind: 'inventory' },
   profiles: { kind: 'profiles' },
+  bots: { kind: 'bots' },
   marketplace: { kind: 'marketplace' },
   triggers: { kind: 'triggers' },
   developer: { kind: 'developer' },
@@ -55,7 +57,13 @@ function appearanceIcon(appearance: Appearance) {
   return <IconFollowsystemOutline16 />;
 }
 
-export function ProfileMenu({ user, onSignOut, onNavigate, collapsed = false }: ProfileMenuProps) {
+export function ProfileMenu({
+  user,
+  onSignOut,
+  onNavigate,
+  collapsed = false,
+  bots = false,
+}: ProfileMenuProps) {
   const [open, setOpen] = useState(false);
   const [appearance, setLocalAppearance] = useState<Appearance>(() => storedAppearance());
   const [avatarBroken, setAvatarBroken] = useState(false);
@@ -65,6 +73,7 @@ export function ProfileMenu({ user, onSignOut, onNavigate, collapsed = false }: 
       ? [{ id: 'inventory', icon: <IconBrowseOutline16 />, label: 'Agents' }]
       : []),
     { id: 'profiles', icon: <IconPersonalizationOutline16 />, label: 'Profiles' },
+    ...(bots ? [{ id: 'bots', icon: <IconSettingsOutline16 />, label: 'Bot settings' }] : []),
     { id: 'marketplace', icon: <IconBrowseOutline16 />, label: 'Marketplace' },
     ...(!user.visitor && user.capabilities.includes('publish_triggers')
       ? [{ id: 'triggers', icon: <IconGoalOutline16 />, label: 'CMA Trigger' }]
