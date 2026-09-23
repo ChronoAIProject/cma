@@ -24,7 +24,6 @@ import { LifecycleProgress } from '../sandbox/LifecycleProgress';
 import { AgentSourceLabel, useAgentSource } from './source';
 import { useAgentProvenance } from './provenance';
 import { QueuedMessageNotice } from './QueuedMessageNotice';
-import { ChannelPendingMessages } from './ChannelPendingMessages';
 
 interface AgentSurfaceProps {
   readonly draft?: AgentDraft;
@@ -252,13 +251,6 @@ export function AgentSurface({
       )}
 
       <QueuedMessageNotice control={controller.queuedMessage} readOnly={readOnly} />
-      <ChannelPendingMessages
-        agentId={agentId}
-        viewerId={viewerId}
-        provenance={provenance}
-        cursor={conversation.cursor}
-        enabled={!readOnly && !historyIncomplete}
-      />
 
       <div className="agent-surface__conversation">
         {status === 'starting' ||
