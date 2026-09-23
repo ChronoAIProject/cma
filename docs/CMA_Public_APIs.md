@@ -389,5 +389,28 @@ Event Worker Profile creation uses an `Idempotency-Key`; updates and retirement
 use `expected_revision`. Retiring a worker preserves existing Bot pins and
 historical revisions. The complete configuration is returned in `profile`.
 
-Supplemental browser auth and embed routes have their own origin/cookie and
-content-type contracts; use the authentication and Trigger guides for them.
+## Supplemental browser, discovery and operational routes
+
+These router surfaces supplement the 176 OpenAPI operations above. Browser
+identity and connection flows retain their cookie, redirect and same-origin
+requirements; they are not generic resource CRUD. `GET /auth/signup-options`
+and the public Trigger embed routes are already included in the OpenAPI table.
+
+| Method and path | Implemented behavior |
+| --- | --- |
+| `GET /auth/login` | Start browser OAuth sign-in or registration. |
+| `GET /auth/callback` | Complete the browser identity exchange. |
+| `GET /auth/session` | Read the signed-in subject and capabilities. |
+| `GET /auth/logout` | End browser sign-in and redirect through logout. |
+| `POST /auth/connections/check` | Check the owner's selected service connection. |
+| `POST /auth/connections/start` | Start the browser service connection flow. |
+| `POST /auth/connections/cancel` | Cancel the retained connection intent. |
+| `GET /openapi.json` | Read the machine-readable CMA contract. |
+| `GET /.well-known/agent-card.json` | Discover the CMA provider and its capabilities. |
+| `POST /api/v1/mcp` | Return the explicit unsupported-interface response. |
+| `ANY /api/v1/a2a` | Return the explicit unsupported-interface response. |
+| `GET /livez` | Probe API process liveness. |
+| `GET /ready` | Probe API readiness, including database availability. |
+
+CMAEG's supported native `POST /mcp` belongs to the gateway origin and is a
+separate interface from CMA's unsupported `/api/v1/mcp` route.
