@@ -507,14 +507,14 @@ async fn periodic_reconciliation_exits_on_shutdown() {
     task.await.unwrap();
 }
 
-struct InventoryProbe {
+pub(super) struct InventoryProbe {
     inner: InMemoryHostedBackend,
     replies: Mutex<VecDeque<layer3_adapter::Result<Vec<RuntimeObservation>>>>,
     calls: Arc<AtomicUsize>,
 }
 
 impl InventoryProbe {
-    fn new(
+    pub(super) fn new(
         inner: InMemoryHostedBackend,
         replies: Vec<layer3_adapter::Result<Vec<RuntimeObservation>>>,
     ) -> Self {
