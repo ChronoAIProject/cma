@@ -19,13 +19,12 @@ The changelog at the end is **append-only**. Entries are never edited or deleted
 | Home | The owner's Sandbox -> Workspace -> Agent tree and creation state appropriate to their capabilities. |
 | Sandbox | Runtime state, pinned profile facts, Workspaces and recorded preparation. |
 | Agent | One conversation in one Worktree, with approvals, tools, usage and durable history. |
-| Profiles | Draft and published Sandbox, Workspace and Agent Profiles. |
-| Marketplace | Public profile discovery, full revision inspection, use and fork. |
+| Profiles | One library for personal Sandbox, Workspace and Agent Profiles, public Marketplace discovery, and versioned Event Worker Profiles. |
 | CMA Trigger | Signed-in authoring, publication, placements and integration snippets. |
 | Public Trigger | A visitor's landing, consent, review, connection assistance and progress. |
 | Operations | Capability-gated inventory, Profiles, activity and settings. |
 | Developer | Public TypeScript and Rust SDK guides bundled with the frontend. |
-| Bridges | Personal and organization channel connections, explicit context permission, configuration and lifecycle controls. |
+| Bots | Owner Bot configuration and lifecycle through CMAEG, opened from the account menu. |
 
 Each view has a canonical route. Refresh and browser history restore it without
 admitting work. The terminal plane, separate Chat model, session list, canvas
@@ -857,32 +856,6 @@ accessible numeric values. Without a reported ceiling, show only the known
 figure. Context-summary boundaries use neutral metadata, not failure colour.
 
 ### Organization inventory and shared Agent views
-
-The scoped navigation's **Bridges** entry opens `/bridges` or
-`/organizations/{organization}/bridges`. Creation uses the corresponding `/new`
-route and saved details use `/bridges/{bridge_id}`. Use existing Button, Picker,
-Input, fieldset, confirmation and surface tokens. Forms use the existing
-24/16/12/8px spacing, with capacity fields and inventory rows stacking on narrow
-screens. Personal and organization scope is explicit; only current owners or
-organization admins load management settings, bot/key/route choices or grants.
-
-Bridge setup starts disabled with separate Sandbox placement and sender-in-chat
-context. Explain resource ownership, CMA visibility, context sharing and where
-group replies appear before the user's exposure acknowledgment. Retained Agents
-need separate explicit permission to use their existing history and execution
-context. Show unsupported placement and platform controls as disabled choices
-with reasons. Saving settings, validating the connection, recording permission,
-enabling the bridge and observing successful execution/delivery are distinct.
-Never claim processing is available from a settings or connection result alone.
-
-Show the exact callback for manual NyxID configuration. Import the selected key
-through a password input without browser storage; clear it on submission and
-never display raw provider failure text. Retain nonsecret edited settings across
-ordinary access refreshes, clear protected choices while access is unavailable,
-and retain the exact command and key for uncertain-result recovery. Changing
-viewer, client or owner resets that management context. Retirement uses the
-existing risk confirmation and explicitly preserves retained resources/history;
-key and invocation-grant revocation use inline confirmation.
 
 The account menu's **Agents** entry opens `/agents`; an organization selection
 uses `/organizations/{organization}/agents` so reload and deep links retain the
@@ -2014,3 +1987,5 @@ draft. Summary readers never receive the management history control.
 | 2026-09-23 | Merge the Profiles and Marketplace account entries into one Profile library, with My profiles, Marketplace and Event workers navigation. Add versioned Event Worker Profile composition, retirement and Bot selection using existing fields, pickers, cards and editor bands. |
 
 | 2026-09-23 | Retain Event Worker Profile save requests in owner-scoped browser session storage across reloads, require explicit same-request retry, and keep saved workers readable and retireable when source catalogue entries are removed. |
+
+| 2026-09-23 | Align the view inventory with the unified Profile library and owner Bots; remove the retired Bridge setup specification while preserving historical changelog entries and Agent provenance vocabulary. |
