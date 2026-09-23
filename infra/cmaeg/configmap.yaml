@@ -33,4 +33,4 @@ data:
   CMAEG_HEARTBEAT_MS: "60000"
   CMAEG_FAILURE_TEXT: "Sorry, I couldn’t finish that request. Please try again."
   CMAEG_DRAIN_SECONDS: "600"
-  CMAEG_BUSY_RETRY_MAX_MS: "15000"
+  CMAEG_BUSY_RETRY_MAX_MS: "180000"
