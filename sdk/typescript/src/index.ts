@@ -96,3 +96,5 @@ export * from './provider-bindings.js';
 
 export { Cmaeg, type CmaegConfig } from './cmaeg/index.js';
 export * as cmaeg from './cmaeg/index.js';
+
+export * from './event-worker-profiles.js';

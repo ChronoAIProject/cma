@@ -1435,3 +1435,37 @@ refuses unsupported native tool or profile settings, retaining durable cleanup.
 Bot credentials include the pinned profile's explicit scopes and model service;
 CMA no longer adds an implicit NyxID tools catalogue service. These checks do
 not establish real Telegram delivery or authorize retiring the existing bridge.
+
+
+## Event Worker Profile catalogue and catalogue cleanup
+
+The owner Profile library combines My profiles, Marketplace and Event workers.
+Saved workers compose owned published CMA revisions and keep their full immutable
+configuration in `event_worker_profiles` and `event_worker_profile_revisions`.
+Bots retain the exact selected worker snapshot. Revisions survive retirement;
+existing Bots are never repointed by an edit. See [public APIs](CMA_Public_APIs.md)
+and [gateway architecture](CMAEG_Architecture.md).
+
+Provider binding plans now produce deterministic pinned instance configurations
+directly. They do not create imported drafts in the Profile catalogue. Historical
+binding profile identifiers and digests are preserved; existing immutable
+revisions and instance snapshots remain valid. When all three platform defaults
+are explicitly set to custom profiles, boot no longer recreates the system
+Profile catalogue entries.
+
+Before an explicitly authorized catalogue deletion, point platform defaults at
+retained published revisions and audit Trigger dependencies. Keep immutable
+published revisions and instance snapshots required by existing resources.
+For each retained Sandbox whose catalogue entry will be removed, persist its
+current `always_keep_alive` policy in `sandbox_retained_availability`. The row is
+fenced by Sandbox ID, owner, creation timestamp and pinned Profile ID, with the
+current `document_schema_version`. The original catalogue policy takes precedence
+while present. After removal, inactivity scheduling reads and fences the retained
+policy in the same transaction as the Sandbox evidence. Malformed identity
+refuses inactivity admission; it cannot authorize a pause. Deploy this reader
+before removing the catalogue entry. Do not mutate or pause the Sandbox itself.
+
+Delete only an inventoried, owner- and draft-version-fenced set of catalogue rows
+in a transaction, with a mutation receipt and exact retained IDs. Verify restart
+does not reseed deleted system profiles and existing runtime Pod UIDs remain
+unchanged. A database-wide reset is outside this procedure.
