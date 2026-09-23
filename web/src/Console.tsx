@@ -1,6 +1,7 @@
 import { Presence } from './ui/Presence';
-import { ChannelManagement, isChannelRoute, canManageBots } from './ChannelManagement';
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
+import { ProfileViews, Operations, TriggerPublisherPage } from './ConsolePages';
+import { BotManagement, isBotRoute, canManageBots } from './BotManagement';
+import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { LandingCharacter } from './landing/LandingCharacter';
 import {
   useCmaClient,
@@ -38,19 +39,7 @@ import { SandboxAccessPage } from './resources/SandboxAccessPage';
 import { WorkspaceContents } from './resources/WorkspaceContents';
 import { scopeValue } from './resources/scope';
 import { ScopedNavigation } from './resources/ScopedNavigation';
-
-const ProfileViews = lazy(() =>
-  import('./profiles/ProfileViews').then((module) => ({ default: module.ProfileViews })),
-);
-const Operations = lazy(() =>
-  import('./operator/Operations').then((module) => ({ default: module.Operations })),
-);
-
-const TriggerPublisherPage = lazy(() =>
-  import('./trigger-publisher/TriggerPublisherPage').then((module) => ({
-    default: module.TriggerPublisherPage,
-  })),
-);
+import { NavigationScopePicker, useNavigationScope } from './resources/NavigationScope';
 
 interface ConsoleProps {
   readonly user: User;
@@ -73,16 +62,14 @@ export function Console({
 }: ConsoleProps) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [navigationScope, setNavigationScope] = useState(
-    route.kind === 'inventory'
-      ? scopeValue(route.organization, route.shared)
-      : route.kind === 'bridges' || route.kind === 'bridge_new'
-        ? scopeValue(route.organization)
-        : '',
+    route.kind === 'inventory' ? scopeValue(route.organization, route.shared) : '',
   );
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [artifactPublicationScope] = useState(() => new ArtifactPublicationScope());
   const [revision, setRevision] = useState(0);
   const client = useCmaClient();
+  const scopeClient = user.visitor ? undefined : client.resourceViews;
+  const scopeChoices = useNavigationScope(scopeClient, navigationScope);
   const draft = useAgentDraft(client, user.id, route.kind === 'agent' ? route.agentId : undefined);
   const sandboxCommandScope = useMemo(() => ({ client, viewerId: user.id }), [client, user.id]);
   const agentAccess = useAgentAccess(
@@ -141,16 +128,8 @@ export function Console({
     deleteSandbox: user.capabilities.includes('delete_own_sandbox'),
   };
   const ready = agent.state.status === 'ready' ? agent.state : undefined;
-  const content = isChannelRoute(route) ? (
-    <ChannelManagement
-      user={user}
-      route={route}
-      onNavigate={(next) => {
-        if (next.kind === 'bridges' || next.kind === 'bridge_new')
-          setNavigationScope(scopeValue(next.organization));
-        onNavigate(next);
-      }}
-    />
+  const content = isBotRoute(route) ? (
+    <BotManagement user={user} route={route} onNavigate={onNavigate} />
   ) : route.kind === 'inventory' ? (
     client.resourceViews === undefined ? (
       <section className="console__empty">
@@ -416,13 +395,20 @@ export function Console({
             onSidebarNavigate();
             onNavigate({ kind: 'home' });
           }}
+          scope={
+            scopeClient === undefined ? undefined : (
+              <NavigationScopePicker
+                choices={scopeChoices}
+                value={navigationScope}
+                onChange={setNavigationScope}
+              />
+            )
+          }
           navigation={
             <ScopedNavigation
               client={user.visitor ? undefined : client.resourceViews}
-              bridges={!user.visitor && client.bridgeViews !== undefined}
-              bots={canManageBots(user, client)}
               scope={navigationScope}
-              onScopeChange={setNavigationScope}
+              choices={scopeChoices}
               onNavigate={(next) => {
                 onSidebarNavigate();
                 onNavigate(next);
@@ -473,6 +459,7 @@ export function Console({
           account={
             <ProfileMenu
               user={user}
+              bots={canManageBots(user, client)}
               collapsed={collapsed}
               onSignOut={onSignOut}
               onNavigate={onNavigate}

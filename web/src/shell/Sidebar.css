@@ -25,6 +25,31 @@
   flex: none;
 }
 
+.sidebar__head--scoped {
+  gap: 4px;
+}
+
+.sidebar__head--scoped .sidebar__build {
+  max-width: 8ch;
+  flex: 0 1 auto;
+}
+
+.sidebar__head--scoped .sidebar__toggle {
+  width: 32px;
+}
+
+.sidebar__scope-picker {
+  flex: 1;
+  min-width: 60px;
+}
+
+.sidebar__scope-picker > button {
+  width: 100%;
+  min-width: 0;
+  padding-inline: 4px;
+  font-size: 12px;
+}
+
 .sidebar--collapsed .sidebar__head {
   flex-direction: column;
 }
@@ -135,7 +160,8 @@
 @media (max-width: 30rem) {
   .sidebar__brand,
   .sidebar__new,
-  .sidebar__toggle {
+  .sidebar__toggle,
+  .sidebar__scope-picker > button {
     min-height: 44px;
   }
 }

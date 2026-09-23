@@ -420,10 +420,17 @@ The grid transitions its tracks, except while dragging, where the transition wou
 ## 10. The sidebar
 
 The brand row, browser tree, and account foot retain the established shell
-dimensions. The mark and wordmark link to Home and close Agent details. A separate
-New agent icon button follows the build badge, never sharing the brand hit area.
-The badge sits beside CMA using existing layer-2 ground, secondary ink and border,
-11px code type, 2px/4px padding and 4px radius; it truncates within 11ch and exposes
+dimensions. The mark and wordmark link to Home and close Agent details. The
+navigation scope Picker sits between the build badge and the separate
+New agent icon button, which has its own hit area. When the Picker is available,
+the brand shows its mark without the wordmark, the header gap is 4px, the badge
+truncates within 8ch and the collapse control is 32px wide. The Picker fills the
+remaining width with a 60px minimum, 12px type and 4px inline padding; long names
+truncate while its menu shows the full choice. Collapsing hides the Picker and
+preserves its selected scope.
+The badge uses existing layer-2 ground, secondary ink and border,
+11px code type, 2px/4px padding and 4px radius; without the Picker it truncates
+within 11ch and exposes
 the complete build identity on hover. The standalone tool is 32px wide and 36px
 high; mobile header controls retain at least 44px height. Collapsing keeps the
 mark, separate creation tool and panel control. The browser region alone scrolls
@@ -438,12 +445,10 @@ signed-in viewer and survives route changes.
 
 Agent metadata also shows its authorized immutable creation category in the
 existing secondary text style: Manual, Trigger, Channel, or Unknown origin.
-Parent summaries count each child's category and remain complete when the tree
-is filtered; an unavailable child fact suppresses the summary. An existing
-native select labeled Agent creation filters the current tree by category.
-Loading and refused facts never become the Unknown origin category. The filter
-reports incomplete reads and does not imply that archived or other inventories
-were searched. No private actor or external source references appear in rows.
+Parent summaries count each child's category; an unavailable child fact
+suppresses the summary. The sidebar has no Agent creation or Agent channel
+activity filters. Loading and refused facts never become the Unknown origin
+category. No private actor or external source references appear in rows.
 
 Expansion and navigation are separate keyboard-operable commands, with named
 `aria-expanded` state. A collapsed group retains its count. Paused or reviving
@@ -459,9 +464,10 @@ from the authenticated public snapshot, not inferred from a role label.
 
 The account row is the only foot content: avatar, name, and email. Long identity
 lines truncate within the fixed seat. Its upward-opening menu contains Profiles,
-Marketplace, CMA Trigger, Developer, capability-gated Operations, appearance,
+capability-gated Bot settings, Marketplace, CMA Trigger, Developer, capability-gated Operations, appearance,
 and sign out. Profiles, Marketplace, publisher, Operations, and Developer use
-their canonical routes and work with refresh and browser history.
+their canonical routes and work with refresh and browser history. Bot settings
+opens `/bots` from this menu; it is not a separate sidebar navigation row.
 
 There is no Chat/Agent switch, session group, pricing control, or terminal plane
 choice. Selecting an Agent opens its conversation; selecting a Sandbox opens
@@ -911,9 +917,9 @@ that exceeds 15 seconds loses its display authority. Foreground, scope/client
 changes and denied access clear old shared values and cancel streams/exports.
 Channel-use presentation remains subsequent work.
 
-The sidebar's existing Picker chooses Personal, a named Organization or Shared
-with me without
-changing the current conversation. Keep selection through sidebar collapse and
+The sidebar header Picker chooses Personal, a named Organization or Shared
+with me without changing the current conversation. Keep selection through sidebar
+collapse and
 preserve the personal composer/draft during organization browsing and access
 loss. Organization and shared Sandboxes page independently; expanding a named Sandbox or
 Workspace reads that authorized branch. The Agent inventory link includes narrow
@@ -1945,6 +1951,10 @@ Append-only. Never edit or delete an entry.
 | 2026-09-16 | Offer ordinary queued input beside Stop response in Responses v2 tabs, with distinct accessible labels, existing composer controls and draft-preserving admission recovery. |
 | 2026-09-16 | Keep Queue message and Stop response aligned beside the input at every supported viewport, using explicit composer grid columns and existing control sizes and gaps. |
 | 2026-09-17 | Dismiss an open menu before its enclosing dialog on Escape from a row or trigger, preserving the selected value and returning focus to the trigger. |
+| 2026-09-23 | Moved Bot settings into the bottom-left account menu, retaining capability checks and the canonical `/bots` route. |
+| 2026-09-23 | Move the navigation scope Picker between the header build badge and New agent, keep the compact mark and usable controls at narrow sidebar widths, and remove both sidebar Agent filters while retaining resource facts. |
+| 2026-09-23 | Remove the same two sidebar filters from Organization and Shared with me trees, preserving authorized hierarchy expansion and pagination. |
+| 2026-09-23 | Retire the old bridge management routes and pending bridge-message panel; Bot settings remains the supported channel-management entry in the account menu. |
 
 ### Approved Agent artifacts
 

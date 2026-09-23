@@ -8,9 +8,6 @@ export type AppRoute =
   | { readonly kind: 'workspace'; readonly workspaceId: string }
   | { readonly kind: 'agent'; readonly agentId: string }
   | { readonly kind: 'inventory'; readonly organization?: string; readonly shared?: boolean }
-  | { readonly kind: 'bridges'; readonly organization?: string }
-  | { readonly kind: 'bridge_new'; readonly organization?: string }
-  | { readonly kind: 'bridge'; readonly bridgeId: string }
   | { readonly kind: 'bots' }
   | { readonly kind: 'bot_new' }
   | { readonly kind: 'bot'; readonly botId: string }
@@ -66,8 +63,6 @@ export function parseRoute(pathname: string): AppRoute {
     switch (path[0]) {
       case 'agents':
         return { kind: 'inventory' };
-      case 'bridges':
-        return { kind: 'bridges' };
       case 'bots':
         return { kind: 'bots' };
       case 'profiles':
@@ -90,8 +85,6 @@ export function parseRoute(pathname: string): AppRoute {
     if (resource === 'workspaces') return { kind: 'workspace', workspaceId: id };
     if (resource === 'agents') return { kind: 'agent', agentId: id };
     if (resource === 'bots') return id === 'new' ? { kind: 'bot_new' } : { kind: 'bot', botId: id };
-    if (resource === 'bridges')
-      return id === 'new' ? { kind: 'bridge_new' } : { kind: 'bridge', bridgeId: id };
     if (resource === 'launches') return { kind: 'launch', launchId: id };
     if (resource === 't') return { kind: 'public_trigger', publicId: id };
     if (resource === 'triggers' && id === 'manage') return { kind: 'triggers' };
@@ -101,8 +94,6 @@ export function parseRoute(pathname: string): AppRoute {
     const [resource = '', qualifier = '', id = ''] = path;
     if (resource === 'organizations' && id === 'agents')
       return { kind: 'inventory', organization: qualifier };
-    if (resource === 'organizations' && id === 'bridges')
-      return { kind: 'bridges', organization: qualifier };
     if (resource === 'profiles') {
       const profileKind = PROFILE_KINDS.find((kind) => `${kind}-profiles` === qualifier);
       if (profileKind !== undefined) return { kind: 'profile', profileKind, profileId: id };
@@ -118,14 +109,6 @@ export function parseRoute(pathname: string): AppRoute {
     }
   }
 
-  if (
-    path.length === 4 &&
-    path[0] === 'organizations' &&
-    path[2] === 'bridges' &&
-    path[3] === 'new'
-  ) {
-    return { kind: 'bridge_new', organization: path[1] };
-  }
   if (path.length === 4 && path[0] === 'triggers' && path[1] === 'manage' && path[3] === 'embed') {
     return { kind: 'trigger_embed', triggerId: path[2] ?? '' };
   }
@@ -152,16 +135,6 @@ export function routePath(route: AppRoute): string {
       return route.organization === undefined
         ? '/agents'
         : `/organizations/${segment(route.organization)}/agents`;
-    case 'bridges':
-      return route.organization === undefined
-        ? '/bridges'
-        : `/organizations/${segment(route.organization)}/bridges`;
-    case 'bridge_new':
-      return route.organization === undefined
-        ? '/bridges/new'
-        : `/organizations/${segment(route.organization)}/bridges/new`;
-    case 'bridge':
-      return `/bridges/${segment(route.bridgeId)}`;
     case 'bots':
       return '/bots';
     case 'bot_new':
