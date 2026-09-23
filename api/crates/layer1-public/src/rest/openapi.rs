@@ -32,6 +32,12 @@ use super::trigger_openapi_shapes::*;
 #[derive(OpenApi)]
 #[openapi(
     paths(
+        super::event_workers::create,
+        super::event_workers::list,
+        super::event_workers::read,
+        super::event_workers::revision,
+        super::event_workers::update,
+        super::event_workers::retire,
         super::bots::create,
         super::bots::list,
         super::bots::read,

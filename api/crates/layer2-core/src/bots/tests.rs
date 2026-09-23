@@ -28,6 +28,7 @@ impl BotProfileResolver for Profiles {
             agent_profiles: vec![],
         };
         Ok(BotProfiles {
+            event_worker_profile: None,
             resolved_model: "test".into(),
             agent: AgentProfileRevision {
                 profile_id: reference.id.clone(),
@@ -61,6 +62,7 @@ pub(super) fn caller(subject: &str) -> Caller {
 }
 pub(super) fn input() -> CreateBot {
     CreateBot {
+        event_worker_profile: None,
         name: "test bot".into(),
         external_bot_id: uuid::Uuid::new_v4().to_string(),
         profile: AgentProfileRef::new(crate::AgentProfileId("agp_test".into()), 1),
