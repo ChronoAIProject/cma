@@ -1954,6 +1954,7 @@ Append-only. Never edit or delete an entry.
 | 2026-09-23 | Moved Bot settings into the bottom-left account menu, retaining capability checks and the canonical `/bots` route. |
 | 2026-09-23 | Move the navigation scope Picker between the header build badge and New agent, keep the compact mark and usable controls at narrow sidebar widths, and remove both sidebar Agent filters while retaining resource facts. |
 | 2026-09-23 | Remove the same two sidebar filters from Organization and Shared with me trees, preserving authorized hierarchy expansion and pagination. |
+| 2026-09-23 | Retire the old bridge management routes and pending bridge-message panel; Bot settings remains the supported channel-management entry in the account menu. |
 
 ### Approved Agent artifacts
 

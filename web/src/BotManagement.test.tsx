@@ -3,7 +3,7 @@ import { expect, it, vi } from 'vitest';
 import { CmaClientProvider } from './api/context';
 import { unavailableClient, type CmaWebClient } from './api/client';
 import type { User } from './auth/types';
-import { ChannelManagement, canManageBots } from './ChannelManagement';
+import { BotManagement, canManageBots } from './BotManagement';
 import { bot, botClient } from './bots/fixtures.test-support';
 
 const owner: User = {
@@ -15,7 +15,7 @@ const owner: User = {
 function Entry({ user = owner, client }: { user?: User; client: CmaWebClient }) {
   return (
     <CmaClientProvider client={client}>
-      <ChannelManagement user={user} route={{ kind: 'bots' }} onNavigate={vi.fn()} />
+      <BotManagement user={user} route={{ kind: 'bots' }} onNavigate={vi.fn()} />
     </CmaClientProvider>
   );
 }
