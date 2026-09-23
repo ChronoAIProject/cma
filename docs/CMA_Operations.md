@@ -589,6 +589,14 @@ publication and must be withdrawn if verification fails.
 
 ## Bridge Continuity Observation
 
+If a deleting Sandbox loses its bound runtime, reconciliation confirms absence
+with a fresh complete provider inventory before atomically clearing runtime and
+checkpoint writer authority and stopping its live Agents. Existing stop reasons,
+conversation identities and logs are retained; unfinished turns are interrupted,
+never reported complete. Deletion continues through credential revocation and
+snapshot/home cleanup without starting a replacement runtime. Inventory failures
+retain the original authority for retry.
+
 The [owned continuity runners](CMA_Owned_Continuity.md) preserve the prepared
 active-turn, native-history and passive browser-reconnect checks as committed,
 parameterized tooling. They require successful disposable fixture receipts and
