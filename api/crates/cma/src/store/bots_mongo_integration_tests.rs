@@ -102,6 +102,7 @@ async fn worker_revisions_are_atomic_owner_fenced_and_survive_reopen() {
     })
     .unwrap();
     let first = EventWorkerProfile {
+        provider: "cma_codex".into(),
         id: format!("ewp_{}", uuid::Uuid::new_v4().simple()),
         owner: bot.owner,
         revision: 1,
