@@ -8,7 +8,7 @@ use cmaeg_core::{
         ReplyPolicy, Secret, Source,
     },
     ids::{BindingId, ProviderSlug, RecordId},
-    profile::{AgentProfileSnapshot, NyxIdIdentity, NyxIdIdentityKind},
+    profile::{EventWorkerProfile, NyxIdIdentity, NyxIdIdentityKind},
     seal::ChannelPointer,
     ValidationError,
 };
@@ -27,7 +27,7 @@ pub struct ChannelCreateRequest {
     pub record_id: Option<RecordId>,
     pub schema_version: u16,
     pub name: String,
-    pub profile: AgentProfileSnapshot,
+    pub profile: EventWorkerProfile,
     pub provider: ProviderRequest,
     pub sources: Vec<SourceRequest>,
     pub partition: cmaeg_core::channel::PartitionRule,
@@ -41,7 +41,7 @@ pub struct ChannelCreateRequest {
 pub struct ChannelUpdateRequest {
     pub schema_version: u16,
     pub name: String,
-    pub profile: AgentProfileSnapshot,
+    pub profile: EventWorkerProfile,
     pub provider: ProviderRequest,
     pub sources: Vec<SourceRequest>,
     pub partition: cmaeg_core::channel::PartitionRule,
