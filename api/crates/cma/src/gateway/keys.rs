@@ -90,7 +90,7 @@ impl Key {
             || self.bindings_count != 0
             || (role == BotKeyRole::Route
                 && (!self.allowed_service_ids.is_empty()
-                    || self.platform.as_deref() != Some("telegram")))
+                    || self.platform.as_deref() != Some("generic")))
         {
             return Err(BotError::Forbidden);
         }
