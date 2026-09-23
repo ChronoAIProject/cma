@@ -2,7 +2,7 @@
 use cmaeg_core::{
     channel::{ChannelDefinition, PartitionRule, ProviderBinding, ReplyPolicy, Source},
     ids::RecordId,
-    profile::{AgentProfileSnapshot, NyxIdIdentity},
+    profile::{EventWorkerProfile, NyxIdIdentity},
 };
 use serde::Serialize;
 use utoipa::ToSchema;
@@ -16,7 +16,7 @@ pub struct PublicChannelDefinition {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub creation: Option<cmaeg_core::channel::ChannelCreation>,
     pub owner: NyxIdIdentity,
-    pub profile: AgentProfileSnapshot,
+    pub profile: EventWorkerProfile,
     pub profile_digest: String,
     pub provider: ProviderBinding,
     pub sources: Vec<Source>,
