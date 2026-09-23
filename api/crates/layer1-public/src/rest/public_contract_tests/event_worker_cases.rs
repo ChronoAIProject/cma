@@ -30,7 +30,11 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
     } else {
         Arc::new(InMemoryEventWorkerProfileStore::default())
     };
-    let service = EventWorkerProfileService::new(store, Arc::new(super::bot_cases::Profiles));
+    let service = EventWorkerProfileService::new(
+        store,
+        Arc::new(super::bot_cases::Profiles),
+        "cma_codex".into(),
+    );
     let input:EventWorkerProfileInput=serde_json::from_value(serde_json::json!({"name":"Example worker","description":"Complete worker configuration","agent_profile":{"id":"agp_bot","revision":1},"sandbox_profile":{"id":"sbp_bot","revision":1},"workspace_profile":{"id":"wkp_bot","revision":1}})).unwrap();
     if mode != "create" && mode != "invalid" && mode != "unavailable" {
         service

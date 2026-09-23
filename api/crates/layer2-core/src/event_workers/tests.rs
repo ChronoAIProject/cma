@@ -10,7 +10,7 @@ impl BotProfileResolver for Resolver {
     async fn resolve(&self, _: &SubjectId, request: &CreateBot) -> Result<BotProfiles, BotError> {
         let agent:AgentProfileContent=serde_json::from_value(serde_json::json!({"model":"example","thinking_effort":"medium","permission_level":"guarded","skills":[],"system_prompt":"Retained instructions"})).unwrap();
         let workspace:WorkspaceProfileContent=serde_json::from_value(serde_json::json!({"location":{"type":"directory","name":"project"},"name":"project","setup_commands":[],"agent_profiles":[]})).unwrap();
-        let sandbox:SandboxProfileContent=serde_json::from_value(serde_json::json!({"cpu_millis":1000,"memory_mib":2048,"nyxid_services":[],"agent_provider":"codex","model_access":"chronoai_managed","max_workspaces":1,"max_agents_per_workspace":1,"workspace_profiles":[],"software_install_commands":[],"environment_variables":[]})).unwrap();
+        let sandbox:SandboxProfileContent=serde_json::from_value(serde_json::json!({"cpu_millis":1000,"memory_mib":2048,"nyxid_services":[],"agent_provider":AgentProvider::default(),"model_access":"chronoai_managed","max_workspaces":1,"max_agents_per_workspace":1,"workspace_profiles":[],"software_install_commands":[],"environment_variables":[]})).unwrap();
         Ok(BotProfiles {
             event_worker_profile: None,
             resolved_model: "example".into(),
@@ -57,6 +57,7 @@ fn service() -> Arc<EventWorkerProfileService> {
     EventWorkerProfileService::new(
         Arc::new(InMemoryEventWorkerProfileStore::default()),
         Arc::new(Resolver),
+        "registered".into(),
     )
 }
 #[tokio::test]
@@ -118,7 +119,7 @@ async fn bots_pin_full_worker_configuration_and_retirement_does_not_rewrite_it()
     let bots = BotService::new(
         Arc::new(InMemoryBotStore::default()),
         service.clone(),
-        "cma_codex".into(),
+        "registered".into(),
     );
     let bot = bots
         .create(&owner, "create-bot", request.clone())
