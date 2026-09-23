@@ -57,7 +57,7 @@ async fn read_proof(
         .await
         .map_err(unavailable)?
         .ok_or(SandboxStoreError::NotFound)?;
-    if row.contains_key(crate::sandbox::channel_reuse_cleanup::CLEANUP_ADMISSION_FIELD) {
+    if row.contains_key("channel_reuse_cleanup_admission") {
         return Err(SandboxStoreError::Conflict);
     }
     let agent = super::super::agents::read_agent(&row)?;

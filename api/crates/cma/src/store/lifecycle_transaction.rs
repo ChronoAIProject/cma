@@ -68,34 +68,6 @@ pub(super) async fn commit_lifecycle(
     store: &MongoSandboxStore,
     mutation: SandboxLifecycleMutation,
 ) -> Result<(), SandboxStoreError> {
-    commit_authorized_lifecycle(store, mutation, None).await
-}
-
-pub(crate) async fn commit_channel_lifecycle(
-    store: &MongoSandboxStore,
-    mutation: SandboxLifecycleMutation,
-    allocations: &crate::store::MongoBridgeAllocationStore,
-    permit: &crate::bridge::provisioning::revival::ChannelRevivalAuthority,
-) -> Result<(), SandboxStoreError> {
-    allocations
-        .require_channel_lifecycle_database(&store.sandboxes.namespace().db)
-        .map_err(|_| SandboxStoreError::Conflict)?;
-    if mutation.guard
-        != layer2_core::sandbox::store::SandboxMutationGuard::capture(permit.sandbox())
-    {
-        return Err(SandboxStoreError::Conflict);
-    }
-    commit_authorized_lifecycle(store, mutation, Some((allocations, permit))).await
-}
-
-async fn commit_authorized_lifecycle(
-    store: &MongoSandboxStore,
-    mutation: SandboxLifecycleMutation,
-    channel: Option<(
-        &crate::store::MongoBridgeAllocationStore,
-        &crate::bridge::provisioning::revival::ChannelRevivalAuthority,
-    )>,
-) -> Result<(), SandboxStoreError> {
     let mut last_transient = None;
     for attempt in 0..TRANSACTION_ATTEMPTS {
         if attempt > 0 {
@@ -116,23 +88,7 @@ async fn commit_authorized_lifecycle(
             }
             return Err(SandboxStoreError::Unavailable(error.to_string()));
         }
-        let applied = async {
-            if let Some((allocations, permit)) = channel {
-                allocations
-                    .fence_channel_revival(permit, &mut session)
-                    .await
-                    .map_err(|error| match error {
-                        crate::store::bridge_allocations::MutationError::Mongo(error) => {
-                            ApplyError::Driver(error)
-                        }
-                        crate::store::bridge_allocations::MutationError::Core(_) => {
-                            ApplyError::Domain(SandboxStoreError::Conflict)
-                        }
-                    })?;
-            }
-            apply_lifecycle(store, &mutation, &mut session).await
-        }
-        .await;
+        let applied = apply_lifecycle(store, &mutation, &mut session).await;
         let receipt = match applied {
             Ok(receipt) => receipt,
             Err(ApplyError::Domain(error)) => {
@@ -149,12 +105,7 @@ async fn commit_authorized_lifecycle(
                 return Err(SandboxStoreError::Unavailable(error.to_string()));
             }
         };
-        if let Some((_, permit)) = channel {
-            if permit.require_current().is_err() {
-                let _ = session.abort_transaction().await;
-                return Err(SandboxStoreError::Conflict);
-            }
-        }
+
         match commit_transaction(&mut session).await {
             CommitOutcome::Committed => return Ok(()),
             CommitOutcome::Retry(error) => last_transient = Some(error.to_string()),
