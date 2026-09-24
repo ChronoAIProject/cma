@@ -86,7 +86,7 @@ fn cache_evicts_oldest_at_capacity() {
         auth.insert_cache(
             sequence.to_string(),
             CacheEntry {
-                result: Ok("alice".into()),
+                result: Ok(("alice".into(), false)),
                 expires_at: Instant::now() + SUCCESS_TTL,
                 sequence: sequence as u64,
             },
@@ -95,4 +95,100 @@ fn cache_evicts_oldest_at_capacity() {
     assert_eq!(auth.cache.len(), CACHE_LIMIT);
     assert!(!auth.cache.contains_key("0"));
     assert!(auth.cache.contains_key(&CACHE_LIMIT.to_string()));
+}
+
+#[tokio::test]
+async fn organization_type_requires_provider_evidence_and_survives_auth_cache() {
+    let router = Router::new()
+        .route(
+            "/api/v1/users/me",
+            get(|headers: HeaderMap| async move {
+                match headers.get("authorization").unwrap().to_str().unwrap() {
+                    "Bearer organization" => r#"{"id":"org","user_type":"org"}"#,
+                    "Bearer legacy-org" => r#"{"id":"org"}"#,
+                    "Bearer human" => r#"{"id":"person","user_type":"person"}"#,
+                    "Bearer legacy-human" => r#"{"id":"person"}"#,
+                    _ => r#"{"id":"wrong-proof"}"#,
+                }
+            }),
+        )
+        .route(
+            "/api/v1/orgs/org/authorization",
+            get(|| async { r#"{"id":"org","your_role":"admin"}"# }),
+        )
+        .route(
+            "/api/v1/orgs/wrong-proof/authorization",
+            get(|| async { r#"{"id":"another-org","your_role":"admin"}"# }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let auth =
+        CreatorAuthenticator::new(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
+    let task = tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
+    for token in ["organization", "legacy-org"] {
+        for _ in 0..2 {
+            assert!(
+                auth.authenticate(&headers(token))
+                    .await
+                    .unwrap()
+                    .organization
+            );
+        }
+    }
+    for token in ["human", "legacy-human"] {
+        assert!(
+            !auth
+                .authenticate(&headers(token))
+                .await
+                .unwrap()
+                .organization
+        );
+    }
+    assert_eq!(
+        auth.authenticate(&headers("wrong")).await,
+        Err(CreatorAuthError::NotAuthenticated)
+    );
+    task.abort();
+}
+
+#[tokio::test]
+async fn organization_key_uses_userinfo_only_with_verified_organization_proof() {
+    let router = Router::new()
+        .route("/api/v1/users/me", get(|| async { StatusCode::FORBIDDEN }))
+        .route(
+            "/oauth/userinfo",
+            get(|headers: HeaderMap| async move {
+                match headers.get("authorization").unwrap().to_str().unwrap() {
+                    "Bearer org-key" => (StatusCode::OK, r#"{"sub":"org"}"#),
+                    "Bearer forbidden-person" => (StatusCode::OK, r#"{"sub":"person"}"#),
+                    "Bearer wrong-proof" => (StatusCode::OK, r#"{"sub":"wrong-proof"}"#),
+                    _ => (StatusCode::UNAUTHORIZED, ""),
+                }
+            }),
+        )
+        .route(
+            "/api/v1/orgs/org/authorization",
+            get(|| async { r#"{"id":"org","your_role":"admin"}"# }),
+        )
+        .route(
+            "/api/v1/orgs/wrong-proof/authorization",
+            get(|| async { r#"{"id":"org","your_role":"admin"}"# }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let auth =
+        CreatorAuthenticator::new(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
+    let task = tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
+    let creator = auth.authenticate(&headers("org-key")).await.unwrap();
+    assert_eq!(creator.subject, "org");
+    assert!(creator.organization);
+    for token in ["forbidden-person", "wrong-proof", "invalid"] {
+        assert_eq!(
+            auth.authenticate(&headers(token)).await,
+            Err(CreatorAuthError::NotAuthenticated)
+        );
+    }
+    task.abort();
 }

@@ -42,7 +42,12 @@ export type GroupAdmission = Output<typeof GroupAdmissionSchema>;
 export const SkillSourceSchema = enumeration('ornn');
 export type SkillSource = Output<typeof SkillSourceSchema>;
 
-export const NyxIdIdentityKindSchema = enumeration('human', 'service_account', 'agent_key');
+export const NyxIdIdentityKindSchema = enumeration(
+  'human',
+  'service_account',
+  'agent_key',
+  'organization',
+);
 export type NyxIdIdentityKind = Output<typeof NyxIdIdentityKindSchema>;
 
 export const ProviderSlugSchema = text;
