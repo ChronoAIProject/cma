@@ -5,6 +5,9 @@ conversation, invokes a registered provider, and delivers the result. CMA is the
 currently deployed provider. The gateway owns event routing and delivery; the
 provider owns agent provisioning, execution, conversation history and event context.
 
+Start with the [service flow diagrams](CMAEG_Protocol.md#0-service-flows-at-a-glance)
+for an overview of channel setup, ingress, execution, tools, delivery and recovery.
+
 ## Addresses and discovery
 
 | Interface | Production address |
@@ -14,8 +17,9 @@ provider owns agent provisioning, execution, conversation history and event cont
 | Native MCP | `https://bot-gateway.chrono-ai.fun/mcp` |
 | OpenAPI | <https://bot-gateway.chrono-ai.fun/openapi.json> |
 | Integration guide | <https://bot-gateway.chrono-ai.fun/docs> |
-| Architecture | <https://bot-gateway.chrono-ai.fun/docs/architecture> |
-| Complete protocol | <https://bot-gateway.chrono-ai.fun/docs/protocol> |
+| Architecture section | <https://bot-gateway.chrono-ai.fun/docs#architecture> |
+| Complete protocol section | <https://bot-gateway.chrono-ai.fun/docs#protocol> |
+| Download complete document | <https://bot-gateway.chrono-ai.fun/docs/download> |
 
 The NyxID catalog display name is **Agent Event Gateway**, with slug `cmaeg`.
 It is a public, automatically connected service. Refresh `GET /api/v1/keys` in

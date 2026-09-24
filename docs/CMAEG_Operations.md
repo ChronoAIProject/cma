@@ -2,14 +2,24 @@
 
 ## Public documentation
 
-The gateway itself serves `/docs`, `/docs/architecture`, `/docs/protocol` and
-`/openapi.json`. The three articles are rendered to HTML on the server and also
-available verbatim at `/docs/integration.md`, `/docs/architecture.md` and
+The gateway itself serves a single `/docs` document combining the integration
+guide, architecture and complete protocol, with section navigation and a
+`/docs/download` Markdown download. The former `/docs/architecture` and
+`/docs/protocol` addresses redirect to their sections. `/openapi.json` remains
+the machine-readable contract. Individual source articles are also available
+verbatim at `/docs/integration.md`, `/docs/architecture.md` and
 `/docs/protocol.md`. They require no login, JavaScript or external assets.
 The build embeds exactly the reviewed integration, architecture and protocol
 Markdown files; operations runbooks are not part of the public bundle.
 `infra/cmaeg/Dockerfile` copies those inputs for the binary build. Documentation
 updates therefore roll out with the gateway image, independently of CMA web.
+
+Service flow diagrams are reviewed static SVG assets under
+`api/crates/cmaeg/assets/docs`. Regenerate them with
+`.github/scripts/render-cmaeg-diagrams.py` using Mermaid CLI 11.17.0 after editing
+Mermaid source blocks; `--check` verifies source freshness in CI. The browser
+loads local SVG images under the gateway's restrictive content security policy.
+The complete Markdown download retains the Mermaid sources and internal links.
 
 Production catalog display name: **Agent Event Gateway**. NyxID slug: `cmaeg`.
 The catalog REST base is `https://bot-gateway.chrono-ai.fun/v1`, with OpenAPI at

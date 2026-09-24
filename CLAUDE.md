@@ -350,6 +350,13 @@ remain compatible. A non-additive change requires `/v2`. The reviewed baseline
 rule in §8: regenerate it, review the diff against this rule, and commit it with
 the implementation and protocol documentation.
 
+The reviewed SVG diagrams under `api/crates/cmaeg/assets/docs` are another
+required exception to the generated-artifact rule: they are bundled source
+assets for the public document, which must render without browser JavaScript
+or external services. Their Mermaid sources remain in the protocol and
+architecture Markdown; regenerate and review the SVGs with
+`.github/scripts/render-cmaeg-diagrams.py`. CI verifies source freshness.
+
 ---
 
 ## 4. `infra/` must never diverge from the code
