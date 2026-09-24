@@ -1475,7 +1475,7 @@ unchanged. A database-wide reset is outside this procedure.
 `CHRONO_NYXID_SERVICE_ID` is an optional catalog UUID string (unset by default).
 When configured, CMA accepts ordinary `nyx_` and `nyxid_ag_` keys whose live
 NyxID introspection proves access to this exact catalog service. Register the
-existing confidential CMA OAuth client in that catalog's `developer_app_ids`
+existing confidential CMA OAuth client in that catalog's `introspection_client_ids`
 before enabling this setting. Use the existing client ID/secret; no additional
 shared token is required. Direct requests and NyxID proxy requests use the same
 verification. Unconfigured deployments reject ordinary agent keys.
