@@ -54,7 +54,8 @@ its common shape, while the provider reports which fields it honours or refuses.
 | Create/read/update/delete/recover/test a channel | Creator's NyxID bearer; `profile.metadata.owner.subject` must match the caller |
 | Submit a custom event | Configured HMAC signature, or an explicitly configured ingress key |
 | Receive a NyxID relay callback | NyxID's signed callback token and required relay headers |
-| Read context, reply, edit, or typing | Channel's dedicated agent key **and** an unexpired opaque event/message reference |
+| Read context, reply, or typing | Channel's dedicated agent key **and** an unexpired `event_ref` |
+| Edit a message | Channel's dedicated agent key and `message_ref`; native MCP also requires an unexpired same-event `event_ref` |
 | Rekey a channel | Operator service credential; unavailable to ordinary creators |
 | Gateway calls to a provider | Registered provider authentication; binding execution/context uses the retained agent credential |
 
