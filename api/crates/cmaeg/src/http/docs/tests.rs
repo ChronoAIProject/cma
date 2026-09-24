@@ -28,10 +28,13 @@ async fn public_docs_are_real_html_and_exact_markdown_without_authentication() {
             .contains("default-src 'none'"));
         let body = response.text().await.unwrap();
         assert!(body.contains(expected));
-        assert!(body.contains("<nav aria-label=\"Documentation\">"));
+        assert!(body.contains("<nav aria-label=\"Sections\">"));
         assert!(body.contains("<main id=\"content\"><h1"));
         assert!(body.contains("href=\"/openapi.json\""));
         assert!(!body.contains("<script"));
+        assert!(!body.contains("language-mermaid"));
+        assert_eq!(body.matches("class=\"diagram\"").count(), 10);
+        assert!(body.contains("href=\"/docs/download\""));
         assert!(!body.contains("href=\"CMAEG_Operations.md"));
     }
     for (path, expected) in [
@@ -45,6 +48,34 @@ async fn public_docs_are_real_html_and_exact_markdown_without_authentication() {
             "text/markdown; charset=utf-8"
         );
         assert_eq!(response.text().await.unwrap(), expected);
+    }
+    let download = client
+        .get(format!("{base}/docs/download"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(download.status(), 200);
+    assert_eq!(
+        download.headers()[header::CONTENT_DISPOSITION],
+        "attachment; filename=\"agent-event-gateway.md\""
+    );
+    let markdown = download.text().await.unwrap();
+    for text in [
+        "Implement a downstream agent provider",
+        "Full event context and restart recovery",
+        "Flow H — Replica restart",
+        "8. Tools API and MCP",
+    ] {
+        assert!(markdown.contains(text));
+    }
+    for (_, name, _) in diagrams::DIAGRAMS {
+        let response = client
+            .get(format!("{base}/docs/diagrams/{name}.svg"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        assert_eq!(response.headers()[header::CONTENT_TYPE], "image/svg+xml");
     }
     assert_eq!(
         client
@@ -69,10 +100,10 @@ async fn public_docs_are_real_html_and_exact_markdown_without_authentication() {
 
 #[test]
 fn document_links_headings_and_unsafe_markup_are_handled() {
-    let output = render("# Heading\n\n## 8. Tools API and MCP\n\n## 8. Tools API and MCP\n\n[protocol](CMAEG_Protocol.md#8-tools-api-and-mcp)\n\n[internal](CMAEG_Operations.md)\n\n[bad](javascript:alert%281%29)\n\n<img src=x onerror=alert(1)>\n");
-    assert!(output.contains("id=\"8-tools-api-and-mcp\""));
-    assert!(output.contains("id=\"8-tools-api-and-mcp-1\""));
-    assert!(output.contains("href=\"/docs/protocol#8-tools-api-and-mcp\""));
+    let (output, _) = render::render("# Heading\n\n## 8. Tools API and MCP\n\n## 8. Tools API and MCP\n\n[protocol](CMAEG_Protocol.md#8-tools-api-and-mcp)\n\n[internal](CMAEG_Operations.md)\n\n[bad](javascript:alert%281%29)\n\n<img src=x onerror=alert(1)>\n", "protocol");
+    assert!(output.contains("id=\"protocol-8-tools-api-and-mcp\""));
+    assert!(output.contains("id=\"protocol-8-tools-api-and-mcp-1\""));
+    assert!(output.contains("href=\"#protocol-8-tools-api-and-mcp\""));
     assert!(!output.contains("CMAEG_Operations"));
     assert!(!output.contains("javascript:"));
     assert!(!output.contains("<img"));
