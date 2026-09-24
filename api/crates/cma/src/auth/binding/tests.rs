@@ -15,7 +15,11 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use tower::ServiceExt;
 
 pub(super) fn reserved(key: &ProvidedCredential) -> ProviderBinding {
-    let profile = json!({"schema_version":1,"metadata":{"name":"authentication","owner":{"kind":"human","subject":"owner"},"provider":"registered"},
+    reserved_with_owner(key, "human")
+}
+
+pub(super) fn reserved_with_owner(key: &ProvidedCredential, owner_kind: &str) -> ProviderBinding {
+    let profile = json!({"schema_version":1,"metadata":{"name":"authentication","owner":{"kind":owner_kind,"subject":"owner"},"provider":"registered"},
         "model":{"access":"managed","service":AgentProvider::default().connection_services().managed,"api_type":"responses","model":"test","thinking_effort":"medium"},
         "permission":{"action_mode":"guarded"},"context":{},"environment":{"size":{"cpu_cores":1,"memory_gib":2},"workspace":{"type":"directory","name":"project"}}});
     let digest = format!("sha256:{}", content_digest(&profile).unwrap());

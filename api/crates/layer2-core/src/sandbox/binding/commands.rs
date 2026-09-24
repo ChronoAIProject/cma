@@ -3,7 +3,7 @@ use super::{
     BindingState, BindingWork, ProviderBinding,
 };
 use crate::sandbox::agent_io::{
-    AgentActor, AgentAuthorizationRevision, AgentCommandEnvelope, AgentOwner, AgentSourceKind,
+    AgentActor, AgentAuthorizationRevision, AgentCommandEnvelope, AgentSourceKind,
     CommandLedgerError, CommandReservation,
 };
 use crate::sandbox::store::SandboxStoreError;
@@ -58,10 +58,7 @@ impl BindingConversationAuthority {
         }
         if envelope.authorization != authority(&self.binding.binding_id, self.binding.generation)
             || envelope.agent_id != self.conversation.agent_id
-            || envelope.owner
-                != (AgentOwner::Person {
-                    subject: self.binding.owner.clone(),
-                })
+            || envelope.owner != self.binding.resource_owner()
             || envelope.actor
                 != (AgentActor::Api {
                     subject: self.binding.owner.clone(),

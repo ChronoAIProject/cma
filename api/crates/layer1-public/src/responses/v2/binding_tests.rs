@@ -11,7 +11,7 @@ use layer2_core::{
     resource_access::*,
     sandbox::{
         agent_io::*,
-        store::{AgentStore, InMemorySandboxStore},
+        store::{AgentStore, InMemorySandboxStore, SandboxStore},
         AgentStatus,
     },
     Caller, SubjectId,
@@ -42,12 +42,7 @@ impl AgentCommandAdmissionAuthority for BindingAuthority {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(
-            *owner,
-            AgentOwner::Person {
-                subject: principal.owner().clone()
-            }
-        );
+        assert_eq!(owner, principal.resource_owner());
         if let Some(store) = &self.admission_race {
             if !self.changed.swap(true, Ordering::SeqCst) {
                 let mut agent = store
@@ -82,8 +77,12 @@ impl OrganizationAuthority for BindingAuthority {
     }
 }
 fn binding(id: &str, hash: &str) -> ProviderBinding {
+    binding_with_owner(id, hash, "human")
+}
+
+fn binding_with_owner(id: &str, hash: &str, owner_kind: &str) -> ProviderBinding {
     let value = json!({"schema_version":1,
-        "metadata":{"name":"responses", "owner":{"kind":"human","subject":"owner-a"},"provider":"registered"},
+        "metadata":{"name":"responses", "owner":{"kind":owner_kind,"subject":"owner-a"},"provider":"registered"},
         "model":{"access":"managed","service":AgentProvider::default().connection_services().managed,"api_type":"responses","model":"test","thinking_effort":"medium"},
         "permission":{"action_mode":"guarded"},"context":{},"environment":{"size":{"cpu_cores":1,"memory_gib":2},"workspace":{"type":"directory","name":"project"}}});
     let digest = format!("sha256:{}", content_digest(&value).unwrap());
@@ -180,13 +179,34 @@ async fn fixture_with_state_and_race(
     Arc<BindingAccessService>,
     BindingPrincipal,
 ) {
+    fixture_for_owner(conversation_state, admission_race, "human").await
+}
+
+pub(crate) async fn fixture_for_owner(
+    conversation_state: BindingConversationState,
+    admission_race: bool,
+    owner_kind: &str,
+) -> (
+    axum::Router,
+    Arc<InMemorySandboxStore>,
+    Arc<BindingAccessService>,
+    BindingPrincipal,
+) {
     let (state, store) = fixtures::conversation_fixture().await;
     let agent = fixtures::seeded_agent("agt_fixture", AgentStatus::Ready, 2, None);
     fixtures::insert_agent(&store, agent.clone(), vec![]).await;
-    let mut reserved = binding("binding-responses", &"a".repeat(64));
+    let mut reserved = binding_with_owner("binding-responses", &"a".repeat(64), owner_kind);
     reserved.sandbox_id = agent.sandbox_id.clone();
     reserved.workspace_id = agent.workspace_id.clone();
     let binding = ready(&store, reserved).await;
+    let sandbox = store
+        .get_sandbox(&binding.sandbox_id)
+        .await
+        .unwrap()
+        .unwrap();
+    if let Some(policy) = binding.sandbox_resource_policy(&sandbox).unwrap() {
+        store.set_resource_policy_for_test(policy);
+    }
     let mut conversation = BindingConversation::new(
         &binding,
         "conversation-external".into(),
