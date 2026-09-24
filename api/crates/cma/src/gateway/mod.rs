@@ -241,6 +241,23 @@ impl BotExternal for GatewayBots {
         })
         .await
     }
+    async fn active_route_key(&self, bot: &Bot) -> Result<Option<String>, BotError> {
+        bounded(async {
+            let token = self.auth.bot_owner_token(&bot.owner).await?;
+            let owned: Vec<_> = self
+                .nyxid
+                .owned_keys(token.expose(), bot)
+                .await?
+                .into_iter()
+                .filter(|key| key.role == BotKeyRole::Route)
+                .map(|key| key.id)
+                .collect();
+            self.nyxid
+                .active_route_key(token.expose(), bot, &owned)
+                .await
+        })
+        .await
+    }
     async fn delete_routes(&self, bot: &Bot, key_ids: &[String]) -> Result<(), BotError> {
         bounded(async {
             let token = self.auth.bot_owner_token(&bot.owner).await?;

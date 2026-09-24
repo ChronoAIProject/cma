@@ -28,17 +28,21 @@ export function BotCreate({
   onNavigate,
   intent,
   retain,
+  initialName = '',
+  initialProfile,
 }: {
   readonly client: BotClient;
   readonly profiles: CreationClient;
   readonly onNavigate: (route: AppRoute) => void;
   readonly intent?: CreationIntent;
   readonly retain: (value: CreationIntent | undefined) => boolean | void;
+  readonly initialName?: string;
+  readonly initialProfile?: CreationProfile;
 }) {
   const [step, setStep] = useState(intent === undefined ? 0 : 3);
-  const [name, setName] = useState('');
+  const [name, setName] = useState(initialName);
   const [botId, setBotId] = useState('');
-  const [profile, setProfile] = useState<CreationProfile>();
+  const [profile, setProfile] = useState<CreationProfile | undefined>(initialProfile);
   const [profileMode, setProfileMode] = useState<'profiles' | 'worker'>('profiles');
   const [worker, setWorker] = useState<EventWorkerProfileRecord>();
   const [environment, setEnvironment] = useState<EnvironmentDraft>({ mode: 'default' });

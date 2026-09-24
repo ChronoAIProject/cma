@@ -169,6 +169,9 @@ pub enum NyxIdIdentityKind {
     /// Wire value `agent_key`.
     #[serde(rename = "agent_key")]
     AgentKey,
+    /// Wire value `organization`.
+    #[serde(rename = "organization")]
+    Organization,
 }
 
 /// CMAEG `OptionStyle` wire shape.

@@ -482,7 +482,10 @@ these credentials. A provider slug MUST be in the operator's allowlist and match
 
 Profile fields not illustrated above: optional `environment` is provider-specific
 JSON; metadata `description` defaults to empty. Identity `kind` is `human`,
-`service_account` or `agent_key`. Model `access` is `managed` or `custom`;
+`service_account`, `agent_key` or `organization`. The owner subject must equal
+the authenticated creator. Organization ownership requires a NyxID
+organization-owned caller verified by NyxID; organization ownership is immutable
+after channel creation. Model `access` is `managed` or `custom`;
 `api_type` is `responses` or `chat_completions`; `thinking_effort` is `minimal`,
 `low`, `medium`, `high` or `very_high`. All model fields are required. Permission
 `action_mode` is `guarded` or `autonomous`; `service_scope` defaults to `[]`.
