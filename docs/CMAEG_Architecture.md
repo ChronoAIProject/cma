@@ -6,6 +6,12 @@ configuration, credential rotation and probes are in
 listed in [CMA Public APIs](CMA_Public_APIs.md); exact schemas come from each
 service's `GET /openapi.json`.
 
+Start with the public [integration guide](CMAEG_Integration.md), hosted at
+<https://bot-gateway.chrono-ai.fun/docs>. It covers creator applications,
+event sources, Agent tools and downstream providers. The globally auto-connected
+NyxID service is **Agent Event Gateway** (`cmaeg`); its REST proxy is
+`https://nyx-api.chrono-ai.fun/api/v1/proxy/s/cmaeg`, already mapped to `/v1`.
+
 ## Ownership and topology
 
 CMAEG is a separate event gateway. It verifies event sources, selects a channel

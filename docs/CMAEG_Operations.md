@@ -1,5 +1,25 @@
 # CMA Event Gateway operations
 
+## Public documentation
+
+The gateway itself serves `/docs`, `/docs/architecture`, `/docs/protocol` and
+`/openapi.json`. The three articles are rendered to HTML on the server and also
+available verbatim at `/docs/integration.md`, `/docs/architecture.md` and
+`/docs/protocol.md`. They require no login, JavaScript or external assets.
+The build embeds exactly the reviewed integration, architecture and protocol
+Markdown files; operations runbooks are not part of the public bundle.
+`infra/cmaeg/Dockerfile` copies those inputs for the binary build. Documentation
+updates therefore roll out with the gateway image, independently of CMA web.
+
+Production catalog display name: **Agent Event Gateway**. NyxID slug: `cmaeg`.
+The catalog REST base is `https://bot-gateway.chrono-ai.fun/v1`, with OpenAPI at
+`https://bot-gateway.chrono-ai.fun/openapi.json`. The `/v1` base is necessary
+because the NyxID OpenAPI parser discovers paths but does not apply `servers`.
+The public/internal service is auto-connected and forwards caller bearers;
+channel ownership and credential-specific gateway checks remain authoritative.
+
+## Startup
+
 The wire authority is [CMAEG protocol](CMAEG_Protocol.md). Configuration is loaded
 once before binding; invalid values fail startup. Restart through the drain
 procedure to apply changes. Configuration is operator-owned.

@@ -1,0 +1,29 @@
+:root { color-scheme: light dark; font-family: system-ui, sans-serif; color: #211b12; background: #fffbf2; --line: #d9ccb5; --accent: #493922; --selected: #f3e9d7; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+a { color: var(--accent); overflow-wrap: anywhere; }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+.skip { position: absolute; left: 16px; top: -100px; padding: 12px; background: var(--selected); }
+.skip:focus { top: 12px; }
+header { display: flex; flex-wrap: wrap; align-items: center; gap: 16px 32px; min-height: 64px; padding: 16px 24px; border-bottom: 1px solid var(--line); }
+header a { font-size: 20px; font-weight: 650; text-decoration: none; }
+.layout { display: grid; grid-template-columns: 200px minmax(0, 748px); justify-content: center; align-items: start; gap: 32px; padding: 32px 24px 64px; }
+nav { display: flex; flex-direction: column; gap: 4px; }
+nav a { display: flex; align-items: center; min-height: 40px; padding: 8px 12px; border-left: 2px solid transparent; border-radius: 8px; text-decoration: none; }
+nav a[aria-current] { background: var(--selected); border-left-color: var(--accent); font-weight: 650; }
+main { min-width: 0; font-size: 16px; line-height: 28px; overflow-wrap: anywhere; }
+h1 { margin: 0 0 24px; font-size: 32px; line-height: 40px; }
+h2 { margin: 32px 0 16px; font-size: 22px; line-height: 32px; }
+h3, h4, h5, h6 { margin: 24px 0 12px; font-size: 16px; line-height: 28px; }
+p, ul, ol, pre { margin: 0 0 16px; }
+li + li { margin-top: 6px; }
+code { font-family: ui-monospace, monospace; font-size: 13px; }
+:not(pre) > code { padding: 2px 5px; background: var(--selected); border-radius: 4px; }
+pre { max-width: 100%; overflow: auto; overflow-wrap: normal; padding: 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--selected); line-height: 22px; }
+.table { max-width: 100%; overflow: auto; margin-bottom: 16px; }
+table { border-collapse: collapse; min-width: 100%; font-size: 14px; line-height: 24px; }
+th, td { padding: 8px 12px; border: 1px solid var(--line); text-align: left; min-width: 120px; }
+blockquote { margin: 16px 0; padding-left: 16px; border-left: 2px solid var(--line); }
+:is(h1, h2, h3, h4, h5, h6) { scroll-margin-top: 24px; }
+@media (max-width: 48rem) { .layout { grid-template-columns: minmax(0, 1fr); gap: 16px; padding: 16px 16px 48px; } header { padding: 16px; } }
+@media (prefers-color-scheme: dark) { :root { color: #f5f3e9; background: #0c0d0a; --line: #404333; --accent: #d3ed74; --selected: #1b1e15; } }
