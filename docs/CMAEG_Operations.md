@@ -958,6 +958,34 @@ distinct billing refusal after successful CMA admission, not the earlier
 organization authorization defect. The receipt is
 `/tmp/cma-bot-father-model-failure-receipt.json`.
 
+Read-only billing checks at 12:30:37 UTC found zero active credit grants for the
+organization and unused daily allowances of 1,000,000 input tokens and 10,000
+output tokens. Allowance consumption and reservations were both zero. The exact
+runtime request contained 56,407 bytes and no `max_output_tokens`; its SHA-256 is
+`b5a0d3a44a78cbaba7320ceb1805f21dc50437e6ea6288ee8c1c281a700b89c6`.
+NyxID's current request-bytes/4 estimator rounds this to 14,102 tokens for both
+input and output reservation. The input estimate fits the daily allowance, but
+the output estimate exceeds its allowance by 4,102 tokens. At the observed
+0.00002 credits per output token, that excess is 0.08204 credits, which the
+wallet reservation rounds up to one whole credit. This calculation describes
+the reservation estimate, not actual model output or a completed debit.
+
+The live organization wallet balance was not established. The organization API
+key cannot access the billing endpoint, and the human wallet endpoint has no
+owner selector and may create a wallet, so that endpoint was not called.
+The evidence therefore does not establish an exhausted wallet. The observed
+facts remain the HTTP 402 refusal, unused allowances, zero active grants and
+the reservation calculation. Details are in
+`/tmp/cma-bot-father-billing-evidence.json`.
+
+A one-time grant of 10 internal credits, scoped only to the ChronoAI organization
+and `chrono-llm-public`, was proposed and awaits explicit billing authorization.
+It is not a recurring grant or a payment-method charge, and no financial mutation
+was made. The prepared proposal is
+`/tmp/cma-bot-father-credit-grant-proposal.json`. The failed event remains durable;
+a replacement helper's read-only lineage verification passed, without dispatching
+a replacement event or changing the Telegram route.
+
 Telegram cutover was not performed. Successful model output, the real Telegram
 round trip and final Bot Father acceptance remain unverified while the upstream
 credit refusal is unresolved. These receipts do not establish gateway epic
