@@ -16,6 +16,7 @@ import { Presence } from './ui/Presence';
 import { useCmaClient, useCreationClient, usePublicClient } from './api/context';
 import type { CreationRequest } from './create/CreationFlow';
 import { ReferenceProvider } from './profiles/ReferenceLink';
+import { retainFatherDraftForSignIn } from './bots/fatherDraft';
 
 const CreationFlow = lazy(() =>
   import('./create/CreationFlow').then((module) => ({ default: module.CreationFlow })),
@@ -65,7 +66,14 @@ export function App() {
     );
   }
   if (state.status === 'anonymous') {
-    return <SignInLanding onSignIn={() => signIn(window.location.pathname)} />;
+    return (
+      <SignInLanding
+        onSignIn={async () => {
+          retainFatherDraftForSignIn();
+          await signIn(window.location.pathname);
+        }}
+      />
+    );
   }
   return (
     <ReferenceProvider key={state.user.id} onNavigate={router.navigate}>
