@@ -35,3 +35,4 @@ tracing-subscriber = { workspace = true }
 utoipa = { workspace = true }
 url = { workspace = true }
 uuid = { workspace = true }
+pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }

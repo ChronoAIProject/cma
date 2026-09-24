@@ -2,6 +2,7 @@
 
 pub mod callbacks;
 pub mod creation;
+pub(crate) mod docs;
 pub mod events;
 pub mod management;
 mod management_responses;
