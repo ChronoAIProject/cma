@@ -17,10 +17,7 @@ impl AuthState {
         let principal = request.binding.ok_or(CommandAuthorizationError::Revoked)?;
         if context.credential_source != CredentialSource::Binding
             || *context != crate::auth::binding::context(&principal)
-            || *owner
-                != (AgentOwner::Person {
-                    subject: principal.owner().clone(),
-                })
+            || owner != principal.resource_owner()
         {
             return Err(CommandAuthorizationError::Revoked);
         }

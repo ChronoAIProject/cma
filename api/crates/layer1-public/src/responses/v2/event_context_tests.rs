@@ -1,4 +1,4 @@
-use super::binding_tests::{fixture, request};
+use super::binding_tests::request;
 use axum::{
     body::{to_bytes, Body},
     http::{Method, StatusCode},
@@ -78,7 +78,21 @@ async fn binding_admission_revision_race_retries_the_same_event_without_duplicat
 }
 #[tokio::test]
 async fn full_context_is_admitted_once_read_by_its_binding_and_never_overwritten() {
-    let (app, store, _, principal) = fixture().await;
+    full_context_admission("human").await;
+}
+
+#[tokio::test]
+async fn organization_binding_turn_preserves_full_context_and_idempotent_response() {
+    full_context_admission("organization").await;
+}
+
+async fn full_context_admission(owner_kind: &str) {
+    let (app, store, _, principal) = super::binding_tests::fixture_for_owner(
+        layer2_core::sandbox::binding::BindingConversationState::Ready,
+        false,
+        owner_kind,
+    )
+    .await;
     let expected = context();
     let body = json!({"conversation":"conversation-external", "stream":true,"input":"Hello","event_context":expected});
     let response = app
@@ -97,6 +111,16 @@ async fn full_context_is_admitted_once_read_by_its_binding_and_never_overwritten
         .await
         .unwrap()
         .unwrap();
+    let expected_owner = if owner_kind == "organization" {
+        layer2_core::sandbox::agent_io::AgentOwner::Organization {
+            subject: principal.owner().clone(),
+        }
+    } else {
+        layer2_core::sandbox::agent_io::AgentOwner::Person {
+            subject: principal.owner().clone(),
+        }
+    };
+    assert_eq!(retained.receipt.envelope.owner, expected_owner);
     assert_eq!(
         retained
             .receipt
