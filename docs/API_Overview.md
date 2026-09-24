@@ -2,6 +2,11 @@
 
 See the [complete method/path inventory](CMA_Public_APIs.md) and the
 [Event Gateway architecture and integration guide](CMAEG_Architecture.md).
+For task-oriented guidance, use the public [CMA skill](skills/cma/SKILL.md), its
+[non-admin user stories and flows](skills/cma/references/user-journeys.md), and
+[API recipes](skills/cma/references/api-recipes.md).
+The package is published as [cma on Ornn](https://ornn.chrono-ai.fun/skills/cma)
+and recommended by CMA's global NyxID service.
 
 
 CMA exposes one Sandbox model through public interfaces. A Sandbox contains
