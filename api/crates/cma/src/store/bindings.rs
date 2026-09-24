@@ -51,6 +51,7 @@ impl BindingCollections {
         };
         for (collection, keys) in [
             (&value.records, doc! {"pending": 1, "_id": 1}),
+            (&value.records, doc! {"key_history": 1}),
             (&value.records, doc! {"record.owner": 1, "_id": 1}),
             (&value.conversations, doc! {"pending": 1, "_id": 1}),
             (
@@ -91,6 +92,15 @@ impl BindingCollections {
 
 #[async_trait::async_trait]
 impl BindingStore for MongoSandboxStore {
+    async fn contains_key_hash(&self, hash: &str) -> Result<bool, SandboxStoreError> {
+        Ok(self
+            .bindings
+            .records
+            .find_one(doc! {"$or": [{"record.key_sha256": hash}, {"key_history": hash}]})
+            .await
+            .map_err(driver)?
+            .is_some())
+    }
     async fn find_by_key_hash(
         &self,
         hash: &str,
@@ -135,11 +145,12 @@ impl BindingStore for MongoSandboxStore {
             document.remove("_id");
             let result = self.bindings.records.update_one(
                 doc! {"_id": &next.binding_id, "revision": integer(expected)?, "document_schema_version": DOCUMENT_SCHEMA_VERSION},
-                doc! {"$set": document}).await.map_err(driver)?;
+                doc! {"$set": document, "$addToSet": {"key_history": {"$each": [current.as_ref().expect("validated update").key_sha256.clone(), next.key_sha256.clone()]}}}).await.map_err(driver)?;
             if result.matched_count != 1 {
                 return Err(SandboxStoreError::Conflict);
             }
         } else {
+            document.insert("key_history", vec![next.key_sha256.clone()]);
             self.bindings
                 .records
                 .insert_one(document)
