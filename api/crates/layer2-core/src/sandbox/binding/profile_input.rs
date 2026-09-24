@@ -58,6 +58,8 @@ pub(super) struct Context {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Environment {
+    #[serde(default)]
+    pub always_keep_alive: bool,
     pub size: Size,
     pub workspace: WorkspaceLocation,
     #[serde(default)]
