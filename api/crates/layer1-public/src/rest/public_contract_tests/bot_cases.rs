@@ -99,6 +99,9 @@ impl BotExternal for External {
     async fn set_route_key(&self, _: &Bot, _: &str, _: &str) -> Result<(), BotError> {
         unreachable!()
     }
+    async fn active_route_key(&self, _: &Bot) -> Result<Option<String>, BotError> {
+        unreachable!()
+    }
     async fn delete_routes(&self, _: &Bot, _: &[String]) -> Result<(), BotError> {
         unreachable!()
     }

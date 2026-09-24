@@ -6,6 +6,7 @@ mod lifecycle;
 mod nyxid_fixture;
 mod provider_fixture;
 mod rest;
+mod route_inventory;
 mod web;
 use fixture::*;
 
