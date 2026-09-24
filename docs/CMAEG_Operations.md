@@ -783,3 +783,182 @@ count unchanged and requires the maintainer's capacity decision. No NyxID
 catalogue, service configuration, role, code or deployment was changed. No
 Telegram test message was sent. The #918 acceptance evidence, #912 independent
 documentation exercise and #920 bridge retirement remain incomplete.
+
+### Combined Bot Father and gateway documentation rollout — 2026-09-24
+
+The unified gateway documentation and reviewed owner handoff are deployed and
+verified. Father's organization-owned turn now passes admission, but model
+execution is blocked by NyxID's `insufficient_credits` response. Telegram cutover
+and successful end-to-end Bot Father operation remain pending.
+
+PRs #944, #945 and #946 merged into `develop`. The final merged commit is
+`c4b026ca59aceee13ea0611c97747d69bd9cbf90`. All 14 jobs in Actions run
+`35989386802`, attempt 1, passed for head
+`6a263062087f5f893319a3bc065930b7ebb01edb`. The native image artifacts retain
+their actual tested revision `1eafc11b0f0fa4a225b0316daebee78e94e4e11e`;
+its tree `18c1271c9ddcc1c0ea77eb2282c0157539cdd6c8` equals the merged tree.
+Archive hashes, image IDs, source labels and `linux/amd64` platform were checked
+before promotion. Registry readback verified the immutable digests and identical
+image configurations. CI labels retain their original `development`/`dev` values.
+
+The rollout passed its guarded final verification at 11:27:01 UTC in namespace
+`chrono-bot`, cluster
+`gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northeast1-gke`.
+The registry prefix is
+`us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry`:
+
+| Component | Repository | Verified deployed digest |
+| --- | --- | --- |
+| CMA API | `cma-api` | `sha256:cd4f473317725d00c0497d674b5d84019fce9ee7a5e2d6333ca5e773e8952749` |
+| CMAEG | `cma-cmaeg` | `sha256:5ca9e3608fc87560e05c70dc91d86313fcc3fbf43bb2d547d60fb6808552fe0e` |
+| CMA web | `cma-web` | `sha256:09478a1b7745991bc430589eeda55e7bfe1524b3b3fc2497c660750ad10e22f0` |
+
+API, gateway and web each settled at one ready replica. The final observer checked
+the installed container image IDs against those registry digests. Live ConfigMaps
+and deployment settings other than the three images were unchanged. All six
+existing runtime Pods retained their exact UID, full spec, container image and
+identity, restart count and readiness. The protected Sandbox
+`sbx_9533afb9cb4a46cfb268ced722c65a22` retained Pod UID
+`19e9937e-a62a-439b-b2dd-50b3ba71a0ef`. No lifecycle command or runtime replacement
+was part of this rollout. These before/after observations establish Pod
+continuity; they do not establish uninterrupted request availability or a live
+conversation restart drill. The retained runtime default remains
+`sha256:532a64cf193957991248d98d82b7a61f6d333a2b87f5e1db0a19ae55f598ed49`.
+
+Public API readiness, gateway readiness, web root and gateway documentation all
+returned HTTP 200. A separate gateway check at 11:29:15 UTC confirmed
+`ready: true` and `cma_reachable: true`. Rollout evidence is
+`/tmp/cma-bot-father-rollout-receipt.json`; image verification receipts are under
+`/tmp/cma-bot-father-ci-35989386802/`.
+
+The backend job passed 2,649 regular tests, with 366 skipped in that run,
+then 236 real Mongo contracts across six partitions and the explicitly selected
+Linux writer-boundary test. Formatting, all-target/all-feature Clippy, workspace
+build and the doc-test gate passed; the latter executed zero doctests. Frontend
+validation passed 1,429 tests across 154 files, formatting, lint, typecheck,
+production build, CSS and style checks. Production dependency installation
+reported zero vulnerabilities; the full dependency audit passed its high-severity
+threshold with three moderate development dependency findings. Logs, exact job
+metadata and checksums are under `/tmp/cma-bot-father-ci-evidence-35989386802/`.
+
+The CI latency harness used the compiled gateway with a fake CMA and a 50-ms fake
+delay. Warm launch p99 was 28.557 ms across 500 samples; cold launch p99 61.581 ms,
+cold restore p99 56.403 ms and tool delivery p99 20.813 ms each used 200 samples.
+All configured limits passed. These measurements are not production Telegram
+latency or Bot Father acceptance.
+
+Production browser checks verified the combined documentation at
+`https://bot-gateway.chrono-ai.fun/docs`: 39 section links resolve without missing
+or duplicate anchors, all ten SVG diagrams decode, desktop and 390px mobile
+layouts have no horizontal overflow, and light/dark screenshots were inspected.
+Clicking the top-right download button saved the complete 82,380-character
+`agent-event-gateway.md`, including Flow A through Flow H. A fresh browser with
+its cache disabled opened the downstream-provider Flow F deep link at 101px,
+below the sticky header, while earlier images loaded lazily. The two legacy
+architecture/protocol URLs return permanent HTTP 308 redirects to the matching
+sections. All three raw Markdown endpoints and `/openapi.json` return HTTP 200;
+the latter advertises 13 operations.
+
+Browser and HTTP receipts, screenshot hashes and the downloaded document are
+indexed by `/tmp/cma-bot-father-production-docs-receipt.json`. The main browser
+report is `/tmp/cmaeg-unified-production-browser.json`; screenshots use
+`/tmp/cmaeg-unified-production-*.png`, with the uncached link screenshot at
+`/tmp/cmaeg-fresh-deeplink.png`. The first dark screenshot preceded lazy-image
+decoding; the inspected replacement waits for the image to decode.
+
+The production Father handoff journey passed at 11:32 UTC against the deployed
+web and API images. An anonymous draft link required sign-in and made no profile
+mutation. After the existing human owner's real sign-in cookie was verified,
+the draft survived the clean return and still required explicit review. The
+owner confirmed one private Agent Profile, which was created and published as
+`agp_b772aa7952c547389e2af4bc37207b3c`, revision 1. The existing Bot wizard
+received the chosen name and profile. Its owned Telegram selection, access
+policy and final review were reached; the final Create Bot action was not
+invoked, so this check created no Bot or route. Cleanup retired exactly that
+private profile and was verified at 11:32:50 UTC.
+
+The handoff receipt is `/tmp/cma-bot-father-live-handoff-receipt.json`. Two
+earlier observer attempts timed out before dispatching any profile creation:
+the receipt records their absent create authority and zero mutation counters.
+The browser observer's exact textarea-label selector was corrected before the
+successful attempt. This evidence establishes the deployed handoff and cleanup;
+it does not establish a real Telegram conversation or completed personal Bot
+creation.
+
+At 11:49:16 UTC, a separate read through NyxID's `cmaeg` service proxy returned
+HTTP 200 for the organization-owned gateway channel. The observed organization,
+gateway record and provider binding all matched the retained Father resources.
+The check made no remote mutation. Its receipt is
+`/tmp/cma-bot-father-nyx-proxy-receipt.json`; it establishes this authenticated
+gateway read, not organization turn execution or ordinary CMA API-key enablement.
+
+This entry records the deployed implementation, public documentation and owner
+handoff checks. The subsequent organization-owned Father custom-event check
+exposed an API authorization refusal for the organization turn. Personal-only
+checks in admission and command authorization discarded the authoritative
+binding's organization ownership. PR #947 preserves the complete owner kind
+and subject through both paths while retaining exact actor, conversation,
+generation, credential and resource-lineage checks.
+
+The correction merged at `378292984840d424906ca5a99ad31e839d6ffcec`, with
+tree `23a53ec8249f240cec8b07b1e12a6fdad0a2b9d2`. All 14 jobs in Actions run
+`35994566783`, attempt 1, passed for reviewed head
+`eb6898cb11533e8e40f61cf0846bb8e97fbee900`. Backend validation passed 2,652
+regular tests, 236 real Mongo contracts across six partitions and the explicit
+Linux writer-boundary test, plus formatting, Clippy, build and doc-test gates.
+The regular pass skipped 366 tests; the doc-test gate executed zero doctests.
+Local focused validation also passed 71 tests: 17 CMA, 19 public API and 35 core,
+with Clippy and formatting. Independent read-only review by Codex agent
+`agent_auth_ship` found no blocking privilege or compatibility gap in ownership,
+deferred authorization, command execution or retained personal bindings.
+Logs, job metadata and checksums are under
+`/tmp/cma-bot-father-ci-evidence-35994566783/`.
+
+The correction run's fake-provider latency p99 was 15.431 ms for warm launch
+across 500 samples, and 60.719 ms for cold launch, 55.434 ms for cold restore
+and 9.771 ms for tool delivery across 200 samples each. All limits passed;
+these remain CI measurements.
+
+The API-only correction passed guarded production verification at 12:20:57 UTC.
+Its final deployed image is
+`cma-api@sha256:55ded45dd035d7745bffaeea59400320d316bdc6d6f561fbf91dddca7e5e57d3`
+under the same registry prefix. Its original tested revision is
+`a306f4504c20e9dc0929cc9ff3bd72586ddd2f85`, with the same tree as the #947
+merge. Archive, source label, platform, immutable registry digest and image
+configuration checks passed. The earlier API digest in the combined rollout
+table is superseded by this correction; gateway and web retain that table's
+verified images.
+
+All seven current runtime Pods, including the original protected Sandbox and
+the new Father Sandbox, retained exact UIDs, full specs, container identities,
+restart counts and readiness. Father Pod UID
+`6a0d5b2c-6049-47c7-a2fb-59ad2dd1e7bb` was preserved. ConfigMaps, gateway and web
+were unchanged; all three public health checks returned HTTP 200. The first
+health observer request encountered Cloudflare error 1010 with Python's default
+user agent. The same check passed with its explicit
+`cma-bot-father-rollout/1` user agent; this was an observer compatibility issue.
+Evidence is `/tmp/cma-bot-father-api-fix-rollout-receipt.json` and
+`/tmp/cma-bot-father-api-fix-ci-35994566783/`.
+
+At 12:26:28 UTC, the retained custom event successfully passed provider admission
+after the correction, in 0.368962242 seconds. This confirms that the prior
+organization authorization refusal is resolved. The Father resources belong to
+ChronoAI organization `52aa284c-b5b2-49bd-9d12-79f24772dbd7`: gateway record
+`77fe02e5-2905-4f00-86ce-5d50a63bfe47`, binding
+`bnd_77fe02e529054f0086ce5d50a63bfe47`, Sandbox
+`sbx_5dfad475e99d4e0cbe2c387fc0e2d50e`, and Agent
+`agt_a410e5bc0d1f4701a05eacb36eb0324d`.
+
+The admitted event `39cab064-3ca4-4763-8b4d-c107306cbd66` produced response
+`resp_9e96a0d82d964598af1b84f7a2930b41`, which finished as `failed` during model
+execution. Read-only inspection of the Father runtime's `logs_2.sqlite` showed
+five sampling retries receiving upstream HTTP 402, `insufficient_credits`,
+error code `11300`, with message `Insufficient billing credits`. This is a
+distinct billing refusal after successful CMA admission, not the earlier
+organization authorization defect. The receipt is
+`/tmp/cma-bot-father-model-failure-receipt.json`.
+
+Telegram cutover was not performed. Successful model output, the real Telegram
+round trip and final Bot Father acceptance remain unverified while the upstream
+credit refusal is unresolved. These receipts do not establish gateway epic
+completion or authorize closing its remaining acceptance work.
