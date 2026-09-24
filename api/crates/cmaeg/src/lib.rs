@@ -56,6 +56,7 @@ pub fn router() -> Router {
                 get(http::readiness::readyz).with_state(http::readiness::Readiness::default()),
             )
             .route("/openapi.json", get(openapi))
+            .merge(http::docs::router())
             .layer(RequestBodyLimitLayer::new(REQUEST_BODY_LIMIT_BYTES))
             .layer(axum::middleware::from_fn(http::problems::protocol_headers)),
     )
@@ -72,6 +73,7 @@ pub fn router_with_state(state: http::ManagementState) -> Router {
                 get(http::readiness::readyz).with_state(readiness),
             )
             .route("/openapi.json", get(openapi))
+            .merge(http::docs::router())
             .layer(RequestBodyLimitLayer::new(REQUEST_BODY_LIMIT_BYTES))
             .layer(axum::middleware::from_fn(http::problems::protocol_headers)),
     )
