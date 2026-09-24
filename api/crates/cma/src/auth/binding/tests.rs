@@ -90,6 +90,7 @@ async fn binding_key_bypasses_nyxid_and_cookie_custody_and_never_inherits_owner_
         None,
         auth_store,
     )
+    .with_agent_key_service(Some("cma-service".into()))
     .with_binding_store(store.clone());
     let original = key();
     let mut binding = reserved(&original);
@@ -149,11 +150,11 @@ async fn binding_key_bypasses_nyxid_and_cookie_custody_and_never_inherits_owner_
         );
     }
 
-    assert!(auth
-        .resolve_request(&headers(&key()))
-        .await
-        .unwrap()
-        .is_none());
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    // Only an unknown key may reach the ordinary service verifier.
+    assert!(auth.resolve_request(&headers(&key())).await.is_err());
+    let unknown_calls = calls.load(Ordering::SeqCst);
+    assert!(unknown_calls > 0);
     binding.state = BindingState::Ready;
     binding.work = BindingWork::Idle;
     binding
@@ -193,7 +194,7 @@ async fn binding_key_bypasses_nyxid_and_cookie_custody_and_never_inherits_owner_
         .await
         .unwrap()
         .is_none());
-    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert_eq!(calls.load(Ordering::SeqCst), unknown_calls);
     server.abort();
 }
 
