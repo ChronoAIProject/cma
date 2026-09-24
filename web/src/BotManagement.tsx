@@ -1,5 +1,5 @@
 import { lazy, Suspense, useState } from 'react';
-import { useCmaClient, useCreationClient } from './api/context';
+import { useCmaClient, useCreationClient, useProfileViewsClient } from './api/context';
 import type { User } from './auth/types';
 import type { BotRoute } from './bots/BotPage';
 import type { AppRoute } from './routing/routes';
@@ -28,6 +28,7 @@ export function BotManagement({
 }) {
   const client = useCmaClient();
   const profiles = useCreationClient();
+  const profileViews = useProfileViewsClient();
   const [scope, setScope] = useState({ client, viewer: user.id, generation: 0 });
   if (scope.client !== client || scope.viewer !== user.id)
     setScope({ client, viewer: user.id, generation: scope.generation + 1 });
@@ -54,7 +55,11 @@ export function BotManagement({
         key={scope.generation}
         client={client.botViews}
         viewer={user.id}
+        viewerLabel={user.email ?? user.displayName ?? user.handle}
         profiles={profiles}
+        agentProfiles={
+          user.capabilities.includes('manage_own_profiles') ? profileViews?.agent : undefined
+        }
         route={route}
         onNavigate={onNavigate}
       />
