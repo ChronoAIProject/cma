@@ -155,6 +155,9 @@ delivery state is not durable; the gateway does not promise exactly-once effects
 
 ### Flow E — Use the four agent tools
 
+This sequence shows native MCP, where every tool receives `event_ref`. REST
+`updateMessage` uses only `message_ref`; the other REST tools use `event_ref`.
+
 ```mermaid
 sequenceDiagram
     participant A as Agent / tool client
@@ -179,7 +182,8 @@ sequenceDiagram
     end
 ```
 
-Use REST or native MCP; both share the same authority checks. Native MCP keeps
+Use REST or native MCP; both verify the channel key and the references required
+by that operation. Native MCP keeps
 `replyToEvent`, `updateMessage`, `sendTyping`, `readEventContext`. NyxID-discovered
 REST tool names are lowercase. Current Telegram and custom transports report
 **editing and typing as unsupported**. Read capabilities instead of assuming a
@@ -432,7 +436,7 @@ re-encryption. Store the complete returned value; do not rebuild it from
 `record_id`. `event_ref` carries expiring event authority and reply routing; relay
 references expire by the earlier of 30 minutes and reply-token expiry. Custom
 references last at most 30 minutes. `message_ref` identifies a confirmed delivery
-and carries channel/event authority and expiry. It is returned only when the
+and carries channel/event authority with no embedded expiry. It is returned only when the
 transport can identify the delivered message. Clients MUST NOT decode, alter,
 log or substitute these three kinds of reference. A reference alone is not
 sufficient authorization: tools also require the channel's agent key.
@@ -731,7 +735,11 @@ clients MUST NOT manufacture IDs by copying an implementation's hash algorithm.
 ## 8. Tools API and MCP
 
 All tools require the single channel agent-key bearer, compared locally in
-constant time, and an unexpired reference. REST tools return JSON 200 receipts
+constant time. Reply, typing and context require an unexpired `event_ref`.
+REST update requires a valid `message_ref`; native MCP update additionally
+requires an unexpired `event_ref` naming the same event. Channel deletion or
+agent-key rotation revokes access even when a message reference can be opened.
+REST tools return JSON 200 receipts
 or problems. Native MCP at `/mcp` uses JSON-RPC 2.0 and protocol `2025-06-18`,
 with `initialize`, `notifications/initialized`, `ping`, `tools/list`, `tools/call`.
 Send `Content-Type: application/json`; an optional `MCP-Protocol-Version` must be
