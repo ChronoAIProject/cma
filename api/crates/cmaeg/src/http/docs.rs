@@ -1,44 +1,31 @@
-//! Public, server-rendered integration documentation bundled with the gateway.
-//! Only these reviewed documents are published; operations runbooks stay private.
-
-use std::{collections::HashMap, sync::LazyLock};
-
+//! One public integration document bundled with the gateway.
+//! Operations runbooks stay private.
 use axum::{
     http::header,
     response::{IntoResponse, Response},
     routing::get,
     Router,
 };
-use pulldown_cmark::{html, CowStr, Event, Options, Parser, Tag, TagEnd};
-
+use std::sync::LazyLock;
+mod diagrams;
+mod render;
 const GUIDE: &str = include_str!("../../../../../docs/CMAEG_Integration.md");
 const ARCHITECTURE: &str = include_str!("../../../../../docs/CMAEG_Architecture.md");
 const PROTOCOL: &str = include_str!("../../../../../docs/CMAEG_Protocol.md");
 const STYLE: &str = include_str!("docs.css");
-
-static PAGES: LazyLock<[String; 3]> = LazyLock::new(|| {
-    [
-        page("Integration guide", "/docs", "/docs/integration.md", GUIDE),
-        page(
-            "Architecture",
-            "/docs/architecture",
-            "/docs/architecture.md",
-            ARCHITECTURE,
-        ),
-        page(
-            "Protocol reference",
-            "/docs/protocol",
-            "/docs/protocol.md",
-            PROTOCOL,
-        ),
-    ]
-});
+const SECTIONS: [(&str, &str, &str); 3] = [
+    ("integration", "Integration guide", GUIDE),
+    ("architecture", "Architecture", ARCHITECTURE),
+    ("protocol", "Protocol reference", PROTOCOL),
+];
+static PAGE: LazyLock<String> = LazyLock::new(page);
+static DOWNLOAD: LazyLock<String> = LazyLock::new(download_markdown);
 
 pub(crate) fn router() -> Router {
-    Router::new()
+    let mut router = Router::new()
         .route(
             "/docs",
-            get(|| async { document(&PAGES[0], "text/html; charset=utf-8") }),
+            get(|| async { document(&PAGE, "text/html; charset=utf-8") }),
         )
         .route(
             "/docs/",
@@ -46,11 +33,24 @@ pub(crate) fn router() -> Router {
         )
         .route(
             "/docs/architecture",
-            get(|| async { document(&PAGES[1], "text/html; charset=utf-8") }),
+            get(|| async { axum::response::Redirect::permanent("/docs#architecture") }),
         )
         .route(
             "/docs/protocol",
-            get(|| async { document(&PAGES[2], "text/html; charset=utf-8") }),
+            get(|| async { axum::response::Redirect::permanent("/docs#protocol") }),
+        )
+        .route(
+            "/docs/download",
+            get(|| async {
+                let mut response = document(&DOWNLOAD, "text/markdown; charset=utf-8");
+                response.headers_mut().insert(
+                    header::CONTENT_DISPOSITION,
+                    header::HeaderValue::from_static(
+                        "attachment; filename=\"agent-event-gateway.md\"",
+                    ),
+                );
+                response
+            }),
         )
         .route(
             "/docs/integration.md",
@@ -67,9 +67,24 @@ pub(crate) fn router() -> Router {
         .route(
             "/docs/style.css",
             get(|| async { document(STYLE, "text/css; charset=utf-8") }),
-        )
+        );
+    for (_, name, svg) in diagrams::DIAGRAMS {
+        router = router.route(
+            &format!("/docs/diagrams/{name}.svg"),
+            get(move || async move {
+                let mut response = document(svg, "image/svg+xml");
+                response.headers_mut().insert(
+                    header::CONTENT_SECURITY_POLICY,
+                    header::HeaderValue::from_static(
+                        "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+                    ),
+                );
+                response
+            }),
+        );
+    }
+    router
 }
-
 fn document(body: &'static str, content_type: &'static str) -> Response {
     (
         [
@@ -77,7 +92,7 @@ fn document(body: &'static str, content_type: &'static str) -> Response {
             (header::CACHE_CONTROL, "public, max-age=300"),
             (
                 header::CONTENT_SECURITY_POLICY,
-                "default-src 'none'; style-src 'self'; base-uri 'none'; frame-ancestors 'none'",
+                "default-src 'none'; style-src 'self'; img-src 'self'; base-uri 'none'; frame-ancestors 'none'",
             ),
             (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
             (header::REFERRER_POLICY, "no-referrer"),
@@ -86,48 +101,54 @@ fn document(body: &'static str, content_type: &'static str) -> Response {
     )
         .into_response()
 }
-
-fn page(title: &str, selected: &str, source: &str, markdown: &str) -> String {
+fn page() -> String {
     let mut navigation = String::new();
-    for (path, label) in [
-        ("/docs", "Integration guide"),
-        ("/docs/architecture", "Architecture"),
-        ("/docs/protocol", "Protocol reference"),
-    ] {
-        let current = if path == selected {
-            " aria-current=\"page\""
-        } else {
-            ""
-        };
-        navigation.push_str(&format!("<a href=\"{path}\"{current}>{label}</a>"));
+    let mut article = String::new();
+    for (id, title, markdown) in SECTIONS {
+        let (body, contents) = render::render(markdown, id);
+        navigation.push_str(&format!(
+            "<a class=\"section-title\" href=\"#{id}\">{title}</a>{contents}"
+        ));
+        article.push_str(&format!(
+            "<section id=\"{id}\" aria-label=\"{title}\">{body}</section>"
+        ));
     }
-    let article = render(markdown);
     format!(
         r##"<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{title} · Agent Event Gateway</title><meta name="description" content="Integrate event sources, agent tools and downstream providers with Agent Event Gateway.">
+<title>Documentation · Agent Event Gateway</title><meta name="description" content="Integration guide, architecture and complete protocol reference for Agent Event Gateway.">
 <link rel="stylesheet" href="/docs/style.css"></head><body>
 <a class="skip" href="#content">Skip to content</a>
-<header><a href="/docs">Agent Event Gateway</a><span>Developer documentation</span></header>
-<div class="layout"><nav aria-label="Documentation">{navigation}<a href="/openapi.json">OpenAPI JSON</a><a href="{source}" download>Download Markdown</a></nav>
-<main id="content">{article}</main></div></body></html>"##
+<header><a class="brand" href="/docs">Agent Event Gateway</a><span>Developer documentation</span><a class="download" href="/docs/download" download="agent-event-gateway.md">Download document <span aria-hidden="true">↓</span></a></header>
+<div class="layout"><nav aria-label="Sections"><p class="nav-label">ON THIS PAGE</p>{navigation}<a class="section-title" href="/openapi.json">OpenAPI JSON ↗</a></nav>
+<main id="content"><h1>Agent Event Gateway</h1><p class="lead">Connect event sources to agents. Build channels, integrate providers and deliver replies using one gateway.</p>{article}</main></div></body></html>"##
     )
 }
-
-fn render(markdown: &str) -> String {
-    let mut events: Vec<_> = Parser::new_ext(markdown, Options::ENABLE_TABLES).collect();
-    let mut headings = HashMap::new();
-    for index in 0..events.len() {
-        if matches!(&events[index], Event::Start(Tag::Heading { .. })) {
+fn download_markdown() -> String {
+    use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
+    use std::collections::HashMap;
+    let mut output = String::from("# Agent Event Gateway\n\nIntegration guide, architecture and protocol reference.\n\nOpenAPI: https://bot-gateway.chrono-ai.fun/openapi.json\n\n");
+    for (section, _, markdown) in SECTIONS {
+        output.push_str(&format!("<a id=\"{section}\"></a>\n\n"));
+        let events: Vec<_> = Parser::new_ext(markdown, Options::ENABLE_TABLES)
+            .into_offset_iter()
+            .collect();
+        let mut headings = HashMap::new();
+        let mut annotated = String::new();
+        let mut cursor = 0;
+        for (index, (event, range)) in events.iter().enumerate() {
+            if !matches!(event, Event::Start(Tag::Heading { .. })) {
+                continue;
+            }
             let mut text = String::new();
-            for event in &events[index + 1..] {
+            for (event, _) in &events[index + 1..] {
                 match event {
                     Event::End(TagEnd::Heading(_)) => break,
                     Event::Text(value) | Event::Code(value) => text.push_str(value),
                     _ => {}
                 }
             }
-            let slug: String = text
+            let slug = text
                 .to_lowercase()
                 .chars()
                 .filter(|ch| ch.is_alphanumeric() || ch.is_whitespace() || *ch == '-')
@@ -142,59 +163,25 @@ fn render(markdown: &str) -> String {
                 format!("{slug}-{count}")
             };
             *count += 1;
-            if let Event::Start(Tag::Heading { id: target, .. }) = &mut events[index] {
-                *target = Some(id.into());
-            }
+            annotated.push_str(&markdown[cursor..range.start]);
+            annotated.push_str(&format!("<a id=\"{section}-{id}\"></a>\n\n"));
+            cursor = range.start;
         }
+        annotated.push_str(&markdown[cursor..]);
+        annotated = annotated.replace("](#", &format!("](#{section}-"));
+        for (file, id) in [
+            ("CMAEG_Integration.md", "integration"),
+            ("CMAEG_Architecture.md", "architecture"),
+            ("CMAEG_Protocol.md", "protocol"),
+        ] {
+            annotated = annotated
+                .replace(&format!("]({file}#"), &format!("](#{id}-"))
+                .replace(&format!("]({file})"), &format!("](#{id})"));
+        }
+        output.push_str(&annotated);
+        output.push_str("\n\n---\n\n");
     }
-    let mut links = Vec::new();
-    let events = events.into_iter().filter_map(|event| match event {
-        Event::Html(_) | Event::InlineHtml(_) => None,
-        Event::Start(Tag::Link {
-            link_type,
-            dest_url,
-            title,
-            id,
-        }) => {
-            let target = link_target(&dest_url);
-            links.push(target.is_some());
-            target.map(|dest_url| {
-                Event::Start(Tag::Link {
-                    link_type,
-                    dest_url: CowStr::from(dest_url),
-                    title,
-                    id,
-                })
-            })
-        }
-        Event::End(TagEnd::Link) if links.pop() != Some(true) => None,
-        Event::Start(Tag::Image { .. }) | Event::End(TagEnd::Image) => None,
-        Event::Start(Tag::Table(_)) => Some(Event::Html("<div class=\"table\"><table>".into())),
-        Event::End(TagEnd::Table) => Some(Event::Html("</table></div>".into())),
-        other => Some(other),
-    });
-    let mut output = String::new();
-    html::push_html(&mut output, events);
     output
 }
-
-fn link_target(target: &str) -> Option<String> {
-    if target.starts_with("https://") || target.starts_with("http://") || target.starts_with('#') {
-        return Some(target.into());
-    }
-    let (file, fragment) = target.split_once('#').unwrap_or((target, ""));
-    let path = match file {
-        "CMAEG_Integration.md" => "/docs",
-        "CMAEG_Architecture.md" => "/docs/architecture",
-        "CMAEG_Protocol.md" => "/docs/protocol",
-        _ => return None,
-    };
-    Some(if fragment.is_empty() {
-        path.into()
-    } else {
-        format!("{path}#{fragment}")
-    })
-}
-
 #[cfg(test)]
 mod tests;
