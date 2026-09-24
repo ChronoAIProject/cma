@@ -9,6 +9,7 @@ pub(super) struct VerifiedSubject {
     pub subject: layer2_core::SubjectId,
     pub permissions: permissions::PermissionEvidence,
     pub profile: Profile,
+    pub independent_commands: bool,
     pub api_expires_at: Option<std::time::SystemTime>,
 }
 
@@ -83,6 +84,9 @@ pub(super) async fn verify_subject(
     metadata: &ProviderMetadata,
     access_token: &str,
 ) -> Result<VerifiedSubject, ProviderVerificationError> {
+    if super::agent_keys::is_agent_key(access_token) {
+        return super::agent_keys::verify(auth, metadata, access_token).await;
+    }
     use ProviderVerificationError::{Rejected, Unavailable};
     if !super::bearer::permits_ambient_auth(access_token) {
         verification_failure("userinfo", "restricted_credential", None);
@@ -139,6 +143,7 @@ pub(super) async fn verify_subject(
         subject: layer2_core::SubjectId::new(subject),
         permissions,
         profile: Profile::from_userinfo(&body),
+        independent_commands: api_expires_at.is_some(),
         api_expires_at,
     })
 }

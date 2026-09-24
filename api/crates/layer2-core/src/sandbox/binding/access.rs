@@ -48,6 +48,12 @@ pub struct BindingAccessService {
 }
 
 impl BindingAccessService {
+    pub async fn contains_key_hash(
+        &self,
+        hash: &str,
+    ) -> Result<bool, crate::sandbox::store::SandboxStoreError> {
+        self.store.contains_key_hash(hash).await
+    }
     pub fn new(store: Arc<dyn BindingStore>) -> Arc<Self> {
         Arc::new(Self { store })
     }

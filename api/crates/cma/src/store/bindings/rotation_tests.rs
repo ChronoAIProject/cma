@@ -93,6 +93,12 @@ async fn mongo_binding_rotation_atomically_fences_key_sandbox_and_conversations(
     assert_eq!(rotated.sandbox_id, binding.sandbox_id);
     assert_eq!(rotated.workspace_id, binding.workspace_id);
     assert_eq!(rotated.work, BindingWork::DeliverCredential);
+    // A former binding key must never regain ordinary user authority after rotation.
+    assert!(store.contains_key_hash(&original.sha256()).await.unwrap());
+    assert!(store
+        .contains_key_hash(&replacement.sha256())
+        .await
+        .unwrap());
     let stored = store
         .get_sandbox(&binding.sandbox_id)
         .await
@@ -142,5 +148,24 @@ async fn mongo_binding_rotation_atomically_fences_key_sandbox_and_conversations(
         store.binding(&binding.binding_id).await.unwrap().unwrap(),
         retired
     );
+    let reopened = MongoSandboxStore::open(&client, &database).await.unwrap();
+    assert!(reopened
+        .contains_key_hash(&original.sha256())
+        .await
+        .unwrap());
+    assert!(reopened
+        .contains_key_hash(&replacement.sha256())
+        .await
+        .unwrap());
+    assert!(reopened
+        .find_by_key_hash(&original.sha256())
+        .await
+        .unwrap()
+        .is_none());
+    assert!(reopened
+        .find_by_key_hash(&replacement.sha256())
+        .await
+        .unwrap()
+        .is_none());
     client.database(&database).drop().await.unwrap();
 }

@@ -7,6 +7,8 @@ use crate::sandbox::store::SandboxStoreError;
 /// additionally fences the exact parent revision in the same transaction.
 #[async_trait::async_trait]
 pub trait BindingStore: Send + Sync {
+    /// Current and retained former binding keys cannot acquire ambient authority.
+    async fn contains_key_hash(&self, hash: &str) -> Result<bool, SandboxStoreError>;
     /// Unique hash lookup. Retired bindings never authenticate.
     async fn find_by_key_hash(
         &self,
