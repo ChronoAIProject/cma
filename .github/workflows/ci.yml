@@ -168,6 +168,8 @@ jobs:
             diff <(echo "$expected") <(echo "$actual") || true
             exit 1
           fi
+      - name: Gateway diagrams match reviewed Markdown
+        run: python3 .github/scripts/render-cmaeg-diagrams.py --check
       - name: docs/ contains only markdown
         run: |
           bad=$(find docs -type f ! -name '*.md' || true)
