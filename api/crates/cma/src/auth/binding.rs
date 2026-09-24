@@ -9,6 +9,16 @@ use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
 impl AuthState {
+    pub(super) async fn is_known_binding_key(&self, token: &str) -> Result<bool, StoreError> {
+        let Some(access) = &self.bindings else {
+            return Ok(false);
+        };
+        let hash = format!("{:x}", Sha256::digest(token.as_bytes()));
+        access
+            .contains_key_hash(&hash)
+            .await
+            .map_err(|_| StoreError::Unavailable("binding key history unavailable".into()))
+    }
     pub(crate) fn with_binding_store(
         mut self: Arc<Self>,
         store: Arc<dyn BindingStore>,
