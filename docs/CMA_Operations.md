@@ -1469,3 +1469,32 @@ Delete only an inventoried, owner- and draft-version-fenced set of catalogue row
 in a transaction, with a mutation receipt and exact retained IDs. Verify restart
 does not reseed deleted system profiles and existing runtime Pod UIDs remain
 unchanged. A database-wide reset is outside this procedure.
+
+### Ordinary NyxID agent API credentials
+
+`CHRONO_NYXID_SERVICE_ID` is an optional catalog UUID string (unset by default).
+When configured, CMA accepts ordinary `nyx_` and `nyxid_ag_` keys whose live
+NyxID introspection proves access to this exact catalog service. Register the
+existing confidential CMA OAuth client in that catalog's `developer_app_ids`
+before enabling this setting. Use the existing client ID/secret; no additional
+shared token is required. Direct requests and NyxID proxy requests use the same
+verification. Unconfigured deployments reject ordinary agent keys.
+
+CMA validates `active`, `sub`, `token_type=api_key`, the exact `aud`, `proxy`
+scope, complete permissions and any expiry. Every new verification checks live
+NyxID grants; overlapping requests only share their in-flight verification. An
+identity alone never grants access. Inactive evidence returns 401; provider
+outages return 503. Browser cookies cannot override an explicitly supplied
+agent key. Existing binding keys retain their restricted conversation authority.
+Current/retired binding hashes and hashes retained by future rotations cannot
+fall back to ordinary owner authentication. Historical hashes rotated before
+this version still rely on NyxID revocation and service scope.
+
+Deferred commands retain the exact encrypted agent key separately from browser
+logins and verify it again before execution. Expiring keys retain their exact
+provider expiry; verified nonexpiring keys store an explicit null expiry. The
+encrypted binding for existing finite-expiry records is unchanged. Older CMA
+versions cannot consume newly admitted nonexpiring-key commands, so deployments
+with such commands require this version or a compatible successor for rollback.
+Bot creation still requires the actual owner's renewable human login; accepting
+an agent key does not authorize borrowing that owner's stored login.

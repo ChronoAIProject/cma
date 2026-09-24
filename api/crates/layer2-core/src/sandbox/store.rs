@@ -399,6 +399,7 @@ pub struct InMemorySandboxStore {
 
 #[derive(Clone, Default)]
 struct State {
+    binding_key_history: std::collections::HashSet<String>,
     bindings: std::collections::BTreeMap<String, super::binding::ProviderBinding>,
     binding_conversations: std::collections::BTreeMap<String, super::binding::BindingConversation>,
     agent_artifacts: HashMap<String, super::agent_artifacts::StoredAgentArtifact>,
