@@ -155,3 +155,24 @@ fn binding_profile_rejects_digest_mismatch_unknown_fields_and_invalid_bounds() {
     value["environment"]["unexpected"] = true.into();
     assert!(map(value).is_err());
 }
+
+#[test]
+fn organization_and_keep_alive_are_explicit_and_legacy_plans_remain_compatible() {
+    let legacy = map(input()).unwrap();
+    let encoded = serde_json::to_value(&legacy).unwrap();
+    assert!(encoded.get("organization_owned").is_none());
+    assert!(encoded["environment"].get("always_keep_alive").is_none());
+    assert_eq!(
+        serde_json::from_value::<BindingProfilePlan>(encoded).unwrap(),
+        legacy
+    );
+    let mut value = input();
+    value["metadata"]["owner"]["kind"] = "organization".into();
+    value["environment"]["always_keep_alive"] = true.into();
+    let plan = map(value).unwrap();
+    assert!(plan.organization_owned);
+    assert!(plan.environment.as_ref().unwrap().always_keep_alive);
+    assert!(plan
+        .honoured
+        .contains(&"environment.always_keep_alive".into()));
+}

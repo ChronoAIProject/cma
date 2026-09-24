@@ -19,6 +19,8 @@ pub struct BindingFieldRefusal {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BindingEnvironmentPlan {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub always_keep_alive: bool,
     pub sandbox: SandboxProfileContent,
     pub workspace: WorkspaceProfileContent,
 }
@@ -26,6 +28,8 @@ pub struct BindingEnvironmentPlan {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BindingProfilePlan {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub organization_owned: bool,
     pub owner: SubjectId,
     pub name: String,
     pub profile_digest: String,
@@ -74,7 +78,7 @@ pub fn map_profile(
     bounded(&input.metadata.provider, "metadata.provider", 1, 32)?;
     if !matches!(
         input.metadata.owner.kind.as_str(),
-        "human" | "service_account" | "agent_key"
+        "human" | "service_account" | "agent_key" | "organization"
     ) {
         return Err(invalid("invalid metadata.owner.kind"));
     }
@@ -121,6 +125,7 @@ pub fn map_profile(
         }
     }
     let mut plan = BindingProfilePlan {
+        organization_owned: input.metadata.owner.kind == "organization",
         owner: SubjectId::new(input.metadata.owner.subject),
         name: input.metadata.name,
         profile_digest: digest,
@@ -251,7 +256,14 @@ fn map_environment(
         ]
         .map(str::to_owned),
     );
-    Ok(BindingEnvironmentPlan { sandbox, workspace })
+    if input.always_keep_alive {
+        plan.honoured.push("environment.always_keep_alive".into());
+    }
+    Ok(BindingEnvironmentPlan {
+        sandbox,
+        workspace,
+        always_keep_alive: input.always_keep_alive,
+    })
 }
 
 impl BindingProfilePlan {
