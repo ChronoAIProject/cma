@@ -184,6 +184,15 @@ async fn keep_alive_and_fence_policy(
     sandbox: &Sandbox,
     session: &mut ClientSession,
 ) -> Result<bool, ApplyError> {
+    if store
+        .bindings
+        .keep_alive(sandbox, session)
+        .await
+        .map_err(ApplyError::Domain)?
+        == Some(true)
+    {
+        return Ok(true);
+    }
     let Some(document) = store
         .sandbox_profiles
         .find_one(doc! { "_id": sandbox.profile.id.as_str() })

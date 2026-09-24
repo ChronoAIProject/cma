@@ -24,6 +24,7 @@ pub enum NyxIdIdentityKind {
     Human,
     ServiceAccount,
     AgentKey,
+    Organization,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]

@@ -27,6 +27,7 @@ const CACHE_LIMIT: usize = 10_000;
 pub struct Creator {
     pub subject: String,
     pub token_hash: String,
+    pub organization: bool,
 }
 
 /// State types expose the creator authenticator to the generic extractor.
@@ -105,7 +106,7 @@ pub struct CreatorAuthenticator {
 
 #[derive(Debug, Clone)]
 struct CacheEntry {
-    result: Result<String, CreatorAuthError>,
+    result: Result<(String, bool), CreatorAuthError>,
     expires_at: Instant,
     sequence: u64,
 }
@@ -130,15 +131,18 @@ impl CreatorAuthenticator {
         let token_hash = token_hash(token);
         if let Some(entry) = self.cache.get(&token_hash) {
             if entry.expires_at > Instant::now() {
-                return entry.result.clone().map(|subject| Creator {
+                return entry.result.clone().map(|(subject, organization)| Creator {
                     subject,
+                    organization,
                     token_hash: token_hash.clone(),
                 });
             }
             drop(entry);
             self.cache.remove(&token_hash);
         }
-        let result = self.fetch_subject(token).await;
+        let result = tokio::time::timeout(Duration::from_secs(3), self.fetch_subject(token))
+            .await
+            .unwrap_or(Err(CreatorAuthError::ProviderUnavailable));
         let (ttl, cached) = match &result {
             Ok(subject) => (SUCCESS_TTL, Ok(subject.clone())),
             Err(error) => (FAILURE_TTL, Err(error.clone())),
@@ -151,14 +155,15 @@ impl CreatorAuthenticator {
                 sequence: self.sequence.fetch_add(1, Ordering::Relaxed),
             },
         );
-        result.map(|subject| Creator {
+        result.map(|(subject, organization)| Creator {
             subject,
+            organization,
             token_hash,
         })
     }
 
-    async fn fetch_subject(&self, token: &str) -> Result<String, CreatorAuthError> {
-        let mut response = self
+    async fn fetch_subject(&self, token: &str) -> Result<(String, bool), CreatorAuthError> {
+        let response = self
             .client
             .get(format!("{}/api/v1/users/me", self.base_url))
             .bearer_auth(token)
@@ -166,31 +171,66 @@ impl CreatorAuthenticator {
             .send()
             .await
             .map_err(|_| CreatorAuthError::ProviderUnavailable)?;
-        if response.status() == StatusCode::UNAUTHORIZED
-            || response.status() == StatusCode::FORBIDDEN
-        {
-            return Err(CreatorAuthError::NotAuthenticated);
-        }
-        if !response.status().is_success() {
-            return Err(CreatorAuthError::ProviderUnavailable);
-        }
-        let mut bytes = Vec::new();
-        while let Some(chunk) = response
-            .chunk()
-            .await
-            .map_err(|_| CreatorAuthError::ProviderUnavailable)?
-        {
-            if bytes.len() + chunk.len() > 64 * 1024 {
-                return Err(CreatorAuthError::ProviderUnavailable);
+        // Organization keys intentionally cannot read a personal /users/me
+        // profile. Authenticate their subject using NyxID's userinfo endpoint,
+        // then require independent positive organization evidence.
+        if response.status() == StatusCode::FORBIDDEN {
+            let response = self
+                .client
+                .get(format!("{}/oauth/userinfo", self.base_url))
+                .bearer_auth(token)
+                .send()
+                .await
+                .map_err(|_| CreatorAuthError::ProviderUnavailable)?;
+            let body = read_subject(response).await?;
+            if !self.verify_organization(token, &body.subject).await? {
+                return Err(CreatorAuthError::NotAuthenticated);
             }
-            bytes.extend_from_slice(&chunk);
+            return Ok((body.subject, true));
         }
-        let body: SubjectResponse =
-            serde_json::from_slice(&bytes).map_err(|_| CreatorAuthError::ProviderUnavailable)?;
-        if body.subject.is_empty() || body.subject.len() > 512 {
+        let body = read_subject(response).await?;
+        let organization = match body.user_type.as_deref() {
+            Some("org") => true,
+            Some("person") => false,
+            None => self.verify_organization(token, &body.subject).await?,
+            Some(_) => return Err(CreatorAuthError::ProviderUnavailable),
+        };
+        Ok((body.subject, organization))
+    }
+
+    // Older NyxID profiles omit user_type. A positively verified organization
+    // endpoint supplies the same evidence; never infer type from an ID string.
+    async fn verify_organization(
+        &self,
+        token: &str,
+        subject: &str,
+    ) -> Result<bool, CreatorAuthError> {
+        let mut url =
+            url::Url::parse(&self.base_url).map_err(|_| CreatorAuthError::ProviderUnavailable)?;
+        url.path_segments_mut()
+            .map_err(|_| CreatorAuthError::ProviderUnavailable)?
+            .extend(["api", "v1", "orgs", subject, "authorization"]);
+        let response = self
+            .client
+            .get(url)
+            .bearer_auth(token)
+            .timeout(Duration::from_secs(3))
+            .send()
+            .await
+            .map_err(|_| CreatorAuthError::ProviderUnavailable)?;
+        if response.status() == StatusCode::NOT_FOUND {
+            return Ok(false);
+        }
+        #[derive(Deserialize)]
+        struct Proof {
+            id: String,
+            your_role: String,
+        }
+        let proof: Proof = read_json(response).await?;
+        if proof.id != subject || proof.your_role != "admin" {
             return Err(CreatorAuthError::NotAuthenticated);
         }
-        Ok(body.subject)
+        Ok(true)
     }
 
     fn insert_cache(&self, key: String, value: CacheEntry) {
@@ -212,8 +252,44 @@ impl CreatorAuthenticator {
 
 #[derive(Debug, Deserialize)]
 struct SubjectResponse {
-    #[serde(alias = "id")]
+    #[serde(default)]
+    user_type: Option<String>,
+    #[serde(alias = "id", alias = "sub")]
     subject: String,
+}
+
+async fn read_subject(response: reqwest::Response) -> Result<SubjectResponse, CreatorAuthError> {
+    let body: SubjectResponse = read_json(response).await?;
+    if body.subject.is_empty() || body.subject.len() > 512 {
+        return Err(CreatorAuthError::NotAuthenticated);
+    }
+    Ok(body)
+}
+
+async fn read_json<T: serde::de::DeserializeOwned>(
+    mut response: reqwest::Response,
+) -> Result<T, CreatorAuthError> {
+    if matches!(
+        response.status(),
+        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN
+    ) {
+        return Err(CreatorAuthError::NotAuthenticated);
+    }
+    if !response.status().is_success() {
+        return Err(CreatorAuthError::ProviderUnavailable);
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|_| CreatorAuthError::ProviderUnavailable)?
+    {
+        if bytes.len() + chunk.len() > 64 * 1024 {
+            return Err(CreatorAuthError::ProviderUnavailable);
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    serde_json::from_slice(&bytes).map_err(|_| CreatorAuthError::ProviderUnavailable)
 }
 
 fn bearer(headers: &HeaderMap) -> Option<&str> {

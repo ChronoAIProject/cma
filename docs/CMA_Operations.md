@@ -70,7 +70,12 @@ never belong in the provider allowlist or ConfigMap. Optional legacy file inputs
 remain available outside this deployment.
 
 Creator authentication calls NyxID `GET /api/v1/users/me` with a three-second
-deadline. Only token hashes are cached: successes for 60 seconds and failures for
+total deadline. Organization keys that receive 403 use `/oauth/userinfo` to
+authenticate their subject and must additionally prove that exact subject through
+`GET /api/v1/orgs/{subject}/authorization`; a personal subject cannot use this
+fallback. Older profiles without `user_type` also require the organization lookup
+to distinguish personal and organization ownership. Only token hashes are cached:
+successes for 60 seconds and failures for
 10 seconds, with oldest-entry eviction at 10,000 entries. A cached success can
 continue during a short NyxID outage; an uncached unreachable check returns 503.
 Invalid bearers return 401. The record client sends the service bearer only to
@@ -1498,3 +1503,59 @@ versions cannot consume newly admitted nonexpiring-key commands, so deployments
 with such commands require this version or a compatible successor for rollback.
 Bot creation still requires the actual owner's renewable human login; accepting
 an agent key does not authorize borrowing that owner's stored login.
+
+## Organization-owned always-live event workers
+
+A gateway creator authenticated as an organization can prepare an Event Worker
+Profile with `metadata.owner.kind: organization`. The gateway verifies the NyxID
+subject type, using the authenticated organization authorization endpoint when
+older user profiles omit that type. CMA accepts the owner assertion only through
+the independently authenticated provider-binding manager. New binding sandbox
+admission atomically writes explicit organization ownership evidence; failed
+admission cannot leave an ownership sidecar behind. Existing personal bindings
+retain their original interpretation. Owner kind cannot change through reconfigure.
+
+The CMA provider accepts `environment.always_keep_alive: true`. The immutable
+binding plan retains this policy and automatic inactivity scheduling consults
+that exact binding and sandbox lineage. This prevents inactivity pause; it does
+not block an explicitly requested manual lifecycle operation. Existing retained
+availability policies continue to apply, including catalog-cleanup survivors.
+
+CMA Bot Father uses a dedicated ChronoAI organization binding and exactly
+`chrono-llm-public`, `ornn-api`, and `cmaeg` service grants. It drafts user Bot
+configurations and hands them to an authenticated CMA review page. A Telegram
+sender ID is not a NyxID login and does not authorize resources under the Father
+owner. The user's own explicit web confirmation creates their private profile
+and Bot with their selected Telegram channel.
+
+The handoff URL is `https://bot.chrono-ai.fun/bots/new?setup=` followed by
+`encodeURIComponent(JSON.stringify({v: 1, name, instructions}))`. It accepts
+only these three fields: `name` is limited to 80 UTF-8 bytes and `instructions`
+to 4096 UTF-8 bytes. The draft survives sign-in in session storage. The review
+page shows the signed-in owner and editable content; creating and publishing the
+private Agent Profile requires confirmation. Owner-bound receipts reconcile an
+uncertain API response or page reload before starting another create. The next
+step is the existing Bot wizard, with name and profile preselected. The user
+chooses their own Telegram bot from NyxID and explicitly confirms the Bot's
+admission policy. Registering a Telegram bot is available at
+`https://nyx.chrono-ai.fun/channel-bots`.
+
+Father instructions must explain this confirmation step and must never request
+Telegram tokens or NyxID credentials in chat. It should ask for the intended Bot
+name and behavior, then produce a draft link after the user confirms the draft.
+It must not claim a Bot exists until creation is confirmed by CMA. Personal
+drafts must never be stored as organization-owned profiles or published to the
+marketplace. Keep the Father conversation partitioned by conversation and sender.
+
+When moving an existing Telegram bot to Father, first disable its old CMA Bot
+connection with `POST /api/v1/bots/{bot_id}/disable` and wait for completion.
+The old provider binding, sandbox, conversations and credential renewal remain
+owned by the original user. Disabled Bot renewal updates the provider credential
+without updating an external route. It preserves the old route key while a
+complete owner-scoped inventory proves that key is still bound to the exact
+route; after retirement, obsolete keys can be revoked. Enabling a Bot reconciles
+the route to the current key before opening gateway admission. Keep the old
+connection disabled after migration: its retained runtime continues credential
+renewal independently. Do not enable a connection whose route was retired;
+that operation remains denied and retries under the existing worker semantics,
+which blocks scheduled rotation until the pending operation is resolved.
