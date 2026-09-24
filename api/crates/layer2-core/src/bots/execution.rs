@@ -80,6 +80,10 @@ pub trait BotExternal: Send + Sync {
     async fn set_callback(&self, bot: &Bot, key_id: &str, url: &str) -> Result<(), BotError>;
     async fn create_route(&self, bot: &Bot, key_id: &str) -> Result<String, BotError>;
     async fn set_route_key(&self, bot: &Bot, route: &str, key: &str) -> Result<(), BotError>;
+    /// Read the exact retained route from complete, owner-scoped active inventory.
+    /// Absence permits credential cleanup only; it never proves a transfer or
+    /// authorizes route creation. Ambiguous or conflicting ownership is an error.
+    async fn active_route_key(&self, bot: &Bot) -> Result<Option<String>, BotError>;
     /// Discover and delete routes only for the selected external bot and these
     /// owned keys. Refuse any conflicting use rather than deleting another route.
     async fn delete_routes(&self, bot: &Bot, key_ids: &[String]) -> Result<(), BotError>;
@@ -185,6 +189,28 @@ impl BotWorker {
             return Err(BotError::Unavailable);
         }
         let enabled = operation == BotOperation::Enable;
+        if enabled {
+            // Disabled renewal may have retained a key still used by an old
+            // route. Reconcile that route before admitting any new messages.
+            // A removed or transferred route leaves this Bot disabled.
+            self.step(bot, "reconcile_route_before_enable").await?;
+            self.external
+                .set_route_key(
+                    bot,
+                    bot.resources
+                        .route_id
+                        .as_deref()
+                        .ok_or(BotError::Unavailable)?,
+                    bot.resources
+                        .credentials
+                        .route_key_id
+                        .as_deref()
+                        .ok_or(BotError::Unavailable)?,
+                )
+                .await?;
+            self.retire_unused_keys(bot, &bot.resources.credentials.clone())
+                .await?;
+        }
         self.step(bot, "configure_admission").await?;
         let channel = self
             .external

@@ -1546,3 +1546,16 @@ name and behavior, then produce a draft link after the user confirms the draft.
 It must not claim a Bot exists until creation is confirmed by CMA. Personal
 drafts must never be stored as organization-owned profiles or published to the
 marketplace. Keep the Father conversation partitioned by conversation and sender.
+
+When moving an existing Telegram bot to Father, first disable its old CMA Bot
+connection with `POST /api/v1/bots/{bot_id}/disable` and wait for completion.
+The old provider binding, sandbox, conversations and credential renewal remain
+owned by the original user. Disabled Bot renewal updates the provider credential
+without updating an external route. It preserves the old route key while a
+complete owner-scoped inventory proves that key is still bound to the exact
+route; after retirement, obsolete keys can be revoked. Enabling a Bot reconciles
+the route to the current key before opening gateway admission. Keep the old
+connection disabled after migration: its retained runtime continues credential
+renewal independently. Do not enable a connection whose route was retired;
+that operation remains denied and retries under the existing worker semantics,
+which blocks scheduled rotation until the pending operation is resolved.
