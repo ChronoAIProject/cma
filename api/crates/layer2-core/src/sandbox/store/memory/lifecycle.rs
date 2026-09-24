@@ -16,12 +16,14 @@ impl SandboxAdmissionStore for InMemorySandboxStore {
     ) -> Result<SandboxAdmissionResult, SandboxStoreError> {
         admission.validate()?;
         let mut state = self.lock();
+        let mut resource_policy = None;
         if let Some(fence) = &admission.binding {
             let binding = state
                 .bindings
                 .get(&fence.binding_id)
                 .ok_or(SandboxStoreError::Conflict)?;
             fence.require_sandbox(binding, &admission.sandbox)?;
+            resource_policy = binding.sandbox_resource_policy(&admission.sandbox)?;
         }
         let replay_key = admission
             .trigger_launch_id()
@@ -71,6 +73,9 @@ impl SandboxAdmissionStore for InMemorySandboxStore {
         let mut candidate = state.clone();
         let id = sandbox.id.clone();
         create_record!(candidate, sandboxes, id.clone(), sandbox.clone())?;
+        if let Some(policy) = resource_policy {
+            candidate.resource_policies.insert(id.clone(), policy);
+        }
         if let Some(key) = replay_key {
             candidate.sandbox_admissions.insert(
                 key,

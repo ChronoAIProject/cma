@@ -1,7 +1,8 @@
 import type { AppRoute } from '../routing/routes';
 import type { CreationClient } from '../create/client';
 import type { BotClient } from './model';
-import { BotCreate } from './BotCreate';
+import type { AgentProfileContent, ProfileEditorClient } from '../profiles/client';
+import { BotNew } from './BotNew';
 import { useCreationIntent } from './creationIntent';
 import { BotDetail } from './BotDetail';
 import { BotsList } from './BotsList';
@@ -11,13 +12,17 @@ export type BotRoute = Extract<AppRoute, { kind: 'bots' | 'bot_new' | 'bot' }>;
 export function BotPage({
   client,
   viewer,
+  viewerLabel = viewer,
   profiles,
+  agentProfiles,
   route,
   onNavigate,
 }: {
   readonly client: BotClient;
   readonly viewer: string;
+  readonly viewerLabel?: string;
   readonly profiles?: CreationClient;
+  readonly agentProfiles?: ProfileEditorClient<AgentProfileContent>;
   readonly route: BotRoute;
   readonly onNavigate: (route: AppRoute) => void;
 }) {
@@ -38,9 +43,12 @@ export function BotPage({
           <h1>Profile selection unavailable</h1>
         </section>
       ) : (
-        <BotCreate
+        <BotNew
           client={client}
+          viewer={viewer}
+          viewerLabel={viewerLabel}
           profiles={profiles}
+          agentProfiles={agentProfiles}
           onNavigate={onNavigate}
           intent={intent}
           retain={retain}

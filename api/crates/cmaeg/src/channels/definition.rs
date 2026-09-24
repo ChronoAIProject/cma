@@ -126,7 +126,11 @@ pub fn build_definition(
         record_id,
         creation: None,
         owner: NyxIdIdentity {
-            kind: NyxIdIdentityKind::Human,
+            kind: if request.profile.metadata.owner.kind == NyxIdIdentityKind::Organization {
+                NyxIdIdentityKind::Organization
+            } else {
+                NyxIdIdentityKind::Human
+            },
             subject: owner.to_owned(),
         },
         profile: request.profile.clone(),
@@ -205,6 +209,14 @@ pub fn build_update(
     request: &ChannelUpdateRequest,
     current: &ChannelDefinition,
 ) -> Result<ChannelDefinition, ValidationError> {
+    if (request.profile.metadata.owner.kind == NyxIdIdentityKind::Organization)
+        != (current.profile.metadata.owner.kind == NyxIdIdentityKind::Organization)
+    {
+        return Err(ValidationError::new(
+            "/profile/metadata/owner/kind",
+            "organization ownership is immutable",
+        ));
+    }
     let mut credentials = current.secrets.clone();
     if let Some(patch) = &request.credentials {
         if let Some(agent_key) = &patch.agent_key {
@@ -402,6 +414,12 @@ pub fn channel_pointer(
 
 fn validate_definition(definition: &ChannelDefinition) -> Result<(), ValidationError> {
     definition.validate()?;
+    if definition.profile.metadata.owner.subject != definition.owner.subject {
+        return Err(ValidationError::new(
+            "/profile/metadata/owner/subject",
+            "must match the authenticated channel owner",
+        ));
+    }
     if definition.provider.slug != definition.profile.metadata.provider {
         return Err(ValidationError::new(
             "/provider/slug",

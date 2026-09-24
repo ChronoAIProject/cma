@@ -149,6 +149,35 @@ impl NyxidClient {
             .await?;
         updated.require(bot, &[key.to_owned()])
     }
+    pub async fn active_route_key(
+        &self,
+        token: &str,
+        bot: &Bot,
+        owned: &[String],
+    ) -> Result<Option<String>, BotError> {
+        let expected = bot
+            .resources
+            .route_id
+            .as_deref()
+            .ok_or(BotError::Unavailable)?;
+        identifier(expected)?;
+        let routes = self.routes(token).await?;
+        let mut retained = None;
+        for route in routes {
+            if route.id == expected {
+                route.require(bot, owned)?;
+                if !route.is_active {
+                    return Err(BotError::Unavailable);
+                }
+                retained = Some(route.agent_api_key_id);
+            } else if owned.contains(&route.agent_api_key_id)
+                || route.channel_bot_id.as_deref() == Some(&bot.request.external_bot_id)
+            {
+                return Err(BotError::Forbidden);
+            }
+        }
+        Ok(retained)
+    }
     pub async fn delete_routes(
         &self,
         token: &str,
