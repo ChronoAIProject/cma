@@ -5,6 +5,288 @@ see [Event Gateway architecture](CMAEG_Architecture.md). This document remains
 the normative wire contract.
 
 
+## 0. Service flows at a glance
+
+Start here to see which API your system calls and what the gateway does next.
+The diagrams describe the implemented v1 behavior. A successful admission is
+separate from completed agent work and confirmed external delivery.
+
+```mermaid
+flowchart TB
+    Creator["Creator application · NyxID owner token"] -->|"Create / read / update / test / delete channels"| Gateway["Agent Event Gateway · /v1"]
+    Telegram["Telegram user"] --> Nyx["NyxID Bot relay"]
+    Nyx -->|"Signed callback"| Gateway
+    Source["Your event producer"] -->|"Authenticated CloudEvent"| Gateway
+    Gateway -->|"Binding + conversation + Responses stream"| Provider["Your agent provider · CMA or another allowlisted provider"]
+    Provider --> Agent["Agent execution"]
+    Agent -->|"4 event tools · REST or MCP"| Gateway
+    Gateway -->|"Replies"| Nyx
+    Gateway -->|"SSE or signed result webhook"| Consumer["Your result consumer"]
+    Gateway <-->|"Encrypted channel records"| Store["CMA record API"]
+    Provider --> Context["Durable turns + full event context"]
+```
+
+| Your integration | What you implement or configure | Start with |
+| --- | --- | --- |
+| Creator application | Authenticate the owner, submit a complete worker profile, retain the returned channel/record/version and endpoints | [Flow A](#flow-a-create-inspect-and-test-a-channel) and [§5](#5-management-api) |
+| Telegram Bot | NyxID Bot and agent route, pinned relay issuer/key/routes, returned callback URL, admission and reply policy | [Flow B](#flow-b-telegram-message-to-agent-reply) and [§6](#6-sources) |
+| Custom event producer | CloudEvents JSON plus HMAC or an explicitly allowed key; preserve event identity on retries | [Flow C](#flow-c-custom-event-ingress-and-response-modes) and [§6](#6-sources) |
+| Result consumer | Read the live SSE stream or verify and deduplicate signed result webhooks | [Flow D](#flow-d-deliver-results-and-interpret-receipts) and [§10](#10-delivery-semantics) |
+| Agent or tool client | Use the channel's agent key with the supplied event/message references | [Flow E](#flow-e-use-the-four-agent-tools) and [§8](#8-tools-api-and-mcp) |
+| Downstream agent provider | Implement Agent Card, binding, conversation, Responses SSE, durable idempotency and authenticated event-context reads | [Flow F](#flow-f-implement-a-downstream-agent-provider) and [§9](#9-provider-contract) |
+| Channel owner / operator | Reconcile versions and uncertain mutations; manage credentials and lifecycle within the correct authority | [Flow G](#flow-g-update-policy-rotate-credentials-and-delete), [Flow H](#flow-h-replica-restart-and-recovery-boundaries) and [§5](#5-management-api) |
+
+The REST base is `https://bot-gateway.chrono-ai.fun/v1`. Through the globally
+auto-connected NyxID service, use
+`https://nyx-api.chrono-ai.fun/api/v1/proxy/s/cmaeg` and append the same relative
+path, without another `/v1`. Native MCP uses the separate gateway `/mcp` endpoint.
+
+### Flow A — Create, inspect and test a channel
+
+```mermaid
+sequenceDiagram
+    participant C as Creator application
+    participant G as Gateway
+    participant N as NyxID
+    participant S as CMA record API
+    participant P as Agent provider
+    C->>G: POST /v1/channels · owner bearer + profile +<br/>sources + credentials
+    G->>N: Verify creator identity (bounded cache)
+    G->>G: Check owner, policy, credentials and allowlisted<br/>provider
+    opt Creator reserved record_id
+        G->>S: Persist encrypted pending reservation
+    end
+    G->>P: Read Agent Card / prepare binding with profile and<br/>digest
+    P-->>G: binding_id, level, honoured and refused fields
+    G->>S: Persist encrypted ready channel
+    G-->>C: 201 · channel_id, record_id, version, endpoints,<br/>field decisions
+    C->>G: GET /v1/channels/{channel_id}
+    G-->>C: 200 · retained channel configuration (secrets<br/>redacted)
+    C->>G: POST /v1/channels/{channel_id}/test
+    G->>P: Synthetic provider test
+    G-->>C: 200 · accepted_after_ms, first_text, level
+```
+
+Reserve `record_id` before issuing a create when you need restart-safe recovery.
+After a lost response, use `GET /v1/channel-records/{record_id}` and reconcile the
+same reservation. The optional `Idempotency-Key` cache alone is replica-local.
+Inspect `provider.refused`: schema acceptance does not mean the provider supports
+every requested field. `/test` exercises the provider path; it does not prove a
+real Telegram round trip or external result delivery.
+
+### Flow B — Telegram message to agent reply
+
+```mermaid
+sequenceDiagram
+    participant U as Telegram user
+    participant N as NyxID relay
+    participant G as Gateway
+    participant P as Agent provider
+    U->>N: Send text to the configured Bot
+    N->>G: POST /v1/callbacks/{channel_id} · signed envelope
+    G->>G: Restore channel and verify signature, issuer,<br/>route, body and reply token
+    alt Sender / content / chat policy refuses the event
+        G-->>N: 202 · status=refused, stable reason
+    else Admitted human text
+        G->>G: Normalize activity and choose stable conversation<br/>and event identity
+        G->>P: POST Responses · stream=true, idempotency key,<br/>full event_context
+        P-->>G: response.created / response.in_progress
+        G-->>N: 202 · accepted (or deferred when acceptance budget<br/>expires)
+        opt Long-running turn and acknowledgements enabled
+            G->>N: Progress acknowledgement, then bounded heartbeats
+            N->>U: Working on it…
+        end
+        P-->>G: Committed message / completion or explicit tool reply
+        G->>N: Deliver answer through the bound reply route
+        N->>U: Agent answer
+    end
+```
+
+The gateway verifies the relay before admission. A `202` refusal starts no agent
+turn. An accepted/deferred `202`, acknowledgement or heartbeat is not a completed
+answer. Provider work can continue after the ingress connection closes. A failed
+turn attempts one failure notice unless a tool already replied.
+
+### Flow C — Custom event ingress and response modes
+
+```mermaid
+flowchart TB
+    Event["Producer keeps one logical CloudEvent id"] --> Sign["Sign exact raw body with HMAC · or send allowed NyxID key"]
+    Sign --> Post["POST /v1/channels/{channel_id}/events"]
+    Post --> Verify["Restore channel → authenticate → normalize → partition"]
+    Verify --> Turn["Provider admission with stable idempotency key + full activity"]
+    Turn --> Mode{"Requested mode"}
+    Mode -->|"Default"| Async["202 accepted/deferred · work continues"]
+    Mode -->|"?mode=stream + sync sink"| SSE["200 text/event-stream"]
+    SSE --> Frames["cmaeg.text.delta → cmaeg.message → completed or failed"]
+    Async --> Webhook["Configured result_webhook receives signed result events"]
+    Frames --> Webhook
+```
+
+A default `202` is not a result body. Configure a result webhook when you need an
+asynchronous callback; a `source` sink by itself does not create one. SSE requires
+a `sync` sink. The stream has no durable replay or `Last-Event-ID` contract.
+For HMAC, sign the original bytes and use the configured base64 **string's UTF-8
+bytes** as the key; do not base64-decode the configured string. See §6 for the
+executable signing example, timestamp window and exact headers.
+
+### Flow D — Deliver results and interpret receipts
+
+```mermaid
+flowchart TB
+    Output["Committed provider message or explicit replyToEvent"] --> Policy["Reply policy and duplicate-answer suppression"]
+    Policy --> TG["Telegram source sink"]
+    Policy --> Live["Custom sync sink"]
+    Policy --> Hook["Custom result_webhook sink"]
+    TG --> Render["Render safely · chunk at 4000 UTF-16 units · pace per route"]
+    Render --> Receipt{"Delivery outcome"}
+    Receipt --> Confirm["confirmed · retain returned message_ref"]
+    Receipt --> Unknown["unknown · do not blindly resend"]
+    Receipt --> Reject["rejected / rate_limited / unsupported · inspect receipt"]
+    Live --> Stream["Deliver live SSE frames · disconnect does not cancel the turn"]
+    Hook --> Verify["Receiver verifies HMAC and deduplicates webhook ID"]
+    Verify --> Retry["Gateway makes up to 4 attempts with stable ID/body"]
+```
+
+`rendering` and `delivery` are separate fields: a rendered message can still fail
+to deliver. A confirmed or unknown explicit tool reply suppresses a later
+automatic answer. Partial chunk delivery is not full confirmation. External
+delivery state is not durable; the gateway does not promise exactly-once effects.
+
+### Flow E — Use the four agent tools
+
+```mermaid
+sequenceDiagram
+    participant A as Agent / tool client
+    participant G as Gateway REST or native MCP
+    participant P as Provider context store
+    participant S as Selected delivery sink
+    A->>G: Channel agent bearer + unexpired event_ref
+    G->>G: Verify sealed reference and exact channel key
+    alt readEventContext
+        G->>P: GET conversation/events/{event_id} using retained<br/>agent bearer
+        P-->>G: Durable complete activity and matching event identity
+        G-->>A: Activity + actual transport capabilities
+    else replyToEvent
+        G->>S: Render and deliver message
+        S-->>G: Delivery outcome
+        G-->>A: Rendering + delivery receipt · message_ref when<br/>available
+    else updateMessage
+        A->>G: message_ref identifying the same event
+        G-->>A: Delivery receipt or unsupported capability
+    else sendTyping
+        G-->>A: sent or unsupported
+    end
+```
+
+Use REST or native MCP; both share the same authority checks. Native MCP keeps
+`replyToEvent`, `updateMessage`, `sendTyping`, `readEventContext`. NyxID-discovered
+REST tool names are lowercase. Current Telegram and custom transports report
+**editing and typing as unsupported**. Read capabilities instead of assuming a
+tool name guarantees platform support. Expired references return `410`; a
+reference alone never grants access.
+
+### Flow F — Implement a downstream agent provider
+
+```mermaid
+sequenceDiagram
+    participant G as Gateway
+    participant P as Your allowlisted provider
+    participant D as Your durable store
+    participant A as Your agent runtime
+    G->>P: GET configured Agent Card
+    P-->>G: Verified capability advertisement
+    G->>P: PUT binding/{binding_id} · profile, digest,<br/>agent_key, tools
+    P->>P: Authenticate manager/agent and validate owner,<br/>scope, profile
+    P->>D: Idempotently retain binding and provisioning plan
+    P-->>G: Binding level and field decisions
+    G->>P: POST Responses · conversation, input, stream,<br/>event_context, Idempotency-Key
+    opt conversation_not_found
+        P-->>G: 404 conversation_not_found
+        G->>P: PUT<br/>binding/{binding_id}/conversations/{conversation_id}<br/>· {}
+        G->>P: Retry same Responses request and same idempotency key
+    end
+    P->>D: Atomically admit turn + idempotency + complete<br/>event_context
+    P-->>G: SSE response.created or response.in_progress with<br/>response ID
+    P->>A: Execute admitted work
+    A-->>P: Output
+    P->>D: Commit message before output_item.done
+    P-->>G: Message events, then completed / failed / incomplete
+```
+
+Implement all provider operations listed in §9, including authenticated context
+reads and binding/conversation deletion. URL templates are registered by the
+operator; channel creators cannot choose arbitrary provider origins. The CMA
+provider uses its configured service bearer for exact binding/conversation
+management paths; turns and context reads use the retained agent key. Other
+providers use their retained agent bearer. An HTTP `200` without an acceptance
+SSE event does not establish admission. Busy retries retain the same logical
+identity; a lost stream must not silently launch a new turn.
+
+### Flow G — Update policy, rotate credentials and delete
+
+```mermaid
+sequenceDiagram
+    participant C as Channel owner
+    participant G as Gateway
+    participant P as Provider
+    participant S as CMA record API
+    C->>G: GET channel · read current version
+    G-->>C: version N and retained policy
+    C->>G: PUT channel · full replacement policy +<br/>expected_version N
+    G->>P: Reconcile binding (including selected credentials)
+    G->>S: Conditional write of encrypted record
+    alt Version changed or write uncertain
+        G-->>C: Conflict / failure · reconcile same identity<br/>before retry
+    else Committed
+        G-->>C: 200 · same channel_id, new version
+    end
+    Note over C,G: Optional credentials patch rotates agent/channel/HMAC credentials
+    C->>G: DELETE channel?expected_version=current
+    G->>P: Release binding
+    alt Provider release failed
+        G-->>C: Failure · channel record retained
+    else Released (or already absent)
+        G->>S: Remove retained channel record
+        G-->>C: 204
+    end
+```
+
+PUT replaces the full policy and preserves the channel ID and provider slug.
+Omitted credentials retain the prior values. GET does not prove that an uncertain
+prior provider mutation was reconciled; a successful PUT does. Separately,
+`POST /channels/{channel_id}/rekey` requires the **CMA service bearer** and
+re-encrypts the record with the current gateway master key. Rekey is an operator
+operation, not agent-key rotation; retain keys needed for old channel pointers.
+
+### Flow H — Replica restart and recovery boundaries
+
+```mermaid
+sequenceDiagram
+    participant C as Caller / agent
+    participant G as New gateway replica
+    participant S as CMA record API
+    participant P as Provider durable store
+    C->>G: Request with existing channel_id / event_ref
+    G->>G: Open sealed pointer with retained master keys
+    G->>S: Authenticated read of encrypted channel record on<br/>cache miss
+    S-->>G: Versioned retained channel
+    G->>G: Decrypt, validate and repopulate disposable cache
+    opt readEventContext with valid channel agent key
+        G->>P: Authenticated read for exact binding +<br/>conversation + event
+        P-->>G: Full persisted activity (up to 32 KiB of text)
+        G-->>C: Original context, even though sealed reference is<br/>at most 4 KiB
+    end
+    Note over C,P: In-flight streams, local delivery receipts and queued output are not replayed
+```
+
+Keep the key ring and encrypted records across replacements. Context is persisted
+with normal provider turn admission, so ingress needs no separate context-write
+call. Repeating an event must preserve its identity and use provider idempotency.
+This does **not** recover lost live SSE frames or guarantee an unobserved external
+send did not happen. See §10 before designing retries around uncertain delivery.
+
+
 ## 1. Scope and terms
 
 This document is the normative contract for CMAEG clients, event sources and
@@ -157,7 +439,7 @@ sufficient authorization: tools also require the channel's agent key.
 
 ## 5. Management API
 
-All six operations return `Cache-Control: no-store`. Except rekey, they use
+All management operations return `Cache-Control: no-store`. Except rekey, they use
 `Authorization: Bearer <creator NyxID token>` and enforce ownership. The owner
 subject in `profile.metadata.owner` MUST equal the authenticated creator.
 `schema_version` for both channel requests and profiles is `1`.
