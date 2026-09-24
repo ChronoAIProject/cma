@@ -46,16 +46,7 @@ impl ResourceAccessService {
         else {
             return Err(ResourceAccessStoreError::Corrupt.into());
         };
-        let expected_owner = if proof.binding.profile.organization_owned {
-            ResourceOwner::Organization {
-                subject: proof.binding.owner.clone(),
-            }
-        } else {
-            ResourceOwner::Person {
-                subject: proof.binding.owner.clone(),
-            }
-        };
-        if snapshot.scope(target)?.owner != expected_owner
+        if snapshot.scope(target)?.owner != proof.binding.resource_owner()
             || lineage.sandbox.id != proof.binding.sandbox_id
             || workspace.id != proof.binding.workspace_id
             || worktree.id != proof.conversation.worktree_id

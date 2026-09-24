@@ -324,6 +324,21 @@ fn valid_sha256(value: &str) -> bool {
 }
 
 impl ProviderBinding {
+    /// Owner kind is part of retained binding authority, independently of the
+    /// subject string carried by a binding credential.
+    pub fn resource_owner(&self) -> crate::resource_access::ResourceOwner {
+        use crate::resource_access::ResourceOwner;
+        if self.profile.organization_owned {
+            ResourceOwner::Organization {
+                subject: self.owner.clone(),
+            }
+        } else {
+            ResourceOwner::Person {
+                subject: self.owner.clone(),
+            }
+        }
+    }
+
     /// The authenticated binding manager attests the owner kind after verifying
     /// the creator with NyxID. Persist this evidence with new sandbox admission.
     pub fn sandbox_resource_policy(
@@ -334,7 +349,7 @@ impl ProviderBinding {
         crate::sandbox::store::SandboxStoreError,
     > {
         use crate::resource_access::{
-            OrganizationOwnershipEvidence, ResourceActor, ResourceOwner, ResourcePolicyRecord,
+            OrganizationOwnershipEvidence, ResourceActor, ResourcePolicyRecord,
         };
         if self.sandbox_id != sandbox.id || self.owner != sandbox.owner {
             return Err(crate::sandbox::store::SandboxStoreError::Conflict);
@@ -345,9 +360,7 @@ impl ProviderBinding {
         let policy = ResourcePolicyRecord {
             sandbox_id: sandbox.id.clone(),
             sandbox_created_at: sandbox.created_at.clone(),
-            owner: ResourceOwner::Organization {
-                subject: self.owner.clone(),
-            },
+            owner: self.resource_owner(),
             organization_evidence: Some(OrganizationOwnershipEvidence {
                 issuer: "cma:authenticated-provider-binding-manager".into(),
                 organization: self.owner.clone(),
