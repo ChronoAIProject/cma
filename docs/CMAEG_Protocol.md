@@ -467,10 +467,15 @@ A transport success alone does not mean platform delivery succeeded.
 | `sendTyping` | POST `/v1/events/{event_ref}/typing`, no body | `{event_ref}` |
 | `readEventContext` | GET `/v1/events/{event_ref}/context` | `{event_ref}` |
 
-NyxID service proxy tool names are `<configured-slug>__replyToEvent`,
-`<configured-slug>__updateMessage`, `<configured-slug>__sendTyping`, and
-`<configured-slug>__readEventContext`; native names omit the slug. The default
-slug is `cmaeg`. A message is `{text?,blocks:[],reply_to?}`; text or at least one
+Native MCP preserves the four names above. NyxID's OpenAPI discovery normalizes
+operation IDs to lowercase, so its discovered tool names are
+`<configured-slug>__replytoevent`, `<configured-slug>__updatemessage`,
+`<configured-slug>__sendtyping`, and `<configured-slug>__readeventcontext`.
+Those tools use NyxID's discovered REST parameter schemas, not native MCP
+arguments. The default slug is `cmaeg`; its production display name is
+**Agent Event Gateway** and its NyxID service base includes `/v1`.
+The [integration guide](CMAEG_Integration.md) lists exact public URLs.
+A message is `{text?,blocks:[],reply_to?}`; text or at least one
 block is required. `reply_to` is an opaque message reference. Blocks:
 
 | Block type | Complete fields after `type` | Telegram rendering | Custom rendering |
