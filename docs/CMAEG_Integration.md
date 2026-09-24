@@ -5,6 +5,9 @@ conversation, invokes a registered provider, and delivers the result. CMA is the
 currently deployed provider. The gateway owns event routing and delivery; the
 provider owns agent provisioning, execution, conversation history and event context.
 
+Start with the [service flow diagrams](CMAEG_Protocol.md#0-service-flows-at-a-glance)
+for an overview of channel setup, ingress, execution, tools, delivery and recovery.
+
 ## Addresses and discovery
 
 | Interface | Production address |
@@ -14,8 +17,9 @@ provider owns agent provisioning, execution, conversation history and event cont
 | Native MCP | `https://bot-gateway.chrono-ai.fun/mcp` |
 | OpenAPI | <https://bot-gateway.chrono-ai.fun/openapi.json> |
 | Integration guide | <https://bot-gateway.chrono-ai.fun/docs> |
-| Architecture | <https://bot-gateway.chrono-ai.fun/docs/architecture> |
-| Complete protocol | <https://bot-gateway.chrono-ai.fun/docs/protocol> |
+| Architecture section | <https://bot-gateway.chrono-ai.fun/docs#architecture> |
+| Complete protocol section | <https://bot-gateway.chrono-ai.fun/docs#protocol> |
+| Download complete document | <https://bot-gateway.chrono-ai.fun/docs/download> |
 
 The NyxID catalog display name is **Agent Event Gateway**, with slug `cmaeg`.
 It is a public, automatically connected service. Refresh `GET /api/v1/keys` in
@@ -50,7 +54,8 @@ its common shape, while the provider reports which fields it honours or refuses.
 | Create/read/update/delete/recover/test a channel | Creator's NyxID bearer; `profile.metadata.owner.subject` must match the caller |
 | Submit a custom event | Configured HMAC signature, or an explicitly configured ingress key |
 | Receive a NyxID relay callback | NyxID's signed callback token and required relay headers |
-| Read context, reply, edit, or typing | Channel's dedicated agent key **and** an unexpired opaque event/message reference |
+| Read context, reply, or typing | Channel's dedicated agent key **and** an unexpired `event_ref` |
+| Edit a message | Channel's dedicated agent key and `message_ref`; native MCP also requires an unexpired same-event `event_ref` |
 | Rekey a channel | Operator service credential; unavailable to ordinary creators |
 | Gateway calls to a provider | Registered provider authentication; binding execution/context uses the retained agent credential |
 
