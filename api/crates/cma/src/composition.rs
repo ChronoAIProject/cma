@@ -125,6 +125,7 @@ impl ControlPlaneComposition {
             stores.auth.clone(),
             config.nyxid_public_url.clone(),
         )
+        .with_agent_key_service(config.nyxid_service_id.clone())
         .with_binding_store(stores.sandbox_model.clone());
         let broker = Arc::new(
             CmaServiceConnectionBroker::from_auth_config(

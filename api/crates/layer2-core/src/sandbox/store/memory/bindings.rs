@@ -7,6 +7,9 @@ use crate::sandbox::binding::{BindingConversation, BindingStore, ProviderBinding
 
 #[async_trait]
 impl BindingStore for InMemorySandboxStore {
+    async fn contains_key_hash(&self, hash: &str) -> Result<bool, SandboxStoreError> {
+        Ok(self.lock().binding_key_history.contains(hash))
+    }
     async fn find_by_key_hash(
         &self,
         hash: &str,
@@ -57,6 +60,7 @@ impl BindingStore for InMemorySandboxStore {
         {
             return Err(SandboxStoreError::Conflict);
         }
+        state.binding_key_history.insert(next.key_sha256.clone());
         state.bindings.insert(next.binding_id.clone(), next);
         Ok(())
     }
