@@ -178,6 +178,7 @@ impl ProviderBinding {
             || self.work != BindingWork::Idle
             || self.previous.is_some()
             || self.owner != profile.owner
+            || self.profile.organization_owned != profile.organization_owned
         {
             return Err("binding is retired, busy, or has another owner".into());
         }
@@ -320,4 +321,49 @@ fn valid_sha256(value: &str) -> bool {
         && value
             .bytes()
             .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+}
+
+impl ProviderBinding {
+    /// The authenticated binding manager attests the owner kind after verifying
+    /// the creator with NyxID. Persist this evidence with new sandbox admission.
+    pub fn sandbox_resource_policy(
+        &self,
+        sandbox: &crate::sandbox::Sandbox,
+    ) -> Result<
+        Option<crate::resource_access::ResourcePolicyRecord>,
+        crate::sandbox::store::SandboxStoreError,
+    > {
+        use crate::resource_access::{
+            OrganizationOwnershipEvidence, ResourceActor, ResourceOwner, ResourcePolicyRecord,
+        };
+        if self.sandbox_id != sandbox.id || self.owner != sandbox.owner {
+            return Err(crate::sandbox::store::SandboxStoreError::Conflict);
+        }
+        if !self.profile.organization_owned {
+            return Ok(None);
+        }
+        let policy = ResourcePolicyRecord {
+            sandbox_id: sandbox.id.clone(),
+            sandbox_created_at: sandbox.created_at.clone(),
+            owner: ResourceOwner::Organization {
+                subject: self.owner.clone(),
+            },
+            organization_evidence: Some(OrganizationOwnershipEvidence {
+                issuer: "cma:authenticated-provider-binding-manager".into(),
+                organization: self.owner.clone(),
+                admitted_by: ResourceActor::Api {
+                    subject: self.manager.clone(),
+                    delegation_id: None,
+                },
+                verified_at: self.created_at.clone(),
+            }),
+            revision: 1,
+        };
+        policy.validate().map_err(|_| {
+            crate::sandbox::store::SandboxStoreError::Corrupt(
+                "invalid binding ownership evidence".into(),
+            )
+        })?;
+        Ok(Some(policy))
+    }
 }

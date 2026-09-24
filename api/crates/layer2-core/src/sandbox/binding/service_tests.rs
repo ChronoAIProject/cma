@@ -180,7 +180,14 @@ impl Fixture {
         self.ready_with_tool_endpoint(None).await
     }
     async fn ready_with_tool_endpoint(&self, endpoint: Option<String>) -> ProviderBinding {
-        let profile = profile("Original instruction");
+        self.ready_with_profile(profile("Original instruction"), endpoint)
+            .await
+    }
+    async fn ready_with_profile(
+        &self,
+        profile: serde_json::Value,
+        endpoint: Option<String>,
+    ) -> ProviderBinding {
         let digest = format!("sha256:{}", content_digest(&profile).unwrap());
         let binding = self
             .service

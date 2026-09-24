@@ -15,6 +15,7 @@ pub(super) struct IdentityState {
     pub calls: Vec<String>,
     pub fail_after: Option<&'static str>,
     pub expiry_suffix: Option<&'static str>,
+    pub routes_total: Option<usize>,
 }
 pub(super) type Identity = Arc<Mutex<IdentityState>>;
 pub(super) fn routes(state: Identity) -> Router {
@@ -139,7 +140,7 @@ async fn revoke(State(state): State<Identity>, Path(id): Path<String>) -> Respon
 async fn routes_list(State(state): State<Identity>) -> Json<Value> {
     let state = state.lock().unwrap();
     Json(
-        json!({"conversations":state.routes.values().cloned().collect::<Vec<_>>(),"total":state.routes.len()}),
+        json!({"conversations":state.routes.values().cloned().collect::<Vec<_>>(),"total":state.routes_total.unwrap_or(state.routes.len())}),
     )
 }
 async fn route(State(state): State<Identity>, Json(mut body): Json<Value>) -> Response {

@@ -76,11 +76,14 @@ pub(super) fn render(markdown: &str, section: &str) -> (String, String) {
                 .iter()
                 .map(|byte| format!("{byte:02x}"))
                 .collect::<String>();
-            if let Some((_, name, _)) = super::diagrams::DIAGRAMS
+            if let Some((_, name, svg)) = super::diagrams::DIAGRAMS
                 .iter()
                 .find(|(digest, _, _)| *digest == hash)
             {
-                rendered.push(Event::Html(format!("<figure class=\"diagram\"><a href=\"/docs/diagrams/{name}.svg\" target=\"_blank\" rel=\"noopener\" aria-label=\"Open full-size flow diagram\"><img src=\"/docs/diagrams/{name}.svg\" alt=\"{} — service flow diagram\" loading=\"lazy\"></a><figcaption>Open diagram in a new tab to enlarge</figcaption></figure>", escape(&heading)).into()));
+                let dimensions = diagram_size(svg)
+                    .map(|(width, height)| format!(" width=\"{width}\" height=\"{height}\""))
+                    .unwrap_or_default();
+                rendered.push(Event::Html(format!("<figure class=\"diagram\"><a href=\"/docs/diagrams/{name}.svg\" target=\"_blank\" rel=\"noopener\" aria-label=\"Open full-size flow diagram\"><img src=\"/docs/diagrams/{name}.svg\"{dimensions} alt=\"{} — service flow diagram\" loading=\"lazy\"></a><figcaption>Open diagram in a new tab to enlarge</figcaption></figure>", escape(&heading)).into()));
             } else {
                 rendered.push(Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(
                     "mermaid".into(),
@@ -121,6 +124,25 @@ pub(super) fn render(markdown: &str, section: &str) -> (String, String) {
     let mut output = String::new();
     html::push_html(&mut output, events);
     (output, navigation)
+}
+
+// Reserve each reviewed SVG's aspect ratio before lazy loading. Otherwise a
+// deep link can land several sections early as preceding diagrams acquire size.
+fn diagram_size(svg: &str) -> Option<(u32, u32)> {
+    let view_box = svg.split_once("viewBox=\"")?.1.split('"').next()?;
+    let values = view_box
+        .split_whitespace()
+        .map(str::parse::<f64>)
+        .collect::<Result<Vec<_>, _>>()
+        .ok()?;
+    if values.len() != 4
+        || values[2..]
+            .iter()
+            .any(|value| !value.is_finite() || *value <= 0.0 || *value > 100_000.0)
+    {
+        return None;
+    }
+    Some((values[2].ceil() as u32, values[3].ceil() as u32))
 }
 
 fn demote(level: HeadingLevel) -> HeadingLevel {

@@ -100,7 +100,14 @@ async fn production_effects_create_disable_rotate_and_delete_through_compiled_ga
                 BotState::Disabled
             }
         );
-        assert_eq!(server.identity.lock().unwrap().keys.len(), 2);
+        assert_eq!(
+            server.identity.lock().unwrap().keys.len(),
+            if operation == BotOperation::Rotate {
+                3
+            } else {
+                2
+            }
+        );
         assert_eq!(
             bot.resources.channel.as_ref().unwrap().channel_id,
             active.resources.channel.as_ref().unwrap().channel_id
@@ -120,6 +127,79 @@ async fn production_effects_create_disable_rotate_and_delete_through_compiled_ga
     assert!(server.remote.records.lock().unwrap().is_empty());
     assert!(server.remote.provider_keys.lock().unwrap().is_empty());
 }
+#[tokio::test]
+async fn disabled_runtime_rotates_after_route_removal_and_cannot_enable_without_a_route() {
+    let server = Server::start().await;
+    let gateway = Gateway::start(&server).await;
+    let (service, _, worker, initial) = setup(&server, &gateway).await;
+    worker.run(&initial.bot_id).await.unwrap();
+    service
+        .admit(&owner(), &initial.bot_id, BotOperation::Disable)
+        .await
+        .unwrap();
+    worker.run(&initial.bot_id).await.unwrap();
+    let disabled = service.get(&owner(), &initial.bot_id).await.unwrap();
+    let original_channel = disabled.resources.channel.unwrap();
+    let mut previous = disabled.resources.credentials;
+    {
+        let mut identity = server.identity.lock().unwrap();
+        identity.routes.clear();
+        identity.calls.clear();
+    }
+    for _ in 0..2 {
+        service
+            .admit(&owner(), &initial.bot_id, BotOperation::Rotate)
+            .await
+            .unwrap();
+        worker.run(&initial.bot_id).await.unwrap();
+        let bot = service.get(&owner(), &initial.bot_id).await.unwrap();
+        assert_eq!(bot.state, BotState::Disabled);
+        assert!(bot.work.is_none());
+        assert_ne!(bot.resources.credentials, previous);
+        previous = bot.resources.credentials;
+        let channel = bot.resources.channel.unwrap();
+        assert_eq!(channel.channel_id, original_channel.channel_id);
+        assert_eq!(channel.binding_id, original_channel.binding_id);
+        assert_eq!(server.identity.lock().unwrap().keys.len(), 2);
+        assert_eq!(server.remote.records.lock().unwrap().len(), 1);
+        assert_eq!(server.remote.provider_keys.lock().unwrap().len(), 1);
+    }
+    service
+        .admit(&owner(), &initial.bot_id, BotOperation::Enable)
+        .await
+        .unwrap();
+    assert_eq!(
+        worker.run(&initial.bot_id).await,
+        Err(BotError::Unavailable)
+    );
+    assert_eq!(
+        service.get(&owner(), &initial.bot_id).await.unwrap().state,
+        BotState::Disabled
+    );
+    let channel: Value = reqwest::Client::new()
+        .get(format!(
+            "{}/v1/channel-records/{}",
+            gateway.base, initial.record_id
+        ))
+        .bearer_auth("owner-token")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        channel["definition"]["sources"][0]["admission"],
+        json!({"type":"scoped","senders":{"type":"deny"},"chats":{"type":"deny"},"groups":"deny"})
+    );
+    let identity = server.identity.lock().unwrap();
+    assert!(identity.routes.is_empty());
+    assert!(identity.calls.iter().all(|call| matches!(
+        call.as_str(),
+        "mint_agent" | "mint_route" | "callback" | "revoke"
+    )));
+}
+
 #[tokio::test]
 async fn unknown_nyxid_creation_outcomes_clean_up_owned_effects_after_gateway_restart() {
     for failed_step in [
