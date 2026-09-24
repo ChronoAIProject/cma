@@ -25,6 +25,20 @@ pub async fn create(
     request: ChannelCreateRequest,
 ) -> Result<CreatedChannel, ManagementError> {
     validate_create_request(&request).map_err(ManagementError::Invalid)?;
+    if request.profile.metadata.owner.subject != creator.subject {
+        return Err(ManagementError::Invalid(ValidationError::new(
+            "/profile/metadata/owner/subject",
+            "must match the authenticated NyxID subject",
+        )));
+    }
+    if (request.profile.metadata.owner.kind == cmaeg_core::profile::NyxIdIdentityKind::Organization)
+        != creator.organization
+    {
+        return Err(ManagementError::Invalid(ValidationError::new(
+            "/profile/metadata/owner/kind",
+            "must match the authenticated NyxID subject type",
+        )));
+    }
     if let Some(record_id) = request.record_id.clone() {
         return super::creation::create(state, creator, request, record_id).await;
     }
