@@ -787,9 +787,10 @@ documentation exercise and #920 bridge retirement remain incomplete.
 ### Combined Bot Father and gateway documentation rollout — 2026-09-24
 
 The unified gateway documentation and reviewed owner handoff are deployed and
-verified. Father's organization-owned turn now passes admission, but model
-execution is blocked by NyxID's `insufficient_credits` response. Telegram cutover
-and successful end-to-end Bot Father operation remain pending.
+verified. Father's organization-owned turn passes admission. Its last model
+execution now completes and returns a valid owner handoff link after the
+authorized organization credit grant on September 25. Telegram cutover is
+verified; a genuine user message and its delivered reply remain pending.
 
 PRs #944, #945 and #946 merged into `develop`. The final merged commit is
 `c4b026ca59aceee13ea0611c97747d69bd9cbf90`. All 14 jobs in Actions run
@@ -978,15 +979,61 @@ facts remain the HTTP 402 refusal, unused allowances, zero active grants and
 the reservation calculation. Details are in
 `/tmp/cma-bot-father-billing-evidence.json`.
 
-A one-time grant of 10 internal credits, scoped only to the ChronoAI organization
-and `chrono-llm-public`, was proposed and awaits explicit billing authorization.
-It is not a recurring grant or a payment-method charge, and no financial mutation
-was made. The prepared proposal is
-`/tmp/cma-bot-father-credit-grant-proposal.json`. The failed event remains durable;
-a replacement helper's read-only lineage verification passed, without dispatching
-a replacement event or changing the Telegram route.
+After the maintainer's explicit billing authorization on September 25, one
+official credit grant was issued at 05:46:21 UTC. Grant
+`b3efd9e1-96d6-440a-bcd9-88d2999ecc90`, batch
+`cd39fabb-392f-4822-a285-4ed0b051f819`, is active for exactly the ChronoAI
+organization and `chrono-llm-public`. Readback confirmed billing enabled,
+10,000,000 remaining microcredits, zero reserved microcredits and one matching
+grant in the complete organization inventory. The grant is a one-time allocation
+of 10 internal credits, not a recurring grant or payment-method charge. Exactly
+one financial mutation was made; the organization wallet balance remains
+unobserved. Evidence is `/tmp/cma-bot-father-credit-grant-receipt.json`.
 
-Telegram cutover was not performed. Successful model output, the real Telegram
-round trip and final Bot Father acceptance remain unverified while the upstream
-credit refusal is unresolved. These receipts do not establish gateway epic
-completion or authorize closing its remaining acceptance work.
+The failed event remains durable in `test_history`. Before creating a replacement,
+read-only provider verification confirmed its terminal failure, generation 1,
+exact event/conversation/binding/Agent/Sandbox lineage and retained event context.
+The first post-grant attempt waited for Google Cloud reauthentication and made
+no event mutation. After access was restored, replacement custom event
+`f5485159-3fb0-487c-9294-b354ba6ad2c1` completed at 05:50:01 UTC with HTTP 200,
+`cmaeg.message` output and terminal `cmaeg.completed`. The 1,367-byte answer
+contained a valid owner handoff draft link and returned no credential or event
+reference. Its SHA-256 is
+`6dfccce29263e69cd6eba14ecbdf20c69ccd42ea763540bb9ba0f71dac322472`.
+This is successful production custom-event/model/handoff acceptance after the
+grant, recorded in `/tmp/cma-bot-father-provision-receipt.json`; it is not a
+Telegram message test.
+
+The September 25 Telegram preflight found the Father binding ready at generation
+1 with always-keep-alive enabled. The new runtime baseline records the original
+protected Pod UID `19e9937e-a62a-439b-b2dd-50b3ba71a0ef`, still ready with zero
+restarts. Father now uses ready Pod UID
+`26d03403-74ef-4272-8171-a41b339bc48a`, created on September 24 at 15:35:06 UTC,
+after the earlier API rollout and before this cutover attempt. The new baseline
+does not extend the earlier rollout's Pod-continuity observation across that
+replacement. Both current Pods use the retained runtime image and have zero
+restarts. Evidence is
+`/tmp/cma-bot-father-telegram-runtime-baseline-20260925.json`.
+
+The authorized Telegram cutover completed and passed verification at 05:51:48 UTC.
+The existing Telegram bot `548fdeb5-3c1c-4f49-a982-72e19f995507` was transferred
+from its previous personal owner to the ChronoAI organization. The preview-fenced
+transfer retired both prior routes. New route
+`b9973c4e-14a0-4ebf-90b9-27c80be60f81` is the single active route, with the
+organization owner, correct retained route key and Father gateway callback.
+The gateway's route matches. Evidence is
+`/tmp/cma-bot-father-telegram-receipt.json`.
+
+The original CMA Bot `bot_73405efb35c54f349f2bac6918751a10` is disabled with no
+pending operation. Its original provider binding, protected Sandbox and
+credential-renewal support remain retained; the route migration did not pause or
+replace that runtime. Both the protected user runtime and current Father runtime
+preserved their exact Pod UIDs, container identities and restart counts against
+the September 25 baseline. The read-only observer passed at 05:51:50 UTC and
+had not yet seen a new inbound message. The maintainer was asked to send the
+agreed Paper assistant test to the existing Telegram bot.
+
+This verifies the deployed custom-event/model/handoff path and Telegram route
+configuration. Genuine Telegram ingress, delivered reply and final Bot Father
+acceptance remain pending the human test message. These observations do not
+establish gateway epic completion or close its remaining acceptance work.
