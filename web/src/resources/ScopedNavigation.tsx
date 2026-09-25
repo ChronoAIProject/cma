@@ -14,8 +14,10 @@ export function ScopedNavigation({
   scope,
   choices,
   onNavigate,
+  route,
 }: {
   readonly client?: ResourceViewsClient;
+  readonly route?: AppRoute;
   readonly personal: ReactNode;
   readonly scope: string;
   readonly choices: NavigationScopeChoices;
@@ -31,8 +33,8 @@ export function ScopedNavigation({
       ) : null}
       {shared === true ? (
         <>
-          <SandboxTree key="shared" client={client} shared onNavigate={onNavigate} />
-          <SharedAgentNavigation client={client} onNavigate={onNavigate} />
+          <SandboxTree key="shared" client={client} route={route} shared onNavigate={onNavigate} />
+          <SharedAgentNavigation client={client} route={route} onNavigate={onNavigate} />
         </>
       ) : organization === undefined ? (
         personal
@@ -49,6 +51,7 @@ export function ScopedNavigation({
             key={organization}
             client={client}
             organization={organization}
+            route={route}
             onNavigate={onNavigate}
           />
         </>
