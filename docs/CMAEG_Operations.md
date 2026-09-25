@@ -790,7 +790,9 @@ The unified gateway documentation and reviewed owner handoff are deployed and
 verified. Father's organization-owned turn passes admission. Its last model
 execution now completes and returns a valid owner handoff link after the
 authorized organization credit grant on September 25. Telegram cutover is
-verified; a genuine user message and its delivered reply remain pending.
+verified, and a genuine user message completed with a confirmed Telegram reply
+containing the requested owner handoff link. The broader latency/restart campaign
+and creation of a new child Bot are not established by this acceptance.
 
 PRs #944, #945 and #946 merged into `develop`. The final merged commit is
 `c4b026ca59aceee13ea0611c97747d69bd9cbf90`. All 14 jobs in Actions run
@@ -1033,10 +1035,43 @@ the September 25 baseline. The read-only observer passed at 05:51:50 UTC and
 had not yet seen a new inbound message. The maintainer was asked to send the
 agreed Paper assistant test to the existing Telegram bot.
 
-This verifies the deployed custom-event/model/handoff path and Telegram route
-configuration. Genuine Telegram ingress, delivered reply and final Bot Father
-acceptance remain pending the human test message. These observations do not
-establish gateway epic completion or close its remaining acceptance work.
+The subsequent genuine user message completed successfully. Inbound event
+`d2bb2210-1ad7-451d-9fab-28339d66f318`, Telegram message `160`, arrived at
+06:38:14.564 UTC and its gateway callback was delivered. The durable event-context
+read returned HTTP 200 and matched that event. The provider ran Agent
+`agt_b511502d6a1b41e3a1bd8976d1dddd2e` in the same Father binding, Sandbox and
+Workspace. This Agent is distinct from the earlier custom-test Agent; the
+organization binding remained ready at generation 1 with always-keep-alive
+honoured.
+
+Provider response `resp_9881508187a942d1ab10ef27f106a24e` completed at
+06:39:22 UTC with three committed messages. Its final 633-byte message contained
+a valid setup link whose decoded payload exactly matched the user's actual
+request: name `Paper Assistant`, instructions
+`explain scientific papers clearly and concisely`. The user's capitalization and
+punctuation differed from the suggested fixture and were preserved. No provider
+answer returned a credential or event reference. The final message SHA-256 is
+`d02db6efc2edbd5492446b93c7849bb8d30d4457de8607de2fac7d66a10f565c`.
+
+The complete relay message window contained one user inbound and four outbounds:
+one acknowledgement plus the three provider messages. Final Telegram message
+`164`, NyxID message `b30a0e07-cef9-4ffa-aefe-e054fa95d2cc`, was recorded at
+06:39:23.130 UTC, after provider completion, with the exact inbound reply linkage.
+The gateway relay confirmed final delivery at 06:39:23.139464 UTC. Matching
+message identities, the complete message count and post-completion ordering
+distinguish the final reply from the acknowledgement. Observed ingress-to-final
+delivery was 68.575464 seconds for this one message.
+
+The observer made zero resource mutations and confirmed the protected user
+Sandbox still running and ready with its original Pod UID. Evidence is
+`/tmp/cma-bot-father-telegram-live-receipt.json`,
+`/tmp/cma-bot-father-telegram-final-reply-receipt.json` and
+`/tmp/cma-bot-father-telegram-delivery-order.json`. These establish genuine
+Telegram ingress, completed model work, a correctly populated owner handoff link
+and confirmed relay delivery. They do not inspect the Telegram client's visual
+rendering, create a new child Bot, or establish the broader 30-warm/10-cold sample
+and restart acceptance campaign referenced by #912. Gateway epic completion is
+not claimed by this single-message result.
 
 ### Organization navigation production verification — 2026-09-25
 
