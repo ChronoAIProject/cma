@@ -46,6 +46,28 @@ fn model_service(bot: &WorkerProjection<'_>) -> &'static str {
     }
 }
 pub fn snapshot(bot: &WorkerProjection<'_>) -> Result<Value, BotError> {
+    snapshot_for_owner(
+        bot,
+        &crate::resource_access::ResourceOwner::Person {
+            subject: bot.owner.clone(),
+        },
+    )
+}
+pub fn snapshot_for_owner(
+    bot: &WorkerProjection<'_>,
+    owner: &crate::resource_access::ResourceOwner,
+) -> Result<Value, BotError> {
+    if match owner {
+        crate::resource_access::ResourceOwner::Person { subject }
+        | crate::resource_access::ResourceOwner::Organization { subject } => subject,
+    } != bot.owner
+    {
+        return Err(BotError::Forbidden);
+    }
+    let owner_kind = match owner {
+        crate::resource_access::ResourceOwner::Person { .. } => "human",
+        crate::resource_access::ResourceOwner::Organization { .. } => "organization",
+    };
     let agent = &bot.profiles.agent.content;
     let sandbox = &bot.profiles.sandbox.content;
     let workspace = &bot.profiles.workspace.content;
@@ -62,7 +84,7 @@ pub fn snapshot(bot: &WorkerProjection<'_>) -> Result<Value, BotError> {
         .collect();
     Ok(json!({
         "schema_version":1,
-        "metadata":{"name":bot.name,"description":"", "owner":{"subject":bot.owner,"kind":"human"},"provider":bot.provider},
+        "metadata":{"name":bot.name,"description":"", "owner":{"subject":bot.owner,"kind":owner_kind},"provider":bot.provider},
         "model":{"access":"managed","service":model_service(bot),"api_type":"responses","model":bot.profiles.resolved_model,
             "thinking_effort":match agent.thinking_effort { ThinkingEffort::Minimal => "minimal", ThinkingEffort::Low => "low", ThinkingEffort::Medium => "medium", ThinkingEffort::High => "high", ThinkingEffort::XHigh => "very_high" }},
         "permission":{"action_mode":match agent.permission_level { PermissionLevel::Guarded => "guarded", PermissionLevel::Autonomous => "autonomous" },"service_scope":services(bot)?},

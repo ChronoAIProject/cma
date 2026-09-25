@@ -8,6 +8,10 @@ mod common;
 mod connections;
 mod digest;
 mod marketplace;
+mod owned_creation;
+pub use owned_creation::{
+    PrivateProfileCreationService, PrivateSandboxProfileInput, ProfileCreationError,
+};
 mod public_values;
 pub mod references;
 mod sandbox;
