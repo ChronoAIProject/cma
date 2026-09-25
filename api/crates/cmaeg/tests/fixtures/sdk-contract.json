@@ -221,6 +221,7 @@
         {
           "id": "fixture",
           "label": "fixture",
+          "selected": true,
           "style": "default"
         }
       ],
@@ -233,6 +234,7 @@
         {
           "id": "fixture",
           "label": "fixture",
+          "selected": true,
           "style": "default"
         }
       ],
@@ -670,6 +672,7 @@
     {
       "id": "fixture",
       "label": "fixture",
+      "selected": true,
       "style": "default"
     }
   ],
@@ -744,6 +747,7 @@
         },
         "occurred_at": "fixture"
       },
+      "activity_verified": true,
       "capabilities": {
         "attachments": "fixture",
         "buttons": "fixture",
@@ -752,8 +756,13 @@
         "max_text_chars": 1,
         "typing": true
       },
+      "channel_id": "fixture",
       "conversation_id": "fixture",
-      "event_id": "fixture"
+      "event_id": "fixture",
+      "provider_binding_id": "fixture",
+      "source": {
+        "type": "custom"
+      }
     }
   ],
   "ConversationId": [
@@ -919,6 +928,7 @@
         {
           "id": "fixture",
           "label": "fixture",
+          "selected": true,
           "style": "default"
         }
       ],
@@ -1287,6 +1297,7 @@
     "unknown_sender",
     "message_edit",
     "interactive_action_unsupported",
+    "interaction_expired_or_invalid",
     "system_event",
     "content_unsupported",
     "attachment_unsupported",

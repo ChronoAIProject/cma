@@ -52,10 +52,15 @@ pub(crate) struct NyxidServiceConnectionBroker {
     http: Client,
     base_url: String,
     browser_origin: Url,
+    callback_origin: Option<Url>,
     credentials: Arc<dyn VisitorCredentialSource>,
 }
 
 impl NyxidServiceConnectionBroker {
+    #[allow(
+        dead_code,
+        reason = "callback-free constructor remains useful for isolated broker tests"
+    )]
     pub(crate) fn new<T>(
         http: Client,
         base_url: impl Into<String>,
@@ -65,10 +70,26 @@ impl NyxidServiceConnectionBroker {
     where
         T: VisitorCredentialSource + 'static,
     {
+        Self::new_with_callback(http, base_url, browser_origin, None::<&str>, credentials)
+    }
+
+    pub(crate) fn new_with_callback<T>(
+        http: Client,
+        base_url: impl Into<String>,
+        browser_origin: impl AsRef<str>,
+        callback_origin: Option<impl AsRef<str>>,
+        credentials: Arc<T>,
+    ) -> Result<Self, ServiceConnectionError>
+    where
+        T: VisitorCredentialSource + 'static,
+    {
         Ok(Self {
             http,
             base_url: base_url.into().trim_end_matches('/').to_owned(),
             browser_origin: canonical_browser_origin(browser_origin.as_ref())?,
+            callback_origin: callback_origin
+                .map(|origin| canonical_browser_origin(origin.as_ref()))
+                .transpose()?,
             credentials,
         })
     }
@@ -191,6 +212,16 @@ impl NyxidServiceConnectionBroker {
             expires_at: canonical_provider_timestamp(&response.expires_at)?,
         })
     }
+
+    fn callback_url(&self, intent_id: &str) -> Option<String> {
+        let mut origin = self.callback_origin.clone()?;
+        origin.set_path("/connection-return");
+        origin.set_query(None);
+        origin
+            .query_pairs_mut()
+            .append_pair("cma_connection", intent_id);
+        Some(origin.to_string())
+    }
 }
 
 #[async_trait]
@@ -272,6 +303,7 @@ impl ServiceConnectionBroker for NyxidServiceConnectionBroker {
                     .json(&CreateConnectLinkRequest {
                         service_slug: service.as_str(),
                         expires_in: CONNECT_LINK_TTL_SECONDS,
+                        callback_url: self.callback_url(_intent_id),
                     }),
                 false,
             )
@@ -314,6 +346,8 @@ impl ServiceConnectionBroker for NyxidServiceConnectionBroker {
 struct CreateConnectLinkRequest<'a> {
     service_slug: &'a str,
     expires_in: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    callback_url: Option<String>,
 }
 
 #[derive(Deserialize)]

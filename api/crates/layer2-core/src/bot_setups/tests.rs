@@ -352,6 +352,10 @@ impl Fixture {
         });
         self.advance(&id).await.unwrap()
     }
+    async fn text(&mut self, text: &str) -> SetupView {
+        let id = self.event(SetupInput::Text(text.into()));
+        self.advance(&id).await.unwrap()
+    }
     async fn services(&mut self, owner: &str) -> SetupView {
         let view = self.begin().await;
         assert_eq!(view.step, SetupStep::Owner);
@@ -386,6 +390,29 @@ impl Fixture {
             action_id: action,
         })
     }
+}
+
+#[tokio::test]
+async fn text_commands_drive_the_same_durable_workflow_without_relay_callbacks() {
+    let mut fixture = Fixture::new();
+    let mut view = fixture.begin().await;
+    assert_eq!(view.step, SetupStep::Owner);
+    view = fixture.text("personal").await;
+    assert_eq!(view.step, SetupStep::Agent);
+    view = fixture.text("defaults").await;
+    assert_eq!(view.step, SetupStep::Workspace);
+    view = fixture.text("defaults").await;
+    assert_eq!(view.step, SetupStep::Sandbox);
+    view = fixture.text("defaults").await;
+    assert_eq!(view.step, SetupStep::Services);
+    view = fixture.text("done").await;
+    assert_eq!(view.step, SetupStep::ExternalBot);
+    view = fixture.text("bot:external-bot").await;
+    assert_eq!(view.step, SetupStep::Admission);
+    view = fixture.text("private").await;
+    assert_eq!(view.step, SetupStep::Review);
+    let created = fixture.text("create").await;
+    assert_eq!(created.step, SetupStep::Provisioning);
 }
 
 #[tokio::test]

@@ -10,6 +10,63 @@ pub(super) fn owner(setup: &BotSetup) -> Result<&ResourceOwner, BotError> {
 pub(super) fn invalid_action() -> BotError {
     BotError::Invalid("Choose an option from the current configuration.".into())
 }
+
+/// Resolve the text command used by relays that cannot carry interactive
+/// callbacks.  Telegram's existing relay forwards the user's reply as normal
+/// text, so Bot Father renders the exact action IDs and accepts those IDs on
+/// the next turn.  The short `create` alias is expanded against the durable
+/// review digest instead of trusting a digest supplied by the client.
+pub(super) fn text_action(setup: &BotSetup, text: &str) -> Option<String> {
+    if matches!(setup.step, SetupStep::Login | SetupStep::Name) {
+        return None;
+    }
+    let value = text
+        .trim()
+        .strip_prefix("/choice ")
+        .or_else(|| text.trim().strip_prefix("choice "))
+        .unwrap_or(text.trim());
+    if value.is_empty() || value.len() > 512 || value.chars().any(char::is_whitespace) {
+        return None;
+    }
+    if value.eq_ignore_ascii_case("create") && setup.step == SetupStep::Review {
+        return setup
+            .confirmation_digest
+            .as_ref()
+            .map(|digest| format!("create:{digest}"));
+    }
+    let lower = value.to_ascii_lowercase();
+    let simple = matches!(
+        lower.as_str(),
+        "cancel"
+            | "new"
+            | "edit"
+            | "refresh"
+            | "register"
+            | "done"
+            | "next"
+            | "previous"
+            | "back"
+            | "personal"
+            | "defaults"
+            | "custom"
+            | "agent:quick"
+            | "agent:thorough"
+            | "workspace:prepared"
+            | "workspace:clean"
+            | "sandbox:on_demand"
+            | "sandbox:always_live"
+            | "private"
+            | "public"
+            | "groups"
+    );
+    if simple {
+        return Some(lower);
+    }
+    if value.starts_with("org:") || value.starts_with("service:") || value.starts_with("bot:") {
+        return Some(value.to_owned());
+    }
+    None
+}
 pub(super) fn choose(
     action: &str,
     defaults: SetupStep,
