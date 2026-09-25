@@ -7,7 +7,7 @@
 use cmaeg_core::{
     activity::ActivityKind,
     channel::Secret,
-    message::{Block, ChoiceOption, Field, OptionStyle, OutboundMessage},
+    message::{Block, Field, OutboundMessage},
     seal::EventRef,
 };
 use reqwest::{Client, StatusCode, Url};
@@ -15,7 +15,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::time::Duration;
 
-const BINDING_ENV: &str = "CMAEG_BOT_FATHER_BINDING_ID";
+use crate::config::CMAEG_BOT_FATHER_BINDING_ID;
 
 #[derive(Clone)]
 pub struct BotFatherClient {
@@ -26,14 +26,14 @@ pub struct BotFatherClient {
 
 impl BotFatherClient {
     pub fn from_env(cma_base_url: &str) -> Result<Option<Self>, String> {
-        let Some(binding_id) = std::env::var(BINDING_ENV)
+        let Some(binding_id) = std::env::var(CMAEG_BOT_FATHER_BINDING_ID)
             .ok()
             .filter(|value| !value.trim().is_empty())
         else {
             return Ok(None);
         };
         if !valid_binding(&binding_id) {
-            return Err(format!("{BINDING_ENV} is invalid"));
+            return Err(format!("{CMAEG_BOT_FATHER_BINDING_ID} is invalid"));
         }
         let mut endpoint = Url::parse(cma_base_url)
             .map_err(|_| "invalid CMA origin for Bot Father setup".to_owned())?;
@@ -112,7 +112,11 @@ fn draft(activity: &cmaeg_core::activity::Activity) -> Value {
         return json!({});
     };
     let trimmed = text.trim();
-    if trimmed.is_empty() || trimmed.starts_with("link_") || trimmed.starts_with("/start link_") {
+    if trimmed.is_empty()
+        || trimmed.starts_with("link_")
+        || trimmed.starts_with("/start link_")
+        || setup_command(trimmed)
+    {
         return json!({});
     }
     let lower = trimmed.to_ascii_lowercase();
@@ -127,7 +131,7 @@ fn draft(activity: &cmaeg_core::activity::Activity) -> Value {
     } else if let Some(start) = lower.find("called ") {
         let value = &trimmed[start + "called ".len()..];
         value
-            .split(|character: char| character == '.' || character == ',' || character == ':')
+            .split(['.', ',', ':'])
             .next()
             .map(str::trim)
             .filter(|value| !value.is_empty())
@@ -156,10 +160,45 @@ fn draft(activity: &cmaeg_core::activity::Activity) -> Value {
     })
 }
 
+fn setup_command(value: &str) -> bool {
+    let value = value
+        .trim()
+        .strip_prefix("/choice ")
+        .or_else(|| value.trim().strip_prefix("choice "))
+        .unwrap_or(value.trim());
+    let lower = value.to_ascii_lowercase();
+    matches!(
+        lower.as_str(),
+        "cancel"
+            | "new"
+            | "edit"
+            | "refresh"
+            | "register"
+            | "done"
+            | "next"
+            | "previous"
+            | "back"
+            | "personal"
+            | "defaults"
+            | "custom"
+            | "agent:quick"
+            | "agent:thorough"
+            | "workspace:prepared"
+            | "workspace:clean"
+            | "sandbox:on_demand"
+            | "sandbox:always_live"
+            | "private"
+            | "public"
+            | "groups"
+    ) || value.starts_with("org:")
+        || value.starts_with("service:")
+        || value.starts_with("bot:")
+        || (lower == "create" && value.len() <= 64)
+}
+
 #[derive(Debug, Deserialize)]
 struct SetupView {
     step: String,
-    interaction_id: String,
     #[serde(default)]
     name: Option<String>,
     #[serde(default)]
@@ -245,30 +284,25 @@ impl SetupView {
             image: None,
         }];
         if !self.choices.is_empty() {
-            blocks.push(Block::Choice {
-                id: self.interaction_id,
-                prompt: "Choose an option:".into(),
-                options: self
-                    .choices
-                    .into_iter()
-                    .map(|choice| {
-                        let id = choice.id;
-                        let style = if id == "cancel" {
-                            OptionStyle::Danger
-                        } else if id.starts_with("create:") {
-                            OptionStyle::Primary
-                        } else {
-                            OptionStyle::Default
-                        };
-                        ChoiceOption {
-                            id,
-                            label: choice.label,
-                            style,
-                            selected: choice.selected,
-                        }
-                    })
-                    .collect(),
-                multi: self.step == "services",
+            let mut lines = vec![
+                "Reply with the command after the choice. Telegram link mode is active, so each command is processed as a normal message.".to_owned(),
+            ];
+            for choice in self.choices {
+                let command = choice
+                    .id
+                    .strip_prefix("create:")
+                    .map(|_| "create")
+                    .unwrap_or(choice.id.as_str());
+                let selected = if choice.selected { " (selected)" } else { "" };
+                lines.push(format!("- {}{} — `{command}`", choice.label, selected));
+            }
+            if self.step == "services" {
+                lines.push(
+                    "You can repeat a service command to toggle it, then reply `done`.".into(),
+                );
+            }
+            blocks.push(Block::Text {
+                text: lines.join("\n"),
             });
         }
         if let Some(url) = self.connection_url.or(self.identity.login_url).or(bot_url) {

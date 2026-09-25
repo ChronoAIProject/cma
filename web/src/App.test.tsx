@@ -1,10 +1,28 @@
 import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { App } from './App';
 import { AuthContextProvider } from './auth/context';
 import { createMockAuthProvider } from './auth/mock';
 
 describe('the retained application shell', () => {
+  afterEach(() => {
+    window.history.replaceState(null, '', '/');
+    vi.restoreAllMocks();
+  });
+
+  it('renders the hosted connection return page and closes its popup', async () => {
+    window.history.replaceState(null, '', '/connection-return?status=completed');
+    const close = vi.spyOn(window, 'close').mockImplementation(() => undefined);
+    render(
+      <AuthContextProvider provider={createMockAuthProvider()}>
+        <App />
+      </AuthContextProvider>,
+    );
+    expect(await screen.findByText('Connection complete')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Close this window' })).toBeInTheDocument();
+    expect(close).not.toHaveBeenCalled();
+  });
+
   it('shows the authenticated empty state and account control', async () => {
     render(
       <AuthContextProvider provider={createMockAuthProvider({ initiallyAuthenticated: true })}>
