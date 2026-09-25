@@ -1,6 +1,5 @@
 use super::*;
-use crate::bots::BotError;
-use crate::resource_access::ResourceOwner;
+use crate::{bots::BotError, resource_access::ResourceOwner};
 
 pub(super) fn grant(setup: &BotSetup) -> Result<&str, BotError> {
     setup.grant_id.as_deref().ok_or(BotError::Forbidden)
