@@ -19,6 +19,7 @@ pub(super) async fn store() -> MongoAuthStore {
         login_attempts: client.database("test").collection(LOGIN_ATTEMPTS),
         subjects: client.database("test").collection(SUBJECTS),
         api_bearers: client.database("test").collection(API_BEARERS),
+        actor_links: client.database("test").collection(ACTOR_LINKS),
         cipher: AuthCipher::new("test", &key).unwrap(),
     }
 }

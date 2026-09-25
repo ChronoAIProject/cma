@@ -205,6 +205,21 @@ async fn binding_key_bypasses_nyxid_and_cookie_custody_and_never_inherits_owner_
 #[test]
 fn binding_request_paths_exclude_management_and_foreign_event_context() {
     use axum::http::Method;
+    assert!(permits_request(
+        &Method::POST,
+        "/api/v1/bot-setups/advance",
+        "binding-auth"
+    ));
+    assert!(!permits_request(
+        &Method::GET,
+        "/api/v1/bot-setups/advance",
+        "binding-auth"
+    ));
+    assert!(!permits_request(
+        &Method::POST,
+        "/api/v1/bots",
+        "binding-auth"
+    ));
     for path in [
         "/api/v1/agents",
         "/api/v1/sandboxes",

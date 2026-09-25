@@ -11,6 +11,10 @@ use utoipa::ToSchema;
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ContextResponse {
     pub event_id: EventId,
+    pub channel_id: cmaeg_core::ids::ChannelId,
+    pub provider_binding_id: cmaeg_core::ids::BindingId,
+    pub source: cmaeg_core::activity::SourceKind,
+    pub activity_verified: bool,
     pub conversation_id: ConversationId,
     pub activity: PublicActivity,
     pub capabilities: Capabilities,
@@ -44,9 +48,9 @@ impl Capabilities {
     }
     pub fn telegram() -> Self {
         Self {
-            edit: false,
+            edit: true,
             typing: false,
-            buttons: "numbered_text".into(),
+            buttons: "inline_keyboard".into(),
             cards: "text".into(),
             attachments: "link_text".into(),
             max_text_chars: 4000,
@@ -78,6 +82,10 @@ pub(super) async fn read(
     if snapshot.channel_id != channel.id {
         return Err(unavailable());
     }
+    let activity_verified = event.verifies_activity(&snapshot.activity);
+    if event.activity_sha256.is_some() && !activity_verified {
+        return Err(unavailable());
+    }
     let activity = snapshot.activity;
     let capabilities = if matches!(activity.source, cmaeg_core::activity::SourceKind::Custom) {
         Capabilities::custom()
@@ -86,6 +94,10 @@ pub(super) async fn read(
     };
     Ok(ContextResponse {
         event_id: event.event_id.clone(),
+        channel_id: channel.id.clone(),
+        provider_binding_id: channel.definition.provider.binding_id.clone(),
+        source: activity.source.clone(),
+        activity_verified,
         conversation_id: event.conversation_id.clone(),
         activity: PublicActivity {
             kind: activity.kind,

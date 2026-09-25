@@ -1,3 +1,4 @@
+use super::helpers::*;
 use super::*;
 use crate::{
     bots::{BotAdmission, BotError, GroupAdmission, IdentityAdmission},
@@ -5,9 +6,6 @@ use crate::{
     SubjectId,
 };
 use std::sync::Arc;
-
-use super::helpers::*;
-
 pub struct BotSetupService {
     pub(super) store: Arc<dyn BotSetupStore>,
     pub(super) dependencies: Arc<dyn BotSetupDependencies>,
@@ -191,16 +189,57 @@ impl BotSetupService {
                     SetupStep::Sandbox => {
                         setup.step = choose(action, SetupStep::Services, SetupStep::SandboxCustom)?
                     }
-                    SetupStep::AgentCustom
-                    | SetupStep::WorkspaceCustom
-                    | SetupStep::SandboxCustom
-                        if action == "back" =>
-                    {
-                        setup.step = match setup.step {
-                            SetupStep::AgentCustom => SetupStep::Agent,
-                            SetupStep::WorkspaceCustom => SetupStep::Workspace,
-                            _ => SetupStep::Sandbox,
-                        };
+                    SetupStep::AgentCustom => {
+                        if action == "back" {
+                            setup.step = SetupStep::Agent;
+                        } else {
+                            setup.configuration.agent.thinking_effort = match action {
+                                "agent:quick" => crate::profiles::ThinkingEffort::Low,
+                                "agent:thorough" => crate::profiles::ThinkingEffort::High,
+                                _ => return Err(invalid_action()),
+                            };
+                            self.dependencies
+                                .validate_configuration(&setup.configuration)
+                                .await?;
+                            setup.step = SetupStep::Workspace;
+                        }
+                    }
+                    SetupStep::WorkspaceCustom => {
+                        if action == "back" {
+                            setup.step = SetupStep::Workspace;
+                        } else {
+                            match action {
+                                "workspace:prepared" => {}
+                                "workspace:clean" => {
+                                    setup.configuration.workspace.setup_commands.clear()
+                                }
+                                _ => return Err(invalid_action()),
+                            }
+                            self.dependencies
+                                .validate_configuration(&setup.configuration)
+                                .await?;
+                            setup.step = SetupStep::Sandbox;
+                        }
+                    }
+                    SetupStep::SandboxCustom => {
+                        if action == "back" {
+                            setup.step = SetupStep::Sandbox;
+                        } else {
+                            match action {
+                                "sandbox:on_demand" => {
+                                    setup.configuration.availability.always_keep_alive = false
+                                }
+                                "sandbox:always_live" => {
+                                    setup.configuration.availability.always_keep_alive = true
+                                }
+                                _ => return Err(invalid_action()),
+                            }
+                            self.dependencies
+                                .validate_configuration(&setup.configuration)
+                                .await?;
+                            setup.selected_services.clear();
+                            setup.step = SetupStep::Services;
+                        }
                     }
                     SetupStep::Services => {
                         let services = self.catalog(&setup).await?;
@@ -412,53 +451,5 @@ impl BotSetupService {
             return self.finish_or_view(setup, notice).await;
         }
         self.view(&setup, notice, connection_url).await
-    }
-
-    async fn finish_or_view(
-        &self,
-        mut setup: BotSetup,
-        notice: Option<String>,
-    ) -> Result<SetupView, BotError> {
-        if setup.step == SetupStep::Provisioning && setup.bot_id.is_none() {
-            let result = self.dependencies.provision(&setup).await?;
-            let previous = setup.revision;
-            setup.bot_id = Some(result.bot_id);
-            setup.revision += 1;
-            setup.updated_at = crate::now_rfc3339();
-            self.store.replace(&setup, previous).await?;
-        }
-        if setup.step == SetupStep::Provisioning && setup.bot_id.is_some() {
-            let result = self.dependencies.result(&setup).await?;
-            if result.state == "active" {
-                let previous = setup.revision;
-                setup.step = SetupStep::Complete;
-                setup.revision += 1;
-                setup.updated_at = crate::now_rfc3339();
-                self.store.replace(&setup, previous).await?;
-            }
-        }
-        self.view(&setup, notice, None).await
-    }
-
-    pub(super) async fn catalog(
-        &self,
-        setup: &BotSetup,
-    ) -> Result<Vec<SetupServiceChoice>, BotError> {
-        let mut services = self
-            .dependencies
-            .services(&setup.actor, grant(setup)?, owner(setup)?)
-            .await?;
-        for service in &mut services {
-            service.selected = service.required
-                || setup.selected_services.contains(&service.id)
-                || setup
-                    .configuration
-                    .sandbox
-                    .nyxid_services
-                    .iter()
-                    .any(|id| id.as_str() == service.id || id.as_str() == service.slug);
-        }
-        services.sort_by(|a, b| a.name.cmp(&b.name).then(a.id.cmp(&b.id)));
-        Ok(services)
     }
 }

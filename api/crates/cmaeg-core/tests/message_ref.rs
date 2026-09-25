@@ -19,6 +19,7 @@ fn payload(keys: &MasterKeyRing) -> MessageRefPayload {
         event_id: "event-1".parse().unwrap(),
         platform_message_id: "platform-message-1".into(),
         route_id: "route-1".into(),
+        interaction_record_id: None,
     }
 }
 #[test]

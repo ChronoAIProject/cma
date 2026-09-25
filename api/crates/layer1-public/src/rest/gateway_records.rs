@@ -276,7 +276,7 @@ impl From<GatewayRecordHead> for GatewayRecordHeadView {
     }
 }
 
-fn gateway_error(error: CoreError) -> Response {
+pub(super) fn gateway_error(error: CoreError) -> Response {
     match error {
         CoreError::Forbidden => no_store(problem(
             StatusCode::FORBIDDEN,

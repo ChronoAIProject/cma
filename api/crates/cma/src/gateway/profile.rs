@@ -20,5 +20,5 @@ pub(super) fn snapshot(bot: &Bot) -> Result<Value, BotError> {
     if let Some(pin) = &bot.profiles.event_worker_profile {
         return Ok(pin.snapshot.clone());
     }
-    projection::snapshot(&projection(bot))
+    projection::snapshot_for_owner(&projection(bot), &bot.resource_owner())
 }
