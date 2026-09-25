@@ -86,9 +86,9 @@ impl BotSetupService {
                         )
                         .await;
                 }
-                Some(action_id.as_str())
+                Some(action_id.clone())
             }
-            SetupInput::Text(_) => None,
+            SetupInput::Text(text) => text_action(&setup, text),
         };
         let text = match &event.input {
             SetupInput::Text(text) => Some(text.as_str()),
@@ -96,12 +96,12 @@ impl BotSetupService {
         };
         let mut connection_url = None;
         let mut notice = None;
-        if action == Some("cancel")
+        if action.as_deref() == Some("cancel")
             && !matches!(setup.step, SetupStep::Provisioning | SetupStep::Complete)
         {
             setup.step = SetupStep::Cancelled;
         } else if matches!(setup.step, SetupStep::Complete | SetupStep::Cancelled)
-            && action == Some("new")
+            && action.as_deref() == Some("new")
         {
             setup.id = format!("bst_{}", uuid::Uuid::new_v4().simple());
             setup.step = SetupStep::Login;
@@ -151,7 +151,7 @@ impl BotSetupService {
             }
             // A fresh login changes the required step. Never interpret that same
             // input as an owner choice, creation consent or unrelated mutation.
-            if let Some(action) = action {
+            if let Some(action) = action.as_deref() {
                 match setup.step {
                     SetupStep::Owner => {
                         let owners = self

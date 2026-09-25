@@ -1,7 +1,7 @@
 //! Activities wire types for the independent CMAEG v1 protocol.
 use super::{
-    AcceptedStatus, ActorKind, AttachmentKind, ChannelId, ConversationId, ConversationKind,
-    EventId, EventRef, MessageRef, Platform, ProblemCode,
+    AcceptedStatus, ActorKind, AttachmentKind, BindingId, ChannelId, ConversationId,
+    ConversationKind, EventId, EventRef, MessageRef, Platform, ProblemCode,
 };
 use serde::{Deserialize, Serialize};
 
@@ -164,12 +164,20 @@ pub struct CloudEvent {
 pub struct ContextResponse {
     /// Wire field `activity`.
     pub activity: PublicActivity,
+    /// Wire field `activity_verified`.
+    pub activity_verified: bool,
     /// Wire field `capabilities`.
     pub capabilities: Capabilities,
+    /// Wire field `channel_id`.
+    pub channel_id: ChannelId,
     /// Wire field `conversation_id`.
     pub conversation_id: ConversationId,
     /// Wire field `event_id`.
     pub event_id: EventId,
+    /// Wire field `provider_binding_id`.
+    pub provider_binding_id: BindingId,
+    /// Wire field `source`.
+    pub source: SourceKind,
 }
 
 /// CMAEG `EventAccepted` wire shape.

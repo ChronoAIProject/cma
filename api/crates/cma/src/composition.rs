@@ -135,9 +135,10 @@ impl ControlPlaneComposition {
                 .map(|father| father.username.clone()),
         )?;
         let broker = Arc::new(
-            CmaServiceConnectionBroker::from_auth_config(
+            CmaServiceConnectionBroker::from_auth_config_with_callback(
                 &config.auth_mode,
                 config.nyxid_public_url.as_deref(),
+                Some(config.public_url.as_str()),
                 Arc::clone(&auth),
             )
             .map_err(|error| format!("service connection broker is not usable: {error}"))?
