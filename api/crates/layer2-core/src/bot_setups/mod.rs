@@ -2,6 +2,7 @@
 mod helpers;
 mod model;
 mod ports;
+mod progress;
 mod service;
 mod view;
 pub use model::*;

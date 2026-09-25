@@ -46,6 +46,11 @@ pub(super) const DIAGRAMS: &[(&str, &str, &str)] = &[
         include_str!("../../../assets/docs/protocol-8.svg"),
     ),
     (
+        "1bdd1287bbe65f5c23dd6c7879c1b47b261a49261fbfd5bd3a91dd08e05e7353",
+        "protocol-9",
+        include_str!("../../../assets/docs/protocol-9.svg"),
+    ),
+    (
         "6749c7a34c99e07138ae8fcfccb3fe801103f9f4b42e7824e6171ef817984e3b",
         "architecture-0",
         include_str!("../../../assets/docs/architecture-0.svg"),

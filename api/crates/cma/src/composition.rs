@@ -38,6 +38,7 @@ pub(crate) struct ControlPlaneComposition {
     pub router: Router,
     pub bindings: bindings::BindingComposition,
     pub bots: Option<bots::BotComposition>,
+    pub auth: Arc<AuthState>,
     pub launch_scheduler: super::trigger::LaunchScheduler,
     pub provenance_backfill: crate::sandbox::AgentProvenanceBackfill,
     pub command_scheduler: super::commands::CommandScheduler,
@@ -126,7 +127,13 @@ impl ControlPlaneComposition {
             config.nyxid_public_url.clone(),
         )
         .with_agent_key_service(config.nyxid_service_id.clone())
-        .with_binding_store(stores.sandbox_model.clone());
+        .with_binding_store(stores.sandbox_model.clone())
+        .with_bot_father_username(
+            config
+                .bot_father
+                .as_ref()
+                .map(|father| father.username.clone()),
+        )?;
         let broker = Arc::new(
             CmaServiceConnectionBroker::from_auth_config(
                 &config.auth_mode,
@@ -376,6 +383,24 @@ impl ControlPlaneComposition {
         let (bot_routes, bots) =
             bots::BotComposition::build(config, &stores, auth.clone(), event_workers)?;
         let resource_routes = resource_routes.merge(bot_routes);
+        let resource_routes = if config.bot_father.is_some() {
+            let bot_service = bots
+                .as_ref()
+                .ok_or("Bot Father requires Bot management")?
+                .service
+                .clone();
+            resource_routes.merge(rest::bot_setup_router(
+                crate::bot_setups::SetupDependencies::build(
+                    config,
+                    stores.clone(),
+                    auth.clone(),
+                    settings.clone(),
+                    bot_service,
+                )?,
+            ))
+        } else {
+            resource_routes
+        };
         let public = super::rest_router(resource_routes)
             .merge(crate::connections::router(browser_connections))
             .merge(crate::auth::router(Arc::clone(&auth)))
@@ -388,7 +413,7 @@ impl ControlPlaneComposition {
                 crate::rate_limit::enforce,
             ))
             .layer(axum::middleware::from_fn_with_state(
-                auth,
+                auth.clone(),
                 crate::auth::attach_subject,
             ));
         let provenance_backfill =
@@ -404,6 +429,7 @@ impl ControlPlaneComposition {
 
         Ok(Self {
             router,
+            auth,
             bindings,
             bots,
             provenance_backfill,

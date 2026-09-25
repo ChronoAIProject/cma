@@ -17,7 +17,16 @@ pub fn launch_request(
     now: i64,
 ) -> Result<LaunchRequest, &'static str> {
     let payload = verified.payload;
-    let event_id = EventId::new(payload.message_id.clone()).map_err(|_| "activity_invalid")?;
+    let event_id = EventId::new(if let Some(callback) = &facts.callback {
+        use sha2::{Digest, Sha256};
+        format!(
+            "telegram-callback:{:x}",
+            Sha256::digest(format!("{}:{}", payload.conversation.id, callback.id).as_bytes())
+        )
+    } else {
+        payload.message_id.clone()
+    })
+    .map_err(|_| "activity_invalid")?;
     let activity = Activity {
         schema_version: 1,
         event_id: event_id.clone(),
@@ -58,6 +67,7 @@ pub fn launch_request(
     let event_ref = EventRef::seal(
         &EventRefPayload {
             v: 1,
+            activity_sha256: Some(cmaeg_core::seal::event_ref::activity_digest(&activity)),
             channel_id: channel.id.clone(),
             record_id: channel.pointer.record_id.clone(),
             event_id: event_id.clone(),

@@ -2,7 +2,7 @@ use super::*;
 use layer2_core::bots::{BotControl, BotService, BotWorker};
 
 pub(crate) struct BotComposition {
-    service: Arc<BotService>,
+    pub(super) service: Arc<BotService>,
     worker: BotWorker,
     activity: Arc<ActivityService>,
 }
