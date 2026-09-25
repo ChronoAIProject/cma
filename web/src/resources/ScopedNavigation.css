@@ -9,12 +9,14 @@
   color: var(--dsw-alias-label-primary);
   overflow-wrap: anywhere;
 }
-.scoped-navigation p {
+.scoped-navigation > p,
+.scoped-navigation__tree > p {
   margin: 4px 0;
   font-size: 12px;
   color: var(--dsw-alias-label-secondary);
 }
-.scoped-navigation a {
+.scoped-navigation > a,
+.scoped-navigation__tree > a {
   color: var(--dsw-alias-brand-text);
   font-size: 13px;
 }

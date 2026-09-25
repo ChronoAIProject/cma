@@ -1,4 +1,3 @@
-import { ResourceAccessDetails } from './ResourceAccessSummary';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { SharedAgent as SharedAgentDetail } from '@chronoai/cma-sdk';
 import { ApiError } from '@chronoai/cma-sdk';
@@ -12,10 +11,8 @@ import { Composer } from '../agent/Composer';
 import { foldLiveEvent, type ConversationState } from '../agent/conversation';
 import { useAgentProvenance, creationLabel } from '../agent/provenance';
 import { Button } from '../ui/Button';
-import { ArtifactButton } from './ArtifactButton';
-import type { ArtifactPublicationScope } from './artifactRecovery';
-import { ChannelUsage } from './ChannelUsage';
-import { statusLabel } from '../vocabulary/status';
+import { AgentHeader } from '../agent/AgentHeader';
+import { ActiveThinking } from '../agent/ActiveThinking';
 import type { ApprovalDecision } from '../agent/controller';
 import '../agent/Agent.css';
 
@@ -24,11 +21,26 @@ interface Props {
   readonly web: CmaWebClient;
   readonly detail: SharedAgentDetail;
   readonly onAccessChanged: () => void;
-  readonly publicationScope?: ArtifactPublicationScope;
+  readonly detailsOpen: boolean;
+  readonly onDetailsOpenChange: (open: boolean) => void;
 }
 
-export function SharedAgent({ client, web, detail, onAccessChanged, publicationScope }: Props) {
+export function SharedAgent({
+  client,
+  web,
+  detail,
+  onAccessChanged,
+  detailsOpen,
+  onDetailsOpenChange,
+}: Props) {
   const agentId = detail.id;
+  const title = detail.title?.trim() || 'Untitled agent';
+  useEffect(() => {
+    document.title = `${title} · CMA`;
+    return () => {
+      document.title = 'CMA';
+    };
+  }, [title]);
   const read = useMemo(
     () => async (signal: AbortSignal) => {
       try {
@@ -140,26 +152,23 @@ export function SharedAgent({ client, web, detail, onAccessChanged, publicationS
   };
   const conversation =
     live !== undefined && live.basis === ready ? live.conversation : ready?.conversation;
+  const status =
+    conversation?.agentStatus !== undefined &&
+    conversation.agentStatusAt !== undefined &&
+    Date.parse(conversation.agentStatusAt) > Date.parse(detail.updated_at)
+      ? conversation.agentStatus
+      : detail.status;
   return (
     <section className="agent-surface">
-      <header className="agent-header">
-        <p>Shared Agent</p>
-        <div className="agent-header__title">
-          <h1>{detail.title?.trim() || 'Untitled agent'}</h1>
-          <span>{statusLabel(detail.status)}</span>
-        </div>
-        <p>{creationLabel(provenance)}</p>
-        {ready === undefined ? null : (
-          <ResourceAccessDetails client={client} access={ready.access} />
-        )}
-        {ready === undefined ? null : <ChannelUsage client={client} id={agentId} />}
-        <Button size="sm" onClick={onAccessChanged}>
-          Refresh access
-        </Button>
-        {can('view_artifacts') ? (
-          <ArtifactButton client={client} id={agentId} publicationScope={publicationScope} />
-        ) : null}
-      </header>
+      <AgentHeader
+        title={title}
+        status={status}
+        lineage={<span>Agent</span>}
+        detailsOpen={detailsOpen}
+        onDetailsOpenChange={onDetailsOpenChange}
+      >
+        <p className="agent-header__source">{creationLabel(provenance)}</p>
+      </AgentHeader>
       <div className="agent-surface__conversation">
         {history.state.status === 'loading' ? (
           <p role="status">Loading authorized Agent history</p>
@@ -180,13 +189,21 @@ export function SharedAgent({ client, web, detail, onAccessChanged, publicationS
           />
         )}
       </div>
-      {error === undefined ? null : <p role="alert">{error}</p>}
-      {notice === undefined ? null : <p role="status">{notice}</p>}
+      {error === undefined ? null : (
+        <p className="agent-action-error" role="alert">
+          {error}
+        </p>
+      )}
+      {notice === undefined ? null : (
+        <p className="agent-action-error" role="status">
+          {notice}
+        </p>
+      )}
       {ready === undefined ? null : can('interact') ? (
         <div className="agent-surface__input">
-          <p>Your messages are attributed to you.</p>
+          {conversation === undefined ? null : <ActiveThinking conversation={conversation} />}
           <Composer
-            status={detail.status}
+            status={status}
             running={conversation?.activeRunId !== undefined}
             busy={busy}
             inputAvailability={{ allowed: true }}
@@ -208,7 +225,11 @@ export function SharedAgent({ client, web, detail, onAccessChanged, publicationS
         </div>
       ) : (
         <div className="agent-surface__input">
-          <p>You can view this Agent. Your current access does not allow interaction.</p>
+          <div className="agent-composer">
+            <p className="agent-composer__notice">
+              You can view this Agent. Your current access does not allow interaction.
+            </p>
+          </div>
         </div>
       )}
     </section>

@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
 import { createClient } from '@chronoai/cma-sdk';
@@ -10,7 +10,8 @@ import { chooseOption } from '../test/select';
 import { loadSandbox, loadWorkspace } from './loadHierarchy';
 import { ScopedNavigation as ScopedNavigationTree } from './ScopedNavigation';
 import { useNavigationScope } from './NavigationScope';
-import type { ComponentProps } from 'react';
+import { useState, type ComponentProps } from 'react';
+import type { AppRoute } from '../routing/routes';
 import { SandboxAccessPage } from './SandboxAccessPage';
 
 const at = '2026-09-01T00:00:00Z';
@@ -146,8 +147,8 @@ it('opens a shared Sandbox using safe metadata and loads a Workspace only when e
   expect(screen.queryByRole('button', { name: 'Advanced' })).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Sharing' })).not.toBeInTheDocument();
   const user = userEvent.setup();
-  await user.click(screen.getByRole('button', { name: workspace.name }));
-  const link = await screen.findByRole('link', { name: agent.title });
+  await user.click(screen.getByRole('button', { name: `Show Agents in ${workspace.name}` }));
+  const link = await screen.findByRole('link', { name: new RegExp(agent.title) });
   expect(link).toHaveAttribute('href', '/agents/agt_shared');
   expect(screen.getByText(worktree.name)).toBeInTheDocument();
   await user.click(link);
@@ -163,8 +164,8 @@ it('clears parent and descendant labels after revoked hierarchy access', async (
   const test = fixture();
   test.show();
   const user = userEvent.setup();
-  await user.click(await screen.findByRole('button', { name: workspace.name }));
-  await screen.findByRole('link', { name: agent.title });
+  await user.click(await screen.findByRole('button', { name: `Show Agents in ${workspace.name}` }));
+  await screen.findByRole('link', { name: new RegExp(agent.title) });
   test.state.revoked = true;
   await user.click(screen.getByRole('button', { name: 'Refresh Sandbox access' }));
   await screen.findByRole('heading', { name: 'Sandbox unavailable' });
@@ -178,7 +179,7 @@ it('refuses a direct Sandbox URL without fetching its details or children when n
   test.state.revoked = true;
   test.show();
   await screen.findByRole('heading', { name: 'Sandbox unavailable' });
-  expect(test.paths.filter((path) => !path.endsWith('/organizations'))).toEqual([
+  expect([...new Set(test.paths.filter((path) => !path.endsWith('/organizations')))]).toEqual([
     '/api/v1/resource-access/sandbox/sbx_shared',
   ]);
   expect(test.readSandbox).not.toHaveBeenCalled();
@@ -229,10 +230,7 @@ it.each([false, true])(
     );
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: 'Next Sandboxes' }));
-    await user.click(await screen.findByRole('button', { name: sandbox.name }));
-    expect(test.paths.some((path) => path.includes('/workspaces/'))).toBe(false);
-    await user.click(await screen.findByRole('button', { name: workspace.name }));
-    await screen.findByRole('link', { name: agent.title });
+    await screen.findByRole('link', { name: new RegExp(agent.title) });
     expect(
       screen.getByRole('link', { name: shared ? 'All shared Agents' : 'All authorized Agents' }),
     ).toHaveAttribute('href', shared ? '/shared/agents' : '/organizations/org_research/agents');
@@ -294,7 +292,7 @@ it.each([false, true])(
     const composer = await screen.findByRole('textbox', { name: 'Message' });
     await user.type(composer, 'Keep my personal draft');
     await chooseOption(user, 'Navigation scope', shared ? 'Shared with me' : 'Research');
-    await screen.findByRole('button', { name: sandbox.name });
+    await screen.findByRole('link', { name: new RegExp(sandbox.name) });
     test.state.revoked = true;
     await user.click(
       screen.getByRole('button', {
@@ -392,7 +390,7 @@ it('pages shared navigation without parent reads and clears it on revocation', a
   await screen.findByText('No shared Agents on this page.');
   const user = userEvent.setup();
   await user.click(screen.getByRole('button', { name: 'Next shared Agents' }));
-  await screen.findByRole('link', { name: 'Narrow shared Agent' });
+  await screen.findByRole('link', { name: /Narrow shared Agent/ });
   expect(screen.getByRole('link', { name: 'All shared Agents' })).toHaveAttribute(
     'href',
     '/shared/agents',
@@ -413,3 +411,94 @@ function ScopedNavigation(props: Omit<ComponentProps<typeof ScopedNavigationTree
   const choices = useNavigationScope(props.client, props.scope);
   return <ScopedNavigationTree {...props} choices={choices} />;
 }
+
+it('uses the Personal tree rows for organization links, selected state and keyboard navigation', async () => {
+  const test = fixture();
+  function Navigation() {
+    const [route, setRoute] = useState<AppRoute>({ kind: 'agent', agentId: agent.id });
+    return (
+      <ScopedNavigation
+        client={test.sdk}
+        scope="organization:org_research"
+        route={route}
+        personal={<p>Personal tree</p>}
+        onNavigate={(next) => {
+          test.navigate(next);
+          setRoute(next);
+        }}
+      />
+    );
+  }
+  render(<Navigation />);
+  const agentLink = await screen.findByRole('link', { name: new RegExp(agent.title) });
+  const tree = screen.getByRole('tree', { name: 'Live sandboxes' });
+  const rows = within(tree).getAllByRole('treeitem');
+  expect(rows).toHaveLength(3);
+  expect(rows.map((row) => row.getAttribute('aria-level'))).toEqual(['1', '2', '3']);
+  expect(rows.every((row) => row.classList.contains('tree-row'))).toBe(true);
+  expect(agentLink).toHaveAttribute('aria-current', 'page');
+  const actor = userEvent.setup();
+  const sandboxLink = within(tree).getByRole('link', { name: new RegExp(sandbox.name) });
+  expect(sandboxLink).toHaveAttribute('href', '/sandboxes/sbx_shared');
+  await actor.click(sandboxLink);
+  expect(test.navigate).toHaveBeenLastCalledWith({ kind: 'sandbox', sandboxId: sandbox.id });
+  expect(rows[0]).toHaveAttribute('aria-selected', 'true');
+  rows[0]!.focus();
+  await actor.keyboard('{ArrowDown}{Enter}');
+  expect(test.navigate).toHaveBeenLastCalledWith({ kind: 'workspace', workspaceId: workspace.id });
+  expect(within(tree).getByRole('link', { name: new RegExp(workspace.name) })).toHaveAttribute(
+    'href',
+    '/workspaces/wks_shared',
+  );
+  expect(rows[1]).toHaveAttribute('aria-selected', 'true');
+  await actor.click(within(tree).getByRole('button', { name: `Collapse ${workspace.name}` }));
+  expect(screen.queryByRole('link', { name: new RegExp(agent.title) })).not.toBeInTheDocument();
+  await actor.click(within(tree).getByRole('button', { name: `Expand ${workspace.name}` }));
+  await screen.findByRole('link', { name: new RegExp(agent.title) });
+  test.state.revoked = true;
+  await actor.click(screen.getByRole('button', { name: 'Refresh organization' }));
+  await screen.findByText('Access removed');
+  for (const name of [sandbox.name, workspace.name, agent.title])
+    expect(screen.queryByText(name)).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /Options for/ })).not.toBeInTheDocument();
+});
+
+it('collapses a revoked Workspace after rechecking its parent without retrying the denied branch', async () => {
+  const test = fixture();
+  const original = test.fetch.getMockImplementation()!;
+  let workspaceDenied = false;
+  let deniedReads = 0;
+  test.fetch.mockImplementation(async (input) => {
+    if (
+      workspaceDenied &&
+      new URL(String(input)).pathname === `/api/v1/resource-access/workspace/${workspace.id}`
+    ) {
+      deniedReads += 1;
+      return Response.json(
+        { code: 'resource_not_found', detail: 'Workspace access removed' },
+        { status: 404 },
+      );
+    }
+    return original(input);
+  });
+  render(
+    <ScopedNavigation
+      client={test.sdk}
+      scope="organization:org_research"
+      personal={<p>Personal tree</p>}
+      onNavigate={test.navigate}
+    />,
+  );
+  await screen.findByRole('link', { name: new RegExp(agent.title) });
+  const actor = userEvent.setup();
+  await actor.click(screen.getByRole('button', { name: `Collapse ${workspace.name}` }));
+  workspaceDenied = true;
+  await actor.click(screen.getByRole('button', { name: `Expand ${workspace.name}` }));
+  await screen.findByRole('button', { name: `Expand ${workspace.name}` });
+  expect(deniedReads).toBe(1);
+  expect(screen.queryByRole('link', { name: new RegExp(agent.title) })).not.toBeInTheDocument();
+  expect(screen.getByRole('link', { name: new RegExp(sandbox.name) })).toBeInTheDocument();
+  await actor.click(screen.getByRole('button', { name: 'Refresh organization' }));
+  await screen.findByRole('button', { name: `Expand ${workspace.name}` });
+  expect(deniedReads).toBe(1);
+});
