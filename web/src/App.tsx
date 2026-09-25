@@ -11,7 +11,7 @@ import './styles/shiki.css';
 import './styles/base.css';
 import './styles/components.css';
 import './AppError.css';
-import { lazy, Suspense, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { Presence } from './ui/Presence';
 import { useCmaClient, useCreationClient, usePublicClient } from './api/context';
 import type { CreationRequest } from './create/CreationFlow';
@@ -36,6 +36,14 @@ export function App() {
     readonly value: CreationRequest;
   }>();
   const [hierarchyRevision, setHierarchyRevision] = useState(0);
+
+  // NyxID hosted connection links redirect their popup here after the
+  // credential is saved. The main CMA window is already polling the durable
+  // connection state; this page only closes the child window so the user
+  // returns to that flow without touching NyxID's relay or callback code.
+  if (window.location.pathname === '/connection-return') {
+    return <ConnectionReturnPage />;
+  }
 
   if (
     (router.route.kind === 'public_trigger' || router.route.kind === 'launch') &&
@@ -124,5 +132,21 @@ export function App() {
         )}
       </Presence>
     </ReferenceProvider>
+  );
+}
+
+function ConnectionReturnPage() {
+  useEffect(() => {
+    const timer = window.setTimeout(() => window.close(), 50);
+    return () => window.clearTimeout(timer);
+  }, []);
+  return (
+    <main className="app-error">
+      <p className="app-error__what">Connection complete</p>
+      <p className="app-error__next">Return to the CMA window to continue.</p>
+      <button type="button" onClick={() => window.close()}>
+        Close this window
+      </button>
+    </main>
   );
 }

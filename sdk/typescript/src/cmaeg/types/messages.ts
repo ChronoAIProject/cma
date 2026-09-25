@@ -24,6 +24,7 @@ export type Field = Output<typeof FieldSchema>;
 export const ChoiceOptionSchema = object({
   id: text,
   label: text,
+  selected: optional(boolean),
   style: optional(OptionStyleSchema),
 });
 export type ChoiceOption = Output<typeof ChoiceOptionSchema>;

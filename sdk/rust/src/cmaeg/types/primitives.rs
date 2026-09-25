@@ -305,6 +305,9 @@ pub enum Refusal {
     /// Wire value `interactive_action_unsupported`.
     #[serde(rename = "interactive_action_unsupported")]
     InteractiveActionUnsupported,
+    /// Wire value `interaction_expired_or_invalid`.
+    #[serde(rename = "interaction_expired_or_invalid")]
+    InteractionExpiredOrInvalid,
     /// Wire value `system_event`.
     #[serde(rename = "system_event")]
     SystemEvent,
