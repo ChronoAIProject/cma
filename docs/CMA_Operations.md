@@ -1531,6 +1531,14 @@ sender, channel and activity digest. CMA stores a durable setup plan bound to
 that sender and conversation; a Gateway restart or duplicated callback resumes
 the same revision.
 
+Enable this integration by setting both `CHRONO_BOT_FATHER_BINDING_ID` and
+`CHRONO_BOT_FATHER_TELEGRAM_USERNAME` in CMA's runtime environment. The binding
+must be a valid `bnd_` identifier and the username must be the exact Telegram
+bot username without `@`; an incomplete or malformed pair fails startup. If
+both keys are absent, Bot Father is disabled and CMA does not accept its setup
+callbacks. These values identify the already provisioned owner binding and
+Telegram ingress only; they are not credentials.
+
 An unauthenticated sender receives a short-lived NyxID login link. NyxID keeps
 the renewable credential in CMA. The browser displays a one-time confirmation
 code and returns the user to the same Telegram chat; CMA activates the grant
