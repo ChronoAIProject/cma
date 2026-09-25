@@ -94,6 +94,10 @@ impl CreateBotBody {
 #[derive(Serialize, ToSchema)]
 pub struct BotView {
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) resource_owner: Option<super::super::resource_access_shapes::ResourceOwnerView>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) created_by: Option<super::super::resource_access_shapes::ResourceActorView>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub event_worker_profile: Option<ProfileRef>,
     pub bot_id: String,
     pub owner: String,
@@ -166,6 +170,14 @@ impl From<Bot> for BotView {
             BotState::Deleted => ("deleted", None),
         };
         Self {
+            resource_owner: bot
+                .ownership
+                .as_ref()
+                .map(|value| value.owner.clone().into()),
+            created_by: bot
+                .ownership
+                .as_ref()
+                .map(|value| value.created_by.clone().into()),
             event_worker_profile: bot
                 .profiles
                 .event_worker_profile
