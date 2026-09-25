@@ -8,12 +8,22 @@ import './ResourceAccessSummary.css';
 export function ResourceAccessSummary({
   value,
   className = '',
+  compact = false,
 }: {
   readonly value?: AccessSummary;
   readonly className?: string;
+  readonly compact?: boolean;
 }) {
   return (
-    <span className={`resource-access-summary ${className}`.trim()}>
+    <span
+      className={`resource-access-summary ${className}`.trim()}
+      data-compact={compact || undefined}
+      title={
+        compact
+          ? `Owner: ${value?.owner ?? 'Unavailable'} · Your access: ${value?.role ?? 'Unavailable'}`
+          : undefined
+      }
+    >
       Owner: {value?.owner ?? 'Unavailable'} · Your access: {value?.role ?? 'Unavailable'}
     </span>
   );

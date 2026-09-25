@@ -11,6 +11,7 @@ import { resourceCount } from '../vocabulary/count';
 import { useSandboxControl } from './useSandboxControl';
 import { SandboxControls } from './SandboxControls';
 import './SharedHierarchy.css';
+import '../sandbox/SandboxPage.css';
 
 export function SandboxAccessPage({
   client,
@@ -81,24 +82,28 @@ export function SandboxAccessPage({
     );
   const sandbox = current.state.value.detail;
   return (
-    <section className="shared-hierarchy">
-      <header>
-        <p>Shared Sandbox</p>
-        <h1>{sandbox.name}</h1>
-        <ResourceAccessDetails client={client} access={current.state.value.access} />
-        <p>
-          {statusLabel(sandbox.status)} · {resourceCount(sandbox.workspace_count, 'Workspace')} ·{' '}
-          {resourceCount(sandbox.agent_count, 'Agent')}
-        </p>
-        <Button onClick={current.reload}>Refresh Sandbox access</Button>
-        <SandboxControls
-          control={control}
-          access={current.state.value.access}
-          status={sandbox.status}
-          revision={sandbox.revision}
-        />
+    <section className="sandbox-page">
+      <header className="sandbox-page__header">
+        <div>
+          <h1>{sandbox.name}</h1>
+          <ResourceAccessDetails client={client} access={current.state.value.access} />
+          <p>
+            {statusLabel(sandbox.status)} · {resourceCount(sandbox.workspace_count, 'Workspace')} ·{' '}
+            {resourceCount(sandbox.agent_count, 'Agent')}
+          </p>
+        </div>
+        <div className="sandbox-page__actions">
+          <Button onClick={current.reload}>Refresh Sandbox access</Button>
+        </div>
       </header>
-      <div className="shared-hierarchy__body">
+      <SandboxControls
+        control={control}
+        access={current.state.value.access}
+        status={sandbox.status}
+        revision={sandbox.revision}
+      />
+      <section className="sandbox-page__band">
+        <h2>Workspaces</h2>
         {sandbox.workspaces.length === 0 ? (
           <p>No authorized Workspaces in this Sandbox.</p>
         ) : (
@@ -116,7 +121,7 @@ export function SandboxAccessPage({
             ))}
           </ul>
         )}
-      </div>
+      </section>
     </section>
   );
 }

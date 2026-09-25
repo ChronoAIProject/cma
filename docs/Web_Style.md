@@ -1941,12 +1941,34 @@ Append-only. Never edit or delete an entry.
 | 2026-09-23 | Move the navigation scope Picker between the header build badge and New agent, keep the compact mark and usable controls at narrow sidebar widths, and remove both sidebar Agent filters while retaining resource facts. |
 | 2026-09-23 | Remove the same two sidebar filters from Organization and Shared with me trees, preserving authorized hierarchy expansion and pagination. |
 | 2026-09-23 | Retire the old bridge management routes and pending bridge-message panel; Bot settings remains the supported channel-management entry in the account menu. |
+| 2026-09-25 | Reuse Personal hierarchy rows, page bands, Agent header and Details for organization/shared resources. Restore scope from authorized ownership on deep links, retain drafts during explicit scope changes, and omit unsupported personal creation in organization scope. |
+
+### Organization and shared navigation
+
+Organization and Shared with me use the Personal tree row, status dot, keyboard
+navigation, canonical resource links and selected-row treatment. Organization
+Sandboxes use the same Live/Paused groups and expose independently authorized
+Workspace and Agent children. Collapsing a branch survives access refreshes;
+revoked children disappear without reopening a denied branch automatically.
+Compact access metadata uses the existing tree truncation treatment.
+
+Sandbox and Workspace pages reuse the Personal page header and information
+bands. Agent conversations reuse the Personal header, message stream, Thinking
+dock, composer and right-side Details panel, including the compact overlay and
+focus restoration. Details contains access, channel activity and authorized
+artifacts. An Agent-only share never fetches private ancestry to fill a breadcrumb.
+Current capabilities decide the available actions. Personal creation controls
+are absent in organization/shared scope while organization creation is unsupported.
+
+Resource deep links and reloads derive their navigation scope from current
+authorized ownership. Explicit scope selection preserves the open conversation
+and its draft. Changing viewers discards scope state.
 
 ### Approved Agent artifacts
 
 Personal Agent Details offers **Artifacts** under current artifact visibility;
 current sharing managers may publish a selected file after explicit exposure
-acknowledgment. Shared Agents offer lazy artifact browsing alongside history.
+acknowledgment. Shared Agents offer the same lazy artifact entry in Details.
 No parent, repository, credential or runtime files are requested by this view.
 Use the standard Modal and Button primitives, safe display names, byte counts,
 independent paging and clear empty/denied states. Downloads recheck access before
@@ -1963,9 +1985,8 @@ and existing downloads cannot be recalled.
 
 ### Channel activity and management history
 
-Show channel activity independently of immutable creation origin. Agent Details
-and shared Agent headers distinguish current linkage, past linkage and absent
-history. Inventory and personal tree filters combine creation origin with current linkage,
+Show channel activity independently of immutable creation origin. Personal and
+shared Agent Details distinguish current linkage, past linkage and absent history. Inventory and personal tree filters combine creation origin with current linkage,
 any history, detached history or no history. Tree facts use at most four optional
 reads concurrently and expire under the existing bounded read policy. Sandbox
 and Workspace channel counts require facts for every represented child; an
