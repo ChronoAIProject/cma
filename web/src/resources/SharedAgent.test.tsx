@@ -370,3 +370,22 @@ it('uses the personal details drawer without private reads and clears details af
   ])
     expect(read).not.toHaveBeenCalled();
 });
+
+it.each([
+  ['2026-08-31T23:59:00Z', 'Ready'],
+  ['2026-09-01T00:01:00Z', 'Paused'],
+])('uses timestamped shared status instead of stale replay (%s)', async (appendedAt, label) => {
+  const test = fixture();
+  test.web.readAgentEvents = async () => ({
+    items: [
+      {
+        seq: 5,
+        appendedAt,
+        kind: { type: 'status_changed', to: 'paused' },
+      },
+    ],
+  });
+  test.show();
+  await screen.findByText(/Your current access does not allow interaction/);
+  expect(document.querySelector('.agent-header__status')).toHaveTextContent(label);
+});
