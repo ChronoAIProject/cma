@@ -33,7 +33,10 @@ async fn public_docs_are_real_html_and_exact_markdown_without_authentication() {
         assert!(body.contains("href=\"/openapi.json\""));
         assert!(!body.contains("<script"));
         assert!(!body.contains("language-mermaid"));
-        assert_eq!(body.matches("class=\"diagram\"").count(), 10);
+        assert_eq!(
+            body.matches("class=\"diagram\"").count(),
+            diagrams::DIAGRAMS.len()
+        );
         assert!(body.contains("href=\"/docs/download\""));
         assert!(!body.contains("href=\"CMAEG_Operations.md"));
     }
