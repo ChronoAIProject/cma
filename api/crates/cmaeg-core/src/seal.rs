@@ -31,6 +31,7 @@ pub enum TokenKind {
     EventRef,
     MessageRef,
     Blob,
+    Interaction,
 }
 
 impl TokenKind {
@@ -40,6 +41,7 @@ impl TokenKind {
             Self::EventRef => "ev",
             Self::MessageRef => "mr",
             Self::Blob => "bl",
+            Self::Interaction => "in",
         }
     }
 }
@@ -290,11 +292,28 @@ pub fn open<T: DeserializeOwned>(
 /// The wire value still carries the key id and authenticated `cmaeg1.bl.<kid>`
 /// AAD so CMA can retain and return it without learning its contents.
 pub fn seal_blob(ring: &MasterKeyRing, plaintext: &[u8]) -> Result<Vec<u8>, SealError> {
+    seal_bound_blob(ring, TokenKind::Blob, "", plaintext)
+}
+
+pub fn seal_interaction(
+    ring: &MasterKeyRing,
+    id: &str,
+    plaintext: &[u8],
+) -> Result<Vec<u8>, SealError> {
+    seal_bound_blob(ring, TokenKind::Interaction, id, plaintext)
+}
+
+fn seal_bound_blob(
+    ring: &MasterKeyRing,
+    kind: TokenKind,
+    id: &str,
+    plaintext: &[u8],
+) -> Result<Vec<u8>, SealError> {
     if plaintext.len() > MAX_BLOB_BYTES {
         return Err(SealError::TooLarge);
     }
     let kid = ring.current_kid();
-    let aad = aad(TokenKind::Blob, kid);
+    let aad = format!("{}{id}", aad(kind, kid));
     let mut nonce = [0_u8; 12];
     SystemRandom::new()
         .fill(&mut nonce)
@@ -309,7 +328,8 @@ pub fn seal_blob(ring: &MasterKeyRing, plaintext: &[u8]) -> Result<Vec<u8>, Seal
     encoded.extend_from_slice(&nonce);
     encoded.extend_from_slice(&ciphertext);
     Ok(format!(
-        "{TOKEN_VERSION}.bl.{kid}.{}",
+        "{TOKEN_VERSION}.{}.{kid}.{}",
+        kind.wire_name(),
         general_purpose::URL_SAFE_NO_PAD.encode(encoded)
     )
     .into_bytes())
@@ -317,12 +337,29 @@ pub fn seal_blob(ring: &MasterKeyRing, plaintext: &[u8]) -> Result<Vec<u8>, Seal
 
 /// Open an opaque channel-definition blob and report whether it needs rekeying.
 pub fn open_blob(ring: &MasterKeyRing, token: &[u8]) -> Result<Opened<Vec<u8>>, OpenError> {
+    open_bound_blob(ring, TokenKind::Blob, "", token)
+}
+
+pub fn open_interaction(
+    ring: &MasterKeyRing,
+    id: &str,
+    token: &[u8],
+) -> Result<Opened<Vec<u8>>, OpenError> {
+    open_bound_blob(ring, TokenKind::Interaction, id, token)
+}
+
+fn open_bound_blob(
+    ring: &MasterKeyRing,
+    kind: TokenKind,
+    id: &str,
+    token: &[u8],
+) -> Result<Opened<Vec<u8>>, OpenError> {
     if token.len() > MAX_BLOB_WIRE_LENGTH {
         return Err(OpenError::Format);
     }
     let token = std::str::from_utf8(token).map_err(|_| OpenError::Format)?;
     let parts = token.split('.').collect::<Vec<_>>();
-    if parts.len() != 4 || parts[0] != TOKEN_VERSION || parts[1] != TokenKind::Blob.wire_name() {
+    if parts.len() != 4 || parts[0] != TOKEN_VERSION || parts[1] != kind.wire_name() {
         return Err(OpenError::Format);
     }
     let kid = parts[2].parse::<u8>().map_err(|_| OpenError::Format)?;
@@ -344,7 +381,7 @@ pub fn open_blob(ring: &MasterKeyRing, token: &[u8]) -> Result<Opened<Vec<u8>>, 
     let plaintext = key
         .open_in_place(
             nonce,
-            Aad::from(aad(TokenKind::Blob, kid).as_bytes()),
+            Aad::from(format!("{}{id}", aad(kind, kid)).as_bytes()),
             &mut ciphertext,
         )
         .map_err(|_| OpenError::Tampered)?;

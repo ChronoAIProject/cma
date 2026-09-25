@@ -185,9 +185,11 @@ sequenceDiagram
 Use REST or native MCP; both verify the channel key and the references required
 by that operation. Native MCP keeps
 `replyToEvent`, `updateMessage`, `sendTyping`, `readEventContext`. NyxID-discovered
-REST tool names are lowercase. Current Telegram and custom transports report
-**editing and typing as unsupported**. Read capabilities instead of assuming a
-tool name guarantees platform support. Expired references return `410`; a
+REST tool names are lowercase. Telegram reports interactive-card editing and
+inline callbacks when the card carries a gateway interaction record; typing and
+ordinary text-card edits remain unsupported. Custom transports report their own
+capabilities. Read capabilities instead of assuming a tool name guarantees
+platform support. Expired references return `410`; a
 reference alone never grants access.
 
 ### Flow F — Implement a downstream agent provider
@@ -445,7 +447,12 @@ sufficient authorization: tools also require the channel's agent key.
 
 All management operations return `Cache-Control: no-store`. Except rekey, they use
 `Authorization: Bearer <creator NyxID token>` and enforce ownership. The owner
-subject in `profile.metadata.owner` MUST equal the authenticated creator.
+subject in `profile.metadata.owner` MUST equal the authenticated owner. For an
+organization selected using a human bearer, send `X-CMAEG-Owner: <organization-id>`
+on every management request. CMAEG verifies that exact organization and current
+admin authority with NyxID; cache entries are isolated by bearer and selected
+owner. Omitting the header preserves the token's personal/native organization
+subject. The header is not accepted as authority without that verification.
 `schema_version` for both channel requests and profiles is `1`.
 
 Create: `POST /v1/channels` returns 201 `ChannelResponse`. The following complete
@@ -484,7 +491,8 @@ Profile fields not illustrated above: optional `environment` is provider-specifi
 JSON; metadata `description` defaults to empty. Identity `kind` is `human`,
 `service_account`, `agent_key` or `organization`. The owner subject must equal
 the authenticated creator. Organization ownership requires a NyxID
-organization-owned caller verified by NyxID; organization ownership is immutable
+organization-owned caller or the explicitly selected organization of a verified
+NyxID organization administrator; organization ownership is immutable
 after channel creation. Model `access` is `managed` or `custom`;
 `api_type` is `responses` or `chat_completions`; `thinking_effort` is `minimal`,
 `low`, `medium`, `high` or `very_high`. All model fields are required. Permission
@@ -616,18 +624,20 @@ Authenticated supported messages return 202
 provider acceptance or the acceptance budget. Policy/unsupported messages return
 202 `{"status":"refused","reason":"..."}` and launch no turn. Reasons are:
 `bot_sender`, `system_sender`, `unknown_sender`, `message_edit`,
-`interactive_action_unsupported`, `system_event`, `content_unsupported`,
+`interactive_action_unsupported`, `interaction_expired_or_invalid`, `system_event`, `content_unsupported`,
 `attachment_unsupported`, `sender_denied`, `chat_denied`, `group_denied`,
 `group_not_addressed`, `addressing_evidence_unavailable`, `thread_evidence_unavailable`.
 Signature/binding failure is 401 `callback_invalid`, not a policy refusal.
 
 | Telegram capability | Contract |
 | --- | --- |
-| Input | Human text only; edits, callbacks/actions, system and attachment input refused |
+| Input | Human text and authenticated callbacks from gateway-issued inline controls; edits, system and attachment input refused |
 | Group addressing | Pinned bot username and UTF-16 mention entities; bot reply evidence from raw Telegram payload |
 | Topics | Verified forum topic evidence required for thread partitioning |
 | Output | Escaped text; rich blocks degrade as §8 specifies |
-| Edit / typing / interactive callbacks | Unsupported; never reported as performed |
+| Edit | Confirmed gateway interactive cards can be updated using their opaque message reference |
+| Typing | Unsupported; never reported as performed |
+| Interactive callbacks | Native buttons and single/multi choices; exact actor, chat, message and current revision required |
 | Attachments | Safe link text only; no file transfer |
 
 ### Custom CloudEvents
@@ -715,7 +725,9 @@ capacity includes `Retry-After: 2`. Custom authentication failure is 401.
 A full activity is `{schema_version:1,event_id,kind,actor,conversation,occurred_at,source}`.
 Actor is `{id,kind,display_name?}`, kind `human|bot|system|unknown`. Conversation
 is `{id,kind,thread_id?}`, kind `private|group|channel|thread|custom`. Source is
-`{type:"nyxid_relay",platform:"telegram",route_id}` or `{type:"custom"}`.
+`{type:"nyxid_relay",platform:"telegram",route_id}`. NyxID managed Telegram bots may
+identify the transport as `telegram-new`; CMAEG accepts that alias and normalizes it
+to the canonical Telegram protocol platform. or `{type:"custom"}`.
 Activity kind is one of:
 
 | Type | Fields |
@@ -740,7 +752,8 @@ clients MUST NOT manufacture IDs by copying an implementation's hash algorithm.
 All tools require the single channel agent-key bearer, compared locally in
 constant time. Reply, typing and context require an unexpired `event_ref`.
 REST update requires a valid `message_ref`; native MCP update additionally
-requires an unexpired `event_ref` naming the same event. Channel deletion or
+requires an unexpired `event_ref` naming the same event, or a verified interaction
+whose `values.message_ref` is exactly the requested card. Channel deletion or
 agent-key rotation revokes access even when a message reference can be opened.
 REST tools return JSON 200 receipts
 or problems. Native MCP at `/mcp` uses JSON-RPC 2.0 and protocol `2025-06-18`,
@@ -756,7 +769,7 @@ A transport success alone does not mean platform delivery succeeded.
 | Name | REST | MCP arguments |
 | --- | --- | --- |
 | `replyToEvent` | POST `/v1/events/{event_ref}/replies`, body message | `{event_ref,message}` |
-| `updateMessage` | POST `/v1/messages/{message_ref}/update`, body message | `{event_ref,message_ref,message}`; both references must name the same event |
+| `updateMessage` | POST `/v1/messages/{message_ref}/update`, body message | `{event_ref,message_ref,message}`; same event or verified callback for this exact card |
 | `sendTyping` | POST `/v1/events/{event_ref}/typing`, no body | `{event_ref}` |
 | `readEventContext` | GET `/v1/events/{event_ref}/context` | `{event_ref}` |
 
@@ -775,14 +788,16 @@ block is required. `reply_to` is an opaque message reference. Blocks:
 | --- | --- | --- | --- |
 | `text` | `text` | Escaped text | Exact JSON |
 | `card` | `title,body?,fields:[],image?`; fields `{label,value}` | Title/body/labelled fields; safe image link | Exact JSON |
-| `buttons` | `id,options` | Numbered text, no callback controls | Exact JSON |
-| `choice` | `id,prompt,options,multi` | Prompt and numbered options; no interactive selection | Exact JSON |
+| `buttons` | `id,options` | Native inline callback buttons | Exact JSON |
+| `choice` | `id,prompt,options,multi` | Prompt and native inline options with selected markers | Exact JSON |
 | `form` | `id,fields` | Labelled textual form | Exact JSON |
 | `attachment` | `reference,kind,caption?` | Safe URL as link text; unsafe references dropped | Exact JSON/reference |
-| `link` | `url,label?` | Escaped safe link | Exact JSON |
+| `link` | `url,label?` | HTTPS URL button; opening it does not consume a callback | Exact JSON |
 
-Options are `{id,label,style?}` with style `default|primary|danger`, default
-`default`; IDs must be unique within an option list. Forms use
+Options are `{id,label,style?,selected?}` with style `default|primary|danger`, default
+`default`; `selected` defaults to false. Telegram indicates selected options with a
+checkmark and does not promise platform support for option color styles. IDs must
+be unique within an option list. Forms use
 `{id,label,kind,required}`; kind is `{type:"text"}`, `{type:"number"}`,
 `{type:"date"}` or `{type:"choice",options}`. Block IDs must be unique within
 the message. Rendering never interprets arbitrary agent text as Telegram markup.
@@ -796,16 +811,87 @@ is tagged by `outcome`: `confirmed` with optional `platform_message_id`,
 `rejected` with `reason`, `rate_limited` with `retry_after` seconds, `unknown`
 with `reason`, or `unsupported`. Unknown means the platform may have delivered;
 clients MUST NOT blindly resend. Typing returns `{outcome:"sent|unsupported"}`.
-Current Telegram and custom transports return unsupported for editing/typing.
+Telegram editing supports confirmed interactive cards; ordinary legacy text
+references and custom edits remain unsupported. Typing remains unsupported.
 
-Context is `{event_id,conversation_id,activity:{kind,actor,conversation,occurred_at},
+Context is `{event_id,conversation_id,channel_id,provider_binding_id,source,activity_verified,activity:{kind,actor,conversation,occurred_at},
 capabilities:{edit,typing,buttons,cards,attachments,max_text_chars}}`. Telegram
-capabilities are `false,false,"numbered_text","text","link_text",4000`; custom
+capabilities are `true,false,"inline_keyboard","text","link_text",4000`; custom
 are `false,false,"json","json","reference",32768`. Context retrieval requires
 provider persistence described below; if unavailable it returns 503
 `provider_unavailable` with `detail:"event_context_unavailable"`.
 Tool errors additionally include 400 invalid request/reference, 401 missing/invalid
 key, 403 mismatched authority, 410 expired reference and restore errors from §3.
+
+### Interactive Telegram flow
+
+Use the existing four tools. Send one message containing a `card` and `buttons`
+or `choice` blocks. Add a `link` block for a hosted login/consent page. Interactive
+messages must fit one rendered Telegram message (4000 characters); otherwise the
+receipt is rejected before dispatch. Each card supports at most 100 inline
+buttons, including links. Opening a link does not consume the card; include a
+separate **Continue** action when the user should return after browser consent.
+
+```json
+{"text":"Choose where to create your bot","blocks":[{"type":"choice","id":"owner","prompt":"Owner","multi":false,"options":[{"id":"personal","label":"Personal","selected":true},{"id":"org-123","label":"My organization"}]},{"type":"link","url":"https://identity.example/login","label":"Sign in"}]}
+```
+
+An accepted click produces `kind:{type:"interaction",block_id,action_id,values}`.
+`values` contains `selected` (the resulting array of option IDs), `message_ref`
+(the stable sealed parent-card reference), `revision`, `interaction_record_id`
+and `platform_message_id`. IDs are the IDs submitted in the original blocks,
+never raw arbitrary callback data. Single choice returns the clicked option;
+multi-choice toggles the clicked option against the submitted `selected` flags.
+The provider renders the next choice state using these returned selections.
+
+Each card revision accepts one click. Concurrent retries of the same callback
+return the same normalized activity; a different click on a consumed revision is
+refused. Reply with the next card or use `updateMessage` with the callback's
+`event_ref` and exact `values.message_ref`. An edit fences the previous revision
+before dispatch and returns a new message reference. A failed/uncertain edit
+never re-enables old controls. A provider must not blindly resend an unknown
+send/edit result. Use a fresh user message to restart an expired/uncertain flow.
+
+```mermaid
+sequenceDiagram
+    participant P as Provider agent
+    participant G as Event Gateway
+    participant S as Encrypted interaction store
+    participant N as NyxID relay
+    participant U as Telegram user
+    P->>G: replyToEvent with card and choices
+    G->>S: Persist actor/chat-bound opaque controls
+    G->>N: Text and bounded inline keyboard
+    N->>U: Display card
+    N-->>G: Exact outbound and platform message IDs
+    G->>S: Bind confirmed card destination
+    U->>N: Click an option
+    N-->>U: Clear button spinner
+    N->>G: Signed callback with verified actor/chat/card
+    G->>S: Validate current revision and claim click with CAS
+    G->>P: Interaction with selected values and parent message_ref
+    P->>G: updateMessage using callback authority
+    G->>S: Fence previous revision and persist replacement
+    G->>N: Edit exact outbound message and keyboard
+    N->>U: Display next step
+```
+
+CMAEG stores encrypted interaction records separately from channel definitions,
+with a 24-hour lifetime, exact channel/route/actor/chat/thread/message binding and
+compare-and-set revisions. Opaque callback handles stay within Telegram's
+64-byte limit. Gateway replicas retain no authoritative flow state in memory;
+restart and concurrent delivery use the same durable records. These records
+contain transport selections and receipts, not provider-specific provisioning
+rules or identity grants. The provider owns its business workflow.
+
+New event references include a SHA-256 digest of the complete canonical Activity.
+`readEventContext` verifies it after reading the provider's persisted context;
+a mismatch returns `event_context_unavailable`. Its `activity_verified` field is
+true only for matching attested activity. Retained references without a digest
+remain readable with `activity_verified:false`. Identity-sensitive downstream
+flows must require true, validate `channel_id`, `provider_binding_id` and `source`,
+and use the verified activity actor. The relay owner's optional user token does
+not authenticate the Telegram sender as that owner.
 
 ## 9. Provider contract
 

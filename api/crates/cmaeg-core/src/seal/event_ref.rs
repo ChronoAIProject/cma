@@ -17,6 +17,8 @@ use crate::{
 #[serde(deny_unknown_fields)]
 pub struct EventRefPayload {
     pub v: u8,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activity_sha256: Option<String>,
     pub channel_id: ChannelId,
     pub record_id: RecordId,
     pub event_id: EventId,
@@ -223,8 +225,37 @@ impl<'de> Deserialize<'de> for EventRef {
     }
 }
 
+pub fn activity_digest(activity: &crate::activity::Activity) -> String {
+    let digest = ring::digest::digest(
+        &ring::digest::SHA256,
+        crate::profile::canonical_json(
+            serde_json::to_value(activity).expect("Activity serialization is infallible"),
+        )
+        .as_bytes(),
+    );
+    digest
+        .as_ref()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
 impl EventRefPayload {
+    pub fn verifies_activity(&self, activity: &crate::activity::Activity) -> bool {
+        self.activity_sha256
+            .as_ref()
+            .is_some_and(|digest| *digest == activity_digest(activity))
+            && self.event_id == activity.event_id
+    }
+
     pub fn validate(&self) -> Result<(), ValidationError> {
+        if self.activity_sha256.as_ref().is_some_and(|d| {
+            d.len() != 64
+                || !d
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        }) {
+            return Err(ValidationError::new("/activity_sha256", "invalid digest"));
+        }
         if self.v != 1 {
             return Err(ValidationError::new("/v", "unsupported event ref version"));
         }

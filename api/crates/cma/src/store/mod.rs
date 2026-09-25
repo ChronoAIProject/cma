@@ -28,6 +28,7 @@ mod agent_worker_transaction;
 mod agents;
 pub mod auth;
 mod bindings;
+pub(crate) mod bot_setups;
 pub(crate) mod bots;
 #[cfg(test)]
 mod bots_mongo_integration_tests;
@@ -42,7 +43,9 @@ mod default_profiles;
 pub mod directory;
 mod durability;
 mod encryption;
+mod gateway_interactions;
 mod gateway_records;
+pub(crate) use gateway_interactions::MongoGatewayInteractionStore;
 #[cfg(test)]
 mod gateway_records_mongo_integration_tests;
 mod hierarchy;

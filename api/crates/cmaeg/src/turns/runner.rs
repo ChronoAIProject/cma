@@ -25,6 +25,7 @@ pub struct TurnRunner {
     tracker: Arc<TurnTracker>,
     delivery: mpsc::Sender<DeliveryCommand>,
     config: TurnConfig,
+    bot_father: Option<super::bot_father::BotFatherClient>,
 }
 impl TurnRunner {
     pub fn new(
@@ -38,7 +39,12 @@ impl TurnRunner {
             tracker,
             delivery,
             config,
+            bot_father: None,
         }
+    }
+    pub fn with_bot_father(mut self, client: Option<super::bot_father::BotFatherClient>) -> Self {
+        self.bot_father = client;
+        self
     }
     async fn execute(&self, turn: Arc<LaunchRequest>, sender: oneshot::Sender<LaunchOutcome>) {
         use crate::telemetry::{
@@ -47,8 +53,14 @@ impl TurnRunner {
         };
         let provider = turn.channel.definition.provider.slug.to_string();
         let mut observation = Operation::new(names::TURN_DURATION, names::PROVIDER, &provider);
-        let mut admitted = Some(sender);
         let deadline = turn.received_at + self.config.turn_timeout;
+        if self.bot_father.as_ref().is_some_and(|client| {
+            client.matches(turn.channel.definition.provider.binding_id.as_str())
+        }) {
+            self.execute_bot_father(turn, sender).await;
+            return;
+        }
+        let mut admitted = Some(sender);
         let result = tokio::time::timeout_at(deadline.into(), async {
             let stream = self.start(&turn).await.map_err(|error| match error {
                 ProviderError::Capacity | ProviderError::Busy { .. } => {
@@ -88,6 +100,44 @@ impl TurnRunner {
                 reason = error.1,
                 "turn failure could not reach delivery sink"
             );
+        }
+    }
+    async fn execute_bot_father(
+        &self,
+        turn: Arc<LaunchRequest>,
+        sender: oneshot::Sender<LaunchOutcome>,
+    ) {
+        let Some(client) = self.bot_father.as_ref() else {
+            return;
+        };
+        let Some(credential) = turn.channel.definition.secrets.provider_credential.as_ref() else {
+            let _ = sender.send(LaunchOutcome::Refused(Problem::new(
+                ProblemCode::ProviderUnavailable,
+                503,
+                "bot_father_credential_missing",
+            )));
+            return;
+        };
+        let message = client
+            .advance(credential, &turn.event_ref, &turn.activity)
+            .await
+            .unwrap_or_else(|error| cmaeg_core::message::OutboundMessage {
+                text: Some(error),
+                blocks: vec![],
+                reply_to: None,
+            });
+        let response_id = format!("bot-father:{}", turn.activity.event_id);
+        let _ = sender.send(LaunchOutcome::Accepted { response_id });
+        if self
+            .delivery
+            .send(DeliveryCommand::StreamOutcome {
+                turn,
+                outcome: TurnOutcome::SetupMessage { message },
+            })
+            .await
+            .is_err()
+        {
+            tracing::warn!("Bot Father setup response could not reach delivery sink");
         }
     }
     async fn start(&self, turn: &LaunchRequest) -> Result<TurnStream, ProviderError> {

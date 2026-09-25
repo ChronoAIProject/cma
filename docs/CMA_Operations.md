@@ -1521,31 +1521,45 @@ that exact binding and sandbox lineage. This prevents inactivity pause; it does
 not block an explicitly requested manual lifecycle operation. Existing retained
 availability policies continue to apply, including catalog-cleanup survivors.
 
+### Bot Father sender-authorized setup
+
 CMA Bot Father uses a dedicated ChronoAI organization binding and exactly
-`chrono-llm-public`, `ornn-api`, and `cmaeg` service grants. It drafts user Bot
-configurations and hands them to an authenticated CMA review page. A Telegram
-sender ID is not a NyxID login and does not authorize resources under the Father
-owner. The user's own explicit web confirmation creates their private profile
-and Bot with their selected Telegram channel.
+`chrono-llm-public`, `ornn-api`, and `cmaeg` service grants for its own runtime.
+Those grants never authorize creating another user's resources. The setup starts
+inside the Gateway after it verifies the signed Telegram event, private chat,
+sender, channel and activity digest. CMA stores a durable setup plan bound to
+that sender and conversation; a Gateway restart or duplicated callback resumes
+the same revision.
 
-The handoff URL is `https://bot.chrono-ai.fun/bots/new?setup=` followed by
-`encodeURIComponent(JSON.stringify({v: 1, name, instructions}))`. It accepts
-only these three fields: `name` is limited to 80 UTF-8 bytes and `instructions`
-to 4096 UTF-8 bytes. The draft survives sign-in in session storage. The review
-page shows the signed-in owner and editable content; creating and publishing the
-private Agent Profile requires confirmation. Owner-bound receipts reconcile an
-uncertain API response or page reload before starting another create. The next
-step is the existing Bot wizard, with name and profile preselected. The user
-chooses their own Telegram bot from NyxID and explicitly confirms the Bot's
-admission policy. Registering a Telegram bot is available at
-`https://nyx.chrono-ai.fun/channel-bots`.
+An unauthenticated sender receives a short-lived NyxID login link. NyxID keeps
+the renewable credential in CMA. The browser displays a one-time confirmation
+code and returns the user to the same Telegram chat; CMA activates the grant
+only after the same verified sender supplies that code. The Father conversation
+never receives a NyxID token, refresh token or Telegram token. A replaced login,
+expired grant or revoked link invalidates deferred work.
 
-Father instructions must explain this confirmation step and must never request
-Telegram tokens or NyxID credentials in chat. It should ask for the intended Bot
-name and behavior, then produce a draft link after the user confirms the draft.
-It must not claim a Bot exists until creation is confirmed by CMA. Personal
-drafts must never be stored as organization-owned profiles or published to the
-marketplace. Keep the Father conversation partitioned by conversation and sender.
+After activation, the user chooses **Personal** or an organization for which
+NyxID currently proves Admin membership. Organization choices read the exact
+organization service inventory and connections. Personal service connections
+are never borrowed for an organization. Selecting a missing service opens its
+owner-scoped connection ceremony; creation remains blocked until it completes.
+
+Telegram cards then offer system defaults or customized values for Agent Profile,
+Workspace Profile and Sandbox Profile, with selected services, resource limits,
+model access and availability. The user selects an existing channel Bot owned by
+the same owner, or uses the owner-scoped managed Telegram flow at
+`/channel-bots/connect/telegram-new?target_org_id=<org-id>` to create one without
+copying a token. The last card shows the complete owner, profile, service,
+channel and admission plan. Only its exact revision's **Create Bot** callback
+admits provisioning. CMA creates the three private profile revisions and then
+uses the existing durable Bot worker; it does not separately provision duplicate
+Sandbox, Workspace or Agent resources.
+
+Father must ask for the intended Bot name and instructions in chat, render every
+choice as a Gateway button/card, and report progress until the resulting Bot,
+channel binding and hierarchy IDs are available. It must never claim a Bot exists
+before the final confirmation is recorded. Personal and organization setup plans
+are separate, and resources retain their selected owner after creation.
 
 When moving an existing Telegram bot to Father, first disable its old CMA Bot
 connection with `POST /api/v1/bots/{bot_id}/disable` and wait for completion.

@@ -6,6 +6,7 @@ mod config;
 pub mod delivery;
 pub mod http;
 pub mod ingress;
+pub mod interactions;
 pub mod mcp;
 pub mod openapi;
 pub mod providers;
@@ -117,13 +118,19 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let tracker = turns::TurnTracker::new(state.readiness.clone());
     let (delivery, outcomes) = tokio::sync::mpsc::channel(256);
     let waiters = std::sync::Arc::new(delivery::sync::SyncRegistry::default());
+    let interactions = std::sync::Arc::new(interactions::InteractionStore::new(
+        (*state.records).clone(),
+        state.master_keys.clone(),
+        providers.clone(),
+    ));
     let delivery_engine = delivery::engine::DeliveryEngine::start(
         outcomes,
         state.master_keys.clone(),
         delivery::relay_client::RelayClient::new(
             &config.management.nyxid_base_url,
             config.delivery.reply_timeout,
-        )?,
+        )?
+        .with_interactions(interactions.clone()),
         config.delivery.clone(),
         tracker.clone(),
         delivery::custom::CustomDelivery::new(
@@ -131,18 +138,23 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             waiters.clone(),
         ),
     );
-    let runner = std::sync::Arc::new(turns::TurnRunner::new(
-        providers.clone(),
-        tracker.clone(),
-        delivery.clone(),
-        config.turns.clone(),
-    ));
+    let bot_father = turns::bot_father::BotFatherClient::from_env(&config.management.cma_base_url)?;
+    let runner = std::sync::Arc::new(
+        turns::TurnRunner::new(
+            providers.clone(),
+            tracker.clone(),
+            delivery.clone(),
+            config.turns.clone(),
+        )
+        .with_bot_father(bot_father),
+    );
     let ingress = ingress::IngressState::new(
         state.resolver.clone(),
         state.master_keys.clone(),
         config.ingress,
         runner,
-    )?;
+    )?
+    .with_interactions(interactions);
     let tools_state = tools::ToolsState {
         resolver: state.resolver.clone(),
         keys: state.master_keys.clone(),

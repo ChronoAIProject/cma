@@ -90,7 +90,7 @@ pub struct DeleteQuery {
     operation_id = "createChannel",
     tag = "channels",
     security(("creatorBearer" = [])),
-    params(("Idempotency-Key" = Option<String>, Header, description = "1..=256 ASCII bytes; identical creates replay locally for ten minutes")),
+    params(("X-CMAEG-Owner" = Option<String>, Header, description = "Organization owner UUID; caller must be an authorized NyxID organization administrator"), ("Idempotency-Key" = Option<String>, Header, description = "1..=256 ASCII bytes; identical creates replay locally for ten minutes")),
     request_body = ChannelCreateRequest,
     responses((status = 201, body = ChannelResponse), (status = "default", body = cmaeg_core::problem::Problem, content_type = "application/problem+json"))
 )]
@@ -187,7 +187,7 @@ pub async fn create_channel(
     operation_id = "getChannel",
     tag = "channels",
     security(("creatorBearer" = [])),
-    params(("channel_id" = String, Path)),
+    params(("X-CMAEG-Owner" = Option<String>, Header, description = "Organization owner UUID; caller must be an authorized NyxID organization administrator"), ("channel_id" = String, Path)),
     responses((status = 200, body = ChannelResponse), (status = "default", body = cmaeg_core::problem::Problem, content_type = "application/problem+json"))
 )]
 pub async fn get_channel(
@@ -222,7 +222,7 @@ pub async fn get_channel(
     operation_id = "updateChannel",
     tag = "channels",
     security(("creatorBearer" = [])),
-    params(("channel_id" = String, Path)),
+    params(("X-CMAEG-Owner" = Option<String>, Header, description = "Organization owner UUID; caller must be an authorized NyxID organization administrator"), ("channel_id" = String, Path)),
     request_body = ChannelUpdateRequest,
     responses((status = 200, body = ChannelResponse), (status = "default", body = cmaeg_core::problem::Problem, content_type = "application/problem+json"))
 )]
@@ -269,7 +269,7 @@ pub async fn update_channel(
     operation_id = "deleteChannel",
     tag = "channels",
     security(("creatorBearer" = [])),
-    params(("channel_id" = String, Path), DeleteQuery),
+    params(("X-CMAEG-Owner" = Option<String>, Header, description = "Organization owner UUID; caller must be an authorized NyxID organization administrator"), ("channel_id" = String, Path), DeleteQuery),
     responses((status = 204), (status = "default", body = cmaeg_core::problem::Problem, content_type = "application/problem+json"))
 )]
 pub async fn delete_channel(
@@ -311,7 +311,7 @@ pub async fn delete_channel(
     operation_id = "testChannel",
     tag = "channels",
     security(("creatorBearer" = [])),
-    params(("channel_id" = String, Path)),
+    params(("X-CMAEG-Owner" = Option<String>, Header, description = "Organization owner UUID; caller must be an authorized NyxID organization administrator"), ("channel_id" = String, Path)),
     responses((status = 200, body = TestChannelResponse), (status = "default", body = cmaeg_core::problem::Problem, content_type = "application/problem+json"))
 )]
 pub async fn test_channel(
@@ -342,7 +342,7 @@ pub async fn test_channel(
     operation_id = "rekeyChannel",
     tag = "channels",
     security(("serviceBearer" = [])),
-    params(("channel_id" = String, Path)),
+    params(("X-CMAEG-Owner" = Option<String>, Header, description = "Organization owner UUID; caller must be an authorized NyxID organization administrator"), ("channel_id" = String, Path)),
     responses((status = 200, body = RekeyResponse), (status = "default", body = cmaeg_core::problem::Problem, content_type = "application/problem+json"))
 )]
 pub async fn rekey_channel(

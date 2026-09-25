@@ -34,8 +34,35 @@ impl BotSetupService {
                 choices.push(SetupChoice::new("defaults", "Use system defaults"));
                 choices.push(SetupChoice::new("custom", "Customize"));
             }
-            SetupStep::AgentCustom | SetupStep::WorkspaceCustom | SetupStep::SandboxCustom => {
-                choices.push(SetupChoice::new("back", "Back"))
+            SetupStep::AgentCustom => {
+                choices.push(SetupChoice::new(
+                    "agent:quick",
+                    "Quick responses (low reasoning)",
+                ));
+                choices.push(SetupChoice::new(
+                    "agent:thorough",
+                    "Thorough answers (high reasoning)",
+                ));
+                choices.push(SetupChoice::new("back", "Back"));
+            }
+            SetupStep::WorkspaceCustom => {
+                choices.push(SetupChoice::new(
+                    "workspace:prepared",
+                    "Keep the system setup commands",
+                ));
+                choices.push(SetupChoice::new(
+                    "workspace:clean",
+                    "Start with a clean workspace",
+                ));
+                choices.push(SetupChoice::new("back", "Back"));
+            }
+            SetupStep::SandboxCustom => {
+                choices.push(SetupChoice::new("sandbox:on_demand", "Start on demand"));
+                choices.push(SetupChoice::new(
+                    "sandbox:always_live",
+                    "Keep the sandbox always live",
+                ));
+                choices.push(SetupChoice::new("back", "Back"));
             }
             SetupStep::Services => {
                 services = self.catalog(setup).await?;

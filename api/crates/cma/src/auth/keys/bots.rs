@@ -9,18 +9,22 @@ impl KeyIssuer {
         token: &str,
         services: &[ServiceId],
         callback: Option<&str>,
+        owner: &layer2_core::resource_access::ResourceOwner,
     ) -> Result<MintedKey, KeyIssuerError> {
         let allowed = if callback.is_some() && services.is_empty() {
             Vec::new()
         } else {
-            self.resolve_bot_services(token, services).await?
+            self.resolve_bot_services(token, services, owner).await?
         };
         let expires_at = key_expiry(SystemTime::now());
         let mut body = serde_json::json!({
             "name":name,"scopes":KEY_SCOPES,"allowed_service_ids":allowed,
-            "allowed_node_ids":[],"allow_all_services":false,"allow_all_nodes":false,
+            "allowed_node_ids":[],"allow_all_services":false,"allow_all_nodes":false,"allow_auto_connected_services":false,
             "expires_at":layer2_core::rfc3339_at(expires_at)
         });
+        if let layer2_core::resource_access::ResourceOwner::Organization { subject } = owner {
+            body["target_org_id"] = subject.as_str().into();
+        }
         if let Some(callback) = callback {
             body["callback_url"] = callback.into();
             // NyxID API-key platform describes the client, not the channel.
@@ -45,6 +49,7 @@ impl KeyIssuer {
         &self,
         token: &str,
         services: &[ServiceId],
+        owner: &layer2_core::resource_access::ResourceOwner,
     ) -> Result<Vec<String>, KeyIssuerError> {
         if services.is_empty() {
             return Err(KeyIssuerError::EmptyGrant);
@@ -72,6 +77,7 @@ impl KeyIssuer {
         for service in services {
             let matches: Vec<_> = rows
                 .iter()
+                .filter(|row| owner_matches(&row.credential_source, owner))
                 .filter(|row| {
                     row.id == service.as_str() || row.slug.as_deref() == Some(service.as_str())
                 })
@@ -79,14 +85,7 @@ impl KeyIssuer {
             let [row] = matches.as_slice() else {
                 return Err(KeyIssuerError::ServiceNotGranted(service.clone()));
             };
-            if !row.is_active
-                || row
-                    .credential_source
-                    .get("type")
-                    .and_then(serde_json::Value::as_str)
-                    != Some("personal")
-                || !valid_provider_key_id(&row.id)
-            {
+            if !row.is_active || !valid_provider_key_id(&row.id) {
                 return Err(KeyIssuerError::ServiceNotGranted(service.clone()));
             }
             if !granted.contains(&row.id) {
@@ -94,6 +93,24 @@ impl KeyIssuer {
             }
         }
         Ok(granted)
+    }
+}
+
+pub(crate) fn owner_matches(
+    source: &serde_json::Value,
+    owner: &layer2_core::resource_access::ResourceOwner,
+) -> bool {
+    use layer2_core::resource_access::ResourceOwner;
+    match owner {
+        ResourceOwner::Person { .. } => {
+            source.get("type").and_then(serde_json::Value::as_str) == Some("personal")
+        }
+        ResourceOwner::Organization { subject } => {
+            source.get("type").and_then(serde_json::Value::as_str) == Some("org")
+                && source.get("org_id").and_then(serde_json::Value::as_str)
+                    == Some(subject.as_str())
+                && source.get("allowed").and_then(serde_json::Value::as_bool) != Some(false)
+        }
     }
 }
 
@@ -114,3 +131,6 @@ struct BotService {
     is_active: bool,
     credential_source: serde_json::Value,
 }
+
+#[cfg(test)]
+mod tests;

@@ -45,8 +45,14 @@ async fn handle(
     tracker: &TurnTracker,
 ) {
     match command {
-        DeliveryCommand::Update { receipt, .. } => {
-            let _ = receipt.send(unsupported());
+        DeliveryCommand::Update {
+            channel,
+            message_ref,
+            message,
+            receipt,
+            ..
+        } => {
+            let _ = receipt.send(sender.update(&channel, &message_ref, &message).await);
         }
         DeliveryCommand::Typing { receipt, .. } => {
             let _ = receipt.send(TypingReceipt {
@@ -198,6 +204,12 @@ async fn outcome_event(
             }
             finish(state);
         }
+        TurnOutcome::SetupMessage { message } => {
+            state.tool_replied = true;
+            state.answer_attempted = true;
+            let _ = send_message(sender, state, message).await;
+            finish(state);
+        }
         TurnOutcome::Failed { .. } | TurnOutcome::Incomplete { .. } => {
             if !state.tool_replied {
                 send_text(sender, state, config.failure_text.clone()).await;
@@ -243,15 +255,18 @@ async fn timers(
     }
 }
 async fn send_text(sender: &Sender, state: &mut EventState, text: String) -> bool {
-    let result = sender
-        .reply(
-            state,
-            &OutboundMessage {
-                text: Some(text),
-                blocks: vec![],
-                reply_to: None,
-            },
-        )
-        .await;
+    send_message(
+        sender,
+        state,
+        OutboundMessage {
+            text: Some(text),
+            blocks: vec![],
+            reply_to: None,
+        },
+    )
+    .await
+}
+async fn send_message(sender: &Sender, state: &mut EventState, message: OutboundMessage) -> bool {
+    let result = sender.reply(state, &message).await;
     matches!(result.delivery, DeliveryOutcome::Confirmed { .. })
 }

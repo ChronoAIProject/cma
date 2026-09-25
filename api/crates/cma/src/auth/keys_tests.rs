@@ -10,6 +10,7 @@ fn valid_response() -> MintedKeyResponse {
         allowed_node_ids: Vec::new(),
         allow_all_services: false,
         allow_all_nodes: false,
+        allow_auto_connected_services: false,
     }
 }
 
