@@ -152,11 +152,17 @@ export function SharedAgent({
   };
   const conversation =
     live !== undefined && live.basis === ready ? live.conversation : ready?.conversation;
+  const status =
+    conversation?.agentStatus !== undefined &&
+    conversation.agentStatusAt !== undefined &&
+    Date.parse(conversation.agentStatusAt) > Date.parse(detail.updated_at)
+      ? conversation.agentStatus
+      : detail.status;
   return (
     <section className="agent-surface">
       <AgentHeader
         title={title}
-        status={conversation?.agentStatus ?? detail.status}
+        status={status}
         lineage={<span>Agent</span>}
         detailsOpen={detailsOpen}
         onDetailsOpenChange={onDetailsOpenChange}
@@ -197,7 +203,7 @@ export function SharedAgent({
         <div className="agent-surface__input">
           {conversation === undefined ? null : <ActiveThinking conversation={conversation} />}
           <Composer
-            status={conversation?.agentStatus ?? detail.status}
+            status={status}
             running={conversation?.activeRunId !== undefined}
             busy={busy}
             inputAvailability={{ allowed: true }}
