@@ -783,3 +783,22 @@ count unchanged and requires the maintainer's capacity decision. No NyxID
 catalogue, service configuration, role, code or deployment was changed. No
 Telegram test message was sent. The #918 acceptance evidence, #912 independent
 documentation exercise and #920 bridge retirement remain incomplete.
+
+## Native Telegram interaction rollout
+
+Deploy the CMA interaction-record endpoint before the gateway that uses it.
+It uses the existing `cma:gateway:records` service identity and a distinct durable
+collection. The gateway encrypts every record with its existing key ring under a
+separate cryptographic domain; retain old keys through the 24-hour card lifetime.
+NyxID must support bounded `reply.metadata.reply_markup`, signed callback_query
+relay, transport callback acknowledgment, and exact outbound-message UUID edits.
+After deploying that adapter, refresh the existing bot's webhook registration so
+Telegram `allowed_updates` includes `callback_query`; existing webhook settings
+do not change merely because a new adapter image is deployed.
+
+Verify a native choice, edit, and login link in the authorized test chat; restart
+a gateway replica between card display and clicking it. Verify another actor,
+chat or stale revision is refused, duplicate delivery creates no second provider
+turn, and two chats with equal platform message IDs edit their exact own message.
+Neither transport acknowledgment nor a confirmed card send proves child-bot
+provisioning succeeded; verify the provider's creation receipt separately.

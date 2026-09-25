@@ -2,6 +2,7 @@
 
 mod activity;
 mod auth;
+mod bot_setups;
 mod commands;
 mod composition;
 mod config;
@@ -86,6 +87,11 @@ async fn serve() -> Result<(), String> {
         "CMA listening"
     );
     let mut shutdown = ShutdownCoordinator::new();
+    shutdown.push(
+        composition
+            .auth
+            .spawn_actor_link_renewal(shutdown.subscribe()),
+    );
     shutdown.push(composition.bindings.spawn(shutdown.subscribe()));
     if let Some(bots) = composition.bots {
         shutdown.push(bots.spawn(shutdown.subscribe()));

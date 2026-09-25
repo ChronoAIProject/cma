@@ -45,6 +45,7 @@ fn channel_pointer_seals_and_opens() {
 fn event_reference_expires_and_redacts_debug() {
     let payload = EventRefPayload {
         v: 1,
+        activity_sha256: None,
         channel_id: channel_id(),
         record_id: "record-1".parse().unwrap(),
         event_id: "event-1".parse().unwrap(),
@@ -235,4 +236,15 @@ fn alternate_key_id_spellings_cannot_alias_authenticated_tokens() {
             Err(OpenError::Format)
         ));
     }
+}
+
+#[test]
+fn interaction_records_are_bound_to_namespace_id_and_key_ring() {
+    use cmaeg_core::seal::{open_blob, open_interaction, seal_interaction};
+    let blob = seal_interaction(&old_ring(), "record-a", &vec![7; 32768]).unwrap();
+    let opened = open_interaction(&ring(), "record-a", &blob).unwrap();
+    assert_eq!(opened.payload, vec![7; 32768]);
+    assert!(opened.needs_rekey);
+    assert!(open_interaction(&ring(), "record-b", &blob).is_err());
+    assert!(open_blob(&ring(), &blob).is_err());
 }

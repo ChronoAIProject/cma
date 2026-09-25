@@ -20,8 +20,11 @@ impl Renderer for Telegram {
             blocks: vec![],
         };
         for (index, block) in message.blocks.iter().enumerate() {
-            let (text, degradation) = render_block(block);
-            sections.push(text);
+            let (text, degradation) =
+                render_block(block, capabilities.buttons == "inline_keyboard");
+            if !text.is_empty() {
+                sections.push(text);
+            }
             let outcome = match degradation {
                 Some(how) => {
                     report.outcome = RenderingOutcome::Degraded;
@@ -35,7 +38,11 @@ impl Renderer for Telegram {
             });
         }
         let parts: Vec<_> = chunks(
-            &sections.join("\n\n"),
+            &if sections.is_empty() {
+                "Choose an option".into()
+            } else {
+                sections.join("\n\n")
+            },
             (capabilities.max_text_chars as usize).clamp(2, 4000),
         )
         .into_iter()
@@ -54,7 +61,7 @@ impl Renderer for Telegram {
         (parts, report)
     }
 }
-fn render_block(block: &Block) -> (String, Option<&'static str>) {
+fn render_block(block: &Block, native: bool) -> (String, Option<&'static str>) {
     match block {
         Block::Text { text } => (text.clone(), None),
         Block::Card {
@@ -73,6 +80,9 @@ fn render_block(block: &Block) -> (String, Option<&'static str>) {
             lines.extend(image.iter().cloned());
             (lines.join("\n"), Some("text"))
         }
+        Block::Buttons { .. } if native => (String::new(), None),
+        Block::Choice { prompt, .. } if native => (prompt.clone(), None),
+        Block::Link { .. } if native => (String::new(), None),
         Block::Buttons { options, .. } => (
             format!("{}\nReply with a number.", numbered(options)),
             Some("numbered_text"),

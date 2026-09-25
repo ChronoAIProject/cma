@@ -14,6 +14,8 @@ use super::*;
 use crate::auth::persistence::{AuthStore, DurableSubjectTokens, MemoryAuthStore, SecretValue};
 use crate::auth::{profile::Profile, AuthMode};
 
+#[path = "cookie_authorization_tests/actor_link_tests.rs"]
+mod actor_link_tests;
 #[path = "cookie_authorization_tests/bearer_availability_tests.rs"]
 mod bearer_availability_tests;
 #[path = "cookie_authorization_tests/bots_tests.rs"]

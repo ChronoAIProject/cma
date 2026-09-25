@@ -92,6 +92,7 @@ impl Fixture {
         let event_ref = EventRef::seal(
             &EventRefPayload {
                 v: 1,
+                activity_sha256: None,
                 channel_id: self.channel.id.clone(),
                 record_id: self.channel.pointer.record_id.clone(),
                 event_id: activity.event_id.clone(),

@@ -150,6 +150,7 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
     };
     let at = "2026-01-01T00:00:00Z";
     let mut bot = Bot {
+        ownership: None,
         bot_id: "bot_contract".into(),
         owner: SubjectId::new("owner"),
         request,

@@ -11,7 +11,9 @@ use axum::{
 use layer2_core::StoreError;
 
 pub mod admin;
+mod bot_setups;
 mod bots;
+pub use bot_setups::bot_setup_router;
 pub use bots::bot_router;
 mod agent_artifacts;
 mod agent_openapi_shapes;
@@ -86,7 +88,9 @@ mod bindings;
 #[cfg(test)]
 mod bindings_tests;
 pub use bindings::{binding_router, binding_router_with_native_tools};
+mod gateway_interactions;
 mod gateway_records;
+pub use gateway_interactions::gateway_interaction_router;
 #[cfg(test)]
 mod gateway_records_tests;
 mod hierarchy_shared_shapes;
