@@ -128,8 +128,13 @@ impl CreatorAuthenticator {
 
     pub async fn authenticate(&self, headers: &HeaderMap) -> Result<Creator, CreatorAuthError> {
         let token = bearer(headers).ok_or(CreatorAuthError::NotAuthenticated)?;
+        let owner = selected_owner(headers)?;
         let token_hash = token_hash(token);
-        if let Some(entry) = self.cache.get(&token_hash) {
+        let cache_key = owner.map_or_else(
+            || token_hash.clone(),
+            |owner| format!("{token_hash}:{owner}"),
+        );
+        if let Some(entry) = self.cache.get(&cache_key) {
             if entry.expires_at > Instant::now() {
                 return entry.result.clone().map(|(subject, organization)| Creator {
                     subject,
@@ -138,9 +143,10 @@ impl CreatorAuthenticator {
                 });
             }
             drop(entry);
-            self.cache.remove(&token_hash);
+            self.cache.remove(&cache_key);
         }
-        let result = tokio::time::timeout(Duration::from_secs(3), self.fetch_subject(token))
+        let started = Instant::now();
+        let result = tokio::time::timeout(Duration::from_secs(3), self.fetch_creator(token, owner))
             .await
             .unwrap_or(Err(CreatorAuthError::ProviderUnavailable));
         let (ttl, cached) = match &result {
@@ -148,10 +154,10 @@ impl CreatorAuthenticator {
             Err(error) => (FAILURE_TTL, Err(error.clone())),
         };
         self.insert_cache(
-            token_hash.clone(),
+            cache_key,
             CacheEntry {
                 result: cached,
-                expires_at: Instant::now() + ttl,
+                expires_at: started + ttl,
                 sequence: self.sequence.fetch_add(1, Ordering::Relaxed),
             },
         );
@@ -160,6 +166,30 @@ impl CreatorAuthenticator {
             organization,
             token_hash,
         })
+    }
+
+    async fn fetch_creator(
+        &self,
+        token: &str,
+        owner: Option<&str>,
+    ) -> Result<(String, bool), CreatorAuthError> {
+        let (subject, organization) = self.fetch_subject(token).await?;
+        let Some(owner) = owner else {
+            return Ok((subject, organization));
+        };
+        // An organization credential cannot select another organization. A human
+        // selects only an organization for which this exact bearer is a live admin.
+        if organization {
+            return if owner == subject {
+                Ok((subject, true))
+            } else {
+                Err(CreatorAuthError::NotAuthenticated)
+            };
+        }
+        if !self.verify_organization(token, owner).await? {
+            return Err(CreatorAuthError::NotAuthenticated);
+        }
+        Ok((owner.to_owned(), true))
     }
 
     async fn fetch_subject(&self, token: &str) -> Result<(String, bool), CreatorAuthError> {
@@ -290,6 +320,26 @@ async fn read_json<T: serde::de::DeserializeOwned>(
         bytes.extend_from_slice(&chunk);
     }
     serde_json::from_slice(&bytes).map_err(|_| CreatorAuthError::ProviderUnavailable)
+}
+
+fn selected_owner(headers: &HeaderMap) -> Result<Option<&str>, CreatorAuthError> {
+    let mut values = headers.get_all("x-cmaeg-owner").iter();
+    let Some(value) = values.next() else {
+        return Ok(None);
+    };
+    let value = value
+        .to_str()
+        .map_err(|_| CreatorAuthError::NotAuthenticated)?;
+    if values.next().is_some()
+        || value.is_empty()
+        || value.len() > 512
+        || value
+            .chars()
+            .any(|character| character.is_control() || character.is_whitespace())
+    {
+        return Err(CreatorAuthError::NotAuthenticated);
+    }
+    Ok(Some(value))
 }
 
 fn bearer(headers: &HeaderMap) -> Option<&str> {
