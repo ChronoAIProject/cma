@@ -1037,3 +1037,43 @@ This verifies the deployed custom-event/model/handoff path and Telegram route
 configuration. Genuine Telegram ingress, delivered reply and final Bot Father
 acceptance remain pending the human test message. These observations do not
 establish gateway epic completion or close its remaining acceptance work.
+
+### Organization navigation production verification — 2026-09-25
+
+PR #949 merged at `99ac49185bb7a6ba2b5fc4dd505785491a3ba0ce`. All 14 jobs in
+Actions run `36101489523`, attempt 1, passed for reviewed head
+`840bfbbdff319d5da14aef6923a92feef8da02e8`. The actual web artifact retains
+tested revision `5c40bff701ef03b19f2b04f30a1e891b2d962843`; its tree
+`181b3b295dfaa7faa7d818505cef40f4bb2879c3` equals the merged source tree.
+Archive checksums, native image identity, source labels, `linux/amd64` platform,
+registry digest and identical registry image configuration were verified.
+
+The web-only rollout passed guarded verification at 06:36:50 UTC. The final
+deployed web image is
+`cma-web@sha256:b15c241f81e9f706762252865183cf20c65e2c8f9375266cab150fb1c835abd6`
+under the existing registry prefix. It supersedes the earlier combined rollout's
+web pin. The API remains on `55ded45d` and gateway on `5ca9e360`, whose complete
+digests are recorded above. API, gateway and web each have one ready replica;
+public API readiness, gateway readiness and the web root all returned HTTP 200.
+
+A fresh baseline taken at 06:35:27 UTC fenced the exact production namespace,
+deployment `chrono-bot-prod`, database `chrono-bot`, bucket
+`chrono-platform-bot`, current runtime default, ConfigMaps and installed
+API/gateway Pods. Only the web image changed. All seven current runtime Pods
+retained their identities and specs, including protected user UID
+`19e9937e-a62a-439b-b2dd-50b3ba71a0ef` and Father UID
+`26d03403-74ef-4272-8171-a41b339bc48a`. The installed web Pod UID is
+`381c050a-4dc0-4b0b-a88b-f0e1b6aca2b6`; its actual container image ID matches
+the final web digest, it is ready and has zero restarts. Rollout evidence is
+`/tmp/cma-org-session-web-rollout-receipt.json`.
+
+Real browser verification at `https://bot.chrono-ai.fun` passed at 06:37:01 UTC.
+The ChronoAI organization tree exposed Sandbox, Workspace and Agent levels.
+Navigation opened the Father Sandbox, Workspace
+`wks_fcfc4b10078149a182f8041935e8599d` and Agent
+`agt_a410e5bc0d1f4701a05eacb36eb0324d`. The Agent conversation and administrator
+composer were visible, reloading the deep link retained organization scope,
+the details panel worked, and mobile layout checks passed. The observer recorded
+no browser errors and made zero resource mutations. This verifies navigation and
+composer availability; it does not claim a submitted conversation or a genuine
+Telegram message. Browser evidence is `/tmp/cma-org-session-live-receipt.json`.
