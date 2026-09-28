@@ -84,6 +84,7 @@ async fn bind_conversation_probe_and_stream_round_trip() {
             &binding,
             &BindingRequest {
                 schema_version: 1,
+                target: Default::default(),
                 profile: profile(),
                 profile_digest: "digest".into(),
                 agent_key: secret.clone(),
@@ -141,6 +142,15 @@ async fn bind_conversation_probe_and_stream_round_trip() {
         .unwrap();
     client.unbind(&provider, &binding, &secret).await.unwrap();
     let requests = fake.requests();
+    let bind = requests
+        .iter()
+        .find(|request| request.method == "PUT" && !request.path.contains("conversations"))
+        .unwrap();
+    let forwarded: serde_json::Value = serde_json::from_str(&bind.body).unwrap();
+    assert!(
+        forwarded.get("target").is_none(),
+        "legacy providers must receive the original request shape"
+    );
     assert!(requests
         .iter()
         .any(|request| request.authorization.as_deref() == Some("Bearer agent-secret")));

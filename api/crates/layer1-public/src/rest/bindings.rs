@@ -19,10 +19,28 @@ use utoipa::ToSchema;
 #[serde(deny_unknown_fields)]
 pub struct PutBindingRequest {
     pub schema_version: u16,
+    #[serde(default)]
+    pub target: BindingTarget,
     pub profile: serde_json::Value,
     pub profile_digest: String,
     pub agent_key: String,
     pub tools: BindingTools,
+}
+#[derive(Deserialize, Serialize, ToSchema)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum BindingTarget {
+    Profile {},
+    ExistingAgent { agent_id: String },
+}
+impl Default for BindingTarget {
+    fn default() -> Self {
+        Self::Profile {}
+    }
+}
+impl BindingTarget {
+    fn is_profile(&self) -> bool {
+        matches!(self, Self::Profile {})
+    }
 }
 #[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
@@ -39,6 +57,8 @@ pub struct BindingRefusal {
 #[derive(Serialize, ToSchema)]
 pub struct BindingView {
     pub binding_id: String,
+    #[serde(skip_serializing_if = "BindingTarget::is_profile")]
+    pub target: BindingTarget,
     pub owner: String,
     pub profile_digest: String,
     pub sandbox_id: String,
@@ -56,7 +76,8 @@ pub struct BindingView {
 #[derive(Serialize, ToSchema)]
 pub struct BindingConversationView {
     pub conversation_id: String,
-    pub agent_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
     pub state: String,
 }
 
@@ -164,18 +185,32 @@ async fn put_binding(
             "tools advertisement differs from the configured gateway".into(),
         ));
     }
-    match state
-        .service
-        .put_with_tool_endpoint(
-            &caller,
-            &id,
-            body.profile,
-            &body.profile_digest,
-            &credential,
-            state.native_endpoint,
-        )
-        .await
-    {
+    let result = if let BindingTarget::ExistingAgent { agent_id } = body.target {
+        state
+            .service
+            .put_existing_agent(
+                &caller,
+                &id,
+                body.profile,
+                &body.profile_digest,
+                &credential,
+                layer2_core::AgentId(agent_id),
+            )
+            .await
+    } else {
+        state
+            .service
+            .put_with_tool_endpoint(
+                &caller,
+                &id,
+                body.profile,
+                &body.profile_digest,
+                &credential,
+                state.native_endpoint,
+            )
+            .await
+    };
+    match result {
         Ok(value) => Json(BindingView::from(value)).into_response(),
         Err(value) => error(value),
     }
@@ -213,6 +248,36 @@ async fn put_conversation(
     AuthenticatedCaller(caller): AuthenticatedCaller,
     Path((id, conversation)): Path<(String, String)>,
 ) -> Response {
+    match state.service.read(&caller, &id).await {
+        Ok(binding)
+            if binding.existing_agent.is_none()
+                && binding.profile.session_affinity
+                    == layer2_core::sandbox::binding::SessionAffinity::SourceUser =>
+        {
+            if binding.state != BindingState::Ready {
+                return error(BindingError::Conflict);
+            }
+            if !(8..=128).contains(&conversation.len())
+                || !conversation
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+            {
+                return error(BindingError::InvalidRequest(
+                    "invalid conversation identifier".into(),
+                ));
+            }
+            // Actor affinity can only resolve after an authenticated event arrives.
+            // A transport conversation is acknowledged without reserving an Agent.
+            return Json(BindingConversationView {
+                conversation_id: conversation,
+                agent_id: None,
+                state: "ready".into(),
+            })
+            .into_response();
+        }
+        Ok(_) => {}
+        Err(value) => return error(value),
+    }
     match state
         .service
         .ensure_conversation(&caller, &id, &conversation)
@@ -258,6 +323,13 @@ impl From<ProviderBinding> for BindingView {
         };
         Self {
             binding_id: value.binding_id,
+            target: value
+                .existing_agent
+                .map_or(BindingTarget::Profile {}, |agent| {
+                    BindingTarget::ExistingAgent {
+                        agent_id: agent.agent_id.to_string(),
+                    }
+                }),
             owner: value.owner.to_string(),
             profile_digest: value.profile_digest,
             sandbox_id: value.sandbox_id.to_string(),
@@ -291,7 +363,7 @@ impl From<BindingConversation> for BindingConversationView {
         };
         Self {
             conversation_id: value.conversation_id,
-            agent_id: value.agent_id.to_string(),
+            agent_id: Some(value.agent_id.to_string()),
             state: state.into(),
         }
     }

@@ -116,13 +116,17 @@ impl ProviderClient {
             .entry
             .url("binding", &[("binding_id", binding_id.as_str())])
             .map_err(|error| ProviderError::InvalidRequest(error.to_string()))?;
-        let body = json!({
+        let mut body = json!({
             "schema_version": request.schema_version,
             "profile": request.profile,
             "profile_digest": request.profile_digest,
             "agent_key": request.agent_key.as_str(),
             "tools": request.tools,
         });
+        if !request.target.is_profile() {
+            body["target"] = serde_json::to_value(&request.target)
+                .map_err(|error| ProviderError::InvalidRequest(error.to_string()))?;
+        }
         let bearer = self
             .management_bearer(provider, &url, &request.agent_key)
             .await?;
