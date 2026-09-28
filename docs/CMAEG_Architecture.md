@@ -20,6 +20,12 @@ CMA owns Sandboxes, Workspaces, Agents, conversations and provider turns. CMA's
 Bot management coordinates a user's existing NyxID Bot with the gateway and CMA
 provider. NyxID owns identities, selected service access and external Bot routes.
 
+Every admitted message, command and interaction reaches the configured provider
+through the same turn interface. The gateway does not interpret an agent's
+business workflow or reserve slash commands. Agents use skills and authenticated
+application APIs to guide users and perform product operations. Buttons, choice
+controls, media and reply delivery remain generic gateway capabilities.
+
 ```mermaid
 flowchart LR
     External[Telegram / custom event source] -->|authenticated event| Gateway[CMAEG pod]

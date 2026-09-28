@@ -1,6 +1,5 @@
 //! Events passed to delivery, retaining context only for the lifetime of a turn.
 pub use crate::delivery::intents::DeliveryCommand;
-use cmaeg_core::message::OutboundMessage;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TurnOutcome {
@@ -12,7 +11,6 @@ pub enum TurnOutcome {
     Completed { final_text: Option<String> },
     Failed { code: String, message: String },
     Incomplete { reason: String },
-    SetupMessage { message: OutboundMessage },
 }
 impl TurnOutcome {
     pub fn kind(&self) -> &'static str {
@@ -25,16 +23,12 @@ impl TurnOutcome {
             Self::Completed { .. } => "completed",
             Self::Failed { .. } => "failed",
             Self::Incomplete { .. } => "incomplete",
-            Self::SetupMessage { .. } => "setup_message",
         }
     }
     pub fn terminal(&self) -> bool {
         matches!(
             self,
-            Self::Completed { .. }
-                | Self::Failed { .. }
-                | Self::Incomplete { .. }
-                | Self::SetupMessage { .. }
+            Self::Completed { .. } | Self::Failed { .. } | Self::Incomplete { .. }
         )
     }
 }

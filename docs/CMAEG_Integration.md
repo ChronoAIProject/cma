@@ -4,6 +4,9 @@ Agent Event Gateway accepts authenticated events, maps them to an agent
 conversation, invokes a registered provider, and delivers the result. CMA is the
 currently deployed provider. The gateway owns event routing and delivery; the
 provider owns agent provisioning, execution, conversation history and event context.
+Application-specific conversations and workflows belong to the provider and its
+agents. The gateway delivers commands and interaction results as ordinary events;
+it does not reserve a Bot creation command or intercept an agent's conversation.
 
 Start with the [service flow diagrams](CMAEG_Protocol.md#0-service-flows-at-a-glance)
 for an overview of channel setup, ingress, execution, tools, delivery and recovery.

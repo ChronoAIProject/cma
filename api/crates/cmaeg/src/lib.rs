@@ -138,16 +138,12 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             waiters.clone(),
         ),
     );
-    let bot_father = turns::bot_father::BotFatherClient::from_env(&config.management.cma_base_url)?;
-    let runner = std::sync::Arc::new(
-        turns::TurnRunner::new(
-            providers.clone(),
-            tracker.clone(),
-            delivery.clone(),
-            config.turns.clone(),
-        )
-        .with_bot_father(bot_father),
-    );
+    let runner = std::sync::Arc::new(turns::TurnRunner::new(
+        providers.clone(),
+        tracker.clone(),
+        delivery.clone(),
+        config.turns.clone(),
+    ));
     let ingress = ingress::IngressState::new(
         state.resolver.clone(),
         state.master_keys.clone(),
