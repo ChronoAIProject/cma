@@ -166,9 +166,8 @@ impl ShareMutationReceipt {
         if !hex_digest(&self.operation_id)
             || !hex_digest(&self.command_fingerprint)
             || !self.share.validate()
-            || !matches!((&self.share.owner, &self.actor),
-                (ResourceOwner::Person { subject }, ResourceActor::Human { subject: actor }
-                    | ResourceActor::Api { subject: actor, delegation_id: None }) if subject == actor)
+            || !matches!(&self.share.owner,
+                ResourceOwner::Person { subject } if self.actor.ordinary_subject() == Some(subject))
             || self.sandbox_id.as_str().trim().is_empty()
             || crate::seconds_from_rfc3339(&self.sandbox_created_at).is_none()
             || crate::seconds_from_rfc3339(&self.at).is_none()

@@ -81,6 +81,13 @@ impl ResourceAccessService {
             != (AgentOwner::Person {
                 subject: caller.subject.clone(),
             })
+            || matches!(
+                &envelope.actor,
+                AgentActor::Api {
+                    delegation_id: Some(_),
+                    ..
+                }
+            )
         {
             return Err(AccessError::NotFound.into());
         }
@@ -230,9 +237,18 @@ fn validate_actor(
                 == crate::Authorization::new([Capability::UseBindingConversations])
                 && envelope.authorization.authority_id.starts_with("binding:")
                 && envelope.source.kind == AgentSourceKind::Api)
-        || !matches!(&envelope.actor,
-            AgentActor::Human { subject } | AgentActor::Api { subject, delegation_id: None }
-            if *subject == caller.subject)
+        || envelope.actor.ordinary_subject() != Some(&caller.subject)
+        || (matches!(
+            &envelope.actor,
+            AgentActor::Api {
+                delegation_id: Some(_),
+                ..
+            }
+        ) && (envelope.source.kind != AgentSourceKind::Api
+            || !envelope
+                .authorization
+                .authority_id
+                .starts_with("delegated:")))
     {
         return Err(AccessError::NotFound.into());
     }
