@@ -90,12 +90,11 @@ pub async fn call(
                 .authorize_event(caller, &event_ref(&args.event_ref)?)
                 .await?;
             let (_, message) = state.authorize_message(caller, &args.message_ref).await?;
-            if message.channel_id != event.channel_id || message.event_id != event.event_id {
-                return Err(Problem::new(
-                    ProblemCode::Forbidden,
-                    403,
-                    "message does not belong to this event",
-                ));
+            let same_event = message.channel_id == event.channel_id && message.event_id == event.event_id;
+            if !same_event {
+                let context=state.context(caller,&event_ref(&args.event_ref)?).await?;
+                let permitted = context.activity_verified && message.channel_id==event.channel_id && matches!(&context.activity.kind,cmaeg_core::activity::ActivityKind::Interaction(result) if result.values.get("message_ref").and_then(Value::as_str)==Some(args.message_ref.as_str()));
+                if !permitted {return Err(Problem::new(ProblemCode::Forbidden,403,"message does not belong to this event"));}
             }
             serde_json::to_value(
                 state

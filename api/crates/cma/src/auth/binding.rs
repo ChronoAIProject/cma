@@ -29,7 +29,7 @@ impl AuthState {
         self
     }
 
-    pub(super) async fn binding_request(
+    pub(crate) async fn binding_request(
         &self,
         token: String,
     ) -> Result<Option<RequestAuth>, StoreError> {
@@ -77,6 +77,9 @@ pub(super) fn permits_request(method: &axum::http::Method, path: &str, binding: 
     let segments = path.trim_start_matches('/').split('/').collect::<Vec<_>>();
     match (method, segments.as_slice()) {
         (&Method::GET, ["api", "v2"])
+        // The setup handler separately attests the configured Father binding
+        // and the event's exact sender. This grants no ordinary Bot authority.
+        | (&Method::POST, ["api", "v1", "bot-setups", "advance"])
         | (&Method::POST, ["api", "v2", "responses"])
         | (&Method::POST, ["api", "v2", "agents", _, "responses"])
         | (&Method::GET, ["api", "v2", "responses", _])

@@ -20,6 +20,8 @@ mod storage;
 mod features;
 pub(crate) use features::FeatureFlags;
 pub(crate) use gateway::GatewayConfig;
+mod bot_father;
+pub(crate) use bot_father::BotFatherConfig;
 pub(crate) use profiles::DefaultProfileConfig;
 pub(crate) use runtime::RuntimeConfig;
 pub(crate) use storage::CheckpointStorageConfig;
@@ -152,6 +154,7 @@ pub struct Config {
     pub auth_mode: AuthMode,
     pub features: FeatureFlags,
     pub gateway: Option<GatewayConfig>,
+    pub bot_father: Option<BotFatherConfig>,
 }
 
 impl std::fmt::Debug for Config {
@@ -314,6 +317,7 @@ impl Config {
             auth_mode,
             features,
             gateway: GatewayConfig::from_lookup(&mut lookup)?,
+            bot_father: BotFatherConfig::from_lookup(&mut lookup)?,
         })
     }
 
@@ -492,9 +496,4 @@ fn validate_mongodb_uri(value: &str) -> Result<(), String> {
 }
 
 #[cfg(test)]
-#[path = "config_tests.rs"]
 mod tests;
-
-#[cfg(test)]
-#[path = "config/home_tests.rs"]
-mod home_tests;

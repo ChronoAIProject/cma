@@ -19,6 +19,7 @@ pub enum Refusal {
     UnknownSender,
     MessageEdit,
     InteractiveActionUnsupported,
+    InteractionExpiredOrInvalid,
     SystemEvent,
     ContentUnsupported,
     AttachmentUnsupported,

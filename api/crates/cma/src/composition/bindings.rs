@@ -41,9 +41,15 @@ impl BindingComposition {
             )?,
             None => rest::binding_router(self.service.clone()),
         };
-        Ok(routes.merge(rest::gateway_record_router(
-            layer2_core::GatewayRecordService::new(stores.gateway_records.clone(), activity),
-        )))
+        Ok(routes
+            .merge(rest::gateway_record_router(
+                layer2_core::GatewayRecordService::new(stores.gateway_records.clone(), activity),
+            ))
+            .merge(rest::gateway_interaction_router(
+                layer2_core::gateway_interactions::GatewayInteractionService::new(
+                    stores.gateway_interactions.clone(),
+                ),
+            )))
     }
     pub(crate) fn spawn(
         self,

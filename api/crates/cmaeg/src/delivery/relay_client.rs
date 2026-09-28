@@ -14,6 +14,7 @@ pub struct RelayClient {
     http: Client,
     endpoint: Url,
     timeout: Duration,
+    pub interactions: Option<std::sync::Arc<crate::interactions::InteractionStore>>,
 }
 #[derive(Deserialize)]
 struct ReplyResponse {
@@ -21,6 +22,13 @@ struct ReplyResponse {
     platform_message_id: Option<String>,
 }
 impl RelayClient {
+    pub fn with_interactions(
+        mut self,
+        store: std::sync::Arc<crate::interactions::InteractionStore>,
+    ) -> Self {
+        self.interactions = Some(store);
+        self
+    }
     pub fn new(base_url: &str, timeout: Duration) -> Result<Self, crate::ConfigError> {
         let origin = crate::config::validate_origin(crate::CMAEG_NYXID_BASE_URL, base_url)?;
         let endpoint =
@@ -40,6 +48,7 @@ impl RelayClient {
             http,
             endpoint,
             timeout,
+            interactions: None,
         })
     }
     pub async fn send(
@@ -48,44 +57,88 @@ impl RelayClient {
         credential: Credential<'_>,
         text: &str,
     ) -> DeliveryOutcome {
+        self.send_rich(address, credential, text, None).await.0
+    }
+    pub async fn send_rich(
+        &self,
+        address: &ReplyAddress,
+        credential: Credential<'_>,
+        text: &str,
+        markup: Option<&serde_json::Value>,
+    ) -> (DeliveryOutcome, Option<String>) {
         let ReplyAddress::NyxidRelay { message_id, .. } = address else {
-            return DeliveryOutcome::Unsupported;
+            return (DeliveryOutcome::Unsupported, None);
         };
         let (Credential::ReplyToken(secret) | Credential::ChannelKey(secret)) = credential;
         if secret.as_str().is_empty() || !secret.as_str().bytes().all(|b| (33..=126).contains(&b)) {
-            return DeliveryOutcome::Rejected {
-                reason: "no_credential".into(),
-            };
+            return (
+                DeliveryOutcome::Rejected {
+                    reason: "no_credential".into(),
+                },
+                None,
+            );
         }
-        tokio::time::timeout(self.timeout, self.post(message_id, secret, text))
+        tokio::time::timeout(self.timeout, self.post(message_id, secret, text, markup))
             .await
-            .unwrap_or_else(|_| unknown("response_lost"))
+            .unwrap_or_else(|_| (unknown("response_lost"), None))
     }
-    async fn post(&self, message_id: &str, secret: &Secret, text: &str) -> DeliveryOutcome {
+    pub async fn edit(
+        &self,
+        secret: &Secret,
+        destination: &crate::interactions::Destination,
+        text: &str,
+        markup: &serde_json::Value,
+    ) -> DeliveryOutcome {
+        let Ok(endpoint) = self.endpoint.join("reply/update") else {
+            return DeliveryOutcome::Unsupported;
+        };
+        let result=self.http.post(endpoint).bearer_auth(secret.as_str()).timeout(self.timeout).json(&serde_json::json!({"message_id":destination.platform_id,"outbound_message_id":destination.outbound_id,"reply":{"text":text,"metadata":{"reply_markup":markup}}})).send().await;
+        match result {
+            Ok(response) if response.status().is_success() => DeliveryOutcome::Confirmed {
+                platform_message_id: Some(destination.platform_id.clone()),
+            },
+            Ok(response) if response.status() == StatusCode::TOO_MANY_REQUESTS => {
+                DeliveryOutcome::RateLimited {
+                    retry_after: retry_after(response.headers()),
+                }
+            }
+            _ => unknown("edit_unconfirmed"),
+        }
+    }
+    async fn post(
+        &self,
+        message_id: &str,
+        secret: &Secret,
+        text: &str,
+        markup: Option<&serde_json::Value>,
+    ) -> (DeliveryOutcome, Option<String>) {
         let mut response = match self
             .http
             .post(self.endpoint.clone())
             .bearer_auth(secret.as_str())
-            .json(&serde_json::json!({"message_id":message_id,"reply":{"text":text}}))
+            .json(&serde_json::json!({"message_id":message_id,"reply":{"text":text,"metadata":markup.map(|value|serde_json::json!({"reply_markup":value}))}}))
             .send()
             .await
         {
             Ok(response) => response,
-            Err(_) => return unknown("response_lost"),
+            Err(_) => return (unknown("response_lost"),None),
         };
         if response.status() == StatusCode::TOO_MANY_REQUESTS {
-            return DeliveryOutcome::RateLimited {
-                retry_after: retry_after(response.headers()),
-            };
+            return (
+                DeliveryOutcome::RateLimited {
+                    retry_after: retry_after(response.headers()),
+                },
+                None,
+            );
         }
         if response.status() != StatusCode::OK {
-            return unknown("provider_failure");
+            return (unknown("provider_failure"), None);
         }
         if response
             .content_length()
             .is_some_and(|length| length > 4096)
         {
-            return unknown("receipt_invalid");
+            return (unknown("receipt_invalid"), None);
         }
         let mut bytes = Vec::new();
         loop {
@@ -94,12 +147,12 @@ impl RelayClient {
                     bytes.extend_from_slice(&chunk)
                 }
                 Ok(None) => break,
-                Ok(Some(_)) => return unknown("receipt_invalid"),
-                Err(_) => return unknown("response_lost"),
+                Ok(Some(_)) => return (unknown("receipt_invalid"), None),
+                Err(_) => return (unknown("response_lost"), None),
             }
         }
         let Ok(receipt) = serde_json::from_slice::<ReplyResponse>(&bytes) else {
-            return unknown("receipt_invalid");
+            return (unknown("receipt_invalid"), None);
         };
         if !valid_id(&receipt.message_id)
             || receipt.message_id == message_id
@@ -108,11 +161,14 @@ impl RelayClient {
                 .as_deref()
                 .is_some_and(|id| !valid_id(id))
         {
-            return unknown("receipt_invalid");
+            return (unknown("receipt_invalid"), None);
         }
-        DeliveryOutcome::Confirmed {
-            platform_message_id: receipt.platform_message_id,
-        }
+        (
+            DeliveryOutcome::Confirmed {
+                platform_message_id: receipt.platform_message_id,
+            },
+            Some(receipt.message_id),
+        )
     }
 }
 fn valid_id(value: &str) -> bool {

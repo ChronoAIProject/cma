@@ -89,6 +89,8 @@ pub struct ChoiceOption {
     pub label: String,
     #[serde(default)]
     pub style: OptionStyle,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub selected: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
