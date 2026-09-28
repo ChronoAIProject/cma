@@ -4,6 +4,7 @@ use std::{
 };
 
 mod conversation_fixtures;
+mod creation_delegation;
 pub(crate) use conversation_fixtures::{conversation_fixture, conversation_fixture_with_registry};
 
 use async_trait::async_trait;
@@ -299,6 +300,7 @@ pub(super) async fn publish_profile(store: &InMemoryProfileStore) {
 
 fn agent_profile_content() -> AgentProfileContent {
     AgentProfileContent {
+        isolated_agent: false,
         model: Some("gpt-proof".into()),
         thinking_effort: ThinkingEffort::High,
         permission_level: PermissionLevel::Guarded,

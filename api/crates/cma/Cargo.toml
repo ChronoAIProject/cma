@@ -27,6 +27,7 @@ similar = { workspace = true }
 tokio = { workspace = true }
 thiserror = { workspace = true }
 tower-http = { workspace = true }
+tower = { version = "0.5", features = ["util"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 # For its CSPRNG-backed v4 generator, which is what session cookies, OAuth
@@ -35,13 +36,11 @@ uuid = { workspace = true }
 zeroize = { workspace = true }
 
 [dev-dependencies]
-cmaeg = { path = "../cmaeg" }
 cmaeg-core = { path = "../cmaeg-core" }
+cmaeg = { path = "../cmaeg" }
 layer2-core = { workspace = true, features = ["test-support"] }
 # Holds PTY receipt, output, and disconnect boundaries so socket races are
 # proved without sleeps or scheduler assumptions.
 layer1-public = { workspace = true, features = ["test-support"] }
-# Drives the composed REST router in public error-contract tests.
-tower = { version = "0.5", features = ["util"] }
 tokio = { workspace = true, features = ["test-util"] }
 tokio-tungstenite = { workspace = true }

@@ -8,7 +8,7 @@ use utoipa::OpenApi;
     info(title = "CMA Event Gateway", version = "1.0"),
     servers((url = "/v1")),
     modifiers(&ManagementSecurity, &ProfileCompatibility, &ProtocolBase),
-    components(schemas(crate::providers::EventContextSnapshot)),
+    components(schemas(crate::providers::EventContextSnapshot, cmaeg_core::channel::ProviderTarget)),
     paths(
         http::management::create_channel,
         http::creation::recover_channel,
@@ -24,6 +24,8 @@ use utoipa::OpenApi;
         http::tools::send_typing,
         http::tools::read_event_context,
         http::tools::verify_event_context,
+        http::reply_targets::create_reply_target,
+        http::reply_targets::reply_to_target,
     )
 )]
 pub struct ApiDoc;

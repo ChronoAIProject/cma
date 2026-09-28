@@ -334,6 +334,7 @@ pub(super) fn binding_request(
 ) -> Result<BindingRequest, ManagementError> {
     Ok(BindingRequest {
         schema_version: definition.schema_version,
+        target: definition.provider.target.clone(),
         profile: definition.profile.clone(),
         profile_digest: definition.profile_digest.clone(),
         agent_key: definition

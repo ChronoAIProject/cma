@@ -229,7 +229,13 @@ async fn binary_journey(renewable: bool) {
     }
     assert_eq!(read["definition"]["name"], "support-bot");
     let document = curl("GET", &format!("{base}/openapi.json"), None, 200).await;
-    assert_eq!(document["paths"].as_object().unwrap().len(), 11);
+    assert_eq!(document["paths"].as_object().unwrap().len(), 13);
+    assert!(document["paths"]
+        .get("/events/{event_ref}/reply-target")
+        .is_some());
+    assert!(document["paths"]
+        .get("/reply-targets/{reply_target_ref}/messages")
+        .is_some());
     let output = Command::new("curl")
         .args([
             "--silent",

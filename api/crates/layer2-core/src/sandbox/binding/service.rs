@@ -6,8 +6,23 @@ use crate::sandbox::{AgentService, SandboxPolicySource, SandboxService, Workspac
 use crate::{now_rfc3339, Caller, Capability};
 use std::sync::Arc;
 
-pub trait BindingServiceStore: BindingStore + SandboxStore + WorkspaceStore + AgentStore {}
-impl<T: BindingStore + SandboxStore + WorkspaceStore + AgentStore> BindingServiceStore for T {}
+pub trait BindingServiceStore:
+    BindingStore
+    + SandboxStore
+    + WorkspaceStore
+    + AgentStore
+    + crate::resource_access::ResourceAccessStore
+{
+}
+impl<
+        T: BindingStore
+            + SandboxStore
+            + WorkspaceStore
+            + AgentStore
+            + crate::resource_access::ResourceAccessStore,
+    > BindingServiceStore for T
+{
+}
 
 pub struct BindingResources {
     pub sandboxes: Arc<SandboxService>,
@@ -27,7 +42,7 @@ pub struct BindingService {
     pub(super) profiles: BindingProfiles,
     pub(super) resources: BindingResources,
     pub(super) credentials: Arc<dyn BindingCredentialCustody>,
-    policy: BindingPolicy,
+    pub(super) policy: BindingPolicy,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -162,6 +177,12 @@ impl BindingService {
             }
             if current
                 .as_ref()
+                .is_some_and(|value| value.existing_agent.is_some())
+            {
+                return Err(BindingError::Conflict);
+            }
+            if current
+                .as_ref()
                 .is_some_and(|value| value.tool_endpoint != tool_endpoint)
             {
                 return Err(BindingError::Conflict);
@@ -283,6 +304,11 @@ impl BindingService {
         }
         for _ in 0..8 {
             let binding = self.read(caller, id).await?;
+            let conversation_id = if binding.existing_agent.is_some() {
+                EXISTING_AGENT_CONVERSATION
+            } else {
+                conversation_id
+            };
             if binding.state != BindingState::Ready {
                 return Err(BindingError::Conflict);
             }
@@ -327,6 +353,11 @@ impl BindingService {
         }
         for _ in 0..8 {
             let binding = self.read(caller, id).await?;
+            let conversation_id = if binding.existing_agent.is_some() {
+                EXISTING_AGENT_CONVERSATION
+            } else {
+                conversation_id
+            };
             let Some(value) = self
                 .store
                 .binding_conversation(id, binding.generation, conversation_id)
@@ -363,7 +394,7 @@ impl BindingService {
     }
 }
 
-fn require(caller: &Caller) -> Result<(), BindingError> {
+pub(super) fn require(caller: &Caller) -> Result<(), BindingError> {
     caller
         .require(Capability::ManageGatewayRecords)
         .map_err(|_| BindingError::Forbidden)?;
@@ -376,7 +407,7 @@ pub(super) fn unavailable(error: impl std::fmt::Display) -> BindingError {
     BindingError::Unavailable(error.to_string())
 }
 
-fn credential_error(error: crate::CoreError) -> BindingError {
+pub(super) fn credential_error(error: crate::CoreError) -> BindingError {
     match error {
         crate::CoreError::InvalidRequest(detail) => BindingError::InvalidRequest(detail),
         crate::CoreError::InvalidState(_) => BindingError::Conflict,

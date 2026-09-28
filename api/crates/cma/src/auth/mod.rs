@@ -35,6 +35,8 @@ mod refresh;
 mod sandbox_prerequisite;
 mod session_routes;
 mod signup_options;
+#[cfg(test)]
+pub(crate) mod test_resources;
 mod token;
 mod tokens;
 mod verification_error;

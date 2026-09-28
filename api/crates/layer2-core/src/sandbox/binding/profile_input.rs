@@ -59,6 +59,10 @@ pub(super) struct Context {
 #[serde(deny_unknown_fields)]
 pub(super) struct Environment {
     #[serde(default)]
+    pub isolated_agents: bool,
+    #[serde(default)]
+    pub session_affinity: super::profile::SessionAffinity,
+    #[serde(default)]
     pub always_keep_alive: bool,
     pub size: Size,
     pub workspace: WorkspaceLocation,

@@ -65,7 +65,7 @@ impl BotSetupDependencies for Dependencies {
             http: &self.http,
             gateway: &self.gateway,
             binding: BINDING,
-            contexts: &self.contexts,
+            contexts: self.contexts.as_ref(),
         }
         .verify(binding, credential, reference, activity)
         .await
@@ -271,7 +271,7 @@ async fn fresh_father_event_reaches_login_with_verified_durable_context_without_
     ))
     .unwrap();
     if let cmaeg_core::activity::ActivityKind::Message { text, .. } = &mut activity.kind {
-        *text = format!("/setup {}", "x".repeat(32 * 1024 - 7));
+        *text = "x".repeat(32 * 1024);
     }
     let partition = activity.partition_key(&definition.partition);
     let conversation = ConversationId::derive(&keys, &channel, 1, &partition);
@@ -420,6 +420,62 @@ async fn fresh_father_event_reaches_login_with_verified_durable_context_without_
     assert_eq!(duplicate["setup_id"], view["setup_id"]);
     assert_eq!(duplicate["revision"], view["revision"]);
     assert_eq!(backend.model_calls.load(Ordering::SeqCst), 0);
+    // The agent uses the retained, signed event and a separate typed operation.
+    // Multiple operations in one model turn must not consume the human event.
+    let action_url = format!("{cma}/api/v1/bot-setups/actions");
+    let read: Value = http
+        .post(&action_url)
+        .json(&json!({"event_ref":reference,"request":{
+            "request_id":"agent-view", "action":{"type":"view"}
+        }}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(read["setup_id"], view["setup_id"]);
+    let draft = json!({"event_ref":reference,"request":{
+        "request_id":"agent-name",
+        "expected":{"setup_id":read["setup_id"],"revision":read["revision"]},
+        "action":{"type":"draft","draft":{"name":"Paper assistant","instructions":"Explain papers."}}
+    }});
+    let drafted = http.post(&action_url).json(&draft).send().await.unwrap();
+    assert_eq!(drafted.status(), 200);
+    let drafted: Value = drafted.json().await.unwrap();
+    assert_eq!(drafted["name"], "Paper assistant");
+    let replayed: Value = http
+        .post(&action_url)
+        .json(&draft)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(replayed["revision"], drafted["revision"]);
+    let mut altered = draft.clone();
+    altered["request"]["action"]["draft"]["name"] = "Different name".into();
+    assert_eq!(
+        http.post(&action_url)
+            .json(&altered)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        409
+    );
+    let mut forged = draft;
+    forged["activity"] = json!({"actor":{"id":"another-user"}});
+    assert_eq!(
+        http.post(&action_url)
+            .json(&forged)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        422
+    );
     let records = mongo
         .database(&database)
         .collection::<mongodb::bson::Document>("bot_setup_contexts");
@@ -437,38 +493,29 @@ async fn fresh_father_event_reaches_login_with_verified_durable_context_without_
 }
 
 #[test]
-fn verified_setup_controls_normalize_without_rewriting_activity() {
-    for (text, expected) in [
-        ("/setup", ""),
-        ("/setup personal", "personal"),
-        ("/setup create", "create"),
-        ("/setup name: Paper assistant", "name: Paper assistant"),
-        (
-            "/setup instructions: Explain papers",
-            "instructions: Explain papers",
-        ),
-        ("/setup {\"agent\":{}}", "{\"agent\":{}}"),
-        ("/start setup", ""),
-        ("/start  setup", ""),
-        ("/start  link_abc-123", "/start link_abc-123"),
-        ("/start link_abc-123", "/start link_abc-123"),
-        ("link_abc-123", "link_abc-123"),
-        ("/setupish create", "/setupish create"),
-        ("hi", "hi"),
+fn verified_input_preserves_user_words_for_agent_action_consent() {
+    for text in [
+        "/setup",
+        "/setup create",
+        "create",
+        "Create Bot",
+        "  hi  ",
+        "/start link_abc-123",
+        "link_abc-123",
+        "make a paper assistant",
+        "{\"agent\":{}}",
     ] {
         let kind = json!({"type":"message", "text":text});
         let input = setup_input(&kind).unwrap();
-        assert!(matches!(input, SetupInput::Text(ref value) if value == expected));
-        assert_eq!(kind["text"], text, "attested input must remain unchanged");
+        assert!(matches!(input, SetupInput::Text(ref value) if value == text));
+        assert_eq!(kind["text"], text);
     }
     for (name, args, expected) in [
-        ("setup", "create", "create"),
-        ("setup", "name: Paper assistant", "name: Paper assistant"),
-        ("start", "setup", ""),
+        ("setup", "create", "/setup create"),
         ("start", "link_abc-123", "/start link_abc-123"),
+        ("create", "", "/create"),
     ] {
         let input = setup_input(&json!({"type":"command", "name":name, "args":args})).unwrap();
         assert!(matches!(input, SetupInput::Text(ref value) if value == expected));
     }
-    assert!(setup_input(&json!({"type":"command", "name":"create", "args":""})).is_err());
 }

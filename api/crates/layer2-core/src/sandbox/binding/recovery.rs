@@ -165,7 +165,11 @@ impl BindingService {
                 {
                     return Ok(());
                 }
-                next.work = RetireCurrentSandbox;
+                next.work = if binding.existing_agent.is_some() {
+                    Idle
+                } else {
+                    RetireCurrentSandbox
+                };
             }
             RetireCurrentSandbox => {
                 if !self.cleanup_sandbox(binding, &binding.sandbox_id).await? {
@@ -260,12 +264,13 @@ impl BindingService {
             return self.save_conversation_state(binding, value, Retiring).await;
         }
         if value.state == Retiring {
-            if self
-                .resources
-                .agents
-                .retire_for_binding(value)
-                .await
-                .map_err(unavailable)?
+            if binding.existing_agent.is_some()
+                || self
+                    .resources
+                    .agents
+                    .retire_for_binding(value)
+                    .await
+                    .map_err(unavailable)?
             {
                 self.save_conversation_state(binding, value, Retired)
                     .await?;

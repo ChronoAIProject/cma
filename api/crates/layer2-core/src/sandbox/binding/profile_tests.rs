@@ -61,6 +61,30 @@ fn binding_profile_maps_resources_commands_identity_and_agent_settings() {
 }
 
 #[test]
+fn isolated_user_sessions_preserve_parent_environment_and_report_support() {
+    let original = map(input()).unwrap();
+    let mut value = input();
+    value["environment"]["isolated_agents"] = json!(true);
+    value["environment"]["session_affinity"] = json!("source_user");
+    let isolated = map(value.clone()).unwrap();
+    assert_eq!(original.environment, isolated.environment);
+    assert!(!original.agent.isolated_agent);
+    assert!(isolated.agent.isolated_agent);
+    assert_eq!(isolated.session_affinity, SessionAffinity::SourceUser);
+    assert!(isolated
+        .honoured
+        .contains(&"environment.isolated_agents".into()));
+    assert!(isolated
+        .honoured
+        .contains(&"environment.session_affinity".into()));
+    value["model"]["access"] = json!("custom");
+    assert!(
+        map(value).is_err(),
+        "isolation cannot expose a shared model credential"
+    );
+}
+
+#[test]
 fn binding_profile_exposes_every_unsupported_requirement() {
     let mut value = input();
     value["model"]["api_type"] = "unsupported".into();

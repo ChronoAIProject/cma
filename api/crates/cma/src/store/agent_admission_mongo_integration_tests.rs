@@ -355,6 +355,7 @@ fn admission(workspace: &Workspace, suffix: &str) -> AgentAdmission {
             revision: 1,
             digest: "c".repeat(64),
             content: AgentProfileContent {
+                isolated_agent: false,
                 model: None,
                 thinking_effort: ThinkingEffort::Medium,
                 permission_level: PermissionLevel::Guarded,

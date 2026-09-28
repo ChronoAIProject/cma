@@ -50,6 +50,13 @@ impl AuthState {
             AgentSourceKind::Api | AgentSourceKind::UserInterface
         ) || (envelope.authorization.authority_id.starts_with("api:")
             && envelope.source.kind != AgentSourceKind::Api)
+            || (matches!(
+                &envelope.actor,
+                AgentActor::Api {
+                    delegation_id: Some(_),
+                    ..
+                }
+            ) && envelope.source.kind != AgentSourceKind::Api)
         {
             return Err(CommandAuthorizationError::Revoked);
         }

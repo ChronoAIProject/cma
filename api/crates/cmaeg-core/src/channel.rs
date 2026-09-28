@@ -51,8 +51,46 @@ pub enum ConformanceLevel {
 #[serde(deny_unknown_fields)]
 pub struct ProviderBinding {
     pub slug: ProviderSlug,
+    #[serde(default, skip_serializing_if = "ProviderTarget::is_profile")]
+    pub target: ProviderTarget,
     pub binding_id: BindingId,
     pub level: ConformanceLevel,
+}
+
+/// Generic provider target. Instance selection and authorization stay with the
+/// provider; the gateway only retains and forwards this declaration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
+pub enum ProviderTarget {
+    Profile {},
+    ExistingAgent { agent_id: String },
+}
+
+impl Default for ProviderTarget {
+    fn default() -> Self {
+        Self::Profile {}
+    }
+}
+
+impl ProviderTarget {
+    pub fn is_profile(&self) -> bool {
+        matches!(self, Self::Profile {})
+    }
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        if let Self::ExistingAgent { agent_id } = self {
+            require_string(agent_id, "/provider/target/agent_id", 1, 128)?;
+            if !agent_id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+            {
+                return Err(ValidationError::new(
+                    "/provider/target/agent_id",
+                    "must be a provider agent identifier",
+                ));
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -239,6 +277,7 @@ impl ChannelDefinition {
             ));
         }
         require_string(&self.name, "/name", 0, 80)?;
+        self.provider.target.validate()?;
         self.profile.validate().map_err(|error| {
             ValidationError::new(format!("/profile{}", error.pointer), error.message)
         })?;

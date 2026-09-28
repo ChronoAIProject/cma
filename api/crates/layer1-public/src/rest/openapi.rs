@@ -1,4 +1,5 @@
 use utoipa::OpenApi;
+pub mod agent_delegations;
 mod identity;
 mod projections;
 use self::projections::{
@@ -32,6 +33,8 @@ use super::trigger_openapi_shapes::*;
 #[derive(OpenApi)]
 #[openapi(
     paths(
+        agent_delegations::identity,
+        agent_delegations::operation,
         super::event_workers::create,
         super::event_workers::list,
         super::event_workers::read,
@@ -40,6 +43,7 @@ use super::trigger_openapi_shapes::*;
         super::event_workers::retire,
         super::bots::create,
         super::bot_setups::advance,
+        super::bot_setups::act,
         super::bots::list,
         super::bots::read,
         super::bots::available,
@@ -405,7 +409,7 @@ use super::trigger_openapi_shapes::*;
         RuntimeInventoryView,
         ActivityView,
         ActivityPageView,
-        super::bindings::PutBindingRequest, super::bindings::BindingTools, super::bindings::BindingView, super::bindings::BindingRefusal, super::bindings::BindingConversationView, PutGatewayRequest, PutGateway, GatewayRecord, GatewayRecordHead, GatewayRecordPage,
+        super::bindings::PutBindingRequest, super::bindings::BindingTarget, super::bindings::BindingTools, super::bindings::BindingView, super::bindings::BindingRefusal, super::bindings::BindingConversationView, PutGatewayRequest, PutGateway, GatewayRecord, GatewayRecordHead, GatewayRecordPage,
     )),
     tags(
         (name = "discovery", description = "Anonymous deployment discovery"),

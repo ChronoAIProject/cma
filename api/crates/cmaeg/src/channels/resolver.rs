@@ -140,6 +140,33 @@ impl ChannelResolver {
     pub fn cache_len(&self) -> usize {
         self.inner.cache.len()
     }
+    pub(crate) fn record_client(&self) -> RecordClient {
+        (*self.inner.records).clone()
+    }
+    /// Recheck live channel authority without accepting a cached definition.
+    pub async fn resolve_current(
+        &self,
+        raw_id: &str,
+    ) -> Result<Arc<ResolvedChannel>, ResolveError> {
+        let id = ChannelId::new(raw_id).map_err(|_| ResolveError::Invalid)?;
+        let pointer = id
+            .open(&self.inner.keys)
+            .map_err(|_| ResolveError::Tampered)?
+            .payload;
+        if self
+            .inner
+            .records
+            .record_url(pointer.record_id.as_str())
+            .map_err(|_| ResolveError::Invalid)?
+            .as_str()
+            != pointer.record_url
+        {
+            return Err(ResolveError::Tampered);
+        }
+        tokio::time::timeout(self.inner.config.restore_timeout, self.fetch(id, pointer))
+            .await
+            .unwrap_or(Err(ResolveError::Unavailable))
+    }
     pub fn invalidate(&self, id: &str) {
         let _guard = self.inner.publication.lock().unwrap();
         self.inner.cache.invalidate(id);

@@ -14,7 +14,7 @@ use layer2_core::sandbox::*;
 
 const NOW: &str = "2026-09-05T00:00:00Z";
 
-pub(super) fn sandbox(id: &str, owner: &str) -> Sandbox {
+pub(crate) fn sandbox(id: &str, owner: &str) -> Sandbox {
     Sandbox {
         id: SandboxId(id.into()),
         owner: SubjectId::new(owner),
@@ -66,7 +66,7 @@ pub(super) fn sandbox(id: &str, owner: &str) -> Sandbox {
     }
 }
 
-pub(super) fn workspace(id: &str, sandbox_id: &str, owner: &str) -> Workspace {
+pub(crate) fn workspace(id: &str, sandbox_id: &str, owner: &str) -> Workspace {
     Workspace {
         id: WorkspaceId(id.into()),
         sandbox_id: SandboxId(sandbox_id.into()),
@@ -98,7 +98,7 @@ pub(super) fn workspace(id: &str, sandbox_id: &str, owner: &str) -> Workspace {
     }
 }
 
-pub(super) fn worktree(
+pub(crate) fn worktree(
     id: &str,
     workspace_id: &str,
     sandbox_id: &str,
@@ -120,7 +120,7 @@ pub(super) fn worktree(
     }
 }
 
-pub(super) fn agent(
+pub(crate) fn agent(
     id: &str,
     worktree_id: &str,
     workspace_id: &str,
@@ -141,6 +141,7 @@ pub(super) fn agent(
             revision: 1,
             digest: "e".repeat(64),
             content: AgentProfileContent {
+                isolated_agent: false,
                 model: Some("model-a".into()),
                 thinking_effort: ThinkingEffort::High,
                 permission_level: PermissionLevel::Guarded,

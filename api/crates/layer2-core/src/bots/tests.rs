@@ -12,6 +12,7 @@ impl BotProfileResolver for Profiles {
     async fn resolve(&self, _: &SubjectId, request: &CreateBot) -> Result<BotProfiles, BotError> {
         let reference = &request.profile;
         let agent = AgentProfileContent {
+            isolated_agent: false,
             model: Some("test".into()),
             thinking_effort: ThinkingEffort::Medium,
             permission_level: PermissionLevel::Guarded,

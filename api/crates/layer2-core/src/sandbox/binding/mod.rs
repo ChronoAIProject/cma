@@ -2,6 +2,7 @@
 mod access;
 mod commands;
 mod credential;
+mod existing;
 pub use access::{BindingAccessService, BindingConversationAuthority, BindingPrincipal};
 mod fence;
 mod model;
@@ -15,10 +16,13 @@ pub mod store;
 pub use credential::{BindingCredentialCustody, ProvidedCredential};
 pub use fence::{BindingAdmissionFence, BindingConversationFence};
 pub use model::{
-    BindingConversation, BindingConversationState, BindingState, BindingWork,
+    BindingConversation, BindingConversationState, BindingState, BindingWork, ExistingBindingAgent,
     PreviousBindingEnvironment, ProviderBinding, BINDING_CONFORMANCE_LEVEL,
+    EXISTING_AGENT_CONVERSATION,
 };
-pub use profile::{map_profile, BindingEnvironmentPlan, BindingFieldRefusal, BindingProfilePlan};
+pub use profile::{
+    map_profile, BindingEnvironmentPlan, BindingFieldRefusal, BindingProfilePlan, SessionAffinity,
+};
 pub use store::BindingStore;
 
 #[cfg(test)]
