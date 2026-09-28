@@ -96,6 +96,9 @@ async fn serve() -> Result<(), String> {
     if let Some(bots) = composition.bots {
         shutdown.push(bots.spawn(shutdown.subscribe()));
     }
+    if let Some(continuations) = composition.actor_continuations {
+        shutdown.push(continuations.spawn(shutdown.subscribe()));
+    }
     let worker_signal = shutdown.subscribe();
     shutdown.push(composition.launch_scheduler.spawn(worker_signal));
     shutdown.push(composition.command_scheduler.spawn(shutdown.subscribe()));

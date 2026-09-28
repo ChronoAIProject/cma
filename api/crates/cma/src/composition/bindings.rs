@@ -97,10 +97,19 @@ pub(super) fn responses(
     stores: &MongoStores,
     commands: Arc<layer2_core::sandbox::agent_io::AgentCommandService>,
     reads: Arc<layer2_core::sandbox::AgentReadService>,
-) -> Router {
-    layer1_public::responses::v2::router(
-        layer1_public::responses::v2::ResponsesV2State::new(commands, reads).with_bindings(
-            layer2_core::sandbox::binding::BindingAccessService::new(stores.sandbox_model.clone()),
-        ),
-    )
+    bindings: &BindingComposition,
+    gateway: Option<&crate::config::GatewayConfig>,
+) -> Result<Router, String> {
+    let mut state = layer1_public::responses::v2::ResponsesV2State::new(commands, reads)
+        .with_bindings(layer2_core::sandbox::binding::BindingAccessService::new(
+            stores.sandbox_model.clone(),
+        ));
+    if let Some(gateway) = gateway {
+        state = state.with_event_router(super::event_routing::CmaEventRouter::new(
+            stores.sandbox_model.clone(),
+            bindings.service.clone(),
+            &gateway.base_url,
+        )?);
+    }
+    Ok(layer1_public::responses::v2::router(state))
 }

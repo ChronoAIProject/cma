@@ -1,4 +1,5 @@
 use utoipa::OpenApi;
+pub mod agent_delegations;
 mod identity;
 mod projections;
 use self::projections::{
@@ -32,6 +33,8 @@ use super::trigger_openapi_shapes::*;
 #[derive(OpenApi)]
 #[openapi(
     paths(
+        agent_delegations::identity,
+        agent_delegations::operation,
         super::event_workers::create,
         super::event_workers::list,
         super::event_workers::read,

@@ -141,6 +141,7 @@ pub(super) fn agent(
             revision: 1,
             digest: "e".repeat(64),
             content: AgentProfileContent {
+                isolated_agent: false,
                 model: Some("model-a".into()),
                 thinking_effort: ThinkingEffort::High,
                 permission_level: PermissionLevel::Guarded,

@@ -40,6 +40,9 @@ pub struct SkillRef {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentProfileContent {
+    /// Isolate this agent's filesystem, processes and local network from siblings.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub isolated_agent: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     pub thinking_effort: ThinkingEffort,
