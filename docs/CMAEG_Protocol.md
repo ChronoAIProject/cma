@@ -749,6 +749,54 @@ clients MUST NOT manufacture IDs by copying an implementation's hash algorithm.
 
 ## 8. Tools API and MCP
 
+### Delayed replies for provider integrations
+
+A provider that must reply after the original `event_ref` expires first exchanges
+that reference while it is valid. Both operations require the channel's current
+agent-key bearer and `Content-Type: application/json`:
+
+| Operation | Request | Response |
+| --- | --- | --- |
+| `createReplyTarget` | POST `/v1/events/{event_ref}/reply-target`, body `{}` | `{reply_target_ref,expires_at}`; expiry is Unix seconds, at most 24 hours after issuance |
+| `replyToTarget` | POST `/v1/reply-targets/{reply_target_ref}/messages`, required `Idempotency-Key` header, body `OutboundMessage` | The ordinary `{message_ref?,rendering,delivery}` receipt |
+
+The sealed `cmaeg1.rt` capability derives only from the original authenticated
+relay event with verified retained activity. The request cannot supply a route,
+sender, chat or replacement event. It is bounded to 4 KiB and carries no NyxID
+user credential or relay reply token. The gateway uses the current channel key
+to reply to the original relay message. Custom/synchronous destinations cannot
+issue this capability. Providers retain the opaque reference securely with their
+own pending operation; it is not a login grant or a new incoming user event.
+
+Creation and every send, including receipt replay, read current channel authority
+without accepting a stale cache. The original route must still belong to the
+channel, and the record, provider binding and agent-key hash must match the
+capability. Deleting the channel, changing the binding or rotating the agent key
+revokes it. A valid capability may outlive the original event reference, but not
+its own expiry. Expired targets return `410 event_ref_expired` with detail
+`reply_target_expired`; malformed/tampered targets return `400 invalid_request`.
+Revoked bindings, keys or destinations return `403 forbidden`.
+
+`Idempotency-Key` is one visible ASCII string of 1–128 bytes. Reuse it with the
+same message when reconciling a response. The encrypted claim and receipt are
+durable CMA interaction records; a claim is stored before external delivery.
+The same destination/event/key and request ID replay the saved receipt across
+replica restarts, including when the capability was reminted. Changed message
+content under that ID returns `409 conflict`. Reusing an ID for another event
+does not combine those independent deliveries.
+
+An in-progress or abandoned claim returns `delivery.outcome: "unknown"` with
+reason `delivery_in_progress_or_uncertain`, without initiating another send. A
+later retry can read the finalized receipt if the original worker finishes.
+A lost external response also remains unknown; this API does not promise exactly
+once external delivery. Do not invent a new ID to retry an uncertain send. Multiple
+different IDs are independent messages, with no ordering guarantee across events.
+Records persist through all capabilities that can be minted from the original
+event. Delivery records cannot authorize interaction callbacks. Native MCP keeps
+the four existing tools; delayed replies use these provider-integration REST APIs.
+
+### Immediate event tools
+
 All tools require the single channel agent-key bearer, compared locally in
 constant time. Reply, typing and context require an unexpired `event_ref`.
 REST update requires a valid `message_ref`; native MCP update additionally
@@ -1065,6 +1113,8 @@ Generated from the reviewed OpenAPI snapshot; effective paths include its server
 | `POST /v1/channels/{channel_id}/test` | `testChannel` |
 | `GET /v1/events/{event_ref}/context` | `readEventContext` |
 | `POST /v1/events/{event_ref}/context` | `verifyEventContext` |
+| `POST /v1/events/{event_ref}/reply-target` | `createReplyTarget` |
+| `POST /v1/reply-targets/{reply_target_ref}/messages` | `replyToTarget` |
 | `POST /v1/events/{event_ref}/replies` | `replyToEvent` |
 | `POST /v1/events/{event_ref}/typing` | `sendTyping` |
 | `POST /v1/messages/{message_ref}/update` | `updateMessage` |

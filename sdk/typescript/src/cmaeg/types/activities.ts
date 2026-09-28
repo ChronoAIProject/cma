@@ -9,6 +9,7 @@ import {
   EventIdSchema,
   EventRefSchema,
   MessageRefSchema,
+  ReplyTargetRefSchema,
   PlatformSchema,
   ProblemCodeSchema,
 } from './primitives.js';
@@ -26,6 +27,12 @@ import {
   type Output,
 } from '../../schema.js';
 import { anything, extensible } from './helpers.js';
+
+export const ReplyTargetResponseSchema = object({
+  reply_target_ref: ReplyTargetRefSchema,
+  expires_at: integer,
+});
+export type ReplyTargetResponse = Output<typeof ReplyTargetResponseSchema>;
 
 export const ActorSchema = object({
   display_name: optional(nullable(text)),

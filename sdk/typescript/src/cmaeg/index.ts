@@ -60,6 +60,17 @@ export class Cmaeg {
   replyToEvent(ref: string, message: OutboundMessage, options?: OperationOptions) {
     return this.#tools.replyToEvent(ref, message, options);
   }
+  createReplyTarget(ref: string, options?: OperationOptions) {
+    return this.#tools.createReplyTarget(ref, options);
+  }
+  replyToTarget(
+    ref: string,
+    idempotencyKey: string,
+    message: OutboundMessage,
+    options?: OperationOptions,
+  ) {
+    return this.#tools.replyToTarget(ref, idempotencyKey, message, options);
+  }
   updateMessage(ref: string, message: OutboundMessage, options?: OperationOptions) {
     return this.#tools.updateMessage(ref, message, options);
   }

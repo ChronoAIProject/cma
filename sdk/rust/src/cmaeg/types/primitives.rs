@@ -74,6 +74,9 @@ pub type BindingId = String;
 /// CMAEG `ChannelId` wire shape.
 pub type ChannelId = String;
 
+/// Opaque delayed-reply authority; do not log or reconstruct it.
+pub type ReplyTargetRef = String;
+
 /// CMAEG `ConformanceLevel` wire shape.
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ConformanceLevel {

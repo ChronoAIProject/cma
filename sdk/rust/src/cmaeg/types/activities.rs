@@ -5,6 +5,15 @@ use super::{
 };
 use serde::{Deserialize, Serialize};
 
+/// A capability to reply later to the original authenticated event destination.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct ReplyTargetResponse {
+    /// Opaque bounded authority; do not log it.
+    pub reply_target_ref: super::ReplyTargetRef,
+    /// Expiry as Unix seconds, at most 24 hours after issuance.
+    pub expires_at: i64,
+}
+
 /// CMAEG `Activity` wire shape.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct Activity {
