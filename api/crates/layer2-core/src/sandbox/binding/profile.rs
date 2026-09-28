@@ -142,6 +142,9 @@ pub fn map_profile(
         skills: input.context.skills,
         system_prompt: input.context.system_prompt,
     };
+    if agent.isolated_agent && model_access != ModelAccess::ChronoaiManaged {
+        return Err(invalid("isolated agents require managed model access"));
+    }
     agent.validate().map_err(invalid)?;
     for skill in &agent.skills {
         bounded(skill.id.as_str(), "context.skills.id", 1, 512)?;
@@ -172,6 +175,12 @@ pub fn map_profile(
         .collect(),
         refused: Vec::new(),
     };
+    if plan.agent.isolated_agent {
+        plan.honoured.push("environment.isolated_agents".into());
+    }
+    if plan.session_affinity == SessionAffinity::SourceUser {
+        plan.honoured.push("environment.session_affinity".into());
+    }
     if input.model.api_type == supported_model_api {
         plan.honoured.push("model.api_type".into());
     } else {
