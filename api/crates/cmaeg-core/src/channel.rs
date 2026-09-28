@@ -450,7 +450,7 @@ impl FromStr for Platform {
     type Err = ValidationError;
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
-            "telegram" => Ok(Self::Telegram),
+            "telegram" | "telegram-new" => Ok(Self::Telegram),
             _ => Err(ValidationError::new("/platform", "unsupported platform")),
         }
     }

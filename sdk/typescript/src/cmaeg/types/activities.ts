@@ -2,6 +2,7 @@ import {
   AcceptedStatusSchema,
   ActorKindSchema,
   AttachmentKindSchema,
+  BindingIdSchema,
   ChannelIdSchema,
   ConversationIdSchema,
   ConversationKindSchema,
@@ -135,9 +136,14 @@ export type PublicActivity = Output<typeof PublicActivitySchema>;
 
 export const ContextResponseSchema = object({
   activity: PublicActivitySchema,
+  activity_verified: boolean,
   capabilities: CapabilitiesSchema,
+  channel_id: ChannelIdSchema,
   conversation_id: ConversationIdSchema,
   event_id: EventIdSchema,
+  expires_at: integer,
+  provider_binding_id: BindingIdSchema,
+  source: SourceKindSchema,
 });
 export type ContextResponse = Output<typeof ContextResponseSchema>;
 

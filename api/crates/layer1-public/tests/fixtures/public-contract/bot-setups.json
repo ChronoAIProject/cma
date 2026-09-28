@@ -1,0 +1,1059 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "bot-setup-advance",
+      "operation": "POST /api/v1/bot-setups/advance",
+      "scenario": "bot_setup_contract_active",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/bot-setups/advance",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "event_ref": "event-contract",
+          "activity": {
+            "schema_version": 1,
+            "event_id": "event-contract",
+            "kind": {
+              "type": "message",
+              "text": "Create my bot",
+              "attachments": [],
+              "mentions_bot": false
+            },
+            "actor": {
+              "id": "actor-contract",
+              "kind": "human"
+            },
+            "conversation": {
+              "id": "chat-contract",
+              "kind": "private"
+            },
+            "occurred_at": "2026-09-28T00:00:00Z",
+            "source": {
+              "type": "nyxid_relay",
+              "platform": "telegram",
+              "route_id": "route-contract"
+            }
+          },
+          "draft": {},
+          "customization": {}
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "setup_id": "bst_contract",
+          "revision": 2,
+          "step": "owner",
+          "interaction_id": "bst_contract.2",
+          "identity": {
+            "grant_id": "grant-contract",
+            "subject": "actor-contract",
+            "display_name": "Contract user",
+            "login_url": null
+          },
+          "owner": null,
+          "name": null,
+          "configuration": {
+            "agent": {
+              "model": "test",
+              "thinking_effort": "medium",
+              "permission_level": "guarded",
+              "skills": [],
+              "system_prompt": ""
+            },
+            "workspace": {
+              "location": {
+                "type": "directory",
+                "name": "project"
+              },
+              "name": "project",
+              "setup_commands": [],
+              "agent_profiles": []
+            },
+            "sandbox": {
+              "cpu_millis": 1000,
+              "memory_mib": 2048,
+              "nyxid_services": [],
+              "agent_provider": "codex",
+              "model_access": "chronoai_managed",
+              "max_workspaces": 1,
+              "max_agents_per_workspace": 1,
+              "workspace_profiles": [],
+              "software_install_commands": [],
+              "environment_variables": []
+            },
+            "availability": {
+              "warmup_enabled": false,
+              "warmup_count": 1,
+              "always_keep_alive": false
+            }
+          },
+          "choices": [
+            {
+              "id": "personal",
+              "label": "Personal",
+              "selected": false
+            },
+            {
+              "id": "cancel",
+              "label": "Cancel",
+              "selected": false
+            }
+          ],
+          "services": [],
+          "connection_url": null,
+          "external_bot_id": null,
+          "admission": null,
+          "result": null,
+          "notice": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "bot-setup-advance-replay",
+      "operation": "POST /api/v1/bot-setups/advance",
+      "scenario": "bot_setup_contract_active",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/bot-setups/advance",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "event_ref": "event-contract",
+          "activity": {
+            "schema_version": 1,
+            "event_id": "event-contract",
+            "kind": {
+              "type": "message",
+              "text": "Create my bot",
+              "attachments": [],
+              "mentions_bot": false
+            },
+            "actor": {
+              "id": "actor-contract",
+              "kind": "human"
+            },
+            "conversation": {
+              "id": "chat-contract",
+              "kind": "private"
+            },
+            "occurred_at": "2026-09-28T00:00:00Z",
+            "source": {
+              "type": "nyxid_relay",
+              "platform": "telegram",
+              "route_id": "route-contract"
+            }
+          },
+          "draft": {},
+          "customization": {}
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "setup_id": "bst_contract",
+          "revision": 2,
+          "step": "owner",
+          "interaction_id": "bst_contract.2",
+          "identity": {
+            "grant_id": "grant-contract",
+            "subject": "actor-contract",
+            "display_name": "Contract user",
+            "login_url": null
+          },
+          "owner": null,
+          "name": null,
+          "configuration": {
+            "agent": {
+              "model": "test",
+              "thinking_effort": "medium",
+              "permission_level": "guarded",
+              "skills": [],
+              "system_prompt": ""
+            },
+            "workspace": {
+              "location": {
+                "type": "directory",
+                "name": "project"
+              },
+              "name": "project",
+              "setup_commands": [],
+              "agent_profiles": []
+            },
+            "sandbox": {
+              "cpu_millis": 1000,
+              "memory_mib": 2048,
+              "nyxid_services": [],
+              "agent_provider": "codex",
+              "model_access": "chronoai_managed",
+              "max_workspaces": 1,
+              "max_agents_per_workspace": 1,
+              "workspace_profiles": [],
+              "software_install_commands": [],
+              "environment_variables": []
+            },
+            "availability": {
+              "warmup_enabled": false,
+              "warmup_count": 1,
+              "always_keep_alive": false
+            }
+          },
+          "choices": [
+            {
+              "id": "personal",
+              "label": "Personal",
+              "selected": false
+            },
+            {
+              "id": "cancel",
+              "label": "Cancel",
+              "selected": false
+            }
+          ],
+          "services": [],
+          "connection_url": null,
+          "external_bot_id": null,
+          "admission": null,
+          "result": null,
+          "notice": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "bot-setup-stale-callback",
+      "operation": "POST /api/v1/bot-setups/advance",
+      "scenario": "bot_setup_contract_active",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/bot-setups/advance",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "event_ref": "event-stale",
+          "activity": {
+            "schema_version": 1,
+            "event_id": "event-stale",
+            "kind": {
+              "type": "interaction",
+              "block_id": "bst_contract.1",
+              "action_id": "cancel",
+              "values": {}
+            },
+            "actor": {
+              "id": "actor-contract",
+              "kind": "human"
+            },
+            "conversation": {
+              "id": "chat-contract",
+              "kind": "private"
+            },
+            "occurred_at": "2026-09-28T00:00:00Z",
+            "source": {
+              "type": "nyxid_relay",
+              "platform": "telegram",
+              "route_id": "route-contract"
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "setup_id": "bst_contract",
+          "revision": 2,
+          "step": "owner",
+          "interaction_id": "bst_contract.2",
+          "identity": {
+            "grant_id": "grant-contract",
+            "subject": "actor-contract",
+            "display_name": "Contract user",
+            "login_url": null
+          },
+          "owner": null,
+          "name": null,
+          "configuration": {
+            "agent": {
+              "model": "test",
+              "thinking_effort": "medium",
+              "permission_level": "guarded",
+              "skills": [],
+              "system_prompt": ""
+            },
+            "workspace": {
+              "location": {
+                "type": "directory",
+                "name": "project"
+              },
+              "name": "project",
+              "setup_commands": [],
+              "agent_profiles": []
+            },
+            "sandbox": {
+              "cpu_millis": 1000,
+              "memory_mib": 2048,
+              "nyxid_services": [],
+              "agent_provider": "codex",
+              "model_access": "chronoai_managed",
+              "max_workspaces": 1,
+              "max_agents_per_workspace": 1,
+              "workspace_profiles": [],
+              "software_install_commands": [],
+              "environment_variables": []
+            },
+            "availability": {
+              "warmup_enabled": false,
+              "warmup_count": 1,
+              "always_keep_alive": false
+            }
+          },
+          "choices": [
+            {
+              "id": "personal",
+              "label": "Personal",
+              "selected": false
+            },
+            {
+              "id": "cancel",
+              "label": "Cancel",
+              "selected": false
+            }
+          ],
+          "services": [],
+          "connection_url": null,
+          "external_bot_id": null,
+          "admission": null,
+          "result": null,
+          "notice": "This choice has expired. Use the latest configuration."
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "bot-setup-cancel",
+      "operation": "POST /api/v1/bot-setups/advance",
+      "scenario": "bot_setup_contract_active",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/bot-setups/advance",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "event_ref": "event-cancel",
+          "activity": {
+            "schema_version": 1,
+            "event_id": "event-cancel",
+            "kind": {
+              "type": "interaction",
+              "block_id": "bst_contract.2",
+              "action_id": "cancel",
+              "values": {}
+            },
+            "actor": {
+              "id": "actor-contract",
+              "kind": "human"
+            },
+            "conversation": {
+              "id": "chat-contract",
+              "kind": "private"
+            },
+            "occurred_at": "2026-09-28T00:00:00Z",
+            "source": {
+              "type": "nyxid_relay",
+              "platform": "telegram",
+              "route_id": "route-contract"
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "setup_id": "bst_contract",
+          "revision": 3,
+          "step": "cancelled",
+          "interaction_id": "bst_contract.3",
+          "identity": {
+            "grant_id": "grant-contract",
+            "subject": "actor-contract",
+            "display_name": "Contract user",
+            "login_url": null
+          },
+          "owner": null,
+          "name": null,
+          "configuration": {
+            "agent": {
+              "model": "test",
+              "thinking_effort": "medium",
+              "permission_level": "guarded",
+              "skills": [],
+              "system_prompt": ""
+            },
+            "workspace": {
+              "location": {
+                "type": "directory",
+                "name": "project"
+              },
+              "name": "project",
+              "setup_commands": [],
+              "agent_profiles": []
+            },
+            "sandbox": {
+              "cpu_millis": 1000,
+              "memory_mib": 2048,
+              "nyxid_services": [],
+              "agent_provider": "codex",
+              "model_access": "chronoai_managed",
+              "max_workspaces": 1,
+              "max_agents_per_workspace": 1,
+              "workspace_profiles": [],
+              "software_install_commands": [],
+              "environment_variables": []
+            },
+            "availability": {
+              "warmup_enabled": false,
+              "warmup_count": 1,
+              "always_keep_alive": false
+            }
+          },
+          "choices": [
+            {
+              "id": "new",
+              "label": "Create another Bot",
+              "selected": false
+            }
+          ],
+          "services": [],
+          "connection_url": null,
+          "external_bot_id": null,
+          "admission": null,
+          "result": null,
+          "notice": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "bot-setup-cancel-replay",
+      "operation": "POST /api/v1/bot-setups/advance",
+      "scenario": "bot_setup_contract_active",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/bot-setups/advance",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "event_ref": "event-cancel",
+          "activity": {
+            "schema_version": 1,
+            "event_id": "event-cancel",
+            "kind": {
+              "type": "interaction",
+              "block_id": "bst_contract.2",
+              "action_id": "cancel",
+              "values": {}
+            },
+            "actor": {
+              "id": "actor-contract",
+              "kind": "human"
+            },
+            "conversation": {
+              "id": "chat-contract",
+              "kind": "private"
+            },
+            "occurred_at": "2026-09-28T00:00:00Z",
+            "source": {
+              "type": "nyxid_relay",
+              "platform": "telegram",
+              "route_id": "route-contract"
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "setup_id": "bst_contract",
+          "revision": 3,
+          "step": "cancelled",
+          "interaction_id": "bst_contract.3",
+          "identity": {
+            "grant_id": "grant-contract",
+            "subject": "actor-contract",
+            "display_name": "Contract user",
+            "login_url": null
+          },
+          "owner": null,
+          "name": null,
+          "configuration": {
+            "agent": {
+              "model": "test",
+              "thinking_effort": "medium",
+              "permission_level": "guarded",
+              "skills": [],
+              "system_prompt": ""
+            },
+            "workspace": {
+              "location": {
+                "type": "directory",
+                "name": "project"
+              },
+              "name": "project",
+              "setup_commands": [],
+              "agent_profiles": []
+            },
+            "sandbox": {
+              "cpu_millis": 1000,
+              "memory_mib": 2048,
+              "nyxid_services": [],
+              "agent_provider": "codex",
+              "model_access": "chronoai_managed",
+              "max_workspaces": 1,
+              "max_agents_per_workspace": 1,
+              "workspace_profiles": [],
+              "software_install_commands": [],
+              "environment_variables": []
+            },
+            "availability": {
+              "warmup_enabled": false,
+              "warmup_count": 1,
+              "always_keep_alive": false
+            }
+          },
+          "choices": [
+            {
+              "id": "new",
+              "label": "Create another Bot",
+              "selected": false
+            }
+          ],
+          "services": [],
+          "connection_url": null,
+          "external_bot_id": null,
+          "admission": null,
+          "result": null,
+          "notice": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "bot-setup-legacy",
+      "operation": "POST /api/v1/bot-setups/advance",
+      "scenario": "bot_setup_contract_legacy",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/bot-setups/advance",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "event_ref": "legacy-event"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "setup_id": "bst_contract",
+          "revision": 2,
+          "step": "owner",
+          "interaction_id": "bst_contract.2",
+          "identity": {
+            "grant_id": "grant-contract",
+            "subject": "actor-contract",
+            "display_name": "Contract user",
+            "login_url": null
+          },
+          "owner": null,
+          "name": null,
+          "configuration": {
+            "agent": {
+              "model": "test",
+              "thinking_effort": "medium",
+              "permission_level": "guarded",
+              "skills": [],
+              "system_prompt": ""
+            },
+            "workspace": {
+              "location": {
+                "type": "directory",
+                "name": "project"
+              },
+              "name": "project",
+              "setup_commands": [],
+              "agent_profiles": []
+            },
+            "sandbox": {
+              "cpu_millis": 1000,
+              "memory_mib": 2048,
+              "nyxid_services": [],
+              "agent_provider": "codex",
+              "model_access": "chronoai_managed",
+              "max_workspaces": 1,
+              "max_agents_per_workspace": 1,
+              "workspace_profiles": [],
+              "software_install_commands": [],
+              "environment_variables": []
+            },
+            "availability": {
+              "warmup_enabled": false,
+              "warmup_count": 1,
+              "always_keep_alive": false
+            }
+          },
+          "choices": [
+            {
+              "id": "personal",
+              "label": "Personal",
+              "selected": false
+            },
+            {
+              "id": "cancel",
+              "label": "Cancel",
+              "selected": false
+            }
+          ],
+          "services": [],
+          "connection_url": null,
+          "external_bot_id": null,
+          "admission": null,
+          "result": null,
+          "notice": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "bot-setup-forbidden",
+      "operation": "POST /api/v1/bot-setups/advance",
+      "scenario": "bot_setup_contract_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/bot-setups/advance",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "event_ref": "event-contract",
+          "activity": {
+            "schema_version": 1,
+            "event_id": "event-contract",
+            "kind": {
+              "type": "message",
+              "text": "Create my bot",
+              "attachments": [],
+              "mentions_bot": false
+            },
+            "actor": {
+              "id": "actor-contract",
+              "kind": "human"
+            },
+            "conversation": {
+              "id": "chat-contract",
+              "kind": "private"
+            },
+            "occurred_at": "2026-09-28T00:00:00Z",
+            "source": {
+              "type": "nyxid_relay",
+              "platform": "telegram",
+              "route_id": "route-contract"
+            }
+          },
+          "draft": {},
+          "customization": {}
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/setup_authority_required",
+          "title": "setup_authority_required",
+          "status": 403,
+          "detail": "bot management is forbidden",
+          "code": "setup_authority_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "bot-setup-missing",
+      "operation": "POST /api/v1/bot-setups/advance",
+      "scenario": "bot_setup_contract_missing",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/bot-setups/advance",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "event_ref": "event-contract",
+          "activity": {
+            "schema_version": 1,
+            "event_id": "event-contract",
+            "kind": {
+              "type": "message",
+              "text": "Create my bot",
+              "attachments": [],
+              "mentions_bot": false
+            },
+            "actor": {
+              "id": "actor-contract",
+              "kind": "human"
+            },
+            "conversation": {
+              "id": "chat-contract",
+              "kind": "private"
+            },
+            "occurred_at": "2026-09-28T00:00:00Z",
+            "source": {
+              "type": "nyxid_relay",
+              "platform": "telegram",
+              "route_id": "route-contract"
+            }
+          },
+          "draft": {},
+          "customization": {}
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/setup_not_found",
+          "title": "setup_not_found",
+          "status": 404,
+          "detail": "bot not found",
+          "code": "setup_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "bot-setup-conflict",
+      "operation": "POST /api/v1/bot-setups/advance",
+      "scenario": "bot_setup_contract_conflict",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/bot-setups/advance",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "event_ref": "event-contract",
+          "activity": {
+            "schema_version": 1,
+            "event_id": "event-contract",
+            "kind": {
+              "type": "message",
+              "text": "Create my bot",
+              "attachments": [],
+              "mentions_bot": false
+            },
+            "actor": {
+              "id": "actor-contract",
+              "kind": "human"
+            },
+            "conversation": {
+              "id": "chat-contract",
+              "kind": "private"
+            },
+            "occurred_at": "2026-09-28T00:00:00Z",
+            "source": {
+              "type": "nyxid_relay",
+              "platform": "telegram",
+              "route_id": "route-contract"
+            }
+          },
+          "draft": {},
+          "customization": {}
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/setup_changed",
+          "title": "setup_changed",
+          "status": 409,
+          "detail": "bot operation conflicts with current work",
+          "code": "setup_changed"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "bot-setup-unavailable",
+      "operation": "POST /api/v1/bot-setups/advance",
+      "scenario": "bot_setup_contract_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/bot-setups/advance",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "event_ref": "event-contract",
+          "activity": {
+            "schema_version": 1,
+            "event_id": "event-contract",
+            "kind": {
+              "type": "message",
+              "text": "Create my bot",
+              "attachments": [],
+              "mentions_bot": false
+            },
+            "actor": {
+              "id": "actor-contract",
+              "kind": "human"
+            },
+            "conversation": {
+              "id": "chat-contract",
+              "kind": "private"
+            },
+            "occurred_at": "2026-09-28T00:00:00Z",
+            "source": {
+              "type": "nyxid_relay",
+              "platform": "telegram",
+              "route_id": "route-contract"
+            }
+          },
+          "draft": {},
+          "customization": {}
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/setup_unavailable",
+          "title": "setup_unavailable",
+          "status": 503,
+          "detail": "bot dependency is unavailable",
+          "code": "setup_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "bot-setup-oversized-ref",
+      "operation": "POST /api/v1/bot-setups/advance",
+      "scenario": "bot_setup_contract_oversized",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/bot-setups/advance",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "event_ref": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "activity": {
+            "schema_version": 1,
+            "event_id": "event-contract",
+            "kind": {
+              "type": "message",
+              "text": "Create my bot",
+              "attachments": [],
+              "mentions_bot": false
+            },
+            "actor": {
+              "id": "actor-contract",
+              "kind": "human"
+            },
+            "conversation": {
+              "id": "chat-contract",
+              "kind": "private"
+            },
+            "occurred_at": "2026-09-28T00:00:00Z",
+            "source": {
+              "type": "nyxid_relay",
+              "platform": "telegram",
+              "route_id": "route-contract"
+            }
+          },
+          "draft": {},
+          "customization": {}
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_setup",
+          "title": "invalid_setup",
+          "status": 400,
+          "detail": "Event reference exceeds the permitted size.",
+          "code": "invalid_setup"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "bot-setup-unsupported-activity",
+      "operation": "POST /api/v1/bot-setups/advance",
+      "scenario": "bot_setup_contract_invalid",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/bot-setups/advance",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "event_ref": "unsupported-event",
+          "activity": {
+            "schema_version": 1,
+            "event_id": "unsupported-event",
+            "kind": {
+              "type": "event",
+              "ce": {}
+            },
+            "actor": {
+              "id": "actor-contract",
+              "kind": "human"
+            },
+            "conversation": {
+              "id": "chat-contract",
+              "kind": "private"
+            },
+            "occurred_at": "2026-09-28T00:00:00Z",
+            "source": {
+              "type": "nyxid_relay",
+              "platform": "telegram",
+              "route_id": "route-contract"
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_setup",
+          "title": "invalid_setup",
+          "status": 400,
+          "detail": "Unsupported setup activity",
+          "code": "invalid_setup"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "bot-setup-foreign-actor",
+      "operation": "POST /api/v1/bot-setups/advance",
+      "scenario": "bot_setup_contract_foreign",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/bot-setups/advance",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "event_ref": "event-contract",
+          "activity": {
+            "schema_version": 1,
+            "event_id": "event-contract",
+            "kind": {
+              "type": "message",
+              "text": "Create my bot",
+              "attachments": [],
+              "mentions_bot": false
+            },
+            "actor": {
+              "id": "foreign-actor",
+              "kind": "human"
+            },
+            "conversation": {
+              "id": "chat-contract",
+              "kind": "private"
+            },
+            "occurred_at": "2026-09-28T00:00:00Z",
+            "source": {
+              "type": "nyxid_relay",
+              "platform": "telegram",
+              "route_id": "route-contract"
+            }
+          },
+          "draft": {},
+          "customization": {}
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/setup_authority_required",
+          "title": "setup_authority_required",
+          "status": 403,
+          "detail": "bot management is forbidden",
+          "code": "setup_authority_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

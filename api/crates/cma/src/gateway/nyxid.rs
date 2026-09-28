@@ -67,7 +67,11 @@ impl NyxidClient {
         Ok(result
             .bots
             .into_iter()
-            .filter(|b| b.user_id == owner && b.is_active && b.platform == "telegram")
+            .filter(|b| {
+                b.user_id == owner
+                    && b.is_active
+                    && matches!(b.platform.as_str(), "telegram" | "telegram-new")
+            })
             .map(|b| ExternalBot {
                 id: b.id,
                 name: b.label,
@@ -88,16 +92,28 @@ impl NyxidClient {
         if result.id != bot.request.external_bot_id
             || result.user_id != bot.owner.as_str()
             || !result.is_active
-            || result.platform != "telegram"
+            || !matches!(result.platform.as_str(), "telegram" | "telegram-new")
         {
             return Err(BotError::Forbidden);
         }
         Ok(result)
     }
+    #[allow(dead_code)] // Used by the route cleanup/reconciliation worker.
     pub async fn routes(&self, token: &str) -> Result<Vec<Route>, BotError> {
-        let result: Routes = self
-            .json(token, Method::GET, "/api/v1/channel-conversations", None)
-            .await?;
+        self.routes_at(token, "/api/v1/channel-conversations").await
+    }
+    pub async fn routes_for_bot(&self, token: &str, bot: &Bot) -> Result<Vec<Route>, BotError> {
+        let path = match bot.resource_owner() {
+            layer2_core::resource_access::ResourceOwner::Organization { subject } => {
+                identifier(subject.as_str())?;
+                format!("/api/v1/channel-conversations?org_id={subject}")
+            }
+            _ => "/api/v1/channel-conversations".into(),
+        };
+        self.routes_at(token, &path).await
+    }
+    async fn routes_at(&self, token: &str, path: &str) -> Result<Vec<Route>, BotError> {
+        let result: Routes = self.json(token, Method::GET, path, None).await?;
         complete(
             result.total,
             result.conversations.iter().map(|r| r.id.as_str()),
@@ -111,16 +127,29 @@ impl NyxidClient {
         key: &str,
     ) -> Result<String, BotError> {
         // No route owned by another integration may be silently overridden.
-        if self.routes(token).await?.iter().any(|r| {
+        if self.routes_for_bot(token, bot).await?.iter().any(|r| {
             r.channel_bot_id.as_deref() == Some(&bot.request.external_bot_id) && r.is_active
         }) {
             return Err(BotError::Invalid(
                 "the selected external bot already has an active route".into(),
             ));
         }
-        let route: Route = self.json(token, Method::POST, "/api/v1/channel-conversations", Some(json!({
+        let mut body = json!({
             "channel_bot_id":bot.request.external_bot_id,"agent_api_key_id":key,"default_agent":true,"platform_conversation_id":"*"
-        }))).await?;
+        });
+        if let layer2_core::resource_access::ResourceOwner::Organization { subject } =
+            bot.resource_owner()
+        {
+            body["target_org_id"] = subject.as_str().into();
+        }
+        let route: Route = self
+            .json(
+                token,
+                Method::POST,
+                "/api/v1/channel-conversations",
+                Some(body),
+            )
+            .await?;
         route.require(bot, &[key.to_owned()])?;
         Ok(route.id)
     }
@@ -133,7 +162,7 @@ impl NyxidClient {
         owned: &[String],
     ) -> Result<(), BotError> {
         identifier(route)?;
-        let routes = self.routes(token).await?;
+        let routes = self.routes_for_bot(token, bot).await?;
         let current = routes
             .iter()
             .find(|r| r.id == route)
@@ -161,7 +190,7 @@ impl NyxidClient {
             .as_deref()
             .ok_or(BotError::Unavailable)?;
         identifier(expected)?;
-        let routes = self.routes(token).await?;
+        let routes = self.routes_for_bot(token, bot).await?;
         let mut retained = None;
         for route in routes {
             if route.id == expected {
@@ -184,7 +213,7 @@ impl NyxidClient {
         bot: &Bot,
         keys: &[String],
     ) -> Result<(), BotError> {
-        let routes = self.routes(token).await?;
+        let routes = self.routes_for_bot(token, bot).await?;
         let selected: Vec<_> = routes
             .iter()
             .filter(|r| keys.contains(&r.agent_api_key_id))
@@ -220,7 +249,7 @@ impl Route {
     pub fn require(&self, bot: &Bot, keys: &[String]) -> Result<(), BotError> {
         identifier(&self.id)?;
         if self.channel_bot_id.as_deref() != Some(&bot.request.external_bot_id)
-            || self.platform != "telegram"
+            || !matches!(self.platform.as_str(), "telegram" | "telegram-new")
             || !keys.contains(&self.agent_api_key_id)
             || self.platform_conversation_id != "*"
             || !self.default_agent

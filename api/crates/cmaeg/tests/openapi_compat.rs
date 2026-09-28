@@ -35,10 +35,15 @@ fn openapi_compat_export_is_fresh_sorted_and_needs_no_secrets() {
     let document = snapshot();
     assert_eq!(document["info"]["version"], "1.0");
     assert_eq!(document["servers"], json!([{"url":"/v1"}]));
-    assert_eq!(
-        document["paths"]["/channels/{channel_id}"]["delete"]["parameters"][1]["in"],
-        "query"
-    );
+    let parameters = document["paths"]["/channels/{channel_id}"]["delete"]["parameters"]
+        .as_array()
+        .unwrap();
+    let version = parameters
+        .iter()
+        .find(|parameter| parameter["name"] == "expected_version")
+        .expect("channel deletion must require an expected version");
+    assert_eq!(version["in"], "query");
+    assert_eq!(version["required"], true);
 }
 
 #[test]
@@ -129,7 +134,14 @@ fn openapi_compat_protects_operations_media_security_and_parameters() {
     paths["/channels"]["post"]["operationId"] = json!("renamed");
     paths["/channels"]["post"]["security"] = json!([]);
     paths["/channels"]["post"]["requestBody"]["content"] = json!({});
-    paths["/channels/{channel_id}"]["delete"]["parameters"][1]["in"] = json!("header");
+    let parameters = paths["/channels/{channel_id}"]["delete"]["parameters"]
+        .as_array_mut()
+        .unwrap();
+    let version = parameters
+        .iter_mut()
+        .find(|parameter| parameter["name"] == "expected_version")
+        .unwrap();
+    version["in"] = json!("header");
     paths["/channels/{channel_id}"]["get"]["responses"]
         .as_object_mut()
         .unwrap()

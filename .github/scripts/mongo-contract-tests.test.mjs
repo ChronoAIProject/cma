@@ -14,6 +14,8 @@ const requiredPrefixes = [
   'store::bindings::',
   'store::gateway_records_mongo_integration_tests::',
   'store::bots_mongo_integration_tests::',
+  'store::bot_setups::mongo_integration_tests::',
+  'bot_setups::events::tests::',
   'store::trigger_definitions::launch_mongo_integration_tests::',
   'store::checkpoint_objects::mongo_integration_tests::',
   'store::sandbox_mongo_integration_tests::checkpoint_capture_tests::',

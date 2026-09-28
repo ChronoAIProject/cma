@@ -83,6 +83,7 @@ impl App {
                 event_id: payload.event_id.clone(),
                 platform_message_id: "platform-1".into(),
                 route_id: "route-1".into(),
+                interaction_record_id: None,
             },
             &fixture.state.master_keys,
         )

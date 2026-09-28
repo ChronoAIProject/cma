@@ -54,6 +54,12 @@
     "name": "protocol-8"
   },
   {
+    "source": "CMAEG_Protocol.md",
+    "index": 9,
+    "sha256": "1bdd1287bbe65f5c23dd6c7879c1b47b261a49261fbfd5bd3a91dd08e05e7353",
+    "name": "protocol-9"
+  },
+  {
     "source": "CMAEG_Architecture.md",
     "index": 0,
     "sha256": "6749c7a34c99e07138ae8fcfccb3fe801103f9f4b42e7824e6171ef817984e3b",

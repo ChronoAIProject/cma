@@ -9,6 +9,7 @@ use axum::http::HeaderMap;
 use layer2_core::{Authorization, Capability, StoreError, SubjectId};
 use tokio::sync::RwLock;
 
+pub mod actor_links;
 mod agent_keys;
 pub mod bearer;
 mod bearer_authorization;
@@ -90,6 +91,7 @@ impl std::fmt::Debug for AuthMode {
 }
 
 pub struct AuthState {
+    bot_father_username: Option<String>,
     agent_key_service_id: Option<String>,
     bindings: Option<Arc<layer2_core::sandbox::binding::BindingAccessService>>,
     pub(super) mode: AuthMode,
@@ -147,6 +149,7 @@ impl AuthState {
             (AuthMode::Trusted { .. }, _) => String::new(),
         };
         Arc::new(Self {
+            bot_father_username: None,
             bindings: None,
             agent_key_service_id: None,
             mode,

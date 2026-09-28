@@ -37,6 +37,14 @@ export function App() {
   }>();
   const [hierarchyRevision, setHierarchyRevision] = useState(0);
 
+  // NyxID hosted connection links redirect their popup here after the
+  // credential is saved. The main CMA window is already polling the durable
+  // connection state. Keep its child window available for the next service;
+  // the main window closes it only after the entire sequence is verified.
+  if (window.location.pathname === '/connection-return') {
+    return <ConnectionReturnPage />;
+  }
+
   if (
     (router.route.kind === 'public_trigger' || router.route.kind === 'launch') &&
     publicClient !== undefined &&
@@ -124,5 +132,20 @@ export function App() {
         )}
       </Presence>
     </ReferenceProvider>
+  );
+}
+
+function ConnectionReturnPage() {
+  return (
+    <main className="app-error">
+      <p className="app-error__what">Returning to CMA</p>
+      <p className="app-error__next">
+        CMA is checking your connection. Your next sign-in will open here, or this window will close
+        when all services are ready. If nothing happens, return to the CMA window to continue.
+      </p>
+      <button type="button" onClick={() => window.close()}>
+        Close this window
+      </button>
+    </main>
   );
 }

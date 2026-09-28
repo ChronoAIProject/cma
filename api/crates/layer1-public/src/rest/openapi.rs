@@ -39,6 +39,7 @@ use super::trigger_openapi_shapes::*;
         super::event_workers::update,
         super::event_workers::retire,
         super::bots::create,
+        super::bot_setups::advance,
         super::bots::list,
         super::bots::read,
         super::bots::available,
@@ -174,6 +175,7 @@ use super::trigger_openapi_shapes::*;
         super::admin::activity,
         super::bindings::put_binding, super::bindings::get_binding, super::bindings::delete_binding, super::bindings::put_conversation, super::bindings::delete_conversation, super::gateway_records::put_record, super::gateway_records::get_record,
         super::gateway_records::delete_record, super::gateway_records::list,
+        super::gateway_interactions::write, super::gateway_interactions::read, super::gateway_interactions::delete,
     ),
     components(schemas(
         super::agent_artifacts::AgentArtifactView,

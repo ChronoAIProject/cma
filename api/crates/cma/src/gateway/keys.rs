@@ -79,7 +79,7 @@ impl Key {
     fn require(&self, bot: &Bot) -> Result<BotKeyRole, BotError> {
         identifier(&self.id)?;
         let role = role(bot, &self.name).ok_or(BotError::Forbidden)?;
-        if self.credential_source != json!({"type":"personal"})
+        if !crate::auth::keys::owner_matches(&self.credential_source, &bot.resource_owner())
             || self.scopes != "proxy read"
             || self.allow_all_services
             || self.allow_all_nodes
@@ -99,9 +99,14 @@ impl Key {
 }
 impl NyxidClient {
     pub async fn owned_keys(&self, token: &str, bot: &Bot) -> Result<Vec<BotKeyRef>, BotError> {
-        let result: Keys = self
-            .json(token, Method::GET, "/api/v1/api-keys", None)
-            .await?;
+        let path = match bot.resource_owner() {
+            layer2_core::resource_access::ResourceOwner::Organization { subject } => {
+                identifier(subject.as_str())?;
+                format!("/api/v1/api-keys?org_id={subject}")
+            }
+            _ => "/api/v1/api-keys".into(),
+        };
+        let result: Keys = self.json(token, Method::GET, &path, None).await?;
         complete(
             result.keys.len() as u64,
             result.keys.iter().map(|k| k.id.as_str()),
@@ -140,7 +145,7 @@ impl NyxidClient {
         }
         self.owned_key(token, bot, id).await?;
         if self
-            .routes(token)
+            .routes_for_bot(token, bot)
             .await?
             .iter()
             .any(|r| r.agent_api_key_id == id)

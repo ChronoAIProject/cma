@@ -72,7 +72,21 @@ pub fn router(auth: Arc<AuthState>) -> Router {
         .route("/auth/session", get(read))
         .route("/auth/signup-options", get(signup_options))
         .route("/auth/logout", get(logout))
+        .merge(super::actor_links::routes())
         .with_state(auth)
+}
+
+/// Reuse the established browser-bound PKCE flow for an opaque actor-link intent.
+pub(super) async fn actor_login(auth: Arc<AuthState>, link_id: &str) -> Response {
+    if !opaque_path_segment(link_id) || link_id.len() > 100 {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    begin_login(
+        auth,
+        Some(format!("/auth/bot-father/link/{link_id}/complete")),
+        None,
+    )
+    .await
 }
 
 async fn login(State(auth): State<Arc<AuthState>>, Query(params): Query<LoginParams>) -> Response {
@@ -357,6 +371,7 @@ fn app_return_target(value: &str) -> Result<String, ()> {
         ["sandboxes", sandbox_id] if opaque_path_segment(sandbox_id) => {}
         ["bots"] => {}
         ["bots", bot_id] if opaque_path_segment(bot_id) => {}
+        ["auth", "bot-father", "link", intent, "complete"] if opaque_path_segment(intent) => {}
         ["profiles"] | ["marketplace"] => {}
         ["profiles" | "marketplace", kind, profile_id]
             if matches!(*kind, "agent" | "workspace" | "sandbox")

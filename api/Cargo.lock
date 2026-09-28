@@ -337,6 +337,8 @@ dependencies = [
  "async-trait",
  "axum",
  "base64",
+ "cmaeg",
+ "cmaeg-core",
  "flate2",
  "futures-util",
  "governor",

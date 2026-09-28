@@ -28,12 +28,20 @@ pub(super) const BROWSER_LOGINS: &str = "auth_browser_logins";
 pub(super) const LOGIN_ATTEMPTS: &str = "auth_login_attempts";
 pub(super) const SUBJECTS: &str = "auth_subjects";
 pub(super) const API_BEARERS: &str = "auth_api_bearers";
-pub(super) const AUTH_COLLECTIONS: &[&str] =
-    &[BROWSER_LOGINS, LOGIN_ATTEMPTS, SUBJECTS, API_BEARERS];
+pub(super) const ACTOR_LINKS: &str = "auth_actor_links";
+pub(super) const AUTH_COLLECTIONS: &[&str] = &[
+    BROWSER_LOGINS,
+    LOGIN_ATTEMPTS,
+    SUBJECTS,
+    API_BEARERS,
+    ACTOR_LINKS,
+];
 const EXPIRY_INDEX: &str = "expires_at_ttl";
 const LOGIN_KIND: &str = "login-attempt";
 const SUBJECT_KIND: &str = "subject-auth";
 
+#[path = "auth_actor_links.rs"]
+mod actor_links;
 #[path = "auth_api_bearers.rs"]
 mod api_bearers;
 
@@ -94,6 +102,7 @@ pub struct MongoAuthStore {
     login_attempts: Collection<LoginAttemptDoc>,
     subjects: Collection<SubjectDoc>,
     api_bearers: Collection<api_bearers::ApiBearerDoc>,
+    actor_links: Collection<actor_links::ActorLinkDoc>,
     cipher: AuthCipher,
 }
 
@@ -111,6 +120,7 @@ impl MongoAuthStore {
             login_attempts: majority_collection(&database, LOGIN_ATTEMPTS),
             subjects: majority_collection(&database, SUBJECTS),
             api_bearers: majority_collection(&database, API_BEARERS),
+            actor_links: majority_collection(&database, ACTOR_LINKS),
             cipher: AuthCipher::new(deployment, encryption_key)?,
         };
         let expiry = || {
@@ -139,6 +149,16 @@ impl MongoAuthStore {
             .create_index(expiry())
             .await
             .map_err(|_| StoreError::Unavailable("API bearer custody expiry index".into()))?;
+        store
+            .actor_links
+            .create_index(
+                IndexModel::builder()
+                    .keys(doc! {"link_id":1})
+                    .options(IndexOptions::builder().unique(true).build())
+                    .build(),
+            )
+            .await
+            .map_err(|_| StoreError::Unavailable("actor link identity index".into()))?;
         Ok(store)
     }
 
@@ -270,6 +290,32 @@ impl MongoAuthStore {
 
 #[async_trait::async_trait]
 impl AuthStore for MongoAuthStore {
+    async fn due_actor_links(
+        &self,
+        renewed_before: u64,
+        limit: usize,
+    ) -> Result<Vec<crate::auth::actor_links::ActorLinkRecord>, StoreError> {
+        self.actor_links_due(renewed_before, limit).await
+    }
+    async fn actor_link_for_actor(
+        &self,
+        actor_key: &str,
+    ) -> Result<Option<crate::auth::actor_links::ActorLinkRecord>, StoreError> {
+        self.read_actor_link(doc! {"_id":actor_key}).await
+    }
+    async fn actor_link_by_id(
+        &self,
+        link_id: &str,
+    ) -> Result<Option<crate::auth::actor_links::ActorLinkRecord>, StoreError> {
+        self.read_actor_link(doc! {"link_id":link_id}).await
+    }
+    async fn replace_actor_link(
+        &self,
+        expected_revision: Option<u64>,
+        link: crate::auth::actor_links::ActorLinkRecord,
+    ) -> Result<bool, StoreError> {
+        self.write_actor_link(expected_revision, link).await
+    }
     async fn insert_api_bearer(&self, custody: ApiBearerCustody) -> Result<bool, StoreError> {
         self.insert_api_bearer_record(custody).await
     }
