@@ -1,4 +1,4 @@
-use super::input::draft;
+use super::input::{draft, is_setup_activity};
 use super::{input::request, view::SetupView};
 use cmaeg_core::activity::{
     Activity, ActivityConversation, ActivityKind, Actor, ActorKind, ConversationKind, SourceKind,
@@ -34,6 +34,46 @@ fn activity(text: &str) -> Activity {
             route_id: "route".into(),
         },
     }
+}
+
+#[test]
+fn ordinary_bot_father_messages_remain_provider_turns() {
+    for text in [
+        "hi",
+        "How's the weather today?",
+        "Search the web for today's news",
+    ] {
+        assert!(
+            !is_setup_activity(&activity(text)),
+            "unexpected setup routing: {text}"
+        );
+    }
+}
+
+#[test]
+fn explicit_setup_controls_keep_the_durable_workflow() {
+    for text in [
+        "create",
+        "/create",
+        "name: Paper assistant",
+        "instructions: Explain papers",
+        "{\"agent\":{}}",
+        "```json\n{\"agent\":{}}\n```",
+        "link_abcdef",
+    ] {
+        assert!(
+            is_setup_activity(&activity(text)),
+            "missing setup routing: {text}"
+        );
+    }
+}
+
+#[test]
+fn explicit_name_control_becomes_a_draft_name() {
+    assert_eq!(
+        draft(&activity("name: Paper assistant"))["name"],
+        "Paper assistant"
+    );
 }
 
 #[test]
