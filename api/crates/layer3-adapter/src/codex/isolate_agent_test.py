@@ -42,6 +42,64 @@ class IsolationTests(unittest.TestCase):
             ("tools", "127.0.0.1", 9093),
         ))
 
+    def test_https_rejects_private_metadata_reserved_and_mixed_dns_answers(self):
+        public = (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))
+        for address in [
+            "127.0.0.1", "10.2.3.4", "172.16.0.1", "192.168.1.1",
+            "169.254.169.254", "100.100.100.200", "0.0.0.0", "224.0.0.1",
+            "::1", "fe80::1", "fc00::1", "fec0::1", "ff02::1", "::ffff:127.0.0.1",
+        ]:
+            family = socket.AF_INET6 if ":" in address else socket.AF_INET
+            sockaddr = (address, 443, 0, 0) if family == socket.AF_INET6 else (address, 443)
+            private = (family, socket.SOCK_STREAM, 6, "", sockaddr)
+            for answers in ([private], [public, private]):
+                with self.subTest(address=address, mixed=len(answers) > 1):
+                    with mock.patch.object(isolate.socket, "getaddrinfo", return_value=answers):
+                        with self.assertRaises(ValueError):
+                            isolate.public_addresses("weather.example:443")
+
+    def test_https_rejects_bad_authorities_and_plain_http_ports_before_dns(self):
+        for authority in [
+            "127.0.0.1:9090", "weather.example:80", "weather.example",
+            "user:password@weather.example:443", "weather.example:443/path",
+            "weather.example:443?x=1", "weather.example:443#fragment",
+            "weather.example:443\r\n", "[fe80::1%eth0]:443",
+        ]:
+            with self.subTest(authority=authority):
+                with mock.patch.object(isolate.socket, "getaddrinfo") as resolve:
+                    with self.assertRaises(ValueError):
+                        isolate.public_addresses(authority)
+                    resolve.assert_not_called()
+
+    def test_https_connect_pins_numeric_ip_after_single_dns_resolution(self):
+        answers = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))]
+        upstream = mock.Mock()
+        with mock.patch.object(isolate.socket, "getaddrinfo", return_value=answers) as resolve:
+            with mock.patch.object(isolate.socket, "socket", return_value=upstream):
+                self.assertIs(isolate.connect_public("weather.example:443"), upstream)
+                resolve.assert_called_once_with("weather.example", 443, type=socket.SOCK_STREAM)
+                upstream.connect.assert_called_once_with(("93.184.216.34", 443))
+
+    def test_https_connect_handler_tunnels_data_and_plain_http_is_explicitly_refused(self):
+        with tempfile.TemporaryDirectory(prefix="cma-https-test-", dir="/tmp") as root:
+            with mock.patch.object(isolate, "PROXIES", ()):
+                with isolate.relays(root, inside=False):
+                    for method, expected in [("GET https://weather.example/ HTTP/1.1", b"405"),
+                                             ("CONNECT weather.example:443 HTTP/1.1", b"200")]:
+                        remote, peer = socket.socketpair()
+                        with remote, peer, mock.patch.object(isolate, "connect_public", return_value=remote):
+                            with socket.socket(socket.AF_UNIX) as client:
+                                client.settimeout(3)
+                                peer.settimeout(3)
+                                client.connect(str(pathlib.Path(root) / "https.sock"))
+                                client.sendall(method.encode() + b"\r\nHost: weather.example\r\n\r\n")
+                                self.assertIn(expected, client.recv(4096))
+                                if expected == b"200":
+                                    client.sendall(b"TLS fixture request")
+                                    self.assertEqual(peer.recv(4096), b"TLS fixture request")
+                                    peer.sendall(b"TLS fixture reply")
+                                    self.assertEqual(client.recv(4096), b"TLS fixture reply")
+
     def test_relay_duplex_forwards_to_fixed_server_even_with_destination_headers(self):
         with socket.socket() as upstream:
             upstream.bind(("127.0.0.1", 0))
