@@ -114,6 +114,9 @@ pub struct ChoiceOption {
     pub id: String,
     /// Wire field `label`.
     pub label: String,
+    /// Wire field `selected`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected: Option<bool>,
     /// Wire field `style`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub style: Option<OptionStyle>,

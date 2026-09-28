@@ -101,7 +101,7 @@ CMA and CMAEG as separate clients; configure each with its own service origin.
 ## Full event context and restart recovery
 
 A sealed event reference is bounded to 4 KiB. It carries authenticated identity
-and routing information; full activity text may be 32 KiB and cannot fit inside
+and routing information plus a digest of the complete canonical Activity; full activity text may be 32 KiB and cannot fit inside
 that reference. CMA persists the complete activity with the provider turn during
 ordinary admission. This adds no separate write call on the event ingress path.
 
@@ -113,7 +113,25 @@ the immutable activity through the provider endpoint:
 The provider checks the binding credential and the exact binding, conversation
 and event. A later gateway replica can retrieve the same full activity after its
 cache is gone. It must never manufacture missing text from a truncated event
-reference or return another conversation's context.
+reference or return another conversation's context. New references attest the
+activity digest, so changing an actor or callback selection in provider storage
+cannot create valid sender authority. Legacy references are explicitly unverified.
+
+## Native interactions
+
+CMAEG owns neutral cards, choices, compact button handles, callback validation
+and message edits. NyxID owns Telegram credentials and platform transport (including the
+`telegram-new` managed adapter alias, normalized by CMAEG to Telegram).
+Providers own business decisions such as login, owner selection and provisioning.
+The existing four gateway tools carry all native interaction operations.
+
+Interaction records use a distinct encrypted `/api/v1/gateway/interaction-records`
+namespace with compare-and-set versions and expiry. Records bind each card to
+one channel, route, actor, chat/thread and exact outgoing Nyx message UUID.
+They survive gateway replica restarts; stale and cross-user clicks cannot advance
+a card. A click consumes one revision, and the provider replies with or edits the
+next card. Telegram message IDs alone are insufficient because they are only
+unique inside a chat. Full flow and examples are in Protocol §8.
 
 ## Credentials and persistence
 

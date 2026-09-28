@@ -216,6 +216,9 @@ describe('shared public contract', () => {
           status: fixture.response.status,
           code: problemBody(fixture).code,
         });
+      } else if (fixture.response.status >= 400 && fixture.response.bodyKind === 'empty') {
+        await expect(invoke()).rejects.toBeInstanceOf(ProtocolError);
+        expect(fetch).toHaveBeenCalledOnce();
       } else if (
         fixture.response.status >= 400 &&
         !(fixture.operation === 'GET /auth/session' && fixture.response.status === 401)

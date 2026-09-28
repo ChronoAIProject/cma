@@ -22,15 +22,28 @@ pub(crate) struct CmaServiceConnectionBroker {
 }
 
 enum BrokerMode {
-    Provider(NyxidServiceConnectionBroker),
+    Provider(Box<NyxidServiceConnectionBroker>),
     Trusted,
 }
 
 impl CmaServiceConnectionBroker {
     /// Build the broker from the same auth configuration used by request auth.
+    #[allow(
+        dead_code,
+        reason = "callback-free constructor remains useful for isolated broker tests"
+    )]
     pub(crate) fn from_auth_config(
         auth_mode: &AuthMode,
         nyxid_public_url: Option<&str>,
+        auth: Arc<AuthState>,
+    ) -> Result<Self, ServiceConnectionError> {
+        Self::from_auth_config_with_callback(auth_mode, nyxid_public_url, None, auth)
+    }
+
+    pub(crate) fn from_auth_config_with_callback(
+        auth_mode: &AuthMode,
+        nyxid_public_url: Option<&str>,
+        cma_public_url: Option<&str>,
         auth: Arc<AuthState>,
     ) -> Result<Self, ServiceConnectionError> {
         match auth_mode {
@@ -41,12 +54,17 @@ impl CmaServiceConnectionBroker {
                     .redirect(reqwest::redirect::Policy::none())
                     .build()
                     .expect("the rustls HTTP client builds");
-                NyxidServiceConnectionBroker::new(http, base_url, browser_origin, auth).map(
-                    |broker| Self {
-                        mode: BrokerMode::Provider(broker),
-                        subscriptions: None,
-                    },
+                NyxidServiceConnectionBroker::new_with_callback(
+                    http,
+                    base_url,
+                    browser_origin,
+                    cma_public_url,
+                    auth,
                 )
+                .map(|broker| Self {
+                    mode: BrokerMode::Provider(Box::new(broker)),
+                    subscriptions: None,
+                })
             }
             AuthMode::Trusted { .. } => Ok(Self {
                 mode: BrokerMode::Trusted,

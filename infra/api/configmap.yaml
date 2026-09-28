@@ -51,6 +51,8 @@ data:
   CHRONO_NYXID_PUBLIC_URL: "https://nyx.chrono-ai.fun"
   CHRONO_CMAEG_BASE_URL: "http://cmaeg"
   CHRONO_CMAEG_PUBLIC_URL: "https://bot-gateway.chrono-ai.fun"
+  CHRONO_BOT_FATHER_BINDING_ID: "bnd_77fe02e529054f0086ce5d50a63bfe47"
+  CHRONO_BOT_FATHER_TELEGRAM_USERNAME: "CMA_Trureturing_Bot"
   # Provider-issued OAuth client identifier, not a secret or a chosen name.
   CHRONO_NYXID_CLIENT_ID: "c0cd33d2-27ba-4b8d-b38e-562364fadb72"
   # Must match the database authorized by the Secret's connection URI.

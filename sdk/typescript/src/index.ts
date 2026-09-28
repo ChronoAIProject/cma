@@ -3,6 +3,8 @@
 export { Cma, createClient } from './client.js';
 export * from './resource-access.js';
 export * from './bots.js';
+export * from './bot-setups.js';
+export * from './gateway-interactions.js';
 export {
   Agents,
   type AgentListOptions,

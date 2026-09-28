@@ -173,6 +173,40 @@ pub(super) fn next_auth_counter(value: u64) -> Result<u64, StoreError> {
 
 #[async_trait::async_trait]
 pub trait AuthStore: Send + Sync {
+    async fn due_actor_links(
+        &self,
+        _renewed_before: u64,
+        _limit: usize,
+    ) -> Result<Vec<super::actor_links::ActorLinkRecord>, StoreError> {
+        Err(StoreError::Unavailable(
+            "actor links are not configured".into(),
+        ))
+    }
+    async fn actor_link_for_actor(
+        &self,
+        _actor_key: &str,
+    ) -> Result<Option<super::actor_links::ActorLinkRecord>, StoreError> {
+        Err(StoreError::Unavailable(
+            "actor links are not configured".into(),
+        ))
+    }
+    async fn actor_link_by_id(
+        &self,
+        _link_id: &str,
+    ) -> Result<Option<super::actor_links::ActorLinkRecord>, StoreError> {
+        Err(StoreError::Unavailable(
+            "actor links are not configured".into(),
+        ))
+    }
+    async fn replace_actor_link(
+        &self,
+        _expected_revision: Option<u64>,
+        _link: super::actor_links::ActorLinkRecord,
+    ) -> Result<bool, StoreError> {
+        Err(StoreError::Unavailable(
+            "actor links are not configured".into(),
+        ))
+    }
     /// Immutable, independently held API credential; never replaces a login.
     async fn insert_api_bearer(&self, custody: ApiBearerCustody) -> Result<bool, StoreError>;
     async fn api_bearer(&self, id: &SecretDigest) -> Result<Option<ApiBearerCustody>, StoreError>;
@@ -206,6 +240,7 @@ pub struct MemoryAuthStore {
     browsers: Mutex<HashMap<SecretDigest, BrowserLogin>>,
     subjects: Mutex<HashMap<SubjectId, SubjectAuthState>>,
     api_bearers: Mutex<HashMap<SecretDigest, ApiBearerCustody>>,
+    actor_links: Mutex<HashMap<String, super::actor_links::ActorLinkRecord>>,
 }
 
 #[cfg(test)]
@@ -238,6 +273,56 @@ impl MemoryAuthStore {
 #[cfg(test)]
 #[async_trait::async_trait]
 impl AuthStore for MemoryAuthStore {
+    async fn due_actor_links(
+        &self,
+        renewed_before: u64,
+        limit: usize,
+    ) -> Result<Vec<super::actor_links::ActorLinkRecord>, StoreError> {
+        self.available()?;
+        Ok(self
+            .actor_links
+            .lock()
+            .await
+            .values()
+            .filter(|row| row.active && !row.revoked && row.renewed_at <= renewed_before)
+            .take(limit)
+            .cloned()
+            .collect())
+    }
+    async fn actor_link_for_actor(
+        &self,
+        actor_key: &str,
+    ) -> Result<Option<super::actor_links::ActorLinkRecord>, StoreError> {
+        self.available()?;
+        Ok(self.actor_links.lock().await.get(actor_key).cloned())
+    }
+    async fn actor_link_by_id(
+        &self,
+        link_id: &str,
+    ) -> Result<Option<super::actor_links::ActorLinkRecord>, StoreError> {
+        self.available()?;
+        Ok(self
+            .actor_links
+            .lock()
+            .await
+            .values()
+            .find(|row| row.link_id == link_id)
+            .cloned())
+    }
+    async fn replace_actor_link(
+        &self,
+        expected_revision: Option<u64>,
+        link: super::actor_links::ActorLinkRecord,
+    ) -> Result<bool, StoreError> {
+        self.available()?;
+        link.validate()?;
+        let mut rows = self.actor_links.lock().await;
+        if rows.get(&link.actor_key).map(|row| row.revision) != expected_revision {
+            return Ok(false);
+        }
+        rows.insert(link.actor_key.clone(), link);
+        Ok(true)
+    }
     async fn insert_api_bearer(&self, custody: ApiBearerCustody) -> Result<bool, StoreError> {
         self.available()?;
         custody.validate()?;

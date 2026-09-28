@@ -136,6 +136,8 @@ pub struct BotTestResult {
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Bot {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ownership: Option<super::BotOwnership>,
     pub bot_id: String,
     pub owner: SubjectId,
     pub request: CreateBot,
@@ -212,6 +214,29 @@ impl CreateBot {
     }
 }
 impl Bot {
+    pub fn resource_owner(&self) -> crate::resource_access::ResourceOwner {
+        self.ownership
+            .as_ref()
+            .map(|value| value.owner.clone())
+            .unwrap_or_else(|| crate::resource_access::ResourceOwner::Person {
+                subject: self.owner.clone(),
+            })
+    }
+    pub fn credential_subject(&self) -> &SubjectId {
+        self.ownership
+            .as_ref()
+            .map_or(&self.owner, |value| &value.credential_subject)
+    }
+    pub fn credential_incarnation(&self) -> Option<&str> {
+        self.ownership
+            .as_ref()
+            .and_then(|value| value.credential_incarnation.as_deref())
+    }
+    pub fn authorization_grant_id(&self) -> Option<&str> {
+        self.ownership
+            .as_ref()
+            .and_then(|value| value.authorization_grant_id.as_deref())
+    }
     pub fn validate_replacement(&self, previous: &Self) -> Result<(), super::BotError> {
         self.validate()?;
         if self.revision
@@ -221,6 +246,7 @@ impl Bot {
                 .ok_or(super::BotError::Conflict)?
             || self.bot_id != previous.bot_id
             || self.owner != previous.owner
+            || self.ownership != previous.ownership
             || self.request != previous.request
             || self.profiles != previous.profiles
             || self.provider != previous.provider
@@ -237,6 +263,12 @@ impl Bot {
     }
     pub fn validate(&self) -> Result<(), super::BotError> {
         self.request.validate()?;
+        if let Some(ownership) = &self.ownership {
+            ownership.validate()?;
+            if super::authority::owner_subject(&ownership.owner) != &self.owner {
+                return Err(super::BotError::Forbidden);
+            }
+        }
         match (
             &self.request.event_worker_profile,
             &self.profiles.event_worker_profile,
@@ -247,13 +279,14 @@ impl Bot {
                 let name = pin.snapshot["metadata"]["name"]
                     .as_str()
                     .ok_or(super::BotError::Unavailable)?;
-                let mut projected = crate::event_workers::projection::snapshot(
+                let mut projected = crate::event_workers::projection::snapshot_for_owner(
                     &crate::event_workers::projection::WorkerProjection {
                         name,
                         owner: &self.owner,
                         provider: &self.provider,
                         profiles: &self.profiles,
                     },
+                    &self.resource_owner(),
                 )?;
                 projected["metadata"]["description"] =
                     pin.snapshot["metadata"]["description"].clone();

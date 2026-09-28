@@ -54,6 +54,7 @@ procedure to apply changes. Configuration is operator-owned.
 | `CMAEG_CMA_SERVICE_TOKEN_FILE` | file path | Optional alternative | Compatibility file source for the same bearer; mutually exclusive with `CMAEG_CMA_SERVICE_TOKEN`. |
 | `CMAEG_NYXID_BASE_URL` | origin URL | Required | NyxID origin for creator authentication, with the same URL restrictions as the CMA origin. |
 | `CMAEG_TOOLS_NYXID_SLUG` | string | `cmaeg` | NyxID service slug in the provider tools advertisement, matching `[a-z0-9_]{1,32}`. |
+| `CMAEG_BOT_FATHER_BINDING_ID` | binding ID | Unset | Optional CMA Bot Father owner binding, using a `bnd_` identifier. When set, CMAEG forwards Bot Father setup turns to CMA; malformed values fail startup. |
 | `CMAEG_CHANNEL_CACHE_TTL_MS` | positive integer, ms | `60000` | Fresh lifetime of a resolved channel on this replica. |
 | `CMAEG_CHANNEL_NEGATIVE_TTL_MS` | positive integer, ms | `10000` | Lifetime of a cached CMA record-not-found result; expired negative entries are never served. |
 | `CMAEG_CHANNEL_CACHE_MAX` | positive integer | `50000` | Maximum positive and negative channel entries on this replica. |
@@ -783,3 +784,22 @@ count unchanged and requires the maintainer's capacity decision. No NyxID
 catalogue, service configuration, role, code or deployment was changed. No
 Telegram test message was sent. The #918 acceptance evidence, #912 independent
 documentation exercise and #920 bridge retirement remain incomplete.
+
+## Native Telegram interaction rollout
+
+Deploy the CMA interaction-record endpoint before the gateway that uses it.
+It uses the existing `cma:gateway:records` service identity and a distinct durable
+collection. The gateway encrypts every record with its existing key ring under a
+separate cryptographic domain; retain old keys through the 24-hour card lifetime.
+NyxID must support bounded `reply.metadata.reply_markup`, signed callback_query
+relay, transport callback acknowledgment, and exact outbound-message UUID edits.
+After deploying that adapter, refresh the existing bot's webhook registration so
+Telegram `allowed_updates` includes `callback_query`; existing webhook settings
+do not change merely because a new adapter image is deployed.
+
+Verify a native choice, edit, and login link in the authorized test chat; restart
+a gateway replica between card display and clicking it. Verify another actor,
+chat or stale revision is refused, duplicate delivery creates no second provider
+turn, and two chats with equal platform message IDs edit their exact own message.
+Neither transport acknowledgment nor a confirmed card send proves child-bot
+provisioning succeeded; verify the provider's creation receipt separately.

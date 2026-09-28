@@ -35,6 +35,8 @@ uuid = { workspace = true }
 zeroize = { workspace = true }
 
 [dev-dependencies]
+cmaeg = { path = "../cmaeg" }
+cmaeg-core = { path = "../cmaeg-core" }
 layer2-core = { workspace = true, features = ["test-support"] }
 # Holds PTY receipt, output, and disconnect boundaries so socket races are
 # proved without sleeps or scheduler assumptions.
