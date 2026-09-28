@@ -91,54 +91,15 @@ impl BindingEventRouter for CmaEventRouter {
         if binding.profile.session_affinity == SessionAffinity::Conversation {
             return Ok(None);
         }
-        event.validate().map_err(|_| E::Invalid)?;
-        if !event.reference.starts_with("cmaeg1.ev.")
-            || !event
-                .reference
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_'))
-        {
-            return Err(E::Forbidden);
-        }
-        let activity: cmaeg_core::activity::Activity =
-            serde_json::from_value(event.payload["activity"].clone()).map_err(|_| E::Invalid)?;
-        activity.validate().map_err(|_| E::Invalid)?;
         let credential = caller.credential.as_ref().ok_or(E::Forbidden)?;
-        let response = self
-            .http
-            .post(format!(
-                "{}/v1/events/{}/context",
-                self.gateway, event.reference
-            ))
-            .bearer_auth(credential.value())
-            .json(&activity)
-            .send()
-            .await
-            .map_err(|_| E::Unavailable)?;
-        if matches!(response.status().as_u16(), 401 | 403 | 400 | 410) {
-            return Err(E::Forbidden);
-        }
-        if !response.status().is_success() {
-            return Err(E::Unavailable);
-        }
-        let mut response = response;
-        let mut bytes = Vec::new();
-        while let Some(chunk) = response.chunk().await.map_err(|_| E::Unavailable)? {
-            if bytes.len() + chunk.len() > 2 * 1024 * 1024 {
-                return Err(E::Unavailable);
-            }
-            bytes.extend_from_slice(&chunk);
-        }
-        let proof: VerifiedContext = serde_json::from_slice(&bytes).map_err(|_| E::Unavailable)?;
-        if !proof.activity_verified
-            || proof.channel_id != event.source_id
-            || proof.conversation_id != event.conversation_id
-            || proof.provider_binding_id != binding.binding_id
-            || proof.event_id != event.event_id
-            || activity.event_id.as_str() != event.event_id
-        {
-            return Err(E::Forbidden);
-        }
+        let activity = verify_activity(
+            &self.http,
+            &self.gateway,
+            &binding.binding_id,
+            credential.value(),
+            event,
+        )
+        .await?;
         let session = source_user_session(&binding.binding_id, binding.generation, &activity)?;
         let (conversation, _) = self
             .bindings
@@ -155,16 +116,93 @@ impl BindingEventRouter for CmaEventRouter {
     }
 }
 
+// This is a CMA routing projection, not the gateway's activity schema.
+// The gateway validates the full original Activity through its authenticated API.
+#[derive(Deserialize)]
+struct ActivityIdentity {
+    event_id: String,
+    actor: SourceActor,
+    source: ActivitySource,
+}
+#[derive(Deserialize)]
+struct SourceActor {
+    id: String,
+    kind: String,
+}
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum ActivitySource {
+    NyxidRelay { platform: String },
+    Custom,
+}
+
+async fn verify_activity(
+    http: &reqwest::Client,
+    gateway: &str,
+    binding: &str,
+    credential: &str,
+    event: &ExternalEventContext,
+) -> Result<ActivityIdentity, BindingRouteError> {
+    use BindingRouteError as E;
+    event.validate().map_err(|_| E::Invalid)?;
+    if !event.reference.starts_with("cmaeg1.ev.")
+        || !event
+            .reference
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_'))
+    {
+        return Err(E::Forbidden);
+    }
+    // Authenticate the complete original wire value. Routing only consumes
+    // the identity projection after the gateway verifies its sealed digest.
+    let activity = event.payload.get("activity").ok_or(E::Invalid)?;
+    let response = http
+        .post(format!("{}/v1/events/{}/context", gateway, event.reference))
+        .bearer_auth(credential)
+        .json(activity)
+        .send()
+        .await
+        .map_err(|_| E::Unavailable)?;
+    if matches!(response.status().as_u16(), 401 | 403 | 400 | 410) {
+        return Err(E::Forbidden);
+    }
+    if !response.status().is_success() {
+        return Err(E::Unavailable);
+    }
+    let mut response = response;
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|_| E::Unavailable)? {
+        if bytes.len() + chunk.len() > 2 * 1024 * 1024 {
+            return Err(E::Unavailable);
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    let proof: VerifiedContext = serde_json::from_slice(&bytes).map_err(|_| E::Unavailable)?;
+    if !proof.activity_verified
+        || proof.channel_id != event.source_id
+        || proof.conversation_id != event.conversation_id
+        || proof.provider_binding_id != binding
+        || proof.event_id != event.event_id
+    {
+        return Err(E::Forbidden);
+    }
+    let identity: ActivityIdentity =
+        serde_json::from_value(activity.clone()).map_err(|_| E::Invalid)?;
+    if identity.event_id != event.event_id {
+        return Err(E::Forbidden);
+    }
+    Ok(identity)
+}
+
 fn source_user_session(
     binding: &str,
     generation: u64,
-    activity: &cmaeg_core::activity::Activity,
+    activity: &ActivityIdentity,
 ) -> Result<String, BindingRouteError> {
-    use cmaeg_core::activity::{ActorKind, SourceKind};
-    let SourceKind::NyxidRelay { platform, .. } = &activity.source else {
+    let ActivitySource::NyxidRelay { platform } = &activity.source else {
         return Err(BindingRouteError::Invalid);
     };
-    if activity.actor.kind != ActorKind::Human {
+    if activity.actor.kind != "human" {
         return Err(BindingRouteError::Invalid);
     }
     layer2_core::profiles::content_digest(&(
@@ -180,45 +218,122 @@ fn source_user_session(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::{http::HeaderMap, routing::post, Json, Router};
     use serde_json::json;
-    fn activity() -> cmaeg_core::activity::Activity {
-        serde_json::from_value(json!({"schema_version":1,"event_id":"event-a",
+    fn activity() -> serde_json::Value {
+        json!({"schema_version":1,"event_id":"event-a",
             "kind":{"type":"message","text":"hello","mentions_bot":false},
             "actor":{"id":"sender-one","kind":"human"},
             "conversation":{"id":"chat-a","kind":"private"},
-            "occurred_at":"2026-09-29T00:00:00Z", "source":{"type":"nyxid_relay","platform":"telegram","route_id":"route-a"}})).unwrap()
+            "occurred_at":"2026-09-29T00:00:00Z", "source":{"type":"nyxid_relay","platform":"telegram","route_id":"route-a"}})
+    }
+    fn identity(activity: &serde_json::Value) -> ActivityIdentity {
+        serde_json::from_value(activity.clone()).unwrap()
     }
     #[test]
     fn source_user_affinity_is_stable_across_events_and_chats_but_separates_authority() {
         let mut first = activity();
-        let expected = source_user_session("binding-a", 1, &first).unwrap();
-        first.conversation.id = "chat-b".into();
-        first.event_id = cmaeg_core::ids::EventId::new("event-b").unwrap();
+        let expected = source_user_session("binding-a", 1, &identity(&first)).unwrap();
+        first["conversation"]["id"] = "chat-b".into();
+        first["event_id"] = "event-b".into();
         assert_eq!(
-            source_user_session("binding-a", 1, &first).unwrap(),
+            source_user_session("binding-a", 1, &identity(&first)).unwrap(),
             expected
         );
         assert_ne!(
-            source_user_session("binding-a", 2, &first).unwrap(),
+            source_user_session("binding-a", 2, &identity(&first)).unwrap(),
             expected
         );
         assert_ne!(
-            source_user_session("binding-b", 1, &first).unwrap(),
+            source_user_session("binding-b", 1, &identity(&first)).unwrap(),
             expected
         );
-        first.actor.id = "sender-two".into();
+        first["actor"]["id"] = "sender-two".into();
         assert_ne!(
-            source_user_session("binding-a", 1, &first).unwrap(),
+            source_user_session("binding-a", 1, &identity(&first)).unwrap(),
             expected
         );
     }
     #[test]
     fn system_and_unattested_custom_senders_do_not_acquire_human_affinity() {
         let mut first = activity();
-        first.actor.kind = cmaeg_core::activity::ActorKind::System;
-        assert!(source_user_session("binding", 1, &first).is_err());
-        first.actor.kind = cmaeg_core::activity::ActorKind::Human;
-        first.source = cmaeg_core::activity::SourceKind::Custom;
-        assert!(source_user_session("binding", 1, &first).is_err());
+        first["actor"]["kind"] = "system".into();
+        assert!(source_user_session("binding", 1, &identity(&first)).is_err());
+        first["actor"]["kind"] = "human".into();
+        first["source"] = json!({"type":"custom"});
+        assert!(source_user_session("binding", 1, &identity(&first)).is_err());
+    }
+
+    #[tokio::test]
+    async fn verifier_sends_complete_activity_and_requires_exact_gateway_proof() {
+        let mut original = activity();
+        original["kind"]["text"] = "x".repeat(32 * 1024).into();
+        original["kind"]["attachments"] = json!([{
+            "reference":"fixture-image", "kind":"image", "filename":"photo.png",
+            "mime_type":"image/png", "size_bytes":1024
+        }]);
+        original["actor"]["display_name"] = "Visitor".into();
+        original["conversation"]["thread_id"] = "thread-a".into();
+        let event = ExternalEventContext {
+            provider_conversation_id: None,
+            source_id: "channel-a".into(),
+            conversation_id: "chat-a".into(),
+            event_id: "event-a".into(),
+            reference: "cmaeg1.ev.fixture".into(),
+            payload: json!({"activity":original}),
+        };
+        for mismatch in [
+            None,
+            Some("activity_verified"),
+            Some("channel_id"),
+            Some("conversation_id"),
+            Some("provider_binding_id"),
+            Some("event_id"),
+        ] {
+            let expected = event.payload["activity"].clone();
+            let app = Router::new().route(
+                "/v1/events/cmaeg1.ev.fixture/context",
+                post(move |headers: HeaderMap, Json(body): Json<serde_json::Value>| {
+                    let expected = expected.clone();
+                    async move {
+                        assert_eq!(headers["authorization"], "Bearer fixture-credential");
+                        assert_eq!(body, expected, "authenticate the complete original Activity");
+                        let mut proof = json!({"channel_id":"channel-a","conversation_id":"chat-a",
+                            "provider_binding_id":"binding-a","event_id":"event-a","activity_verified":true});
+                        if let Some(field) = mismatch {
+                            proof[field] = if field == "activity_verified" {
+                                false.into()
+                            } else {
+                                "wrong-source".into()
+                            };
+                        }
+                        Json(proof)
+                    }
+                }),
+            );
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let gateway = format!("http://{}", listener.local_addr().unwrap());
+            let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+            let result = verify_activity(
+                &reqwest::Client::new(),
+                &gateway,
+                "binding-a",
+                "fixture-credential",
+                &event,
+            )
+            .await;
+            server.abort();
+            if mismatch.is_some() {
+                assert!(matches!(result, Err(BindingRouteError::Forbidden)));
+            } else {
+                let verified = result.unwrap();
+                assert_eq!(verified.event_id, "event-a");
+                assert_eq!(verified.actor.id, "sender-one");
+                assert_eq!(
+                    source_user_session("binding-a", 1, &verified).unwrap(),
+                    source_user_session("binding-a", 1, &identity(&original)).unwrap()
+                );
+            }
+        }
     }
 }
