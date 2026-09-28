@@ -12,6 +12,7 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
         "POST /api/v1/bot-setups/advance" => {
             check(c, c.client.bot_setups().advance(&c.body()?).await)
         }
+        "POST /api/v1/bot-setups/actions" => check(c, c.client.bot_setups().act(&c.body()?).await),
         "PUT /api/v1/gateway/interaction-records/{record_id}" => c.check(
             c.client
                 .gateway_interactions()

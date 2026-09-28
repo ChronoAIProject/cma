@@ -28,6 +28,23 @@ fn reference_value() -> ProfileReference {
     serde_json::from_value(reference()).unwrap()
 }
 
+#[test]
+fn isolated_agent_profile_roundtrip_preserves_true_and_omits_the_legacy_default() {
+    let legacy = content(ProfileKind::Agent);
+    let ordinary: AgentProfileContent = serde_json::from_value(legacy.clone()).unwrap();
+    assert!(!ordinary.isolated_agent);
+    assert_eq!(serde_json::to_value(ordinary).unwrap(), legacy);
+    let mut isolated = legacy.clone();
+    isolated["isolated_agent"] = true.into();
+    let decoded: AgentProfileContent = serde_json::from_value(isolated.clone()).unwrap();
+    assert!(decoded.isolated_agent);
+    assert_eq!(serde_json::to_value(decoded).unwrap(), isolated);
+    let mut explicit_default = legacy.clone();
+    explicit_default["isolated_agent"] = false.into();
+    let decoded: AgentProfileContent = serde_json::from_value(explicit_default).unwrap();
+    assert_eq!(serde_json::to_value(decoded).unwrap(), legacy);
+}
+
 async fn profile_contract<C: ProfileContent>(server: &Server, profiles: Profiles<'_, C>) {
     let kind = C::KIND;
     let path = format!("/{}", C::COLLECTION);

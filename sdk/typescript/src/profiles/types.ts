@@ -35,6 +35,7 @@ export const skillReference = object({
 export type SkillReference = Output<typeof skillReference>;
 
 export const agentProfileContent = object({
+  isolated_agent: optional(boolean),
   model: optional(text),
   thinking_effort: thinkingEffort,
   permission_level: permissionLevel,

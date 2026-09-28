@@ -2,6 +2,7 @@ import type { Dispatch } from './context.js';
 
 export const botDispatch: Record<string, Dispatch> = {
   'POST /api/v1/bot-setups/advance': ({ client, body }) => client.botSetups.advance(body),
+  'POST /api/v1/bot-setups/actions': ({ client, body }) => client.botSetups.act(body),
   'PUT /api/v1/gateway/interaction-records/{record_id}': ({ client, param, body }) =>
     client.gatewayInteractions.put(param('record_id'), body),
   'GET /api/v1/gateway/interaction-records/{record_id}': ({ client, param }) =>
