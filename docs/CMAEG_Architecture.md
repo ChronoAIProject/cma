@@ -123,6 +123,23 @@ reference or return another conversation's context. New references attest the
 activity digest, so changing an actor or callback selection in provider storage
 cannot create valid sender authority. Legacy references are explicitly unverified.
 
+## Durable delayed replies
+
+Providers can exchange a valid, activity-attested event reference for a sealed
+reply target lasting at most 24 hours. It retains only the original event's
+relay destination and is bound to the current channel record, provider binding
+and agent-key hash. The gateway checks live authority on every send and receipt
+replay, then uses the channel credential to reply to the original relay message.
+The provider owns its pending operation, user authentication and resumption.
+
+An encrypted claim and final delivery receipt use CMA's generic interaction-record
+storage. A caller's stable idempotency key admits one delivery attempt before
+any external send. Gateway restarts preserve that claim; an abandoned or uncertain
+attempt is reported as unknown and is not automatically resent. These records
+have their own validated schema and cannot be used as button callback authority.
+The gateway stores no application workflow, delegated user grant or user-to-agent
+selection policy in this capability.
+
 ## Native interactions
 
 CMAEG owns neutral cards, choices, compact button handles, callback validation

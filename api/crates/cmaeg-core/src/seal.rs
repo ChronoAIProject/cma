@@ -13,10 +13,12 @@ use serde::{de::DeserializeOwned, Serialize};
 pub mod event_ref;
 pub mod message_ref;
 pub mod pointer;
+pub mod reply_target;
 
 pub use event_ref::{EventRef, EventRefPayload, ReplyAddress};
 pub use message_ref::MessageRefPayload;
 pub use pointer::ChannelPointer;
+pub use reply_target::{ReplyTargetPayload, ReplyTargetRef, REPLY_TARGET_TTL};
 
 pub const MAX_TOKEN_LENGTH: usize = 4_096;
 /// Maximum plaintext with space for the wire prefix, nonce, tag and base64 expansion.
@@ -32,6 +34,7 @@ pub enum TokenKind {
     MessageRef,
     Blob,
     Interaction,
+    ReplyTarget,
 }
 
 impl TokenKind {
@@ -42,6 +45,7 @@ impl TokenKind {
             Self::MessageRef => "mr",
             Self::Blob => "bl",
             Self::Interaction => "in",
+            Self::ReplyTarget => "rt",
         }
     }
 }

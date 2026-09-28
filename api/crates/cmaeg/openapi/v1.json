@@ -2335,6 +2335,25 @@
         ],
         "type": "object"
       },
+      "ReplyTargetRef": {
+        "type": "string"
+      },
+      "ReplyTargetResponse": {
+        "properties": {
+          "expires_at": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "reply_target_ref": {
+            "$ref": "#/components/schemas/ReplyTargetRef"
+          }
+        },
+        "required": [
+          "reply_target_ref",
+          "expires_at"
+        ],
+        "type": "object"
+      },
       "Secret": {
         "description": "A secret that only appears in the encrypted channel blob.",
         "type": "string"
@@ -3565,6 +3584,59 @@
         ]
       }
     },
+    "/events/{event_ref}/reply-target": {
+      "post": {
+        "operationId": "createReplyTarget",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "event_ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {}
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplyTargetResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "agentBearer": []
+          }
+        ],
+        "tags": [
+          "provider integration"
+        ]
+      }
+    },
     "/events/{event_ref}/typing": {
       "post": {
         "operationId": "sendTyping",
@@ -3662,6 +3734,69 @@
         ],
         "tags": [
           "tools"
+        ]
+      }
+    },
+    "/reply-targets/{reply_target_ref}/messages": {
+      "post": {
+        "operationId": "replyToTarget",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "reply_target_ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OutboundMessage"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntentReceipt"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "agentBearer": []
+          }
+        ],
+        "tags": [
+          "provider integration"
         ]
       }
     }

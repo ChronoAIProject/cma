@@ -9,6 +9,7 @@ mod management_responses;
 pub mod metrics;
 pub mod problems;
 pub mod readiness;
+pub mod reply_targets;
 pub mod schema;
 pub mod tools;
 
