@@ -1,6 +1,40 @@
 use cmaeg_core::activity::ActivityKind;
 use serde_json::{json, Value};
 
+/// Return whether this event is an explicit continuation of the durable Bot
+/// setup workflow. Ordinary messages stay on the provider turn so Bot Father
+/// remains a normal agent. The model's Bot Father skill handles natural
+/// language intent; this gate only preserves callbacks and documented
+/// text/JSON controls emitted by setup cards.
+pub(super) fn is_setup_activity(activity: &cmaeg_core::activity::Activity) -> bool {
+    match &activity.kind {
+        ActivityKind::Interaction(_) => true,
+        ActivityKind::Command { name, .. } => matches!(name.as_str(), "start" | "create"),
+        ActivityKind::Message { text, .. } => is_setup_text(text),
+        ActivityKind::Event { .. } => false,
+    }
+}
+
+fn is_setup_text(text: &str) -> bool {
+    let trimmed = text.trim();
+    if trimmed.is_empty()
+        || trimmed.starts_with('{')
+        || trimmed.starts_with("```")
+        || trimmed == "/start"
+        || trimmed.starts_with("/start link_")
+        || trimmed.starts_with("link_")
+        || trimmed.starts_with("name:")
+        || trimmed.starts_with("instructions:")
+        || trimmed.starts_with("model:")
+        || trimmed.starts_with("repository:")
+        || trimmed.starts_with("directory:")
+        || trimmed.starts_with("resources:")
+    {
+        return true;
+    }
+    setup_command(trimmed)
+}
+
 /// The gateway translates the documented text envelope, while CMA validates
 /// profile fields, service authority and the current workflow step.
 pub(super) fn request(activity: &cmaeg_core::activity::Activity) -> Result<(Value, Value), String> {
@@ -64,7 +98,9 @@ pub(super) fn draft(activity: &cmaeg_core::activity::Activity) -> Value {
         return json!({});
     }
     let lower = trimmed.to_ascii_lowercase();
-    let name = if let Some(start) = trimmed.find("叫 ") {
+    let name = if let Some(value) = trimmed.strip_prefix("name:") {
+        Some(value.trim()).filter(|value| !value.is_empty())
+    } else if let Some(start) = trimmed.find("叫 ") {
         let value = &trimmed[start + "叫 ".len()..];
         value
             .split(" 的 Bot")
@@ -134,6 +170,7 @@ fn setup_command(value: &str) -> bool {
             | "private"
             | "public"
             | "groups"
+            | "/create"
     ) || value.starts_with("org:")
         || value.starts_with("service:")
         || value.starts_with("bot:")
