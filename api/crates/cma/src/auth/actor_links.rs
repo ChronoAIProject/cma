@@ -70,15 +70,24 @@ impl AuthState {
         &self,
         actor: &EventActor,
     ) -> Result<ActorLinkStatus, BotError> {
-        let key = actor.key().map_err(|_| BotError::Forbidden)?;
+        let key = actor.key().map_err(|error| {
+            tracing::warn!(stage = "actor_key", error = ?error, "Bot Father actor identity was rejected");
+            BotError::Forbidden
+        })?;
         for _ in 0..4 {
             let current = self
                 .store
                 .actor_link_for_actor(&key)
                 .await
-                .map_err(|_| BotError::Unavailable)?;
+                .map_err(|error| {
+                    tracing::warn!(stage = "actor_link_read", error = ?error, "Bot Father actor link could not be read");
+                    BotError::Unavailable
+                })?;
             if let Some(row) = &current {
-                row.validate().map_err(|_| BotError::Unavailable)?;
+                row.validate().map_err(|error| {
+                    tracing::warn!(stage = "actor_link_validate", error = ?error, "Bot Father actor link was malformed");
+                    BotError::Unavailable
+                })?;
                 if row.actor != *actor {
                     return Err(BotError::Forbidden);
                 }
@@ -116,7 +125,10 @@ impl AuthState {
                 .store
                 .replace_actor_link(current.as_ref().map(|row| row.revision), row.clone())
                 .await
-                .map_err(|_| BotError::Unavailable)?
+                .map_err(|error| {
+                    tracing::warn!(stage = "actor_link_write", error = ?error, "Bot Father actor link could not be written");
+                    BotError::Unavailable
+                })?
             {
                 return self.link_status(&row);
             }
@@ -126,6 +138,10 @@ impl AuthState {
 
     fn link_status(&self, row: &ActorLinkRecord) -> Result<ActorLinkStatus, BotError> {
         let AuthMode::Provider { public_url, .. } = &self.mode else {
+            tracing::warn!(
+                stage = "auth_mode",
+                "Bot Father actor link requires provider authentication mode"
+            );
             return Err(BotError::Forbidden);
         };
         Ok(ActorLinkStatus {
