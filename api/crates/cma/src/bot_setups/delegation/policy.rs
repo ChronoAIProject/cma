@@ -1,5 +1,5 @@
 use axum::http::Method;
-use layer2_core::bots::BotError;
+use layer2_core::{bots::BotError, resource_access::ResourceOwner};
 
 /// Match canonical local routes only. Neither headers nor proxy/auth/admin
 /// destinations can be selected by the model. Existing handlers enforce access.
@@ -73,6 +73,37 @@ pub(super) fn validate(method: &Method, target: &str, key: Option<&str>) -> Resu
 }
 fn refused() -> BotError {
     BotError::Invalid("This operation is not available through delegated CMA access; mutations require an idempotency key.".into())
+}
+
+/// These legacy creation handlers infer personal ownership from the caller.
+/// Organization membership must never silently create a personal resource.
+pub(super) fn validate_owner(
+    method: &Method,
+    target: &str,
+    owner: &ResourceOwner,
+) -> Result<(), BotError> {
+    if method != Method::POST || !matches!(owner, ResourceOwner::Organization { .. }) {
+        return Ok(());
+    }
+    let path = target.split('?').next().unwrap_or_default();
+    if matches!(
+        path.split('/').collect::<Vec<_>>().as_slice(),
+        [
+            "",
+            "api",
+            "v1",
+            "sandboxes"
+                | "agent-profiles"
+                | "workspace-profiles"
+                | "sandbox-profiles"
+                | "event-worker-profiles"
+        ] | ["", "api", "v1", "marketplace", _, _, "fork"]
+    ) {
+        return Err(BotError::Invalid(
+            "This creation operation supports personal ownership only. Organization Bot creation requires the Bot setup action.".into(),
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
