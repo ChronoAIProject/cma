@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 176,
+  "openapi_operations": 180,
   "operations": {
     "GET /api/v1/organizations": {
       "classification": "openapi",
@@ -2453,6 +2453,56 @@
       "classification": "openapi",
       "source": "api/crates/layer1-public/src/rest/event_workers/mod.rs# Public Event Worker Profile management; the web uses these same operations.",
       "required_problems": []
+    },
+    "PUT /api/v1/gateway/interaction-records/{record_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/gateway_interactions.rs# Real REST fixtures exercise opaque records, permission checks, expiry admission, optimistic concurrency and store failures.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "invalid_gateway_record",
+        "store_failed",
+        "conflict",
+        "gateway_record_too_large"
+      ]
+    },
+    "GET /api/v1/gateway/interaction-records/{record_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/gateway_interactions.rs# Real REST fixtures exercise opaque records, permission checks, expiry admission, optimistic concurrency and store failures.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "invalid_gateway_record",
+        "store_failed"
+      ],
+      "non_problem_statuses": {
+        "404": "api/crates/layer1-public/src/rest/gateway_interactions.rs# Missing or expired interaction reads and deletes return an empty 404 response."
+      }
+    },
+    "DELETE /api/v1/gateway/interaction-records/{record_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/gateway_interactions.rs# Real REST fixtures exercise opaque records, permission checks, expiry admission, optimistic concurrency and store failures.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "invalid_gateway_record",
+        "store_failed",
+        "conflict"
+      ],
+      "non_problem_statuses": {
+        "404": "api/crates/layer1-public/src/rest/gateway_interactions.rs# Missing or expired interaction reads and deletes return an empty 404 response."
+      }
+    },
+    "POST /api/v1/bot-setups/advance": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bot_setups.rs# Binding-authenticated setup workflow returns the real core view and maps all BotError outcomes. Gateway attestation dependencies are fixture ports.",
+      "required_problems": [
+        "setup_authority_required",
+        "setup_not_found",
+        "setup_changed",
+        "setup_unavailable",
+        "invalid_setup"
+      ]
     }
   }
 }

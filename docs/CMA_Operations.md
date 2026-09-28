@@ -1552,19 +1552,35 @@ organization service inventory and connections. Personal service connections
 are never borrowed for an organization. Selecting a missing service opens its
 owner-scoped connection ceremony; creation remains blocked until it completes.
 
-Telegram cards then offer system defaults or customized values for Agent Profile,
+Telegram messages offer system defaults or customized values for Agent Profile,
 Workspace Profile and Sandbox Profile, with selected services, resource limits,
-model access and availability. The user selects an existing channel Bot owned by
+model access and availability. The current text/link mode uses commands displayed
+beside each choice; it works with the existing NyxID relay without a callback
+upgrade. During **Customize**, users can send `instructions: Explain papers`,
+`model: <model-id>` (or `model: default`),
+`repository: https://github.com/owner/repo [branch-or-tag]`, `directory: work`, or
+`resources: 2000 4096` (CPU millicores and memory MiB). Each edit stays on the
+current configuration step, and `done` advances. Existing reasoning, clean
+workspace and availability shortcuts remain available. Advanced users can edit
+and send the displayed full JSON template using exactly one `agent`, `workspace`
+or `sandbox` object; `availability` accompanies `sandbox`. CMA validates all
+fields, capacities and owner authority before accepting the edit. `cancel` works
+at every pre-provisioning step, including login and naming.
+
+The user selects an existing channel Bot owned by
 the same owner, or uses the owner-scoped managed Telegram flow at
 `/channel-bots/connect/telegram-new?target_org_id=<org-id>` to create one without
-copying a token. The last card shows the complete owner, profile, service,
-channel and admission plan. Only its exact revision's **Create Bot** callback
-admits provisioning. CMA creates the three private profile revisions and then
+copying a token. The final review shows the selected owner, connected services,
+channel Bot, admission rules and complete effective profile/availability values.
+Long profile content is split into bounded text blocks and Telegram messages.
+The explicit `create` command confirms the current durable review plan; structured
+callbacks also carry its revision. CMA records the immutable plan digest before
+admitting provisioning. CMA creates the three private profile revisions and then
 uses the existing durable Bot worker; it does not separately provision duplicate
 Sandbox, Workspace or Agent resources.
 
-Father must ask for the intended Bot name and instructions in chat, render every
-choice as a Gateway button/card, and report progress until the resulting Bot,
+Father must ask for the intended Bot name and instructions in chat, display every
+choice with a usable command or link, and report progress until the resulting Bot,
 channel binding and hierarchy IDs are available. It must never claim a Bot exists
 before the final confirmation is recorded. Personal and organization setup plans
 are separate, and resources retain their selected owner after creation.

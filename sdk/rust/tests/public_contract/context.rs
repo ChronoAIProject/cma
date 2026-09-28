@@ -112,6 +112,17 @@ pub fn load() -> Vec<Case> {
             let _ = case.request.expanded_raw_body();
             let symbols = scenes.entry(case.scenario.clone()).or_default();
             symbols
+                .entry("interaction_expiry".into())
+                .or_insert_with(|| {
+                    serde_json::json!(
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap()
+                            .as_secs()
+                            + 3600
+                    )
+                });
+            symbols
                 .entry("ephemeral_credential".into())
                 .or_insert_with(|| {
                     use std::hash::{BuildHasher, Hasher};

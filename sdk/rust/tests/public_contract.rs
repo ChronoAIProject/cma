@@ -28,7 +28,10 @@ async fn dispatch(c: &Context<'_>) -> Result<()> {
     let op = c.case.operation.as_str();
     if op.contains("/event-worker-profiles") {
         event_workers::dispatch(c).await
-    } else if op.contains("/api/v1/bots") {
+    } else if op.contains("/api/v1/bots")
+        || op.contains("/api/v1/bot-setups")
+        || op.contains("/gateway/interaction-records")
+    {
         bots::dispatch(c).await
     } else if op.contains("/cmaeg/bindings") {
         bindings::dispatch(c).await
@@ -187,7 +190,21 @@ async fn shared_backend_corpus_replays_through_typed_sdk_methods() {
         }
         server.expect(context::wire(&case));
         let result = dispatch(&c).await;
-        if case.response.status >= 400
+        if case.response.status >= 400 && case.response.body_kind == "empty" {
+            let error = result.expect_err(&case.id);
+            assert!(
+                matches!(error, Error::Protocol { .. }),
+                "{}: {error:?}",
+                case.id
+            );
+            server.assert_drained();
+            assert_eq!(
+                server.request_count(),
+                1,
+                "{} must use exactly one typed HTTP request",
+                case.id
+            );
+        } else if case.response.status >= 400
             && !(case.operation == "GET /auth/session" && case.response.status == 401)
         {
             check_error(&case, result.expect_err(&case.id));

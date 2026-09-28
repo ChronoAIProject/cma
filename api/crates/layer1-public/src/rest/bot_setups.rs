@@ -18,6 +18,9 @@ use std::sync::Arc;
 #[serde(deny_unknown_fields)]
 pub struct AdvanceSetup {
     pub event_ref: String,
+    /// Full ingress activity; the gateway attests it against the sealed reference.
+    #[serde(default)]
+    pub activity: Option<serde_json::Value>,
     #[serde(default)]
     #[schema(value_type=Object)]
     pub draft: SetupDraft,
@@ -40,16 +43,17 @@ pub(super) async fn advance(
     Json(body): Json<AdvanceSetup>,
 ) -> Response {
     let AuthMethod::BindingKey { binding_id } = method;
-    if body.event_ref.len() > 16 * 1024 {
+    if body.event_ref.len() > 4096 {
         return error(BotError::Invalid(
             "Event reference exceeds the permitted size.".into(),
         ));
     }
     let response = match service
-        .advance(
+        .advance_with_activity(
             &binding_id,
             credential.value(),
             &body.event_ref,
+            body.activity.as_ref(),
             body.draft,
             body.customization,
         )

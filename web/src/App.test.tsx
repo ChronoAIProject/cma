@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { App } from './App';
 import { AuthContextProvider } from './auth/context';
@@ -7,10 +7,12 @@ import { createMockAuthProvider } from './auth/mock';
 describe('the retained application shell', () => {
   afterEach(() => {
     window.history.replaceState(null, '', '/');
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
-  it('renders the hosted connection return page and closes its popup', async () => {
+  it('keeps the returned popup available for the next service until the parent finishes', async () => {
+    vi.useFakeTimers();
     window.history.replaceState(null, '', '/connection-return?status=completed');
     const close = vi.spyOn(window, 'close').mockImplementation(() => undefined);
     render(
@@ -18,9 +20,14 @@ describe('the retained application shell', () => {
         <App />
       </AuthContextProvider>,
     );
-    expect(await screen.findByText('Connection complete')).toBeInTheDocument();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    expect(screen.getByText('Returning to CMA')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Close this window' })).toBeInTheDocument();
     expect(close).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Close this window' }));
+    expect(close).toHaveBeenCalledOnce();
   });
 
   it('shows the authenticated empty state and account control', async () => {

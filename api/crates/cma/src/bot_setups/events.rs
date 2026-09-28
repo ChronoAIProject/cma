@@ -9,14 +9,22 @@ struct Context {
     event_id: String,
     source: serde_json::Value,
     activity_verified: bool,
+    expires_at: i64,
     activity: serde_json::Value,
 }
-impl SetupDependencies {
-    pub(super) async fn verified_event(
+pub(super) struct EventVerifier<'a> {
+    pub http: &'a reqwest::Client,
+    pub gateway: &'a str,
+    pub binding: &'a str,
+    pub contexts: &'a crate::store::bot_setup_contexts::MongoBotSetupContextStore,
+}
+impl EventVerifier<'_> {
+    pub(super) async fn verify(
         &self,
         binding: &str,
         credential: &str,
         reference: &str,
+        supplied_activity: Option<&serde_json::Value>,
     ) -> Result<SetupEvent, BotError> {
         if binding != self.binding
             || reference.len() > 4096
@@ -27,15 +35,14 @@ impl SetupDependencies {
         {
             return Err(BotError::Forbidden);
         }
-        let context: Context = serde_json::from_value(
-            self.json(
-                self.http
-                    .get(format!("{}/v1/events/{reference}/context", self.gateway))
-                    .bearer_auth(credential),
-            )
-            .await?,
-        )
-        .map_err(|_| BotError::Unavailable)?;
+        let url = format!("{}/v1/events/{reference}/context", self.gateway);
+        let request = match supplied_activity {
+            Some(activity) => self.http.post(url).json(activity),
+            None => self.http.get(url),
+        };
+        let context: Context =
+            serde_json::from_value(super::request_json(request.bearer_auth(credential)).await?)
+                .map_err(|_| BotError::Unavailable)?;
         if context.provider_binding_id != binding
             || !context.activity_verified
             || (context.source["type"].as_str() != Some("nyxid_relay")
@@ -79,6 +86,24 @@ impl SetupDependencies {
                 ))
             }
         };
+        if let Some(activity) = supplied_activity {
+            let snapshot = serde_json::json!({
+                "schema_version": 1,
+                "channel_id": context.channel_id,
+                "conversation_id": context.conversation_id,
+                "activity": activity,
+                "event_ref": reference,
+            });
+            self.contexts
+                .retain(
+                    binding,
+                    &context.conversation_id,
+                    &context.event_id,
+                    context.expires_at,
+                    &snapshot,
+                )
+                .await?;
+        }
         Ok(SetupEvent {
             actor: ExternalActor {
                 binding_id: binding.into(),
@@ -92,3 +117,67 @@ impl SetupDependencies {
         })
     }
 }
+impl SetupDependencies {
+    pub(super) async fn verified_event(
+        &self,
+        binding: &str,
+        credential: &str,
+        reference: &str,
+        activity: Option<&serde_json::Value>,
+    ) -> Result<SetupEvent, BotError> {
+        self.require_binding(binding, credential).await?;
+        let event = EventVerifier {
+            http: &self.http,
+            gateway: &self.gateway,
+            binding: &self.binding,
+            contexts: &self.stores.bot_setup_contexts,
+        }
+        .verify(binding, credential, reference, activity)
+        .await?;
+        self.require_binding(binding, credential).await?;
+        Ok(event)
+    }
+    pub(super) async fn retained_context(
+        &self,
+        binding: &str,
+        credential: &str,
+        conversation: &str,
+        event: &str,
+    ) -> Result<Option<serde_json::Value>, BotError> {
+        if binding != self.binding {
+            return Ok(None);
+        }
+        // The setup workflow has no model conversation. Authenticate its exact
+        // current binding before and after the durable read instead.
+        self.require_binding(binding, credential).await?;
+        let context = self
+            .stores
+            .bot_setup_contexts
+            .get(binding, conversation, event)
+            .await?;
+        self.require_binding(binding, credential).await?;
+        Ok(context)
+    }
+
+    async fn require_binding(&self, binding: &str, credential: &str) -> Result<(), BotError> {
+        let auth = self
+            .auth
+            .binding_request(credential.into())
+            .await
+            .map_err(|_| BotError::Unavailable)?
+            .ok_or(BotError::Forbidden)?;
+        if auth
+            .binding
+            .as_ref()
+            .is_some_and(|principal| principal.binding_id() == binding)
+        {
+            Ok(())
+        } else {
+            Err(BotError::Forbidden)
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "events/tests.rs"]
+mod tests;

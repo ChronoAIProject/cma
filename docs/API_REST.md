@@ -120,6 +120,72 @@ record-id order and returns `{ items, next_after }`. The default limit is 100
 and valid limits are 1 through 200. Listing and all mutations require the same
 capability; an authenticated caller without it receives `403 forbidden`.
 
+## Event Gateway Interaction Records
+
+`PUT`, `GET`, and `DELETE /api/v1/gateway/interaction-records/{record_id}` use a
+separate namespace for encrypted, expiring interaction state. They require
+`cma:gateway:records`, accept the same canonical UUID v4 record identifiers and
+1–65,536 decoded-byte blob limit as channel records, and return
+`Cache-Control: no-store`. The calling gateway owns encryption and interaction
+semantics; CMA stores opaque bytes with durable version and expiry checks.
+
+`PUT` accepts `{ owner, blob, expected_version, expires_at }`, where `blob` is
+base64 and `expires_at` is a Unix timestamp in seconds strictly after now and at
+most seven days in the future. An omitted/null `expected_version` creates
+version 1. Updates require the current version and exactly the same owner and
+expiry; neither ownership nor retention can change through an update. The
+response is `{ record_id, version, updated_at }`. Conflicting creation, stale
+versions, or changed ownership/expiry return `409 conflict`.
+
+`GET` returns `{ record_id, owner, blob, version, created_at, updated_at }`.
+`DELETE` requires the `expected_version` query parameter and returns `204` after
+deletion. Missing or expired records return an empty `404` for both operations;
+expiry is enforced before MongoDB's asynchronous TTL cleanup. These records are
+not included in the channel-record listing. Invalid identifiers, owners, base64
+or expiry return `400 invalid_gateway_record`; an invalid decoded blob size
+returns `413 gateway_record_too_large`. Insufficient authority returns
+`403 forbidden`, and unavailable storage returns `503 store_failed`.
+
+## Bot Father Setup Workflow
+
+`POST /api/v1/bot-setups/advance` advances the sender's durable Bot Father setup
+and returns its current configuration view. It is called with the configured
+Bot Father binding's agent credential; a channel owner's general permission is
+not authority to create resources for a Telegram sender. The request accepts
+`{ event_ref, activity?, draft?, customization? }`. `event_ref` is limited to
+4096 bytes. For fresh events, supply the full canonical CMAEG Activity in
+`activity`; CMA asks the gateway to attest that activity against the sealed
+reference before trusting its sender or selections. Omitting `activity` uses
+the retained provider context path for compatibility.
+
+The verified private-chat sender first completes NyxID login and confirms the
+link in the same Telegram conversation. The workflow then selects Personal or
+an authorized organization, Bot name/instructions, Agent/Workspace/Sandbox
+configuration, services, an owned channel bot, and admission rules. `draft`
+contains optional `name` and `instructions`; `customization` can provide typed
+`agent`, `workspace`, `sandbox`, and `availability` values when the current
+step requests them. Resource provisioning starts only after the verified
+interaction confirms the exact final plan revision.
+
+The response includes `setup_id`, `revision`, `step`, `interaction_id`,
+`identity`, `owner`, `name`, `configuration`, `choices`, `services`,
+`connection_url`, `external_bot_id`, `admission`, `result`, and `notice`.
+Render the returned choices with the supplied `interaction_id`; duplicate
+event IDs return the retained view without repeating the mutation, and stale
+interaction revisions return the latest view with a notice. Setup state and
+verified event context survive CMA and gateway restarts. Father retains the
+authenticated full Activity in the encrypted `bot_setup_contexts` collection
+until the sealed event expires; advancing this workflow does not create a model
+command. Credentials are never returned in the view. A successful advance carries
+`Cache-Control: no-store` and reports workflow progress, not proof that
+provisioning has finished; check the returned result state.
+
+Named workflow failures are `400 invalid_setup`,
+`403 setup_authority_required`, `404 setup_not_found`, `409 setup_changed`, and
+`503 setup_unavailable`. Authentication failures are rejected by CMA before the
+workflow handler runs. The gateway's public integration protocol and rendered
+flows remain hosted by the [Agent Event Gateway](https://bot-gateway.chrono-ai.fun/docs).
+
 ## Provider Bindings
 
 The CMAEG service principal manages bindings under `/api/v1/cmaeg/bindings`.
@@ -154,6 +220,15 @@ Once reserved, a conversation still provisioning its Agent returns
 `429 conversation_not_ready` and `Retry-After: 1` on Responses requests. Retry
 the same input and idempotency key; a preparation refusal admits no turn.
 Missing, foreign, failed or retired conversations remain 404.
+
+`GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}`
+returns the retained full event context to the authenticated binding credential.
+For Father setup events it reads the encrypted workflow context described above;
+for normal provider turns it reads the existing durable model-turn ledger. A
+workflow context read rechecks the current binding before and after storage
+access. Gateway reference verification and the `expires_at` deadline remain
+part of the gateway's provider-integration protocol; these operations add no
+native MCP tool names.
 
 Both DELETE operations return 204 after durable retirement admission. Conversation
 cleanup stops the Agent and removes its Worktree through the existing workers;
@@ -807,6 +882,10 @@ returns 409, including changing an omitted default into an explicit reference.
 | `PUT /api/v1/gateway/channel-records/{record_id}` | PutGatewayRecordRequest | - | 200 PutGatewayRecordView |
 | `GET /api/v1/gateway/channel-records/{record_id}` | - | - | 200 GatewayRecordView; 404 ProblemDocument |
 | `DELETE /api/v1/gateway/channel-records/{record_id}` | - | expected_version | 204 empty; 404/409 ProblemDocument |
+| `PUT /api/v1/gateway/interaction-records/{record_id}` | PutInteraction | - | 200 PutGatewayRecordView; 400/403/409/413/503 ProblemDocument |
+| `GET /api/v1/gateway/interaction-records/{record_id}` | - | - | 200 GatewayRecordView; 404 empty; 400/403/503 ProblemDocument |
+| `DELETE /api/v1/gateway/interaction-records/{record_id}` | - | expected_version | 204 empty; 404 empty; 400/403/409/503 ProblemDocument |
+| `POST /api/v1/bot-setups/advance` | AdvanceSetup | - | 200 SetupView; 400/403/404/409/503 ProblemDocument |
 
 ### Administration
 

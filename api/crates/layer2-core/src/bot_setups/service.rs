@@ -29,9 +29,34 @@ impl BotSetupService {
         draft: SetupDraft,
         customization: SetupCustomization,
     ) -> Result<SetupView, BotError> {
+        self.advance_with_activity(binding, credential, reference, None, draft, customization)
+            .await
+    }
+
+    pub async fn context(
+        &self,
+        binding: &str,
+        credential: &str,
+        conversation: &str,
+        event: &str,
+    ) -> Result<Option<serde_json::Value>, BotError> {
+        self.dependencies
+            .context(binding, credential, conversation, event)
+            .await
+    }
+
+    pub async fn advance_with_activity(
+        &self,
+        binding: &str,
+        credential: &str,
+        reference: &str,
+        activity: Option<&serde_json::Value>,
+        draft: SetupDraft,
+        customization: SetupCustomization,
+    ) -> Result<SetupView, BotError> {
         let event = self
             .dependencies
-            .event(binding, credential, reference)
+            .event(binding, credential, reference, activity)
             .await?;
         let mut setup = match self.store.get(&event.actor).await? {
             Some(setup) => setup,
@@ -196,6 +221,7 @@ impl BotSetupService {
                             setup.configuration.agent.thinking_effort = match action {
                                 "agent:quick" => crate::profiles::ThinkingEffort::Low,
                                 "agent:thorough" => crate::profiles::ThinkingEffort::High,
+                                "done" => setup.configuration.agent.thinking_effort,
                                 _ => return Err(invalid_action()),
                             };
                             self.dependencies
@@ -209,7 +235,7 @@ impl BotSetupService {
                             setup.step = SetupStep::Workspace;
                         } else {
                             match action {
-                                "workspace:prepared" => {}
+                                "workspace:prepared" | "done" => {}
                                 "workspace:clean" => {
                                     setup.configuration.workspace.setup_commands.clear()
                                 }
@@ -226,6 +252,7 @@ impl BotSetupService {
                             setup.step = SetupStep::Sandbox;
                         } else {
                             match action {
+                                "done" => {}
                                 "sandbox:on_demand" => {
                                     setup.configuration.availability.always_keep_alive = false
                                 }
@@ -394,49 +421,60 @@ impl BotSetupService {
                     | SetupStep::Cancelled => {}
                     _ => return Err(invalid_action()),
                 }
-            } else if text.is_some() {
-                match setup.step {
-                    SetupStep::Name if setup.draft.name.is_some() => setup.step = SetupStep::Agent,
-                    SetupStep::AgentCustom => {
-                        setup.configuration.agent = customization.agent.ok_or_else(|| {
-                            BotError::Invalid(
-                                "Provide the customized Agent Profile configuration.".into(),
-                            )
-                        })?;
-                        self.dependencies
-                            .validate_configuration(&setup.configuration)
-                            .await?;
-                        setup.step = SetupStep::Workspace;
-                    }
-                    SetupStep::WorkspaceCustom => {
-                        setup.configuration.workspace =
-                            customization.workspace.ok_or_else(|| {
+            } else if let Some(text) = text {
+                if super::custom_text::apply(&mut setup, text)? {
+                    self.dependencies
+                        .validate_configuration(&setup.configuration)
+                        .await?;
+                    notice = Some("Configuration updated. Continue editing or choose Done.".into());
+                } else {
+                    match setup.step {
+                        SetupStep::Name if setup.draft.name.is_some() => {
+                            setup.step = SetupStep::Agent
+                        }
+                        SetupStep::AgentCustom => {
+                            setup.configuration.agent = customization.agent.ok_or_else(|| {
                                 BotError::Invalid(
-                                    "Provide the customized Workspace Profile configuration."
-                                        .into(),
+                                    "Provide the customized Agent Profile configuration.".into(),
                                 )
                             })?;
-                        self.dependencies
-                            .validate_configuration(&setup.configuration)
-                            .await?;
-                        setup.step = SetupStep::Sandbox;
-                    }
-                    SetupStep::SandboxCustom => {
-                        setup.configuration.sandbox = customization.sandbox.ok_or_else(|| {
-                            BotError::Invalid(
-                                "Provide the customized Sandbox Profile configuration.".into(),
-                            )
-                        })?;
-                        if let Some(availability) = customization.availability {
-                            setup.configuration.availability = availability;
+                            self.dependencies
+                                .validate_configuration(&setup.configuration)
+                                .await?;
+                            setup.step = SetupStep::Workspace;
                         }
-                        self.dependencies
-                            .validate_configuration(&setup.configuration)
-                            .await?;
-                        setup.selected_services.clear();
-                        setup.step = SetupStep::Services;
+                        SetupStep::WorkspaceCustom => {
+                            setup.configuration.workspace =
+                                customization.workspace.ok_or_else(|| {
+                                    BotError::Invalid(
+                                        "Provide the customized Workspace Profile configuration."
+                                            .into(),
+                                    )
+                                })?;
+                            self.dependencies
+                                .validate_configuration(&setup.configuration)
+                                .await?;
+                            setup.step = SetupStep::Sandbox;
+                        }
+                        SetupStep::SandboxCustom => {
+                            setup.configuration.sandbox =
+                                customization.sandbox.ok_or_else(|| {
+                                    BotError::Invalid(
+                                        "Provide the customized Sandbox Profile configuration."
+                                            .into(),
+                                    )
+                                })?;
+                            if let Some(availability) = customization.availability {
+                                setup.configuration.availability = availability;
+                            }
+                            self.dependencies
+                                .validate_configuration(&setup.configuration)
+                                .await?;
+                            setup.selected_services.clear();
+                            setup.step = SetupStep::Services;
+                        }
+                        _ => {}
                     }
-                    _ => {}
                 }
             }
         }

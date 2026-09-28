@@ -762,7 +762,8 @@
       "provider_binding_id": "fixture",
       "source": {
         "type": "custom"
-      }
+      },
+      "expires_at": 1
     }
   ],
   "ConversationId": [
