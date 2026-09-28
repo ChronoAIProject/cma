@@ -174,6 +174,8 @@ pub struct ContextResponse {
     pub conversation_id: ConversationId,
     /// Wire field `event_id`.
     pub event_id: EventId,
+    /// Sealed event expiry as Unix seconds.
+    pub expires_at: i64,
     /// Wire field `provider_binding_id`.
     pub provider_binding_id: BindingId,
     /// Wire field `source`.

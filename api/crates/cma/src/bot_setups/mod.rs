@@ -89,22 +89,25 @@ impl SetupDependencies {
     }
 
     async fn json(&self, request: reqwest::RequestBuilder) -> Result<serde_json::Value, BotError> {
-        let mut response = request.send().await.map_err(|_| BotError::Unavailable)?;
-        if matches!(response.status().as_u16(), 401 | 403) {
-            return Err(BotError::Forbidden);
-        }
-        if !response.status().is_success() {
+        request_json(request).await
+    }
+}
+async fn request_json(request: reqwest::RequestBuilder) -> Result<serde_json::Value, BotError> {
+    let mut response = request.send().await.map_err(|_| BotError::Unavailable)?;
+    if matches!(response.status().as_u16(), 401 | 403) {
+        return Err(BotError::Forbidden);
+    }
+    if !response.status().is_success() {
+        return Err(BotError::Unavailable);
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|_| BotError::Unavailable)? {
+        if bytes.len() + chunk.len() > 1024 * 1024 {
             return Err(BotError::Unavailable);
         }
-        let mut bytes = Vec::new();
-        while let Some(chunk) = response.chunk().await.map_err(|_| BotError::Unavailable)? {
-            if bytes.len() + chunk.len() > 1024 * 1024 {
-                return Err(BotError::Unavailable);
-            }
-            bytes.extend_from_slice(&chunk);
-        }
-        serde_json::from_slice(&bytes).map_err(|_| BotError::Unavailable)
+        bytes.extend_from_slice(&chunk);
     }
+    serde_json::from_slice(&bytes).map_err(|_| BotError::Unavailable)
 }
 
 #[async_trait::async_trait]
@@ -114,8 +117,20 @@ impl BotSetupDependencies for SetupDependencies {
         binding: &str,
         credential: &str,
         reference: &str,
+        activity: Option<&serde_json::Value>,
     ) -> Result<SetupEvent, BotError> {
-        self.verified_event(binding, credential, reference).await
+        self.verified_event(binding, credential, reference, activity)
+            .await
+    }
+    async fn context(
+        &self,
+        binding: &str,
+        credential: &str,
+        conversation: &str,
+        event: &str,
+    ) -> Result<Option<serde_json::Value>, BotError> {
+        self.retained_context(binding, credential, conversation, event)
+            .await
     }
     async fn identity(&self, actor: &ExternalActor) -> Result<SetupIdentity, BotError> {
         self.link_identity(actor).await

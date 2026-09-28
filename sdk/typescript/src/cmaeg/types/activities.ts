@@ -141,6 +141,7 @@ export const ContextResponseSchema = object({
   channel_id: ChannelIdSchema,
   conversation_id: ConversationIdSchema,
   event_id: EventIdSchema,
+  expires_at: integer,
   provider_binding_id: BindingIdSchema,
   source: SourceKindSchema,
 });

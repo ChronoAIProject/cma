@@ -29,7 +29,7 @@ impl AuthState {
         self
     }
 
-    pub(super) async fn binding_request(
+    pub(crate) async fn binding_request(
         &self,
         token: String,
     ) -> Result<Option<RequestAuth>, StoreError> {

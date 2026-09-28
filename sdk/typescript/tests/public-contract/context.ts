@@ -136,7 +136,13 @@ export function loadCorpus(): ContractCase[] {
       ids.add(fixture.id);
       let scope = symbols.get(fixture.scenario);
       if (!scope)
-        symbols.set(fixture.scenario, (scope = new Map([['ephemeral_credential', randomUUID()]])));
+        symbols.set(
+          fixture.scenario,
+          (scope = new Map<string, unknown>([
+            ['ephemeral_credential', randomUUID()],
+            ['interaction_expiry', Math.floor(Date.now() / 1000) + 3600],
+          ])),
+        );
       for (const [name, header] of Object.entries(fixture.headerCaptures ?? {})) {
         const value = fixture.response.headers[header];
         assert(typeof value === 'string', `Missing receipt header ${header}`);

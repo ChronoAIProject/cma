@@ -16,7 +16,18 @@ pub trait BotSetupDependencies: Send + Sync {
         binding: &str,
         credential: &str,
         reference: &str,
+        activity: Option<&serde_json::Value>,
     ) -> Result<SetupEvent, BotError>;
+    /// Retained workflow context, confined to the current configured binding.
+    async fn context(
+        &self,
+        _binding: &str,
+        _credential: &str,
+        _conversation: &str,
+        _event: &str,
+    ) -> Result<Option<serde_json::Value>, BotError> {
+        Ok(None)
+    }
     async fn identity(&self, actor: &ExternalActor) -> Result<SetupIdentity, BotError>;
     async fn confirm_identity(
         &self,

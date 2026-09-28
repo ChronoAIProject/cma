@@ -31,6 +31,7 @@ const admission = tagged({
     groups: enumeration('deny', 'all', 'mention', 'reply_to_bot', 'mention_or_reply_to_bot'),
   }),
 });
+export { admission as botAdmissionSchema };
 const createBot = object({
   name: text,
   nyxid_bot_id: text,

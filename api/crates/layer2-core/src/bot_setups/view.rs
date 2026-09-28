@@ -43,6 +43,7 @@ impl BotSetupService {
                     "agent:thorough",
                     "Thorough answers (high reasoning)",
                 ));
+                choices.push(SetupChoice::new("done", "Done editing"));
                 choices.push(SetupChoice::new("back", "Back"));
             }
             SetupStep::WorkspaceCustom => {
@@ -54,6 +55,7 @@ impl BotSetupService {
                     "workspace:clean",
                     "Start with a clean workspace",
                 ));
+                choices.push(SetupChoice::new("done", "Done editing"));
                 choices.push(SetupChoice::new("back", "Back"));
             }
             SetupStep::SandboxCustom => {
@@ -62,6 +64,7 @@ impl BotSetupService {
                     "sandbox:always_live",
                     "Keep the sandbox always live",
                 ));
+                choices.push(SetupChoice::new("done", "Done editing"));
                 choices.push(SetupChoice::new("back", "Back"));
             }
             SetupStep::Services => {

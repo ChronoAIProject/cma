@@ -3,6 +3,7 @@ use super::{
     durability::majority_collection,
     encryption::{AuthCipher, AuthEncryptionKey, CipherEnvelope},
     sandbox_mongo::is_duplicate_key,
+    schema::{self, DOCUMENT_SCHEMA_VERSION},
 };
 use layer2_core::{
     bot_setups::{BotSetup, BotSetupStore, ExternalActor},
@@ -16,7 +17,7 @@ use serde::{Deserialize, Serialize};
 struct Document {
     #[serde(rename = "_id")]
     actor_key: String,
-    schema_version: u32,
+    document_schema_version: i64,
     revision: i64,
     payload: CipherEnvelope,
 }
@@ -32,7 +33,7 @@ impl MongoBotSetupStore {
         key: &AuthEncryptionKey,
     ) -> Result<Self, StoreError> {
         let database = client.database(database);
-        super::schema::initialize_collections(&database, &["bot_setups"]).await?;
+        schema::initialize_collections(&database, &["bot_setups"]).await?;
         Ok(Self {
             records: majority_collection(&database, "bot_setups"),
             cipher: AuthCipher::new(deployment, key)?,
@@ -47,12 +48,13 @@ impl MongoBotSetupStore {
                 .seal("bot-setup", actor_key.as_bytes(), "plan", &payload)
                 .map_err(|_| BotError::Unavailable)?,
             actor_key,
-            schema_version: 1,
+            document_schema_version: DOCUMENT_SCHEMA_VERSION,
             revision: i64::try_from(setup.revision).map_err(|_| BotError::Conflict)?,
         })
     }
     fn decode(&self, row: Document, actor: &ExternalActor) -> Result<BotSetup, BotError> {
-        if row.schema_version != 1 || row.actor_key != actor.key() {
+        schema::require_current(row.document_schema_version).map_err(|_| BotError::Unavailable)?;
+        if row.actor_key != actor.key() {
             return Err(BotError::Unavailable);
         }
         let payload = self
@@ -91,7 +93,7 @@ impl BotSetupStore for MongoBotSetupStore {
         let result = self
             .records
             .replace_one(
-                doc! {"_id":setup.actor.key(),"schema_version":1,"revision":expected},
+                doc! {"_id":setup.actor.key(),"document_schema_version":DOCUMENT_SCHEMA_VERSION,"revision":expected},
                 self.document(setup)?,
             )
             .await
@@ -103,3 +105,7 @@ impl BotSetupStore for MongoBotSetupStore {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "bot_setups_mongo_integration_tests.rs"]
+mod mongo_integration_tests;

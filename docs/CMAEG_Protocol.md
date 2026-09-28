@@ -814,12 +814,14 @@ clients MUST NOT blindly resend. Typing returns `{outcome:"sent|unsupported"}`.
 Telegram editing supports confirmed interactive cards; ordinary legacy text
 references and custom edits remain unsupported. Typing remains unsupported.
 
-Context is `{event_id,conversation_id,channel_id,provider_binding_id,source,activity_verified,activity:{kind,actor,conversation,occurred_at},
+Context is `{event_id,conversation_id,channel_id,provider_binding_id,source,activity_verified,expires_at,activity:{kind,actor,conversation,occurred_at},
 capabilities:{edit,typing,buttons,cards,attachments,max_text_chars}}`. Telegram
 capabilities are `true,false,"inline_keyboard","text","link_text",4000`; custom
 are `false,false,"json","json","reference",32768`. Context retrieval requires
 provider persistence described below; if unavailable it returns 503
 `provider_unavailable` with `detail:"event_context_unavailable"`.
+`expires_at` is the sealed event reference's Unix expiry in seconds; receiving a
+context response never extends that deadline.
 Tool errors additionally include 400 invalid request/reference, 401 missing/invalid
 key, 403 mismatched authority, 410 expired reference and restore errors from §3.
 
@@ -947,6 +949,36 @@ conversation and activity event IDs must match; the gateway validates all three.
 Synthetic management tests omit this extension. Unsupported/unavailable reads
 must fail explicitly; the gateway does not invent a context from the sealed ref.
 
+### Verify a fresh activity before admitting a workflow
+
+Providers that run a deterministic workflow before creating any model turn can
+attest the full ingress Activity with
+`POST /v1/events/{event_ref}/context` (`verifyEventContext`). Send the canonical
+Activity object itself as the JSON body and the channel's assigned agent bearer
+in `Authorization`. This provider-integration endpoint authenticates the current
+channel/key relationship and reference expiry, validates the Activity, and
+compares its digest with the digest sealed at ingress. A missing or mismatching
+digest returns `400 invalid_request`; expired and unauthorized references use
+the same refusals as the existing tools. A successful response is the context
+shape above with `activity_verified:true` and `expires_at`.
+
+The workflow integration sequence is:
+
+1. Gateway delivers the sealed `event_ref` and complete Activity to the provider.
+2. Provider calls the authenticated verification POST with those exact values.
+3. After verification, provider persists the actor-bound workflow and complete
+   context until `expires_at`, then advances its own business state.
+4. Later `readEventContext` calls read that persisted context through the existing
+   provider event-context GET, including after either service restarts.
+
+Verification is stateless and does not call back into provider context storage,
+so a fresh event can be verified before it is persisted. CMA Bot Father uses this
+path and stores encrypted workflow context without admitting a model command.
+Normal model turns continue to persist context with turn admission as described
+above. `verifyEventContext` is tagged **provider integration** in OpenAPI; the
+native MCP tool list remains exactly `replyToEvent`, `updateMessage`, `sendTyping`,
+and `readEventContext`.
+
 429 indicates retryable upstream capacity; 409 with `stale_response`,
 `session_busy` or `conversation_in_progress` is also retryable. Other 5xx responses
 are unavailable;
@@ -1030,6 +1062,7 @@ Generated from the reviewed OpenAPI snapshot; effective paths include its server
 | `POST /v1/channels/{channel_id}/rekey` | `rekeyChannel` |
 | `POST /v1/channels/{channel_id}/test` | `testChannel` |
 | `GET /v1/events/{event_ref}/context` | `readEventContext` |
+| `POST /v1/events/{event_ref}/context` | `verifyEventContext` |
 | `POST /v1/events/{event_ref}/replies` | `replyToEvent` |
 | `POST /v1/events/{event_ref}/typing` | `sendTyping` |
 | `POST /v1/messages/{message_ref}/update` | `updateMessage` |

@@ -1,4 +1,5 @@
 //! Durable, actor-authorized Bot configuration and explicit creation consent.
+mod custom_text;
 mod helpers;
 mod model;
 mod ports;
