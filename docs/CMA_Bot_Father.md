@@ -1,8 +1,7 @@
 # CMA Bot Father: agent ownership and user sessions
 
-This document records the maintainer's 2026-09-28 requirements and the remaining
-implementation boundaries. It is a target design, not a claim that all flows are
-deployed. Public gateway contracts remain in the gateway's own
+This document describes CMA Bot Father and its ownership boundaries. The
+delivery section distinguishes implemented behavior from production evidence. Public gateway contracts remain in the gateway's own
 [integration guide](CMAEG_Integration.md) and [protocol](CMAEG_Protocol.md).
 
 ## Responsibility
@@ -39,10 +38,12 @@ provider in both modes:
 | Existing agent instance | The gateway forwards the specified target. The provider sends every admitted event to that agent, regardless of sender. | Attach to the authorized existing instance. Deleting the channel detaches it; it must not delete the borrowed agent, workspace or sandbox. |
 | Event Worker Profile | The gateway forwards the profile target and verified event identity. The provider applies its own session policy, reuses the appropriate agent, or creates a new instance. | The provider owns user affinity, instance lookup, provisioning and cleanup of the instances it created. |
 
-The protocol must identify the target explicitly. A fixed partition on a profile
-currently creates one new profile instance; it does not attach to an existing
-agent. Do not advertise that as existing-agent support. Providers must reject
-unsupported target types rather than silently provision a different resource.
+The channel's `provider.target` accepts `{"type":"profile"}` (the default) or
+`{"type":"existing_agent","agent_id":"agt_..."}`. CMA validates the existing
+agent's owner and live workspace/sandbox before attaching it. That target is
+immutable. Existing-agent attachment supports automatic final replies (L1);
+it does not replace the attached agent's credential or inject a second channel's
+native tools. Providers reject unsupported targets explicitly.
 
 The gateway preserves authenticated platform/sender, source chat/thread, event ID
 and reply destination as event metadata. It does not hash the sender into an
@@ -50,12 +51,18 @@ agent-selection key, maintain a user-to-agent map, or decide whether an agent
 needs creating. A verified Telegram sender is a source identity; it is not proof
 of a NyxID account. CMA owns the authenticated account association after login.
 
-A subconnection is a provider-owned session beneath one channel binding. For
-Bot Father, CMA durably associates the channel and verified source user with an
-Agent, Worktree, conversation and delegated identity. CMA defines the affinity
-policy, including whether the same user across multiple chats shares an agent.
-The gateway treats provider session identifiers as opaque correlation metadata.
-Each event retains its own reply destination regardless of which agent is selected.
+A subconnection is a provider-owned session beneath one channel binding. CMA's
+profile extension `environment.session_affinity: "source_user"` derives its
+session from the binding generation, verified source platform and human sender.
+The same sender across chats reuses its Agent, Worktree and conversation; different
+senders never share them. CMA attests the original Activity through the gateway
+before choosing or provisioning an agent. NyxID delegation belongs to that source
+actor and is established separately through explicit consent. CMA does not merge
+separate source identities merely because they later sign into the same account.
+Each event retains its own reply destination regardless of the selected agent.
+The original transport chat and the provider session are distinct identifiers.
+Transport conversation creation/deletion acknowledges the transport lifecycle
+without creating or retiring user agents; binding retirement cleans them up.
 
 Repeated events, retries, gateway restarts and simultaneous first events must
 resolve to the same provider-selected instance. This guarantee must be enforced
@@ -108,34 +115,49 @@ incarnation, binding generation and agent mapping. An expired or superseded logi
 cannot wake another user's agent or grant authority to a replacement conversation.
 Retries must not duplicate the operation or start a second agent.
 
-The current link flow records a browser candidate and requires a one-time proof
-from the original Telegram sender. Its return link is an interim flow, not the
-automatic callback required here. NyxID's existing `telegram_widget` provider API
-can expose a server-verified Telegram user ID, but production inspection on
-2026-09-28 found its widget bot username unconfigured. The implementation must
-not assume that this optional proof path is available, or change NyxID to enable
-it without authorization.
+The browser flow uses a fresh, browser-bound PKCE login and displays the exact
+Telegram actor before consent. A callback GET cannot activate delegation. The
+explicit consent POST atomically activates the grant and appends its durable
+wakeup. CMA leases pending wakeups, admits one deterministic agent command, and
+rechecks authority while waiting for completion. Lost responses, API restarts and
+lease expiry reuse the admitted command and delivery identity. A revoked,
+replaced or expired grant cannot continue the operation.
+
+The callback gives the agent a CMA continuation reference, valid only for CMA's
+delegated and setup APIs. It resolves to the original signed event and timestamp;
+it is not a new user instruction or a gateway reply capability. CMA retains the
+24-hour reply target before returning a login link and sends the callback result
+to the original source chat. Credentials never enter the agent prompt.
 
 ## Delegated operations and isolation
 
-General CMA operations require a reusable delegated operation interface; the
-setup-specific action API alone does not fulfill this requirement. Each operation
-must resolve its subject and grant from the authenticated agent/subconnection
-context, check the grant and current resource authority, and use existing CMA
-resource services and command admission. A model-supplied subject, owner or grant
-ID is not sufficient authority.
+The binding-authenticated `POST /api/v1/agent-delegations/identity` resolves
+sign-in status or a login URL from the current event. The companion
+`POST /api/v1/agent-delegations/operations` dispatches allowlisted ordinary CMA
+resource operations as that user. It uses existing resource services and command
+admission, checks current grant and membership, and retains delegation attribution
+through deferred execution. The model cannot supply a user token or grant ID.
+Mutations require an idempotency key. Bot creation uses the typed
+`POST /api/v1/bot-setups/actions` workflow to retain review and final consent.
+See [REST](API_REST.md#agent-delegated-cma-operations) for request examples.
 
 The credential broker keeps user secrets outside the shared sandbox. Per-user
 history, draft configuration and tool results must never be added to another
 agent's prompt. Shared skills and CMA documentation may be reused. User-specific
 memory and grants may not be shared.
 
-Separate worktrees and `CODEX_HOME` directories currently separate ordinary model
-contexts, but all sandbox processes share a Unix identity and filesystem. They
-are not a security boundary against sibling agents with shell access. Production
-multi-user acceptance therefore also needs enforced runtime access separation
-and agent-scoped tool authority within the shared Sandbox. Merely placing tokens
-in different files does not meet this requirement.
+Bot Father enables CMA's `environment.isolated_agents: true` provider extension.
+Each agent process runs in private filesystem, process and network namespaces.
+Only its own home/worktree is writable; sibling histories, shared runtime state,
+shared credentials and host runtime control are inaccessible. Shared skills and
+tools are read-only. Public HTTPS research passes through a proxy that rejects
+private destinations. A constrained platform relay permits only model/research
+services and the event-authorized CMA delegation/setup APIs; it cannot use the
+Father's organization credential to list siblings or manage resources directly.
+
+This is an opt-in runtime launch policy for Bot Father agents. It does not rotate
+retained sandboxes or change other users' agent profiles. Resource ownership and
+grant checks still run in CMA for every delegated operation.
 
 ## Callback replies and gateway boundaries
 
@@ -158,21 +180,21 @@ generic way to resume its provider conversation and send a result to the retaine
 source destination. Current short-lived event references are not indefinite
 conversation credentials. Do not disable expiry to make delayed callbacks work.
 
-The proposed generic extension is an opaque `reply_target_ref` minted from
-verified ingress, separate from the provider-selected session identifier. It
-authorizes delivery to the original source conversation/topic under the current
-channel and provider binding, with explicit lifetime and revocation semantics.
-The platform adapter may retain an original message reference when its relay
-requires one. Its scope contains delivery authority, never a user's NyxID grant
-or an agent-selection policy. It must not become an unrestricted arbitrary-chat
-send credential.
+The generic gateway extension mints an opaque `reply_target_ref` through
+`POST /v1/events/{event_ref}/reply-target`. It authenticates the retained original
+Activity and scopes the target to that original message, channel, binding and
+current channel key for 24 hours. It contains no user login grant or instance
+selection policy.
 
-A proposed `POST /v1/reply-targets/{reply_target_ref}/messages` operation would use
-that target and a provider-supplied idempotency key. This is a proposed extension,
-not an existing endpoint. Every agent uses the same API; the authenticated target
-determines the destination. Expired/deleted/replaced channel authority fails
-closed. Provider/gateway delivery receipts must distinguish confirmed, rejected
-and unknown delivery; an unknown platform send cannot be labelled exactly-once.
+`POST /v1/reply-targets/{reply_target_ref}/messages` accepts the normal outbound
+message and a required `Idempotency-Key`. Every agent/provider uses the same
+endpoint; the authenticated target determines the destination. Both mint and
+send recheck uncached current channel authority. Expired, deleted or rekeyed
+channels fail closed. Claims and receipts are durably encrypted in the generic
+interaction store, so a gateway restart can replay a confirmed receipt. A changed
+payload under the same key conflicts. An unknown platform send is not retried
+automatically or described as confirmed delivery. The existing four native MCP
+tool names remain unchanged; delayed delivery is a provider REST capability.
 
 CMA retains the originating reply target with the pending login/operation and
 durable wakeup. It does not substitute whichever chat most recently contacted
@@ -207,7 +229,7 @@ user information remain entirely in CMA.
 - Callback retries, revocation, late login, busy turns and expired reply references
   produce explicit results without cross-user continuation or duplicate creation.
 
-## Delivery status on 2026-09-28
+## Delivery status
 
 PR [#953](https://github.com/ChronoAIProject/cma/pull/953) merged into `develop` at
 `9ecf0eb9b42a50a842845dc5d10b84522832e496` and its CI-tested gateway image was
@@ -216,8 +238,17 @@ deployed to `chrono-bot` in production. CMAEG remains one replica. Both
 200. The NyxID `nyxbot` agent-card endpoint returned 404 during verification, so
 complete integration with that provider is not yet verified.
 
-The agent-owned correction branch removes gateway Bot Father interception and
-adds typed, actor-attested setup actions. Those are intermediate changes, not
-evidence for automatic callback continuation, general delegated operations,
-existing-agent attachment or secure multi-user runtime isolation. They were not
-included in the PR #953 production rollout.
+The agent-owned correction implements normal agent dispatch, actor-attested
+setup actions, browser consent and a durable callback outbox, general delegated
+operations, provider-owned source-user affinity, existing-agent attachment and
+isolated per-user runtime launches. These changes are not included in the PR
+#953 rollout. Their production activation is pending completion of the correction
+branch's full CI and the rollout evidence below.
+
+Local validation includes 195 CMA authentication tests, all six real MongoDB
+authentication/outbox tests, all 985 core tests, the existing-agent index migration
+regression, provider routing and transport-context preservation, gateway target
+and delayed reply HTTP tests, and SDK schema checks. All 20 isolation tests passed inside the retained Bot
+Father production runtime without replacing it. Those checks establish their
+individual boundaries; Telegram login/continuation and multi-user deployment
+acceptance must still be recorded after activation.

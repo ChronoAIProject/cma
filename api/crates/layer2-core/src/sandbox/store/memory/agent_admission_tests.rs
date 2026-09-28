@@ -122,6 +122,7 @@ fn profile() -> AgentProfileSnapshot {
         revision: 3,
         digest: "c".repeat(64),
         content: AgentProfileContent {
+            isolated_agent: false,
             model: Some("model-a".into()),
             thinking_effort: ThinkingEffort::High,
             permission_level: PermissionLevel::Guarded,

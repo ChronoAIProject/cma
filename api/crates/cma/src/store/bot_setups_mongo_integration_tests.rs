@@ -23,6 +23,7 @@ fn setup() -> BotSetup {
         draft: SetupDraft::default(),
         configuration: SetupConfiguration {
             agent: AgentProfileContent {
+                isolated_agent: false,
                 model: Some("fixture-model".into()),
                 thinking_effort: ThinkingEffort::Medium,
                 permission_level: PermissionLevel::Guarded,

@@ -30,6 +30,7 @@ async fn dispatch(c: &Context<'_>) -> Result<()> {
         event_workers::dispatch(c).await
     } else if op.contains("/api/v1/bots")
         || op.contains("/api/v1/bot-setups")
+        || op.contains("/api/v1/agent-delegations")
         || op.contains("/gateway/interaction-records")
     {
         bots::dispatch(c).await

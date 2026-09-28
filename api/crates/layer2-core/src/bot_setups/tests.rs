@@ -120,6 +120,7 @@ impl BotSetupDependencies for Dependencies {
     async fn defaults(&self) -> Result<SetupConfiguration, BotError> {
         Ok(SetupConfiguration {
             agent: AgentProfileContent {
+                isolated_agent: false,
                 model: Some("model".into()),
                 thinking_effort: ThinkingEffort::Medium,
                 permission_level: PermissionLevel::Guarded,

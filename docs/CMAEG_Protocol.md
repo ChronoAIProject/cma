@@ -303,8 +303,9 @@ Agent Profile, which configures one Agent within a Workspace. A **channel** bind
 an immutable EventWorkerProfile snapshot, provider binding, source
 policies, partition rule and reply policy. A **source** submits authenticated
 events. An **activity** is the source-neutral event given to the agent. A
-**partition** selects a stable provider conversation. A **turn** is one admitted
-provider response. A **sink** receives results. A **binding** is the provider's
+**partition** selects a stable transport conversation identifier. The provider
+may resolve that identifier and authenticated source metadata to its own user
+session and agent. A **turn** is one admitted provider response. A **sink** receives results. A **binding** is the provider's
 prepared environment for the channel. CMA stores encrypted channel records;
 CMAEG keeps only disposable caches and active work in memory.
 

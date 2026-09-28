@@ -234,6 +234,7 @@ fn profiles(store: Arc<InMemoryProfileStore>) -> Arc<PrivateProfileCreationServi
 }
 fn agent_content() -> AgentProfileContent {
     AgentProfileContent {
+        isolated_agent: false,
         model: Some("test".into()),
         thinking_effort: ThinkingEffort::Medium,
         permission_level: PermissionLevel::Guarded,

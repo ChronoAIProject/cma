@@ -9,7 +9,6 @@ use axum::{
 use layer2_core::{
     resource_access::CredentialSource,
     sandbox::agent_io::{CommandAdmissionError, CommandLedgerError, ExternalEventContext},
-    AgentId,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -43,6 +42,7 @@ pub(super) fn parse(payload: Value) -> Result<ExternalEventContext, Box<Response
         .ok_or_else(invalid)?
         .to_owned();
     let context = ExternalEventContext {
+        provider_conversation_id: None,
         source_id: wire.channel_id,
         conversation_id: wire.conversation_id,
         event_id,
@@ -100,19 +100,11 @@ pub(super) async fn retrieve(
             }
         }
     }
-    let agent = match state
-        .resolve_conversation(&auth, &AgentId(conversation.clone()))
-        .await
-    {
-        Ok(agent) => agent,
-        Err(error) => return *error,
-    };
     let result = state
         .commands
-        .external_event_context(
+        .external_event_context_for_source(
             &auth.context,
             auth.credential.as_ref().map(|value| value.value()),
-            &agent,
             &binding,
             &conversation,
             &event,

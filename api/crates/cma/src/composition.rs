@@ -4,6 +4,7 @@ mod adapter;
 mod bindings;
 mod bots;
 mod credentials;
+mod event_routing;
 mod profiles;
 use adapter::production_adapter;
 use axum::{extract::DefaultBodyLimit, Router};
@@ -38,6 +39,7 @@ pub(crate) struct ControlPlaneComposition {
     pub router: Router,
     pub bindings: bindings::BindingComposition,
     pub bots: Option<bots::BotComposition>,
+    pub actor_continuations: Option<Arc<crate::bot_setups::ActorContinuationWorker>>,
     pub auth: Arc<AuthState>,
     pub launch_scheduler: super::trigger::LaunchScheduler,
     pub provenance_backfill: crate::sandbox::AgentProvenanceBackfill,
@@ -325,7 +327,13 @@ impl ControlPlaneComposition {
             auth.clone(),
         );
         let projections = projections.with_commands(command_service.clone());
-        let responses_v2 = bindings::responses(&stores, command_service, projections.reads());
+        let responses_v2 = bindings::responses(
+            &stores,
+            command_service.clone(),
+            projections.reads(),
+            &bindings,
+            config.gateway.as_ref(),
+        )?;
         let provenance = layer2_core::sandbox::AgentProvenanceService::new(
             stores.sandbox_model.clone(),
             resource_access.clone(),
@@ -384,21 +392,30 @@ impl ControlPlaneComposition {
         let (bot_routes, bots) =
             bots::BotComposition::build(config, &stores, auth.clone(), event_workers)?;
         let resource_routes = resource_routes.merge(bot_routes);
+        let mut actor_continuations = None;
         let resource_routes = if config.bot_father.is_some() {
             let bot_service = bots
                 .as_ref()
                 .ok_or("Bot Father requires Bot management")?
                 .service
                 .clone();
-            let service = crate::bot_setups::SetupDependencies::build(
+            let dependencies = crate::bot_setups::SetupDependencies::build(
                 config,
                 stores.clone(),
                 auth.clone(),
                 settings.clone(),
                 bot_service,
             )?;
+            let service = dependencies.service();
+            actor_continuations = Some(crate::bot_setups::ActorContinuationWorker::new(
+                dependencies.clone(),
+                command_service,
+                resource_routes.clone(),
+            ));
+            let delegation_routes = dependencies.delegation_router(resource_routes.clone());
             resource_routes
                 .merge(rest::bot_setup_router(service.clone()))
+                .merge(delegation_routes)
                 .layer(axum::Extension(service))
         } else {
             resource_routes
@@ -434,6 +451,7 @@ impl ControlPlaneComposition {
             auth,
             bindings,
             bots,
+            actor_continuations,
             provenance_backfill,
             launch_scheduler,
             command_scheduler,

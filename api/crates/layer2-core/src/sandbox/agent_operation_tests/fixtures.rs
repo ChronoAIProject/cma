@@ -71,6 +71,7 @@ pub(super) fn test_agent(status: AgentStatus, first_message: Option<&str>) -> Ag
             revision: 1,
             digest: "b".repeat(64),
             content: AgentProfileContent {
+                isolated_agent: false,
                 model: Some("model-a".into()),
                 thinking_effort: ThinkingEffort::High,
                 permission_level: PermissionLevel::Guarded,

@@ -146,6 +146,52 @@ or expiry return `400 invalid_gateway_record`; an invalid decoded blob size
 returns `413 gateway_record_too_large`. Insufficient authority returns
 `403 forbidden`, and unavailable storage returns `503 store_failed`.
 
+## Agent-delegated CMA operations
+
+These provider APIs require the configured Bot Father binding credential and a
+current event reference or CMA-issued callback continuation. User identity is
+resolved from the original admitted event, its retained agent/worktree and the
+current CMA consent grant. Request bodies cannot supply user credentials or a
+grant ID. A supplied organization owner selects the requested context; current
+membership and each operation's existing permissions determine access.
+
+`POST /api/v1/agent-delegations/identity` accepts
+`{"event_ref":"<current event or CMA continuation>"}` and returns the linked
+identity or CMA browser sign-in URL. The browser uses fresh PKCE authentication
+and explicit consent. Consent activation and the agent callback are durable and
+recover after API restarts. Ordinary questions do not require consent.
+
+`POST /api/v1/agent-delegations/operations` accepts:
+
+```json
+{
+  "event_ref": "<current event or CMA continuation>",
+  "owner": { "kind": "organization", "subject": "<organization ID>" },
+  "method": "GET",
+  "path": "/api/v1/sandboxes?organization=<organization ID>"
+}
+```
+
+Omit `owner` for Personal authority. `body` carries a mutation's ordinary API
+body and every mutation requires `idempotency_key`. The allowed operations cover
+organization discovery, ordinary sandbox/workspace/agent/profile reads and changes, Marketplace reads
+and forks, Responses execution and controls. Existing resource handlers enforce
+permissions and durable admission; deferred commands retain the original user
+and delegation. Administrative, authentication, gateway-record and arbitrary
+proxy destinations are not accepted. Bot creation uses the reviewed setup flow
+below. Paths must be canonical local API paths; no URLs or caller headers are
+forwarded.
+
+A completed operation returns `{"status":200,"body":<normal API result>}`; the
+inner status can also be the ordinary API's problem response. Responses
+admission returns an inner `202` with `response_id` and `command_id`, allowing
+normal polling without exposing the internal stream. Outer refusal means the
+binding, source, consent or requested operation could not be authorized.
+Responses never return the user's renewable credential. Request bodies are
+limited to 256 KiB and operation results to 1 MiB. Authority and source mapping
+are rechecked after dispatch; mutations must reuse their original idempotency
+key after an uncertain response.
+
 ## Bot Father Setup Workflow
 
 Bot Father is an ordinary CMA agent with a specialized skill. CMAEG forwards all
@@ -155,7 +201,8 @@ The agent interprets the user's intent and calls CMA's public workflow API.
 
 `POST /api/v1/bot-setups/actions` applies an agent-selected operation to the
 verified sender's durable plan. It requires the configured Bot Father binding
-credential and the **current** sealed `event_ref` (at most 4096 bytes). CMA asks
+credential and the **current** sealed `event_ref` or a CMA callback continuation
+reference (at most 4096 bytes). CMA asks
 the gateway's generic context endpoint for the original Activity retained with
 the provider turn, verifies the binding/private-chat sender, and derives the
 actor identity from that event. The request cannot supply or rewrite Activity.
@@ -189,11 +236,14 @@ mutation ID or a stale revision returns `409 setup_changed`; a matching replay
 returns the retained view without repeating the operation. An unchanged `view`
 is a repeatable read and does not reserve a mutation receipt.
 
-The sender signs in through the returned NyxID link and returns its one-time
-`link_...` proof in the same chat. CMA retains the renewable credential and
-verifies Personal or organization ownership, profiles, owner-specific services,
-connections and channel Bots. Bot Father's own organization identity never
-substitutes for the sender's account. No user token is exposed to the agent.
+The sender follows the CMA-owned sign-in link, completes NyxID login and explicitly
+authorizes the displayed Telegram actor in the browser. CMA then automatically
+notifies the initiating agent through a durable callback; no chat proof or extra
+message is required. The callback continuation resolves the original signed
+human input, so login itself cannot confirm resource creation. CMA retains the
+renewable credential and verifies Personal or organization ownership, profiles,
+owner-specific services, connections and channel Bots. No user token is exposed
+to the agent.
 
 The response includes `setup_id`, `revision`, `step`, `interaction_id`,
 `identity`, `owner`, `name`, `configuration`, `choices`, `services`,
@@ -271,6 +321,20 @@ Once reserved, a conversation still provisioning its Agent returns
 `429 conversation_not_ready` and `Retry-After: 1` on Responses requests. Retry
 the same input and idempotency key; a preparation refusal admits no turn.
 Missing, foreign, failed or retired conversations remain 404.
+
+CMA's optional profile extension `environment.session_affinity:"source_user"`
+changes provider selection without changing gateway partitioning. CMA verifies
+the original human Activity with the gateway, then maps binding generation,
+platform and sender to one durable Agent/Worktree. Different chats from the same
+sender reuse that Agent while retaining their original event reply addresses.
+A transport conversation PUT returns `200 {conversation_id,state:"ready"}` without
+`agent_id`; provisioning waits for authenticated source identity on the first
+Responses call. Preparation returns `429 conversation_not_ready` with
+`Retry-After: 2`. Transport conversation DELETE acknowledges without retiring any
+user Agent; binding retirement owns their cleanup. The companion
+`environment.isolated_agents:true` enables private filesystem/process/network
+namespaces and constrained platform access for each new Agent. These are opaque
+CMA provider profile extensions, not gateway user-routing policies.
 
 `GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}`
 returns the retained full event context to the authenticated binding credential.
@@ -936,6 +1000,8 @@ returns 409, including changing an omitted default into an explicit reference.
 | `PUT /api/v1/gateway/interaction-records/{record_id}` | PutInteraction | - | 200 PutGatewayRecordView; 400/403/409/413/503 ProblemDocument |
 | `GET /api/v1/gateway/interaction-records/{record_id}` | - | - | 200 GatewayRecordView; 404 empty; 400/403/503 ProblemDocument |
 | `DELETE /api/v1/gateway/interaction-records/{record_id}` | - | expected_version | 204 empty; 404 empty; 400/403/409/503 ProblemDocument |
+| `POST /api/v1/agent-delegations/identity` | AgentDelegationIdentityRequest | - | 200 identity or login URL; 400/401/403/404/409/503 problem |
+| `POST /api/v1/agent-delegations/operations` | AgentDelegationOperationRequest | - | 200 result envelope; 400/401/403/404/409/503 problem |
 | `POST /api/v1/bot-setups/actions` | AgentSetupAction | - | 200 SetupView; 400/403/404/409/503 ProblemDocument |
 | `POST /api/v1/bot-setups/advance` | AdvanceSetup (compatibility) | - | 200 SetupView; 400/403/404/409/503 ProblemDocument |
 

@@ -27,6 +27,7 @@ pub(super) fn profile_runtime_options(
     worktree_path: &str,
 ) -> RuntimeOptions {
     RuntimeOptions {
+        isolated_agent: agent.isolated_agent,
         model: agent.model.clone(),
         reasoning_effort: match agent.thinking_effort {
             ThinkingEffort::Minimal => layer3_adapter::ReasoningEffort::Minimal,

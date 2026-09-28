@@ -12,6 +12,7 @@ async fn external_event_context_commits_with_admission_and_survives_restart_and_
     };
     input.content.push(AgentContent::ExternalEvent {
         context: ExternalEventContext {
+            provider_conversation_id: None,
             source_id: "independent-channel".into(),
             conversation_id: conversation.conversation_id.clone(),
             event_id: "external-event".into(),

@@ -1534,7 +1534,7 @@ CMA Bot Father is an ordinary agent in the ChronoAI organization with the
 call the existing CMA service through the runtime's credential-injecting NyxID
 proxy. It does not grant management authority over other users' resources.
 CMA recognizes the binding key and limits it to binding conversations and the
-sender-authorized setup API. Adding this transport reach to an externally
+sender-authorized setup and delegated-operation APIs. Adding this transport reach to an externally
 managed key does not require replacing its existing sandbox or changing the
 immutable environment snapshot. Credential service access must still be verified
 through the exact organization connection and NyxID key scope plan.
@@ -1558,9 +1558,13 @@ CMA obtains the original retained Activity through the generic gateway context
 API, authenticates the configured binding, and derives the private-chat sender
 from the attested event. An action cannot replace that identity or rewrite the
 message. A sender without a linked identity receives a short-lived sign-in link.
-CMA retains the renewable NyxID credential, and activates it only after the same
-sender returns the one-time `link_...` proof in that chat. The agent never receives
-an access token, refresh token, password or Telegram Bot token.
+CMA retains the renewable NyxID credential and activates delegation only after
+fresh browser-bound PKCE login plus explicit consent for the displayed Telegram
+actor. The activation and pending callback are committed together. CMA resumes
+the exact initiating Agent through its leased durable outbox, recovers the same
+command after restart, and delivers the result through the gateway's 24-hour
+reply target. A callback never invents fresh human creation consent. The agent
+never receives an access token, refresh token, password or Telegram Bot token.
 
 The skill asks whether resources belong to Personal or an authorized organization,
 then offers defaults or customized Agent, Workspace and Sandbox settings.
@@ -1579,7 +1583,14 @@ request cannot stand in for the user's final confirmation.
 
 Typed operations have durable request IDs and revision checks, so one natural
 message can drive several authorized choices and retries do not duplicate work.
-Plans, login grants and receipts survive restarts. The agent reports completion
+Plans, login grants and receipts survive restarts. Bot Father enables
+`environment.session_affinity: "source_user"` and `environment.isolated_agents:
+true` in its CMA Event Worker Profile. The provider attests the source user,
+selects a durable per-user Agent/Worktree in the retained Sandbox, and isolates
+the process filesystem, network and platform routes. These profile flags do not
+change the projected Sandbox/Workspace or the stored service key. Workspace
+capacity remains bounded; exhausted users are never assigned a sibling's Agent.
+The agent reports completion
 only when CMA returns an active result with the resulting Bot URL.
 Legacy `advance` requests and encrypted pre-provider event snapshots remain
 compatible; new model turns use the ordinary provider context store.

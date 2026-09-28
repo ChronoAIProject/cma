@@ -10,6 +10,10 @@ pub const MAX_EXTERNAL_EVENT_BYTES: usize = 1_048_576;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExternalEventContext {
+    /// Selected by the provider adapter after authenticating the source event.
+    /// The original transport conversation remains immutable in `payload`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_conversation_id: Option<String>,
     pub source_id: String,
     pub conversation_id: String,
     pub event_id: String,
@@ -22,6 +26,10 @@ impl ExternalEventContext {
             !value.trim().is_empty() && value.len() <= limit && !value.chars().any(char::is_control)
         };
         if !valid(&self.source_id, 512)
+            || self
+                .provider_conversation_id
+                .as_deref()
+                .is_some_and(|id| !valid(id, 512))
             || !valid(&self.conversation_id, 512)
             || !valid(&self.event_id, 512)
             || !valid(&self.reference, 4096)
@@ -46,6 +54,16 @@ impl AgentInput {
     }
 }
 impl AgentCommand {
+    pub fn external_event_mut(&mut self) -> Option<&mut ExternalEventContext> {
+        let input = match self {
+            Self::Message { input, .. } | Self::Steer { input } => input,
+            _ => return None,
+        };
+        input.content.iter_mut().find_map(|item| match item {
+            AgentContent::ExternalEvent { context } => Some(context),
+            _ => None,
+        })
+    }
     pub fn external_event(&self) -> Option<&ExternalEventContext> {
         match self {
             Self::Message { input, .. } | Self::Steer { input } => input.external_event(),
