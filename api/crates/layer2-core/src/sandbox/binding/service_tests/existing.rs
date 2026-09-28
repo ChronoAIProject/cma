@@ -7,7 +7,7 @@ async fn ready_agent(f: &Fixture, owner_kind: &str) -> (ProviderBinding, Binding
     let mut value = profile("Keep the existing Agent instruction");
     value["metadata"]["owner"]["kind"] = owner_kind.into();
     let binding = f
-        .ready_with_profile(value, Some("https://gateway.example/mcp".into()))
+        .ready_with_profile(value, Some("https://gateway.example/tools".into()))
         .await;
     let conversation = resource_access::ready_conversation(f, &binding).await;
     let mut worktree = f
