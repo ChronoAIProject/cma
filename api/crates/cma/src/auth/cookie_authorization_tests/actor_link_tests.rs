@@ -124,6 +124,18 @@ async fn actor_link_requires_both_browser_and_same_sender_and_replays_without_ne
 }
 
 #[tokio::test]
+async fn actor_link_accepts_a_protocol_sized_sealed_channel_id() {
+    let f = fixture().await;
+    let mut actor = actor();
+    actor.channel_id = format!("cmaeg1.ch.{}", "a".repeat(268));
+    assert_eq!(actor.channel_id.len(), 278);
+
+    let status = f.auth.ensure_actor_link(&actor).await.unwrap();
+    assert!(status.login_url.is_some());
+    assert!(status.grant_id.is_none());
+}
+
+#[tokio::test]
 async fn actor_link_cannot_borrow_a_replacement_login_even_for_same_subject() {
     let f = fixture().await;
     let (status, code) = candidate(&f).await;
