@@ -142,12 +142,6 @@ pub(crate) async fn create(
     key: IdempotencyKey,
     body: Result<RequestBody<CreateAgentRequest>, BodyProblem>,
 ) -> Response {
-    let actor = resource.map_or_else(
-        || layer2_core::resource_access::ResourceActor::Human {
-            subject: caller.subject.clone(),
-        },
-        |resource| resource.context.actor,
-    );
     let command_state = state.clone();
     let operation_caller = caller.clone();
     execute_command(
@@ -157,24 +151,28 @@ pub(crate) async fn create(
         format!("agent:create:{workspace_id}"),
         body,
         move |body| async move {
-            let agent = command_state
-                .agents
-                .create_as(
-                    &operation_caller,
-                    &actor,
-                    &WorkspaceId(workspace_id),
-                    CreateAgent {
-                        profile: AgentProfileRef::new(
-                            AgentProfileId(body.agent_profile.id),
-                            body.agent_profile.revision,
-                        ),
-                        title: body.title,
-                        first_message: body.first_message,
-                        origin: AgentOrigin::Manual,
-                    },
-                )
-                .await
-                .map_err(InstanceProblem::from_create)?;
+            let request = CreateAgent {
+                profile: AgentProfileRef::new(
+                    AgentProfileId(body.agent_profile.id),
+                    body.agent_profile.revision,
+                ),
+                title: body.title,
+                first_message: body.first_message,
+                origin: AgentOrigin::Manual,
+            };
+            let workspace_id = WorkspaceId(workspace_id);
+            let agent = if let Some(resource) = resource {
+                command_state
+                    .agents
+                    .create_authorized(&resource.context, &workspace_id, request)
+                    .await
+            } else {
+                command_state
+                    .agents
+                    .create(&operation_caller, &workspace_id, request)
+                    .await
+            }
+            .map_err(InstanceProblem::from_create)?;
             let view = read_view(&command_state, &operation_caller, &agent.id).await?;
             Ok((StatusCode::CREATED, Json(view)).into_response())
         },
