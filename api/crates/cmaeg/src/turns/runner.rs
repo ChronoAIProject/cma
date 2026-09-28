@@ -56,6 +56,7 @@ impl TurnRunner {
         let deadline = turn.received_at + self.config.turn_timeout;
         if self.bot_father.as_ref().is_some_and(|client| {
             client.matches(turn.channel.definition.provider.binding_id.as_str())
+                && client.handles_setup_activity(&turn.activity)
         }) {
             self.execute_bot_father(turn, sender).await;
             return;

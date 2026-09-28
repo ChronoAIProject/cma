@@ -271,7 +271,7 @@ async fn fresh_father_event_reaches_login_with_verified_durable_context_without_
     ))
     .unwrap();
     if let cmaeg_core::activity::ActivityKind::Message { text, .. } = &mut activity.kind {
-        *text = "x".repeat(32 * 1024);
+        *text = format!("/setup {}", "x".repeat(32 * 1024 - 7));
     }
     let partition = activity.partition_key(&definition.partition);
     let conversation = ConversationId::derive(&keys, &channel, 1, &partition);
@@ -434,4 +434,41 @@ async fn fresh_father_event_reaches_login_with_verified_durable_context_without_
     cma_task.abort();
     provider_task.abort();
     mongo.database(&database).drop().await.unwrap();
+}
+
+#[test]
+fn verified_setup_controls_normalize_without_rewriting_activity() {
+    for (text, expected) in [
+        ("/setup", ""),
+        ("/setup personal", "personal"),
+        ("/setup create", "create"),
+        ("/setup name: Paper assistant", "name: Paper assistant"),
+        (
+            "/setup instructions: Explain papers",
+            "instructions: Explain papers",
+        ),
+        ("/setup {\"agent\":{}}", "{\"agent\":{}}"),
+        ("/start setup", ""),
+        ("/start  setup", ""),
+        ("/start  link_abc-123", "/start link_abc-123"),
+        ("/start link_abc-123", "/start link_abc-123"),
+        ("link_abc-123", "link_abc-123"),
+        ("/setupish create", "/setupish create"),
+        ("hi", "hi"),
+    ] {
+        let kind = json!({"type":"message", "text":text});
+        let input = setup_input(&kind).unwrap();
+        assert!(matches!(input, SetupInput::Text(ref value) if value == expected));
+        assert_eq!(kind["text"], text, "attested input must remain unchanged");
+    }
+    for (name, args, expected) in [
+        ("setup", "create", "create"),
+        ("setup", "name: Paper assistant", "name: Paper assistant"),
+        ("start", "setup", ""),
+        ("start", "link_abc-123", "/start link_abc-123"),
+    ] {
+        let input = setup_input(&json!({"type":"command", "name":name, "args":args})).unwrap();
+        assert!(matches!(input, SetupInput::Text(ref value) if value == expected));
+    }
+    assert!(setup_input(&json!({"type":"command", "name":"create", "args":""})).is_err());
 }
