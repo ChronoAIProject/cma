@@ -70,8 +70,9 @@ them verbatim and do not log them.
 
 ## Create a custom event channel
 
-Only `cma_codex` is registered in the current deployment. A caller cannot put an
-arbitrary provider URL in a channel request. Obtain a supported model service/model
+The current deployment registers `cma_codex` and `nyxbot` (NyxID's NyxBot
+personal agents, whose channels NyxID creates for their owners). A caller cannot
+put an arbitrary provider URL in a channel request. Obtain a supported model service/model
 and an agent key authorized for the worker's selected services. The example's
 angle-bracket values are substitutions, not literal values to send.
 
