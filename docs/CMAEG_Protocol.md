@@ -945,6 +945,52 @@ not authenticate the Telegram sender as that owner.
 
 ## 9. Provider contract
 
+### Selecting the channel's Agent target
+
+A channel can ask its provider to provision an Agent from an EventWorkerProfile
+or attach an existing CMA Agent. Omit `provider.target`, or use
+`{"type":"profile"}`, for the existing profile provisioning behavior. To attach
+an Agent, set this field in the channel create request:
+
+```json
+{
+  "provider": {
+    "slug": "cma_codex",
+    "target": {"type": "existing_agent", "agent_id": "agt_existing"}
+  }
+}
+```
+
+This is a fragment of the complete create request in §4. The `profile` envelope
+is still required so that ownership and the canonical digest use the same v1
+contract. For an existing target, CMA validates its actual Sandbox, Workspace,
+Worktree and Agent hierarchy against `profile.metadata.owner`, including whether
+the owner is a person or organization. CMA retains the Agent's existing model,
+instructions, tools, credentials and environment; settings from that profile
+envelope are not applied. The binding response lists those unapplied fields in
+`refused`. The target is immutable: create another channel to select a different
+Agent or switch between the two modes.
+
+| Target | Agent selection | Resource lifetime | Reply support |
+| --- | --- | --- | --- |
+| Omitted or `profile` | Provider provisions from the EventWorkerProfile and chooses session affinity. | Provider manages the resources created for this binding. | The negotiated provider conformance level and native tools, when supported. |
+| `existing_agent` | Every admitted sender reaches the specified Agent and shared history. | The owner's existing resources survive channel deletion. | L1 automatic final replies; existing Agent tools remain as configured. |
+
+The gateway retains and forwards the requested target; the provider owns Agent
+selection. An existing target sends **every admitted sender to the same Agent
+and its shared history**, regardless of the transport partition. Choose an
+appropriate sender/chat admission policy for that intended sharing. A profile
+target can instead use the provider's separate-session policy.
+
+Existing-agent bindings advertise **L1 with automatic final replies**. Set
+`reply.auto_final` to `true`. CMA does not install this channel's native gateway
+tools or credentials into a borrowed Agent, so explicit gateway tool replies
+from that Agent are not a promised capability for the new channel. Deleting
+the channel or its conversation mapping revokes only that association; it does
+not stop, delete or reconfigure the existing Agent, Worktree, Workspace, Sandbox
+or their credentials. Agent lifetime remains under its owner's normal CMA
+controls. Other channels and the owning session remain independent.
+
 Provider URLs are operator-allowlisted templates, never source-controlled URLs.
 External provider calls use the retained agent bearer. For the `cma_codex`
 provider, binding and conversation management use the configured CMA service
@@ -954,6 +1000,8 @@ reads continue to use the retained agent bearer. Redirects are disabled; another
 allowlisted provider never receives the CMA service bearer.
 `PUT <binding-path/{binding_id}>` receives
 `{schema_version:1,profile,profile_digest,agent_key,tools:{native_mcp_url,nyxid_service_slug}}`.
+For a non-default target, the gateway also forwards `target` unchanged. Omitted
+or profile targets preserve the original binding request shape.
 The provider MUST authenticate the agent identity, bind ownership, idempotently
 prepare the profile under that binding ID, and return
 `{binding_id,level,honoured:[field-paths],refused:[{field,reason}]}`. It MUST name

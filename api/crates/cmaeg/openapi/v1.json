@@ -1951,6 +1951,9 @@
           },
           "slug": {
             "$ref": "#/components/schemas/ProviderSlug"
+          },
+          "target": {
+            "$ref": "#/components/schemas/ProviderTarget"
           }
         },
         "required": [
@@ -1965,6 +1968,9 @@
         "properties": {
           "slug": {
             "$ref": "#/components/schemas/ProviderSlug"
+          },
+          "target": {
+            "$ref": "#/components/schemas/ProviderTarget"
           }
         },
         "required": [
@@ -2007,6 +2013,43 @@
       },
       "ProviderSlug": {
         "type": "string"
+      },
+      "ProviderTarget": {
+        "description": "Generic provider target. Instance selection and authorization stay with the\nprovider; the gateway only retains and forwards this declaration.",
+        "oneOf": [
+          {
+            "properties": {
+              "type": {
+                "enum": [
+                  "profile"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "agent_id": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "existing_agent"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "agent_id",
+              "type"
+            ],
+            "type": "object"
+          }
+        ]
       },
       "PublicActivity": {
         "properties": {

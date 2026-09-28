@@ -406,7 +406,7 @@ use super::trigger_openapi_shapes::*;
         RuntimeInventoryView,
         ActivityView,
         ActivityPageView,
-        super::bindings::PutBindingRequest, super::bindings::BindingTools, super::bindings::BindingView, super::bindings::BindingRefusal, super::bindings::BindingConversationView, PutGatewayRequest, PutGateway, GatewayRecord, GatewayRecordHead, GatewayRecordPage,
+        super::bindings::PutBindingRequest, super::bindings::BindingTarget, super::bindings::BindingTools, super::bindings::BindingView, super::bindings::BindingRefusal, super::bindings::BindingConversationView, PutGatewayRequest, PutGateway, GatewayRecord, GatewayRecordHead, GatewayRecordPage,
     )),
     tags(
         (name = "discovery", description = "Anonymous deployment discovery"),
