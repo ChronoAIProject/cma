@@ -394,3 +394,67 @@ async fn delegated_access_cannot_cross_actor_personal_owner_or_independent_crede
         .await
         .is_err());
 }
+
+#[tokio::test]
+async fn delegated_refresh_during_membership_io_retries_without_revoking_the_command() {
+    let (f, link) = linked().await;
+    let (store, access) = resources(&f, "org").await;
+    let (context, token) = f
+        .auth
+        .context_for_grant(&link, &actor(), &organization())
+        .await
+        .unwrap();
+    let service = AgentCommandService::new(store.clone(), access.clone(), f.auth.clone());
+    let receipt = service
+        .admit(
+            &context,
+            token.expose(),
+            CommandSubmissionSource::Api,
+            submission(),
+        )
+        .await
+        .unwrap();
+    let command = store
+        .get_command(&receipt.receipt.command_id)
+        .await
+        .unwrap()
+        .unwrap()
+        .receipt
+        .envelope;
+    let gate = Arc::new(Gate::default());
+    f.control.organization.write().await.gate = Some(gate.clone());
+    let auth = f.auth.clone();
+    let access_for_worker = access.clone();
+    let pending_command = command.clone();
+    let pending = tokio::spawn(async move {
+        auth.authorize_resource_command(&access_for_worker, &pending_command)
+            .await
+    });
+    tokio::time::timeout(Duration::from_secs(2), gate.reached.notified())
+        .await
+        .unwrap();
+    let mut current = f
+        .store
+        .subject(&SubjectId::new("owner"))
+        .await
+        .unwrap()
+        .unwrap();
+    current.token_generation += 1;
+    current.revision += 1;
+    current.tokens.as_mut().unwrap().access_token =
+        SecretValue::new("refreshed-during-membership".into());
+    f.store.put_subject(current).await.unwrap();
+    f.control.organization.write().await.gate = None;
+    gate.release.notify_one();
+    assert!(matches!(
+        pending.await.unwrap(),
+        Err(ResourceCommandAuthorizationError::Custody(
+            CommandAuthorizationError::Unavailable
+        ))
+    ));
+    *f.control.organization_token.write().await = "refreshed-during-membership".into();
+    f.auth
+        .authorize_resource_command(&access, &command)
+        .await
+        .unwrap();
+}
