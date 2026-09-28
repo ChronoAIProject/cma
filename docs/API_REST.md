@@ -179,8 +179,10 @@ and forks, Responses execution and controls. Existing resource handlers enforce
 permissions and durable admission; deferred commands retain the original user
 and delegation. Administrative, authentication, gateway-record and arbitrary
 proxy destinations are not accepted. Bot creation uses the reviewed setup flow
-below. Paths must be canonical local API paths; no URLs or caller headers are
-forwarded.
+below. An organization owner cannot be used with legacy creation routes that
+implicitly create Personal resources: CMA refuses those calls before dispatch.
+Organization Bot creation remains available through the typed setup workflow.
+Paths must be canonical local API paths; no URLs or caller headers are forwarded.
 
 A completed operation returns `{"status":200,"body":<normal API result>}`; the
 inner status can also be the ordinary API's problem response. Responses

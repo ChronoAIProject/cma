@@ -246,9 +246,10 @@ isolated per-user runtime launches. These changes are not included in the PR
 branch's full CI and the rollout evidence below.
 
 Local validation includes 195 CMA authentication tests, all six real MongoDB
-authentication/outbox tests, all 985 core tests, the existing-agent index migration
-regression, provider routing and transport-context preservation, gateway target
-and delayed reply HTTP tests, and SDK schema checks. All 20 isolation tests passed inside the retained Bot
+authentication/outbox tests, all 988 core tests, the existing-agent index migration
+regression, provider routing and transport-context preservation, seven CMA
+callback/broker integration tests, gateway target and delayed reply HTTP tests,
+2,124 TypeScript contract cases and 2,119 Rust SDK contract cases. All 20 isolation tests passed inside the retained Bot
 Father production runtime without replacing it. Those checks establish their
 individual boundaries; Telegram login/continuation and multi-user deployment
 acceptance must still be recorded after activation.
