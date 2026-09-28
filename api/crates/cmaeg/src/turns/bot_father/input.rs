@@ -1,52 +1,84 @@
 use cmaeg_core::activity::ActivityKind;
 use serde_json::{json, Value};
 
-/// Return whether this event is an explicit continuation of the durable Bot
-/// setup workflow. Ordinary messages stay on the provider turn so Bot Father
-/// remains a normal agent. The model's Bot Father skill handles natural
-/// language intent; this gate only preserves callbacks and documented
-/// text/JSON controls emitted by setup cards.
+/// Only the explicit setup command, its login return, and its own callbacks
+/// bypass the provider. The agent interprets all ordinary conversation,
+/// including unqualified choice words, JSON and natural-language Bot requests.
 pub(super) fn is_setup_activity(activity: &cmaeg_core::activity::Activity) -> bool {
     match &activity.kind {
-        ActivityKind::Interaction(_) => true,
-        ActivityKind::Command { name, .. } => matches!(name.as_str(), "start" | "create"),
-        ActivityKind::Message { text, .. } => is_setup_text(text),
-        ActivityKind::Event { .. } => false,
+        ActivityKind::Interaction(result) => is_setup_block(&result.block_id),
+        _ => setup_text(activity).is_some(),
     }
 }
 
-fn is_setup_text(text: &str) -> bool {
-    let trimmed = text.trim();
-    if trimmed.is_empty()
-        || trimmed.starts_with('{')
-        || trimmed.starts_with("```")
-        || trimmed == "/start"
-        || trimmed.starts_with("/start link_")
-        || trimmed.starts_with("link_")
-        || trimmed.starts_with("name:")
-        || trimmed.starts_with("instructions:")
-        || trimmed.starts_with("model:")
-        || trimmed.starts_with("repository:")
-        || trimmed.starts_with("directory:")
-        || trimmed.starts_with("resources:")
-    {
-        return true;
+fn setup_text(activity: &cmaeg_core::activity::Activity) -> Option<&str> {
+    match &activity.kind {
+        ActivityKind::Message { text, .. } => {
+            let text = text.trim();
+            if let Some(value) = text.strip_prefix("/setup") {
+                return (value.is_empty() || value.starts_with(char::is_whitespace))
+                    .then(|| value.trim());
+            }
+            if let Some(value) = text.strip_prefix("/start ") {
+                let value = value.trim();
+                return if value == "setup" {
+                    Some("")
+                } else if is_login_return(value) {
+                    Some(value)
+                } else {
+                    None
+                };
+            }
+            is_login_return(text).then_some(text)
+        }
+        ActivityKind::Command { name, args } if name == "setup" => Some(args.trim()),
+        ActivityKind::Command { name, args } if name == "start" => {
+            let args = args.trim();
+            if args == "setup" {
+                Some("")
+            } else if is_login_return(args) {
+                Some(args)
+            } else {
+                None
+            }
+        }
+        _ => None,
     }
-    setup_command(trimmed)
+}
+
+fn is_login_return(text: &str) -> bool {
+    text.strip_prefix("link_").is_some_and(|proof| {
+        !proof.is_empty()
+            && proof.len() <= 128
+            && proof
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    })
+}
+
+fn is_setup_block(value: &str) -> bool {
+    value.strip_prefix("bst_").is_some_and(|value| {
+        value.split_once('.').is_some_and(|(id, revision)| {
+            id.len() == 32
+                && id.bytes().all(|byte| byte.is_ascii_hexdigit())
+                && !revision.is_empty()
+                && revision.bytes().all(|byte| byte.is_ascii_digit())
+                && revision.parse::<u64>().is_ok_and(|revision| revision > 0)
+        })
+    })
 }
 
 /// The gateway translates the documented text envelope, while CMA validates
 /// profile fields, service authority and the current workflow step.
 pub(super) fn request(activity: &cmaeg_core::activity::Activity) -> Result<(Value, Value), String> {
-    let ActivityKind::Message { text, .. } = &activity.kind else {
+    let Some(text) = setup_text(activity) else {
         return Ok((json!({}), json!({})));
     };
-    let text = text.trim();
     if !text.starts_with('{') && !text.starts_with("```") {
         return Ok((draft(activity), json!({})));
     }
     let invalid = || {
-        "Send the complete JSON template from the current Customize step: {\"agent\": {...}}, {\"workspace\": {...}}, or {\"sandbox\": {...}, \"availability\": {...}}. Keep the outer object and use valid JSON; you can also reply `back` or `cancel`.".to_owned()
+        "Send the complete JSON template from the current Customize step with `/setup ` before the JSON: {\"agent\": {...}}, {\"workspace\": {...}}, or {\"sandbox\": {...}, \"availability\": {...}}. Keep the outer object and use valid JSON; you can also reply `/setup back` or `/setup cancel`.".to_owned()
     };
     let text = if let Some(fenced) = text.strip_prefix("```json") {
         fenced
@@ -85,10 +117,9 @@ pub(super) fn request(activity: &cmaeg_core::activity::Activity) -> Result<(Valu
 }
 
 pub(super) fn draft(activity: &cmaeg_core::activity::Activity) -> Value {
-    let ActivityKind::Message { text, .. } = &activity.kind else {
+    let Some(trimmed) = setup_text(activity) else {
         return json!({});
     };
-    let trimmed = text.trim();
     if trimmed.is_empty()
         || trimmed == "/start"
         || trimmed.starts_with("link_")

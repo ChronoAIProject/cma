@@ -86,45 +86,9 @@ impl EventVerifier<'_> {
                 "Open a private conversation with Bot Father to create a Bot.".into(),
             ));
         }
-        let kind = &activity["kind"];
-        let input = match kind["type"].as_str() {
-            Some("message") => SetupInput::Text(kind["text"].as_str().unwrap_or_default().into()),
-            Some("command") if kind["name"].as_str() == Some("start") => SetupInput::Text(format!(
-                "/start {}",
-                kind["args"].as_str().unwrap_or_default()
-            )),
-            Some("interaction") => SetupInput::Interaction {
-                block_id: kind["block_id"]
-                    .as_str()
-                    .ok_or_else(|| {
-                        tracing::warn!(
-                            stage = "interaction_block",
-                            "Bot Father interaction had no block identity"
-                        );
-                        BotError::Forbidden
-                    })?
-                    .into(),
-                action_id: kind["action_id"]
-                    .as_str()
-                    .ok_or_else(|| {
-                        tracing::warn!(
-                            stage = "interaction_action",
-                            "Bot Father interaction had no action identity"
-                        );
-                        BotError::Forbidden
-                    })?
-                    .into(),
-            },
-            _ => {
-                tracing::warn!(
-                    stage = "activity_kind",
-                    "Bot Father event kind was not a supported setup input"
-                );
-                return Err(BotError::Invalid(
-                    "This event cannot configure a Bot.".into(),
-                ));
-            }
-        };
+        // Normalize the setup transport only after the gateway has verified the
+        // original activity digest. Never rewrite the activity that is retained.
+        let input = setup_input(&activity["kind"])?;
         if let Some(activity) = supplied_activity {
             let snapshot = serde_json::json!({
                 "schema_version": 1,
@@ -156,6 +120,49 @@ impl EventVerifier<'_> {
         })
     }
 }
+fn setup_input(kind: &serde_json::Value) -> Result<SetupInput, BotError> {
+    match kind["type"].as_str() {
+        Some("message") => Ok(SetupInput::Text(normalize_setup_text(
+            kind["text"].as_str().unwrap_or_default(),
+        ))),
+        Some("command") if kind["name"].as_str() == Some("setup") => Ok(SetupInput::Text(
+            kind["args"].as_str().unwrap_or_default().trim().into(),
+        )),
+        Some("command") if kind["name"].as_str() == Some("start") => {
+            Ok(SetupInput::Text(normalize_setup_text(&format!(
+                "/start {}",
+                kind["args"].as_str().unwrap_or_default()
+            ))))
+        }
+        Some("interaction") => Ok(SetupInput::Interaction {
+            block_id: kind["block_id"].as_str().ok_or(BotError::Forbidden)?.into(),
+            action_id: kind["action_id"]
+                .as_str()
+                .ok_or(BotError::Forbidden)?
+                .into(),
+        }),
+        _ => Err(BotError::Invalid(
+            "This event cannot configure a Bot.".into(),
+        )),
+    }
+}
+
+fn normalize_setup_text(text: &str) -> String {
+    let text = text.trim();
+    if let Some(args) = text.strip_prefix("/start ") {
+        return if args.trim() == "setup" {
+            String::new()
+        } else {
+            format!("/start {}", args.trim())
+        };
+    }
+    text.strip_prefix("/setup")
+        .filter(|value| value.is_empty() || value.starts_with(char::is_whitespace))
+        .map(str::trim)
+        .unwrap_or(text)
+        .to_owned()
+}
+
 impl SetupDependencies {
     pub(super) async fn verified_event(
         &self,

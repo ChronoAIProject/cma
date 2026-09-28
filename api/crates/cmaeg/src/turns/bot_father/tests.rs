@@ -1,14 +1,15 @@
 use super::input::{draft, is_setup_activity};
 use super::{input::request, view::SetupView};
 use cmaeg_core::activity::{
-    Activity, ActivityConversation, ActivityKind, Actor, ActorKind, ConversationKind, SourceKind,
+    Activity, ActivityConversation, ActivityKind, Actor, ActorKind, ConversationKind,
+    InteractionResult, SourceKind,
 };
 use cmaeg_core::channel::Platform;
 use cmaeg_core::ids::EventId;
 use cmaeg_core::message::{Block, OutboundMessage};
 use serde_json::json;
 
-fn activity(text: &str) -> Activity {
+pub(super) fn activity(text: &str) -> Activity {
     Activity {
         schema_version: 1,
         event_id: EventId::new("event").unwrap(),
@@ -42,6 +43,25 @@ fn ordinary_bot_father_messages_remain_provider_turns() {
         "hi",
         "How's the weather today?",
         "Search the web for today's news",
+        "Help me create a Telegram bot",
+        "帮我创建一个机器人",
+        "",
+        "create",
+        "done",
+        "back",
+        "personal",
+        "instructions: explain this code",
+        "name: this is part of my document",
+        "{\"agent\":{}}",
+        "```json\n{\"agent\":{}}\n```",
+        "/start",
+        "/create",
+        "/setupish create",
+        "link_",
+        "link_abc contains spaces",
+        "/start link_abc extra",
+        "/starting link_abc",
+        "/start setup extra",
     ] {
         assert!(
             !is_setup_activity(&activity(text)),
@@ -53,25 +73,68 @@ fn ordinary_bot_father_messages_remain_provider_turns() {
 #[test]
 fn explicit_setup_controls_keep_the_durable_workflow() {
     for text in [
-        "create",
-        "/create",
-        "name: Paper assistant",
-        "instructions: Explain papers",
-        "{\"agent\":{}}",
-        "```json\n{\"agent\":{}}\n```",
+        "/setup",
+        "/start setup",
+        "/setup create",
+        "/setup name: Paper assistant",
+        "/setup instructions: Explain papers",
+        "/setup {\"agent\":{}}",
+        "/setup ```json\n{\"agent\":{}}\n```",
         "link_abcdef",
+        "/start link_abc-123",
     ] {
         assert!(
             is_setup_activity(&activity(text)),
             "missing setup routing: {text}"
         );
     }
+    assert!(!is_setup_activity(&activity(&format!(
+        "link_{}",
+        "a".repeat(129)
+    ))));
+}
+
+#[test]
+fn only_setup_commands_and_setup_callback_namespace_are_intercepted() {
+    for (name, args, expected) in [
+        ("setup", "", true),
+        ("setup", "create", true),
+        ("start", "setup", true),
+        ("start", "link_abc-123", true),
+        ("start", "", false),
+        ("create", "", false),
+        ("start", "link_abc extra", false),
+        ("setupish", "create", false),
+    ] {
+        let mut input = activity("");
+        input.kind = ActivityKind::Command {
+            name: name.into(),
+            args: args.into(),
+        };
+        assert_eq!(is_setup_activity(&input), expected, "{name} {args}");
+    }
+    for (block_id, expected) in [
+        ("bst_0123456789abcdef0123456789abcdef.1", true),
+        ("bst_0123456789abcdef0123456789abcdef.12", true),
+        ("weather.1", false),
+        ("bst_other.1", false),
+        ("bst_0123456789abcdef0123456789abcdef.0", false),
+        ("bst_0123456789abcdef0123456789abcdef.1.extra", false),
+    ] {
+        let mut input = activity("");
+        input.kind = ActivityKind::Interaction(InteractionResult {
+            block_id: block_id.into(),
+            action_id: "create".into(),
+            values: Default::default(),
+        });
+        assert_eq!(is_setup_activity(&input), expected, "{block_id}");
+    }
 }
 
 #[test]
 fn explicit_name_control_becomes_a_draft_name() {
     assert_eq!(
-        draft(&activity("name: Paper assistant"))["name"],
+        draft(&activity("/setup name: Paper assistant"))["name"],
         "Paper assistant"
     );
 }
@@ -79,7 +142,7 @@ fn explicit_name_control_becomes_a_draft_name() {
 #[test]
 fn initial_request_extracts_name_and_instructions_without_copying_login_code() {
     let value = draft(&activity(
-        "帮我创建一个叫 Paper assistant 的 Bot。Agent instructions：Explain papers.",
+        "/setup 帮我创建一个叫 Paper assistant 的 Bot。Agent instructions：Explain papers.",
     ));
     assert_eq!(value["name"], "Paper assistant");
     assert_eq!(value["instructions"], "Explain papers.");
@@ -90,7 +153,7 @@ fn initial_request_extracts_name_and_instructions_without_copying_login_code() {
 #[test]
 fn advanced_json_is_forwarded_as_customization_and_never_as_a_bot_name() {
     let (draft, customization) = request(&activity(
-        "```json\n{\"agent\": {\"system_prompt\": \"Explain papers\"}}\n```",
+        "/setup ```json\n{\"agent\": {\"system_prompt\": \"Explain papers\"}}\n```",
     ))
     .unwrap();
     assert_eq!(draft, json!({}));
@@ -98,7 +161,7 @@ fn advanced_json_is_forwarded_as_customization_and_never_as_a_bot_name() {
     // Individual field semantics belong to the CMA API, including rejection
     // of incomplete or unknown profile fields.
     let (_, customization) = request(&activity(
-        "{\"sandbox\": {\"cpu_millis\": 2000}, \"availability\": {\"always_keep_alive\": true}}",
+        "/setup {\"sandbox\": {\"cpu_millis\": 2000}, \"availability\": {\"always_keep_alive\": true}}",
     ))
     .unwrap();
     assert_eq!(customization["sandbox"]["cpu_millis"], 2000);
@@ -115,7 +178,7 @@ fn malformed_or_ambiguous_customization_has_an_actionable_error() {
         "{\"agent\":{},\"availability\":{}}",
         "{\"workspace\":null}",
     ] {
-        let error = request(&activity(input)).unwrap_err();
+        let error = request(&activity(&format!("/setup {input}"))).unwrap_err();
         assert!(error.contains("current Customize step"), "{input}: {error}");
         assert!(error.contains("cancel"));
     }
@@ -182,7 +245,7 @@ fn review_shows_the_effective_plan_before_creation_without_identity_credentials(
         "apt-get update",
         "PUBLIC_SETTING",
         "always_keep_alive",
-        "Reply `create`",
+        "Reply `/setup create`",
     ] {
         assert!(text.contains(expected), "missing {expected}");
     }
@@ -209,9 +272,9 @@ fn custom_steps_show_basic_edits_and_complete_current_json_templates() {
         let text = rendered(&message);
         assert!(text.contains(command));
         assert!(
-            text.contains("reply `done`")
-                || text.contains("Reply `done`")
-                || text.contains("then `done`")
+            text.contains("reply `/setup done`")
+                || text.contains("Reply `/setup done`")
+                || text.contains("then `/setup done`")
         );
         assert!(text.contains(&format!("\"{key}\": {{")));
         if key == "sandbox" {
