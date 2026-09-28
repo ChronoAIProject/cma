@@ -65,7 +65,7 @@ impl BotSetupDependencies for Dependencies {
             http: &self.http,
             gateway: &self.gateway,
             binding: BINDING,
-            contexts: &self.contexts,
+            contexts: self.contexts.as_ref(),
         }
         .verify(binding, credential, reference, activity)
         .await
