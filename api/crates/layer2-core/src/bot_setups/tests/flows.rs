@@ -191,6 +191,7 @@ async fn replay_cannot_borrow_another_actors_identity_or_a_revoked_grant() {
     fixture.dependencies.events.lock().unwrap().insert(
         "foreign".into(),
         SetupEvent {
+            occurred_at: crate::now_rfc3339(),
             actor: other_actor.clone(),
             event_id: "foreign".into(),
             input: SetupInput::Interaction {

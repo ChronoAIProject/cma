@@ -3,6 +3,7 @@ import { ProviderBindings } from './provider-bindings.js';
 import { GatewayRecords } from './gateway-records.js';
 import { Bots } from './bots.js';
 import { BotSetups } from './bot-setups.js';
+import { AgentDelegations } from './agent-delegations.js';
 import { GatewayInteractions } from './gateway-interactions.js';
 import { readAgentCard } from './agent-card.js';
 import { resolveConfig, type ClientConfig, type ResolvedConfig } from './config.js';
@@ -38,6 +39,7 @@ export class Cma {
   readonly gatewayRecords: GatewayRecords;
   readonly bots: Bots;
   readonly botSetups: BotSetups;
+  readonly agentDelegations: AgentDelegations;
   readonly gatewayInteractions: GatewayInteractions;
   readonly eventWorkerProfiles: EventWorkerProfiles;
   readonly agents: Agents;
@@ -71,6 +73,7 @@ export class Cma {
     this.gatewayRecords = new GatewayRecords(this.#config);
     this.bots = new Bots(this.#config);
     this.botSetups = new BotSetups(this.#config);
+    this.agentDelegations = new AgentDelegations(this.#config);
     this.gatewayInteractions = new GatewayInteractions(this.#config);
     this.eventWorkerProfiles = new EventWorkerProfiles(this.#config);
     this.agents = new Agents(this.#config);

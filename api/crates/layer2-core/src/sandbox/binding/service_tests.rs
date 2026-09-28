@@ -484,3 +484,4 @@ mod resource_access;
 mod command_tests;
 
 mod event_tests;
+mod existing;

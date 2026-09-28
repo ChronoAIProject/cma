@@ -25,6 +25,20 @@ async fn fixture() -> Fixture {
 }
 async fn candidate(f: &Fixture) -> (crate::auth::actor_links::ActorLinkStatus, String) {
     let initial = f.auth.ensure_actor_link(&actor()).await.unwrap();
+    // Compatibility fixture: existing encrypted rows predate browser consent.
+    let mut legacy = f
+        .store
+        .actor_link_by_id(&initial.link_id)
+        .await
+        .unwrap()
+        .unwrap();
+    legacy.activation = crate::auth::actor_links::ActorActivation::LegacyChatProof;
+    legacy.revision += 1;
+    assert!(f
+        .store
+        .replace_actor_link(Some(initial.revision), legacy)
+        .await
+        .unwrap());
     assert!(initial.candidate.is_none());
     assert!(initial.grant_id.is_none());
     let cookie = f
@@ -67,6 +81,9 @@ async fn candidate(f: &Fixture) -> (crate::auth::actor_links::ActorLinkStatus, S
     assert!(status.grant_id.is_none());
     (status, code)
 }
+
+#[path = "actor_browser_tests.rs"]
+mod browser_tests;
 
 #[tokio::test]
 async fn actor_link_requires_both_browser_and_same_sender_and_replays_without_new_authority() {

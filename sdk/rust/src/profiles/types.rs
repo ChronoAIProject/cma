@@ -49,6 +49,9 @@ pub struct SkillReference {
 /// Agent model, policy, skills, and initial instructions.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentProfileContent {
+    /// Isolate this Agent's process, files and network access; omitted or false retains the default.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub isolated_agent: bool,
     /// Optional explicit model name.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,

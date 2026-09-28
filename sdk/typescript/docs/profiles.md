@@ -6,6 +6,11 @@
 revision workflow with distinct typed content. Drafts are editable; published
 revisions are immutable. Instances and nested profile references pin a revision.
 
+Agent content can set `isolated_agent: true` to request separate process, file
+and network boundaries. Omission or `false` retains the existing default. The
+SDK preserves the selected value when reading or saving a profile, including
+when that configuration appears in a Bot Father setup review.
+
 ```ts
 import { createClient } from '@chronoai/cma-sdk';
 

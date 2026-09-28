@@ -28,6 +28,8 @@ use documents::*;
 #[cfg(test)]
 mod admission_tests;
 #[cfg(test)]
+mod existing_tests;
+#[cfg(test)]
 mod mongo_tests;
 
 const BINDINGS: &str = "provider_bindings";
@@ -64,27 +66,45 @@ impl BindingCollections {
                 .await
                 .map_err(|e| StoreError::Unavailable(format!("binding index: {e}")))?;
         }
-        for (collection, key) in [
-            (&value.records, "record.key_sha256"),
-            (&value.conversations, "record.agent_id"),
-        ] {
-            let mut keys = Document::new();
-            keys.insert(key, 1);
-            collection
-                .create_index(
-                    IndexModel::builder()
-                        .keys(keys)
-                        .options(
-                            mongodb::options::IndexOptions::builder()
-                                .unique(true)
-                                .build(),
-                        )
-                        .build(),
-                )
-                .await
-                .map_err(|error| {
-                    StoreError::Unavailable(format!("binding unique index: {error}"))
-                })?;
+        value
+            .records
+            .create_index(
+                IndexModel::builder()
+                    .keys(doc! {"record.key_sha256": 1})
+                    .options(
+                        mongodb::options::IndexOptions::builder()
+                            .unique(true)
+                            .build(),
+                    )
+                    .build(),
+            )
+            .await
+            .map_err(|error| StoreError::Unavailable(format!("binding unique index: {error}")))?;
+        // An existing Agent may be borrowed by another channel. Lookup remains
+        // unique inside one binding generation; resource lifecycle is retained
+        // by the Agent's original owner, independently of these associations.
+        value
+            .conversations
+            .create_index(
+                IndexModel::builder()
+                    .keys(doc! {"binding_id": 1, "generation": 1, "record.agent_id": 1})
+                    .options(
+                        mongodb::options::IndexOptions::builder()
+                            .unique(true)
+                            .name("binding_generation_agent".to_owned())
+                            .build(),
+                    )
+                    .build(),
+            )
+            .await
+            .map_err(|error| StoreError::Unavailable(format!("binding agent index: {error}")))?;
+        if let Err(error) = value.conversations.drop_index("record.agent_id_1").await {
+            if !matches!(&*error.kind, mongodb::error::ErrorKind::Command(command) if command.code == 27)
+            {
+                return Err(StoreError::Unavailable(format!(
+                    "binding agent index migration: {error}"
+                )));
+            }
         }
         Ok(value)
     }

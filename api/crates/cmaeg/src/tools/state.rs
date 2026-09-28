@@ -208,7 +208,7 @@ impl ToolsState {
         }
         Ok(super::context::project(&channel, &event, activity, true))
     }
-    async fn deliver<T>(
+    pub(super) async fn deliver<T>(
         &self,
         command: DeliveryCommand,
         received: oneshot::Receiver<T>,
@@ -244,7 +244,7 @@ impl ToolsState {
         .map_err(|_| Problem::new(ProblemCode::Internal, 504, "delivery_timeout"))?
     }
 }
-fn validate(message: &OutboundMessage) -> Result<(), Problem> {
+pub(super) fn validate(message: &OutboundMessage) -> Result<(), Problem> {
     message.validate().map_err(|error| {
         Problem::new(
             if error.message.contains("32768") {

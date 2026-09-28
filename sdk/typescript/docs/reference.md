@@ -490,3 +490,32 @@ The `test` method runs a synthetic provider turn and sends no Telegram message.
 
 Bot responses contain no credential bytes. Preserve channel IDs and callback
 URLs exactly; never decode, reconstruct or log opaque gateway references.
+
+## Bot Father operations
+
+`client.botSetups.advance` reads an attested source event and returns the current
+setup view. `client.botSetups.act` lets the conversational Agent select a typed
+`view`, `draft`, `choose`, `customize`, or `confirm` operation. Both require the
+configured Bot Father binding credential and the original opaque `event_ref`.
+Operations carry `request.request_id` for replay protection; every operation
+except `view` also needs `request.expected` with the latest `setup_id` and
+`revision`. Preserve the same request ID and content when retrying an uncertain
+result. A changed revision requires reading the current view and making a new
+decision.
+
+The view's `confirmation_digest` identifies the exact reviewed plan. Send that
+digest in a `confirm` action only after the user has confirmed that plan. CMA
+independently checks the attested user confirmation; an Agent-selected action
+cannot replace consent, establish a user identity, or borrow a different user's
+credentials. Ordinary chat does not require calling either setup operation.
+
+## Agent-delegated operations
+
+`client.agentDelegations.identity({ event_ref })` resolves a signed-in source
+actor or returns CMA's browser-consent URL. `client.agentDelegations.operate()`
+accepts the same event capability, a canonical local `path`, `method`, optional
+`body` and optional resource `owner`. Mutations require `idempotency_key`.
+These methods require the configured Bot Father binding credential; they do not
+accept a user token or claimed grant ID. The operation result is `{ status, body }`;
+inspect the inner status before treating a mutation as successful. A CMA callback
+continuation is accepted only by CMA APIs, never gateway reply tools.

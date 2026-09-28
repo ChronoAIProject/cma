@@ -12,6 +12,7 @@ fn attach(request: &mut CommandReservation) {
     };
     input.content.push(AgentContent::ExternalEvent {
         context: ExternalEventContext {
+            provider_conversation_id: None,
             source_id: "source".into(),
             conversation_id: "scoped-conversation".into(),
             event_id: "event".into(),

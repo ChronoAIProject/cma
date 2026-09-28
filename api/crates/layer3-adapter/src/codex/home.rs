@@ -71,10 +71,15 @@ pub fn render_agent_home(
         }
     }
 
-    let mut symlinks = vec![HomeSymlink {
-        path: "auth.json".into(),
-        target: SHARED_AUTH_PATH.into(),
-    }];
+    validate_isolation(&request.options)?;
+    let mut symlinks = if request.options.isolated_agent {
+        Vec::new()
+    } else {
+        vec![HomeSymlink {
+            path: "auth.json".into(),
+            target: SHARED_AUTH_PATH.into(),
+        }]
+    };
     symlinks.extend(
         BASELINE_SKILLS
             .iter()
@@ -116,6 +121,7 @@ pub fn render_agent_home(
 /// Render the unchanged bridge launch. Conversation resume stays on ACP.
 pub fn render_launch(request: &AgentOpenRequest) -> crate::Result<AgentLaunch> {
     validate_slot(&request.options.slot)?;
+    validate_isolation(&request.options)?;
     if request.options.home_directory != expected_home(&request.options.slot)
         || !valid_worktree_path(&request.options.working_directory)
     {
@@ -140,12 +146,36 @@ pub fn render_launch(request: &AgentOpenRequest) -> crate::Result<AgentLaunch> {
         agent_id: request.options.slot.clone(),
         cwd: request.options.working_directory.clone(),
         home: request.options.home_directory.clone(),
-        program: BRIDGE_PROGRAM.into(),
+        program: if request.options.isolated_agent {
+            "/usr/bin/python3".into()
+        } else {
+            BRIDGE_PROGRAM.into()
+        },
         // codex-acp has no resume CLI argument. The existing ACP load call
         // receives resume_conversation after the bridge starts.
-        args: Vec::new(),
+        args: if request.options.isolated_agent {
+            vec![
+                "-I".into(),
+                "-c".into(),
+                include_str!("isolate_agent.py").into(),
+                "outer".into(),
+                request.options.home_directory.clone(),
+                request.options.working_directory.clone(),
+            ]
+        } else {
+            Vec::new()
+        },
         env,
     })
+}
+
+fn validate_isolation(options: &crate::RuntimeOptions) -> crate::Result<()> {
+    if options.isolated_agent && options.own_credential {
+        return Err(AdapterError::Rejected(
+            "isolated agents require managed model access; shared provider credentials cannot be mounted".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn validate_slot(slot: &crate::AgentSlot) -> crate::Result<()> {

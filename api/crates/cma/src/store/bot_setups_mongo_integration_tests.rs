@@ -23,6 +23,7 @@ fn setup() -> BotSetup {
         draft: SetupDraft::default(),
         configuration: SetupConfiguration {
             agent: AgentProfileContent {
+                isolated_agent: false,
                 model: Some("fixture-model".into()),
                 thinking_effort: ThinkingEffort::Medium,
                 permission_level: PermissionLevel::Guarded,
@@ -56,7 +57,9 @@ fn setup() -> BotSetup {
         admission: None,
         service_page: 0,
         confirmation_digest: None,
+        confirmation_event: None,
         bot_id: None,
+        processed_actions: vec![],
         processed_events: vec!["fixture-event-1".into()],
         updated_at: layer2_core::now_rfc3339(),
     }

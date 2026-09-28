@@ -1,3 +1,4 @@
+use super::{SetupActionReceipt, SetupReviewEvent};
 use crate::{
     profiles::{
         AgentProfileContent, SandboxProfileAvailability, SandboxProfileContent,
@@ -26,6 +27,7 @@ impl ExternalActor {
 pub struct SetupEvent {
     pub actor: ExternalActor,
     pub event_id: String,
+    pub occurred_at: String,
     pub input: SetupInput,
 }
 
@@ -96,6 +98,10 @@ pub struct BotSetup {
     pub admission: Option<crate::bots::BotAdmission>,
     pub service_page: usize,
     pub confirmation_digest: Option<String>,
+    #[serde(default)]
+    pub confirmation_event: Option<SetupReviewEvent>,
+    #[serde(default)]
+    pub processed_actions: Vec<SetupActionReceipt>,
     pub bot_id: Option<String>,
     pub processed_events: Vec<String>,
     pub updated_at: String,
@@ -130,6 +136,7 @@ pub struct SetupView {
     pub connection_url: Option<String>,
     pub external_bot_id: Option<String>,
     pub admission: Option<crate::bots::BotAdmission>,
+    pub confirmation_digest: Option<String>,
     pub result: Option<SetupResult>,
     pub notice: Option<String>,
 }

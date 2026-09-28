@@ -73,6 +73,25 @@ impl AuthState {
         owner: &SubjectId,
         expected_incarnation: Option<&str>,
     ) -> Result<SecretValue, BotError> {
+        self.renewable_actor_token(owner, expected_incarnation, Some(Capability::ManageOwnBots))
+            .await
+    }
+
+    pub(in crate::auth) async fn actor_token_fenced(
+        &self,
+        owner: &SubjectId,
+        expected_incarnation: Option<&str>,
+    ) -> Result<SecretValue, BotError> {
+        self.renewable_actor_token(owner, expected_incarnation, None)
+            .await
+    }
+
+    async fn renewable_actor_token(
+        &self,
+        owner: &SubjectId,
+        expected_incarnation: Option<&str>,
+        required: Option<Capability>,
+    ) -> Result<SecretValue, BotError> {
         tokio::time::timeout(Duration::from_secs(15), async {
             let mut state = self
                 .store
@@ -106,7 +125,7 @@ impl AuthState {
             let request = cookie_authorization::request_for_cookie(self, owner, state.clone())
                 .await
                 .map_err(|_| BotError::Unavailable)?;
-            if !request.authorization.allows(Capability::ManageOwnBots)
+            if required.is_some_and(|capability| !request.authorization.allows(capability))
                 || request.delegated_credential.as_deref() != Some(tokens.access_token.expose())
             {
                 return Err(BotError::Forbidden);

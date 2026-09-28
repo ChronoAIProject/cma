@@ -277,11 +277,11 @@ fn corrupt() -> SandboxStoreError {
 
 fn valid_creator(actor: Option<&ResourceActor>) -> bool {
     actor.is_none_or(|actor| match actor {
-        ResourceActor::Human { subject }
-        | ResourceActor::Api {
-            subject,
-            delegation_id: None,
-        } => !subject.as_str().trim().is_empty(),
+        // Provenance records attribution after the creation service validates
+        // authority. Retain its delegation ID without treating it as authority.
+        ResourceActor::Human { .. } | ResourceActor::Api { .. } => {
+            actor.ordinary_subject().is_some()
+        }
         ResourceActor::Trigger { subject, launch_id } => {
             !subject.as_str().trim().is_empty() && !launch_id.as_str().trim().is_empty()
         }
