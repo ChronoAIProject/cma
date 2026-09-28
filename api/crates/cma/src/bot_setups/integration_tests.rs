@@ -108,18 +108,20 @@ async fn continuation_reuses_admission_and_reply_identity_after_lost_response_or
         ));
         assert_eq!(f.peer.effects.lock().unwrap().len(), 1);
         assert_eq!(f.peer.reply_calls.load(Ordering::SeqCst), 2);
-        let polled = f.peer.polled.lock().unwrap();
-        assert_eq!(polled.len(), 2);
-        assert_eq!(polled[0].receipt, polled[1].receipt);
-        let admitted = &polled[0].receipt.envelope;
-        assert!(
-            admitted.command.external_event().is_none(),
-            "callback cannot fabricate human consent"
-        );
-        let content = serde_json::to_string(admitted).unwrap();
-        assert!(content.contains(&capability(&first)));
-        assert!(!content.contains(USER_TOKEN));
-        assert!(!content.contains(KEY));
+        {
+            let polled = f.peer.polled.lock().unwrap();
+            assert_eq!(polled.len(), 2);
+            assert_eq!(polled[0].receipt, polled[1].receipt);
+            let admitted = &polled[0].receipt.envelope;
+            assert!(
+                admitted.command.external_event().is_none(),
+                "callback cannot fabricate human consent"
+            );
+            let content = serde_json::to_string(admitted).unwrap();
+            assert!(content.contains(&capability(&first)));
+            assert!(!content.contains(USER_TOKEN));
+            assert!(!content.contains(KEY));
+        }
         assert!(f
             .authority
             .auth
@@ -327,4 +329,63 @@ async fn delegated_operation_requires_login_valid_source_owner_and_allowlisted_r
         json_body(response).await;
     }
     assert!(f.audit.0.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn delegated_organization_creation_never_falls_back_to_personal_ownership() {
+    let f = Fixture::new().await;
+    let notification = f.activate().await;
+    let calls = Arc::new(AtomicUsize::new(0));
+    let observed = calls.clone();
+    let resources = Router::new().fallback(move |Extension(context): Extension<CallerContext>| {
+        let observed = observed.clone();
+        async move {
+            observed.fetch_add(1, Ordering::SeqCst);
+            assert_eq!(context.caller.subject.as_str(), "visitor");
+            assert!(context.validate_principal());
+            assert_eq!(context.memberships.len(), 1);
+            assert_eq!(context.memberships[0].organization.as_str(), "visitor-org");
+            Json(json!({"authorized":true}))
+        }
+    });
+    for path in [
+        "/api/v1/sandboxes",
+        "/api/v1/agent-profiles",
+        "/api/v1/workspace-profiles?view=all",
+        "/api/v1/sandbox-profiles",
+        "/api/v1/event-worker-profiles",
+        "/api/v1/marketplace/agent-profiles/profile-one/fork",
+    ] {
+        let response = request(&f, resources.clone(), "/api/v1/agent-delegations/operations", json!({
+            "event_ref":capability(&notification),"owner":{"kind":"organization","subject":"visitor-org"},
+            "method":"POST","path":path,"idempotency_key":"organization-creation"
+        })).await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{path}");
+        let value = json_body(response).await;
+        assert!(value["detail"]
+            .as_str()
+            .unwrap()
+            .contains("personal ownership only"));
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert!(f.audit.0.lock().unwrap().is_empty());
+    for (method, path) in [
+        ("GET", "/api/v1/sandboxes/organization-sandbox"),
+        ("POST", "/api/v2/responses"),
+        (
+            "POST",
+            "/api/v2/agents/organization-agent/responses/response-one/controls",
+        ),
+    ] {
+        let response = request(&f, resources.clone(), "/api/v1/agent-delegations/operations", json!({
+            "event_ref":capability(&notification),"owner":{"kind":"organization","subject":"visitor-org"},
+            "method":method,"path":path,"idempotency_key":"organization-operation"
+        })).await;
+        assert_eq!(response.status(), StatusCode::OK, "{path}");
+        assert_eq!(
+            json_body(response).await,
+            json!({"status":200,"body":{"authorized":true}})
+        );
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), 3);
 }
