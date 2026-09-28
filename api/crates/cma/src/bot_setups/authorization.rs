@@ -14,18 +14,6 @@ pub(super) fn actor(value: &ExternalActor) -> crate::auth::actor_links::EventAct
     }
 }
 impl SetupDependencies {
-    pub(super) async fn link_identity(
-        &self,
-        value: &ExternalActor,
-    ) -> Result<SetupIdentity, BotError> {
-        let status = self.auth.ensure_actor_link(&actor(value)).await?;
-        Ok(SetupIdentity {
-            grant_id: status.grant_id,
-            login_url: status.login_url,
-            subject: status.candidate.as_ref().map(|c| c.subject.to_string()),
-            display_name: status.candidate.and_then(|c| c.profile.display_name),
-        })
-    }
     pub(super) async fn confirm_link(
         &self,
         value: &ExternalActor,
