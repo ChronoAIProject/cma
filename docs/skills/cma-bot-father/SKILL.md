@@ -1,7 +1,7 @@
 ---
 name: cma-bot-father
 description: Guide Telegram users through creating a personal or organization-owned CMA Agent Bot, choosing profiles and services, connecting a Telegram channel, and continuing its setup. Use when a user wants to create or configure a Bot or resume that workflow; ordinary conversation and general questions remain normal assistant work.
-version: "1.1"
+version: "1.2"
 metadata:
   category: plain
   tags: [cma, telegram, bot, channels]
@@ -84,8 +84,12 @@ During Customize, help the user prepare the appropriate command:
 - Sandbox: `/setup resources: 2000 4096` for 2 CPU cores and 4096 MiB memory.
 - Advanced: prefix the **complete current JSON template** with `/setup `;
   retain its outer `agent`, `workspace`, or `sandbox` object and all required
-  fields. `availability` accompanies the sandbox template. Finish with
-  `/setup done`.
+  fields. `availability` accompanies the sandbox template. A valid complete
+  template advances immediately; follow the returned card instead of sending
+  an extra `/setup done`.
+
+Field shortcuts remain on the current Customize step so users can make more
+edits; `/setup done` finishes those edits and advances to the next step.
 
 Changes are validated against the selected owner and current step by CMA. Do not
 promise arbitrary APIs, service scopes, or resource mutations that the cards do
