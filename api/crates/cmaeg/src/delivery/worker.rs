@@ -204,12 +204,6 @@ async fn outcome_event(
             }
             finish(state);
         }
-        TurnOutcome::SetupMessage { message } => {
-            state.tool_replied = true;
-            state.answer_attempted = true;
-            let _ = send_message(sender, state, message).await;
-            finish(state);
-        }
         TurnOutcome::Failed { .. } | TurnOutcome::Incomplete { .. } => {
             if !state.tool_replied {
                 send_text(sender, state, config.failure_text.clone()).await;
