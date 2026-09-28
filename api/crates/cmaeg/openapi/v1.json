@@ -951,6 +951,9 @@
           "label": {
             "type": "string"
           },
+          "selected": {
+            "type": "boolean"
+          },
           "style": {
             "$ref": "#/components/schemas/OptionStyle"
           }
@@ -1046,18 +1049,39 @@
           "activity": {
             "$ref": "#/components/schemas/PublicActivity"
           },
+          "activity_verified": {
+            "type": "boolean"
+          },
           "capabilities": {
             "$ref": "#/components/schemas/Capabilities"
+          },
+          "channel_id": {
+            "$ref": "#/components/schemas/ChannelId"
           },
           "conversation_id": {
             "$ref": "#/components/schemas/ConversationId"
           },
           "event_id": {
             "$ref": "#/components/schemas/EventId"
+          },
+          "expires_at": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "provider_binding_id": {
+            "$ref": "#/components/schemas/BindingId"
+          },
+          "source": {
+            "$ref": "#/components/schemas/SourceKind"
           }
         },
         "required": [
           "event_id",
+          "channel_id",
+          "provider_binding_id",
+          "source",
+          "activity_verified",
+          "expires_at",
           "conversation_id",
           "activity",
           "capabilities"
@@ -2103,6 +2127,7 @@
           "unknown_sender",
           "message_edit",
           "interactive_action_unsupported",
+          "interaction_expired_or_invalid",
           "system_event",
           "content_unsupported",
           "attachment_unsupported",
@@ -2761,6 +2786,18 @@
         "operationId": "recoverChannel",
         "parameters": [
           {
+            "description": "Organization owner UUID; caller must be an authorized NyxID organization administrator",
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
             "in": "path",
             "name": "record_id",
             "required": true,
@@ -2805,6 +2842,18 @@
       "post": {
         "operationId": "createChannel",
         "parameters": [
+          {
+            "description": "Organization owner UUID; caller must be an authorized NyxID organization administrator",
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
           {
             "description": "1..=256 ASCII bytes; identical creates replay locally for ten minutes",
             "in": "header",
@@ -2865,6 +2914,18 @@
         "operationId": "deleteChannel",
         "parameters": [
           {
+            "description": "Organization owner UUID; caller must be an authorized NyxID organization administrator",
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
             "in": "path",
             "name": "channel_id",
             "required": true,
@@ -2911,6 +2972,18 @@
         "operationId": "getChannel",
         "parameters": [
           {
+            "description": "Organization owner UUID; caller must be an authorized NyxID organization administrator",
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
             "in": "path",
             "name": "channel_id",
             "required": true,
@@ -2953,6 +3026,18 @@
       "put": {
         "operationId": "updateChannel",
         "parameters": [
+          {
+            "description": "Organization owner UUID; caller must be an authorized NyxID organization administrator",
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
           {
             "in": "path",
             "name": "channel_id",
@@ -3218,6 +3303,18 @@
         "operationId": "rekeyChannel",
         "parameters": [
           {
+            "description": "Organization owner UUID; caller must be an authorized NyxID organization administrator",
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
             "in": "path",
             "name": "channel_id",
             "required": true,
@@ -3262,6 +3359,18 @@
       "post": {
         "operationId": "testChannel",
         "parameters": [
+          {
+            "description": "Organization owner UUID; caller must be an authorized NyxID organization administrator",
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
           {
             "in": "path",
             "name": "channel_id",
@@ -3345,6 +3454,59 @@
         ],
         "tags": [
           "tools"
+        ]
+      },
+      "post": {
+        "operationId": "verifyEventContext",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "event_ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Activity"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContextResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "agentBearer": []
+          }
+        ],
+        "tags": [
+          "provider integration"
         ]
       }
     },

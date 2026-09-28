@@ -15,6 +15,8 @@ use super::{
 /// Aggregate-neutral stores opened atomically at process startup.
 pub struct MongoStores {
     pub(crate) event_workers: Arc<super::event_workers::MongoEventWorkerProfileStore>,
+    pub(crate) bot_setups: Arc<super::bot_setups::MongoBotSetupStore>,
+    pub(crate) bot_setup_contexts: Arc<super::bot_setup_contexts::MongoBotSetupContextStore>,
     pub(crate) bots: Arc<super::bots::MongoBotStore>,
     /// Sandbox -> Workspace -> Worktree -> Agent aggregates and logs.
     pub sandbox_model: Arc<MongoSandboxStore>,
@@ -34,6 +36,7 @@ pub struct MongoStores {
     pub settings: Arc<MongoPlatformSettingsStore>,
     pub operations: Arc<MongoOperationStore>,
     pub gateway_records: Arc<MongoGatewayRecordStore>,
+    pub(crate) gateway_interactions: Arc<super::MongoGatewayInteractionStore>,
     client: Client,
     database: String,
 }
@@ -79,10 +82,30 @@ impl MongoStores {
         let settings = Arc::new(MongoPlatformSettingsStore::open(&client, database).await?);
         let operations = Arc::new(MongoOperationStore::open(&client, database).await?);
         let gateway_records = Arc::new(MongoGatewayRecordStore::open(&client, database).await?);
+        let gateway_interactions =
+            Arc::new(super::MongoGatewayInteractionStore::open(&client, database).await?);
+        let bot_setups = Arc::new(
+            super::bot_setups::MongoBotSetupStore::open(
+                &client,
+                database,
+                deployment,
+                auth_encryption_key,
+            )
+            .await?,
+        );
         let bots = Arc::new(
             super::bots::MongoBotStore::open(&client, database)
                 .await
                 .map_err(|_| StoreError::Unavailable("open bot store".into()))?,
+        );
+        let bot_setup_contexts = Arc::new(
+            super::bot_setup_contexts::MongoBotSetupContextStore::open(
+                &client,
+                database,
+                deployment,
+                auth_encryption_key,
+            )
+            .await?,
         );
         let event_workers = Arc::new(
             super::event_workers::MongoEventWorkerProfileStore::open(&client, database)
@@ -91,6 +114,8 @@ impl MongoStores {
         );
         let stores = Self {
             event_workers,
+            bot_setups,
+            bot_setup_contexts,
             bots,
             sandbox_model,
             sandbox_profiles,
@@ -104,6 +129,7 @@ impl MongoStores {
             settings,
             operations,
             gateway_records,
+            gateway_interactions,
             client,
             database: database.to_owned(),
         };

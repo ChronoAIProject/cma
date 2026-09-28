@@ -7,7 +7,14 @@ use cmaeg_core::{
 };
 use serde_json::Value;
 
+#[derive(Clone)]
+pub struct CallbackFacts {
+    pub id: String,
+    pub data: String,
+    pub message_id: String,
+}
 pub struct TelegramFacts {
+    pub callback: Option<CallbackFacts>,
     pub conversation: ConversationKind,
     pub thread_id: Option<String>,
     pub mentioned: Option<bool>,
@@ -59,8 +66,8 @@ pub fn observe(
     if events.len() > 1 || (!events.is_empty() && raw.get("callback_query").is_some()) {
         return Err(VerificationError("telegram_event_ambiguous"));
     }
-    if raw.get("callback_query").is_some() {
-        return Ok(Observation::Refused(Refusal::InteractiveActionUnsupported));
+    if let Some(callback) = raw.get("callback_query") {
+        return observe_callback(payload, callback);
     }
     let Some((kind, message)) = events.first() else {
         return Ok(Observation::Refused(Refusal::SystemEvent));
@@ -167,6 +174,7 @@ pub fn observe(
             .and_then(Value::as_bool),
     };
     Ok(Observation::Message(TelegramFacts {
+        callback: None,
         conversation,
         thread_id,
         mentioned,
@@ -218,4 +226,58 @@ fn mention(message: &Value, text: &str, username: &str) -> Result<bool, Verifica
         }
     }
     Ok(false)
+}
+
+fn observe_callback(
+    payload: &CallbackPayload,
+    callback: &Value,
+) -> Result<Observation, VerificationError> {
+    let denied = || VerificationError("telegram_callback_invalid");
+    let from = callback.get("from").ok_or_else(denied)?;
+    if from.get("is_bot").and_then(Value::as_bool) != Some(false) {
+        return Ok(Observation::Refused(Refusal::BotSender));
+    }
+    let message = callback.get("message").ok_or_else(denied)?;
+    let chat = message.get("chat").ok_or_else(denied)?;
+    let message_id = numeric(message.get("message_id"))?;
+    if numeric(from.get("id"))? != payload.sender.platform_id
+        || numeric(chat.get("id"))? != payload.conversation.platform_id
+        || payload.reply_to_platform_message_id.as_deref() != Some(message_id.as_str())
+        || payload.content.kind != "interaction"
+        || !payload.content.attachments.is_empty()
+    {
+        return Err(denied());
+    }
+    let conversation = match chat.get("type").and_then(Value::as_str) {
+        Some("private") => ConversationKind::Private,
+        Some("group" | "supergroup") => ConversationKind::Group,
+        _ => return Err(denied()),
+    };
+    let id = callback
+        .get("id")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty() && s.len() <= 256)
+        .ok_or_else(denied)?
+        .to_owned();
+    let data = callback
+        .get("data")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty() && s.len() <= 64)
+        .ok_or_else(denied)?
+        .to_owned();
+    let thread_id = message
+        .get("message_thread_id")
+        .map(|id| numeric(Some(id)))
+        .transpose()?;
+    Ok(Observation::Message(TelegramFacts {
+        callback: Some(CallbackFacts {
+            id,
+            data,
+            message_id,
+        }),
+        conversation,
+        thread_id,
+        mentioned: Some(true),
+        replied_to_bot: Some(true),
+    }))
 }

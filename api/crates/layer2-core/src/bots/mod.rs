@@ -1,4 +1,6 @@
 //! Owner Bot lifecycle. External protocol orchestration implements the execution port.
+mod authority;
+pub use authority::{BotDelegation, BotOwnerAuthority, BotOwnership};
 mod control;
 mod creation;
 pub use control::*;
@@ -34,3 +36,6 @@ mod execution_tests;
 mod profile_tests;
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod ownership_tests;

@@ -4,7 +4,7 @@ use axum::{
     extract::{Path, State},
     http::{header, StatusCode},
     response::{IntoResponse, Response},
-    Json,
+    Extension, Json,
 };
 use layer2_core::{
     resource_access::CredentialSource,
@@ -60,6 +60,7 @@ pub(super) async fn retrieve(
     State(state): State<ResponsesV2State>,
     auth: Result<AuthenticatedResourceCaller, crate::auth::NotAuthenticated>,
     Path((binding, conversation, event)): Path<(String, String, String)>,
+    setups: Option<Extension<std::sync::Arc<layer2_core::bot_setups::BotSetupService>>>,
 ) -> Response {
     let Ok(auth) = auth else {
         return error::unauthenticated();
@@ -71,6 +72,33 @@ pub(super) async fn retrieve(
             "Event context requires a current binding key.",
             None,
         );
+    }
+    if let (Some(Extension(setups)), Some(credential)) = (setups, auth.credential.as_ref()) {
+        match setups
+            .context(&binding, credential.value(), &conversation, &event)
+            .await
+        {
+            Ok(Some(context)) => {
+                return ([(header::CACHE_CONTROL, "no-store")], Json(context)).into_response()
+            }
+            Ok(None) => {}
+            Err(layer2_core::bots::BotError::Forbidden) => {
+                return error::error(
+                    StatusCode::FORBIDDEN,
+                    "binding_key_required",
+                    "Event context requires a current binding key.",
+                    None,
+                )
+            }
+            Err(_) => {
+                return error::error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "event_context_unavailable",
+                    "Event context is temporarily unavailable.",
+                    None,
+                )
+            }
+        }
     }
     let agent = match state
         .resolve_conversation(&auth, &AgentId(conversation.clone()))

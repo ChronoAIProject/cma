@@ -201,3 +201,26 @@ fn timing(response: &reqwest::Response) -> std::collections::BTreeMap<String, f6
     }
     values
 }
+
+#[test]
+fn telegram_new_platform_alias_maps_to_telegram_protocol() {
+    use std::str::FromStr;
+    assert_eq!(
+        cmaeg_core::channel::Platform::from_str("telegram-new").unwrap(),
+        cmaeg_core::channel::Platform::Telegram
+    );
+}
+
+#[tokio::test]
+async fn accepts_managed_telegram_new_platform_alias() {
+    let fixture = Fixture::new(|_| {}, Default::default()).await;
+    let mut envelope = Envelope::new();
+    envelope.payload["platform"] = "telegram-new".into();
+    let (body, token) = envelope.signed();
+    let mut request = fixture.request(body, &token).build().unwrap();
+    request
+        .headers_mut()
+        .insert("x-nyxid-platform", "telegram-new".parse().unwrap());
+    let response = fixture.client.execute(request).await.unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::ACCEPTED);
+}

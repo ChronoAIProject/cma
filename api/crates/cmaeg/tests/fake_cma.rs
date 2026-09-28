@@ -58,6 +58,10 @@ impl FakeCma {
                 "/api/v1/gateway/channel-records/{record_id}",
                 put(put_record).get(get_record).delete(delete_record),
             )
+            .route(
+                "/api/v1/gateway/interaction-records/{record_id}",
+                put(put_record).get(get_record).delete(delete_record),
+            )
             .with_state(state.clone())
             .layer(axum::middleware::from_fn(
                 |request: axum::extract::Request, next: axum::middleware::Next| async move {

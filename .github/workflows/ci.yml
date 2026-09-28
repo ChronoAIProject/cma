@@ -180,23 +180,34 @@ jobs:
           if [ -n "$bad" ]; then echo "::error::non-markdown in SDK docs: $bad"; exit 1; fi
       - name: Layer dependency rule
         run: |
+          # Inspect production dependencies only. CMA's integration tests run
+          # the compiled gateway against disposable fixtures, so their
+          # dev-dependencies may include sibling gateway crates without
+          # introducing a runtime layer dependency.
+          production_dependencies() {
+            awk '
+              /^\[dependencies\]$/ { in_dependencies=1; next }
+              /^\[/ { in_dependencies=0 }
+              in_dependencies { print }
+            ' "$1"
+          }
           fail=0
-          grep -q 'layer3-adapter' api/crates/layer1-public/Cargo.toml \
+          production_dependencies api/crates/layer1-public/Cargo.toml | grep -q 'layer3-adapter' \
             && { echo "::error::layer1-public must not depend on layer3-adapter"; fail=1; }
-          grep -q 'layer1-public' api/crates/layer2-core/Cargo.toml \
+          production_dependencies api/crates/layer2-core/Cargo.toml | grep -q 'layer1-public' \
             && { echo "::error::layer2-core must not depend on layer1-public"; fail=1; }
-          grep -qE 'layer1-public|layer2-core' api/crates/layer3-adapter/Cargo.toml \
+          production_dependencies api/crates/layer3-adapter/Cargo.toml | grep -qE 'layer1-public|layer2-core' \
             && { echo "::error::layer3-adapter must not depend on layer1 or layer2"; fail=1; }
-          grep -q 'layer4-runtime' api/crates/cma/Cargo.toml \
+          production_dependencies api/crates/cma/Cargo.toml | grep -q 'layer4-runtime' \
             && { echo "::error::control plane must not depend on layer4-runtime"; fail=1; }
           for manifest in api/crates/layer1-public/Cargo.toml \
             api/crates/layer2-core/Cargo.toml api/crates/layer3-adapter/Cargo.toml \
             api/crates/layer4-runtime/Cargo.toml api/crates/cma/Cargo.toml; do
-            grep -qE 'cmaeg(-core)?' "$manifest" \
+            production_dependencies "$manifest" | grep -qE 'cmaeg(-core)?' \
               && { echo "::error::$manifest must not depend on CMAEG crates"; fail=1; }
           done
           for manifest in api/crates/cmaeg*/Cargo.toml; do
-            grep -qE 'layer1-public|layer2-core|layer3-adapter|layer4-runtime|(^|[^[:alnum:]_-])cma([^[:alnum:]_-]|$)' "$manifest" \
+            production_dependencies "$manifest" | grep -qE 'layer1-public|layer2-core|layer3-adapter|layer4-runtime|(^|[^[:alnum:]_-])cma([^[:alnum:]_-]|$)' \
               && { echo "::error::$manifest must not depend on control-plane or layer crates"; fail=1; }
           done
           exit $fail

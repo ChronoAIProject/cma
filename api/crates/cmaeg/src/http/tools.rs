@@ -27,7 +27,10 @@ pub fn router(state: ToolsState) -> Router {
             .route("/v1/events/{event_ref}/replies", post(reply_to_event))
             .route("/v1/messages/{message_ref}/update", post(update_message))
             .route("/v1/events/{event_ref}/typing", post(send_typing))
-            .route("/v1/events/{event_ref}/context", get(read_event_context))
+            .route(
+                "/v1/events/{event_ref}/context",
+                get(read_event_context).post(verify_event_context),
+            )
             .with_state(state)
             .layer(RequestBodyLimitLayer::new(131072))
             .layer(axum::middleware::from_fn(protocol_headers)),
@@ -122,6 +125,25 @@ pub async fn read_event_context(
         Err(error) => return result::<ContextResponse>(Err(error)),
     };
     result(state.context(caller, &reference).await)
+}
+#[utoipa::path(post,path="/v1/events/{event_ref}/context",operation_id="verifyEventContext",tag="provider integration",
+    security(("agentBearer"=[])),params(("event_ref"=String,Path)),request_body=cmaeg_core::activity::Activity,
+    responses((status=200,body=ContextResponse),(status="default",body=Problem,content_type="application/problem+json")))]
+pub async fn verify_event_context(
+    State(state): State<ToolsState>,
+    caller: AgentCaller,
+    Path(reference): Path<String>,
+    body: Result<Json<cmaeg_core::activity::Activity>, axum::extract::rejection::JsonRejection>,
+) -> Response {
+    let activity = match json(body) {
+        Ok(value) => value,
+        Err(error) => return result::<ContextResponse>(Err(error)),
+    };
+    let reference = match event_ref(&reference) {
+        Ok(value) => value,
+        Err(error) => return result::<ContextResponse>(Err(error)),
+    };
+    result(state.verify_context(caller, &reference, activity).await)
 }
 fn json<T>(body: Result<Json<T>, axum::extract::rejection::JsonRejection>) -> Result<T, Problem> {
     body.map(|Json(value)| value).map_err(|error| {

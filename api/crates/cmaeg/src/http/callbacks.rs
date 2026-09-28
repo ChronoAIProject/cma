@@ -143,7 +143,7 @@ pub async fn callback(
         _ => return invalid(VerificationError("header_missing")),
     };
     let Some((index, Source::NyxidRelay { admission, bot_username, .. })) = channel.definition.sources.iter().enumerate()
-        .find(|(_, source)| matches!(source, Source::NyxidRelay { platform: candidate, .. } if candidate.as_str() == platform)) else {
+        .find(|(_, source)| matches!(source, Source::NyxidRelay { platform: candidate, .. } if candidate.as_str() == platform || (candidate.as_str() == "telegram" && platform == "telegram-new"))) else {
         return problem(StatusCode::BAD_REQUEST, ProblemCode::InvalidRequest, "no matching relay source");
     };
     let headers = match CallbackHeaders::read(&parts.headers) {
@@ -189,6 +189,8 @@ pub async fn callback(
     if verified.reply_expires_at <= now || verified.callback_deadline <= now {
         return invalid(VerificationError("token_time"));
     }
+    let callback = facts.callback.clone();
+    let route = verified.payload.conversation.id.clone();
     let mut request = match launch_request(
         channel,
         verified,
@@ -202,6 +204,47 @@ pub async fn callback(
             return problem(StatusCode::BAD_REQUEST, ProblemCode::InvalidRequest, reason)
         }
     };
+    if let Some(callback) = callback {
+        let Some(store) = &state.interactions else {
+            return refused(Refusal::InteractiveActionUnsupported);
+        };
+        let interaction = match store
+            .consume(
+                &request.channel,
+                &request.activity,
+                &route,
+                &callback.id,
+                &callback.data,
+                &callback.message_id,
+            )
+            .await
+        {
+            Ok(value) => value,
+            Err(crate::interactions::Error::Denied) => {
+                return refused(Refusal::InteractionExpiredOrInvalid)
+            }
+            Err(crate::interactions::Error::Unavailable) => {
+                return problem(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    ProblemCode::ProviderUnavailable,
+                    "interaction_store_unavailable",
+                )
+            }
+        };
+        request.activity.kind = cmaeg_core::activity::ActivityKind::Interaction(interaction.0);
+        request.activity.occurred_at = interaction.1;
+        let Ok(mut opened) = request.event_ref.open(&state.master_keys, now) else {
+            return invalid(VerificationError("event_ref_invalid"));
+        };
+        opened.payload.activity_sha256 = Some(cmaeg_core::seal::event_ref::activity_digest(
+            &request.activity,
+        ));
+        let Ok(reference) = cmaeg_core::seal::EventRef::seal(&opened.payload, &state.master_keys)
+        else {
+            return invalid(VerificationError("event_ref_invalid"));
+        };
+        request.event_ref = reference;
+    }
     verify_span.record("event_id", request.activity.event_id.as_str());
     drop(verify_time);
     request.timing = Some(timing);

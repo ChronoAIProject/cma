@@ -26,11 +26,17 @@ impl GatewayClient {
     async fn request<T: Serialize + ?Sized>(
         &self,
         token: &str,
+        bot: &Bot,
         method: Method,
         url: Url,
         body: Option<&T>,
     ) -> Result<Response, BotError> {
-        let request = self.http.request(method, url).bearer_auth(token);
+        let mut request = self.http.request(method, url).bearer_auth(token);
+        if let layer2_core::resource_access::ResourceOwner::Organization { subject } =
+            bot.resource_owner()
+        {
+            request = request.header("X-CMAEG-Owner", subject.as_str());
+        }
         let request = if let Some(body) = body {
             request.json(body)
         } else {
@@ -104,6 +110,7 @@ impl GatewayClient {
         let response = self
             .request(
                 token,
+                bot,
                 Method::POST,
                 self.url("channels", None)?,
                 Some(&body),
@@ -132,6 +139,7 @@ impl GatewayClient {
         let response = self
             .request::<()>(
                 token,
+                bot,
                 Method::GET,
                 self.url("channel-records", Some(&bot.record_id))?,
                 None,
@@ -189,6 +197,7 @@ impl GatewayClient {
         let response = self
             .request(
                 token,
+                bot,
                 Method::PUT,
                 self.url("channels", Some(&current.channel.channel_id))?,
                 Some(&body),
@@ -211,15 +220,34 @@ impl GatewayClient {
         }
         Ok(updated)
     }
+    #[allow(dead_code)] // Retained for Bot cleanup retries after a failed setup.
     pub async fn delete(
         &self,
         token: &str,
         current: &BotChannelObservation,
     ) -> Result<(), BotError> {
+        self.delete_with_bot(token, None, current).await
+    }
+    pub async fn delete_with_bot(
+        &self,
+        token: &str,
+        bot: Option<&Bot>,
+        current: &BotChannelObservation,
+    ) -> Result<(), BotError> {
         let mut url = self.url("channels", Some(&current.channel.channel_id))?;
         url.query_pairs_mut()
             .append_pair("expected_version", &current.channel.version.to_string());
-        let response = self.request::<()>(token, Method::DELETE, url, None).await?;
+        let response = if let Some(bot) = bot {
+            self.request::<()>(token, bot, Method::DELETE, url, None)
+                .await?
+        } else {
+            self.http
+                .delete(url)
+                .bearer_auth(token)
+                .send()
+                .await
+                .map_err(|_| BotError::Unavailable)?
+        };
         if response.status() == 204 || response.status() == 404 {
             Ok(())
         } else {
@@ -234,7 +262,9 @@ impl GatewayClient {
             Some(&channel.channel_id),
             Some("test"),
         )?;
-        let response = self.request::<()>(token, Method::POST, url, None).await?;
+        let response = self
+            .request::<()>(token, bot, Method::POST, url, None)
+            .await?;
         let result: Test = read_json(response)
             .await
             .map_err(|_| BotError::Unavailable)?;
@@ -270,7 +300,7 @@ impl GatewayClient {
             .ok_or(BotError::Unavailable)?;
         if source.kind != "nyxid_relay"
             || source.issuer != self.issuer
-            || source.platform != "telegram"
+            || !matches!(source.platform.as_str(), "telegram" | "telegram-new")
             || channel.endpoints.nyxid_callback_url
                 != endpoint(&self.public, "callbacks", Some(&channel.channel_id), None)?.as_str()
             || channel.endpoints.custom_event_url
