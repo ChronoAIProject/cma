@@ -148,57 +148,81 @@ returns `413 gateway_record_too_large`. Insufficient authority returns
 
 ## Bot Father Setup Workflow
 
-`POST /api/v1/bot-setups/advance` advances the sender's durable Bot Father setup
-and returns its current configuration view. It is called with the configured
-Bot Father binding's agent credential; a channel owner's general permission is
-not authority to create resources for a Telegram sender. The request accepts
-`{ event_ref, activity?, draft?, customization? }`. `event_ref` is limited to
-4096 bytes. For fresh events, supply the full canonical CMAEG Activity in
-`activity`; CMA asks the gateway to attest that activity against the sealed
-reference before trusting its sender or selections. Omitting `activity` uses
-the retained provider context path for compatibility.
+Bot Father is an ordinary CMA agent with a specialized skill. CMAEG forwards all
+messages, commands, login returns and interaction events through its normal
+provider path; it contains no Bot Father dispatch, command parser or setup UI.
+The agent interprets the user's intent and calls CMA's public workflow API.
 
-The Bot Father gateway dispatches ordinary messages to its provider agent. Its
-skill guides users to the explicit `/setup` workflow, or the Telegram deep link
-`https://t.me/<bot-username>?start=setup`. Setup choices use commands such as
-`/setup personal`, `/setup name: Paper assistant`, `/setup instructions: Explain
-papers`, `/setup done`, and `/setup create`. Advanced customization uses
-`/setup {"agent": {...}}` (or the other documented profile envelopes). Bare
-`create`, `done`, free-form JSON and bot-related conversation remain agent input.
-Only setup callbacks with a `bst_<32-hex-id>.<revision>` block identity and valid
-`link_<proof>` or `/start link_<proof>` login returns also take the setup path.
-CMA removes the `/setup` transport prefix **after** attesting the original
-activity; callers must not strip it from the supplied `activity`. The retained
-context preserves the original event exactly. `/setup create` therefore carries
-the user's final confirmation through the same verified-plan checks.
+`POST /api/v1/bot-setups/actions` applies an agent-selected operation to the
+verified sender's durable plan. It requires the configured Bot Father binding
+credential and the **current** sealed `event_ref` (at most 4096 bytes). CMA asks
+the gateway's generic context endpoint for the original Activity retained with
+the provider turn, verifies the binding/private-chat sender, and derives the
+actor identity from that event. The request cannot supply or rewrite Activity.
 
-The verified private-chat sender first completes NyxID login and confirms the
-link in the same Telegram conversation. The workflow then selects Personal or
-an authorized organization, Bot name/instructions, Agent/Workspace/Sandbox
-configuration, services, an owned channel bot, and admission rules. `draft`
-contains optional `name` and `instructions`; `customization` can provide typed
-`agent`, `workspace`, `sandbox`, and `availability` values when the current
-step requests them. Resource provisioning starts only after the verified
-interaction confirms the exact final plan revision.
+```json
+{
+  "event_ref": "<current event reference>",
+  "request": {
+    "request_id": "<unique request UUID>",
+    "expected": { "setup_id": "<returned setup ID>", "revision": 2 },
+    "action": { "type": "choose", "choice_id": "personal" }
+  }
+}
+```
+
+The typed actions are:
+
+| Action | Additional fields | Behavior |
+| --- | --- | --- |
+| `view` | none; `expected` is optional | Open/resume the sender's plan, process a verified login return, and return current choices/progress. |
+| `draft` | `draft: {name?, instructions?}` | Record conversationally supplied name/instructions at Login, Owner or Name. |
+| `choose` | `choice_id` from the current view | Select an owner, defaults/customization, service, channel Bot, admission rule or navigation action. |
+| `customize` | `customization: {agent?, workspace?, sandbox?, availability?}` | Submit the complete profile for the current Customize step. The agent prepares JSON from the user's preferences. |
+| `confirm` | `plan_digest` from the review | Admit the reviewed plan only with separate signed user consent. |
+
+Every mutation requires the returned setup ID and revision. Several distinct
+operations can use the same human event, allowing the agent to apply a user's
+combined preferences without additional messages. Repeat an uncertain request
+with the same ID, event, revision and payload. A changed payload under a recorded
+mutation ID or a stale revision returns `409 setup_changed`; a matching replay
+returns the retained view without repeating the operation. An unchanged `view`
+is a repeatable read and does not reserve a mutation receipt.
+
+The sender signs in through the returned NyxID link and returns its one-time
+`link_...` proof in the same chat. CMA retains the renewable credential and
+verifies Personal or organization ownership, profiles, owner-specific services,
+connections and channel Bots. Bot Father's own organization identity never
+substitutes for the sender's account. No user token is exposed to the agent.
 
 The response includes `setup_id`, `revision`, `step`, `interaction_id`,
 `identity`, `owner`, `name`, `configuration`, `choices`, `services`,
-`connection_url`, `external_bot_id`, `admission`, `result`, and `notice`.
-Render the returned choices with the supplied `interaction_id`; duplicate
-event IDs return the retained view without repeating the mutation, and stale
-interaction revisions return the latest view with a notice. Setup state and
-verified event context survive CMA and gateway restarts. Father retains the
-authenticated full Activity in the encrypted `bot_setup_contexts` collection
-until the sealed event expires; advancing this workflow does not create a model
-command. Credentials are never returned in the view. A successful advance carries
-`Cache-Control: no-store` and reports workflow progress, not proof that
-provisioning has finished; check the returned result state.
+`connection_url`, `external_bot_id`, `admission`, `confirmation_digest`, `result`
+and `notice`. The agent explains those choices naturally and uses the generic
+gateway reply/interaction tools when suitable. Users do not submit slash
+commands or configuration JSON.
 
-Named workflow failures are `400 invalid_setup`,
-`403 setup_authority_required`, `404 setup_not_found`, `409 setup_changed`, and
-`503 setup_unavailable`. Authentication failures are rejected by CMA before the
-workflow handler runs. The gateway's public integration protocol and rendered
-flows remain hosted by the [Agent Event Gateway](https://bot-gateway.chrono-ai.fun/docs).
+Before creation, show the complete effective plan and request explicit
+confirmation. `confirm` requires the exact plan digest and revision plus a new
+verified event created after the review. The original event must contain clear
+creation consent (for example `Create Bot` or `确认创建`) or the matching generic
+interaction action. An agent action alone, a greeting, an old event or the event
+that prepared the review cannot authorize provisioning. CMA records the plan
+before using the existing durable Bot worker to create resources. Report
+completion only when `result` confirms the Bot is active.
+
+`POST /api/v1/bot-setups/advance` remains a compatibility interface accepting
+`{event_ref, activity?, draft?, customization?}`. Supplied Activity must pass the
+gateway's generic digest attestation; text is retained verbatim. New agent
+integrations use `actions`. Legacy encrypted setup contexts remain readable until
+their event expires; ordinary model turns retain their context through the normal
+provider contract. Plans and action receipts survive replica restarts.
+
+Responses use `Cache-Control: no-store`. Named workflow failures are
+`400 invalid_setup`, `403 setup_authority_required`, `404 setup_not_found`,
+`409 setup_changed`, and `503 setup_unavailable`. Authentication failures are
+rejected before the handler. The gateway's independent event/reply integration
+protocol is hosted at https://bot-gateway.chrono-ai.fun/docs .
 
 ## Provider Bindings
 
@@ -899,7 +923,8 @@ returns 409, including changing an omitted default into an explicit reference.
 | `PUT /api/v1/gateway/interaction-records/{record_id}` | PutInteraction | - | 200 PutGatewayRecordView; 400/403/409/413/503 ProblemDocument |
 | `GET /api/v1/gateway/interaction-records/{record_id}` | - | - | 200 GatewayRecordView; 404 empty; 400/403/503 ProblemDocument |
 | `DELETE /api/v1/gateway/interaction-records/{record_id}` | - | expected_version | 204 empty; 404 empty; 400/403/409/503 ProblemDocument |
-| `POST /api/v1/bot-setups/advance` | AdvanceSetup | - | 200 SetupView; 400/403/404/409/503 ProblemDocument |
+| `POST /api/v1/bot-setups/actions` | AgentSetupAction | - | 200 SetupView; 400/403/404/409/503 ProblemDocument |
+| `POST /api/v1/bot-setups/advance` | AdvanceSetup (compatibility) | - | 200 SetupView; 400/403/404/409/503 ProblemDocument |
 
 ### Administration
 

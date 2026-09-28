@@ -207,6 +207,16 @@ fn binding_request_paths_exclude_management_and_foreign_event_context() {
     use axum::http::Method;
     assert!(permits_request(
         &Method::POST,
+        "/api/v1/bot-setups/actions",
+        "binding-auth"
+    ));
+    assert!(!permits_request(
+        &Method::GET,
+        "/api/v1/bot-setups/actions",
+        "binding-auth"
+    ));
+    assert!(permits_request(
+        &Method::POST,
         "/api/v1/bot-setups/advance",
         "binding-auth"
     ));
