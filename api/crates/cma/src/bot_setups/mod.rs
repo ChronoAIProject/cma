@@ -1,8 +1,16 @@
 //! Production ports for the public, sender-authorized Bot setup workflow.
+mod authority;
 mod authorization;
 mod configuration;
+mod continuation;
+mod delegation;
 mod events;
+mod origin;
 mod provisioning;
+use authority::SetupAuthority;
+pub(crate) use continuation::ActorContinuationWorker;
+#[cfg(test)]
+mod integration_tests;
 
 use crate::{auth::AuthState, config::Config, store::MongoStores};
 use layer2_core::{
@@ -14,17 +22,20 @@ use layer2_core::{
 use std::{sync::Arc, time::Duration};
 
 pub(crate) struct SetupDependencies {
-    auth: Arc<AuthState>,
+    authority: Arc<SetupAuthority>,
     stores: Arc<MongoStores>,
     settings: Arc<PlatformSettingsService>,
     bots: Arc<BotService>,
     profiles: Arc<PrivateProfileCreationService>,
-    http: reqwest::Client,
-    gateway: String,
     nyxid: String,
     nyxid_public: String,
-    binding: String,
     required_services: Vec<String>,
+}
+impl std::ops::Deref for SetupDependencies {
+    type Target = SetupAuthority;
+    fn deref(&self) -> &Self::Target {
+        &self.authority
+    }
 }
 impl SetupDependencies {
     pub(crate) fn build(
@@ -33,7 +44,7 @@ impl SetupDependencies {
         auth: Arc<AuthState>,
         settings: Arc<PlatformSettingsService>,
         bots: Arc<BotService>,
-    ) -> Result<Arc<BotSetupService>, String> {
+    ) -> Result<Arc<Self>, String> {
         let father = config
             .bot_father
             .as_ref()
@@ -59,19 +70,26 @@ impl SetupDependencies {
                 policy.capacity_bounds,
                 policy.public_value_scanner,
             ),
-            auth,
             stores: stores.clone(),
             settings,
             bots,
-            http: reqwest::Client::builder()
-                .connect_timeout(Duration::from_secs(3))
-                .timeout(Duration::from_secs(20))
-                .redirect(reqwest::redirect::Policy::none())
-                .retry(reqwest::retry::never())
-                .user_agent("cma-bot-setup/1")
-                .build()
-                .map_err(|_| "setup HTTP client configuration failed")?,
-            gateway: gateway.base_url.trim_end_matches('/').into(),
+            authority: Arc::new(SetupAuthority {
+                auth,
+                store: stores.sandbox_model.clone(),
+                custody: stores.sandbox_credentials.clone(),
+                activity: stores.activity.clone(),
+                contexts: stores.bot_setup_contexts.clone(),
+                http: reqwest::Client::builder()
+                    .connect_timeout(Duration::from_secs(3))
+                    .timeout(Duration::from_secs(20))
+                    .redirect(reqwest::redirect::Policy::none())
+                    .retry(reqwest::retry::never())
+                    .user_agent("cma-bot-setup/1")
+                    .build()
+                    .map_err(|_| "setup HTTP client configuration failed")?,
+                gateway: gateway.base_url.trim_end_matches('/').into(),
+                binding: father.binding_id.clone(),
+            }),
             nyxid: base_url.trim_end_matches('/').into(),
             nyxid_public: config
                 .nyxid_public_url
@@ -79,17 +97,13 @@ impl SetupDependencies {
                 .unwrap_or(base_url)
                 .trim_end_matches('/')
                 .into(),
-            binding: father.binding_id.clone(),
             required_services,
         });
-        Ok(BotSetupService::new(
-            stores.bot_setups.clone(),
-            dependencies,
-        ))
+        Ok(dependencies)
     }
 
-    async fn json(&self, request: reqwest::RequestBuilder) -> Result<serde_json::Value, BotError> {
-        request_json(request).await
+    pub(crate) fn service(self: &Arc<Self>) -> Arc<BotSetupService> {
+        BotSetupService::new(self.stores.bot_setups.clone(), self.clone())
     }
 }
 async fn request_json(request: reqwest::RequestBuilder) -> Result<serde_json::Value, BotError> {
