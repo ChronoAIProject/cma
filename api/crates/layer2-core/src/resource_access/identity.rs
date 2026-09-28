@@ -32,3 +32,27 @@ pub enum ResourceActor {
         sender_id: String,
     },
 }
+
+impl ResourceActor {
+    /// Structural attribution only. Authentication must verify any delegation
+    /// before constructing a trusted CallerContext or authorizing execution.
+    pub fn ordinary_subject(&self) -> Option<&SubjectId> {
+        let subject = match self {
+            Self::Human { subject } => subject,
+            Self::Api {
+                subject,
+                delegation_id,
+            } if delegation_id.as_ref().is_none_or(|id| {
+                !id.is_empty()
+                    && id.len() <= 256
+                    && id.trim() == id
+                    && !id.chars().any(char::is_control)
+            }) =>
+            {
+                subject
+            }
+            _ => return None,
+        };
+        (!subject.as_str().trim().is_empty()).then_some(subject)
+    }
+}

@@ -72,16 +72,7 @@ impl SandboxControlService {
         credential: &str,
         submission: SandboxControlSubmission,
     ) -> Result<SandboxControlRecord, SandboxControlServiceError> {
-        if !context.validate_principal()
-            || !matches!(
-                context.actor,
-                crate::resource_access::ResourceActor::Human { .. }
-                    | crate::resource_access::ResourceActor::Api {
-                        delegation_id: None,
-                        ..
-                    }
-            )
-        {
+        if !context.validate_principal() || context.actor.ordinary_subject().is_none() {
             return Err(ResourceAccessError::Access(AccessError::NotFound).into());
         }
         if submission.expected_revision == 0
