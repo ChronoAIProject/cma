@@ -124,10 +124,24 @@ impl OrganizationMembership {
 pub enum CredentialSource {
     /// Authority established by an existing retained sign-in or internal adapter.
     Retained,
+    /// Exact actor grant independently verified by the authentication adapter.
+    /// Attribution alone cannot turn a retained login into delegated authority.
+    Delegated { grant_digest: [u8; 32] },
     /// Authority confined to one retained external binding.
     Binding,
     /// Exact independently presented credential; cannot borrow sign-in custody.
     Independent { expires_at: Option<SystemTime> },
+}
+
+impl CredentialSource {
+    /// Called by trusted authentication after validating the named actor grant.
+    pub fn delegated(grant_id: &str) -> Self {
+        use sha2::{Digest, Sha256};
+        Self::Delegated {
+            grant_digest: Sha256::digest(format!("cma-delegated-custody\0{grant_id}").as_bytes())
+                .into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -161,15 +175,78 @@ impl CallerContext {
         )
     }
 
-    /// Require actual principal attribution for ordinary CMA requests. A
-    /// channel/delegated service will use its separately scoped bridge policy.
+    /// Attribution is supplied by trusted authentication, including explicitly
+    /// verified retained actor grants. Channel metadata alone is not a principal.
     pub fn validate_principal(&self) -> bool {
         self.credential.validate().is_ok()
             && self.caller.subject == self.credential.subject
-            && matches!(&self.actor,
-                ResourceActor::Human { subject }
-                | ResourceActor::Api { subject, delegation_id: None }
-                | ResourceActor::Trigger { subject, .. }
-                if subject == &self.caller.subject)
+            && match &self.actor {
+                ResourceActor::Trigger { subject, .. } => subject == &self.caller.subject,
+                actor => actor.ordinary_subject() == Some(&self.caller.subject),
+            }
+            && match (&self.actor, self.credential_source) {
+                (
+                    ResourceActor::Api {
+                        delegation_id: Some(grant),
+                        ..
+                    },
+                    source,
+                ) => source == CredentialSource::delegated(grant),
+                (_, CredentialSource::Delegated { .. }) => false,
+                _ => true,
+            }
+    }
+}
+
+#[cfg(test)]
+mod delegation_tests {
+    use super::*;
+    use crate::{Authorization, Capability};
+
+    fn context() -> CallerContext {
+        CallerContext {
+            credential_source: CredentialSource::delegated("grant-a"),
+            caller: Caller::new(
+                SubjectId::new("alice"),
+                Authorization::new([Capability::UseOwnSandboxes]),
+            ),
+            credential: CredentialContext {
+                issuer: "provider".into(),
+                subject: SubjectId::new("alice"),
+                credential_id: "credential".into(),
+            },
+            actor: ResourceActor::Api {
+                subject: SubjectId::new("alice"),
+                delegation_id: Some("grant-a".into()),
+            },
+            memberships: vec![],
+        }
+    }
+
+    #[test]
+    fn actor_delegation_requires_exact_trusted_custody_and_matching_subject() {
+        let original = context();
+        assert!(original.validate_principal());
+        for source in [
+            CredentialSource::Retained,
+            CredentialSource::Binding,
+            CredentialSource::Independent { expires_at: None },
+            CredentialSource::delegated("grant-b"),
+        ] {
+            let mut changed = original.clone();
+            changed.credential_source = source;
+            assert!(!changed.validate_principal());
+        }
+        let mut changed = original.clone();
+        changed.actor = ResourceActor::Api {
+            subject: SubjectId::new("bob"),
+            delegation_id: Some("grant-a".into()),
+        };
+        assert!(!changed.validate_principal());
+        changed.actor = ResourceActor::Api {
+            subject: SubjectId::new("alice"),
+            delegation_id: None,
+        };
+        assert!(!changed.validate_principal());
     }
 }
