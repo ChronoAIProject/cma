@@ -1392,6 +1392,15 @@
       ]
     }
   ],
+  "ReplyTargetRef": [
+    "fixture"
+  ],
+  "ReplyTargetResponse": [
+    {
+      "expires_at": 1,
+      "reply_target_ref": "fixture"
+    }
+  ],
   "Secret": [
     "fixture"
   ],
