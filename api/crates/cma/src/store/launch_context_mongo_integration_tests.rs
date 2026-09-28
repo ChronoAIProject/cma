@@ -457,6 +457,7 @@ fn agent(
             revision: 1,
             digest: "e".repeat(64),
             content: AgentProfileContent {
+                isolated_agent: false,
                 model: None,
                 thinking_effort: ThinkingEffort::Medium,
                 permission_level: PermissionLevel::Guarded,

@@ -1,5 +1,5 @@
 //! Explicit, renewable NyxID authority linked to an authenticated event sender.
-//! Neither a browser callback nor a model-supplied sender can activate a grant.
+//! A fresh browser login plus explicit consent, or a legacy chat proof, activates a grant.
 
 use super::{
     persistence::{SecretDigest, SecretValue},
@@ -9,9 +9,7 @@ use super::{
 
 use layer2_core::{
     bots::BotError,
-    resource_access::{
-        CallerContext, OrganizationAuthority, OrganizationRole, ResourceActor, ResourceOwner,
-    },
+    resource_access::{CallerContext, OrganizationAuthority, ResourceActor, ResourceOwner},
     Caller, StoreError, SubjectId,
 };
 use serde::{Deserialize, Serialize};
@@ -23,9 +21,11 @@ use std::{
 const LINK_LIFETIME: u64 = 15 * 60;
 const RENEW_INTERVAL: u64 = 24 * 60 * 60;
 mod browser;
+mod consent;
 mod model;
 mod renewal;
 mod services;
+mod wakeups;
 pub(super) use browser::routes;
 pub use model::*;
 
@@ -70,6 +70,27 @@ impl AuthState {
         &self,
         actor: &EventActor,
     ) -> Result<ActorLinkStatus, BotError> {
+        self.ensure_actor_link_inner(actor, None).await
+    }
+
+    /// The caller must obtain this origin from retained, authenticated provider IO.
+    pub(crate) async fn ensure_actor_link_with_origin(
+        &self,
+        actor: &EventActor,
+        origin: ActorLinkOrigin,
+    ) -> Result<ActorLinkStatus, BotError> {
+        origin.validate(actor).map_err(|_| BotError::Forbidden)?;
+        if origin.reply_expires_at <= now() {
+            return Err(BotError::Forbidden);
+        }
+        self.ensure_actor_link_inner(actor, Some(origin)).await
+    }
+
+    async fn ensure_actor_link_inner(
+        &self,
+        actor: &EventActor,
+        origin: Option<ActorLinkOrigin>,
+    ) -> Result<ActorLinkStatus, BotError> {
         let key = actor.key().map_err(|error| {
             tracing::warn!(stage = "actor_key", error = ?error, "Bot Father actor identity was rejected");
             BotError::Forbidden
@@ -91,6 +112,15 @@ impl AuthState {
                 if row.actor != *actor {
                     return Err(BotError::Forbidden);
                 }
+                if origin.is_some()
+                    && row.activation == ActorActivation::LegacyChatProof
+                    && !row.revoked
+                {
+                    // Old browser text authorized bot management only. General
+                    // CMA operations require the new explicit consent card.
+                    self.revoke_actor_link(actor, &row.link_id).await?;
+                    continue;
+                }
                 if row.active && !row.revoked {
                     match self.link_token(row).await {
                         Ok(_) => return self.link_status(row),
@@ -103,6 +133,23 @@ impl AuthState {
                     continue;
                 }
                 if !row.revoked && row.expires_at > now() {
+                    // Upgrade an unstarted link with the authenticated resume
+                    // target. Once a browser attempt/candidate exists its target
+                    // is immutable; a new incoming event cannot redirect it.
+                    if row.origin.is_none() && row.subject.is_none() && origin.is_some() {
+                        let mut upgraded = row.clone();
+                        upgraded.origin = origin.clone();
+                        upgraded.revision += 1;
+                        if self
+                            .store
+                            .replace_actor_link(Some(row.revision), upgraded.clone())
+                            .await
+                            .map_err(|_| BotError::Unavailable)?
+                        {
+                            return self.link_status(&upgraded);
+                        }
+                        continue;
+                    }
                     return self.link_status(row);
                 }
             }
@@ -120,6 +167,10 @@ impl AuthState {
                 active: false,
                 revoked: false,
                 renewed_at: 0,
+                activation: ActorActivation::BrowserConsent,
+                browser_consent: None,
+                origin: origin.clone(),
+                wakeup: None,
             };
             if self
                 .store
@@ -147,11 +198,16 @@ impl AuthState {
         Ok(ActorLinkStatus {
             link_id: row.link_id.clone(),
             revision: row.revision,
-            login_url: (!row.active && row.subject.is_none()).then(|| {
+            login_url: (!row.active && !row.revoked).then(|| {
                 format!(
-                    "{}/auth/bot-father/link/{}",
+                    "{}/auth/bot-father/link/{}{}",
                     public_url.trim_end_matches('/'),
-                    row.link_id
+                    row.link_id,
+                    if row.subject.is_some() {
+                        "/complete"
+                    } else {
+                        ""
+                    }
                 )
             }),
             candidate: row.subject.clone().map(|subject| ActorCandidate {
@@ -178,6 +234,9 @@ impl AuthState {
             .map_err(|_| BotError::Unavailable)?
             .ok_or(BotError::Forbidden)?;
         row.validate().map_err(|_| BotError::Unavailable)?;
+        if row.activation != ActorActivation::LegacyChatProof {
+            return Err(BotError::Forbidden);
+        }
         if row.active
             && !row.revoked
             && row.actor == *actor
@@ -214,7 +273,7 @@ impl AuthState {
             return Err(BotError::Forbidden);
         }
         let subject = row.subject.as_ref().ok_or(BotError::Forbidden)?;
-        self.bot_owner_token_fenced(subject, row.incarnation.as_deref())
+        self.actor_token_fenced(subject, row.incarnation.as_deref())
             .await?;
         row.active = true;
         row.revision += 1;
@@ -264,6 +323,9 @@ impl AuthState {
         let request = super::cookie_authorization::request_for_cookie(self, &grant.subject, state)
             .await
             .map_err(|_| BotError::Unavailable)?;
+        if request.delegated_credential.as_deref() != Some(token.expose()) {
+            return Err(BotError::Conflict);
+        }
         let caller = Caller::new(grant.subject.clone(), request.authorization.clone());
         let mut context = match owner {
             ResourceOwner::Person { subject } if subject == &grant.subject => {
@@ -276,7 +338,6 @@ impl AuthState {
                     .map_err(|_| BotError::Forbidden)?;
                 if !context.memberships.iter().any(|membership| {
                     membership.organization == *subject
-                        && membership.role == OrganizationRole::Admin
                         && membership.is_current(&context.credential, SystemTime::now())
                 }) {
                     return Err(BotError::Forbidden);
@@ -285,17 +346,28 @@ impl AuthState {
             }
             _ => return Err(BotError::Forbidden),
         };
+        context.credential_source =
+            layer2_core::resource_access::CredentialSource::delegated(&grant.grant_id);
         context.actor = ResourceActor::Api {
             subject: grant.subject,
             delegation_id: Some(grant.grant_id),
         };
         // Recheck the exact grant after any provider IO before returning authority.
         let current = self.link_record(grant_id).await?;
-        if current.revision != row.revision || !current.active || current.revoked {
+        if !current.same_active_authority(&row) {
             return Err(BotError::Forbidden);
         }
-        self.bot_owner_token_fenced(&context.caller.subject, Some(&grant.credential_incarnation))
+        let latest_token = self
+            .actor_token_fenced(&context.caller.subject, Some(&grant.credential_incarnation))
             .await?;
+        if latest_token != token
+            || !self
+                .link_record(grant_id)
+                .await?
+                .same_active_authority(&row)
+        {
+            return Err(BotError::Conflict);
+        }
         Ok((context, token))
     }
 
@@ -316,6 +388,9 @@ impl AuthState {
             row.active = false;
             row.revoked = true;
             row.confirmation_digest = None;
+            if let Some(wakeup) = &mut row.wakeup {
+                wakeup.state = ActorWakeupState::Cancelled;
+            }
             row.revision += 1;
             if self
                 .store
@@ -340,10 +415,24 @@ impl AuthState {
         if grant.subject != *subject || grant.credential_incarnation != incarnation {
             return Err(BotError::Forbidden);
         }
-        self.link_token(&row).await
+        self.link_token(&row).await?;
+        let token = self
+            .bot_owner_token_fenced(subject, Some(incarnation))
+            .await?;
+        if !self
+            .link_record(grant_id)
+            .await?
+            .same_active_authority(&row)
+        {
+            return Err(BotError::Forbidden);
+        }
+        Ok(token)
     }
 
-    async fn link_record(&self, link_id: &str) -> Result<ActorLinkRecord, BotError> {
+    pub(in crate::auth) async fn link_record(
+        &self,
+        link_id: &str,
+    ) -> Result<ActorLinkRecord, BotError> {
         if !opaque(link_id) {
             return Err(BotError::Forbidden);
         }
@@ -362,10 +451,10 @@ impl AuthState {
     async fn link_token(&self, row: &ActorLinkRecord) -> Result<SecretValue, BotError> {
         let grant = row.grant()?;
         let token = self
-            .bot_owner_token_fenced(&grant.subject, Some(&grant.credential_incarnation))
+            .actor_token_fenced(&grant.subject, Some(&grant.credential_incarnation))
             .await?;
         let latest = self.link_record(&grant.grant_id).await?;
-        if latest.revision != row.revision || !latest.active || latest.revoked {
+        if !latest.same_active_authority(row) {
             return Err(BotError::Forbidden);
         }
         Ok(token)

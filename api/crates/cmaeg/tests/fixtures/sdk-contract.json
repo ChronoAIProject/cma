@@ -413,7 +413,11 @@
         "schema_version": 1
       },
       "provider": {
-        "slug": "fixture"
+        "slug": "fixture",
+        "target": {
+          "type": "existing_agent",
+          "agent_id": "agt_existing"
+        }
       },
       "record_id": "fixture",
       "reply": {
@@ -520,7 +524,11 @@
         "provider": {
           "binding_id": "fixture",
           "level": "l1",
-          "slug": "fixture"
+          "slug": "fixture",
+          "target": {
+            "type": "existing_agent",
+            "agent_id": "agt_existing"
+          }
         },
         "record_id": "fixture",
         "reply": {
@@ -639,7 +647,11 @@
         "schema_version": 1
       },
       "provider": {
-        "slug": "fixture"
+        "slug": "fixture",
+        "target": {
+          "type": "existing_agent",
+          "agent_id": "agt_existing"
+        }
       },
       "reply": {
         "ack_after_ms": 1,
@@ -1127,12 +1139,34 @@
     {
       "binding_id": "fixture",
       "level": "l1",
-      "slug": "fixture"
+      "slug": "fixture",
+      "target": {
+        "type": "existing_agent",
+        "agent_id": "agt_existing"
+      }
+    },
+    {
+      "binding_id": "fixture",
+      "level": "l1",
+      "slug": "fixture",
+      "target": {
+        "type": "profile"
+      }
     }
   ],
   "ProviderRequest": [
     {
-      "slug": "fixture"
+      "slug": "fixture",
+      "target": {
+        "type": "existing_agent",
+        "agent_id": "agt_existing"
+      }
+    },
+    {
+      "slug": "fixture",
+      "target": {
+        "type": "profile"
+      }
     }
   ],
   "ProviderResponse": [
@@ -1249,7 +1283,11 @@
       "provider": {
         "binding_id": "fixture",
         "level": "l1",
-        "slug": "fixture"
+        "slug": "fixture",
+        "target": {
+          "type": "existing_agent",
+          "agent_id": "agt_existing"
+        }
       },
       "record_id": "fixture",
       "reply": {
@@ -1390,6 +1428,15 @@
           "type": "source"
         }
       ]
+    }
+  ],
+  "ReplyTargetRef": [
+    "fixture"
+  ],
+  "ReplyTargetResponse": [
+    {
+      "expires_at": 1,
+      "reply_target_ref": "fixture"
     }
   ],
   "Secret": [
@@ -1544,6 +1591,15 @@
         ]
       },
       "schema_version": 1
+    }
+  ],
+  "ProviderTarget": [
+    {
+      "type": "profile"
+    },
+    {
+      "type": "existing_agent",
+      "agent_id": "agt_existing"
     }
   ]
 }

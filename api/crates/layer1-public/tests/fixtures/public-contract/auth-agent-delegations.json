@@ -1,0 +1,209 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "agent-delegation-identity-linked",
+      "operation": "POST /api/v1/agent-delegations/identity",
+      "scenario": "delegation_linked",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agent-delegations/identity",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "event_ref": "cmaeg1.ev.fixture"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "grant_id": "grant_fixture",
+          "subject": "visitor",
+          "display_name": null,
+          "login_url": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "grant": "/grant_id"
+      }
+    },
+    {
+      "id": "agent-delegation-identity-refused",
+      "operation": "POST /api/v1/agent-delegations/identity",
+      "scenario": "delegation_linked",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agent-delegations/identity",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "event_ref": "invalid-reference"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/delegated-operation-refused",
+          "title": "delegated operation refused",
+          "status": 403,
+          "detail": "bot management is forbidden",
+          "code": "delegated_operation_refused"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-delegation-operations-organizations",
+      "operation": "POST /api/v1/agent-delegations/operations",
+      "scenario": "delegation_linked",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agent-delegations/operations",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "event_ref": "cmaeg1.ev.fixture",
+          "method": "GET",
+          "path": "/api/v1/organizations"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "status": 200,
+          "body": {
+            "items": [
+              {
+                "id": "visitor-org",
+                "role": "admin",
+                "display_name": "Visitor organization"
+              }
+            ]
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-delegation-operations-invalid",
+      "operation": "POST /api/v1/agent-delegations/operations",
+      "scenario": "delegation_linked",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agent-delegations/operations",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "event_ref": "cmaeg1.ev.fixture",
+          "method": "GET",
+          "path": "/api/v1/admin/settings"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/delegated-operation-refused",
+          "title": "delegated operation refused",
+          "status": 400,
+          "detail": "This operation is not available through delegated CMA access; mutations require an idempotency key.",
+          "code": "delegated_operation_refused"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-delegation-operations-wrong-owner",
+      "operation": "POST /api/v1/agent-delegations/operations",
+      "scenario": "delegation_linked",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agent-delegations/operations",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "event_ref": "cmaeg1.ev.fixture",
+          "method": "GET",
+          "path": "/api/v1/organizations",
+          "owner": {
+            "kind": "person",
+            "subject": "father-owner"
+          }
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/delegated-operation-refused",
+          "title": "delegated operation refused",
+          "status": 403,
+          "detail": "bot management is forbidden",
+          "code": "delegated_operation_refused"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-delegation-operations-secret-echo",
+      "operation": "POST /api/v1/agent-delegations/operations",
+      "scenario": "delegation_secret_echo",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agent-delegations/operations",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "event_ref": "cmaeg1.ev.fixture",
+          "method": "GET",
+          "path": "/api/v1/organizations"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/delegated-operation-refused",
+          "title": "delegated operation refused",
+          "status": 503,
+          "detail": "bot dependency is unavailable",
+          "code": "delegated_operation_refused"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

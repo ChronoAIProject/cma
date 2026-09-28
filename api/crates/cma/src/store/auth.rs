@@ -44,6 +44,8 @@ const SUBJECT_KIND: &str = "subject-auth";
 mod actor_links;
 #[path = "auth_api_bearers.rs"]
 mod api_bearers;
+#[path = "auth_login_documents.rs"]
+mod login_documents;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct BrowserLoginDoc {
@@ -63,6 +65,8 @@ struct LoginAttemptDoc {
     verifier: CipherEnvelope,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     return_to: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    actor_link_intent: Option<CipherEnvelope>,
     expires_at: DateTime,
 }
 
@@ -159,46 +163,16 @@ impl MongoAuthStore {
             )
             .await
             .map_err(|_| StoreError::Unavailable("actor link identity index".into()))?;
+        store
+            .actor_links
+            .create_index(
+                IndexModel::builder()
+                    .keys(doc! {"active":1,"wakeup_due_at":1,"_id":1})
+                    .build(),
+            )
+            .await
+            .map_err(|_| StoreError::Unavailable("actor wakeup index".into()))?;
         Ok(store)
-    }
-
-    fn login_to_doc(&self, attempt: LoginAttempt) -> Result<LoginAttemptDoc, StoreError> {
-        let id = *attempt.id.as_bytes();
-        Ok(LoginAttemptDoc {
-            id: binary(id),
-            document_schema_version: DOCUMENT_SCHEMA_VERSION,
-            browser_binding: binary(*attempt.browser_binding.as_bytes()),
-            verifier: self
-                .cipher
-                .seal(LOGIN_KIND, &id, "verifier", attempt.verifier.expose())?,
-            return_to: attempt.return_to,
-            expires_at: DateTime::from_system_time(attempt.expires_at),
-        })
-    }
-
-    fn browser_login_to_doc(login: BrowserLogin) -> BrowserLoginDoc {
-        BrowserLoginDoc {
-            id: binary(*login.id.as_bytes()),
-            document_schema_version: DOCUMENT_SCHEMA_VERSION,
-            subject: login.subject.0,
-            expires_at: DateTime::from_system_time(login.expires_at),
-        }
-    }
-
-    fn login_from_doc(&self, document: LoginAttemptDoc) -> Result<LoginAttempt, StoreError> {
-        schema::require_current(document.document_schema_version)?;
-        let id = digest(&document.id, "login attempt")?;
-        let browser_binding = digest(&document.browser_binding, "login browser binding")?;
-        let verifier =
-            self.cipher
-                .open(LOGIN_KIND, id.as_bytes(), "verifier", document.verifier)?;
-        Ok(LoginAttempt {
-            id,
-            browser_binding,
-            verifier: SecretValue::new(verifier),
-            return_to: document.return_to,
-            expires_at: document.expires_at.to_system_time(),
-        })
     }
 
     fn subject_to_doc(&self, state: SubjectAuthState) -> Result<SubjectDoc, StoreError> {
@@ -290,6 +264,13 @@ impl MongoAuthStore {
 
 #[async_trait::async_trait]
 impl AuthStore for MongoAuthStore {
+    async fn due_actor_wakeups(
+        &self,
+        due_before: u64,
+        limit: usize,
+    ) -> Result<Vec<crate::auth::actor_links::ActorLinkRecord>, StoreError> {
+        self.actor_wakeups_due(due_before, limit).await
+    }
     async fn due_actor_links(
         &self,
         renewed_before: u64,

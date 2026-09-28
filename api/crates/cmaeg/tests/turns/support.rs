@@ -12,7 +12,7 @@ use cmaeg::{
     TurnConfig,
 };
 use cmaeg_core::{
-    activity::Activity,
+    activity::{Activity, ActivityKind},
     channel::{ChannelDefinition, Secret},
     ids::{ConversationId, IdempotencyKey},
     seal::{ChannelPointer, EventRef, EventRefPayload, MasterKeyRing, ReplyAddress},
@@ -82,17 +82,23 @@ impl Fixture {
         }
     }
     pub fn request(&self, event: &str) -> LaunchRequest {
+        self.request_with_kind(event, None)
+    }
+    pub fn request_with_kind(&self, event: &str, kind: Option<ActivityKind>) -> LaunchRequest {
         let mut activity: Activity = serde_json::from_str(include_str!(
             "../../../cmaeg-core/tests/fixtures/activity.json"
         ))
         .unwrap();
         activity.event_id = event.parse().unwrap();
+        if let Some(kind) = kind {
+            activity.kind = kind;
+        }
         let partition = activity.partition_key(&self.channel.definition.partition);
         let conversation_id = ConversationId::derive(&self.keys, &self.channel.id, 1, &partition);
         let event_ref = EventRef::seal(
             &EventRefPayload {
                 v: 1,
-                activity_sha256: None,
+                activity_sha256: Some(cmaeg_core::seal::event_ref::activity_digest(&activity)),
                 channel_id: self.channel.id.clone(),
                 record_id: self.channel.pointer.record_id.clone(),
                 event_id: activity.event_id.clone(),

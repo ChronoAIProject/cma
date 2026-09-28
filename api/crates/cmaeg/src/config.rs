@@ -33,7 +33,6 @@ pub const CMAEG_CMA_SERVICE_TOKEN: &str = "CMAEG_CMA_SERVICE_TOKEN";
 pub const CMAEG_CMA_SERVICE_TOKEN_FILE: &str = "CMAEG_CMA_SERVICE_TOKEN_FILE";
 pub const CMAEG_NYXID_BASE_URL: &str = "CMAEG_NYXID_BASE_URL";
 pub const CMAEG_TOOLS_NYXID_SLUG: &str = "CMAEG_TOOLS_NYXID_SLUG";
-pub const CMAEG_BOT_FATHER_BINDING_ID: &str = "CMAEG_BOT_FATHER_BINDING_ID";
 
 /// Configuration errors that prevent the service from binding safely.
 #[derive(Debug)]

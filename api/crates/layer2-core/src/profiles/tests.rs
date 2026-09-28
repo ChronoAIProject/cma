@@ -22,6 +22,7 @@ fn agent_profile(id: &str, owner: &str, visibility: ProfileVisibility) -> AgentP
         forked_from: None,
         uses_count: 0,
         draft: AgentProfileContent {
+            isolated_agent: false,
             model: Some("gpt-5".into()),
             thinking_effort: ThinkingEffort::High,
             permission_level: PermissionLevel::Guarded,

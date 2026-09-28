@@ -339,9 +339,13 @@ Nothing in `layer1-public`, `layer2-core`, `layer3-adapter`, `layer4-runtime` or
 CI enforces both directions.
 
 CMAEG owns event ingress, channel configuration and delivery; CMA exposes the
-provider binding contract and owner Bot management. The legacy in-CMA Bridge
-execution pipeline and its public routes have been retired. Persisted history
-readers retain the original schemas and never authorize new legacy work.
+provider binding contract and owner Bot management. Every admitted Activity uses
+the same provider turn interface. Gateway code must not interpret a product
+workflow, special-case an agent binding or reserve product-specific commands.
+Bot creation guidance and business operations belong to the agent skill and CMA.
+The legacy in-CMA Bridge execution pipeline and its public routes have been
+retired. Persisted history readers retain the original schemas and never
+authorize new legacy work.
 
 `docs/CMAEG_Protocol.md` is the normative CMAEG protocol authority. Changes under
 `/v1` must be additive: retained operations, fields, enum values and operation IDs

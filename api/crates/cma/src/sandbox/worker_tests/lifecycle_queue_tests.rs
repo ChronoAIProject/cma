@@ -319,6 +319,7 @@ fn queue_agent_profile() -> AgentProfileSnapshot {
         revision: 1,
         digest: "d".repeat(64),
         content: AgentProfileContent {
+            isolated_agent: false,
             model: Some("gpt-test".into()),
             thinking_effort: ThinkingEffort::High,
             permission_level: PermissionLevel::Autonomous,

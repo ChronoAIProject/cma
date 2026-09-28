@@ -93,6 +93,7 @@ impl BotSetupDependencies for Dependencies {
             }
         };
         Ok(SetupEvent {
+            occurred_at: "2026-09-28T10:00:00Z".into(),
             actor: actor(),
             event_id: reference.into(),
             input,
@@ -184,6 +185,8 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
         admission: None,
         service_page: 0,
         confirmation_digest: None,
+        confirmation_event: None,
+        processed_actions: vec![],
         bot_id: None,
         processed_events: vec![],
         updated_at: "now".into(),
@@ -201,4 +204,85 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
         authorization: Authorization::none(),
         symbols: BTreeMap::new(),
     })
+}
+
+#[cfg(test)]
+mod agent_actions {
+    use super::*;
+    use axum::{
+        body::Body,
+        http::{Request, StatusCode},
+        Router,
+    };
+    use tower::ServiceExt;
+
+    async fn post(router: &Router, body: Value) -> (StatusCode, Value) {
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/bot-setups/actions")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        (status, serde_json::from_slice(&bytes).unwrap())
+    }
+
+    #[tokio::test]
+    async fn structured_rest_actions_use_attested_context_and_preserve_replay_revision() {
+        let router = scenario("bot_setup_contract_legacy").await.unwrap().router;
+        let start = json!({"event_ref":"same-human-event","request":{"request_id":"view","action":{"type":"view"}}});
+        let (status, view) = post(&router, start.clone()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(view["step"], "owner");
+        let (status, replay) = post(&router, start).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(view["revision"], replay["revision"]);
+        let choose = json!({"event_ref":"same-human-event","request":{"request_id":"choose","expected":{"setup_id":view["setup_id"],"revision":view["revision"]},"action":{"type":"choose","choice_id":"personal"}}});
+        let (status, selected) = post(&router, choose.clone()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(selected["step"], "name");
+        let (status, replay) = post(&router, choose.clone()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(selected["revision"], replay["revision"]);
+        let mut stale = choose;
+        stale["request"]["request_id"] = "stale".into();
+        assert_eq!(post(&router, stale).await.0, StatusCode::CONFLICT);
+        let draft = json!({"event_ref":"same-human-event","request":{"request_id":"draft","expected":{"setup_id":selected["setup_id"],"revision":selected["revision"]},"action":{"type":"draft","draft":{"name":"Paper assistant","instructions":"Explain papers"}}}});
+        let (status, drafted) = post(&router, draft).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(drafted["step"], "agent");
+        assert_eq!(
+            drafted["configuration"]["agent"]["system_prompt"],
+            "Explain papers"
+        );
+    }
+
+    #[tokio::test]
+    async fn structured_route_requires_revision_and_rejects_missing_event_authority() {
+        let router = scenario("bot_setup_contract_legacy").await.unwrap().router;
+        let mutation = json!({"event_ref":"event","request":{"request_id":"choose","action":{"type":"choose","choice_id":"personal"}}});
+        let (status, problem) = post(&router, mutation).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(problem["code"], "invalid_setup");
+        let denied = scenario("bot_setup_contract_forbidden")
+            .await
+            .unwrap()
+            .router;
+        let (status, problem) = post(
+            &denied,
+            json!({"event_ref":"event","request":{"request_id":"view","action":{"type":"view"}}}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(problem["code"], "setup_authority_required");
+    }
 }
