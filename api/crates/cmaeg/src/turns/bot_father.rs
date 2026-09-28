@@ -59,6 +59,10 @@ impl BotFatherClient {
         self.binding_id == binding_id
     }
 
+    pub fn handles_setup_activity(&self, activity: &cmaeg_core::activity::Activity) -> bool {
+        input::is_setup_activity(activity)
+    }
+
     pub async fn advance(
         &self,
         credential: &Secret,
