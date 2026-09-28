@@ -1525,9 +1525,15 @@ availability policies continue to apply, including catalog-cleanup survivors.
 
 CMA Bot Father uses a dedicated ChronoAI organization binding and exactly
 `chrono-llm-public`, `ornn-api`, and `cmaeg` service grants for its own runtime.
-Those grants never authorize creating another user's resources. The setup starts
-inside the Gateway after it verifies the signed Telegram event, private chat,
-sender, channel and activity digest. CMA stores a durable setup plan bound to
+Those grants never authorize creating another user's resources. Father is a normal
+provider agent with the [CMA Bot Father skill](skills/cma-bot-father/SKILL.md): greetings, general questions,
+web searches, free-form JSON and natural-language Bot requests all go to the model.
+Its skill guides users into `/setup` or the Telegram deep link
+`https://t.me/<bot-username>?start=setup` when they want to configure a Bot. Ordinary
+conversation remains available between setup steps. Only explicit setup commands,
+valid login returns and callbacks in the setup's `bst_<id>.<revision>` namespace
+use the Gateway handoff after verification of the signed Telegram event, private
+chat, sender, channel and activity digest. CMA stores a durable setup plan bound to
 that sender and conversation; a Gateway restart or duplicated callback resumes
 the same revision.
 
@@ -1542,7 +1548,9 @@ Telegram ingress only; they are not credentials.
 An unauthenticated sender receives a short-lived NyxID login link. NyxID keeps
 the renewable credential in CMA. The browser displays a one-time confirmation
 code and returns the user to the same Telegram chat; CMA activates the grant
-only after the same verified sender supplies that code. The Father conversation
+only after the same verified sender supplies that code. Valid returns are exactly
+`link_<proof>` or `/start link_<proof>` with a 1–128 character URL-safe proof;
+bare `/start` stays with the normal agent. The Father conversation
 never receives a NyxID token, refresh token or Telegram token. A replaced login,
 expired grant or revoked link invalidates deferred work.
 
@@ -1555,16 +1563,18 @@ owner-scoped connection ceremony; creation remains blocked until it completes.
 Telegram messages offer system defaults or customized values for Agent Profile,
 Workspace Profile and Sandbox Profile, with selected services, resource limits,
 model access and availability. The current text/link mode uses commands displayed
-beside each choice; it works with the existing NyxID relay without a callback
-upgrade. During **Customize**, users can send `instructions: Explain papers`,
-`model: <model-id>` (or `model: default`),
-`repository: https://github.com/owner/repo [branch-or-tag]`, `directory: work`, or
-`resources: 2000 4096` (CPU millicores and memory MiB). Each edit stays on the
-current configuration step, and `done` advances. Existing reasoning, clean
+beside each choice, always prefixed by `/setup `; it works with the existing
+NyxID relay without a callback upgrade. For example, `/setup personal` selects
+personal ownership and `/setup name: Paper assistant` provides a name. During
+**Customize**, users can send `/setup instructions: Explain papers`,
+`/setup model: <model-id>` (or `/setup model: default`),
+`/setup repository: https://github.com/owner/repo [branch-or-tag]`, `/setup directory: work`, or
+`/setup resources: 2000 4096` (CPU millicores and memory MiB). Each edit stays on the
+current configuration step, and `/setup done` advances. Existing reasoning, clean
 workspace and availability shortcuts remain available. Advanced users can edit
-and send the displayed full JSON template using exactly one `agent`, `workspace`
-or `sandbox` object; `availability` accompanies `sandbox`. CMA validates all
-fields, capacities and owner authority before accepting the edit. `cancel` works
+and send `/setup ` followed by the displayed full JSON template using exactly one
+`agent`, `workspace` or `sandbox` object; `availability` accompanies `sandbox`. CMA validates all
+fields, capacities and owner authority before accepting the edit. `/setup cancel` works
 at every pre-provisioning step, including login and naming.
 
 The user selects an existing channel Bot owned by
@@ -1573,7 +1583,7 @@ the same owner, or uses the owner-scoped managed Telegram flow at
 copying a token. The final review shows the selected owner, connected services,
 channel Bot, admission rules and complete effective profile/availability values.
 Long profile content is split into bounded text blocks and Telegram messages.
-The explicit `create` command confirms the current durable review plan; structured
+The explicit `/setup create` command confirms the current durable review plan; structured
 callbacks also carry its revision. CMA records the immutable plan digest before
 admitting provisioning. CMA creates the three private profile revisions and then
 uses the existing durable Bot worker; it does not separately provision duplicate
