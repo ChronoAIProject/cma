@@ -7,9 +7,11 @@ reachable. Public HTTPS uses a separate CONNECT proxy that denies every
 non-public resolved address and connects only to the checked numeric address.
 """
 import contextlib
+import http.client
 import ipaddress
 import os
 import pathlib
+import re
 import selectors
 import signal
 import socket
@@ -18,6 +20,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import urllib.parse
 
 
@@ -30,6 +33,156 @@ BWRAP = "/usr/bin/bwrap"
 PYTHON = "/usr/bin/python3"
 SOCKET_ROOT = "/run/cma-agent-proxies"
 PUBLIC_WEB_PROXY = "http://127.0.0.1:9094"
+PLATFORM_PREFIX = "/api/v1/proxy/s/"
+CMA_OPERATIONS = {
+    "api/v1/bot-setups/actions",
+    "api/v1/agent-delegations/identity",
+    "api/v1/agent-delegations/operations",
+}
+REQUEST_HEADERS = {
+    "accept", "content-type", "idempotency-key", "user-agent",
+    "if-match", "if-none-match", "if-modified-since", "if-unmodified-since",
+    "range", "if-range", "anthropic-version", "anthropic-beta", "openai-beta",
+    "mcp-protocol-version", "mcp-session-id", "last-event-id",
+}
+RESPONSE_HEADERS = {
+    "content-type", "content-disposition", "content-range", "accept-ranges",
+    "etag", "last-modified", "cache-control", "expires", "retry-after",
+    "location", "mcp-session-id", "www-authenticate", "x-request-id",
+}
+HEADER_NAME = re.compile(rb"[!#$%&'*+.^_`|~0-9A-Za-z-]+")
+MAX_PLATFORM_BODY = 16 * 1024 * 1024
+
+
+def platform_target(method, target):
+    """Do not lend the binding credential to arbitrary NyxID/CMA routes."""
+    if (method not in {"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"}
+            or not target.startswith(PLATFORM_PREFIX)
+            or any(ord(char) <= 32 or ord(char) >= 127 for char in target)):
+        raise ValueError("platform route is not permitted")
+    path, separator, query = target.partition("?")
+    for segment in path.split("/")[1:]:
+        decoded = segment.encode("ascii")
+        for _ in range(8):
+            if (decoded in (b".", b"..") or any(
+                    byte <= 31 or byte == 127 or byte in b"/\\?#;" for byte in decoded)):
+                raise ValueError("ambiguous platform path")
+            if b"%" not in decoded:
+                break
+            if re.search(rb"%(?![0-9a-fA-F]{2})", decoded):
+                raise ValueError("invalid platform path encoding")
+            decoded = urllib.parse.unquote_to_bytes(decoded)
+        else:
+            raise ValueError("excessive platform path encoding")
+    if "//" in path or "#" in target or "\\" in target:
+        raise ValueError("ambiguous platform target")
+    slug, _, service_path = path[len(PLATFORM_PREFIX):].partition("/")
+    if slug == "cma":
+        if method != "POST" or service_path not in CMA_OPERATIONS or separator:
+            raise ValueError("CMA operation is not permitted")
+    elif slug not in {"chrono-llm-public", "ornn-api"}:
+        raise ValueError("platform service is not permitted")
+    # Reject explicit connection selection even under repeated query decoding.
+    if re.search(r"%(?![0-9a-fA-F]{2})", query):
+        raise ValueError("invalid platform query encoding")
+    for _ in range(8):
+        if "_nyxid_" in query.lower():
+            raise ValueError("platform connection override is not permitted")
+        if "%" not in query:
+            break
+        decoded = urllib.parse.unquote(query)
+        if decoded == query:
+            break
+        query = decoded
+    else:
+        raise ValueError("excessive platform query encoding")
+
+
+def platform_request(client):
+    """Read one bounded, unambiguous request before opening any upstream."""
+    deadline = time.monotonic() + 30
+
+    def receive(limit):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise ValueError("platform request deadline expired")
+        client.settimeout(remaining)
+        chunk = client.recv(limit)
+        if not chunk:
+            raise ValueError("incomplete platform request")
+        return chunk
+
+    incoming = bytearray()
+    while b"\r\n\r\n" not in incoming:
+        if len(incoming) >= 16384:
+            raise ValueError("platform headers are too large")
+        incoming.extend(receive(min(4096, 16384 - len(incoming))))
+    header, body = incoming.split(b"\r\n\r\n", 1)
+    lines = header.split(b"\r\n")
+    method, target, version = lines[0].decode("ascii").split(" ")
+    if version != "HTTP/1.1" or len(target) > 8192:
+        raise ValueError("unsupported platform request")
+    platform_target(method, target)
+    headers = {}
+    for line in lines[1:]:
+        name, colon, value = line.partition(b":")
+        if not colon or not HEADER_NAME.fullmatch(name) or any(
+                byte < 32 and byte != 9 or byte >= 127 for byte in value):
+            raise ValueError("invalid platform header")
+        name = name.decode("ascii").lower()
+        if name in headers:
+            raise ValueError("duplicate platform header")
+        headers[name] = value.strip(b" \t").decode("ascii")
+    if ("host" not in headers
+            or any(name in headers for name in ("transfer-encoding", "te", "trailer", "upgrade", "expect"))
+            or headers.get("connection", "close").lower() not in ("close", "keep-alive")
+            or headers.get("content-encoding", "identity").lower() != "identity"):
+        raise ValueError("unsupported platform framing")
+    length = headers.get("content-length", "0")
+    if not re.fullmatch(r"[0-9]{1,8}", length) or int(length) > MAX_PLATFORM_BODY:
+        raise ValueError("invalid platform body length")
+    length = int(length)
+    if len(body) > length:
+        raise ValueError("pipelined platform request")
+    while len(body) < length:
+        body.extend(receive(min(65536, length - len(body))))
+    return method, target, headers, body
+
+
+class PlatformHttp(socketserver.BaseRequestHandler):
+    def handle(self):
+        started = False
+        try:
+            method, target, headers, body = platform_request(self.request)
+            host, port = self.server.destination
+            # Serialize fresh framing and only harmless application headers.
+            # Runtime alone supplies Authorization; no caller credential fallback.
+            outbound = [f"{method} {target} HTTP/1.1", f"Host: {host}:{port}",
+                        "Connection: close", f"Content-Length: {len(body)}"]
+            outbound += [f"{key}: {value}" for key, value in headers.items() if key in REQUEST_HEADERS]
+            with socket.create_connection((host, port), timeout=10) as upstream:
+                upstream.settimeout(600)
+                upstream.sendall(("\r\n".join(outbound) + "\r\n\r\n").encode("ascii"))
+                upstream.sendall(body)
+                with http.client.HTTPResponse(upstream, method=method) as response:
+                    response.begin()
+                    if not 200 <= response.status <= 599:
+                        raise ValueError("platform upgrades are not permitted")
+                    outgoing = [f"HTTP/1.1 {response.status} Response", "Connection: close"]
+                    for name, value in response.getheaders():
+                        if name.lower() in RESPONSE_HEADERS and all(32 <= ord(c) < 127 for c in value):
+                            outgoing.append(f"{name.lower()}: {value}")
+                    self.request.settimeout(30)
+                    self.request.sendall(("\r\n".join(outgoing) + "\r\n\r\n").encode("ascii"))
+                    started = True
+                    # Response-only streaming: no late bytes, pipelined request,
+                    # CONNECT or upgrade can turn this gate into a duplex tunnel.
+                    while chunk := response.read1(65536):
+                        self.request.sendall(chunk)
+        except (OSError, ValueError, UnicodeError, http.client.HTTPException):
+            if not started:
+                with contextlib.suppress(OSError):
+                    self.request.sendall(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
 
 
 def public_addresses(authority):
@@ -158,7 +311,7 @@ def relays(socket_root, inside):
                 server = TcpServer((host, port), Relay)
                 server.destination = path
             else:
-                server = UnixServer(path, Relay)
+                server = UnixServer(path, PlatformHttp if name == "platform" else Relay)
                 server.destination = (host, port)
             servers.append(server)
             threading.Thread(target=server.serve_forever, daemon=True).start()
