@@ -24,6 +24,7 @@ use tower_http::limit::RequestBodyLimitLayer;
 pub fn router(state: ToolsState) -> Router {
     crate::telemetry::http::instrument(
         Router::new()
+            .merge(super::reply_targets::routes())
             .route("/v1/events/{event_ref}/replies", post(reply_to_event))
             .route("/v1/messages/{message_ref}/update", post(update_message))
             .route("/v1/events/{event_ref}/typing", post(send_typing))
@@ -145,7 +146,9 @@ pub async fn verify_event_context(
     };
     result(state.verify_context(caller, &reference, activity).await)
 }
-fn json<T>(body: Result<Json<T>, axum::extract::rejection::JsonRejection>) -> Result<T, Problem> {
+pub(super) fn json<T>(
+    body: Result<Json<T>, axum::extract::rejection::JsonRejection>,
+) -> Result<T, Problem> {
     body.map(|Json(value)| value).map_err(|error| {
         let (status, code, detail) = match error {
             axum::extract::rejection::JsonRejection::MissingJsonContentType(_) => (

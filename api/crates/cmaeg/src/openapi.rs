@@ -24,6 +24,8 @@ use utoipa::OpenApi;
         http::tools::send_typing,
         http::tools::read_event_context,
         http::tools::verify_event_context,
+        http::reply_targets::create_reply_target,
+        http::reply_targets::reply_to_target,
     )
 )]
 pub struct ApiDoc;
