@@ -1,5 +1,7 @@
 use super::*;
-use crate::auth::{actor_links::*, persistence::*, profile::Profile, AuthMode};
+use crate::auth::{
+    actor_links::*, persistence::*, profile::Profile, test_resources as resources, AuthMode,
+};
 use crate::sandbox::CredentialMaterial;
 use axum::{
     extract::{Path, State},
@@ -20,8 +22,6 @@ use std::{
     sync::atomic::{AtomicBool, AtomicUsize, Ordering},
     time::SystemTime,
 };
-#[path = "../../auth/cookie_authorization_tests/resource_fixture.rs"]
-mod resources;
 
 pub(super) const KEY: &str = "binding-fixture-private-credential";
 pub(super) const USER_TOKEN: &str = "visitor-fixture-private-credential";
@@ -213,6 +213,10 @@ impl Fixture {
             .route("/api/v1/orgs", get(|headers:HeaderMap| async move {
                 assert_eq!(headers["authorization"], format!("Bearer {USER_TOKEN}"));
                 Json(json!({"orgs":[{"id":"visitor-org","your_role":"admin","display_name":"Visitor organization"}]}))
+            }))
+            .route("/api/v1/orgs/visitor-org/authorization", get(|headers:HeaderMap| async move {
+                assert_eq!(headers["authorization"], format!("Bearer {USER_TOKEN}"));
+                Json(json!({"id":"visitor-org","your_role":"admin"}))
             }))
             .route("/v1/events/{event}/context", get(context))
             .route("/v1/events/{event}/reply-target", post(mint))
