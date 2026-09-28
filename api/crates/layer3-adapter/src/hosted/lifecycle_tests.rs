@@ -35,6 +35,7 @@ fn options(slot: &str, cwd: String, own_credential: bool) -> RuntimeOptions {
         reasoning_effort: ReasoningEffort::High,
         permission: PermissionLevel::Autonomous,
         own_credential,
+        isolated_agent: false,
         working_directory: cwd,
         home_directory: format!("/home/cma/.cma/agents/{slot}/home"),
         slot: AgentSlot(slot.into()),
