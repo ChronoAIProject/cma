@@ -185,3 +185,49 @@ async fn full_profile_customization_survives_restart_and_is_not_created_implicit
         0
     );
 }
+
+#[tokio::test]
+async fn resume_keeps_custom_profiles_and_review_plan_unchanged_after_restart() {
+    let mut fixture = Fixture::new();
+    fixture.begin().await;
+    fixture.text("personal").await;
+    for (step, edit) in [
+        (
+            SetupStep::AgentCustom,
+            "instructions: Preserve this custom prompt",
+        ),
+        (SetupStep::WorkspaceCustom, "directory: preserved-work"),
+        (SetupStep::SandboxCustom, "resources: 2000 4096"),
+    ] {
+        assert_eq!(fixture.text("custom").await.step, step);
+        fixture.text(edit).await;
+        let before = fixture.store.get(&fixture.actor).await.unwrap().unwrap();
+        fixture.service = BotSetupService::new(fixture.store.clone(), fixture.dependencies.clone());
+        let resumed = fixture.text("  ").await;
+        let after = fixture.store.get(&fixture.actor).await.unwrap().unwrap();
+        assert_eq!(resumed.step, step);
+        assert_eq!(
+            serde_json::to_value(resumed.configuration).unwrap(),
+            serde_json::to_value(before.configuration.clone()).unwrap()
+        );
+        assert_eq!(after.plan_digest().unwrap(), before.plan_digest().unwrap());
+        fixture.text("done").await;
+    }
+    fixture.text("done").await;
+    fixture.text("bot:external-bot").await;
+    let review = fixture.text("private").await;
+    let before = fixture.store.get(&fixture.actor).await.unwrap().unwrap();
+    let resumed = fixture.text("").await;
+    let after = fixture.store.get(&fixture.actor).await.unwrap().unwrap();
+    assert_eq!(resumed.step, SetupStep::Review);
+    assert_eq!(
+        serde_json::to_value(resumed.configuration).unwrap(),
+        serde_json::to_value(review.configuration).unwrap()
+    );
+    assert_eq!(after.confirmation_digest, before.confirmation_digest);
+    assert_eq!(after.plan_digest().unwrap(), before.plan_digest().unwrap());
+    assert_eq!(
+        fixture.dependencies.provision_calls.load(Ordering::SeqCst),
+        0
+    );
+}

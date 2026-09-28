@@ -158,6 +158,20 @@ not authority to create resources for a Telegram sender. The request accepts
 reference before trusting its sender or selections. Omitting `activity` uses
 the retained provider context path for compatibility.
 
+The Bot Father gateway dispatches ordinary messages to its provider agent. Its
+skill guides users to the explicit `/setup` workflow, or the Telegram deep link
+`https://t.me/<bot-username>?start=setup`. Setup choices use commands such as
+`/setup personal`, `/setup name: Paper assistant`, `/setup instructions: Explain
+papers`, `/setup done`, and `/setup create`. Advanced customization uses
+`/setup {"agent": {...}}` (or the other documented profile envelopes). Bare
+`create`, `done`, free-form JSON and bot-related conversation remain agent input.
+Only setup callbacks with a `bst_<32-hex-id>.<revision>` block identity and valid
+`link_<proof>` or `/start link_<proof>` login returns also take the setup path.
+CMA removes the `/setup` transport prefix **after** attesting the original
+activity; callers must not strip it from the supplied `activity`. The retained
+context preserves the original event exactly. `/setup create` therefore carries
+the user's final confirmation through the same verified-plan checks.
+
 The verified private-chat sender first completes NyxID login and confirms the
 link in the same Telegram conversation. The workflow then selects Personal or
 an authorized organization, Bot name/instructions, Agent/Workspace/Sandbox
