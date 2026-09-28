@@ -68,14 +68,20 @@ impl EventVerifier<'_> {
             .as_str()
             .filter(|v| !v.is_empty())
             .ok_or_else(|| {
-                tracing::warn!(stage = "actor_id", "Bot Father event actor had no usable identity");
+                tracing::warn!(
+                    stage = "actor_id",
+                    "Bot Father event actor had no usable identity"
+                );
                 BotError::Forbidden
             })?
             .to_owned();
         // Linking and configuration use private conversations. Group callbacks
         // do not expose login links or another member's private configuration.
         if activity["conversation"]["kind"].as_str() != Some("private") {
-            tracing::warn!(stage = "conversation", "Bot Father event was not from a private conversation");
+            tracing::warn!(
+                stage = "conversation",
+                "Bot Father event was not from a private conversation"
+            );
             return Err(BotError::Invalid(
                 "Open a private conversation with Bot Father to create a Bot.".into(),
             ));
@@ -88,23 +94,35 @@ impl EventVerifier<'_> {
                 kind["args"].as_str().unwrap_or_default()
             )),
             Some("interaction") => SetupInput::Interaction {
-                block_id: kind["block_id"].as_str().ok_or_else(|| {
-                    tracing::warn!(stage = "interaction_block", "Bot Father interaction had no block identity");
-                    BotError::Forbidden
-                })?.into(),
+                block_id: kind["block_id"]
+                    .as_str()
+                    .ok_or_else(|| {
+                        tracing::warn!(
+                            stage = "interaction_block",
+                            "Bot Father interaction had no block identity"
+                        );
+                        BotError::Forbidden
+                    })?
+                    .into(),
                 action_id: kind["action_id"]
                     .as_str()
                     .ok_or_else(|| {
-                        tracing::warn!(stage = "interaction_action", "Bot Father interaction had no action identity");
+                        tracing::warn!(
+                            stage = "interaction_action",
+                            "Bot Father interaction had no action identity"
+                        );
                         BotError::Forbidden
                     })?
                     .into(),
             },
             _ => {
-                tracing::warn!(stage = "activity_kind", "Bot Father event kind was not a supported setup input");
+                tracing::warn!(
+                    stage = "activity_kind",
+                    "Bot Father event kind was not a supported setup input"
+                );
                 return Err(BotError::Invalid(
                     "This event cannot configure a Bot.".into(),
-                ))
+                ));
             }
         };
         if let Some(activity) = supplied_activity {

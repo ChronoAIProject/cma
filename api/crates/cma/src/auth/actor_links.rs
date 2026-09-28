@@ -138,7 +138,10 @@ impl AuthState {
 
     fn link_status(&self, row: &ActorLinkRecord) -> Result<ActorLinkStatus, BotError> {
         let AuthMode::Provider { public_url, .. } = &self.mode else {
-            tracing::warn!(stage = "auth_mode", "Bot Father actor link requires provider authentication mode");
+            tracing::warn!(
+                stage = "auth_mode",
+                "Bot Father actor link requires provider authentication mode"
+            );
             return Err(BotError::Forbidden);
         };
         Ok(ActorLinkStatus {
