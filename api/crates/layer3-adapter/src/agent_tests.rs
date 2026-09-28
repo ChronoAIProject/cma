@@ -8,6 +8,7 @@ fn options() -> RuntimeOptions {
         reasoning_effort: ReasoningEffort::High,
         permission: PermissionLevel::Autonomous,
         own_credential: false,
+        isolated_agent: false,
         working_directory: "/home/cma/repo/.worktrees/agent-a".into(),
         home_directory: "/home/cma/.cma/agents/agent-a/home".into(),
         slot: AgentSlot::new("agent-a"),
@@ -119,6 +120,7 @@ fn agent_request_digests_cover_every_semantic_execution_field() {
         |request: &mut AgentHomeRequest| request.options.permission = PermissionLevel::Guarded
     );
     changed_home!(|request: &mut AgentHomeRequest| request.options.own_credential = true);
+    changed_home!(|request: &mut AgentHomeRequest| request.options.isolated_agent = true);
     changed_home!(|request: &mut AgentHomeRequest| request
         .options
         .working_directory
