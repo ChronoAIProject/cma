@@ -15,6 +15,7 @@ pub struct ContextResponse {
     pub provider_binding_id: cmaeg_core::ids::BindingId,
     pub source: cmaeg_core::activity::SourceKind,
     pub activity_verified: bool,
+    pub expires_at: i64,
     pub conversation_id: ConversationId,
     pub activity: PublicActivity,
     pub capabilities: Capabilities,
@@ -86,18 +87,32 @@ pub(super) async fn read(
     if event.activity_sha256.is_some() && !activity_verified {
         return Err(unavailable());
     }
-    let activity = snapshot.activity;
+    Ok(project(
+        channel,
+        event,
+        snapshot.activity,
+        activity_verified,
+    ))
+}
+
+pub(super) fn project(
+    channel: &ResolvedChannel,
+    event: &EventRefPayload,
+    activity: cmaeg_core::activity::Activity,
+    activity_verified: bool,
+) -> ContextResponse {
     let capabilities = if matches!(activity.source, cmaeg_core::activity::SourceKind::Custom) {
         Capabilities::custom()
     } else {
         Capabilities::telegram()
     };
-    Ok(ContextResponse {
+    ContextResponse {
         event_id: event.event_id.clone(),
         channel_id: channel.id.clone(),
         provider_binding_id: channel.definition.provider.binding_id.clone(),
         source: activity.source.clone(),
         activity_verified,
+        expires_at: event.expires_at,
         conversation_id: event.conversation_id.clone(),
         activity: PublicActivity {
             kind: activity.kind,
@@ -106,7 +121,7 @@ pub(super) async fn read(
             occurred_at: activity.occurred_at,
         },
         capabilities,
-    })
+    }
 }
 fn unavailable() -> Problem {
     Problem::new(

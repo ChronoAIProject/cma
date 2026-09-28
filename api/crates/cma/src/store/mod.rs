@@ -28,6 +28,7 @@ mod agent_worker_transaction;
 mod agents;
 pub mod auth;
 mod bindings;
+pub(crate) mod bot_setup_contexts;
 pub(crate) mod bot_setups;
 pub(crate) mod bots;
 #[cfg(test)]

@@ -390,15 +390,16 @@ impl ControlPlaneComposition {
                 .ok_or("Bot Father requires Bot management")?
                 .service
                 .clone();
-            resource_routes.merge(rest::bot_setup_router(
-                crate::bot_setups::SetupDependencies::build(
-                    config,
-                    stores.clone(),
-                    auth.clone(),
-                    settings.clone(),
-                    bot_service,
-                )?,
-            ))
+            let service = crate::bot_setups::SetupDependencies::build(
+                config,
+                stores.clone(),
+                auth.clone(),
+                settings.clone(),
+                bot_service,
+            )?;
+            resource_routes
+                .merge(rest::bot_setup_router(service.clone()))
+                .layer(axum::Extension(service))
         } else {
             resource_routes
         };

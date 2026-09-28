@@ -1064,6 +1064,10 @@
           "event_id": {
             "$ref": "#/components/schemas/EventId"
           },
+          "expires_at": {
+            "format": "int64",
+            "type": "integer"
+          },
           "provider_binding_id": {
             "$ref": "#/components/schemas/BindingId"
           },
@@ -1077,6 +1081,7 @@
           "provider_binding_id",
           "source",
           "activity_verified",
+          "expires_at",
           "conversation_id",
           "activity",
           "capabilities"
@@ -3449,6 +3454,59 @@
         ],
         "tags": [
           "tools"
+        ]
+      },
+      "post": {
+        "operationId": "verifyEventContext",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "event_ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Activity"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContextResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "agentBearer": []
+          }
+        ],
+        "tags": [
+          "provider integration"
         ]
       }
     },
