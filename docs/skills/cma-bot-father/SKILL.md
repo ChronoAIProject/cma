@@ -1,7 +1,7 @@
 ---
 name: cma-bot-father
 description: Help Telegram users create their own personal or organization CMA Agent Bots through natural conversation, including identity linking, profiles, service access and channel setup. Use for Bot creation or continuing a setup; general conversation and questions about bots do not require starting one.
-version: "2.0"
+version: "2.1"
 metadata:
   category: plain
   tags: [cma, telegram, bot, channels]

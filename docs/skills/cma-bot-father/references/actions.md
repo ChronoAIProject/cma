@@ -40,8 +40,10 @@ The request envelope is:
 Only `view` may omit `expected`. Every other action uses the newest returned
 `setup_id` and `revision`. IDs contain 1–128 letters, digits, underscores or
 hyphens; UUIDs are suitable. Preserve an action's complete body and ID for an
-uncertain retry. Reusing an ID with a different body or event is a conflict.
-After receiving a successful response, use a new ID for the next action.
+uncertain retry. Reusing a recorded mutation ID with a different body or event
+is a conflict. An unchanged `view` is a repeatable read: it keeps the revision
+and does not reserve its request ID. A view that changes login/setup state can
+record a receipt. Use a new ID for each new action, including a new read.
 
 A shell example using JSON on stdin follows. Replace the fixture placeholders
 with current values inside the quoted heredoc; treat user text as JSON data,
