@@ -1,5 +1,4 @@
 //! Bounded, stateless provider turn execution and drain.
-pub(crate) mod bot_father;
 mod consume;
 mod metadata;
 pub mod outcomes;

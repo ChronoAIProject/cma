@@ -972,9 +972,11 @@ The workflow integration sequence is:
    provider event-context GET, including after either service restarts.
 
 Verification is stateless and does not call back into provider context storage,
-so a fresh event can be verified before it is persisted. CMA Bot Father uses this
-path and stores encrypted workflow context without admitting a model command.
-Normal model turns continue to persist context with turn admission as described
+so a fresh event can be verified before it is persisted. Workflow interpretation
+and state belong to the downstream provider. CMAEG sends every admitted Activity
+through the configured provider turn interface, including commands, login-return
+text and interaction results; it never routes product-specific input to a separate
+workflow endpoint. Model turns persist context with turn admission as described
 above. `verifyEventContext` is tagged **provider integration** in OpenAPI; the
 native MCP tool list remains exactly `replyToEvent`, `updateMessage`, `sendTyping`,
 and `readEventContext`.
