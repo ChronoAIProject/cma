@@ -1523,6 +1523,11 @@ availability policies continue to apply, including catalog-cleanup survivors.
 
 ### Bot Father sender-authorized setup
 
+The expanded agent-owned requirements, channel target modes, delegated login
+continuation and current implementation gaps are recorded in
+[CMA Bot Father](CMA_Bot_Father.md). The setup API below is an intermediate
+capability and does not by itself implement that complete design.
+
 CMA Bot Father is an ordinary agent in the ChronoAI organization with the
 [CMA Bot Father skill](skills/cma-bot-father/SKILL.md). Its runtime uses
 `chrono-llm-public`, `ornn-api`, `cmaeg` and `cma`. The `cma` grant lets the skill
