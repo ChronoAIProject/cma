@@ -508,3 +508,14 @@ digest in a `confirm` action only after the user has confirmed that plan. CMA
 independently checks the attested user confirmation; an Agent-selected action
 cannot replace consent, establish a user identity, or borrow a different user's
 credentials. Ordinary chat does not require calling either setup operation.
+
+## Agent-delegated operations
+
+`client.agentDelegations.identity({ event_ref })` resolves a signed-in source
+actor or returns CMA's browser-consent URL. `client.agentDelegations.operate()`
+accepts the same event capability, a canonical local `path`, `method`, optional
+`body` and optional resource `owner`. Mutations require `idempotency_key`.
+These methods require the configured Bot Father binding credential; they do not
+accept a user token or claimed grant ID. The operation result is `{ status, body }`;
+inspect the inner status before treating a mutation as successful. A CMA callback
+continuation is accepted only by CMA APIs, never gateway reply tools.

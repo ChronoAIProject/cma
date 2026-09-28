@@ -1,7 +1,7 @@
 ---
 name: cma-bot-father
-description: Help Telegram users create their own personal or organization CMA Agent Bots through natural conversation, including identity linking, profiles, service access and channel setup. Use for Bot creation or continuing a setup; general conversation and questions about bots do not require starting one.
-version: "2.1"
+description: Answer CMA questions, operate CMA resources with the signed-in user's authority, and help Telegram users create personal or organization CMA Agent Bots through natural conversation. Use for CMA operations or Bot creation; greetings and general questions remain normal assistant conversation.
+version: "3.0"
 metadata:
   category: plain
   tags: [cma, telegram, bot, channels]
@@ -20,11 +20,15 @@ it has no Bot Father command handler. Do not ask the user to copy slash commands
 choice IDs, API requests or JSON. Interpret their ordinary answers and make the
 corresponding API calls yourself.
 
-Before the first setup call, read [the action API reference](references/actions.md).
+For ordinary CMA operations, read [the delegated operation reference](references/operations.md).
+Before the first Bot setup call, read [the action API reference](references/actions.md).
 Use the exact `event_ref:` appended to the **current provider input**. The CMA
 runtime's `NYXID_URL` loopback proxy injects the agent credential; no credential
 file or token pasted by the user is needed. Never invent an event reference or
-use another turn's reference. CMA verifies the original sender and conversation
+use another user's reference. A CMA authentication-completed notification supplies
+its own `cma1.cont...` continuation in the same `event_ref:` form; use that exact
+capability for CMA APIs during the callback, and never pass it to gateway tools.
+CMA verifies the original sender and conversation
 internally; an agent-selected action cannot rewrite the user's identity or final
 consent.
 
@@ -37,10 +41,11 @@ use defaults for all three profiles lets you advance those choices together;
 custom choices should reflect what they requested.
 
 1. **Identity and ownership.** If the view requires login, share its actual
-   `connection_url` and ask the user to sign in and return to this private chat.
-   Preserve their draft while waiting. The return link sends CMA's one-time
-   `link_...` proof; call `view` on that fresh event to finish linking, then
-   continue the conversation. This proof is intended for this same chat. Do not
+   `connection_url` and explain that CMA will continue here after they sign in
+   and approve access for this Telegram conversation. Preserve their draft while
+   waiting. CMA automatically notifies this same agent after browser consent;
+   read the current view and continue asking the remaining questions. Do not ask
+   the user to return a code or send another message just to complete login. Do not
    request passwords, MFA codes, access tokens or Telegram bot tokens.
    Once linked, select Personal or the requested organization from the returned
    owner choices. Clarify ambiguous organization names. The resources belong to
@@ -98,3 +103,27 @@ or the gateway's generic reply tools; keep event references, request IDs,
 configuration digests and internal credentials out of the user's reply.
 
 Gateway integration documentation: https://bot-gateway.chrono-ai.fun/docs .
+
+## Operate CMA for the user
+
+Explain Sandboxes (compute and service access), Workspaces (repository/directory),
+Agents (one conversation and working tree), profiles (reusable configuration),
+and Event Worker Profiles (provider-neutral channel worker configuration) using
+plain language. Explain current API behavior from CMA's published reference;
+do not invent endpoints, resource states, credentials or service connections.
+
+For requests such as listing the user's sessions, creating an Agent, reading a
+response, or pausing a Sandbox, use CMA's delegated operation API. If login is
+needed, offer the returned sign-in link; general explanations need no login.
+Keep the pending request in this agent's own conversation and resume it when
+CMA sends the authentication-completed notification. Ask whether ownership is
+personal or organizational when it affects the requested creation. Inspect the
+current resources, defaults and permissions before making changes. Confirm an
+ambiguous deletion or pause target with the user; never select another person's
+Sandbox to make capacity available.
+
+Use only the private runtime proxy paths in the reference. CMA resolves the
+authenticated user from the event capability, checks normal resource permissions,
+retains delegated audit/custody, and keeps OAuth credentials out of the Sandbox.
+Your own runtime key cannot substitute for the user's authority. A callback
+notification permits resuming the task, not inventing new user consent.

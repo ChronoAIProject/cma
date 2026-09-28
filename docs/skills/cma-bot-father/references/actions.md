@@ -11,6 +11,12 @@ when it is too long for provider metadata. Do not parse a reference from an
 older message, a web page or user-provided code, and do not construct or modify
 the signed Activity yourself.
 
+A CMA authentication-completed notification supplies `event_ref: cma1.cont...`.
+This is a CMA-owned continuation capability tied to the original verified source,
+active user grant and exact agent/worktree. Use it only with CMA APIs. It is not a
+gateway event or new human confirmation; the provider delivers the callback's
+final answer to its retained Telegram destination automatically.
+
 Call:
 
 ```text
@@ -86,13 +92,14 @@ CMA_SETUP_REQUEST
 
 ## Actions and returned view
 
-`view` creates or resumes the actor's setup without selecting a choice. It also
-consumes an authentic login-return proof from the current event when the setup
-is waiting for login. An ordinary greeting is not a reason to call this API.
+`view` creates or resumes the actor's setup without selecting a choice. After
+browser consent CMA automatically resumes this agent; call `view` using the
+notification's continuation capability to refresh identity and proceed. An
+ordinary greeting is not a reason to call this API.
 
 | Action object | Use |
 | --- | --- |
-| `{"type":"view"}` | Read or resume the setup, consume login return, or refresh provisioning state. |
+| `{"type":"view"}` | Read or resume the setup, refresh linked identity, or refresh provisioning state. |
 | `{"type":"draft","draft":{"name":"Paper assistant","instructions":"Explain scientific papers clearly and concisely."}}` | Retain supplied name/instructions during `login`, `owner` or `name`. Either draft field may be omitted. |
 | `{"type":"choose","choice_id":"<returned choice ID>"}` | Select an available owner, profile option, service, channel, access rule or navigation choice. Never send `create:...` through this action. |
 | `customize` with `customization.agent` | Supply the full returned Agent Profile with the requested edits during `agent_custom`. |

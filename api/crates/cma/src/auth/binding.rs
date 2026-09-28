@@ -81,6 +81,7 @@ pub(super) fn permits_request(method: &axum::http::Method, path: &str, binding: 
         // and the event's exact sender. This grants no ordinary Bot authority.
         | (&Method::POST, ["api", "v1", "bot-setups", "advance"])
         | (&Method::POST, ["api", "v1", "bot-setups", "actions"])
+        | (&Method::POST, ["api", "v1", "agent-delegations", "identity" | "operations"])
         | (&Method::POST, ["api", "v2", "responses"])
         | (&Method::POST, ["api", "v2", "agents", _, "responses"])
         | (&Method::GET, ["api", "v2", "responses", _])

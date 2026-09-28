@@ -257,11 +257,7 @@ async fn put_conversation(
             if binding.state != BindingState::Ready {
                 return error(BindingError::Conflict);
             }
-            if !(8..=128).contains(&conversation.len())
-                || !conversation
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
-            {
+            if !valid_conversation(&conversation) {
                 return error(BindingError::InvalidRequest(
                     "invalid conversation identifier".into(),
                 ));
@@ -303,6 +299,25 @@ async fn delete_conversation(
     AuthenticatedCaller(caller): AuthenticatedCaller,
     Path((id, conversation)): Path<(String, String)>,
 ) -> Response {
+    match state.service.read(&caller, &id).await {
+        Ok(binding)
+            if binding.existing_agent.is_none()
+                && binding.profile.session_affinity
+                    == layer2_core::sandbox::binding::SessionAffinity::SourceUser =>
+        {
+            if !valid_conversation(&conversation) {
+                return error(BindingError::InvalidRequest(
+                    "invalid conversation identifier".into(),
+                ));
+            }
+            // A transport chat can contain several users, and a user can use
+            // several chats. Removing that transport association cannot retire
+            // provider-owned user sessions. Binding retirement cleans them up.
+            return StatusCode::NO_CONTENT.into_response();
+        }
+        Ok(_) => {}
+        Err(value) => return error(value),
+    }
     match state
         .service
         .retire_conversation(&caller, &id, &conversation)
@@ -311,6 +326,13 @@ async fn delete_conversation(
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(value) => error(value),
     }
+}
+
+fn valid_conversation(value: &str) -> bool {
+    (8..=128).contains(&value.len())
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
 }
 
 impl From<ProviderBinding> for BindingView {

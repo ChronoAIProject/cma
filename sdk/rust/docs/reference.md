@@ -215,3 +215,13 @@ unchanged request content across an uncertain retry. Every operation except
 confirmation for that plan. These operations cannot establish a user identity,
 replace consent, or borrow another user's credentials. The conversational Agent
 chooses when setup help is relevant; ordinary chat needs no setup API call.
+
+## Agent-delegated operations
+
+`client.agent_delegations().identity(&request)` resolves a source actor's linked
+identity or browser-consent URL. `operate(&request)` uses that actor's consent for
+an allowlisted ordinary CMA operation. Requests carry the current `event_ref` or
+CMA callback continuation, local path/method, optional body/owner, and a required
+`idempotency_key` for mutations. Inspect `AgentDelegationOperationResult.status`
+before treating the inner operation as successful. These provider APIs require
+the configured Bot Father binding; they never accept or return user credentials.

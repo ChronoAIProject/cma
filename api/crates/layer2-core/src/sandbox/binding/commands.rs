@@ -49,11 +49,13 @@ impl BindingConversationAuthority {
     ) -> Result<(), CommandLedgerError> {
         self.require_current(&self.binding, &self.conversation)
             .map_err(|_| CommandLedgerError::Conflict)?;
-        if envelope
-            .command
-            .external_event()
-            .is_some_and(|context| context.conversation_id != self.conversation.conversation_id)
-        {
+        if envelope.command.external_event().is_some_and(|context| {
+            context
+                .provider_conversation_id
+                .as_deref()
+                .unwrap_or(&context.conversation_id)
+                != self.conversation.conversation_id
+        }) {
             return Err(CommandLedgerError::Invalid);
         }
         if envelope.authorization != authority(&self.binding.binding_id, self.binding.generation)
