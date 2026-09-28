@@ -13,14 +13,19 @@ pub struct EventActor {
 }
 impl EventActor {
     pub(super) fn key(&self) -> Result<String, StoreError> {
-        for value in [
-            &self.binding_id,
-            &self.channel_id,
-            &self.conversation_id,
-            &self.actor_id,
-            &self.platform,
+        // These values are copied from CMAEG's verified event context.  Its
+        // public identifier types allow 1..=512 bytes, including sealed
+        // channel pointers (the Bot Father channel is commonly 278 bytes).
+        // Keep the platform bound specific to the small, enumerated wire
+        // value instead of imposing the old 256-byte limit on every field.
+        for (value, max_bytes) in [
+            (&self.binding_id, 512),
+            (&self.channel_id, 512),
+            (&self.conversation_id, 512),
+            (&self.actor_id, 512),
+            (&self.platform, 32),
         ] {
-            if value.is_empty() || value.len() > 256 || value.chars().any(char::is_control) {
+            if value.is_empty() || value.len() > max_bytes || value.chars().any(char::is_control) {
                 return Err(StoreError::Malformed("event actor is invalid".into()));
             }
         }

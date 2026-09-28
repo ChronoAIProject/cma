@@ -33,6 +33,7 @@ impl EventVerifier<'_> {
                 .bytes()
                 .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_'))
         {
+            tracing::warn!(stage = "reference", configured_binding = %self.binding, request_binding = %binding, "Bot Father event verification rejected the binding or event reference");
             return Err(BotError::Forbidden);
         }
         let url = format!("{}/v1/events/{reference}/context", self.gateway);
@@ -48,20 +49,39 @@ impl EventVerifier<'_> {
             || (context.source["type"].as_str() != Some("nyxid_relay")
                 || context.source["platform"].as_str() != Some("telegram"))
         {
+            tracing::warn!(
+                stage = "context",
+                binding_match = context.provider_binding_id == binding,
+                activity_verified = context.activity_verified,
+                source_type = ?context.source["type"].as_str(),
+                source_platform = ?context.source["platform"].as_str(),
+                "Bot Father event context was not admitted"
+            );
             return Err(BotError::Forbidden);
         }
         let activity = &context.activity;
         if activity["actor"]["kind"].as_str() != Some("human") {
+            tracing::warn!(stage = "actor_kind", "Bot Father event actor was not human");
             return Err(BotError::Forbidden);
         }
         let actor_id = activity["actor"]["id"]
             .as_str()
             .filter(|v| !v.is_empty())
-            .ok_or(BotError::Forbidden)?
+            .ok_or_else(|| {
+                tracing::warn!(
+                    stage = "actor_id",
+                    "Bot Father event actor had no usable identity"
+                );
+                BotError::Forbidden
+            })?
             .to_owned();
         // Linking and configuration use private conversations. Group callbacks
         // do not expose login links or another member's private configuration.
         if activity["conversation"]["kind"].as_str() != Some("private") {
+            tracing::warn!(
+                stage = "conversation",
+                "Bot Father event was not from a private conversation"
+            );
             return Err(BotError::Invalid(
                 "Open a private conversation with Bot Father to create a Bot.".into(),
             ));
@@ -74,16 +94,35 @@ impl EventVerifier<'_> {
                 kind["args"].as_str().unwrap_or_default()
             )),
             Some("interaction") => SetupInput::Interaction {
-                block_id: kind["block_id"].as_str().ok_or(BotError::Forbidden)?.into(),
+                block_id: kind["block_id"]
+                    .as_str()
+                    .ok_or_else(|| {
+                        tracing::warn!(
+                            stage = "interaction_block",
+                            "Bot Father interaction had no block identity"
+                        );
+                        BotError::Forbidden
+                    })?
+                    .into(),
                 action_id: kind["action_id"]
                     .as_str()
-                    .ok_or(BotError::Forbidden)?
+                    .ok_or_else(|| {
+                        tracing::warn!(
+                            stage = "interaction_action",
+                            "Bot Father interaction had no action identity"
+                        );
+                        BotError::Forbidden
+                    })?
                     .into(),
             },
             _ => {
+                tracing::warn!(
+                    stage = "activity_kind",
+                    "Bot Father event kind was not a supported setup input"
+                );
                 return Err(BotError::Invalid(
                     "This event cannot configure a Bot.".into(),
-                ))
+                ));
             }
         };
         if let Some(activity) = supplied_activity {
@@ -125,7 +164,10 @@ impl SetupDependencies {
         reference: &str,
         activity: Option<&serde_json::Value>,
     ) -> Result<SetupEvent, BotError> {
-        self.require_binding(binding, credential).await?;
+        self.require_binding(binding, credential).await.map_err(|error| {
+            tracing::warn!(stage = "binding_before_gateway", error = ?error, "Bot Father binding authorization failed");
+            error
+        })?;
         let event = EventVerifier {
             http: &self.http,
             gateway: &self.gateway,
@@ -134,7 +176,10 @@ impl SetupDependencies {
         }
         .verify(binding, credential, reference, activity)
         .await?;
-        self.require_binding(binding, credential).await?;
+        self.require_binding(binding, credential).await.map_err(|error| {
+            tracing::warn!(stage = "binding_after_gateway", error = ?error, "Bot Father binding authorization failed after gateway verification");
+            error
+        })?;
         Ok(event)
     }
     pub(super) async fn retained_context(
