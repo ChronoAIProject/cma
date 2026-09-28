@@ -86,6 +86,10 @@ pub struct RuntimeOptions {
     pub reasoning_effort: ReasoningEffort,
     pub permission: PermissionLevel,
     pub own_credential: bool,
+    /// Put the complete provider process behind an independent filesystem,
+    /// process and network boundary. This requires the pinned runtime's bwrap.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub isolated_agent: bool,
     pub working_directory: String,
     pub home_directory: String,
     pub slot: AgentSlot,
@@ -357,6 +361,10 @@ fn options_field(digest: &mut Sha256, options: &RuntimeOptions) {
     field(digest, &options.working_directory);
     field(digest, &options.home_directory);
     field(digest, options.slot.as_str());
+    // Existing, non-isolated operations retain their durable request identity.
+    if options.isolated_agent {
+        field(digest, "isolated-agent-v1");
+    }
 }
 
 fn skills_field(digest: &mut Sha256, skills: &[AgentSkill]) {
