@@ -1,8 +1,8 @@
 //! Narrow CMA handoff for the dedicated Bot Father binding.
 //!
 //! Bot setup is a CMA business workflow. CMAEG owns the verified event
-//! reference and Telegram presentation, so the provider model never receives
-//! credentials or has to imitate the setup protocol.
+//! reference and Telegram presentation for explicit /setup controls. Ordinary
+//! conversation goes to the provider model and its Bot Father skill.
 
 use cmaeg_core::{channel::Secret, message::OutboundMessage, seal::EventRef};
 use reqwest::{Client, StatusCode, Url};
@@ -11,6 +11,8 @@ use std::time::Duration;
 
 use crate::config::CMAEG_BOT_FATHER_BINDING_ID;
 
+#[cfg(test)]
+mod dispatch_tests;
 mod input;
 #[cfg(test)]
 mod tests;
@@ -59,6 +61,10 @@ impl BotFatherClient {
         self.binding_id == binding_id
     }
 
+    pub fn handles_setup_activity(&self, activity: &cmaeg_core::activity::Activity) -> bool {
+        input::is_setup_activity(activity)
+    }
+
     pub async fn advance(
         &self,
         credential: &Secret,
@@ -98,10 +104,10 @@ impl BotFatherClient {
                         .filter(|problem| problem["code"] == "invalid_setup")
                         .and_then(|problem| problem["detail"].as_str().map(str::to_owned))
                         .filter(|detail| detail.len() <= 1_024);
-                    format!("CMA could not accept this configuration. {} Reply with a corrected value, or `back` to return to the profile choice.", detail.as_deref().unwrap_or("Check the fields in the current configuration template."))
+                    format!("CMA could not accept this configuration. {} Reply with `/setup` followed by a corrected value, or `/setup back` to return to the profile choice.", detail.as_deref().unwrap_or("Check the fields in the current configuration template."))
                 }
                 StatusCode::UNPROCESSABLE_ENTITY => {
-                    "The configuration fields do not match the template. Keep the required fields and use the shown field types and values, then send the corrected JSON.".into()
+                    "The configuration fields do not match the template. Keep the required fields and use the shown field types and values, then send `/setup ` followed by the corrected JSON.".into()
                 }
                 _ => "Bot Father could not continue right now. Please try again.".into(),
             });
