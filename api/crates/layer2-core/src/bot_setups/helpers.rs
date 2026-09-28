@@ -17,15 +17,19 @@ pub(super) fn invalid_action() -> BotError {
 /// the next turn.  The short `create` alias is expanded against the durable
 /// review digest instead of trusting a digest supplied by the client.
 pub(super) fn text_action(setup: &BotSetup, text: &str) -> Option<String> {
-    if matches!(setup.step, SetupStep::Login | SetupStep::Name) {
-        return None;
-    }
     let value = text
         .trim()
         .strip_prefix("/choice ")
         .or_else(|| text.trim().strip_prefix("choice "))
         .unwrap_or(text.trim());
     if value.is_empty() || value.len() > 512 || value.chars().any(char::is_whitespace) {
+        return None;
+    }
+    // Cancel is available even before authentication or naming is complete.
+    if value.eq_ignore_ascii_case("cancel") {
+        return Some("cancel".into());
+    }
+    if matches!(setup.step, SetupStep::Login | SetupStep::Name) {
         return None;
     }
     if value.eq_ignore_ascii_case("create") && setup.step == SetupStep::Review {

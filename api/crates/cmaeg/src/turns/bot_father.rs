@@ -4,18 +4,19 @@
 //! reference and Telegram presentation, so the provider model never receives
 //! credentials or has to imitate the setup protocol.
 
-use cmaeg_core::{
-    activity::ActivityKind,
-    channel::Secret,
-    message::{Block, Field, OutboundMessage},
-    seal::EventRef,
-};
+use cmaeg_core::{channel::Secret, message::OutboundMessage, seal::EventRef};
 use reqwest::{Client, StatusCode, Url};
-use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::json;
 use std::time::Duration;
 
 use crate::config::CMAEG_BOT_FATHER_BINDING_ID;
+
+mod input;
+#[cfg(test)]
+mod tests;
+mod view;
+
+use view::SetupView;
 
 #[derive(Clone)]
 pub struct BotFatherClient {
@@ -64,10 +65,12 @@ impl BotFatherClient {
         event_ref: &EventRef,
         activity: &cmaeg_core::activity::Activity,
     ) -> Result<OutboundMessage, String> {
+        let (draft, customization) = input::request(activity)?;
         let body = json!({
             "event_ref": event_ref.as_str(),
-            "draft": draft(activity),
-            "customization": {},
+            "activity": activity,
+            "draft": draft,
+            "customization": customization,
         });
         let response = self
             .http
@@ -90,6 +93,16 @@ impl BotFatherClient {
                 StatusCode::CONFLICT => {
                     "That Bot Father choice has expired. Please use the newest card.".into()
                 }
+                StatusCode::BAD_REQUEST => {
+                    let detail = serde_json::from_slice::<serde_json::Value>(&bytes).ok()
+                        .filter(|problem| problem["code"] == "invalid_setup")
+                        .and_then(|problem| problem["detail"].as_str().map(str::to_owned))
+                        .filter(|detail| detail.len() <= 1_024);
+                    format!("CMA could not accept this configuration. {} Reply with a corrected value, or `back` to return to the profile choice.", detail.as_deref().unwrap_or("Check the fields in the current configuration template."))
+                }
+                StatusCode::UNPROCESSABLE_ENTITY => {
+                    "The configuration fields do not match the template. Keep the required fields and use the shown field types and values, then send the corrected JSON.".into()
+                }
                 _ => "Bot Father could not continue right now. Please try again.".into(),
             });
         }
@@ -105,276 +118,4 @@ fn valid_binding(value: &str) -> bool {
         && value
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
-}
-
-fn draft(activity: &cmaeg_core::activity::Activity) -> Value {
-    let ActivityKind::Message { text, .. } = &activity.kind else {
-        return json!({});
-    };
-    let trimmed = text.trim();
-    if trimmed.is_empty()
-        || trimmed.starts_with("link_")
-        || trimmed.starts_with("/start link_")
-        || setup_command(trimmed)
-    {
-        return json!({});
-    }
-    let lower = trimmed.to_ascii_lowercase();
-    let name = if let Some(start) = trimmed.find("叫 ") {
-        let value = &trimmed[start + "叫 ".len()..];
-        value
-            .split(" 的 Bot")
-            .next()
-            .or_else(|| value.split("的 Bot").next())
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-    } else if let Some(start) = lower.find("called ") {
-        let value = &trimmed[start + "called ".len()..];
-        value
-            .split(['.', ',', ':'])
-            .next()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-    } else {
-        None
-    };
-    let instructions = [
-        "Agent instructions：",
-        "Agent instructions:",
-        "instructions:",
-    ]
-    .iter()
-    .find_map(|marker| {
-        trimmed
-            .find(marker)
-            .map(|index| &trimmed[index + marker.len()..])
-    })
-    .map(str::trim)
-    .filter(|value| !value.is_empty());
-    if name.is_none() && instructions.is_none() && trimmed.len() <= 80 {
-        return json!({"name": trimmed});
-    }
-    json!({
-        "name": name,
-        "instructions": instructions,
-    })
-}
-
-fn setup_command(value: &str) -> bool {
-    let value = value
-        .trim()
-        .strip_prefix("/choice ")
-        .or_else(|| value.trim().strip_prefix("choice "))
-        .unwrap_or(value.trim());
-    let lower = value.to_ascii_lowercase();
-    matches!(
-        lower.as_str(),
-        "cancel"
-            | "new"
-            | "edit"
-            | "refresh"
-            | "register"
-            | "done"
-            | "next"
-            | "previous"
-            | "back"
-            | "personal"
-            | "defaults"
-            | "custom"
-            | "agent:quick"
-            | "agent:thorough"
-            | "workspace:prepared"
-            | "workspace:clean"
-            | "sandbox:on_demand"
-            | "sandbox:always_live"
-            | "private"
-            | "public"
-            | "groups"
-    ) || value.starts_with("org:")
-        || value.starts_with("service:")
-        || value.starts_with("bot:")
-        || (lower == "create" && value.len() <= 64)
-}
-
-#[derive(Debug, Deserialize)]
-struct SetupView {
-    step: String,
-    #[serde(default)]
-    name: Option<String>,
-    #[serde(default)]
-    choices: Vec<SetupChoice>,
-    #[serde(default)]
-    connection_url: Option<String>,
-    #[serde(default)]
-    notice: Option<String>,
-    #[serde(default)]
-    identity: SetupIdentity,
-    #[serde(default)]
-    result: Option<SetupResult>,
-}
-#[derive(Debug, Deserialize)]
-struct SetupChoice {
-    id: String,
-    label: String,
-    #[serde(default)]
-    selected: bool,
-}
-#[derive(Debug, Default, Deserialize)]
-struct SetupIdentity {
-    #[serde(default)]
-    login_url: Option<String>,
-}
-#[derive(Debug, Deserialize)]
-struct SetupResult {
-    #[serde(default)]
-    state: String,
-    #[serde(default)]
-    operation: Option<String>,
-    #[serde(default)]
-    failure: Option<String>,
-    #[serde(default)]
-    bot_url: Option<String>,
-}
-
-impl SetupView {
-    fn message(self) -> Result<OutboundMessage, String> {
-        let title = match self.step.as_str() {
-            "login" => "Connect Bot Father to NyxID",
-            "owner" => "Who should own this Bot?",
-            "name" => "Name your Bot",
-            "agent" => "Agent Profile",
-            "workspace" => "Workspace Profile",
-            "sandbox" => "Sandbox Profile",
-            "services" => "Connect services",
-            "external_bot" => "Choose the Telegram Bot",
-            "admission" => "Who may use the Bot?",
-            "review" => "Review your Bot",
-            "provisioning" => "Creating your Bot",
-            "complete" => "Your Bot is ready",
-            "cancelled" => "Bot creation cancelled",
-            _ => "CMA Bot Father",
-        };
-        let mut body = Vec::new();
-        if let Some(name) = &self.name {
-            body.push(format!("Bot: {name}"));
-        }
-        if let Some(notice) = self.notice {
-            body.push(notice);
-        }
-        let bot_url = self
-            .result
-            .as_ref()
-            .and_then(|result| result.bot_url.clone());
-        if let Some(result) = self.result.as_ref() {
-            body.push(format!("Status: {}", result.state));
-            if let Some(operation) = &result.operation {
-                body.push(format!("Working on: {operation}"));
-            }
-            if let Some(failure) = &result.failure {
-                body.push(failure.clone());
-            }
-        }
-        let mut blocks = vec![Block::Card {
-            title: title.into(),
-            body: (!body.is_empty()).then_some(body.join("\n")),
-            fields: vec![Field {
-                label: "Step".into(),
-                value: self.step.clone(),
-            }],
-            image: None,
-        }];
-        if !self.choices.is_empty() {
-            let mut lines = vec![
-                "Reply with the command after the choice. Telegram link mode is active, so each command is processed as a normal message.".to_owned(),
-            ];
-            for choice in self.choices {
-                let command = choice
-                    .id
-                    .strip_prefix("create:")
-                    .map(|_| "create")
-                    .unwrap_or(choice.id.as_str());
-                let selected = if choice.selected { " (selected)" } else { "" };
-                lines.push(format!("- {}{} — `{command}`", choice.label, selected));
-            }
-            if self.step == "services" {
-                lines.push(
-                    "You can repeat a service command to toggle it, then reply `done`.".into(),
-                );
-            }
-            blocks.push(Block::Text {
-                text: lines.join("\n"),
-            });
-        }
-        if let Some(url) = self.connection_url.or(self.identity.login_url).or(bot_url) {
-            let label = if self.step == "login" {
-                "Sign in to NyxID"
-            } else if self.step == "complete" {
-                "Open your Bot"
-            } else {
-                "Continue in NyxID"
-            };
-            blocks.push(Block::Link {
-                url,
-                label: Some(label.into()),
-            });
-        }
-        Ok(OutboundMessage {
-            text: Some(
-                "CMA Bot Father will create the resources only after you confirm Create Bot."
-                    .into(),
-            ),
-            blocks,
-            reply_to: None,
-        })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::draft;
-    use cmaeg_core::activity::{
-        Activity, ActivityConversation, ActivityKind, Actor, ActorKind, ConversationKind,
-        SourceKind,
-    };
-    use cmaeg_core::channel::Platform;
-    use cmaeg_core::ids::EventId;
-    use serde_json::json;
-
-    fn activity(text: &str) -> Activity {
-        Activity {
-            schema_version: 1,
-            event_id: EventId::new("event").unwrap(),
-            kind: ActivityKind::Message {
-                text: text.into(),
-                attachments: vec![],
-                mentions_bot: false,
-                reply_to: None,
-            },
-            actor: Actor {
-                id: "actor".into(),
-                display_name: None,
-                kind: ActorKind::Human,
-            },
-            conversation: ActivityConversation {
-                id: "chat".into(),
-                kind: ConversationKind::Private,
-                thread_id: None,
-            },
-            occurred_at: "2026-01-01T00:00:00Z".into(),
-            source: SourceKind::NyxidRelay {
-                platform: Platform::Telegram,
-                route_id: "route".into(),
-            },
-        }
-    }
-
-    #[test]
-    fn initial_request_extracts_name_and_instructions_without_copying_login_code() {
-        let value = draft(&activity(
-            "帮我创建一个叫 Paper assistant 的 Bot。Agent instructions：Explain papers.",
-        ));
-        assert_eq!(value["name"], "Paper assistant");
-        assert_eq!(value["instructions"], "Explain papers.");
-        assert_eq!(draft(&activity("link_abc")), json!({}));
-    }
 }

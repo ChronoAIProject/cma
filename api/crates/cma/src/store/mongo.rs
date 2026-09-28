@@ -16,6 +16,7 @@ use super::{
 pub struct MongoStores {
     pub(crate) event_workers: Arc<super::event_workers::MongoEventWorkerProfileStore>,
     pub(crate) bot_setups: Arc<super::bot_setups::MongoBotSetupStore>,
+    pub(crate) bot_setup_contexts: Arc<super::bot_setup_contexts::MongoBotSetupContextStore>,
     pub(crate) bots: Arc<super::bots::MongoBotStore>,
     /// Sandbox -> Workspace -> Worktree -> Agent aggregates and logs.
     pub sandbox_model: Arc<MongoSandboxStore>,
@@ -97,6 +98,15 @@ impl MongoStores {
                 .await
                 .map_err(|_| StoreError::Unavailable("open bot store".into()))?,
         );
+        let bot_setup_contexts = Arc::new(
+            super::bot_setup_contexts::MongoBotSetupContextStore::open(
+                &client,
+                database,
+                deployment,
+                auth_encryption_key,
+            )
+            .await?,
+        );
         let event_workers = Arc::new(
             super::event_workers::MongoEventWorkerProfileStore::open(&client, database)
                 .await
@@ -105,6 +115,7 @@ impl MongoStores {
         let stores = Self {
             event_workers,
             bot_setups,
+            bot_setup_contexts,
             bots,
             sandbox_model,
             sandbox_profiles,

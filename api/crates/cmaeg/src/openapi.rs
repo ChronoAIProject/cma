@@ -23,6 +23,7 @@ use utoipa::OpenApi;
         http::tools::update_message,
         http::tools::send_typing,
         http::tools::read_event_context,
+        http::tools::verify_event_context,
     )
 )]
 pub struct ApiDoc;
