@@ -7,7 +7,6 @@ publish = false
 [dependencies]
 async-trait = { workspace = true }
 axum = { workspace = true }
-cmaeg-core = { path = "../cmaeg-core" }
 base64 = { workspace = true }
 futures-util = { workspace = true }
 flate2 = { workspace = true }
@@ -37,6 +36,7 @@ uuid = { workspace = true }
 zeroize = { workspace = true }
 
 [dev-dependencies]
+cmaeg-core = { path = "../cmaeg-core" }
 cmaeg = { path = "../cmaeg" }
 layer2-core = { workspace = true, features = ["test-support"] }
 # Holds PTY receipt, output, and disconnect boundaries so socket races are
