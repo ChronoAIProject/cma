@@ -52,6 +52,60 @@ pub struct AdvanceBotSetup {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub customization: Option<BotSetupCustomization>,
 }
+/// Current setup revision to fence a proposed state change.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct BotSetupExpected {
+    /// Exact setup identity from the latest view.
+    pub setup_id: String,
+    /// Exact revision from that view.
+    pub revision: u64,
+}
+/// Operation selected by the Agent, separate from the user's attested input.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum BotSetupAction {
+    /// Read the current setup without choosing an option.
+    View,
+    /// Update the proposed Bot label and instructions.
+    Draft {
+        /// Proposed naming values.
+        draft: BotSetupDraft,
+    },
+    /// Select an available non-creation choice from the current view.
+    Choose {
+        /// Exact identifier of the offered choice.
+        choice_id: String,
+    },
+    /// Replace the configuration allowed by the current customization step.
+    Customize {
+        /// Proposed effective profile values.
+        customization: Box<BotSetupCustomization>,
+    },
+    /// Submit the reviewed plan; server-verified user consent is still required.
+    Confirm {
+        /// Exact confirmation digest returned by the latest review view.
+        plan_digest: String,
+    },
+}
+/// Replay-protected operation with optimistic concurrency evidence.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct BotSetupActionRequest {
+    /// Caller-selected replay identity containing 1–128 letters, digits, underscores or hyphens.
+    pub request_id: String,
+    /// Required for all operations except viewing the setup.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected: Option<BotSetupExpected>,
+    /// Proposed operation; it never substitutes for the user's consent.
+    pub action: BotSetupAction,
+}
+/// Agent operation bound to an authenticated source event.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct AgentSetupAction {
+    /// Exact sealed event reference; never decode or log it.
+    pub event_ref: String,
+    /// Requested operation with replay and revision protection.
+    pub request: BotSetupActionRequest,
+}
 /// Full effective configuration shown before creation approval.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct BotSetupConfiguration {
@@ -155,6 +209,9 @@ pub struct BotSetupView {
     pub result: Option<BotSetupResult>,
     /// Current user-visible notice.
     pub notice: Option<String>,
+    /// Exact reviewed plan digest; attested user confirmation is required before submission.
+    #[serde(default)]
+    pub confirmation_digest: Option<String>,
 }
 /// Provider workflow requiring the configured Father binding's Agent key.
 pub struct BotSetups<'a>(&'a Client);
@@ -171,6 +228,17 @@ impl BotSetups<'_> {
             .operation(
                 Method::POST,
                 &["bot-setups", "advance"],
+                Some(body),
+                StatusCode::OK,
+            )
+            .await
+    }
+    /// Perform an Agent-selected operation. Confirmation requires verified user consent.
+    pub async fn act(&self, body: &AgentSetupAction) -> Result<BotSetupView> {
+        self.0
+            .operation(
+                Method::POST,
+                &["bot-setups", "actions"],
                 Some(body),
                 StatusCode::OK,
             )

@@ -4,6 +4,9 @@ Agent Event Gateway accepts authenticated events, maps them to an agent
 conversation, invokes a registered provider, and delivers the result. CMA is the
 currently deployed provider. The gateway owns event routing and delivery; the
 provider owns agent provisioning, execution, conversation history and event context.
+Application-specific conversations and workflows belong to the provider and its
+agents. The gateway delivers commands and interaction results as ordinary events;
+it does not reserve a Bot creation command or intercept an agent's conversation.
 
 Start with the [service flow diagrams](CMAEG_Protocol.md#0-service-flows-at-a-glance)
 for an overview of channel setup, ingress, execution, tools, delivery and recovery.
@@ -219,6 +222,30 @@ already have been delivered; blind resend can duplicate messages. Current Telegr
 and custom transports report editing and typing as unsupported. Telegram accepts
 human text, renders rich output as text/link fallbacks, and does not support
 interactive callbacks or attachment transfer in this version.
+
+## Reply after a delayed provider operation
+
+Before the current event expires, call
+`POST /v1/events/{event_ref}/reply-target` with the channel's agent-key bearer and
+body `{}`. Retain the returned `reply_target_ref` and Unix `expires_at` with your
+pending operation. The gateway verifies the original retained activity; the
+capability lasts at most 24 hours and names only that event's original relay
+destination. It does not hold user credentials or authorize application actions.
+
+When the operation finishes, call
+`POST /v1/reply-targets/{reply_target_ref}/messages` with the current channel bearer,
+an `Idempotency-Key` of 1–128 visible ASCII bytes, and a normal message such as
+`{"text":"Your operation has finished."}`. Use a stable ID for that one reply.
+Keep the same ID and body across retries. Exact retries read a durable receipt;
+changed content conflicts. An `unknown` receipt means delivery is uncertain and
+does not trigger automatic resend. Expired or revoked capabilities must not be
+reconstructed or silently replaced with another user's latest event.
+
+This works after gateway restarts and after the short event reference expires.
+It requires a current relay channel key and unchanged channel/binding/key/route
+authority. The four native MCP tools stay unchanged. The TypeScript SDK exposes
+`createReplyTarget` and `replyToTarget`; Rust exposes `create_reply_target` and
+`reply_to_target`. Use the service's `/v1` base once when calling via NyxID.
 
 ## Implement a downstream agent provider
 

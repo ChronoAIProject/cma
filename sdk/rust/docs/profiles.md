@@ -7,6 +7,11 @@ published revisions. Select `agent_profiles()`, `workspace_profiles()`, or
 `sandbox_profiles()` for a typed content boundary. Save uses draft-version CAS;
 omitted name and description retain their current metadata.
 
+`AgentProfileContent::isolated_agent` opts into separate process, file and
+network boundaries. Missing JSON defaults to `false`, and serialization omits
+that default to preserve existing wire requests. A true value survives profile
+reads, updates and Bot Father setup reviews.
+
 ```rust,no_run
 use cma_sdk::{Client, IdempotencyKey, PageOptions};
 use cma_sdk::profiles::{AgentProfileContent, MarketplaceListOptions, UpdateProfile};

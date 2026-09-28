@@ -1,8 +1,8 @@
-//! Browser handoff; the proof is displayed only in the authenticated browser.
+//! Authenticated explicit delegation, with legacy chat-proof compatibility.
 use super::*;
 use crate::auth::{session_routes::request_cookie, AUTH_COOKIE, AUTH_COOKIE_DOMAIN};
 use axum::{
-    extract::{Path, State},
+    extract::{Form, Path, State},
     http::{header, HeaderMap, StatusCode},
     response::{Html, IntoResponse, Response},
     routing::{get, post},
@@ -13,6 +13,7 @@ pub(crate) fn routes() -> Router<Arc<AuthState>> {
     Router::new()
         .route("/auth/bot-father/link/{link_id}", get(begin))
         .route("/auth/bot-father/link/{link_id}/complete", get(complete))
+        .route("/auth/bot-father/link/{link_id}/consent", post(consent))
         .route("/auth/bot-father/link/{link_id}/revoke", post(revoke))
 }
 async fn begin(State(auth): State<Arc<AuthState>>, Path(link_id): Path<String>) -> Response {
@@ -72,6 +73,16 @@ async fn complete(
     Path(link_id): Path<String>,
     headers: HeaderMap,
 ) -> Response {
+    match auth.link_record(&link_id).await {
+        Ok(row) if row.activation == ActorActivation::BrowserConsent => {
+            return match auth.actor_browser_review(&link_id, &headers).await {
+                Ok(row) => browser_card(&auth, &row),
+                Err(_) => rejected(),
+            };
+        }
+        Ok(_) => {}
+        Err(_) => return rejected(),
+    }
     match complete_candidate(&auth, &link_id, &headers).await {
         Ok((code, profile)) => {
             let name = escape(
@@ -104,6 +115,85 @@ async fn complete(
             .into_response(),
     }
 }
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ConsentForm {
+    csrf_token: String,
+    subject: String,
+    review_revision: u64,
+}
+async fn consent(
+    State(auth): State<Arc<AuthState>>,
+    Path(link_id): Path<String>,
+    headers: HeaderMap,
+    Form(form): Form<ConsentForm>,
+) -> Response {
+    match auth
+        .approve_actor_browser_consent(
+            &link_id,
+            &headers,
+            &form.csrf_token,
+            &form.subject,
+            form.review_revision,
+        )
+        .await
+    {
+        Ok(_) => match auth.actor_browser_review(&link_id, &headers).await {
+            Ok(row) => browser_card(&auth, &row),
+            Err(_) => rejected(),
+        },
+        Err(_) => rejected(),
+    }
+}
+
+fn browser_card(auth: &AuthState, row: &ActorLinkRecord) -> Response {
+    let Some(subject) = row.subject.as_ref() else {
+        return rejected();
+    };
+    let Some(evidence) = row.browser_consent.as_ref() else {
+        return rejected();
+    };
+    let name = escape(
+        row.profile
+            .display_name
+            .as_deref()
+            .unwrap_or("NyxID account"),
+    );
+    let subject = escape(subject.as_str());
+    let actor = escape(&row.actor.actor_id);
+    let conversation = escape(&row.actor.conversation_id);
+    let platform = escape(&row.actor.platform);
+    let channel = escape(&row.actor.channel_id);
+    let content = if row.active {
+        let return_link = auth
+            .bot_father_username
+            .as_ref()
+            .map(|username| {
+                format!("<p><a href=\"https://t.me/{username}\">Return to Telegram</a></p>")
+            })
+            .unwrap_or_default();
+        format!("<h1>Account connected</h1><p>{name} ({subject}) authorized the {platform} account {actor} in conversation {conversation}.</p><p>Your assistant will continue in the original conversation. No code or extra chat message is needed.</p>{return_link}")
+    } else {
+        format!("<h1>Authorize your CMA assistant</h1><p>Signed in as <strong>{name}</strong>.</p><dl><dt>NyxID account</dt><dd>{subject}</dd><dt>Messaging platform</dt><dd>{platform}</dd><dt>Messaging account ID</dt><dd>{actor}</dd><dt>Conversation ID</dt><dd>{conversation}</dd><dt>Channel ID</dt><dd>{channel}</dd></dl><p>Allow the messaging account above to use your CMA account through this assistant: manage profiles, sandboxes, workspaces, agent sessions, and bots, within your current personal and organization permissions.</p><p>This authorizes the displayed messaging account. Only continue if you trust it. Signing in alone does not grant this access or create resources.</p><form method=\"post\" action=\"/auth/bot-father/link/{}/consent\"><input type=\"hidden\" name=\"csrf_token\" value=\"{}\"><input type=\"hidden\" name=\"subject\" value=\"{subject}\"><input type=\"hidden\" name=\"review_revision\" value=\"{}\"><button type=\"submit\">Authorize and continue in Telegram</button></form>", row.link_id, evidence.csrf_token, evidence.review_revision)
+    };
+    let mut response = Html(format!("<!doctype html><html lang=\"en\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Connect your CMA account</title><body><main>{content}</main></body></html>")).into_response();
+    for (name, value) in [
+        (header::CACHE_CONTROL, "no-store"),
+        (header::REFERRER_POLICY, "no-referrer"),
+        (
+            header::CONTENT_SECURITY_POLICY,
+            "default-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+        ),
+    ] {
+        response.headers_mut().insert(name, value.parse().unwrap());
+    }
+    response
+}
+
+fn rejected() -> Response {
+    (StatusCode::FORBIDDEN, "This connection is expired, revoked, or belongs to another sign-in. Start again from your CMA assistant.").into_response()
+}
 async fn complete_candidate(
     auth: &AuthState,
     link_id: &str,
@@ -130,7 +220,12 @@ async fn complete_candidate(
     auth.bot_owner_token_fenced(&login.subject, Some(&state.incarnation))
         .await?;
     let mut row = auth.link_record(link_id).await?;
-    if row.subject.is_some() || row.active || row.revoked || row.expires_at <= now() {
+    if row.activation != ActorActivation::LegacyChatProof
+        || row.subject.is_some()
+        || row.active
+        || row.revoked
+        || row.expires_at <= now()
+    {
         return Err(BotError::Forbidden);
     }
     let code = uuid::Uuid::new_v4().simple().to_string();

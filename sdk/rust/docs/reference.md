@@ -199,3 +199,29 @@ The `test` method runs a synthetic provider turn and sends no Telegram message.
 
 Bot responses contain no credential bytes. Preserve channel IDs and callback
 URLs exactly; never decode, reconstruct or log opaque gateway references.
+
+## Bot Father operations
+
+`client.bot_setups().advance` observes the authenticated source event.
+`client.bot_setups().act` accepts `AgentSetupAction`, whose
+`BotSetupActionRequest` selects `BotSetupAction::View`, `Draft`, `Choose`,
+`Customize`, or `Confirm`. Both operations require the configured Father binding
+credential and the original opaque event reference. Retain `request_id` and
+unchanged request content across an uncertain retry. Every operation except
+`View` also supplies `BotSetupExpected` with the latest setup ID and revision.
+
+`BotSetupView::confirmation_digest` identifies the exact reviewed plan. A
+`Confirm` operation forwards that digest; CMA still verifies an attested user
+confirmation for that plan. These operations cannot establish a user identity,
+replace consent, or borrow another user's credentials. The conversational Agent
+chooses when setup help is relevant; ordinary chat needs no setup API call.
+
+## Agent-delegated operations
+
+`client.agent_delegations().identity(&request)` resolves a source actor's linked
+identity or browser-consent URL. `operate(&request)` uses that actor's consent for
+an allowlisted ordinary CMA operation. Requests carry the current `event_ref` or
+CMA callback continuation, local path/method, optional body/owner, and a required
+`idempotency_key` for mutations. Inspect `AgentDelegationOperationResult.status`
+before treating the inner operation as successful. These provider APIs require
+the configured Bot Father binding; they never accept or return user credentials.

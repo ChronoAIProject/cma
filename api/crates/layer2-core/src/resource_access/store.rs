@@ -72,8 +72,7 @@ impl ResourcePolicyRecord {
                 if evidence.organization != *subject
                     || evidence.issuer.trim().is_empty()
                     || crate::seconds_from_rfc3339(&evidence.verified_at).is_none()
-                    || !matches!(&evidence.admitted_by, ResourceActor::Human { subject } | ResourceActor::Api { subject, delegation_id: None }
-                        if !subject.as_str().trim().is_empty())
+                    || evidence.admitted_by.ordinary_subject().is_none()
                 {
                     return Err(ResourceAccessStoreError::Corrupt);
                 }

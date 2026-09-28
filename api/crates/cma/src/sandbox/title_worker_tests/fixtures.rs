@@ -82,6 +82,7 @@ pub(super) fn agent() -> Agent {
             revision: 1,
             digest: "a".repeat(64),
             content: AgentProfileContent {
+                isolated_agent: false,
                 model: Some("agent-selected-model".into()),
                 thinking_effort: ThinkingEffort::Medium,
                 permission_level: PermissionLevel::Guarded,

@@ -8,7 +8,7 @@ use axum::{
     Extension, Json, Router,
 };
 use layer2_core::{
-    bot_setups::{BotSetupService, SetupCustomization, SetupDraft},
+    bot_setups::{BotSetupService, SetupActionRequest, SetupCustomization, SetupDraft},
     bots::BotError,
 };
 use serde::Deserialize;
@@ -29,9 +29,18 @@ pub struct AdvanceSetup {
     pub customization: SetupCustomization,
 }
 
+#[derive(Deserialize, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AgentSetupAction {
+    pub event_ref: String,
+    #[schema(value_type=Object)]
+    pub request: SetupActionRequest,
+}
+
 pub fn bot_setup_router(service: Arc<BotSetupService>) -> Router {
     Router::new()
         .route("/api/v1/bot-setups/advance", post(advance))
+        .route("/api/v1/bot-setups/actions", post(act))
         .with_state(service)
 }
 
@@ -64,6 +73,34 @@ pub(super) async fn advance(
     };
     ([(header::CACHE_CONTROL, "no-store")], response).into_response()
 }
+#[utoipa::path(post,path="/api/v1/bot-setups/actions",tag="bots",request_body=AgentSetupAction,responses((status=200,body=Object),(status=400),(status=401),(status=403),(status=409),(status=503)))]
+pub(super) async fn act(
+    State(service): State<Arc<BotSetupService>>,
+    Extension(method): Extension<AuthMethod>,
+    Extension(credential): Extension<DelegatedCredential>,
+    Json(body): Json<AgentSetupAction>,
+) -> Response {
+    let AuthMethod::BindingKey { binding_id } = method;
+    if body.event_ref.len() > 4096 {
+        return error(BotError::Invalid(
+            "Event reference exceeds the permitted size.".into(),
+        ));
+    }
+    let response = match service
+        .act(
+            &binding_id,
+            credential.value(),
+            &body.event_ref,
+            body.request,
+        )
+        .await
+    {
+        Ok(view) => Json(view).into_response(),
+        Err(problem) => error(problem),
+    };
+    ([(header::CACHE_CONTROL, "no-store")], response).into_response()
+}
+
 fn error(error: BotError) -> Response {
     let (status, code) = match error {
         BotError::Forbidden => (StatusCode::FORBIDDEN, "setup_authority_required"),

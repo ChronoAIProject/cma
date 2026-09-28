@@ -4,11 +4,13 @@ import { input, read } from './resources.js';
 import {
   array,
   boolean,
+  enumeration,
   nullable,
   object,
   optional,
   positiveInteger,
   record,
+  tagged,
   text,
   type Output,
 } from './schema.js';
@@ -27,15 +29,30 @@ const customization = object({
   sandbox: optional(nullable(sandboxProfileContent)),
   availability: optional(nullable(sandboxProfileAvailability)),
 });
+const draft = object({ name: optional(nullable(text)), instructions: optional(nullable(text)) });
 const advance = object({
   event_ref: text,
   // Preserve the exact activity; the gateway authenticates its sealed digest.
   activity: optional(nullable(record)),
-  draft: optional(
-    object({ name: optional(nullable(text)), instructions: optional(nullable(text)) }),
-  ),
+  draft: optional(draft),
   customization: optional(customization),
 });
+const action = tagged(
+  {
+    view: object({ type: enumeration('view') }),
+    draft: object({ type: enumeration('draft'), draft }),
+    choose: object({ type: enumeration('choose'), choice_id: text }),
+    customize: object({ type: enumeration('customize'), customization }),
+    confirm: object({ type: enumeration('confirm'), plan_digest: text }),
+  },
+  'type',
+);
+const actionRequest = object({
+  request_id: text,
+  expected: optional(nullable(object({ setup_id: text, revision: positiveInteger }))),
+  action,
+});
+const agentAction = object({ event_ref: text, request: actionRequest });
 const configuration = object({
   agent: agentProfileContent,
   workspace: workspaceProfileContent,
@@ -83,8 +100,12 @@ const view = object({
     }),
   ),
   notice: nullable(text),
+  confirmation_digest: optional(nullable(text)),
 });
 export type AdvanceBotSetup = Output<typeof advance>;
+export type BotSetupAction = Output<typeof action>;
+export type BotSetupActionRequest = Output<typeof actionRequest>;
+export type AgentSetupAction = Output<typeof agentAction>;
 export type BotSetupView = Output<typeof view>;
 export type BotSetupConfiguration = Output<typeof configuration>;
 /** Bot Father provider workflow; requires the configured binding's agent key. */
@@ -96,6 +117,16 @@ export class BotSetups {
       ...options,
       method: 'POST',
       body: input(advance, body),
+    });
+  }
+  /** Execute an agent-selected operation with replay and revision protection.
+   * Confirmation still requires the server's attested consent for the exact plan.
+   */
+  act(body: AgentSetupAction, options: OperationOptions = {}) {
+    return read(this.config, '/api/v1/bot-setups/actions', view, {
+      ...options,
+      method: 'POST',
+      body: input(agentAction, body),
     });
   }
 }

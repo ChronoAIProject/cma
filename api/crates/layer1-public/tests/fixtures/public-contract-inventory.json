@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 180,
+  "openapi_operations": 183,
   "operations": {
     "GET /api/v1/organizations": {
       "classification": "openapi",
@@ -2502,6 +2502,31 @@
         "setup_changed",
         "setup_unavailable",
         "invalid_setup"
+      ]
+    },
+    "POST /api/v1/bot-setups/actions": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bot_setups.rs# Binding-authenticated typed actions use the real setup state machine, replay fences and error mapping.",
+      "required_problems": [
+        "setup_authority_required",
+        "setup_not_found",
+        "setup_changed",
+        "setup_unavailable",
+        "invalid_setup"
+      ]
+    },
+    "POST /api/v1/agent-delegations/identity": {
+      "classification": "openapi",
+      "source": "api/crates/cma/src/bot_setups/delegation.rs# CMA-owned binding authentication resolves the admitted source actor and dispatches real consent and resource operations; external dependencies are fixture ports.",
+      "required_problems": [
+        "delegated_operation_refused"
+      ]
+    },
+    "POST /api/v1/agent-delegations/operations": {
+      "classification": "openapi",
+      "source": "api/crates/cma/src/bot_setups/delegation.rs# CMA-owned binding authentication resolves the admitted source actor and dispatches real consent and resource operations; external dependencies are fixture ports.",
+      "required_problems": [
+        "delegated_operation_refused"
       ]
     }
   }

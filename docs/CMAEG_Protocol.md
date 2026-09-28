@@ -303,8 +303,9 @@ Agent Profile, which configures one Agent within a Workspace. A **channel** bind
 an immutable EventWorkerProfile snapshot, provider binding, source
 policies, partition rule and reply policy. A **source** submits authenticated
 events. An **activity** is the source-neutral event given to the agent. A
-**partition** selects a stable provider conversation. A **turn** is one admitted
-provider response. A **sink** receives results. A **binding** is the provider's
+**partition** selects a stable transport conversation identifier. The provider
+may resolve that identifier and authenticated source metadata to its own user
+session and agent. A **turn** is one admitted provider response. A **sink** receives results. A **binding** is the provider's
 prepared environment for the channel. CMA stores encrypted channel records;
 CMAEG keeps only disposable caches and active work in memory.
 
@@ -749,6 +750,54 @@ clients MUST NOT manufacture IDs by copying an implementation's hash algorithm.
 
 ## 8. Tools API and MCP
 
+### Delayed replies for provider integrations
+
+A provider that must reply after the original `event_ref` expires first exchanges
+that reference while it is valid. Both operations require the channel's current
+agent-key bearer and `Content-Type: application/json`:
+
+| Operation | Request | Response |
+| --- | --- | --- |
+| `createReplyTarget` | POST `/v1/events/{event_ref}/reply-target`, body `{}` | `{reply_target_ref,expires_at}`; expiry is Unix seconds, at most 24 hours after issuance |
+| `replyToTarget` | POST `/v1/reply-targets/{reply_target_ref}/messages`, required `Idempotency-Key` header, body `OutboundMessage` | The ordinary `{message_ref?,rendering,delivery}` receipt |
+
+The sealed `cmaeg1.rt` capability derives only from the original authenticated
+relay event with verified retained activity. The request cannot supply a route,
+sender, chat or replacement event. It is bounded to 4 KiB and carries no NyxID
+user credential or relay reply token. The gateway uses the current channel key
+to reply to the original relay message. Custom/synchronous destinations cannot
+issue this capability. Providers retain the opaque reference securely with their
+own pending operation; it is not a login grant or a new incoming user event.
+
+Creation and every send, including receipt replay, read current channel authority
+without accepting a stale cache. The original route must still belong to the
+channel, and the record, provider binding and agent-key hash must match the
+capability. Deleting the channel, changing the binding or rotating the agent key
+revokes it. A valid capability may outlive the original event reference, but not
+its own expiry. Expired targets return `410 event_ref_expired` with detail
+`reply_target_expired`; malformed/tampered targets return `400 invalid_request`.
+Revoked bindings, keys or destinations return `403 forbidden`.
+
+`Idempotency-Key` is one visible ASCII string of 1–128 bytes. Reuse it with the
+same message when reconciling a response. The encrypted claim and receipt are
+durable CMA interaction records; a claim is stored before external delivery.
+The same destination/event/key and request ID replay the saved receipt across
+replica restarts, including when the capability was reminted. Changed message
+content under that ID returns `409 conflict`. Reusing an ID for another event
+does not combine those independent deliveries.
+
+An in-progress or abandoned claim returns `delivery.outcome: "unknown"` with
+reason `delivery_in_progress_or_uncertain`, without initiating another send. A
+later retry can read the finalized receipt if the original worker finishes.
+A lost external response also remains unknown; this API does not promise exactly
+once external delivery. Do not invent a new ID to retry an uncertain send. Multiple
+different IDs are independent messages, with no ordering guarantee across events.
+Records persist through all capabilities that can be minted from the original
+event. Delivery records cannot authorize interaction callbacks. Native MCP keeps
+the four existing tools; delayed replies use these provider-integration REST APIs.
+
+### Immediate event tools
+
 All tools require the single channel agent-key bearer, compared locally in
 constant time. Reply, typing and context require an unexpired `event_ref`.
 REST update requires a valid `message_ref`; native MCP update additionally
@@ -897,6 +946,52 @@ not authenticate the Telegram sender as that owner.
 
 ## 9. Provider contract
 
+### Selecting the channel's Agent target
+
+A channel can ask its provider to provision an Agent from an EventWorkerProfile
+or attach an existing CMA Agent. Omit `provider.target`, or use
+`{"type":"profile"}`, for the existing profile provisioning behavior. To attach
+an Agent, set this field in the channel create request:
+
+```json
+{
+  "provider": {
+    "slug": "cma_codex",
+    "target": {"type": "existing_agent", "agent_id": "agt_existing"}
+  }
+}
+```
+
+This is a fragment of the complete create request in §4. The `profile` envelope
+is still required so that ownership and the canonical digest use the same v1
+contract. For an existing target, CMA validates its actual Sandbox, Workspace,
+Worktree and Agent hierarchy against `profile.metadata.owner`, including whether
+the owner is a person or organization. CMA retains the Agent's existing model,
+instructions, tools, credentials and environment; settings from that profile
+envelope are not applied. The binding response lists those unapplied fields in
+`refused`. The target is immutable: create another channel to select a different
+Agent or switch between the two modes.
+
+| Target | Agent selection | Resource lifetime | Reply support |
+| --- | --- | --- | --- |
+| Omitted or `profile` | Provider provisions from the EventWorkerProfile and chooses session affinity. | Provider manages the resources created for this binding. | The negotiated provider conformance level and native tools, when supported. |
+| `existing_agent` | Every admitted sender reaches the specified Agent and shared history. | The owner's existing resources survive channel deletion. | L1 automatic final replies; existing Agent tools remain as configured. |
+
+The gateway retains and forwards the requested target; the provider owns Agent
+selection. An existing target sends **every admitted sender to the same Agent
+and its shared history**, regardless of the transport partition. Choose an
+appropriate sender/chat admission policy for that intended sharing. A profile
+target can instead use the provider's separate-session policy.
+
+Existing-agent bindings advertise **L1 with automatic final replies**. Set
+`reply.auto_final` to `true`. CMA does not install this channel's native gateway
+tools or credentials into a borrowed Agent, so explicit gateway tool replies
+from that Agent are not a promised capability for the new channel. Deleting
+the channel or its conversation mapping revokes only that association; it does
+not stop, delete or reconfigure the existing Agent, Worktree, Workspace, Sandbox
+or their credentials. Agent lifetime remains under its owner's normal CMA
+controls. Other channels and the owning session remain independent.
+
 Provider URLs are operator-allowlisted templates, never source-controlled URLs.
 External provider calls use the retained agent bearer. For the `cma_codex`
 provider, binding and conversation management use the configured CMA service
@@ -906,6 +1001,8 @@ reads continue to use the retained agent bearer. Redirects are disabled; another
 allowlisted provider never receives the CMA service bearer.
 `PUT <binding-path/{binding_id}>` receives
 `{schema_version:1,profile,profile_digest,agent_key,tools:{native_mcp_url,nyxid_service_slug}}`.
+For a non-default target, the gateway also forwards `target` unchanged. Omitted
+or profile targets preserve the original binding request shape.
 The provider MUST authenticate the agent identity, bind ownership, idempotently
 prepare the profile under that binding ID, and return
 `{binding_id,level,honoured:[field-paths],refused:[{field,reason}]}`. It MUST name
@@ -972,9 +1069,11 @@ The workflow integration sequence is:
    provider event-context GET, including after either service restarts.
 
 Verification is stateless and does not call back into provider context storage,
-so a fresh event can be verified before it is persisted. CMA Bot Father uses this
-path and stores encrypted workflow context without admitting a model command.
-Normal model turns continue to persist context with turn admission as described
+so a fresh event can be verified before it is persisted. Workflow interpretation
+and state belong to the downstream provider. CMAEG sends every admitted Activity
+through the configured provider turn interface, including commands, login-return
+text and interaction results; it never routes product-specific input to a separate
+workflow endpoint. Model turns persist context with turn admission as described
 above. `verifyEventContext` is tagged **provider integration** in OpenAPI; the
 native MCP tool list remains exactly `replyToEvent`, `updateMessage`, `sendTyping`,
 and `readEventContext`.
@@ -1063,6 +1162,8 @@ Generated from the reviewed OpenAPI snapshot; effective paths include its server
 | `POST /v1/channels/{channel_id}/test` | `testChannel` |
 | `GET /v1/events/{event_ref}/context` | `readEventContext` |
 | `POST /v1/events/{event_ref}/context` | `verifyEventContext` |
+| `POST /v1/events/{event_ref}/reply-target` | `createReplyTarget` |
+| `POST /v1/reply-targets/{reply_target_ref}/messages` | `replyToTarget` |
 | `POST /v1/events/{event_ref}/replies` | `replyToEvent` |
 | `POST /v1/events/{event_ref}/typing` | `sendTyping` |
 | `POST /v1/messages/{message_ref}/update` | `updateMessage` |

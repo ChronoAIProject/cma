@@ -1951,6 +1951,9 @@
           },
           "slug": {
             "$ref": "#/components/schemas/ProviderSlug"
+          },
+          "target": {
+            "$ref": "#/components/schemas/ProviderTarget"
           }
         },
         "required": [
@@ -1965,6 +1968,9 @@
         "properties": {
           "slug": {
             "$ref": "#/components/schemas/ProviderSlug"
+          },
+          "target": {
+            "$ref": "#/components/schemas/ProviderTarget"
           }
         },
         "required": [
@@ -2007,6 +2013,43 @@
       },
       "ProviderSlug": {
         "type": "string"
+      },
+      "ProviderTarget": {
+        "description": "Generic provider target. Instance selection and authorization stay with the\nprovider; the gateway only retains and forwards this declaration.",
+        "oneOf": [
+          {
+            "properties": {
+              "type": {
+                "enum": [
+                  "profile"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "agent_id": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "existing_agent"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "agent_id",
+              "type"
+            ],
+            "type": "object"
+          }
+        ]
       },
       "PublicActivity": {
         "properties": {
@@ -2332,6 +2375,25 @@
         "required": [
           "auto_final",
           "ack_after_ms"
+        ],
+        "type": "object"
+      },
+      "ReplyTargetRef": {
+        "type": "string"
+      },
+      "ReplyTargetResponse": {
+        "properties": {
+          "expires_at": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "reply_target_ref": {
+            "$ref": "#/components/schemas/ReplyTargetRef"
+          }
+        },
+        "required": [
+          "reply_target_ref",
+          "expires_at"
         ],
         "type": "object"
       },
@@ -3565,6 +3627,59 @@
         ]
       }
     },
+    "/events/{event_ref}/reply-target": {
+      "post": {
+        "operationId": "createReplyTarget",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "event_ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {}
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplyTargetResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "agentBearer": []
+          }
+        ],
+        "tags": [
+          "provider integration"
+        ]
+      }
+    },
     "/events/{event_ref}/typing": {
       "post": {
         "operationId": "sendTyping",
@@ -3662,6 +3777,69 @@
         ],
         "tags": [
           "tools"
+        ]
+      }
+    },
+    "/reply-targets/{reply_target_ref}/messages": {
+      "post": {
+        "operationId": "replyToTarget",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "reply_target_ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OutboundMessage"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntentReceipt"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "agentBearer": []
+          }
+        ],
+        "tags": [
+          "provider integration"
         ]
       }
     }

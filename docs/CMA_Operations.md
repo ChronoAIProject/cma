@@ -1523,77 +1523,77 @@ availability policies continue to apply, including catalog-cleanup survivors.
 
 ### Bot Father sender-authorized setup
 
-CMA Bot Father uses a dedicated ChronoAI organization binding and exactly
-`chrono-llm-public`, `ornn-api`, and `cmaeg` service grants for its own runtime.
-Those grants never authorize creating another user's resources. Father is a normal
-provider agent with the [CMA Bot Father skill](skills/cma-bot-father/SKILL.md): greetings, general questions,
-web searches, free-form JSON and natural-language Bot requests all go to the model.
-Its skill guides users into `/setup` or the Telegram deep link
-`https://t.me/<bot-username>?start=setup` when they want to configure a Bot. Ordinary
-conversation remains available between setup steps. Only explicit setup commands,
-valid login returns and callbacks in the setup's `bst_<id>.<revision>` namespace
-use the Gateway handoff after verification of the signed Telegram event, private
-chat, sender, channel and activity digest. CMA stores a durable setup plan bound to
-that sender and conversation; a Gateway restart or duplicated callback resumes
-the same revision.
+The expanded agent-owned requirements, channel target modes, delegated login
+continuation and current implementation gaps are recorded in
+[CMA Bot Father](CMA_Bot_Father.md). The setup API below is an intermediate
+capability and does not by itself implement that complete design.
 
-Enable this integration by setting both `CHRONO_BOT_FATHER_BINDING_ID` and
-`CHRONO_BOT_FATHER_TELEGRAM_USERNAME` in CMA's runtime environment. The binding
-must be a valid `bnd_` identifier and the username must be the exact Telegram
-bot username without `@`; an incomplete or malformed pair fails startup. If
-both keys are absent, Bot Father is disabled and CMA does not accept its setup
-callbacks. These values identify the already provisioned owner binding and
-Telegram ingress only; they are not credentials.
+CMA Bot Father is an ordinary agent in the ChronoAI organization with the
+[CMA Bot Father skill](skills/cma-bot-father/SKILL.md). Its runtime uses
+`chrono-llm-public`, `ornn-api`, `cmaeg` and `cma`. The `cma` grant lets the skill
+call the existing CMA service through the runtime's credential-injecting NyxID
+proxy. It does not grant management authority over other users' resources.
+CMA recognizes the binding key and limits it to binding conversations and the
+sender-authorized setup and delegated-operation APIs. Adding this transport reach to an externally
+managed key does not require replacing its existing sandbox or changing the
+immutable environment snapshot. Credential service access must still be verified
+through the exact organization connection and NyxID key scope plan.
 
-An unauthenticated sender receives a short-lived NyxID login link. NyxID keeps
-the renewable credential in CMA. The browser displays a one-time confirmation
-code and returns the user to the same Telegram chat; CMA activates the grant
-only after the same verified sender supplies that code. Valid returns are exactly
-`link_<proof>` or `/start link_<proof>` with a 1–128 character URL-safe proof;
-bare `/start` stays with the normal agent. The Father conversation
-never receives a NyxID token, refresh token or Telegram token. A replaced login,
-expired grant or revoked link invalidates deferred work.
+CMAEG owns generic event, context and reply IO. It has no Bot Father configuration,
+slash-command interception, business workflow or setup renderer. Every Activity,
+including a login return or interaction result, reaches the normal provider.
+The skill interprets natural conversation and calls
+`POST /api/v1/bot-setups/actions`; the public contract is documented in
+[API REST](API_REST.md#bot-father-setup-workflow). Ordinary questions remain normal
+agent work, including during an unfinished setup.
 
-After activation, the user chooses **Personal** or an organization for which
-NyxID currently proves Admin membership. Organization choices read the exact
-organization service inventory and connections. Personal service connections
-are never borrowed for an organization. Selecting a missing service opens its
-owner-scoped connection ceremony; creation remains blocked until it completes.
+Enable the CMA workflow by setting `CHRONO_BOT_FATHER_BINDING_ID` and
+`CHRONO_BOT_FATHER_TELEGRAM_USERNAME` in CMA's environment. The binding must be a
+valid `bnd_` identifier and the username must be the exact Telegram username
+without `@`. An incomplete or malformed pair fails startup; absent values disable
+this CMA integration. These are not gateway settings or credentials.
 
-Telegram messages offer system defaults or customized values for Agent Profile,
-Workspace Profile and Sandbox Profile, with selected services, resource limits,
-model access and availability. The current text/link mode uses commands displayed
-beside each choice, always prefixed by `/setup `; it works with the existing
-NyxID relay without a callback upgrade. For example, `/setup personal` selects
-personal ownership and `/setup name: Paper assistant` provides a name. During
-**Customize**, users can send `/setup instructions: Explain papers`,
-`/setup model: <model-id>` (or `/setup model: default`),
-`/setup repository: https://github.com/owner/repo [branch-or-tag]`, `/setup directory: work`, or
-`/setup resources: 2000 4096` (CPU millicores and memory MiB). Each edit stays on the
-current configuration step, and `/setup done` advances. Existing reasoning, clean
-workspace and availability shortcuts remain available. Advanced users can edit
-and send `/setup ` followed by the displayed full JSON template using exactly one
-`agent`, `workspace` or `sandbox` object; `availability` accompanies `sandbox`. CMA validates all
-fields, capacities and owner authority before accepting the edit. `/setup cancel` works
-at every pre-provisioning step, including login and naming.
+The agent supplies the current event reference and a typed action separately.
+CMA obtains the original retained Activity through the generic gateway context
+API, authenticates the configured binding, and derives the private-chat sender
+from the attested event. An action cannot replace that identity or rewrite the
+message. A sender without a linked identity receives a short-lived sign-in link.
+CMA retains the renewable NyxID credential and activates delegation only after
+fresh browser-bound PKCE login plus explicit consent for the displayed Telegram
+actor. The activation and pending callback are committed together. CMA resumes
+the exact initiating Agent through its leased durable outbox, recovers the same
+command after restart, and delivers the result through the gateway's 24-hour
+reply target. A callback never invents fresh human creation consent. The agent
+never receives an access token, refresh token, password or Telegram Bot token.
 
-The user selects an existing channel Bot owned by
-the same owner, or uses the owner-scoped managed Telegram flow at
-`/channel-bots/connect/telegram-new?target_org_id=<org-id>` to create one without
-copying a token. The final review shows the selected owner, connected services,
-channel Bot, admission rules and complete effective profile/availability values.
-Long profile content is split into bounded text blocks and Telegram messages.
-The explicit `/setup create` command confirms the current durable review plan; structured
-callbacks also carry its revision. CMA records the immutable plan digest before
-admitting provisioning. CMA creates the three private profile revisions and then
-uses the existing durable Bot worker; it does not separately provision duplicate
-Sandbox, Workspace or Agent resources.
+The skill asks whether resources belong to Personal or an authorized organization,
+then offers defaults or customized Agent, Workspace and Sandbox settings.
+It prepares configuration from the user's preferences and executes typed CMA
+operations. Users do not copy commands or JSON. Organization choices use the exact
+organization's service inventory and connections; personal connections cannot
+satisfy them. Missing connections use the returned owner-scoped sign-in links.
 
-Father must ask for the intended Bot name and instructions in chat, display every
-choice with a usable command or link, and report progress until the resulting Bot,
-channel binding and hierarchy IDs are available. It must never claim a Bot exists
-before the final confirmation is recorded. Personal and organization setup plans
-are separate, and resources retain their selected owner after creation.
+The user selects an owned Telegram Bot or follows the owner-scoped registration
+link. The skill displays the effective owner, Bot, services, admission rules,
+profiles and availability for final review. Creation requires a separate signed
+user message such as `Create Bot` or `确认创建`, or a matching generic interaction,
+received after that review. CMA checks the exact digest/revision and records the
+plan before its existing durable Bot worker admits provisioning. An agent's own
+request cannot stand in for the user's final confirmation.
+
+Typed operations have durable request IDs and revision checks, so one natural
+message can drive several authorized choices and retries do not duplicate work.
+Plans, login grants and receipts survive restarts. Bot Father enables
+`environment.session_affinity: "source_user"` and `environment.isolated_agents:
+true` in its CMA Event Worker Profile. The provider attests the source user,
+selects a durable per-user Agent/Worktree in the retained Sandbox, and isolates
+the process filesystem, network and platform routes. These profile flags do not
+change the projected Sandbox/Workspace or the stored service key. Workspace
+capacity remains bounded; exhausted users are never assigned a sibling's Agent.
+The agent reports completion
+only when CMA returns an active result with the resulting Bot URL.
+Legacy `advance` requests and encrypted pre-provider event snapshots remain
+compatible; new model turns use the ordinary provider context store.
 
 When moving an existing Telegram bot to Father, first disable its old CMA Bot
 connection with `POST /api/v1/bots/{bot_id}/disable` and wait for completion.

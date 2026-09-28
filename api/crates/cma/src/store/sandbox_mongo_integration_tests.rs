@@ -235,6 +235,7 @@ fn agent_profile(id: &str) -> AgentProfile {
         forked_from: None,
         uses_count: 0,
         draft: AgentProfileContent {
+            isolated_agent: false,
             model: None,
             thinking_effort: ThinkingEffort::Medium,
             permission_level: PermissionLevel::Guarded,

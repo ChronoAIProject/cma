@@ -3,6 +3,16 @@ use crate::{seconds_from_rfc3339, AgentId, SandboxId, SubjectId, WorkspaceId, Wo
 use serde::{Deserialize, Serialize};
 
 pub const BINDING_CONFORMANCE_LEVEL: u8 = 2;
+pub const EXISTING_AGENT_CONVERSATION: &str = "existing_agent";
+
+/// Borrowed hierarchy is validated by CMA; channel retirement only revokes this
+/// association and never owns the existing Agent's resource lifecycle.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExistingBindingAgent {
+    pub agent_id: AgentId,
+    pub worktree_id: WorktreeId,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
@@ -44,6 +54,8 @@ pub struct PreviousBindingEnvironment {
 #[serde(deny_unknown_fields)]
 pub struct ProviderBinding {
     pub binding_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub existing_agent: Option<ExistingBindingAgent>,
     /// The management principal is independent of the resource owner.
     pub manager: SubjectId,
     pub owner: SubjectId,
@@ -97,6 +109,7 @@ impl ProviderBinding {
         };
         let result = Self {
             binding_id,
+            existing_agent: None,
             manager,
             owner: profile.owner.clone(),
             profile_digest: profile.profile_digest.clone(),
@@ -142,6 +155,17 @@ impl ProviderBinding {
             || self.refused != self.profile.refused
             || self.sandbox_id.as_str().is_empty()
             || self.workspace_id.as_str().is_empty()
+            || self.existing_agent.as_ref().is_some_and(|agent| {
+                agent.agent_id.as_str().is_empty()
+                    || agent.worktree_id.as_str().is_empty()
+                    || self.previous.is_some()
+                    || !matches!(self.state, BindingState::Ready | BindingState::Retired)
+                    || !matches!(
+                        self.work,
+                        BindingWork::Idle | BindingWork::RetireCurrentConversations
+                    )
+                    || self.level != 1
+            })
             || seconds_from_rfc3339(&self.created_at)
                 .zip(seconds_from_rfc3339(&self.updated_at))
                 .is_none_or(|(created, updated)| updated < created)
@@ -174,7 +198,8 @@ impl ProviderBinding {
         key_sha256: String,
         at: String,
     ) -> Result<Self, String> {
-        if self.state == BindingState::Retired
+        if self.existing_agent.is_some()
+            || self.state == BindingState::Retired
             || self.work != BindingWork::Idle
             || self.previous.is_some()
             || self.owner != profile.owner
@@ -249,6 +274,8 @@ pub enum BindingConversationState {
 #[serde(deny_unknown_fields)]
 pub struct BindingConversation {
     pub binding_id: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub borrowed: bool,
     pub generation: u64,
     pub conversation_id: String,
     pub owner: SubjectId,
@@ -273,14 +300,29 @@ impl BindingConversation {
         }
         let result = Self {
             binding_id: binding.binding_id.clone(),
+            borrowed: binding.existing_agent.is_some(),
             generation: binding.generation,
-            conversation_id,
+            conversation_id: if binding.existing_agent.is_some() {
+                EXISTING_AGENT_CONVERSATION.into()
+            } else {
+                conversation_id
+            },
             owner: binding.owner.clone(),
             sandbox_id: binding.sandbox_id.clone(),
             workspace_id: binding.workspace_id.clone(),
-            agent_id: AgentId::generate(),
-            worktree_id: WorktreeId::generate(),
-            state: BindingConversationState::Provisioning,
+            agent_id: binding
+                .existing_agent
+                .as_ref()
+                .map_or_else(AgentId::generate, |a| a.agent_id.clone()),
+            worktree_id: binding
+                .existing_agent
+                .as_ref()
+                .map_or_else(WorktreeId::generate, |a| a.worktree_id.clone()),
+            state: if binding.existing_agent.is_some() {
+                BindingConversationState::Ready
+            } else {
+                BindingConversationState::Provisioning
+            },
             created_at: at.clone(),
             updated_at: at,
             revision: 1,

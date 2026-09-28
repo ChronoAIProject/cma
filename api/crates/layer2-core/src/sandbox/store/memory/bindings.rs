@@ -115,11 +115,12 @@ impl BindingStore for InMemorySandboxStore {
             expected,
             &next,
         )?;
-        if state
-            .binding_conversations
-            .iter()
-            .any(|(id, value)| id != &key && value.agent_id == next.agent_id)
-        {
+        if state.binding_conversations.iter().any(|(id, value)| {
+            id != &key
+                && value.agent_id == next.agent_id
+                && value.binding_id == next.binding_id
+                && value.generation == next.generation
+        }) {
             return Err(SandboxStoreError::Conflict);
         }
         state.binding_conversations.insert(key, next);

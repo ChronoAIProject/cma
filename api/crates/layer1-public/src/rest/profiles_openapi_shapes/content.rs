@@ -32,6 +32,8 @@ pub struct AgentProfileContentBody {
     pub skills: Vec<SkillReference>,
     #[serde(default)]
     pub system_prompt: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub isolated_agent: bool,
 }
 
 impl From<AgentProfileContentBody> for layer2_core::profiles::AgentProfileContent {
@@ -50,6 +52,7 @@ impl From<AgentProfileContentBody> for layer2_core::profiles::AgentProfileConten
                 })
                 .collect(),
             system_prompt: value.system_prompt,
+            isolated_agent: value.isolated_agent,
         }
     }
 }
@@ -70,6 +73,7 @@ impl From<layer2_core::profiles::AgentProfileContent> for AgentProfileContentBod
                 })
                 .collect(),
             system_prompt: value.system_prompt,
+            isolated_agent: value.isolated_agent,
         }
     }
 }

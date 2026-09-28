@@ -3,6 +3,32 @@ use crate::{Result, http::Request};
 use reqwest::{Method, StatusCode, header};
 
 impl Cmaeg {
+    /// Create bounded delayed-reply authority while the original event is valid.
+    pub async fn create_reply_target(&self, event_ref: &str) -> Result<ReplyTargetResponse> {
+        let segments = ["v1", "events", event_ref, "reply-target"];
+        let mut request = Request::operation(
+            Method::POST,
+            &segments,
+            Some(&serde_json::json!({})),
+            StatusCode::OK,
+        )?;
+        request.root = true;
+        self.client.request(request).await
+    }
+    /// Send once under a durable caller-chosen key. Unknown delivery is never retried automatically.
+    pub async fn reply_to_target(
+        &self,
+        target: &str,
+        idempotency_key: &str,
+        message: &OutboundMessage,
+    ) -> Result<IntentReceipt> {
+        let segments = ["v1", "reply-targets", target, "messages"];
+        let mut request =
+            Request::operation(Method::POST, &segments, Some(message), StatusCode::OK)?
+                .with_command_key(Some(idempotency_key))?;
+        request.root = true;
+        self.client.request(request).await
+    }
     /// Reply using a channel agent key and an opaque event reference.
     pub async fn reply_to_event(
         &self,

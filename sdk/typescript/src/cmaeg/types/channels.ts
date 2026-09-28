@@ -62,7 +62,19 @@ export type CredentialsRequest = Output<typeof CredentialsRequestSchema>;
 export const PartitionRuleSchema = object({ key: PartitionKeySchema, version: integer });
 export type PartitionRule = Output<typeof PartitionRuleSchema>;
 
-export const ProviderRequestSchema = object({ slug: ProviderSlugSchema });
+export const ProviderTargetSchema = tagged(
+  {
+    profile: object({ type: enumeration('profile') }),
+    existing_agent: object({ type: enumeration('existing_agent'), agent_id: text }),
+  },
+  'type',
+);
+export type ProviderTarget = Output<typeof ProviderTargetSchema>;
+
+export const ProviderRequestSchema = object({
+  slug: ProviderSlugSchema,
+  target: optional(ProviderTargetSchema),
+});
 export type ProviderRequest = Output<typeof ProviderRequestSchema>;
 
 export const SinkSchema = tagged(
@@ -137,6 +149,7 @@ export const ProviderBindingSchema = object({
   binding_id: BindingIdSchema,
   level: ConformanceLevelSchema,
   slug: ProviderSlugSchema,
+  target: optional(ProviderTargetSchema),
 });
 export type ProviderBinding = Output<typeof ProviderBindingSchema>;
 

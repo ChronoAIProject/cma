@@ -192,6 +192,20 @@ pub(crate) async fn fixture_for_owner(
     Arc<BindingAccessService>,
     BindingPrincipal,
 ) {
+    fixture_for_owner_with_router(conversation_state, admission_race, owner_kind, None).await
+}
+
+pub(crate) async fn fixture_for_owner_with_router(
+    conversation_state: BindingConversationState,
+    admission_race: bool,
+    owner_kind: &str,
+    router: Option<Arc<dyn super::BindingEventRouter>>,
+) -> (
+    axum::Router,
+    Arc<InMemorySandboxStore>,
+    Arc<BindingAccessService>,
+    BindingPrincipal,
+) {
     let (state, store) = fixtures::conversation_fixture().await;
     let agent = fixtures::seeded_agent("agt_fixture", AgentStatus::Ready, 2, None);
     fixtures::insert_agent(&store, agent.clone(), vec![]).await;
@@ -241,10 +255,13 @@ pub(crate) async fn fixture_for_owner(
             .with_bindings(bindings.clone()),
     );
     let commands = AgentCommandService::new(store.clone(), access.clone(), authority);
-    let app = super::router(
+    let mut state =
         super::ResponsesV2State::new(commands, state.reads.with_resource_access(access))
-            .with_bindings(bindings.clone()),
-    );
+            .with_bindings(bindings.clone());
+    if let Some(router) = router {
+        state = state.with_event_router(router);
+    }
+    let app = super::router(state);
     (app, store, bindings, principal)
 }
 
