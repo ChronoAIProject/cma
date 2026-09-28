@@ -13,8 +13,9 @@ assistance, delegated CMA resource operations, and event-channel creation.
 Ordinary messages always reach the agent. The agent decides when to offer an
 operation, ask for missing choices, or continue an earlier task.
 
-CMAEG authenticates and normalizes source events, selects a provider conversation,
-invokes the provider, and delivers replies and generic interactions. It does not
+CMAEG authenticates and normalizes source events, forwards the configured target
+and verified source metadata to the provider, and delivers replies and generic
+interactions. The provider selects the actual agent and owns user affinity. CMAEG does not
 interpret `/setup`, decide whether a message requests a Bot, run a setup state
 machine, manage user login, or retain end-user NyxID delegation grants.
 
@@ -30,34 +31,44 @@ use the chosen organization's service inventory, connections and agent-key scope
 
 ## Channel targets and subconnections
 
-A channel target and its partition policy are separate concepts:
+A channel declares a provider and a target. Agent selection belongs to that
+provider in both modes:
 
 | Target | Conversation behavior | Resource lifecycle |
 | --- | --- | --- |
-| Existing agent instance | Every admitted event reaches the specified agent, regardless of sender. Require a fixed partition. | Attach to the authorized existing instance. Deleting the channel detaches it; it must not delete the borrowed agent, workspace or sandbox. |
-| Event Worker Profile | A partition selects a durable instance of the profile; the first event for a new partition reserves and creates that instance. | The provider owns provisioning and cleanup of the instances it created. |
+| Existing agent instance | The gateway forwards the specified target. The provider sends every admitted event to that agent, regardless of sender. | Attach to the authorized existing instance. Deleting the channel detaches it; it must not delete the borrowed agent, workspace or sandbox. |
+| Event Worker Profile | The gateway forwards the profile target and verified event identity. The provider applies its own session policy, reuses the appropriate agent, or creates a new instance. | The provider owns user affinity, instance lookup, provisioning and cleanup of the instances it created. |
 
 The protocol must identify the target explicitly. A fixed partition on a profile
 currently creates one new profile instance; it does not attach to an existing
 agent. Do not advertise that as existing-agent support. Providers must reject
 unsupported target types rather than silently provision a different resource.
 
-For sender routing, the stable key includes the source platform and authenticated
-sender ID, with the channel identity included in the provider conversation ID.
-The chat ID is excluded. Existing `conversation_and_sender` routing remains
-available when one sender should have independent conversations in different
-chats. Changing partition semantics requires a new partition-rule version.
+The gateway preserves authenticated platform/sender, source chat/thread, event ID
+and reply destination as event metadata. It does not hash the sender into an
+agent-selection key, maintain a user-to-agent map, or decide whether an agent
+needs creating. A verified Telegram sender is a source identity; it is not proof
+of a NyxID account. CMA owns the authenticated account association after login.
 
-A subconnection is the durable association of channel, partition-rule version
-and partition key with one provider conversation. Repeated events, retries,
-gateway restarts and simultaneous first events must resolve to the same instance.
-The gateway transports opaque provider identifiers; CMA owns the mapping to its
-Sandbox, Workspace, Agent and Worktree.
+A subconnection is a provider-owned session beneath one channel binding. For
+Bot Father, CMA durably associates the channel and verified source user with an
+Agent, Worktree, conversation and delegated identity. CMA defines the affinity
+policy, including whether the same user across multiple chats shares an agent.
+The gateway treats provider session identifiers as opaque correlation metadata.
+Each event retains its own reply destination regardless of which agent is selected.
 
-Bot Father uses the profile target with a separate sender subconnection for each
-user. CMA retains one always-live Sandbox and Workspace, with a distinct Agent,
-Worktree, model conversation and per-user operation context for each subconnection.
-Different agents may run concurrently; turns for one agent remain ordered.
+Repeated events, retries, gateway restarts and simultaneous first events must
+resolve to the same provider-selected instance. This guarantee must be enforced
+by CMA's durable mapping and admission logic, not by a gateway sender partition.
+The existing gateway `partition` fields are compatibility behavior of the current
+protocol; adding a new gateway `sender` rule does not implement this requirement.
+The profile-target provider contract must let the provider choose the session
+without treating a gateway-derived conversation ID as the user-affinity authority.
+
+Bot Father uses the profile target. CMA retains one always-live Sandbox and
+Workspace, with a distinct Agent, Worktree, model conversation and per-user
+operation context for each subconnection. Different agents may run concurrently;
+turns for one agent remain ordered.
 
 The current provider projection caps a workspace at 16 agents. Capacity must be
 explicit, observable and enforced without mapping new users onto someone else's
@@ -128,16 +139,52 @@ in different files does not meet this requirement.
 
 ## Callback replies and gateway boundaries
 
+All provider agent instances use the same gateway reply API. The gateway does
+not select a recipient from an agent ID or a channel's most recent sender.
+Existing `POST /v1/events/{event_ref}/replies` / `replyToEvent` uses the sealed
+event reference to recover its original relay message and route. NyxID resolves
+that original message to its source conversation. An automatic final response
+likewise stays attached to the event that opened the provider stream.
+
+Agent selection and reply routing are independent. For example, user A's event
+and reply reference are dispatched by CMA to Agent A, while user B's event and
+reply reference are dispatched to Agent B. Either agent may finish first; each
+reply still uses its own event context. A provider may instead choose one shared
+agent without changing this delivery rule. One agent may handle multiple source
+chats; its identity alone must never determine where a response is sent.
+
 A callback can arrive after its initiating turn completed. CMA therefore needs a
 generic way to resume its provider conversation and send a result to the retained
 source destination. Current short-lived event references are not indefinite
 conversation credentials. Do not disable expiry to make delayed callbacks work.
 
-Any necessary gateway extension must describe a generic provider notification or
-conversation reply target, authenticated to the owning channel and current
-provider binding. It must distinguish system events from authenticated human
-events, preserve sender and destination separation, and expose no user login
-state. Bot Father callback handling belongs entirely in CMA.
+The proposed generic extension is an opaque `reply_target_ref` minted from
+verified ingress, separate from the provider-selected session identifier. It
+authorizes delivery to the original source conversation/topic under the current
+channel and provider binding, with explicit lifetime and revocation semantics.
+The platform adapter may retain an original message reference when its relay
+requires one. Its scope contains delivery authority, never a user's NyxID grant
+or an agent-selection policy. It must not become an unrestricted arbitrary-chat
+send credential.
+
+A proposed `POST /v1/reply-targets/{reply_target_ref}/messages` operation would use
+that target and a provider-supplied idempotency key. This is a proposed extension,
+not an existing endpoint. Every agent uses the same API; the authenticated target
+determines the destination. Expired/deleted/replaced channel authority fails
+closed. Provider/gateway delivery receipts must distinguish confirmed, rejected
+and unknown delivery; an unknown platform send cannot be labelled exactly-once.
+
+CMA retains the originating reply target with the pending login/operation and
+durable wakeup. It does not substitute whichever chat most recently contacted
+the agent. Its tool execution broker must also enforce that an agent execution
+can use only its assigned event or continuation context. Accepting a model-chosen
+agent ID or sharing all users' reply capabilities in one sandbox is insufficient.
+This authorization remains provider-owned; the gateway validates the bound reply
+capability without maintaining a user-to-agent map.
+
+Any generic provider notification must distinguish system events from verified
+human events. Bot Father login callbacks, workflow progression and all signed-in
+user information remain entirely in CMA.
 
 ## Acceptance evidence
 
@@ -153,8 +200,10 @@ state. Bot Father callback handling belongs entirely in CMA.
   connection prompts and agent-key scopes.
 - Existing-agent attachment routes all senders to that instance; channel deletion
   leaves the borrowed agent and its environment intact.
-- Profile-target creation provisions one durable instance per selected partition;
-  capacity exhaustion cannot spill a user into another user's instance.
+- Profile-target dispatch lets the provider select and provision each user's
+  durable instance. Gateway replicas neither choose that instance nor retain the
+  user-to-agent mapping. Capacity exhaustion cannot spill a user into another
+  user's instance.
 - Callback retries, revocation, late login, busy turns and expired reply references
   produce explicit results without cross-user continuation or duplicate creation.
 
