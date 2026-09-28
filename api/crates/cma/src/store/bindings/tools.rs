@@ -36,7 +36,9 @@ impl MongoProviderToolSource {
             .store
             .bindings
             .conversations
-            .find_one(doc! {"record.agent_id": &request.options.slot.0})
+            .find_one(
+                doc! {"record.agent_id": &request.options.slot.0, "record.borrowed": {"$ne": true}},
+            )
             .session(&mut *session)
             .await
             .map_err(unavailable)?

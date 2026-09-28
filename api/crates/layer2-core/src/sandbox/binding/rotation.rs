@@ -13,8 +13,10 @@ impl ProviderBinding {
         }
         let mut next = self.clone();
         next.key_sha256 = hash;
-        next.state = BindingState::Provisioning;
-        next.work = BindingWork::DeliverCredential;
+        if self.existing_agent.is_none() {
+            next.state = BindingState::Provisioning;
+            next.work = BindingWork::DeliverCredential;
+        }
         next.advance_revision(at).map_err(CoreError::InvalidState)?;
         Ok(next)
     }
