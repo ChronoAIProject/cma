@@ -210,6 +210,7 @@ pub(super) fn profile(id: &str, owner: &str, visibility: ProfileVisibility) -> A
         forked_from: None,
         uses_count: 0,
         draft: AgentProfileContent {
+            isolated_agent: false,
             model: Some("model-a".into()),
             thinking_effort: ThinkingEffort::High,
             permission_level: PermissionLevel::Guarded,

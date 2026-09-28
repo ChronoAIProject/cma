@@ -9,6 +9,21 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeSet;
 
+/// CMA owns agent affinity. Gateway conversation identifiers remain transport context.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionAffinity {
+    #[default]
+    Conversation,
+    SourceUser,
+}
+
+impl SessionAffinity {
+    pub fn is_default(&self) -> bool {
+        *self == Self::Conversation
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BindingFieldRefusal {
@@ -28,6 +43,8 @@ pub struct BindingEnvironmentPlan {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BindingProfilePlan {
+    #[serde(default, skip_serializing_if = "SessionAffinity::is_default")]
+    pub session_affinity: SessionAffinity,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub organization_owned: bool,
     pub owner: SubjectId,
@@ -110,7 +127,15 @@ pub fn map_profile(
         bounded(&service, "permission.service_scope", 1, 512)?;
         services.insert(ServiceId::new(service));
     }
+    let session_affinity = input
+        .environment
+        .as_ref()
+        .map_or(SessionAffinity::default(), |e| e.session_affinity);
     let agent = AgentProfileContent {
+        isolated_agent: input
+            .environment
+            .as_ref()
+            .is_some_and(|e| e.isolated_agents),
         model: Some(input.model.model),
         thinking_effort,
         permission_level,
@@ -125,6 +150,7 @@ pub fn map_profile(
         }
     }
     let mut plan = BindingProfilePlan {
+        session_affinity,
         organization_owned: input.metadata.owner.kind == "organization",
         owner: SubjectId::new(input.metadata.owner.subject),
         name: input.metadata.name,

@@ -114,12 +114,30 @@ async fn submit(
         Ok(value) => value,
         Err(error) => return *error,
     };
-    submission.agent_id = match state
-        .resolve_conversation(&auth, &submission.agent_id)
-        .await
-    {
-        Ok(id) => id,
-        Err(error) => return *error,
+    let routed = if binding {
+        if let (Some(router), Some(event)) =
+            (&state.event_router, submission.command.external_event_mut())
+        {
+            match router.route(&auth, event).await {
+                Ok(value) => value,
+                Err(error) => return super::routing::error(error),
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    submission.agent_id = if let Some(agent) = routed {
+        agent
+    } else {
+        match state
+            .resolve_conversation(&auth, &submission.agent_id)
+            .await
+        {
+            Ok(id) => id,
+            Err(error) => return *error,
+        }
     };
     if binding {
         if let Some(alias) = alias {

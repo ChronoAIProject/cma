@@ -93,6 +93,7 @@ pub(super) fn agent(id: &str, conversation_id: &str, seq: u64) -> Agent {
             revision: 2,
             digest: "d".repeat(64),
             content: AgentProfileContent {
+                isolated_agent: false,
                 model: None,
                 thinking_effort: ThinkingEffort::Medium,
                 permission_level: PermissionLevel::Guarded,

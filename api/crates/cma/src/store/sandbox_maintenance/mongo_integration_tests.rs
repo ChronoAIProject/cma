@@ -70,6 +70,7 @@ pub(in crate::store) fn ready_agent(sandbox: &Sandbox, id: &str) -> Agent {
             revision: 1,
             digest: "d".repeat(64),
             content: AgentProfileContent {
+                isolated_agent: false,
                 model: None,
                 thinking_effort: ThinkingEffort::Medium,
                 permission_level: PermissionLevel::Guarded,

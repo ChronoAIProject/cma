@@ -217,6 +217,7 @@ fn agent(sandbox: &Sandbox, workspace: &Workspace, id: &str, status: AgentStatus
 
 fn agent_profile_content() -> AgentProfileContent {
     AgentProfileContent {
+        isolated_agent: false,
         model: None,
         thinking_effort: ThinkingEffort::Medium,
         permission_level: PermissionLevel::Guarded,

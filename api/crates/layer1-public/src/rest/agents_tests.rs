@@ -299,6 +299,7 @@ pub(super) async fn publish_profile(store: &InMemoryProfileStore) {
 
 fn agent_profile_content() -> AgentProfileContent {
     AgentProfileContent {
+        isolated_agent: false,
         model: Some("gpt-proof".into()),
         thinking_effort: ThinkingEffort::High,
         permission_level: PermissionLevel::Guarded,

@@ -25,6 +25,10 @@ mod parse;
 mod projection;
 pub(crate) mod queued_cancellation;
 mod routes;
+mod routing;
+#[cfg(test)]
+mod routing_tests;
+pub use routing::{BindingEventRouter, BindingRouteError};
 mod stream;
 #[cfg(test)]
 pub(crate) mod tests;
@@ -37,8 +41,13 @@ pub struct ResponsesV2State {
     commands: Arc<AgentCommandService>,
     reads: Arc<AgentReadService>,
     bindings: Option<Arc<layer2_core::sandbox::binding::BindingAccessService>>,
+    event_router: Option<Arc<dyn BindingEventRouter>>,
 }
 impl ResponsesV2State {
+    pub fn with_event_router(mut self, router: Arc<dyn BindingEventRouter>) -> Self {
+        self.event_router = Some(router);
+        self
+    }
     pub fn with_bindings(
         mut self,
         bindings: Arc<layer2_core::sandbox::binding::BindingAccessService>,
@@ -52,6 +61,7 @@ impl ResponsesV2State {
             commands,
             reads,
             bindings: None,
+            event_router: None,
         }
     }
 }
