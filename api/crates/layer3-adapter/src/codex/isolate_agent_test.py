@@ -232,11 +232,15 @@ class PlatformHttpTests(unittest.TestCase):
                 # upstream. A raw relay would lend it the same credential.
                 client.sendall(f"GET {self.prefix}cma/api/v1/agents HTTP/1.1\r\nHost: local\r\n\r\n".encode())
                 peer.sendall(b"d\r\ndata:second\n\n\r\n0\r\n\r\n")
-                while chunk := client.recv(65536):
-                    result.extend(chunk)
+                # Linux may reset on closing this deliberately malformed
+                # client with its second request unread. The full response
+                # must still have arrived; a reset never counts as completion.
+                with contextlib.suppress(ConnectionResetError):
+                    while chunk := client.recv(65536):
+                        result.extend(chunk)
                 thread.join(timeout=3)
                 self.assertFalse(thread.is_alive())
-                self.assertIn(b"data:second\n\n", result)
+                self.assertEqual(result.split(b"\r\n\r\n", 1)[1], b"data:first\n\ndata:second\n\n")
                 self.assertIn(b"content-type: text/event-stream", result)
                 self.assertNotIn(b"Transfer-Encoding", result)
                 self.assertEqual(peer.recv(65536), b"")
