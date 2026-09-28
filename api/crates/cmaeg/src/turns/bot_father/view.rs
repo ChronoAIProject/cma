@@ -65,7 +65,7 @@ impl SetupView {
         let title = match self.step.as_str() {
             "login" => "Connect Bot Father to NyxID",
             "owner" => "Who should own this Bot?",
-            "name" => "Name your Bot",
+            "name" => "Name your Bot (reply `name: Your Bot name`)",
             "agent" => "Agent Profile",
             "agent_custom" => "Customize your Agent Profile",
             "workspace" => "Workspace Profile",
@@ -87,6 +87,9 @@ impl SetupView {
         }
         if let Some(notice) = &self.notice {
             body.push(notice.clone());
+        }
+        if self.step == "name" {
+            body.push("Reply `name: Your Bot name` to continue. Ordinary questions still go to your Bot Father assistant.".into());
         }
         let bot_url = self
             .result
