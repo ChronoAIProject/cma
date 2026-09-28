@@ -146,7 +146,10 @@ impl AuthState {
         }
         cookie_authorization::require_current_custody(self, &custody.state)
             .await
-            .map_err(|_| CommandAuthorizationError::Revoked)
+            // A concurrent token refresh can change custody without revoking
+            // this grant. Retry with the current generation; the next read
+            // independently rejects a replaced incarnation or revoked grant.
+            .map_err(|_| CommandAuthorizationError::Unavailable)
     }
 }
 

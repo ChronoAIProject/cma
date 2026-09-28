@@ -252,6 +252,8 @@ async fn shared_auth_contract_matches_real_cma_composition() {
                     .unwrap()
                     .to_string_lossy()
                     .starts_with("auth-")
+                // Delegated resource operations use the complete broker fixture.
+                && path.file_name().unwrap() != "auth-agent-delegations.json"
         })
         .collect();
     paths.sort();
