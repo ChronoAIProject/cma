@@ -421,7 +421,9 @@ impl BotSetupService {
                     | SetupStep::Cancelled => {}
                     _ => return Err(invalid_action()),
                 }
-            } else if let Some(text) = text {
+            } else if let Some(text) = text.filter(|text| !text.trim().is_empty()) {
+                // An empty explicit setup command resumes the current view;
+                // it is not a replacement profile or a confirmation.
                 if super::custom_text::apply(&mut setup, text)? {
                     self.dependencies
                         .validate_configuration(&setup.configuration)
