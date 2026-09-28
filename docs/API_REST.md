@@ -247,6 +247,19 @@ retired records retain that reservation. Reusing the key on another binding
 returns a conflict. A changed profile waits for prior work to settle, retires
 old conversation Agents, and keeps compatible Sandbox and Workspace snapshots.
 
+The optional `target` field selects `{"type":"profile"}` (the default) or
+`{"type":"existing_agent","agent_id":"agt_existing"}`. Existing-agent binding
+checks the actual personal/organization resource owner, retains all existing
+Agent configuration, and returns `level:"l1"` with automatic final replies.
+The required profile envelope still supplies the owner and digest; its model,
+environment and instruction settings are not applied. Every transport
+conversation resolves to that same Agent through the canonical provider
+conversation `existing_agent`. The response includes the non-default target.
+Changing the target or profile of this association is rejected. Key rotation
+changes only binding authentication, without changing the existing Sandbox
+credential. Deleting an existing-agent binding or conversation only removes
+the association and never retires the borrowed Agent or parent resources.
+
 `PUT /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}` accepts
 an empty body or `{}` and returns `{conversation_id,agent_id,state}` with 201
 for a new reservation or 200 for a replay. Conversation ids contain 8–128 ASCII

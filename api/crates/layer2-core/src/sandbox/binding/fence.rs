@@ -43,6 +43,7 @@ impl BindingAdmissionFence {
     fn require_binding(&self, binding: &ProviderBinding) -> Result<(), SandboxStoreError> {
         binding.validate().map_err(SandboxStoreError::Corrupt)?;
         if self.binding_id != binding.binding_id
+            || binding.existing_agent.is_some()
             || self.revision != binding.revision
             || self.generation != binding.generation
         {

@@ -3,9 +3,25 @@ use crate::{Client, Result, http::Request};
 use reqwest::{Method, StatusCode};
 use serde::{Deserialize, Serialize};
 
+/// Provider target selection. Omission preserves profile provisioning.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum BindingTarget {
+    /// Provision resources from the supplied profile.
+    Profile,
+    /// Borrow an existing Agent without changing its configuration or lifetime.
+    ExistingAgent {
+        /// Existing CMA Agent owned by the declared profile owner.
+        agent_id: String,
+    },
+}
+
 /// Safe provider binding metadata without credentials.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct ProviderBinding {
+    /// Provider resource target; omitted for profile provisioning.
+    #[serde(default)]
+    pub target: Option<BindingTarget>,
     /// External binding identity.
     pub binding_id: String,
     /// Resource owner.
@@ -47,8 +63,9 @@ pub struct BindingRefusal {
 pub struct BindingConversation {
     /// External conversation identity.
     pub conversation_id: String,
-    /// Reserved CMA Agent identity.
-    pub agent_id: String,
+    /// Reserved CMA Agent identity; absent until provider-owned source-user routing selects it.
+    #[serde(default)]
+    pub agent_id: Option<String>,
     /// Current conversation state.
     pub state: String,
 }
@@ -63,6 +80,9 @@ pub struct BindingTools {
 /// Create, replay, or reconfigure a binding. Debug output omits credentials.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct PutProviderBinding {
+    /// Resource target; omitted for profile provisioning.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<BindingTarget>,
     /// Protocol schema version, currently 1.
     pub schema_version: u16,
     /// Complete canonical profile snapshot.

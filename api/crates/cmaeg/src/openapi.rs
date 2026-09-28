@@ -8,7 +8,7 @@ use utoipa::OpenApi;
     info(title = "CMA Event Gateway", version = "1.0"),
     servers((url = "/v1")),
     modifiers(&ManagementSecurity, &ProfileCompatibility, &ProtocolBase),
-    components(schemas(crate::providers::EventContextSnapshot)),
+    components(schemas(crate::providers::EventContextSnapshot, cmaeg_core::channel::ProviderTarget)),
     paths(
         http::management::create_channel,
         http::creation::recover_channel,

@@ -63,6 +63,7 @@ impl std::error::Error for ProviderError {}
 #[derive(Debug, Clone)]
 pub struct BindingRequest {
     pub schema_version: u16,
+    pub target: cmaeg_core::channel::ProviderTarget,
     pub profile: EventWorkerProfile,
     pub profile_digest: String,
     pub agent_key: Secret,
