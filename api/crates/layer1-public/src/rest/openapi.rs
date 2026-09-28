@@ -40,6 +40,7 @@ use super::trigger_openapi_shapes::*;
         super::event_workers::retire,
         super::bots::create,
         super::bot_setups::advance,
+        super::bot_setups::act,
         super::bots::list,
         super::bots::read,
         super::bots::available,

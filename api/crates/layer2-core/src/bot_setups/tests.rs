@@ -323,6 +323,10 @@ impl Fixture {
             SetupEvent {
                 actor: self.actor.clone(),
                 event_id: id.clone(),
+                occurred_at: (time::OffsetDateTime::now_utc()
+                    + time::Duration::seconds(60 + self.sequence as i64))
+                .format(&time::format_description::well_known::Rfc3339)
+                .unwrap(),
                 input,
             },
         );
@@ -404,3 +408,5 @@ impl Fixture {
 
 mod customization;
 mod flows;
+
+mod agent_actions;
