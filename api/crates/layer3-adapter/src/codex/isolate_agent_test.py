@@ -1,4 +1,5 @@
 """Exercise fixed relay destinations and launch confinement without services."""
+import contextlib
 import importlib.util
 import os
 import pathlib
@@ -7,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import types
 import unittest
 from unittest import mock
 
@@ -15,6 +17,229 @@ SCRIPT = pathlib.Path(__file__).with_name("isolate_agent.py")
 spec = importlib.util.spec_from_file_location("isolate_agent", SCRIPT)
 isolate = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(isolate)
+
+
+class PlatformHttpTests(unittest.TestCase):
+    prefix = "/api/v1/proxy/s/"
+    action = prefix + "cma/api/v1/bot-setups/actions"
+
+    def exchange(self, payload, reply=b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}"):
+        """Exercise the real gate with disposable, credential-free socket pairs."""
+        client, gate = socket.socketpair()
+        upstream, peer = socket.socketpair()
+        with client, gate, upstream, peer:
+            for stream in (client, gate, upstream, peer):
+                stream.settimeout(3)
+            peer.sendall(reply)
+            peer.shutdown(socket.SHUT_WR)
+            server = types.SimpleNamespace(destination=("127.0.0.2", 9092))
+
+            def handle():
+                try:
+                    isolate.PlatformHttp(gate, None, server)
+                finally:
+                    gate.close()
+
+            with mock.patch.object(isolate.socket, "create_connection", return_value=upstream) as connect:
+                thread = threading.Thread(target=handle, daemon=True)
+                thread.start()
+                with contextlib.suppress(BrokenPipeError, ConnectionResetError):
+                    client.sendall(payload)
+                with contextlib.suppress(OSError):
+                    client.shutdown(socket.SHUT_WR)
+                result = bytearray()
+                with contextlib.suppress(ConnectionResetError):
+                    while chunk := client.recv(65536):
+                        result.extend(chunk)
+                thread.join(timeout=3)
+                self.assertFalse(thread.is_alive())
+                forwarded = bytearray()
+                if connect.called:
+                    connect.assert_called_once_with(("127.0.0.2", 9092), timeout=10)
+                    while chunk := peer.recv(65536):
+                        forwarded.extend(chunk)
+            return bytes(result), bytes(forwarded)
+
+    def test_platform_gate_is_on_host_unix_socket_not_bypassable_local_listener(self):
+        with tempfile.TemporaryDirectory(prefix="cma-platform-test-", dir="/tmp") as root:
+            with mock.patch.object(isolate, "PROXIES", (("platform", "127.0.0.2", 9092),)):
+                with mock.patch.object(isolate, "UnixServer", wraps=isolate.UnixServer) as build:
+                    with isolate.relays(root, inside=False):
+                        self.assertIs(build.call_args_list[0].args[1], isolate.PlatformHttp)
+
+    def test_only_delegated_cma_actions_and_explicit_service_slugs_are_allowed(self):
+        for path in isolate.CMA_OPERATIONS:
+            target = self.prefix + "cma/" + path
+            response, forwarded = self.exchange(
+                f'POST {target} HTTP/1.1\r\nHost: ignored\r\nContent-Length: 2\r\n\r\n{{}}'.encode())
+            self.assertIn(b"200", response)
+            self.assertTrue(forwarded.startswith(f"POST {target} HTTP/1.1".encode()))
+        for slug in ("chrono-llm-public", "ornn-api"):
+            for method in ("GET", "HEAD", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"):
+                isolate.platform_target(method, self.prefix + slug + "/v1/resource?q=hello%20world")
+
+    def test_sibling_conversation_management_catalogue_and_aliases_are_denied(self):
+        for target in (
+            self.prefix + "cma/api/v1/provider/bindings/binding/conversations/sibling",
+            self.prefix + "cma/api/v1/agents/sibling",
+            self.prefix + "cma/api/v1/organizations",
+            self.prefix + "cmaeg/v1/channels",
+            self.prefix + "other-service/api/v1/agents",
+            "/api/v1/proxy/00000000-0000-0000-0000-000000000001/api/v1/agents",
+            "/api/v1/proxy/services", "/api/v1/user-services", "/api/v1/auth/me",
+            self.prefix + "cma/api/v1/bot-setups/actions/",
+            self.action + "?owner=organization",
+        ):
+            with self.subTest(target=target):
+                response, forwarded = self.exchange(f"POST {target} HTTP/1.1\r\nHost: local\r\n\r\n".encode())
+                self.assertIn(b"403", response)
+                self.assertFalse(forwarded)
+        for method in ("GET", "PUT", "PATCH", "DELETE", "OPTIONS"):
+            with self.assertRaises(ValueError):
+                isolate.platform_target(method, self.action)
+
+    def test_route_normalization_and_explicit_connection_overrides_fail_closed(self):
+        for target in (
+            "https://nyx.example" + self.action, "/" + self.action,
+            self.prefix + "ornn-api/../cma/api/v1/agents",
+            self.prefix + "ornn-api/%2e%2e/cma/api/v1/agents",
+            self.prefix + "ornn-api/%252e%252e/cma/api/v1/agents",
+            self.prefix + "ornn-api/%2f../cma", self.prefix + "ornn-api/%255c../cma",
+            self.prefix + "ornn-api//cma", self.prefix + "ornn-api/a;../cma",
+            self.prefix + "ornn-api/a%3f../cma", self.prefix + "ornn-api/a%23../cma",
+            self.prefix + "ornn-api/%00", self.prefix + "ornn-api/%0d%0a",
+            self.prefix + "ornn-api/%zz", self.prefix + "ornn-api/%",
+            self.prefix + "ornn-api/%" + "25" * 10 + "2e",
+            self.prefix + "%63ma/api/v1/bot-setups/actions",
+            self.prefix + "ornn-api/path#fragment",
+            self.prefix + "ornn-api/path?_nyxid_via=other",
+            self.prefix + "ornn-api/path?%5fnyxid_via=other",
+            self.prefix + "ornn-api/path?%255fnyxid_via=other",
+            self.prefix + "ornn-api/path?q=1%26_NYXID_VIA=other",
+        ):
+            with self.subTest(target=target), self.assertRaises(ValueError):
+                isolate.platform_target("POST", target)
+        isolate.platform_target("GET", self.prefix + "ornn-api/skills/name%20with%20spaces")
+        isolate.platform_target("GET", self.prefix + "ornn-api/skills?q=100%25")
+
+    def test_request_deadline_is_total_even_when_a_client_keeps_sending_header_bytes(self):
+        client = mock.Mock()
+        client.recv.return_value = b"P"
+        with mock.patch.object(isolate.time, "monotonic", side_effect=(100, 110, 120, 131)):
+            with self.assertRaisesRegex(ValueError, "deadline expired"):
+                isolate.platform_request(client)
+        self.assertEqual(client.recv.call_count, 2)
+        self.assertEqual(client.settimeout.call_args_list, [mock.call(20), mock.call(10)])
+
+    def test_reserializes_body_and_idempotency_without_caller_identity_or_override_headers(self):
+        body = b'{"event_ref":"fixture-event","text":"plain \\u2603"}'
+        request = (f"POST {self.action} HTTP/1.1\r\nHost: attacker\r\n"
+                   "Content-Type: application/json\r\nIdempotency-Key: action-fixture\r\n"
+                   "Authorization: Bearer caller-fixture\r\nCookie: session=caller-fixture\r\n"
+                   "X-Nyxid-Identity-Token: caller-fixture\r\nX-Nyxid-Delegation-Token: caller-fixture\r\n"
+                   "X-Nyxid-Debug-Upstream: true\r\nX-HTTP-Method-Override: GET\r\n"
+                   "Forwarded: host=attacker\r\nConnection: keep-alive\r\n"
+                   f"Content-Length: {len(body)}\r\n\r\n").encode() + body
+        response, forwarded = self.exchange(request)
+        self.assertIn(b"200", response)
+        headers, sent_body = forwarded.split(b"\r\n\r\n", 1)
+        self.assertEqual(sent_body, body)
+        self.assertIn(b"Host: 127.0.0.2:9092", headers)
+        self.assertIn(b"Connection: close", headers)
+        self.assertIn(b"idempotency-key: action-fixture", headers)
+        self.assertIn(b"content-type: application/json", headers)
+        for forbidden in (b"caller-fixture", b"attacker", b"x-nyxid", b"cookie", b"override", b"forwarded"):
+            self.assertNotIn(forbidden, headers.lower())
+
+    def test_request_smuggling_upgrade_framing_and_incomplete_bodies_never_reach_upstream(self):
+        for extra in (
+            b"Content-Length: 0\r\nContent-Length: 0\r\n",
+            b"Content-Length: 0\r\ncontent-length: 1\r\n",
+            b"Transfer-Encoding: chunked\r\n", b"Content-Length: 0\r\nTransfer-Encoding: chunked\r\n",
+            b"Content-Length: +1\r\n", b"Content-Length: 1, 1\r\n", b"Content-Length: -1\r\n",
+            b"Content-Length: 16777217\r\n", b"Content-Length: 999999999999999999999\r\n",
+            b"Content-Length: 1\r\n", b"Upgrade: websocket\r\n", b"Connection: upgrade\r\n",
+            b"Connection: keep-alive, x-override\r\n", b"Expect: 100-continue\r\n",
+            b"Trailer: authorization\r\n", b"TE: trailers\r\n", b"Content-Encoding: gzip\r\n",
+            b"Host: duplicate\r\n", b" X-Folded: value\r\n", b"X-Bad : value\r\n",
+            b"X-Control: value\x00\r\n", b"X-Injection: value\nInjected: bad\r\n",
+            b"X-Long: " + b"a" * 16384 + b"\r\n",
+        ):
+            with self.subTest(header=extra[:80]):
+                response, forwarded = self.exchange(
+                    f"POST {self.action} HTTP/1.1\r\nHost: local\r\n".encode() + extra + b"\r\n")
+                # Closing an oversized request with unread data can reset its
+                # socket before the peer receives the refusal response.
+                if response or len(extra) < 16384:
+                    self.assertIn(b"403", response)
+                self.assertFalse(forwarded)
+        for line in (f"CONNECT {self.action} HTTP/1.1", f"POST {self.action} HTTP/1.0",
+                     f"POST {self.action} HTTP/2.0", f"POST  {self.action} HTTP/1.1"):
+            response, forwarded = self.exchange(line.encode() + b"\r\nHost: local\r\n\r\n")
+            self.assertIn(b"403", response)
+            self.assertFalse(forwarded)
+
+    def test_batched_pipeline_is_rejected_before_authorized_first_request(self):
+        payload = (f"POST {self.action} HTTP/1.1\r\nHost: local\r\nContent-Length: 2\r\n\r\n{{}}"
+                   f"GET {self.prefix}cma/api/v1/agents HTTP/1.1\r\nHost: local\r\n\r\n")
+        response, forwarded = self.exchange(payload.encode())
+        self.assertIn(b"403", response)
+        self.assertFalse(forwarded)
+
+    def test_response_upgrade_and_credential_failure_never_tunnel_or_retry(self):
+        request = f"POST {self.action} HTTP/1.1\r\nHost: local\r\n\r\n".encode()
+        for reply, expected in (
+            (b"HTTP/1.1 101 Switching Protocols\r\nConnection: upgrade\r\nUpgrade: websocket\r\n\r\n", b"403"),
+            (b"HTTP/1.1 503 Unavailable\r\nContent-Length: 0\r\n\r\n", b"503"),
+            (b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n", b"401"),
+        ):
+            response, forwarded = self.exchange(request, reply)
+            self.assertIn(expected, response)
+            self.assertEqual(forwarded.count(b"HTTP/1.1"), 1)
+            self.assertNotIn(b"Upgrade", response)
+
+    def test_chunked_model_response_streams_before_completion_and_drops_late_client_bytes(self):
+        client, gate = socket.socketpair()
+        upstream, peer = socket.socketpair()
+        with client, gate, upstream, peer:
+            for stream in (client, gate, upstream, peer):
+                stream.settimeout(3)
+            server = types.SimpleNamespace(destination=("127.0.0.2", 9092))
+
+            def handle():
+                try:
+                    isolate.PlatformHttp(gate, None, server)
+                finally:
+                    gate.close()
+
+            with mock.patch.object(isolate.socket, "create_connection", return_value=upstream):
+                thread = threading.Thread(target=handle, daemon=True)
+                thread.start()
+                client.sendall(f"POST {self.prefix}chrono-llm-public/v1/responses HTTP/1.1\r\nHost: local\r\n\r\n".encode())
+                sent = bytearray()
+                while b"\r\n\r\n" not in sent:
+                    chunk = peer.recv(65536)
+                    self.assertTrue(chunk, "upstream closed before request headers")
+                    sent.extend(chunk)
+                peer.sendall(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Type: text/event-stream\r\n\r\n"
+                             b"c\r\ndata:first\n\n\r\n")
+                result = bytearray()
+                while b"data:first\n\n" not in result:
+                    chunk = client.recv(65536)
+                    self.assertTrue(chunk, "stream closed before the first event")
+                    result.extend(chunk)
+                # This is deliberately sent after the first operation reached
+                # upstream. A raw relay would lend it the same credential.
+                client.sendall(f"GET {self.prefix}cma/api/v1/agents HTTP/1.1\r\nHost: local\r\n\r\n".encode())
+                peer.sendall(b"d\r\ndata:second\n\n\r\n0\r\n\r\n")
+                while chunk := client.recv(65536):
+                    result.extend(chunk)
+                thread.join(timeout=3)
+                self.assertFalse(thread.is_alive())
+                self.assertIn(b"data:second\n\n", result)
+                self.assertIn(b"content-type: text/event-stream", result)
+                self.assertNotIn(b"Transfer-Encoding", result)
+                self.assertEqual(peer.recv(65536), b"")
 
 
 class IsolationTests(unittest.TestCase):
