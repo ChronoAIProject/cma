@@ -188,6 +188,7 @@ async fn scenario(name: &str) -> Scenario {
                 browser_binding: SecretDigest::identify("oidc-browser-binding", "contract-binding"),
                 verifier: SecretValue::new("contract-verifier".into()),
                 return_to: Some("/t/public-contract/placement-contract".into()),
+                actor_link_intent: None,
                 expires_at: if name == "auth_callback_expired" {
                     SystemTime::UNIX_EPOCH
                 } else {

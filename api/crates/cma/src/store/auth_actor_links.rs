@@ -12,9 +12,32 @@ pub(super) struct ActorLinkDoc {
     revision: i64,
     active: bool,
     renewed_at: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    wakeup_due_at: Option<i64>,
     authority: CipherEnvelope,
 }
 impl MongoAuthStore {
+    pub(super) async fn actor_wakeups_due(
+        &self,
+        before: u64,
+        limit: usize,
+    ) -> Result<Vec<ActorLinkRecord>, StoreError> {
+        use futures_util::TryStreamExt as _;
+        let docs = self
+            .actor_links
+            .find(doc! {"active":true,"wakeup_due_at":{
+            "$type":"number", "$lte":i64::try_from(before).map_err(|_| unavailable())?}})
+            .sort(doc! {"wakeup_due_at":1,"_id":1})
+            .limit(limit.clamp(1, 100) as i64)
+            .await
+            .map_err(|_| unavailable())?
+            .try_collect::<Vec<_>>()
+            .await
+            .map_err(|_| unavailable())?;
+        docs.into_iter()
+            .map(|doc| self.decode_actor_link(doc))
+            .collect()
+    }
     pub(super) async fn actor_links_due(
         &self,
         before: u64,
@@ -38,6 +61,12 @@ impl MongoAuthStore {
             revision: i64::try_from(row.revision).map_err(|_| unavailable())?,
             active: row.active,
             renewed_at: i64::try_from(row.renewed_at).map_err(|_| unavailable())?,
+            wakeup_due_at: row
+                .wakeup
+                .as_ref()
+                .and_then(|wakeup| wakeup.due_at())
+                .map(|at| i64::try_from(at).map_err(|_| unavailable()))
+                .transpose()?,
             authority: self
                 .cipher
                 .seal(KIND, row.actor_key.as_bytes(), "authority", &payload)?,
@@ -57,6 +86,12 @@ impl MongoAuthStore {
             || i64::try_from(row.revision).ok() != Some(doc.revision)
             || row.active != doc.active
             || i64::try_from(row.renewed_at).ok() != Some(doc.renewed_at)
+            || row
+                .wakeup
+                .as_ref()
+                .and_then(|wakeup| wakeup.due_at())
+                .and_then(|at| i64::try_from(at).ok())
+                != doc.wakeup_due_at
         {
             return Err(unavailable());
         }
@@ -108,3 +143,7 @@ impl MongoAuthStore {
 fn unavailable() -> StoreError {
     StoreError::Unavailable("actor link storage unavailable".into())
 }
+
+#[cfg(test)]
+#[path = "auth_actor_links_tests.rs"]
+mod tests;

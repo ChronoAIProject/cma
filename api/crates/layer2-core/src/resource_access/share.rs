@@ -79,8 +79,7 @@ impl ResourceShare {
         };
         !self.id.trim().is_empty()
             && !subject.as_str().trim().is_empty()
-            && matches!(&self.issuer_actor, ResourceActor::Human { subject: actor }
-                | ResourceActor::Api { subject: actor, delegation_id: None } if actor == subject)
+            && self.issuer_actor.ordinary_subject() == Some(subject)
             && !self.target_org_id.as_str().trim().is_empty()
             && self.revision > 0
             && self.revision <= i64::MAX as u64

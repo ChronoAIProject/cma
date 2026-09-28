@@ -165,16 +165,7 @@ impl ResourceAccessService {
         credential: Option<&str>,
         target: &ResourceTarget,
     ) -> Result<ResourceAccessSnapshot, ResourceAccessError> {
-        if !context.validate_principal()
-            || !matches!(
-                &context.actor,
-                ResourceActor::Human { .. }
-                    | ResourceActor::Api {
-                        delegation_id: None,
-                        ..
-                    }
-            )
-        {
+        if !context.validate_principal() || context.actor.ordinary_subject().is_none() {
             return Err(AccessError::NotFound.into());
         }
         let snapshot = self
