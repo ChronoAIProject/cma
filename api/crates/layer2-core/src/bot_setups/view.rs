@@ -138,6 +138,21 @@ impl BotSetupService {
             SetupStep::Cancelled => choices.push(SetupChoice::new("new", "Create another Bot")),
             SetupStep::Name => {}
         }
+        if matches!(
+            setup.step,
+            SetupStep::Name
+                | SetupStep::Agent
+                | SetupStep::AgentCustom
+                | SetupStep::Workspace
+                | SetupStep::WorkspaceCustom
+                | SetupStep::Sandbox
+                | SetupStep::SandboxCustom
+                | SetupStep::Services
+                | SetupStep::ExternalBot
+                | SetupStep::Admission
+        ) {
+            choices.push(SetupChoice::new("edit", "Change configuration"));
+        }
         if !matches!(
             setup.step,
             SetupStep::Provisioning | SetupStep::Complete | SetupStep::Cancelled
@@ -161,6 +176,7 @@ impl BotSetupService {
             connection_url,
             external_bot_id: setup.external_bot_id.clone(),
             admission: setup.admission.clone(),
+            confirmation_digest: setup.confirmation_digest.clone(),
             result,
             notice,
         })
