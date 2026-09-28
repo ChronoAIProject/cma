@@ -110,6 +110,7 @@ async fn execute(
     let owner = body.owner.unwrap_or(ResourceOwner::Person {
         subject: grant.subject.clone(),
     });
+    policy::validate_owner(&method, &body.path, &owner)?;
     let (context, token) = dependencies
         .auth
         .context_for_grant(&grant_id, &actor, &owner)
