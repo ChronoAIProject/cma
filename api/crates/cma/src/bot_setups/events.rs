@@ -86,8 +86,8 @@ impl EventVerifier<'_> {
                 "Open a private conversation with Bot Father to create a Bot.".into(),
             ));
         }
-        // Normalize the setup transport only after the gateway has verified the
-        // original activity digest. Never rewrite the activity that is retained.
+        // Preserve signed user input. The agent supplies structured workflow
+        // actions separately; those actions cannot rewrite consent or identity.
         let input = setup_input(&activity["kind"])?;
         if let Some(activity) = supplied_activity {
             let snapshot = serde_json::json!({
@@ -116,24 +116,28 @@ impl EventVerifier<'_> {
                 platform: "telegram".into(),
             },
             event_id: context.event_id,
+            occurred_at: activity["occurred_at"]
+                .as_str()
+                .ok_or(BotError::Forbidden)?
+                .into(),
             input,
         })
     }
 }
 fn setup_input(kind: &serde_json::Value) -> Result<SetupInput, BotError> {
     match kind["type"].as_str() {
-        Some("message") => Ok(SetupInput::Text(normalize_setup_text(
-            kind["text"].as_str().unwrap_or_default(),
-        ))),
-        Some("command") if kind["name"].as_str() == Some("setup") => Ok(SetupInput::Text(
-            kind["args"].as_str().unwrap_or_default().trim().into(),
+        Some("message") => Ok(SetupInput::Text(
+            kind["text"].as_str().unwrap_or_default().into(),
         )),
-        Some("command") if kind["name"].as_str() == Some("start") => {
-            Ok(SetupInput::Text(normalize_setup_text(&format!(
-                "/start {}",
+        Some("command") => Ok(SetupInput::Text(
+            format!(
+                "/{} {}",
+                kind["name"].as_str().ok_or(BotError::Forbidden)?,
                 kind["args"].as_str().unwrap_or_default()
-            ))))
-        }
+            )
+            .trim_end()
+            .into(),
+        )),
         Some("interaction") => Ok(SetupInput::Interaction {
             block_id: kind["block_id"].as_str().ok_or(BotError::Forbidden)?.into(),
             action_id: kind["action_id"]
@@ -145,22 +149,6 @@ fn setup_input(kind: &serde_json::Value) -> Result<SetupInput, BotError> {
             "This event cannot configure a Bot.".into(),
         )),
     }
-}
-
-fn normalize_setup_text(text: &str) -> String {
-    let text = text.trim();
-    if let Some(args) = text.strip_prefix("/start ") {
-        return if args.trim() == "setup" {
-            String::new()
-        } else {
-            format!("/start {}", args.trim())
-        };
-    }
-    text.strip_prefix("/setup")
-        .filter(|value| value.is_empty() || value.starts_with(char::is_whitespace))
-        .map(str::trim)
-        .unwrap_or(text)
-        .to_owned()
 }
 
 impl SetupDependencies {
@@ -199,8 +187,8 @@ impl SetupDependencies {
         if binding != self.binding {
             return Ok(None);
         }
-        // The setup workflow has no model conversation. Authenticate its exact
-        // current binding before and after the durable read instead.
+        // Compatibility contexts predate provider admission. Authenticate the
+        // exact current binding before and after reading those retained events.
         self.require_binding(binding, credential).await?;
         let context = self
             .stores
