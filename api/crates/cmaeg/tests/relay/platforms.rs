@@ -300,6 +300,8 @@ async fn relay_platform_spellings_select_only_their_own_source() {
 #[tokio::test]
 async fn platforms_without_a_verifier_require_an_explicit_trust_opt_in() {
     for wire in ["discord", "slack", "whatsapp"] {
+        // Management refuses to create or update such a source; this fixture stands
+        // in for a definition stored before that check, which ingress still refuses.
         let fixture = Fixture::on(wire, |_| {}, Default::default()).await;
         refused(
             &fixture,

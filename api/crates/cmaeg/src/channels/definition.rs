@@ -180,7 +180,22 @@ fn build_sources(sources: &[SourceRequest]) -> Result<Vec<Source>, ValidationErr
     let mut result = Vec::with_capacity(sources.len());
     for (index, source) in sources.iter().enumerate() {
         let pointer = format!("/sources/{index}");
-        if let SourceRequest::NyxidRelay { issuer, .. } = source {
+        if let SourceRequest::NyxidRelay {
+            issuer,
+            platform,
+            trust_normalized,
+            ..
+        } = source
+        {
+            // Refuse up front: a stored source like this would admit no callbacks,
+            // so a bot moved onto it would go silent. Ingress still refuses one as
+            // defense in depth for definitions stored before this check existed.
+            if !platform.verifies_raw_event() && !trust_normalized {
+                return Err(ValidationError::new(
+                    format!("{pointer}/trust_normalized"),
+                    "the platform has no raw-event verifier; set trust_normalized to true to admit its normalized callbacks",
+                ));
+            }
             let parsed = reqwest::Url::parse(issuer).map_err(|_| {
                 ValidationError::new(format!("{pointer}/issuer"), "must be an HTTPS origin")
             })?;
