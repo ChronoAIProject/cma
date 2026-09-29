@@ -353,6 +353,9 @@ pub enum Refusal {
     /// Wire value `thread_evidence_unavailable`.
     #[serde(rename = "thread_evidence_unavailable")]
     ThreadEvidenceUnavailable,
+    /// Wire value `platform_verifier_unavailable`.
+    #[serde(rename = "platform_verifier_unavailable")]
+    PlatformVerifierUnavailable,
 }
 
 /// CMAEG `RenderingOutcome` wire shape.

@@ -2184,7 +2184,8 @@
           "group_denied",
           "group_not_addressed",
           "addressing_evidence_unavailable",
-          "thread_evidence_unavailable"
+          "thread_evidence_unavailable",
+          "platform_verifier_unavailable"
         ],
         "type": "string"
       },
