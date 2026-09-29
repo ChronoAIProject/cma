@@ -1,8 +1,8 @@
 //! Public activity and opaque reply reference created after authentication and admission.
-use super::{telegram::TelegramFacts, verify::VerifiedCallback};
+use super::{facts::RelayFacts, verify::VerifiedCallback};
 use crate::{channels::resolver::ResolvedChannel, ingress::launch::LaunchRequest};
 use cmaeg_core::{
-    activity::{Activity, ActivityConversation, ActivityKind, Actor, ActorKind, SourceKind},
+    activity::{Activity, ActivityConversation, ActivityKind, Actor, SourceKind},
     channel::Platform,
     ids::{ConversationId, EventId, IdempotencyKey, MessageRef},
     seal::{EventRef, EventRefPayload, MasterKeyRing, ReplyAddress},
@@ -10,8 +10,9 @@ use cmaeg_core::{
 use std::{sync::Arc, time::Instant};
 pub fn launch_request(
     channel: Arc<ResolvedChannel>,
+    platform: Platform,
     verified: VerifiedCallback,
-    facts: TelegramFacts,
+    facts: RelayFacts,
     keys: &MasterKeyRing,
     received_at: Instant,
     now: i64,
@@ -43,7 +44,7 @@ pub fn launch_request(
         actor: Actor {
             id: payload.sender.platform_id,
             display_name: payload.sender.display_name,
-            kind: ActorKind::Human,
+            kind: facts.actor,
         },
         conversation: ActivityConversation {
             id: payload.conversation.platform_id,
@@ -52,7 +53,7 @@ pub fn launch_request(
         },
         occurred_at: payload.timestamp,
         source: SourceKind::NyxidRelay {
-            platform: Platform::Telegram,
+            platform,
             route_id: payload.conversation.id.clone(),
         },
     };
@@ -77,7 +78,7 @@ pub fn launch_request(
             reply: ReplyAddress::NyxidRelay {
                 message_id: payload.message_id,
                 route_id: payload.conversation.id,
-                platform: Platform::Telegram,
+                platform,
                 reply_token: verified.reply_token,
                 reply_token_expires_at: verified.reply_expires_at,
             },
