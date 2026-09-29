@@ -152,6 +152,34 @@ async fn context_reads_full_provider_activity_after_a_cold_replica_restore_witho
     );
 }
 #[tokio::test]
+async fn context_reports_each_relay_platform_and_its_capabilities() {
+    for (platform, capabilities) in [
+        (
+            "telegram",
+            json!({"edit":true,"typing":false,"buttons":"inline_keyboard","cards":"text","attachments":"link_text","max_text_chars":4000}),
+        ),
+        (
+            "lark",
+            json!({"edit":false,"typing":false,"buttons":"numbered_text","cards":"text","attachments":"link_text","max_text_chars":4000}),
+        ),
+    ] {
+        let app = App::on(platform).await;
+        let response = app
+            .fixture
+            .client
+            .get(app.event_url("context"))
+            .bearer_auth(&app.key)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let value: Value = response.json().await.unwrap();
+        assert_eq!(value["source"]["platform"], platform);
+        assert_eq!(value["activity"]["conversation"]["kind"], "group");
+        assert_eq!(value["capabilities"], capabilities);
+    }
+}
+#[tokio::test]
 async fn deleted_channel_refuses_and_relay_update_and_typing_are_unsupported() {
     let app = App::new().await;
     let update = app

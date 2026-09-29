@@ -4,8 +4,11 @@ use cmaeg_core::message::{
     Block, BlockRendering, BlockRenderingOutcome, ChoiceOption, OutboundMessage, RenderingOutcome,
     RenderingReport,
 };
-pub struct Telegram;
-impl Renderer for Telegram {
+/// Text renderer for NyxID relay platforms. Native controls are left to the
+/// interactive path only when the capabilities advertise an inline keyboard;
+/// otherwise choices degrade to numbered text.
+pub struct RelayText;
+impl Renderer for RelayText {
     fn render(
         &self,
         message: &OutboundMessage,
