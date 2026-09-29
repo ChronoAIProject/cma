@@ -170,6 +170,9 @@ async fn actor_browser_consent_requires_fresh_pkce_attempt_and_exact_browser() {
     );
     let response = call(&f, review(browser.clone())).await;
     assert_eq!(response.status(), StatusCode::OK);
+    // Browser navigation POSTs under no-referrer send Origin: null. Keep the
+    // same-origin form usable while suppressing Referer on external navigation.
+    assert_eq!(response.headers()[header::REFERRER_POLICY], "same-origin");
     let html = String::from_utf8(
         to_bytes(response.into_body(), 65536)
             .await
@@ -192,6 +195,7 @@ async fn actor_browser_wrong_csrf_origin_subject_link_and_revision_do_not_consum
     let row = f.store.actor_link_by_id(&link).await.unwrap().unwrap();
     let c = row.browser_consent.as_ref().unwrap();
     for (origin, csrf, subject, revision) in [
+        ("null", c.csrf_token.as_str(), "owner", c.review_revision),
         (
             "https://attacker.example",
             c.csrf_token.as_str(),
@@ -224,6 +228,19 @@ async fn actor_browser_wrong_csrf_origin_subject_link_and_revision_do_not_consum
             StatusCode::FORBIDDEN
         );
     }
+    // A valid browser session and CSRF nonce cannot substitute for Origin.
+    let missing_origin = Request::post(format!("/auth/bot-father/link/{link}/consent"))
+        .header(header::COOKIE, &browser)
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from(format!(
+            "csrf_token={}&subject=owner&review_revision={}",
+            c.csrf_token, c.review_revision
+        )))
+        .unwrap();
+    assert_eq!(
+        call(&f, missing_origin).await.status(),
+        StatusCode::FORBIDDEN
+    );
     let mut other = actor();
     other.actor_id = "other".into();
     let other_link = f.auth.ensure_actor_link(&other).await.unwrap();
