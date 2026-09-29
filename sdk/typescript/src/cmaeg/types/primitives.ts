@@ -96,6 +96,7 @@ export const RefusalSchema = enumeration(
   'group_not_addressed',
   'addressing_evidence_unavailable',
   'thread_evidence_unavailable',
+  'platform_verifier_unavailable',
 );
 export type Refusal = Output<typeof RefusalSchema>;
 
