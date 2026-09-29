@@ -3,10 +3,11 @@ use super::{
     intents::{DeliveryOutcome, IntentReceipt},
     pacing::Pacing,
     relay_client::{unknown, Credential, RelayClient},
-    render::{Renderer, Telegram},
+    render::{RelayText, Renderer},
 };
 use crate::tools::Capabilities;
 use cmaeg_core::{
+    channel::Platform,
     ids::MessageRef,
     message::{OutboundMessage, RenderingOutcome, RenderingReport},
     seal::{MasterKeyRing, MessageRefPayload, ReplyAddress},
@@ -31,10 +32,9 @@ impl Sender {
         let mut observation = crate::telemetry::operations::Operation::new(
             crate::telemetry::names::DELIVERY_DURATION,
             crate::telemetry::names::PLATFORM,
-            if matches!(state.event.reply, ReplyAddress::NyxidRelay { .. }) {
-                "telegram"
-            } else {
-                "custom"
+            match &state.event.reply {
+                ReplyAddress::NyxidRelay { platform, .. } => platform.as_str(),
+                _ => "custom",
             },
         );
         let result = self.reply_inner(state, message).await;
@@ -46,20 +46,23 @@ impl Sender {
         state: &mut EventState,
         message: &OutboundMessage,
     ) -> IntentReceipt {
-        if !matches!(state.event.reply, ReplyAddress::NyxidRelay { .. }) {
+        let ReplyAddress::NyxidRelay { platform, .. } = &state.event.reply else {
             return self
                 .custom
                 .reply(&state.channel, &state.event, message)
                 .await;
-        }
-        if crate::interactions::has_controls(message) && self.relay.interactions.is_some() {
+        };
+        // Native controls and their updates are proven only for Telegram; every
+        // other platform receives text through NyxID's generic relay reply.
+        let interactive = *platform == Platform::Telegram && self.relay.interactions.is_some();
+        if interactive && crate::interactions::has_controls(message) {
             return self.interactive_reply(state, message).await;
         }
-        let mut capabilities = Capabilities::telegram();
-        if self.relay.interactions.is_none() {
+        let mut capabilities = Capabilities::relay(*platform);
+        if !interactive {
             capabilities.buttons = "numbered_text".into();
         }
-        let (parts, rendering) = Telegram.render(message, &capabilities);
+        let (parts, rendering) = RelayText.render(message, &capabilities);
         let mut result = IntentReceipt {
             message_ref: None,
             rendering,
@@ -71,17 +74,12 @@ impl Sender {
             route_id,
             reply_token,
             reply_token_expires_at,
-            platform,
             ..
         } = &state.event.reply
         else {
             result.delivery = DeliveryOutcome::Unsupported;
             return result;
         };
-        if *platform != cmaeg_core::channel::Platform::Telegram {
-            result.delivery = DeliveryOutcome::Unsupported;
-            return result;
-        }
         let mut confirmed_parts = 0;
         let mut first_platform_id = None;
         for (index, part) in parts.iter().enumerate() {
@@ -206,7 +204,7 @@ impl Sender {
         state: &mut EventState,
         message: &OutboundMessage,
     ) -> IntentReceipt {
-        let (parts, rendering) = Telegram.render(message, &Capabilities::telegram());
+        let (parts, rendering) = RelayText.render(message, &Capabilities::telegram());
         let rejected = |reason: &str| IntentReceipt {
             message_ref: None,
             rendering: rendering.clone(),
@@ -280,10 +278,12 @@ impl Sender {
         let Some(store) = &self.relay.interactions else {
             return unsupported();
         };
-        if reference.interaction_record_id.is_none() {
+        if reference.interaction_record_id.is_none()
+            || channel.definition.relay_platform() != Some(Platform::Telegram)
+        {
             return unsupported();
         }
-        let (parts, rendering) = Telegram.render(message, &Capabilities::telegram());
+        let (parts, rendering) = RelayText.render(message, &Capabilities::telegram());
         if parts.len() != 1 {
             return IntentReceipt {
                 message_ref: None,

@@ -1,5 +1,5 @@
 use cmaeg::{
-    delivery::render::{Renderer, Telegram},
+    delivery::render::{RelayText, Renderer},
     tools::Capabilities,
 };
 use cmaeg_core::message::{OutboundMessage, RenderingOutcome};
@@ -8,7 +8,7 @@ use serde_json::json;
 fn render(value: serde_json::Value) -> (Vec<String>, serde_json::Value) {
     let message: OutboundMessage = serde_json::from_value(value).unwrap();
     message.validate().unwrap();
-    let (parts, report) = Telegram.render(&message, &Capabilities::telegram());
+    let (parts, report) = RelayText.render(&message, &Capabilities::telegram());
     (
         parts.into_iter().map(|part| part.text).collect(),
         serde_json::to_value(report).unwrap(),

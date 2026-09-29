@@ -1,10 +1,10 @@
 //! Platform rendering is separate from transport and send authority.
 pub mod custom;
-mod telegram;
+mod relay;
 mod text;
 use crate::tools::Capabilities;
 use cmaeg_core::message::{OutboundMessage, RenderingReport};
-pub use telegram::Telegram;
+pub use relay::RelayText;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RenderedPart {
