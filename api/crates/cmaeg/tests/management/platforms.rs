@@ -1,5 +1,8 @@
 use super::*;
-use cmaeg::channels::definition::{build_definition, ChannelCreateRequest};
+use cmaeg::channels::definition::{
+    build_definition, build_update, validate_create_request, validate_update_request,
+    ChannelCreateRequest, ChannelUpdateRequest,
+};
 use cmaeg_core::{
     channel::{ConformanceLevel, Platform, Source},
     ids::{BindingId, RecordId},
@@ -65,4 +68,138 @@ fn relay_platform_identity_and_trust_are_carried_into_the_definition() {
         panic!("expected a relay source");
     };
     assert_eq!((platform, trust_normalized), (Platform::Whatsapp, true));
+}
+
+fn relay_body(platform: &str, trust: Option<bool>) -> serde_json::Value {
+    let mut body = create_body();
+    body["sources"][0]["platform"] = platform.into();
+    if let Some(trust) = trust {
+        body["sources"][0]["trust_normalized"] = trust.into();
+    }
+    body
+}
+
+#[test]
+fn unverified_platforms_are_refused_on_create_and_update_without_the_opt_in() {
+    let current = {
+        let request: ChannelCreateRequest =
+            serde_json::from_value(relay_body("slack", Some(true))).unwrap();
+        build_definition(
+            &request,
+            "alice",
+            RecordId::new("record").unwrap(),
+            BindingId::new("binding").unwrap(),
+            ConformanceLevel::L1,
+        )
+        .unwrap()
+    };
+    for platform in ["discord", "slack", "whatsapp"] {
+        for trust in [None, Some(false)] {
+            let body = relay_body(platform, trust);
+            let create: ChannelCreateRequest = serde_json::from_value(body.clone()).unwrap();
+            let mut update = body;
+            update.as_object_mut().unwrap().remove("credentials");
+            update["expected_version"] = 1.into();
+            let update: ChannelUpdateRequest = serde_json::from_value(update).unwrap();
+            for error in [
+                validate_create_request(&create).unwrap_err(),
+                build(relay_body(platform, trust)).unwrap_err(),
+                validate_update_request(&update).unwrap_err(),
+                build_update(&update, &current).unwrap_err(),
+            ] {
+                assert_eq!(error.pointer, "/sources/0/trust_normalized", "{platform}");
+                assert!(error.message.contains("no raw-event verifier"), "{error}");
+            }
+        }
+        build(relay_body(platform, Some(true))).unwrap();
+    }
+    for platform in ["telegram", "lark", "feishu"] {
+        let body = relay_body(platform, None);
+        validate_create_request(&serde_json::from_value(body.clone()).unwrap()).unwrap();
+        build(body).unwrap();
+    }
+}
+
+#[tokio::test]
+async fn http_create_and_update_fail_fast_for_unverified_platforms_and_unknown_spellings() {
+    let provider = FakeProvider::start(FakeProviderConfig::default()).await;
+    let cma = FakeCma::start(false).await;
+    let nyxid = FakeNyxid::start().await;
+    let (base, stop, task) = app(&provider, &cma, &nyxid).await;
+    let client = Client::new();
+    let url = format!("{base}/v1/channels");
+    for (body, detail) in [
+        (
+            relay_body("discord", None),
+            "/sources/0/trust_normalized: the platform has no raw-event verifier",
+        ),
+        (
+            relay_body("whatsapp", Some(false)),
+            "/sources/0/trust_normalized: the platform has no raw-event verifier",
+        ),
+        (
+            relay_body("x", Some(true)),
+            "request does not match the channel schema",
+        ),
+        (
+            relay_body("aurinko", None),
+            "request does not match the channel schema",
+        ),
+    ] {
+        let response = client
+            .post(&url)
+            .bearer_auth("token-alice")
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 400);
+        let problem: serde_json::Value = response.json().await.unwrap();
+        assert_eq!(problem["code"], "invalid_request");
+        assert!(
+            problem["detail"].as_str().unwrap().starts_with(detail),
+            "{problem}"
+        );
+    }
+    assert!(provider.requests().is_empty());
+    assert!(cma.records().is_empty());
+    let response = client
+        .post(&url)
+        .bearer_auth("token-alice")
+        .json(&relay_body("slack", Some(true)))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 201);
+    let created: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(
+        created["definition"]["sources"][0]["trust_normalized"],
+        true
+    );
+    let before = cma.records();
+    let calls = provider.requests().len();
+    let mut update = relay_body("slack", None);
+    update.as_object_mut().unwrap().remove("credentials");
+    update["expected_version"] = created["version"].clone();
+    let response = client
+        .put(format!("{url}/{}", created["channel_id"].as_str().unwrap()))
+        .bearer_auth("token-alice")
+        .json(&update)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 400);
+    let problem: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(problem["code"], "invalid_request");
+    assert_eq!(provider.requests().len(), calls);
+    let after = cma.records();
+    for (record_id, record) in &before {
+        assert_eq!(after[record_id].version, record.version);
+        assert_eq!(after[record_id].blob, record.blob);
+    }
+    stop.send(()).unwrap();
+    task.await.unwrap();
+    provider.close().await;
+    cma.close().await;
+    nyxid.close().await;
 }

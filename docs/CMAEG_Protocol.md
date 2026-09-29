@@ -588,8 +588,14 @@ bot's `open_id` (`ou_` followed by 1–125 identifier characters) on Lark and
 Feishu, otherwise 1–128 ASCII letters, digits, `_`, `-` or `.`. Only Telegram
 uses `bot_username` and only Lark/Feishu use `bot_id` as addressing evidence;
 elsewhere they are retained descriptions. `trust_normalized` defaults to false
-and may be true only for Discord, Slack and WhatsApp, as described below; it is
-omitted from stored definitions while false.
+and is omitted from stored definitions while false. It must be true for Discord,
+Slack and WhatsApp and may not be true for the other platforms, as described
+below. Creating or updating a channel whose Discord, Slack or WhatsApp source
+omits it fails fast with 400 `invalid_request` at `/sources/<n>/trust_normalized`,
+so no channel is stored that would refuse every message; a creator that
+receives this refusal should keep the bot on another delivery path. Unknown
+platform values, such as NyxID's `x` or `aurinko`, fail the request schema with
+400 `invalid_request`.
 Admission is `{type:"all"}`, `{type:"allowlist",sender_ids:[...]}` or
 `{type:"scoped",senders,chats,groups}`. `senders`/`chats` are `{type:"deny"}`,
 `{type:"open"}` or `{type:"allowlist",ids:[...]}`. Groups are `deny`, `all`,
@@ -655,7 +661,7 @@ differs is whether the gateway can corroborate the platform's own event.
 | --- | --- |
 | Telegram | Raw Telegram update in `raw_platform_data`; chat and sender IDs must match the envelope. Human text messages only; `private` or `group`/`supergroup` chats; forum topic IDs when `is_topic_message`; mention entities against `bot_username`; reply evidence from the parent's `is_bot`. |
 | Lark, Feishu | Raw `im.message.receive_v1` event in `raw_platform_data`; any other `header.event_type` is refused as `system_event`. `event.message.chat_id` must equal `conversation.platform_id` and `event.sender.sender_id.open_id` must equal `sender.platform_id` (a mismatch or a human sender without `open_id` is 401). `sender_type` `user` is a human; `app` is refused as `bot_sender`, anything else as `unknown_sender`. `chat_type` `p2p` is private, `group` is group and any other value is `system_event`. Only `message_type:"text"` whose content JSON `text` equals `content.text` is admitted; image, file, audio, media and sticker messages are `attachment_unsupported`, other types `content_unsupported`. `message.thread_id` is the topic thread. A message is mentioned when any `mentions[].id.open_id` equals the pinned `bot_id`; without a pinned `bot_id`, any mention counts, because Lark only delivers group messages that @mention the bot unless the app may read all group messages. Pin `bot_id` when the app holds that permission. A message with `parent_id` has no reply evidence, because the parent's author is absent. |
-| Discord, Slack, WhatsApp | No raw-event verifier. Refused as `platform_verifier_unavailable` unless the source sets `trust_normalized:true`; then the normalized envelope is trusted as-is. `conversation.type` `private`, `group` or `channel` maps to the same conversation kind and any other value is `system_event`. The actor is `sender.platform_id` with kind `unknown`, because bot senders cannot be recognized. Text only. There is no mention, reply or thread evidence, so group `mention`/`reply_to_bot` admission yields `addressing_evidence_unavailable` and thread partitions yield `thread_evidence_unavailable`. |
+| Discord, Slack, WhatsApp | No raw-event verifier, so the source must set `trust_normalized:true` and the normalized envelope is trusted as-is. A definition stored without it (management refuses to create one) has every callback refused as `platform_verifier_unavailable`. `conversation.type` `private`, `group` or `channel` maps to the same conversation kind and any other value is `system_event`. The actor is `sender.platform_id` with kind `unknown`, because bot senders cannot be recognized. Text only. There is no mention, reply or thread evidence, so group `mention`/`reply_to_bot` admission yields `addressing_evidence_unavailable` and thread partitions yield `thread_evidence_unavailable`. |
 
 Opting into `trust_normalized` accepts that the gateway cannot refuse bot
 senders on that platform, so any sender NyxID relays can start a turn; restrict
