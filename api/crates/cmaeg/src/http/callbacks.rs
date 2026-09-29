@@ -5,7 +5,7 @@ use crate::ingress::{
     launch::LaunchOutcome,
     relay::{
         activity::launch_request,
-        telegram::{observe, Observation},
+        facts::{observe, Observation},
         verify::{self, CallbackHeaders},
         VerificationError,
     },
@@ -137,14 +137,32 @@ pub async fn callback(
     };
     let verify_time = timing.verify();
     let verify_span = tracing::info_span!("cmaeg.verify", channel = %crate::telemetry::channel_hash(&channel_id), event_id = tracing::field::Empty);
-    let platform = match verify::single(&parts.headers, "x-nyxid-platform", true) {
+    let wire_platform = match verify::single(&parts.headers, "x-nyxid-platform", true) {
         Ok(Some(platform)) => platform,
         Err(error) => return invalid(error),
         _ => return invalid(VerificationError("header_missing")),
     };
-    let Some((index, Source::NyxidRelay { admission, bot_username, .. })) = channel.definition.sources.iter().enumerate()
-        .find(|(_, source)| matches!(source, Source::NyxidRelay { platform: candidate, .. } if candidate.as_str() == platform || (candidate.as_str() == "telegram" && platform == "telegram-new"))) else {
-        return problem(StatusCode::BAD_REQUEST, ProblemCode::InvalidRequest, "no matching relay source");
+    let Some((index, source, admission, platform)) = channel
+        .definition
+        .sources
+        .iter()
+        .enumerate()
+        .find_map(|(index, source)| match source {
+            Source::NyxidRelay {
+                platform: candidate,
+                admission,
+                ..
+            } if candidate.matches_wire(wire_platform) => {
+                Some((index, source, admission, *candidate))
+            }
+            _ => None,
+        })
+    else {
+        return problem(
+            StatusCode::BAD_REQUEST,
+            ProblemCode::InvalidRequest,
+            "no matching relay source",
+        );
     };
     let headers = match CallbackHeaders::read(&parts.headers) {
         Ok(headers) => headers,
@@ -164,7 +182,7 @@ pub async fn callback(
         Ok(verified) => verified,
         Err(error) => return invalid(error),
     };
-    let facts = match observe(&verified.payload, bot_username.as_deref()) {
+    let facts = match observe(source, &verified.payload) {
         Ok(Observation::Message(facts)) => facts,
         Ok(Observation::Refused(reason)) => return refused(reason),
         Err(error) => return invalid(error),
@@ -193,6 +211,7 @@ pub async fn callback(
     let route = verified.payload.conversation.id.clone();
     let mut request = match launch_request(
         channel,
+        platform,
         verified,
         facts,
         &state.master_keys,
