@@ -187,9 +187,9 @@ by that operation. Native MCP keeps
 `replyToEvent`, `updateMessage`, `sendTyping`, `readEventContext`. NyxID-discovered
 REST tool names are lowercase. Telegram reports interactive-card editing and
 inline callbacks when the card carries a gateway interaction record; typing and
-ordinary text-card edits remain unsupported. Custom transports report their own
-capabilities. Read capabilities instead of assuming a tool name guarantees
-platform support. Expired references return `410`; a
+ordinary text-card edits remain unsupported. Other relay platforms report
+text-only capabilities. Custom transports report their own capabilities. Read
+capabilities instead of assuming a tool name guarantees platform support. Expired references return `410`; a
 reference alone never grants access.
 
 ### Flow F — Implement a downstream agent provider
@@ -575,9 +575,21 @@ caller-supplied owner alone.
 
 ### NyxID relay
 
-Configure `{type:"nyxid_relay",issuer,key_id,route_ids,platform:"telegram",
-admission,bot_username?}`. The issuer MUST be HTTPS; the gateway derives
+Configure `{type:"nyxid_relay",issuer,key_id,route_ids,platform,admission,
+bot_username?,bot_id?,trust_normalized?}`. `platform` is `telegram`, `lark`,
+`feishu`, `discord`, `slack` or `whatsapp`; a channel has at most one relay
+source. The issuer MUST be HTTPS; the gateway derives
 `<issuer>/.well-known/jwks.json`. Requests MUST NOT supply `jwks_url`.
+
+`bot_username` is the bot's handle without `@`: 5–32 Telegram username
+characters on Telegram, otherwise 1–64 ASCII letters, digits, `_`, `-` or `.`.
+`bot_id` is the bot's own platform user ID: a numeric user ID on Telegram, the
+bot's `open_id` (`ou_` followed by 1–125 identifier characters) on Lark and
+Feishu, otherwise 1–128 ASCII letters, digits, `_`, `-` or `.`. Only Telegram
+uses `bot_username` and only Lark/Feishu use `bot_id` as addressing evidence;
+elsewhere they are retained descriptions. `trust_normalized` defaults to false
+and may be true only for Discord, Slack and WhatsApp, as described below; it is
+omitted from stored definitions while false.
 Admission is `{type:"all"}`, `{type:"allowlist",sender_ids:[...]}` or
 `{type:"scoped",senders,chats,groups}`. `senders`/`chats` are `{type:"deny"}`,
 `{type:"open"}` or `{type:"allowlist",ids:[...]}`. Groups are `deny`, `all`,
@@ -586,8 +598,12 @@ Admission is `{type:"all"}`, `{type:"allowlist",sender_ids:[...]}` or
 Send `POST /v1/callbacks/{channel_id}` with `Content-Type: application/json` and
 exactly one each of `x-nyxid-callback-token`, `x-nyxid-message-id`,
 `x-nyxid-platform`, `x-nyxid-timestamp`; optional `x-nyxid-user-token` must also
-be single-valued. Empty/comma-joined values are rejected. The timestamp is RFC
-3339 and must agree with the callback token's `iat` within 60 seconds.
+be single-valued. The header, callback and reply `platform` claims and the body
+`platform` carry NyxID's bot platform spelling and must each name the source's
+platform: `telegram` or `telegram-new` for Telegram, otherwise the protocol value
+itself. A header that names no configured relay source is 400. Empty/comma-joined
+values are rejected. The timestamp is RFC 3339 and must agree with the callback
+token's `iat` within 60 seconds.
 
 Body fields: `message_id`, `correlation_id`, `platform`, `reply_token`,
 `agent:{api_key_id,name}`, `conversation:{id,platform_id,type}`,
@@ -627,19 +643,43 @@ provider acceptance or the acceptance budget. Policy/unsupported messages return
 `bot_sender`, `system_sender`, `unknown_sender`, `message_edit`,
 `interactive_action_unsupported`, `interaction_expired_or_invalid`, `system_event`, `content_unsupported`,
 `attachment_unsupported`, `sender_denied`, `chat_denied`, `group_denied`,
-`group_not_addressed`, `addressing_evidence_unavailable`, `thread_evidence_unavailable`.
+`group_not_addressed`, `addressing_evidence_unavailable`, `thread_evidence_unavailable`,
+`platform_verifier_unavailable`.
 Signature/binding failure is 401 `callback_invalid`, not a policy refusal.
 
-| Telegram capability | Contract |
+Sender, conversation and addressing facts are platform-specific. The callback
+JWT binds the exact body, so every field below is NyxID-authenticated; what
+differs is whether the gateway can corroborate the platform's own event.
+
+| Platform | Facts |
 | --- | --- |
-| Input | Human text and authenticated callbacks from gateway-issued inline controls; edits, system and attachment input refused |
-| Group addressing | Pinned bot username and UTF-16 mention entities; bot reply evidence from raw Telegram payload |
-| Topics | Verified forum topic evidence required for thread partitioning |
-| Output | Escaped text; rich blocks degrade as §8 specifies |
-| Edit | Confirmed gateway interactive cards can be updated using their opaque message reference |
-| Typing | Unsupported; never reported as performed |
-| Interactive callbacks | Native buttons and single/multi choices; exact actor, chat, message and current revision required |
-| Attachments | Safe link text only; no file transfer |
+| Telegram | Raw Telegram update in `raw_platform_data`; chat and sender IDs must match the envelope. Human text messages only; `private` or `group`/`supergroup` chats; forum topic IDs when `is_topic_message`; mention entities against `bot_username`; reply evidence from the parent's `is_bot`. |
+| Lark, Feishu | Raw `im.message.receive_v1` event in `raw_platform_data`; any other `header.event_type` is refused as `system_event`. `event.message.chat_id` must equal `conversation.platform_id` and `event.sender.sender_id.open_id` must equal `sender.platform_id` (a mismatch or a human sender without `open_id` is 401). `sender_type` `user` is a human; `app` is refused as `bot_sender`, anything else as `unknown_sender`. `chat_type` `p2p` is private, `group` is group and any other value is `system_event`. Only `message_type:"text"` whose content JSON `text` equals `content.text` is admitted; image, file, audio, media and sticker messages are `attachment_unsupported`, other types `content_unsupported`. `message.thread_id` is the topic thread. A message is mentioned when any `mentions[].id.open_id` equals the pinned `bot_id`; without a pinned `bot_id`, any mention counts, because Lark only delivers group messages that @mention the bot unless the app may read all group messages. Pin `bot_id` when the app holds that permission. A message with `parent_id` has no reply evidence, because the parent's author is absent. |
+| Discord, Slack, WhatsApp | No raw-event verifier. Refused as `platform_verifier_unavailable` unless the source sets `trust_normalized:true`; then the normalized envelope is trusted as-is. `conversation.type` `private`, `group` or `channel` maps to the same conversation kind and any other value is `system_event`. The actor is `sender.platform_id` with kind `unknown`, because bot senders cannot be recognized. Text only. There is no mention, reply or thread evidence, so group `mention`/`reply_to_bot` admission yields `addressing_evidence_unavailable` and thread partitions yield `thread_evidence_unavailable`. |
+
+Opting into `trust_normalized` accepts that the gateway cannot refuse bot
+senders on that platform, so any sender NyxID relays can start a turn; restrict
+`senders`/`chats` when that matters.
+
+Sealed event references and stored channel definitions carry the platform. A
+gateway replica that predates a platform cannot open references, restore
+channels or deliver replies for it, so every replica MUST run a build that
+supports a platform before any source for it is enabled.
+
+| Capability | Telegram | Lark, Feishu | Discord, Slack, WhatsApp |
+| --- | --- | --- | --- |
+| Input | Human text and authenticated callbacks from gateway-issued inline controls; edits, system and attachment input refused | Human text messages; bot, system and attachment input refused | Text from the trusted normalized envelope; actor kind `unknown` |
+| Group addressing | Pinned bot username and UTF-16 mention entities; bot reply evidence from raw Telegram payload | Mention `open_id` against the pinned `bot_id`, or any mention without one; no reply evidence | None |
+| Topics | Verified forum topic evidence required for thread partitioning | Raw `thread_id` | None |
+| Output | Escaped text; rich blocks degrade as §8 specifies | Plain text; buttons and choices degrade to numbered text | Plain text; buttons and choices degrade to numbered text |
+| Edit | Confirmed gateway interactive cards can be updated using their opaque message reference | Unsupported | Unsupported |
+| Typing | Unsupported; never reported as performed | Unsupported | Unsupported |
+| Interactive callbacks | Native buttons and single/multi choices; exact actor, chat, message and current revision required | Unsupported | Unsupported |
+| Attachments | Safe link text only; no file transfer | Safe link text only | Safe link text only |
+
+Replies on every platform go through NyxID's generic
+`/api/v1/channel-relay/reply`; NyxID performs the platform send. Only Telegram
+replies carry `metadata.reply_markup`.
 
 ### Custom CloudEvents
 
@@ -726,9 +766,9 @@ capacity includes `Retry-After: 2`. Custom authentication failure is 401.
 A full activity is `{schema_version:1,event_id,kind,actor,conversation,occurred_at,source}`.
 Actor is `{id,kind,display_name?}`, kind `human|bot|system|unknown`. Conversation
 is `{id,kind,thread_id?}`, kind `private|group|channel|thread|custom`. Source is
-`{type:"nyxid_relay",platform:"telegram",route_id}`. NyxID managed Telegram bots may
-identify the transport as `telegram-new`; CMAEG accepts that alias and normalizes it
-to the canonical Telegram protocol platform. or `{type:"custom"}`.
+`{type:"nyxid_relay",platform,route_id}`, with a §6 platform, or `{type:"custom"}`.
+NyxID managed Telegram bots may identify the transport as `telegram-new`; CMAEG
+accepts that alias and normalizes it to the canonical Telegram protocol platform.
 Activity kind is one of:
 
 | Type | Fields |
@@ -865,7 +905,8 @@ references and custom edits remain unsupported. Typing remains unsupported.
 
 Context is `{event_id,conversation_id,channel_id,provider_binding_id,source,activity_verified,expires_at,activity:{kind,actor,conversation,occurred_at},
 capabilities:{edit,typing,buttons,cards,attachments,max_text_chars}}`. Telegram
-capabilities are `true,false,"inline_keyboard","text","link_text",4000`; custom
+capabilities are `true,false,"inline_keyboard","text","link_text",4000`; other
+relay platforms are `false,false,"numbered_text","text","link_text",4000`; custom
 are `false,false,"json","json","reference",32768`. Context retrieval requires
 provider persistence described below; if unavailable it returns 503
 `provider_unavailable` with `detail:"event_context_unavailable"`.
@@ -1108,9 +1149,9 @@ when no committed/tool answer exists. A confirmed or unknown tool reply suppress
 later automatic answer delivery. A failure notice is attempted once unless a tool
 has already replied. Typing/acknowledgement alone does not mark an answer delivered.
 
-Telegram sends are paced at least three seconds apart per route. The first send
-may consume an unexpired single-use reply token; subsequent sends use the channel
-key. A 429 can be retried once with the channel key after its bounded wait.
+NyxID relay sends on every platform are paced at least three seconds apart per
+route. The first send may consume an unexpired single-use reply token; subsequent
+sends use the channel key. A 429 can be retried once with the channel key after its bounded wait.
 Unknown sends are never blindly retried. Chunked messages retain their rendering
 report; partial delivery is not full confirmation.
 
