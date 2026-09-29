@@ -180,7 +180,10 @@ fn browser_card(auth: &AuthState, row: &ActorLinkRecord) -> Response {
     let mut response = Html(format!("<!doctype html><html lang=\"en\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Connect your CMA account</title><body><main>{content}</main></body></html>")).into_response();
     for (name, value) in [
         (header::CACHE_CONTROL, "no-store"),
-        (header::REFERRER_POLICY, "no-referrer"),
+        // A no-referrer policy makes navigation POSTs carry Origin: null,
+        // which our consent endpoint correctly rejects. Preserve the origin
+        // for this same-origin form while suppressing cross-origin referrers.
+        (header::REFERRER_POLICY, "same-origin"),
         (
             header::CONTENT_SECURITY_POLICY,
             "default-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
