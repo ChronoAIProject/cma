@@ -214,8 +214,12 @@ fn telegram_new_platform_alias_maps_to_telegram_protocol() {
 #[tokio::test]
 async fn accepts_managed_telegram_new_platform_alias() {
     let fixture = Fixture::new(|_| {}, Default::default()).await;
+    // NyxID stamps the managed bot's own platform on every relay artifact:
+    // callback claims, header, payload and the reply token.
     let mut envelope = Envelope::new();
     envelope.payload["platform"] = "telegram-new".into();
+    envelope.callback["platform"] = "telegram-new".into();
+    envelope.reply["platform"] = "telegram-new".into();
     let (body, token) = envelope.signed();
     let mut request = fixture.request(body, &token).build().unwrap();
     request
