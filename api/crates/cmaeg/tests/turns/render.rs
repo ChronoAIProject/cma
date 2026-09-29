@@ -1,7 +1,7 @@
 use cmaeg::turns::render_input::render;
 use cmaeg_core::{
-    activity::{Activity, ActivityKind, InteractionResult},
-    channel::ChannelDefinition,
+    activity::{Activity, ActivityKind, InteractionResult, SourceKind},
+    channel::{ChannelDefinition, Platform},
 };
 use serde_json::json;
 fn fixtures() -> (Activity, ChannelDefinition) {
@@ -69,4 +69,39 @@ fn cloud_event_data_is_canonical_and_bounded_without_splitting_utf8() {
     let input = render(&activity, &definition);
     let text = input[0]["content"][0]["text"].as_str().unwrap();
     assert!(text.split_once('\n').unwrap().1.len() <= 8192);
+}
+#[test]
+fn lark_and_feishu_strip_only_leading_mention_keys() {
+    let (mut activity, mut definition) = fixtures();
+    definition.sources = vec![serde_json::from_value(json!({"type":"nyxid_relay","issuer":"https://nyx.example","jwks_url":"https://nyx.example/jwks","key_id":"key","route_ids":["route"],"platform":"lark","bot_id":"ou_bot","admission":{"type":"all"}})).unwrap()];
+    for platform in [Platform::Lark, Platform::Feishu] {
+        activity.source = SourceKind::NyxidRelay {
+            platform,
+            route_id: "route".into(),
+        };
+        for (text, mentions_bot, expected) in [
+            ("@_user_1 status?", true, "status?"),
+            (
+                " @_user_1  @_user_12 ask @_user_2 later",
+                true,
+                "ask @_user_2 later",
+            ),
+            ("@_user_1", true, ""),
+            ("@_user_1x keep", true, "@_user_1x keep"),
+            ("@_user_ keep", true, "@_user_ keep"),
+            ("@_user_1 unaddressed", false, "@_user_1 unaddressed"),
+        ] {
+            activity.kind = ActivityKind::Message {
+                text: text.into(),
+                attachments: vec![],
+                mentions_bot,
+                reply_to: None,
+            };
+            assert_eq!(
+                render(&activity, &definition)[0]["content"][0]["text"],
+                expected,
+                "{text}"
+            );
+        }
+    }
 }
