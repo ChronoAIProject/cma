@@ -1852,7 +1852,12 @@
       },
       "Platform": {
         "enum": [
-          "telegram"
+          "telegram",
+          "lark",
+          "feishu",
+          "discord",
+          "slack",
+          "whatsapp"
         ],
         "type": "string"
       },
@@ -2490,6 +2495,12 @@
               "admission": {
                 "$ref": "#/components/schemas/AdmissionPolicy"
               },
+              "bot_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "bot_username": {
                 "type": [
                   "string",
@@ -2513,6 +2524,9 @@
                   "type": "string"
                 },
                 "type": "array"
+              },
+              "trust_normalized": {
+                "type": "boolean"
               },
               "type": {
                 "enum": [
@@ -2606,6 +2620,12 @@
               "admission": {
                 "$ref": "#/components/schemas/AdmissionPolicy"
               },
+              "bot_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "bot_username": {
                 "type": [
                   "string",
@@ -2626,6 +2646,9 @@
                   "type": "string"
                 },
                 "type": "array"
+              },
+              "trust_normalized": {
+                "type": "boolean"
               },
               "type": {
                 "enum": [
