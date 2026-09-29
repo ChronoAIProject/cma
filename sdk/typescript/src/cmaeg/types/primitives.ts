@@ -29,7 +29,14 @@ export type MessageRef = Output<typeof MessageRefSchema>;
 export const ReplyTargetRefSchema = text;
 export type ReplyTargetRef = Output<typeof ReplyTargetRefSchema>;
 
-export const PlatformSchema = enumeration('telegram');
+export const PlatformSchema = enumeration(
+  'telegram',
+  'lark',
+  'feishu',
+  'discord',
+  'slack',
+  'whatsapp',
+);
 export type Platform = Output<typeof PlatformSchema>;
 
 export const GroupAdmissionSchema = enumeration(

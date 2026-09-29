@@ -220,6 +220,21 @@ pub enum Platform {
     /// Wire value `telegram`.
     #[serde(rename = "telegram")]
     Telegram,
+    /// Wire value `lark`.
+    #[serde(rename = "lark")]
+    Lark,
+    /// Wire value `feishu`.
+    #[serde(rename = "feishu")]
+    Feishu,
+    /// Wire value `discord`.
+    #[serde(rename = "discord")]
+    Discord,
+    /// Wire value `slack`.
+    #[serde(rename = "slack")]
+    Slack,
+    /// Wire value `whatsapp`.
+    #[serde(rename = "whatsapp")]
+    Whatsapp,
 }
 
 /// CMAEG `ProblemCode` wire shape.

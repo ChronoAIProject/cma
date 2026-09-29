@@ -160,6 +160,8 @@ mod boundaries;
 mod lifecycle;
 #[path = "management/operations.rs"]
 mod operations;
+#[path = "management/platforms.rs"]
+mod platforms;
 
 #[path = "management/invalidation.rs"]
 mod invalidation;
