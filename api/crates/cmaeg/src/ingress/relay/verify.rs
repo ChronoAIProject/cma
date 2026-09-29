@@ -190,7 +190,7 @@ pub async fn verify(
     if reply.api_key_id != *key_id
         || reply.conversation_id != payload.conversation.id
         || reply.inbound_message_id != payload.message_id
-        || reply.platform != platform
+        || !external_platform_matches(&reply.platform)
     {
         return Err(VerificationError("reply_binding_mismatch"));
     }
