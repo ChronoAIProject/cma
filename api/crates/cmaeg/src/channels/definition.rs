@@ -205,6 +205,8 @@ fn build_sources(sources: &[SourceRequest]) -> Result<Vec<Source>, ValidationErr
                 route_ids,
                 platform,
                 bot_username,
+                bot_id,
+                trust_normalized,
                 admission,
             } => Source::NyxidRelay {
                 issuer: issuer.clone(),
@@ -213,6 +215,8 @@ fn build_sources(sources: &[SourceRequest]) -> Result<Vec<Source>, ValidationErr
                 route_ids: route_ids.clone(),
                 platform: *platform,
                 bot_username: bot_username.clone(),
+                bot_id: bot_id.clone(),
+                trust_normalized: *trust_normalized,
                 admission: admission.clone(),
             },
             SourceRequest::Custom {

@@ -12,10 +12,13 @@ use crate::{
     require_string, ValidationError,
 };
 
+mod platform;
 mod validation;
+pub use platform::Platform;
 pub(crate) use validation::validate_https_url;
 use validation::{
     validate_admission, validate_custom_auth, validate_hash, validate_nonempty_unique,
+    validate_relay_identity,
 };
 
 pub const CHANNEL_SCHEMA_VERSION: u16 = 1;
@@ -23,19 +26,6 @@ pub const MAX_SOURCES: usize = 4;
 pub const MAX_ROUTE_IDS: usize = 64;
 pub const MAX_SINKS: usize = 3;
 pub const MAX_PROMPT_TEMPLATE_BYTES: usize = 8 * 1_024;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum Platform {
-    Telegram,
-}
-impl Platform {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Telegram => "telegram",
-        }
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -104,6 +94,12 @@ pub enum Source {
         platform: Platform,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         bot_username: Option<String>,
+        // The bot's own platform user ID, such as a Lark bot `open_id`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        bot_id: Option<String>,
+        // Explicit opt-in to admit a platform without a raw-event verifier.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        trust_normalized: bool,
         admission: AdmissionPolicy,
     },
     Custom {
@@ -306,6 +302,8 @@ impl ChannelDefinition {
                     route_ids,
                     platform,
                     bot_username,
+                    bot_id,
+                    trust_normalized,
                     admission,
                 } => {
                     if !variants.insert("nyxid_relay") {
@@ -328,18 +326,13 @@ impl ChannelDefinition {
                             MAX_ROUTE_IDS,
                         )?;
                     }
-                    if let Some(username) = bot_username {
-                        if !(5..=32).contains(&username.len())
-                            || !username
-                                .bytes()
-                                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
-                        {
-                            return Err(ValidationError::new(
-                                format!("{pointer}/bot_username"),
-                                "must contain 5..=32 Telegram username characters without @",
-                            ));
-                        }
-                    }
+                    validate_relay_identity(
+                        *platform,
+                        bot_username.as_deref(),
+                        bot_id.as_deref(),
+                        *trust_normalized,
+                        &pointer,
+                    )?;
                     validate_admission(admission, &pointer)?;
                 }
                 Source::Custom {
@@ -482,15 +475,5 @@ impl PartitionRule {
             ));
         }
         Ok(())
-    }
-}
-
-impl FromStr for Platform {
-    type Err = ValidationError;
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            "telegram" | "telegram-new" => Ok(Self::Telegram),
-            _ => Err(ValidationError::new("/platform", "unsupported platform")),
-        }
     }
 }
