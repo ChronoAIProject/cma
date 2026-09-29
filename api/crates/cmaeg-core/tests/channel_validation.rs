@@ -405,6 +405,8 @@ fn bot_identity_is_validated_per_platform() {
 fn trust_normalized_is_only_for_platforms_without_a_raw_event_verifier() {
     for platform in ["discord", "slack", "whatsapp"] {
         validate(relay_on(platform, json!({"trust_normalized": true}))).unwrap();
+        // Stored definitions without the opt-in stay restorable so ingress can refuse
+        // them explicitly; channel management refuses to create or update one.
         validate(relay_on(platform, json!({"trust_normalized": false}))).unwrap();
     }
     for platform in ["telegram", "lark", "feishu"] {
