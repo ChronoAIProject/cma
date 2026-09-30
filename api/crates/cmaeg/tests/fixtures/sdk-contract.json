@@ -435,6 +435,7 @@
           "admission": {
             "type": "all"
           },
+          "bot_id": "fixture",
           "bot_username": "fixture",
           "issuer": "fixture",
           "key_id": "fixture",
@@ -442,6 +443,7 @@
           "route_ids": [
             "fixture"
           ],
+          "trust_normalized": false,
           "type": "nyxid_relay"
         }
       ]
@@ -549,6 +551,7 @@
             "admission": {
               "type": "all"
             },
+            "bot_id": "fixture",
             "bot_username": "fixture",
             "issuer": "fixture",
             "jwks_url": "fixture",
@@ -557,6 +560,7 @@
             "route_ids": [
               "fixture"
             ],
+            "trust_normalized": false,
             "type": "nyxid_relay"
           }
         ],
@@ -668,6 +672,7 @@
           "admission": {
             "type": "all"
           },
+          "bot_id": "fixture",
           "bot_username": "fixture",
           "issuer": "fixture",
           "key_id": "fixture",
@@ -675,6 +680,7 @@
           "route_ids": [
             "fixture"
           ],
+          "trust_normalized": false,
           "type": "nyxid_relay"
         }
       ]
@@ -1091,7 +1097,12 @@
     }
   ],
   "Platform": [
-    "telegram"
+    "telegram",
+    "lark",
+    "feishu",
+    "discord",
+    "slack",
+    "whatsapp"
   ],
   "Problem": [
     {
@@ -1308,6 +1319,7 @@
           "admission": {
             "type": "all"
           },
+          "bot_id": "fixture",
           "bot_username": "fixture",
           "issuer": "fixture",
           "jwks_url": "fixture",
@@ -1316,6 +1328,7 @@
           "route_ids": [
             "fixture"
           ],
+          "trust_normalized": false,
           "type": "nyxid_relay"
         }
       ],
@@ -1345,7 +1358,8 @@
     "group_denied",
     "group_not_addressed",
     "addressing_evidence_unavailable",
-    "thread_evidence_unavailable"
+    "thread_evidence_unavailable",
+    "platform_verifier_unavailable"
   ],
   "RekeyResponse": [
     {
@@ -1470,6 +1484,7 @@
       "admission": {
         "type": "all"
       },
+      "bot_id": "fixture",
       "bot_username": "fixture",
       "issuer": "fixture",
       "jwks_url": "fixture",
@@ -1478,6 +1493,39 @@
       "route_ids": [
         "fixture"
       ],
+      "trust_normalized": false,
+      "type": "nyxid_relay"
+    },
+    {
+      "admission": {
+        "type": "all"
+      },
+      "bot_id": "ou_fixture",
+      "bot_username": "fixture",
+      "issuer": "fixture",
+      "jwks_url": "fixture",
+      "key_id": "fixture",
+      "platform": "lark",
+      "route_ids": [
+        "fixture"
+      ],
+      "trust_normalized": false,
+      "type": "nyxid_relay"
+    },
+    {
+      "admission": {
+        "type": "all"
+      },
+      "bot_id": "fixture",
+      "bot_username": "fixture",
+      "issuer": "fixture",
+      "jwks_url": "fixture",
+      "key_id": "fixture",
+      "platform": "slack",
+      "route_ids": [
+        "fixture"
+      ],
+      "trust_normalized": true,
       "type": "nyxid_relay"
     },
     {
@@ -1497,6 +1545,11 @@
       "type": "nyxid_relay"
     },
     {
+      "platform": "lark",
+      "route_id": "fixture",
+      "type": "nyxid_relay"
+    },
+    {
       "type": "custom"
     }
   ],
@@ -1505,6 +1558,7 @@
       "admission": {
         "type": "all"
       },
+      "bot_id": "fixture",
       "bot_username": "fixture",
       "issuer": "fixture",
       "key_id": "fixture",
@@ -1512,6 +1566,37 @@
       "route_ids": [
         "fixture"
       ],
+      "trust_normalized": false,
+      "type": "nyxid_relay"
+    },
+    {
+      "admission": {
+        "type": "all"
+      },
+      "bot_id": "ou_fixture",
+      "bot_username": "fixture",
+      "issuer": "fixture",
+      "key_id": "fixture",
+      "platform": "lark",
+      "route_ids": [
+        "fixture"
+      ],
+      "trust_normalized": false,
+      "type": "nyxid_relay"
+    },
+    {
+      "admission": {
+        "type": "all"
+      },
+      "bot_id": "fixture",
+      "bot_username": "fixture",
+      "issuer": "fixture",
+      "key_id": "fixture",
+      "platform": "slack",
+      "route_ids": [
+        "fixture"
+      ],
+      "trust_normalized": true,
       "type": "nyxid_relay"
     },
     {
