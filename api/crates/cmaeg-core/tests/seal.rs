@@ -248,3 +248,57 @@ fn interaction_records_are_bound_to_namespace_id_and_key_ring() {
     assert!(open_interaction(&ring(), "record-b", &blob).is_err());
     assert!(open_blob(&ring(), &blob).is_err());
 }
+
+#[test]
+fn event_reference_retains_every_relay_platform_and_its_activity_binding() {
+    let mut activity: cmaeg_core::activity::Activity =
+        serde_json::from_str(include_str!("fixtures/activity.json")).expect("activity");
+    for platform in [
+        Platform::Telegram,
+        Platform::Lark,
+        Platform::Feishu,
+        Platform::Discord,
+        Platform::Slack,
+        Platform::Whatsapp,
+    ] {
+        activity.source = cmaeg_core::activity::SourceKind::NyxidRelay {
+            platform,
+            route_id: "route-1".into(),
+        };
+        activity.validate().expect("valid activity");
+        let payload = EventRefPayload {
+            v: 1,
+            activity_sha256: Some(cmaeg_core::seal::event_ref::activity_digest(&activity)),
+            channel_id: channel_id(),
+            record_id: "record-1".parse().unwrap(),
+            event_id: activity.event_id.clone(),
+            partition_key: "chat-1".into(),
+            conversation_id: conversation_id(),
+            expires_at: 100,
+            reply: ReplyAddress::NyxidRelay {
+                message_id: "message-1".into(),
+                route_id: "route-1".into(),
+                platform,
+                reply_token: Secret::new("reply-token"),
+                reply_token_expires_at: 200,
+            },
+        };
+        let opened = EventRef::seal(&payload, &ring())
+            .expect("event ref")
+            .open(&ring(), 99)
+            .expect("opened")
+            .payload;
+        assert_eq!(opened, payload);
+        assert!(opened.verifies_activity(&activity));
+        let mut other = activity.clone();
+        other.source = cmaeg_core::activity::SourceKind::NyxidRelay {
+            platform: if platform == Platform::Lark {
+                Platform::Feishu
+            } else {
+                Platform::Lark
+            },
+            route_id: "route-1".into(),
+        };
+        assert!(!opened.verifies_activity(&other));
+    }
+}

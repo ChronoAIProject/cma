@@ -22,6 +22,72 @@ pub(super) fn validate_admission(
     Ok(())
 }
 
+/// Per-platform bot identity and trust rules for a NyxID relay source.
+pub(super) fn validate_relay_identity(
+    platform: Platform,
+    bot_username: Option<&str>,
+    bot_id: Option<&str>,
+    trust_normalized: bool,
+    pointer: &str,
+) -> Result<(), ValidationError> {
+    if let Some(username) = bot_username {
+        let (valid, message) = match platform {
+            Platform::Telegram => (
+                (5..=32).contains(&username.len())
+                    && username
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_'),
+                "must contain 5..=32 Telegram username characters without @",
+            ),
+            _ => (
+                identifier_safe(username, 64),
+                "must contain 1..=64 letters, digits, '_', '-' or '.' without @",
+            ),
+        };
+        if !valid {
+            return Err(ValidationError::new(
+                format!("{pointer}/bot_username"),
+                message,
+            ));
+        }
+    }
+    if let Some(id) = bot_id {
+        let (valid, message) = match platform {
+            Platform::Telegram => (
+                (1..=20).contains(&id.len()) && id.bytes().all(|byte| byte.is_ascii_digit()),
+                "must be the bot's numeric Telegram user ID",
+            ),
+            // Mentions carry the bot's open_id; app IDs (`cli_`) and union IDs never match.
+            Platform::Lark | Platform::Feishu => (
+                id.strip_prefix("ou_")
+                    .is_some_and(|rest| identifier_safe(rest, 125)),
+                "must be the bot's open_id (ou_ followed by at most 125 identifier characters)",
+            ),
+            Platform::Discord | Platform::Slack | Platform::Whatsapp => (
+                identifier_safe(id, 128),
+                "must contain 1..=128 letters, digits, '_', '-' or '.'",
+            ),
+        };
+        if !valid {
+            return Err(ValidationError::new(format!("{pointer}/bot_id"), message));
+        }
+    }
+    if trust_normalized && platform.verifies_raw_event() {
+        return Err(ValidationError::new(
+            format!("{pointer}/trust_normalized"),
+            "applies only to platforms without a raw-event verifier",
+        ));
+    }
+    Ok(())
+}
+
+fn identifier_safe(value: &str, max: usize) -> bool {
+    (1..=max).contains(&value.len())
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
+}
+
 pub(super) fn validate_custom_auth(
     auth: &CustomAuth,
     pointer: &str,
