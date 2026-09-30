@@ -107,11 +107,13 @@ export const SourceRequestSchema = tagged(
   {
     nyxid_relay: object({
       admission: AdmissionPolicySchema,
+      bot_id: optional(nullable(text)),
       bot_username: optional(nullable(text)),
       issuer: text,
       key_id: text,
       platform: PlatformSchema,
       route_ids: array(text),
+      trust_normalized: optional(boolean),
       type: enumeration('nyxid_relay'),
     }),
     custom: object({
@@ -160,12 +162,14 @@ export const SourceSchema = tagged(
   {
     nyxid_relay: object({
       admission: AdmissionPolicySchema,
+      bot_id: optional(nullable(text)),
       bot_username: optional(nullable(text)),
       issuer: text,
       jwks_url: text,
       key_id: text,
       platform: PlatformSchema,
       route_ids: array(text),
+      trust_normalized: optional(boolean),
       type: enumeration('nyxid_relay'),
     }),
     custom: object({

@@ -221,7 +221,9 @@ Read `delivery.outcome` and rendering receipts. `unknown` means a reply might
 already have been delivered; blind resend can duplicate messages. Current Telegram
 and custom transports report editing and typing as unsupported. Telegram accepts
 human text, renders rich output as text/link fallbacks, and does not support
-interactive callbacks or attachment transfer in this version.
+interactive callbacks or attachment transfer in this version. Lark, Feishu,
+Discord, Slack and WhatsApp relay sources are text-only in both directions; see
+the protocol's NyxID relay section for their admission facts and opt-ins.
 
 ## Reply after a delayed provider operation
 

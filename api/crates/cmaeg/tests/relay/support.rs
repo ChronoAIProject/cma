@@ -94,6 +94,7 @@ async fn record(State(state): State<Backend>) -> Response {
         .into_response()
 }
 pub struct Fixture {
+    pub platform: String,
     pub state: IngressState,
     pub backend: Backend,
     pub recorder: Arc<Recorder>,
@@ -111,6 +112,10 @@ impl Drop for Fixture {
 }
 impl Fixture {
     pub async fn new(edit: impl FnOnce(&mut Value), config: IngressConfig) -> Self {
+        Self::on("telegram", edit, config).await
+    }
+    /// A channel whose single relay source serves `platform` (a protocol value).
+    pub async fn on(platform: &str, edit: impl FnOnce(&mut Value), config: IngressConfig) -> Self {
         let signer = Signer::shared();
         let backend = Backend {
             jwks: Arc::new(Mutex::new(signer.jwks())),
@@ -137,7 +142,10 @@ impl Fixture {
         ))
         .unwrap();
         value["record_id"] = uuid::Uuid::new_v4().to_string().into();
-        value["sources"] = json!([{"type":"nyxid_relay","issuer":ISSUER,"jwks_url":format!("{base}/jwks"),"key_id":"key-1","route_ids":["route-1"],"platform":"telegram","bot_username":"support_bot","admission":{"type":"all"}}]);
+        value["sources"] = json!([{"type":"nyxid_relay","issuer":ISSUER,"jwks_url":format!("{base}/jwks"),"key_id":"key-1","route_ids":["route-1"],"platform":platform,"admission":{"type":"all"}}]);
+        if platform == "telegram" {
+            value["sources"][0]["bot_username"] = "support_bot".into();
+        }
         value["partition"]["key"] = "conversation_and_sender".into();
         edit(&mut value);
         let mut definition: ChannelDefinition = serde_json::from_value(value).unwrap();
@@ -159,6 +167,7 @@ impl Fixture {
         let state = IngressState::new(resolver, keys, config, recorder.clone()).unwrap();
         let (gateway, app) = serve(callbacks::router(state.clone())).await;
         Self {
+            platform: platform.to_owned(),
             url: format!("{gateway}/v1/callbacks/{id}"),
             state,
             backend,
@@ -173,7 +182,7 @@ impl Fixture {
             .post(&self.url)
             .header("content-type", "application/json")
             .header("x-nyxid-callback-token", token)
-            .header("x-nyxid-platform", "telegram")
+            .header("x-nyxid-platform", &self.platform)
             .header("x-nyxid-message-id", "message-1")
             .header("x-nyxid-timestamp", now_rfc3339())
             .body(body)
@@ -216,19 +225,35 @@ impl Default for Envelope {
 }
 impl Envelope {
     pub fn new() -> Self {
+        Self::on("telegram")
+    }
+    /// A callback for `platform`, spelled as NyxID stamps it on every relay artifact.
+    pub fn on(platform: &str) -> Self {
         let mut callback = claims("channel-relay/callback", "relay_callback", 300);
         callback["api_key_id"] = "key-1".into();
         callback["message_id"] = "message-1".into();
-        callback["platform"] = "telegram".into();
+        callback["platform"] = platform.into();
         let mut reply = claims("channel-relay/reply", "relay_reply", 1800);
         reply["api_key_id"] = "key-1".into();
         reply["inbound_message_id"] = "message-1".into();
         reply["conversation_id"] = "route-1".into();
-        reply["platform"] = "telegram".into();
+        reply["platform"] = platform.into();
+        let mut payload = json!({"message_id":"message-1","correlation_id":"correlation-1","platform":platform,"agent":{"api_key_id":"key-1","name":"A display name"},"conversation":{"id":"route-1","platform_id":"42","type":"private"},"sender":{"platform_id":"7","display_name":"Alice"},"content":{"type":"text","text":"hello"},"timestamp":now_rfc3339()});
+        match platform {
+            "telegram" | "telegram-new" => {
+                payload["raw_platform_data"] = json!({"message":{"message_id":11,"chat":{"id":42,"type":"private"},"from":{"id":7,"is_bot":false},"text":"hello"}});
+            }
+            "lark" | "feishu" => {
+                payload["conversation"]["platform_id"] = "oc_chat".into();
+                payload["sender"]["platform_id"] = "ou_sender".into();
+                payload["raw_platform_data"] = json!({"schema":"2.0","header":{"event_id":"lark-event-1","event_type":"im.message.receive_v1","create_time":"1700000000000","app_id":"cli_fixture","tenant_key":"tenant"},"event":{"sender":{"sender_id":{"open_id":"ou_sender","union_id":"on_sender","user_id":"sender"},"sender_type":"user","tenant_key":"tenant"},"message":{"message_id":"om_message","chat_id":"oc_chat","chat_type":"p2p","message_type":"text","content":"{\"text\":\"hello\"}","create_time":"1700000000000"}}});
+            }
+            _ => {}
+        }
         Self {
             callback,
             reply,
-            payload: json!({"message_id":"message-1","correlation_id":"correlation-1","platform":"telegram","agent":{"api_key_id":"key-1","name":"A display name"},"conversation":{"id":"route-1","platform_id":"42","type":"private"},"sender":{"platform_id":"7","display_name":"Alice"},"content":{"type":"text","text":"hello"},"timestamp":now_rfc3339(),"raw_platform_data":{"message":{"message_id":11,"chat":{"id":42,"type":"private"},"from":{"id":7,"is_bot":false},"text":"hello"}}}),
+            payload,
         }
     }
     pub fn signed(&self) -> (Vec<u8>, String) {
@@ -242,7 +267,25 @@ impl Envelope {
         (body, Signer::shared().token(&claims))
     }
     pub fn group(&mut self) {
-        self.payload["raw_platform_data"]["message"]["chat"]["type"] = "supergroup".into();
+        match self.payload["platform"].as_str().unwrap() {
+            "telegram" | "telegram-new" => {
+                self.payload["raw_platform_data"]["message"]["chat"]["type"] = "supergroup".into();
+            }
+            "lark" | "feishu" => {
+                self.payload["conversation"]["type"] = "group".into();
+                self.lark_message()["chat_type"] = "group".into();
+            }
+            _ => self.payload["conversation"]["type"] = "group".into(),
+        }
+    }
+    /// The raw Lark or Feishu `event.message` object.
+    pub fn lark_message(&mut self) -> &mut Value {
+        &mut self.payload["raw_platform_data"]["event"]["message"]
+    }
+    /// Replace the text in both the normalized content and the raw Lark event.
+    pub fn lark_text(&mut self, text: &str) {
+        self.payload["content"]["text"] = text.into();
+        self.lark_message()["content"] = json!({ "text": text }).to_string().into();
     }
 }
 pub async fn problem(response: reqwest::Response, status: u16, reason: &str) {

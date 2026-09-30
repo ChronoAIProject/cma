@@ -220,6 +220,21 @@ pub enum Platform {
     /// Wire value `telegram`.
     #[serde(rename = "telegram")]
     Telegram,
+    /// Wire value `lark`.
+    #[serde(rename = "lark")]
+    Lark,
+    /// Wire value `feishu`.
+    #[serde(rename = "feishu")]
+    Feishu,
+    /// Wire value `discord`.
+    #[serde(rename = "discord")]
+    Discord,
+    /// Wire value `slack`.
+    #[serde(rename = "slack")]
+    Slack,
+    /// Wire value `whatsapp`.
+    #[serde(rename = "whatsapp")]
+    Whatsapp,
 }
 
 /// CMAEG `ProblemCode` wire shape.
@@ -338,6 +353,9 @@ pub enum Refusal {
     /// Wire value `thread_evidence_unavailable`.
     #[serde(rename = "thread_evidence_unavailable")]
     ThreadEvidenceUnavailable,
+    /// Wire value `platform_verifier_unavailable`.
+    #[serde(rename = "platform_verifier_unavailable")]
+    PlatformVerifierUnavailable,
 }
 
 /// CMAEG `RenderingOutcome` wire shape.

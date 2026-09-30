@@ -62,6 +62,11 @@ pub enum SourceRequest {
         platform: cmaeg_core::channel::Platform,
         #[serde(default)]
         bot_username: Option<String>,
+        // Omitted when absent so retained creation fingerprints stay stable.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        bot_id: Option<String>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        trust_normalized: bool,
         admission: AdmissionPolicy,
     },
     Custom {

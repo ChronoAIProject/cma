@@ -1,48 +1,13 @@
 //! Telegram facts taken from authenticated raw fields and correlated to the envelope.
-use super::{payload::CallbackPayload, VerificationError};
-use crate::ingress::admission::Refusal;
-use cmaeg_core::{
-    activity::ConversationKind,
-    channel::{AdmissionPolicy, GroupAdmission},
+use super::{
+    facts::{CallbackFacts, Observation, RelayFacts},
+    payload::CallbackPayload,
+    VerificationError,
 };
+use crate::ingress::admission::Refusal;
+use cmaeg_core::activity::{ActorKind, ConversationKind};
 use serde_json::Value;
 
-#[derive(Clone)]
-pub struct CallbackFacts {
-    pub id: String,
-    pub data: String,
-    pub message_id: String,
-}
-pub struct TelegramFacts {
-    pub callback: Option<CallbackFacts>,
-    pub conversation: ConversationKind,
-    pub thread_id: Option<String>,
-    pub mentioned: Option<bool>,
-    pub replied_to_bot: Option<bool>,
-}
-impl TelegramFacts {
-    pub fn addressed(&self, policy: &AdmissionPolicy) -> Option<bool> {
-        match policy {
-            AdmissionPolicy::Scoped {
-                groups: GroupAdmission::Mention,
-                ..
-            } => self.mentioned,
-            AdmissionPolicy::Scoped {
-                groups: GroupAdmission::ReplyToBot,
-                ..
-            } => self.replied_to_bot,
-            _ => match (self.mentioned, self.replied_to_bot) {
-                (Some(true), _) | (_, Some(true)) => Some(true),
-                (Some(false), Some(false)) => Some(false),
-                _ => None,
-            },
-        }
-    }
-}
-pub enum Observation {
-    Message(TelegramFacts),
-    Refused(Refusal),
-}
 pub fn observe(
     payload: &CallbackPayload,
     bot_username: Option<&str>,
@@ -173,12 +138,13 @@ pub fn observe(
             .and_then(|from| from.get("is_bot"))
             .and_then(Value::as_bool),
     };
-    Ok(Observation::Message(TelegramFacts {
+    Ok(Observation::Message(RelayFacts {
         callback: None,
         conversation,
         thread_id,
         mentioned,
         replied_to_bot,
+        actor: ActorKind::Human,
     }))
 }
 fn numeric(value: Option<&Value>) -> Result<String, VerificationError> {
@@ -269,7 +235,7 @@ fn observe_callback(
         .get("message_thread_id")
         .map(|id| numeric(Some(id)))
         .transpose()?;
-    Ok(Observation::Message(TelegramFacts {
+    Ok(Observation::Message(RelayFacts {
         callback: Some(CallbackFacts {
             id,
             data,
@@ -279,5 +245,6 @@ fn observe_callback(
         thread_id,
         mentioned: Some(true),
         replied_to_bot: Some(true),
+        actor: ActorKind::Human,
     }))
 }

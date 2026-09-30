@@ -56,8 +56,16 @@ impl App {
         Self::with_text("hello").await
     }
     pub async fn with_text(text: &str) -> Self {
+        Self::build("telegram", text).await
+    }
+    /// A group message on `platform` carrying the envelope's default text.
+    pub async fn on(platform: &str) -> Self {
+        Self::build(platform, "hello").await
+    }
+    async fn build(platform: &str, text: &str) -> Self {
         let key = format!("nyxid_ag_{}", uuid::Uuid::new_v4().simple());
-        let fixture = Fixture::new(
+        let fixture = Fixture::on(
+            platform,
             |value| {
                 value["secrets"]["agent_key_hash"] =
                     format!("sha256:{:x}", Sha256::digest(key.as_bytes())).into();
@@ -66,10 +74,12 @@ impl App {
             Default::default(),
         )
         .await;
-        let mut envelope = Envelope::new();
+        let mut envelope = Envelope::on(platform);
         envelope.group();
-        envelope.payload["content"]["text"] = text.into();
-        envelope.payload["raw_platform_data"]["message"]["text"] = text.into();
+        if platform == "telegram" {
+            envelope.payload["content"]["text"] = text.into();
+            envelope.payload["raw_platform_data"]["message"]["text"] = text.into();
+        }
         assert_eq!(fixture.send(&envelope).await.status(), 202);
         let request = fixture.recorder.requests.lock().unwrap().pop().unwrap();
         let event_ref = request.event_ref.clone();
