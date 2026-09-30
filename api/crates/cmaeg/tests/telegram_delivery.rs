@@ -8,6 +8,8 @@ pub mod fake_nyxid_reply;
 pub mod fake_provider;
 #[path = "delivery/integration.rs"]
 mod integration;
+#[path = "delivery/platforms.rs"]
+mod platforms;
 #[path = "relay/support.rs"]
 pub mod relay_support;
 #[path = "relay/signer.rs"]

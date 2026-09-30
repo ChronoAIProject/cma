@@ -277,3 +277,195 @@ fn private_channel_roundtrip_and_public_view_never_confuse_credential_custody() 
         assert!(blob.to_string().contains(marker));
     }
 }
+
+fn relay_on(platform: &str, fields: Value) -> Value {
+    let mut value = relay_channel();
+    value["sources"][0]["platform"] = json!(platform);
+    for (key, field) in fields.as_object().unwrap() {
+        value["sources"][0][key] = field.clone();
+    }
+    value
+}
+
+#[test]
+fn relay_platforms_parse_their_nyxid_spellings_and_serialize_canonically() {
+    use cmaeg_core::channel::Platform;
+    for (wire, platform) in [
+        ("telegram", Platform::Telegram),
+        ("telegram-new", Platform::Telegram),
+        ("lark", Platform::Lark),
+        ("feishu", Platform::Feishu),
+        ("discord", Platform::Discord),
+        ("slack", Platform::Slack),
+        ("whatsapp", Platform::Whatsapp),
+    ] {
+        assert_eq!(wire.parse::<Platform>().unwrap(), platform);
+        assert!(platform.matches_wire(wire));
+        assert_eq!(serde_json::to_value(platform).unwrap(), platform.as_str());
+        assert_eq!(
+            serde_json::from_value::<Platform>(json!(platform.as_str())).unwrap(),
+            platform
+        );
+    }
+    for wire in ["", "Lark", "telegram_new", "whats_app", "wechat"] {
+        assert!(wire.parse::<Platform>().is_err(), "{wire}");
+    }
+    assert!(!Platform::Lark.matches_wire("feishu"));
+    assert!(!Platform::Feishu.matches_wire("lark"));
+    // `telegram-new` is a NyxID transport spelling, not a protocol value.
+    assert!(serde_json::from_value::<Platform>(json!("telegram-new")).is_err());
+}
+
+#[test]
+fn bot_identity_is_validated_per_platform() {
+    for (platform, field, valid, invalid) in [
+        (
+            "telegram",
+            "bot_id",
+            vec!["1", "12345678901234567890"],
+            vec!["", "ou_bot", "-1", "123456789012345678901"],
+        ),
+        (
+            "lark",
+            "bot_id",
+            vec!["ou_7d8a6e6df7621556ce0d21922b676706"],
+            vec!["", "ou_", "cli_a1b2", "on_union", "ou_bad id", "OU_upper"],
+        ),
+        (
+            "feishu",
+            "bot_id",
+            vec!["ou_bot-1.2"],
+            vec!["ou_bot@tenant"],
+        ),
+        (
+            "slack",
+            "bot_id",
+            vec!["B012ABCDEF", "U0.1-x_y"],
+            vec!["", "bad id", "B:1"],
+        ),
+        (
+            "telegram",
+            "bot_username",
+            vec!["support_bot"],
+            vec!["bot", "support-bot", "@support_bot"],
+        ),
+        (
+            "lark",
+            "bot_username",
+            vec!["s", "support-bot.v2"],
+            vec!["", "@support", "Support Bot", "客服"],
+        ),
+        (
+            "whatsapp",
+            "bot_username",
+            vec!["support_bot"],
+            vec!["support bot"],
+        ),
+    ] {
+        for value in valid {
+            validate(relay_on(platform, json!({ field: value })))
+                .unwrap_or_else(|error| panic!("{platform} {field} {value}: {error}"));
+        }
+        for value in invalid {
+            assert_eq!(
+                validate(relay_on(platform, json!({ field: value })))
+                    .unwrap_err()
+                    .pointer,
+                format!("/sources/0/{field}"),
+                "{platform} {field} {value}"
+            );
+        }
+    }
+    for (field, max) in [("bot_id", 128), ("bot_username", 64)] {
+        validate(relay_on("discord", json!({ field: "x".repeat(max) }))).unwrap();
+        assert_eq!(
+            validate(relay_on("discord", json!({ field: "x".repeat(max + 1) })))
+                .unwrap_err()
+                .pointer,
+            format!("/sources/0/{field}")
+        );
+    }
+    validate(relay_on(
+        "lark",
+        json!({"bot_id": format!("ou_{}", "x".repeat(125))}),
+    ))
+    .unwrap();
+    assert_eq!(
+        validate(relay_on(
+            "lark",
+            json!({"bot_id": format!("ou_{}", "x".repeat(126))})
+        ))
+        .unwrap_err()
+        .pointer,
+        "/sources/0/bot_id"
+    );
+}
+
+#[test]
+fn trust_normalized_is_only_for_platforms_without_a_raw_event_verifier() {
+    for platform in ["discord", "slack", "whatsapp"] {
+        validate(relay_on(platform, json!({"trust_normalized": true}))).unwrap();
+        // Stored definitions without the opt-in stay restorable so ingress can refuse
+        // them explicitly; channel management refuses to create or update one.
+        validate(relay_on(platform, json!({"trust_normalized": false}))).unwrap();
+    }
+    for platform in ["telegram", "lark", "feishu"] {
+        validate(relay_on(platform, json!({"trust_normalized": false}))).unwrap();
+        assert_eq!(
+            validate(relay_on(platform, json!({"trust_normalized": true})))
+                .unwrap_err()
+                .pointer,
+            "/sources/0/trust_normalized"
+        );
+    }
+    let value = relay_on("slack", json!({"trust_normalized": "yes"}));
+    assert!(serde_json::from_value::<ChannelDefinition>(value).is_err());
+}
+
+#[test]
+fn relay_identity_fields_are_omitted_when_unset_and_retained_when_set() {
+    let legacy: ChannelDefinition = serde_json::from_value(relay_channel()).unwrap();
+    let source = &legacy.to_blob_json()["sources"][0];
+    assert!(source.get("bot_id").is_none());
+    assert!(source.get("trust_normalized").is_none());
+    assert_eq!(
+        legacy.relay_platform(),
+        Some(cmaeg_core::channel::Platform::Telegram)
+    );
+    let value = relay_on(
+        "slack",
+        json!({"bot_id":"B012ABCDEF","bot_username":"support","trust_normalized":true}),
+    );
+    let definition: ChannelDefinition = serde_json::from_value(value).unwrap();
+    definition.validate().unwrap();
+    let blob = definition.to_blob_json();
+    assert_eq!(blob["sources"][0]["bot_id"], "B012ABCDEF");
+    assert_eq!(blob["sources"][0]["trust_normalized"], true);
+    assert_eq!(
+        definition.to_public_json()["sources"][0]["platform"],
+        "slack"
+    );
+    assert_eq!(
+        serde_json::from_value::<ChannelDefinition>(blob).unwrap(),
+        definition
+    );
+    assert_eq!(
+        serde_json::from_value::<ChannelDefinition>(channel())
+            .unwrap()
+            .relay_platform(),
+        None
+    );
+}
+
+#[test]
+fn a_channel_still_has_at_most_one_relay_source_across_platforms() {
+    let mut value = relay_channel();
+    let mut lark = relay();
+    lark["platform"] = json!("lark");
+    value["sources"] = json!([relay(), lark]);
+    let error = validate(value).unwrap_err();
+    assert_eq!(
+        (error.pointer.as_str(), error.message.as_str()),
+        ("/sources/1", "source variant is duplicated")
+    );
+}

@@ -29,6 +29,9 @@ pub enum Refusal {
     GroupNotAddressed,
     AddressingEvidenceUnavailable,
     ThreadEvidenceUnavailable,
+    // The platform has no raw-event verifier and the source did not opt in to
+    // trusting the normalized envelope.
+    PlatformVerifierUnavailable,
 }
 pub fn admit(policy: &AdmissionPolicy, facts: &AdmissionFacts<'_>) -> Result<(), Refusal> {
     if facts.is_bot_sender {

@@ -2,6 +2,8 @@
 mod keys;
 #[path = "relay/normalization.rs"]
 mod normalization;
+#[path = "relay/platforms.rs"]
+mod platforms;
 #[path = "relay/signer.rs"]
 mod signer;
 #[path = "relay/support.rs"]

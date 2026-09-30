@@ -109,9 +109,6 @@ pub async fn verify(
     else {
         return Err(VerificationError("relay_source_missing"));
     };
-    let platform = platform.as_str();
-    let external_platform_matches =
-        |value: &str| value == platform || (platform == "telegram" && value == "telegram-new");
     if body.is_empty()
         || headers.callback_token.len() > 16_384
         || headers.user_token.is_some_and(|token| token.len() > 16_384)
@@ -132,8 +129,7 @@ pub async fn verify(
     if claims.api_key_id != *key_id {
         return Err(VerificationError("callback_key_mismatch"));
     }
-    if !external_platform_matches(&claims.platform) || !external_platform_matches(headers.platform)
-    {
+    if !platform.matches_wire(&claims.platform) || !platform.matches_wire(headers.platform) {
         return Err(VerificationError("platform_mismatch"));
     }
     if claims.message_id != headers.message_id {
@@ -146,7 +142,7 @@ pub async fn verify(
         serde_json::from_slice(body).map_err(|_| VerificationError("payload_invalid"))?;
     payload.validate()?;
     if payload.message_id != claims.message_id
-        || !external_platform_matches(&payload.platform)
+        || !platform.matches_wire(&payload.platform)
         || payload.correlation_id != claims.standard.jti
         || payload.agent.api_key_id != *key_id
     {
@@ -190,7 +186,7 @@ pub async fn verify(
     if reply.api_key_id != *key_id
         || reply.conversation_id != payload.conversation.id
         || reply.inbound_message_id != payload.message_id
-        || !external_platform_matches(&reply.platform)
+        || !platform.matches_wire(&reply.platform)
     {
         return Err(VerificationError("reply_binding_mismatch"));
     }

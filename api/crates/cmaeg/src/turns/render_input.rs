@@ -1,7 +1,7 @@
 //! Neutral user input. Source envelopes and credentials never enter the prompt.
 use cmaeg_core::{
-    activity::{Activity, ActivityKind},
-    channel::{ChannelDefinition, Source},
+    activity::{Activity, ActivityKind, SourceKind},
+    channel::{ChannelDefinition, Platform, Source},
     profile::canonical_json,
 };
 use serde_json::{json, Value};
@@ -15,7 +15,7 @@ pub fn render(activity: &Activity, definition: &ChannelDefinition) -> Vec<Respon
             ..
         } => {
             let text = if *mentions_bot {
-                strip_address(text, definition)
+                strip_address(text, &activity.source, definition)
             } else {
                 text.clone()
             };
@@ -60,7 +60,14 @@ pub fn render(activity: &Activity, definition: &ChannelDefinition) -> Vec<Respon
     };
     vec![json!({"role":"user","content":[{"type":"input_text","text":text}]})]
 }
-fn strip_address(text: &str, definition: &ChannelDefinition) -> String {
+fn strip_address(text: &str, source: &SourceKind, definition: &ChannelDefinition) -> String {
+    if let SourceKind::NyxidRelay {
+        platform: Platform::Lark | Platform::Feishu,
+        ..
+    } = source
+    {
+        return strip_mention_keys(text);
+    }
     let Some(username) = definition.sources.iter().find_map(|source| match source {
         Source::NyxidRelay { bot_username, .. } => bot_username.as_deref(),
         _ => None,
@@ -90,6 +97,25 @@ fn strip_address(text: &str, definition: &ChannelDefinition) -> String {
     }
     output.push_str(&text[cursor..]);
     output.trim().to_owned()
+}
+/// Lark and Feishu replace each mention with a placeholder key such as `@_user_1`;
+/// the keys that open the message address it and carry no meaning for the agent.
+fn strip_mention_keys(text: &str) -> String {
+    let mut rest = text.trim_start();
+    while let Some(after) = rest.strip_prefix("@_user_") {
+        let digits = after.bytes().take_while(u8::is_ascii_digit).count();
+        let tail = &after[digits..];
+        if digits == 0
+            || tail
+                .chars()
+                .next()
+                .is_some_and(|next| !next.is_whitespace())
+        {
+            break;
+        }
+        rest = tail.trim_start();
+    }
+    rest.trim_end().to_owned()
 }
 pub(super) fn bounded(value: &str, max: usize) -> &str {
     let mut end = value.len().min(max);

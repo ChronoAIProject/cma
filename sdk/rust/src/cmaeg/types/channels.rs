@@ -347,6 +347,9 @@ pub enum Source {
     NyxidRelay {
         /// Wire field `admission`.
         admission: AdmissionPolicy,
+        /// Wire field `bot_id`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        bot_id: Option<String>,
         /// Wire field `bot_username`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         bot_username: Option<String>,
@@ -360,6 +363,9 @@ pub enum Source {
         platform: Platform,
         /// Wire field `route_ids`.
         route_ids: Vec<String>,
+        /// Wire field `trust_normalized`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        trust_normalized: Option<bool>,
     },
     /// Wire variant `custom`.
     #[serde(rename = "custom")]
@@ -384,6 +390,9 @@ pub enum SourceRequest {
     NyxidRelay {
         /// Wire field `admission`.
         admission: AdmissionPolicy,
+        /// Wire field `bot_id`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        bot_id: Option<String>,
         /// Wire field `bot_username`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         bot_username: Option<String>,
@@ -395,6 +404,9 @@ pub enum SourceRequest {
         platform: Platform,
         /// Wire field `route_ids`.
         route_ids: Vec<String>,
+        /// Wire field `trust_normalized`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        trust_normalized: Option<bool>,
     },
     /// Wire variant `custom`.
     #[serde(rename = "custom")]
