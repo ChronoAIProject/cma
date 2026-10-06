@@ -1607,3 +1607,13 @@ connection disabled after migration: its retained runtime continues credential
 renewal independently. Do not enable a connection whose route was retired;
 that operation remains denied and retries under the existing worker semantics,
 which blocks scheduled rotation until the pending operation is resolved.
+
+### Opaque gateway connection record storage
+
+The service-authenticated `/api/v1/gateway/connection-records` namespace uses the
+same bounded opaque blob, majority persistence and optimistic concurrency
+contract as channel records, in the separate `gateway_connection_records`
+collection. CMA does not deserialize platform setup state or platform
+credentials. The gateway alone encrypts and interprets these records. The
+existing `cma:gateway:records` capability covers the namespace; no new shared
+credential, Secret Manager dependency or user credential store is introduced.

@@ -1215,3 +1215,92 @@ Generated from the reviewed OpenAPI snapshot; effective paths include its server
 | `POST /v1/events/{event_ref}/typing` | `sendTyping` |
 | `POST /v1/messages/{message_ref}/update` | `updateMessage` |
 <!-- openapi-operations:end -->
+
+## Platform connections and optional management capabilities
+
+Platform connection setup belongs to Agent Event Gateway. Agent providers keep
+user sign-in, authorization delegation, conversation logic, worker profiles and
+agent lifecycle. The gateway never retains an end user's NyxID access/refresh
+token. It retains platform credentials only inside encrypted gateway records.
+A provider must establish the association between the authenticated user and the
+verified originating source actor before combining that user's bearer with the
+originating channel's agent credential. Channel ownership alone does not prove
+this association: a shared assistant channel can serve many different users.
+
+`GET /v1/channel-capabilities` describes supported platforms, connection methods
+and optional capabilities. Telegram supports connecting an existing bot token
+or native managed creation. Bot Management Mode is an additional capability of
+an ordinary bot, not an exclusive replacement for a normal conversational bot.
+The owner enables it in official @BotFather; the gateway discovers it through
+`getMe.can_manage_bots`. No public API claims to enable that mode silently.
+
+The provider-facing connection operations are generic:
+
+| Operation | Contract |
+| --- | --- |
+| `POST /v1/channel-connections` | Creator bearer plus `X-CMAEG-Agent-Authorization: Bearer …`; body contains a caller-reserved UUID v4 `record_id`, original `event_ref` and optional `suggested_name`. Both the channel agent and the digest-verified private human event are checked. |
+| `GET /v1/channel-connections/{connection_ref}` | Owner-scoped status, label, optional public entry URL and gateway setup URL; no platform credentials. |
+| `GET /v1/channel-connections` | Owner-scoped ready connections with bounded cursor pagination. |
+| `DELETE /v1/channel-connections/{connection_ref}` | Cancel an unbound operation. A live matching channel must be deleted through channel management first. |
+
+Organization ownership uses the existing `X-CMAEG-Owner` header and current
+NyxID organization authorization. Cross-owner or cross-owner-kind reads and
+cancellation return 404. A repeated create must use the same record ID, event
+and parameters; changing the retained request conflicts. Public status values
+are `draft`, `awaiting_platform`, `ready`, `cancelled`, and `expired`.
+
+The `setup_url` opens the gateway's `/connect` interface. It offers an existing
+bot or a new managed bot and separately offers optional management capability.
+The short-lived link exchanges for a Secure, HttpOnly, SameSite browser
+capability and redirects to a clean path. GETs, including platform link previews,
+do not claim the operation. An explicit same-origin, CSRF-checked POST claims
+that browser; later cancellation, expiry or nonce replacement revokes it.
+Platform tokens are submitted directly to the gateway by POST, never through
+an agent prompt, CMA API field, query string or browser persistent storage.
+
+For managed creation the complete flow is:
+
+1. The provider authenticates the end user, selects personal or organization
+   ownership and retains the exact source-actor association in its own custody.
+2. The provider starts the generic connection operation and sends its setup URL.
+3. The user selects new-bot creation on the gateway page. The gateway verifies
+   the originating bot's management capability and reserves one pending request
+   for that manager/source actor in durable storage.
+4. The gateway sends Telegram's native `request_managed_bot` reply keyboard in
+   the verified private chat. Telegram asks the user to confirm creation.
+5. A verified `managed_bot_created` service message identifies the new bot.
+   Neither that message nor `managed_bot` echoes `request_id`; the gateway uses
+   the durable manager/actor reservation, creation time, message ordering and
+   immutable receipt to prevent concurrent requests from adopting one another's
+   result. A generic `managed_bot` owner/token update is not creation consent.
+6. The gateway reads the child's token with `getManagedBotToken`, verifies the
+   exact child identity with `getMe` and retains the credential encrypted. It
+   never rotates a token as a retry strategy. If the user requested management
+   on the child, readiness waits for Telegram to report that capability.
+7. A durable `gateway.connection.ready` notification wakes the original provider
+   conversation. It retains the originating actor ID and conversation but uses
+   a system actor. Its body contains only `connection_ref` and status. Retries
+   preserve the same event reference and idempotency identity. Providers treat
+   it as status evidence, never as new human permission to provision resources.
+8. After its own resource review/consent, the provider creates the channel with
+   `connection_ref`, generic `connection_admission`, and `sources: []`. The
+   gateway resolves the private source and credential. Creator-supplied platform
+   sources or credentials cannot override the connection. The provider supplies
+   its normal profile/target, partition, reply policy and agent credential.
+9. The gateway reserves the binding durably, verifies webhook ownership and
+   activates the child's native webhook before returning ready creation. It
+   refuses to replace a different existing webhook silently. Future text and
+   interactions use the same neutral event/reply protocol as other channels.
+
+The existing creation bot can retain a NyxID relay ingress while the gateway
+sends its native creation button; the verified service message arrives through
+that relay. New child connections use the gateway's native Telegram transport.
+No NyxBot manager, agent or creation API participates. The platform's one-webhook
+rule still applies: an unrelated registration service must not re-register a
+webhook for a gateway-owned child connection.
+
+Connection references are immutable on a bound channel. Generic updates retain
+the opaque reference and supply the new `connection_admission`; platform secrets
+remain gateway-owned. Deletion removes only the exact retained gateway webhook,
+unbinds the provider and releases the connection reservation. Recovery never
+removes another integration's webhook or borrows another owner's credential.
