@@ -1,8 +1,8 @@
 //! Channel definitions and their stateless gateway policy.
 
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{collections::BTreeSet, fmt, str::FromStr};
+use std::{collections::BTreeSet, str::FromStr};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use utoipa::ToSchema;
 
@@ -13,6 +13,9 @@ use crate::{
 };
 
 mod platform;
+mod secrets;
+mod telegram;
+pub use secrets::{ChannelSecrets, Secret};
 mod validation;
 pub use platform::Platform;
 pub(crate) use validation::validate_https_url;
@@ -86,6 +89,12 @@ impl ProviderTarget {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 pub enum Source {
+    Telegram {
+        bot_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        bot_username: Option<String>,
+        admission: AdmissionPolicy,
+    },
     NyxidRelay {
         issuer: String,
         jwks_url: String,
@@ -190,48 +199,6 @@ pub enum Sink {
     Sync {},
 }
 
-/// A secret that only appears in the encrypted channel blob.
-#[derive(Clone, PartialEq, Eq, ToSchema)]
-#[schema(value_type = String)]
-pub struct Secret(String);
-
-impl Secret {
-    pub fn new(value: impl Into<String>) -> Self {
-        Self(value.into())
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Debug for Secret {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("[redacted]")
-    }
-}
-
-impl<'de> Deserialize<'de> for Secret {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        Ok(Self(String::deserialize(deserializer)?))
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ChannelSecrets {
-    pub agent_key_hash: String,
-    #[serde(default, skip_serializing)]
-    pub channel_key: Option<Secret>,
-    #[serde(default, skip_serializing)]
-    pub hmac_secrets: Vec<(String, Secret)>,
-    #[serde(default, skip_serializing)]
-    pub provider_credential: Option<Secret>,
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ChannelDefinition {
@@ -246,6 +213,8 @@ pub struct ChannelDefinition {
     pub profile_digest: String,
     pub provider: ProviderBinding,
     pub sources: Vec<Source>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection_ref: Option<String>,
     pub partition: PartitionRule,
     pub reply: ReplyPolicy,
     #[serde(default, skip_serializing)]
@@ -273,6 +242,9 @@ impl ChannelDefinition {
             ));
         }
         require_string(&self.name, "/name", 0, 80)?;
+        if let Some(reference) = &self.connection_ref {
+            require_string(reference, "/connection_ref", 1, 4096)?;
+        }
         self.provider.target.validate()?;
         self.profile.validate().map_err(|error| {
             ValidationError::new(format!("/profile{}", error.pointer), error.message)
@@ -295,6 +267,25 @@ impl ChannelDefinition {
         for (index, source) in self.sources.iter().enumerate() {
             let pointer = format!("/sources/{index}");
             match source {
+                Source::Telegram {
+                    bot_id,
+                    bot_username,
+                    admission,
+                } => {
+                    if !variants.insert("telegram") {
+                        return Err(ValidationError::new(
+                            &pointer,
+                            "source variant is duplicated",
+                        ));
+                    }
+                    telegram::validate(
+                        bot_id,
+                        bot_username.as_deref(),
+                        admission,
+                        &self.secrets,
+                        &pointer,
+                    )?;
+                }
                 Source::NyxidRelay {
                     issuer,
                     jwks_url,
@@ -414,6 +405,8 @@ impl ChannelDefinition {
                 json!([key, secret.as_str()])
             }).collect::<Vec<_>>(),
             "provider_credential": self.secrets.provider_credential.as_ref().map(Secret::as_str),
+            "telegram_bot_token": self.secrets.telegram_bot_token.as_ref().map(Secret::as_str),
+            "telegram_webhook_secret": self.secrets.telegram_webhook_secret.as_ref().map(Secret::as_str),
         }));
         Value::Object(object)
     }
@@ -446,7 +439,7 @@ impl PartitionRule {
             .any(|source| matches!(source, Source::Custom { .. }));
         let has_relay = sources
             .iter()
-            .any(|source| matches!(source, Source::NyxidRelay { .. }));
+            .any(|source| matches!(source, Source::NyxidRelay { .. } | Source::Telegram { .. }));
         if has_custom
             && !matches!(
                 self.key,
@@ -471,7 +464,7 @@ impl PartitionRule {
         if matches!(self.key, PartitionKey::Thread) && !has_relay {
             return Err(ValidationError::new(
                 "/partition/key",
-                "requires a NyxID relay source",
+                "requires a chat source",
             ));
         }
         Ok(())

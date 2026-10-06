@@ -6,7 +6,8 @@ pub mod jwks;
 mod jwt;
 mod lark;
 pub mod payload;
-mod telegram;
+pub(crate) mod telegram;
+mod telegram_managed;
 pub mod verify;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

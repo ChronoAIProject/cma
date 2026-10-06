@@ -2,7 +2,6 @@
 use super::problems::{problem, protocol_headers};
 use crate::ingress::{
     admission::{admit, AdmissionFacts, Refusal},
-    launch::LaunchOutcome,
     relay::{
         activity::launch_request,
         facts::{observe, Observation},
@@ -209,7 +208,7 @@ pub async fn callback(
     }
     let callback = facts.callback.clone();
     let route = verified.payload.conversation.id.clone();
-    let mut request = match launch_request(
+    let request = match launch_request(
         channel,
         platform,
         verified,
@@ -223,78 +222,12 @@ pub async fn callback(
             return problem(StatusCode::BAD_REQUEST, ProblemCode::InvalidRequest, reason)
         }
     };
-    if let Some(callback) = callback {
-        let Some(store) = &state.interactions else {
-            return refused(Refusal::InteractiveActionUnsupported);
-        };
-        let interaction = match store
-            .consume(
-                &request.channel,
-                &request.activity,
-                &route,
-                &callback.id,
-                &callback.data,
-                &callback.message_id,
-            )
-            .await
-        {
-            Ok(value) => value,
-            Err(crate::interactions::Error::Denied) => {
-                return refused(Refusal::InteractionExpiredOrInvalid)
-            }
-            Err(crate::interactions::Error::Unavailable) => {
-                return problem(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    ProblemCode::ProviderUnavailable,
-                    "interaction_store_unavailable",
-                )
-            }
-        };
-        request.activity.kind = cmaeg_core::activity::ActivityKind::Interaction(interaction.0);
-        request.activity.occurred_at = interaction.1;
-        let Ok(mut opened) = request.event_ref.open(&state.master_keys, now) else {
-            return invalid(VerificationError("event_ref_invalid"));
-        };
-        opened.payload.activity_sha256 = Some(cmaeg_core::seal::event_ref::activity_digest(
-            &request.activity,
-        ));
-        let Ok(reference) = cmaeg_core::seal::EventRef::seal(&opened.payload, &state.master_keys)
-        else {
-            return invalid(VerificationError("event_ref_invalid"));
-        };
-        request.event_ref = reference;
-    }
     verify_span.record("event_id", request.activity.event_id.as_str());
     drop(verify_time);
-    request.timing = Some(timing);
-    let event_id = request.activity.event_id.to_string();
-    let conversation_id = request.conversation_id.to_string();
-    match state.launcher.launch(request).await {
-        LaunchOutcome::Accepted { .. } | LaunchOutcome::Deferred => (
-            StatusCode::ACCEPTED,
-            Json(CallbackResponse::Accepted {
-                event_id,
-                conversation_id,
-            }),
-        )
-            .into_response(),
-        LaunchOutcome::Refused(error) => {
-            let retry = error.code == ProblemCode::ProviderBusy;
-            let mut response = problem(
-                StatusCode::from_u16(error.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
-                error.code,
-                error.detail.unwrap_or_default(),
-            );
-            if retry {
-                response
-                    .headers_mut()
-                    .insert(header::RETRY_AFTER, HeaderValue::from_static("2"));
-            }
-            response
-        }
-    }
+    super::chat_dispatch::dispatch(state, request, callback, route, timing, now).await
 }
-fn refused(reason: Refusal) -> Response {
+
+pub(crate) fn refused(reason: Refusal) -> Response {
     let mut response = (
         StatusCode::ACCEPTED,
         Json(CallbackResponse::Refused { reason }),
@@ -309,14 +242,14 @@ fn refused(reason: Refusal) -> Response {
     response.extensions_mut().insert(RefusalReason(label));
     response
 }
-fn invalid(error: VerificationError) -> Response {
+pub(crate) fn invalid(error: VerificationError) -> Response {
     problem(
         StatusCode::UNAUTHORIZED,
         ProblemCode::CallbackInvalid,
         error.0,
     )
 }
-fn too_large() -> Response {
+pub(crate) fn too_large() -> Response {
     problem(
         StatusCode::PAYLOAD_TOO_LARGE,
         ProblemCode::PayloadTooLarge,

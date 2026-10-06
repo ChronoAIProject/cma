@@ -23,6 +23,7 @@ use utoipa::OpenApi;
         http::management::test_channel,
         http::management::rekey_channel,
         http::callbacks::callback,
+        http::telegram::callback,
         http::events::receive_event,
         http::tools::reply_to_event,
         http::tools::update_message,

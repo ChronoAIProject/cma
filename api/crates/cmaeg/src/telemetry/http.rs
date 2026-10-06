@@ -40,6 +40,7 @@ async fn observe(mut request: Request, next: Next) -> Response {
     let span = tracing::info_span!("cmaeg.request", request_id, route);
     let source = match route.as_str() {
         "/v1/callbacks/{channel_id}" => Some("nyxid_relay"),
+        "/v1/telegram/{channel_id}" => Some("telegram"),
         "/v1/channels/{channel_id}/events" => Some("custom"),
         _ => None,
     };
