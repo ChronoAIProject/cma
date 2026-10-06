@@ -11,7 +11,10 @@ use utoipa::ToSchema;
 pub struct CreateBotBody {
     pub event_worker_profile: Option<ProfileRef>,
     pub name: String,
+    #[serde(default)]
     pub nyxid_bot_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub connection_ref: Option<String>,
     pub profile: ProfileRef,
     pub sandbox_profile: Option<ProfileRef>,
     pub workspace_profile: Option<ProfileRef>,
@@ -70,6 +73,7 @@ impl CreateBotBody {
             }),
             name: self.name,
             external_bot_id: self.nyxid_bot_id,
+            connection_ref: self.connection_ref,
             profile: AgentProfileRef {
                 id: AgentProfileId(self.profile.id),
                 revision: self.profile.revision,
@@ -102,7 +106,10 @@ pub struct BotView {
     pub bot_id: String,
     pub owner: String,
     pub name: String,
+    #[serde(default)]
     pub nyxid_bot_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub connection_ref: Option<String>,
     pub profile: ProfileRef,
     pub sandbox_profile: ProfileRef,
     pub workspace_profile: ProfileRef,
@@ -190,6 +197,7 @@ impl From<Bot> for BotView {
             owner: bot.owner.to_string(),
             name: bot.request.name,
             nyxid_bot_id: bot.request.external_bot_id,
+            connection_ref: bot.request.connection_ref,
             profile: ProfileRef {
                 id: bot.request.profile.id.0,
                 revision: bot.request.profile.revision,

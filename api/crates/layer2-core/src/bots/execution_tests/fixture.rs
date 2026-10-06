@@ -101,7 +101,12 @@ impl BotExternal for External {
                 event_url: "https://gateway.example/events".into(),
             },
             agent_key_hash: secrets.agent.sha256(),
-            route_key_id: bot.resources.credentials.route_key_id.clone().unwrap(),
+            route_key_id: bot
+                .resources
+                .credentials
+                .route_key_id
+                .clone()
+                .unwrap_or_default(),
             route_ids: vec![],
         };
         remote.channel = Some(observation.clone());
@@ -138,7 +143,7 @@ impl BotExternal for External {
         );
         next.channel.version += 1;
         next.agent_key_hash = keys.agent_key_hash.clone().unwrap();
-        next.route_key_id = keys.route_key_id.clone().unwrap();
+        next.route_key_id = keys.route_key_id.clone().unwrap_or_default();
         next.route_ids = bot.resources.route_id.iter().cloned().collect();
         remote.provider_hash = Some(next.agent_key_hash.clone());
         if std::mem::take(&mut remote.partial_binding) {
@@ -214,6 +219,9 @@ pub(super) struct Fixture {
 }
 impl Fixture {
     pub async fn new() -> Self {
+        Self::with_request(tests::input()).await
+    }
+    pub async fn with_request(request: CreateBot) -> Self {
         let store = Arc::new(InMemoryBotStore::default());
         let service = BotService::new(
             store.clone(),
@@ -223,7 +231,7 @@ impl Fixture {
         let external = Arc::new(External::default());
         let worker = BotWorker::new(service.clone(), external.clone(), "worker".into());
         let bot = service
-            .create(&tests::caller("owner"), "creation", tests::input())
+            .create(&tests::caller("owner"), "creation", request)
             .await
             .unwrap();
         Self {
