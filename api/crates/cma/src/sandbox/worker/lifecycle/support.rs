@@ -124,7 +124,7 @@ impl SandboxWorker {
         .await
     }
 
-    pub(super) async fn handle_lifecycle_failure(
+    pub(in crate::sandbox::worker) async fn handle_lifecycle_failure(
         &self,
         sandbox: Sandbox,
         failure: WorkerFailure,
