@@ -633,7 +633,9 @@ remain required.
 - External checkpoint bytes use the existing chrono-storage bucket
   `chrono-platform-bot`, not a renamed GridFS bucket. Verify the machine identity
   can upload, read and delete exact objects through the platform proxy and that
-  DELETE is independently confirmed by GET 404. Metadata remains in MongoDB.
+  versioned DELETE returns the durable fence receipt described below. Verify
+  GET 404 and rejection of a delayed upload on a disposable object. Metadata
+  remains in MongoDB.
 - The provider-facing model endpoint and baseline services must be usable for a
   fresh visitor. A successful admin account test does not establish that fact.
 - Build, label, scan and inspect all three immutable image digests. Check the
@@ -1045,25 +1047,49 @@ leaves less than ten minutes for the remaining work and does not guarantee every
 large home can finish. Periodic capture claims renew every minute; the explicit
 lifecycle worker retains its configured 31-minute lease. Timeout preserves
 writer-recovery and cleanup authority rather than claiming publication.
+If lifecycle publication loses a revision comparison, the finished worker
+re-reads the aggregate and schedules a short retry only while its exact lease,
+operation, runtime, credential and status are unchanged. Concurrent metadata is
+preserved; a successor worker's lease is never released. An unrelated metadata
+write must not leave the Sandbox waiting for the full capture lease to expire.
 
 Publish only after bounded upload, size/digest verification and readable bytes.
 Use immutable physical object identities so cleanup of a losing upload cannot
-delete a concurrent winner. Retention preserves the two recorded checkpoints
-and does not remove an active recovery reference. Record deletion intent in the
+delete a concurrent winner. Retention keeps the latest completed checkpoint
+(accepting legacy two-generation records until replacement) and does not remove
+an active recovery reference. Record deletion intent in the
 same transaction that removes publication authority, then perform bounded HTTP
 cleanup after commit. Never keep a Mongo transaction open around external HTTP.
 
-A DELETE followed by GET 404 is necessary but insufficient while an earlier
-ambiguous upload can still finish. The client upload deadline is not a remote
-write-lifetime guarantee. Retain minimal `checkpoint_archive_tombstones`
-indefinitely for uncertain stages, containing only the exact opaque physical
-key, schema version and bounded retry state. Confirmed absence permits Sandbox
-purge to finish, but never relinquishes cleanup ownership of that key. Recheck
-with exponential backoff from one minute to one hour, in bounded pages, so a
-write arriving after any client deadline is still reclaimable. Restart must
-resume this cleanup; timeout or lost response must not silently erase the only
-record of an orphan. No tombstone contains credential fields. Final external
-storage and delayed-upload cleanup evidence remains a required deployment gate.
+A DELETE followed by GET 404 is insufficient while an earlier ambiguous upload
+can still finish. The client upload deadline is not a remote write-lifetime
+guarantee. Production cleanup uses chrono-storage's versioned deletion through
+`DELETE .../objects?key=<opaque-key>&mutationGeneration=2`; query transport
+survives the NyxID proxy's header filtering. Immutable UUID keys are never reused.
+Generation 2 supersedes legacy uploads (generation 0) and generation 1 uploads.
+Every part must be fenced before the manifest, with four concurrent requests.
+Accept completion only from a successful, bounded JSON response containing
+`error: null` and `data: {deleted: true, generation: 2, fenceVersion: 1}`. A plain
+204, missing receipt, wrong generation, timeout or partial success retains
+deletion work. Replaying the same fenced delete is idempotent.
+
+Existing `checkpoint_archive_tombstones` settle through this same operation.
+Once all keys are fenced, retain their immutable identity for historical
+references, set `deletion_fenced_at`, and remove `next_attempt_at`. They no
+longer generate recurring storage calls, including after restart. Newly fenced
+uncertain stages can complete without creating a retry tombstone. Backends that
+can only establish observed absence still retain and retry uncertain stages
+with bounded exponential backoff; elapsed time alone never settles them.
+No cleanup record contains credentials. Before deployment, verify delayed legacy
+and generation 1 uploads are rejected after deletion through the real proxy.
+
+The 2026-10-06 investigation measured 4,292,528 storage requests in seven days
+from `chrono-bot-storage`. The old cleanup path repeatedly deleted and read back
+already absent objects: 1,023 retry records described 52,893 physical keys, or
+105,786 DELETE/GET calls per complete pass before retries. This count describes
+the amplification mechanism, not an attribution of every measured request.
+After rollout, a final bounded pass must fence the existing keys; verify pending
+records drain and storage requests fall before claiming the incident resolved.
 
 ## Rollback And Alerts
 
