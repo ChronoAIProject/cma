@@ -31,6 +31,13 @@ pub(crate) trait CheckpointBlobStore: Send + Sync {
         size: u64,
     ) -> Result<CheckpointArchiveDownload>;
     async fn delete(&self, key: &str) -> Result<()>;
+
+    /// True only when storage durably rejects later writes to every owned key.
+    /// Observed absence alone cannot settle an uncertain upload.
+    async fn finalize_delete(&self, key: &str) -> Result<bool> {
+        self.delete(key).await?;
+        Ok(false)
+    }
 }
 
 #[derive(Clone)]
@@ -134,9 +141,64 @@ impl CheckpointBlobStore for ChronoStorage {
         }
         self.delete_object(key).await
     }
+
+    async fn finalize_delete(&self, key: &str) -> Result<bool> {
+        if let Some(size) = multipart::size_from_key(key)? {
+            stream::iter(0..size.div_ceil(multipart::PART_BYTES as u64))
+                .map(|index| async move {
+                    self.fence_deleted_object(&multipart::part_key(key, index))
+                        .await
+                })
+                .buffer_unordered(4)
+                .try_collect::<Vec<_>>()
+                .await?;
+        }
+        self.fence_deleted_object(key).await?;
+        Ok(true)
+    }
 }
 
 impl ChronoStorage {
+    async fn fence_deleted_object(&self, key: &str) -> Result<()> {
+        // CMA allocates immutable UUID object keys. Generation 2 permanently
+        // supersedes their legacy writes (generation 0) and fenced writes (1).
+        // Query transport survives the NyxID proxy's header filtering.
+        let response = self
+            .http
+            .delete(self.objects.clone())
+            .query(&[("key", key), ("mutationGeneration", "2")])
+            .bearer_auth(self.tokens.token().await?)
+            .send()
+            .await
+            .map_err(|_| unavailable("checkpoint deletion fence is unconfirmed"))?;
+        if !response.status().is_success() {
+            return Err(unavailable("checkpoint deletion fence was rejected"));
+        }
+        let mut bytes = Vec::new();
+        let mut body = response.bytes_stream();
+        while let Some(chunk) = body.next().await {
+            let chunk =
+                chunk.map_err(|_| unavailable("checkpoint deletion receipt was interrupted"))?;
+            if bytes.len().saturating_add(chunk.len()) > 16 * 1024 {
+                return Err(rejected("checkpoint deletion receipt exceeds its bound"));
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        let receipt: serde_json::Value = serde_json::from_slice(&bytes)
+            .map_err(|_| unavailable("checkpoint deletion receipt is invalid"))?;
+        let data = &receipt["data"];
+        if !receipt.get("error").is_some_and(serde_json::Value::is_null)
+            || data["deleted"] != true
+            || data["generation"] != 2
+            || data["fenceVersion"] != 1
+        {
+            return Err(unavailable(
+                "checkpoint storage did not confirm a durable deletion fence",
+            ));
+        }
+        Ok(())
+    }
+
     async fn delete_object(&self, key: &str) -> Result<()> {
         let response = self
             .http
