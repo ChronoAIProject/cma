@@ -123,7 +123,8 @@ pub async fn update(
     channel_id: &ChannelId,
     mut request: ChannelUpdateRequest,
 ) -> Result<LoadedChannel, ManagementError> {
-    let _guard = state.mutation_guard(channel_id.as_str()).await;
+    let pointer = open_pointer(state, channel_id)?;
+    let _guard = state.mutation_guard(pointer.record_id.as_str()).await;
     let current = load(state, creator, channel_id).await?;
     crate::connections::binding::expand_update(
         state,
@@ -205,7 +206,8 @@ pub async fn delete(
     channel_id: &ChannelId,
     expected_version: u64,
 ) -> Result<(), ManagementError> {
-    let _guard = state.mutation_guard(channel_id.as_str()).await;
+    let pointer = open_pointer(state, channel_id)?;
+    let _guard = state.mutation_guard(pointer.record_id.as_str()).await;
     let current = load(state, creator, channel_id).await?;
     if current.record.version != expected_version {
         return Err(ManagementError::Conflict {
@@ -250,7 +252,8 @@ pub async fn delete(
 }
 
 pub async fn rekey(state: &ManagementState, channel_id: &ChannelId) -> Result<u8, ManagementError> {
-    let _guard = state.mutation_guard(channel_id.as_str()).await;
+    let pointer = open_pointer(state, channel_id)?;
+    let _guard = state.mutation_guard(pointer.record_id.as_str()).await;
     let loaded = load_unowned(state, channel_id).await?;
     state.resolver.invalidate(channel_id.as_str());
     let mut definition = loaded.definition;
@@ -275,10 +278,10 @@ pub async fn rekey(state: &ManagementState, channel_id: &ChannelId) -> Result<u8
     Ok(state.master_keys.current_kid())
 }
 
-async fn load_unowned(
+fn open_pointer(
     state: &ManagementState,
     channel_id: &ChannelId,
-) -> Result<LoadedChannel, ManagementError> {
+) -> Result<ChannelPointer, ManagementError> {
     let pointer = ChannelPointer::open_id(channel_id, state.master_keys.as_ref())
         .map_err(|error| match error {
             OpenError::Format | OpenError::WrongKind => ManagementError::Invalid(
@@ -296,6 +299,14 @@ async fn load_unowned(
     {
         return Err(ManagementError::NotFound);
     }
+    Ok(pointer)
+}
+
+async fn load_unowned(
+    state: &ManagementState,
+    channel_id: &ChannelId,
+) -> Result<LoadedChannel, ManagementError> {
+    let pointer = open_pointer(state, channel_id)?;
     let record = state
         .records
         .get(&pointer.record_url)

@@ -3,11 +3,15 @@ pub(crate) mod binding;
 mod completion;
 pub mod model;
 mod platform;
+#[cfg(test)]
+mod platform_tests;
 mod recovery;
+mod retry;
 pub(crate) mod service;
 pub mod store;
 #[cfg(test)]
 mod tests;
+mod webhook;
 pub use service::ConnectionService;
 
 #[derive(Debug)]

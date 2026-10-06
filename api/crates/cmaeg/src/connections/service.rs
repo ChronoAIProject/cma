@@ -109,6 +109,8 @@ impl ConnectionService {
             material: None,
             channel_record: None,
             channel_id: None,
+            webhook_retiring: false,
+            webhook_lease: None,
             notified: false,
             completion_ref: None,
         };
@@ -144,7 +146,9 @@ impl ConnectionService {
         let mut items = Vec::new();
         for head in heads {
             match self.owned(owner, &head.record_id).await {
-                Ok((record, _)) if record.status == Status::Ready => {
+                Ok((record, _))
+                    if record.status == Status::Ready && record.channel_record.is_none() =>
+                {
                     items.push(self.view(&record)?)
                 }
                 Ok(_) | Err(Error::NotFound) => {}
@@ -158,17 +162,20 @@ impl ConnectionService {
         if record.channel_record.is_some() && self.channel_exists(&record).await? {
             return Err(Error::Conflict);
         }
-        self.remove_orphan_webhook(&record).await?;
         record.status = Status::Cancelled;
         record.browser_nonce = None;
-        record.channel_record = None;
-        record.channel_id = None;
+        record.webhook_retiring |= record.channel_record.is_some()
+            || record.channel_id.is_some()
+            || record.webhook_lease.is_some();
         self.store.save_connection(&record, Some(version)).await?;
-        if let Some(material) = &record.material {
-            self.store
-                .release_bot_claim(&material.bot_id, &record.owner, &record.id)
-                .await?;
+        if record.webhook_retiring {
+            match self.reconcile_webhook_retirement(id).await {
+                Ok(()) | Err(Error::Conflict) => {}
+                Err(error) => return Err(error),
+            }
         }
+        self.reconcile_terminal_claim(&self.store.connection(id).await?.0)
+            .await?;
         Ok(())
     }
     pub fn view(&self, record: &Connection) -> Result<ConnectionView, Error> {

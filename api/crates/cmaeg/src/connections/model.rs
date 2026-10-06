@@ -38,9 +38,28 @@ pub struct Connection {
     pub channel_record: Option<String>,
     #[serde(default)]
     pub channel_id: Option<String>,
+    #[serde(default)]
+    pub webhook_retiring: bool,
+    #[serde(default)]
+    pub webhook_lease: Option<WebhookLease>,
     pub notified: bool,
     #[serde(default)]
     pub completion_ref: Option<String>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WebhookLease {
+    pub nonce: String,
+    pub expires_at: i64,
+    pub kind: WebhookOperation,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WebhookOperation {
+    Activate,
+    Retire,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -85,6 +104,10 @@ pub struct Pending {
     pub created_at: i64,
     pub expires_at: i64,
     pub prompt_message: Option<i64>,
+    #[serde(default)]
+    pub suggested_name: Option<String>,
+    #[serde(default)]
+    pub suggested_username: Option<String>,
     pub receipt: Option<Receipt>,
 }
 

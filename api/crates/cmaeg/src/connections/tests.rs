@@ -57,12 +57,16 @@ struct Peer {
     channels: Mutex<BTreeMap<String, Retained>>,
     requests: Mutex<Vec<Value>>,
     lose_next_put: AtomicBool,
-    lose_next_delete: AtomicBool,
+    lose_next_put_for: Mutex<Option<String>>,
+    pause_next_mutation: AtomicBool,
+    pause_next_mutation_for: Mutex<Option<String>>,
+    mutation_started: tokio::sync::Notify,
+    resume_mutation: tokio::sync::Notify,
 }
-struct Fixture {
+pub(super) struct Fixture {
     base: String,
     peer: Arc<Peer>,
-    keys: Arc<MasterKeyRing>,
+    pub(super) keys: Arc<MasterKeyRing>,
     server: tokio::task::JoinHandle<()>,
 }
 impl Drop for Fixture {
@@ -71,7 +75,7 @@ impl Drop for Fixture {
     }
 }
 impl Fixture {
-    async fn new() -> Self {
+    pub(super) async fn new() -> Self {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
         let peer = Arc::new(Peer::default());
@@ -93,13 +97,13 @@ impl Fixture {
             server,
         }
     }
-    fn records(&self) -> RecordClient {
+    pub(super) fn records(&self) -> RecordClient {
         RecordClient::new(&self.base, SERVICE_TOKEN).unwrap()
     }
-    fn store(&self) -> Store {
+    pub(super) fn store(&self) -> Store {
         Store::new(self.records(), self.keys.clone())
     }
-    fn service(&self) -> ConnectionService {
+    pub(super) fn service(&self) -> ConnectionService {
         let providers = Arc::new(
             ProviderClient::new(
                 ProviderRegistry::parse("[]").unwrap(),
@@ -134,19 +138,48 @@ impl Fixture {
         };
         ConnectionService::new(management, tools)
     }
+    pub(super) fn retain_channel(
+        &self,
+        definition: &cmaeg_core::channel::ChannelDefinition,
+    ) -> cmaeg_core::ids::ChannelId {
+        let pointer = cmaeg_core::seal::ChannelPointer {
+            v: 1,
+            record_id: definition.record_id.clone(),
+            record_url: self
+                .records()
+                .record_url(definition.record_id.as_str())
+                .unwrap()
+                .to_string(),
+        };
+        self.peer.channels.lock().unwrap().insert(
+            definition.record_id.to_string(),
+            Retained {
+                owner: definition.owner.subject.clone(),
+                version: 1,
+                blob: STANDARD.encode(
+                    seal_blob(&self.keys, definition.to_blob_json().to_string().as_bytes())
+                        .unwrap(),
+                ),
+            },
+        );
+        pointer.seal_id(&self.keys).unwrap()
+    }
+    pub(super) fn forget_channel(&self, record_id: &str) {
+        self.peer.channels.lock().unwrap().remove(record_id);
+    }
 }
 
 fn keys(byte: u8) -> Arc<MasterKeyRing> {
     Arc::new(MasterKeyRing::parse(&format!("1:{}", STANDARD.encode([byte; 32]))).unwrap())
 }
-fn owner(subject: &str, organization: bool) -> Creator {
+pub(super) fn owner(subject: &str, organization: bool) -> Creator {
     Creator {
         subject: subject.into(),
         token_hash: "fixture-authenticated-digest".into(),
         organization,
     }
 }
-fn connection(subject: &str, organization: bool) -> Connection {
+pub(super) fn connection(subject: &str, organization: bool) -> Connection {
     let timestamp = now();
     Connection {
         id: uuid::Uuid::new_v4().to_string(),
@@ -188,6 +221,8 @@ fn connection(subject: &str, organization: bool) -> Connection {
         setup_nonce: "fixture-private-start-nonce".into(),
         browser_nonce: Some("fixture-private-browser-nonce".into()),
         browser_claimed: true,
+        webhook_retiring: false,
+        webhook_lease: None,
         requested_manager: false,
         material: Some(Material {
             bot_id: "9901".into(),
@@ -218,6 +253,7 @@ async fn save(
     if !authenticated(&headers) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
+    before_mutation(&peer, &id).await;
     peer.requests.lock().unwrap().push(body.clone());
     let mut rows = peer.rows.lock().unwrap();
     let previous = rows.get(&id).map(|row| row.version);
@@ -230,6 +266,15 @@ async fn save(
     }
     let version = previous.unwrap_or(0) + 1;
     let subject = body["owner"].as_str().unwrap().to_owned();
+    let targeted_loss = {
+        let mut target = peer.lose_next_put_for.lock().unwrap();
+        if target.as_deref() == Some(&id) {
+            target.take();
+            true
+        } else {
+            false
+        }
+    };
     rows.insert(
         id,
         Retained {
@@ -238,7 +283,7 @@ async fn save(
             version,
         },
     );
-    if peer.lose_next_put.swap(false, Ordering::SeqCst) {
+    if peer.lose_next_put.swap(false, Ordering::SeqCst) || targeted_loss {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     }
     Json(json!({"version":version})).into_response()
@@ -278,6 +323,7 @@ async fn delete(
     if !authenticated(&headers) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
+    before_mutation(&peer, &id).await;
     let mut rows = peer.rows.lock().unwrap();
     let Some(current) = rows.get(&id) else {
         return StatusCode::NOT_FOUND.into_response();
@@ -294,10 +340,24 @@ async fn delete(
             .into_response();
     }
     rows.remove(&id);
-    if peer.lose_next_delete.swap(false, Ordering::SeqCst) {
-        return StatusCode::SERVICE_UNAVAILABLE.into_response();
-    }
     StatusCode::NO_CONTENT.into_response()
+}
+async fn before_mutation(peer: &Peer, id: &str) {
+    let targeted_pause = {
+        let mut target = peer.pause_next_mutation_for.lock().unwrap();
+        if target.as_deref() == Some(id) {
+            target.take();
+            true
+        } else {
+            false
+        }
+    };
+    if peer.pause_next_mutation.swap(false, Ordering::SeqCst) || targeted_pause {
+        peer.mutation_started.notify_one();
+        tokio::time::timeout(Duration::from_secs(5), peer.resume_mutation.notified())
+            .await
+            .unwrap();
+    }
 }
 async fn list(
     State(peer): State<Arc<Peer>>,
@@ -777,7 +837,7 @@ async fn cancellation_recovers_missing_or_unrelated_channel_reservations_and_rel
 }
 
 #[tokio::test]
-async fn lost_claim_delete_response_can_be_retried_without_deleting_new_owner_claim() {
+async fn lost_claim_release_response_can_be_retried_without_releasing_new_owner_claim() {
     let fixture = Fixture::new().await;
     let service = fixture.service();
     let record = connection("alice", false);
@@ -791,7 +851,8 @@ async fn lost_claim_delete_response_can_be_retried_without_deleting_new_owner_cl
         .claim_bot("9901", "alice", &record.id)
         .await
         .unwrap();
-    fixture.peer.lose_next_delete.store(true, Ordering::SeqCst);
+    *fixture.peer.lose_next_put_for.lock().unwrap() =
+        Some(index_id("platform-bot", &["telegram", "9901"]));
     assert!(matches!(
         service.cancel(&owner("alice", false), &record.id).await,
         Err(Error::Unavailable)
@@ -826,6 +887,203 @@ async fn lost_claim_delete_response_can_be_retried_without_deleting_new_owner_cl
         fixture.store().claim_bot("9901", "alice", &record.id).await,
         Err(Error::Conflict)
     ));
+}
+
+#[tokio::test]
+async fn delayed_claim_release_cannot_erase_a_reacquired_claim() {
+    let fixture = Fixture::new().await;
+    let first = uuid::Uuid::new_v4().to_string();
+    let next = uuid::Uuid::new_v4().to_string();
+    fixture
+        .store()
+        .claim_bot("9901", "alice", &first)
+        .await
+        .unwrap();
+    fixture
+        .peer
+        .pause_next_mutation
+        .store(true, Ordering::SeqCst);
+    let delayed_store = fixture.store();
+    let delayed_id = first.clone();
+    let delayed = tokio::spawn(async move {
+        delayed_store
+            .release_bot_claim("9901", "alice", &delayed_id)
+            .await
+    });
+    tokio::time::timeout(
+        Duration::from_secs(3),
+        fixture.peer.mutation_started.notified(),
+    )
+    .await
+    .unwrap();
+    // A second replica releases Alice's same claim; Bob then acquires the slot.
+    fixture
+        .store()
+        .release_bot_claim("9901", "alice", &first)
+        .await
+        .unwrap();
+    fixture
+        .store()
+        .claim_bot("9901", "bob", &next)
+        .await
+        .unwrap();
+    fixture.peer.resume_mutation.notify_one();
+    let _ = tokio::time::timeout(Duration::from_secs(3), delayed)
+        .await
+        .unwrap()
+        .unwrap();
+    fixture
+        .store()
+        .claim_bot("9901", "bob", &next)
+        .await
+        .unwrap();
+    assert!(matches!(
+        fixture.store().claim_bot("9901", "alice", &first).await,
+        Err(Error::Conflict)
+    ));
+    let (stored, version) = fixture
+        .store()
+        .load(&index_id("platform-bot", &["telegram", "9901"]))
+        .await
+        .unwrap();
+    assert!(
+        version >= 3,
+        "releasing and reclaiming must preserve monotonic revisions"
+    );
+    assert!(
+        matches!(stored,Stored::BotClaim(claim) if claim.owner=="bob" && claim.connection_id==next)
+    );
+}
+
+#[tokio::test]
+async fn cancellation_between_material_save_and_claim_releases_the_late_claim() {
+    let fixture = Fixture::new().await;
+    let mut record = connection("alice", false);
+    record.material = None;
+    fixture
+        .store()
+        .save_connection(&record, None)
+        .await
+        .unwrap();
+    let claim_id = index_id("platform-bot", &["telegram", "9901"]);
+    *fixture.peer.pause_next_mutation_for.lock().unwrap() = Some(claim_id.clone());
+    let completing = fixture.service();
+    let input = record.clone();
+    let completion = tokio::spawn(async move {
+        completing
+            .complete(
+                input,
+                1,
+                crate::telegram::BotIdentity {
+                    id: "9901".into(),
+                    username: Some("paper_fixture_bot".into()),
+                    first_name: "Paper assistant".into(),
+                    can_manage_bots: false,
+                },
+                Secret::new(CHILD_TOKEN),
+            )
+            .await
+    });
+    tokio::time::timeout(
+        Duration::from_secs(3),
+        fixture.peer.mutation_started.notified(),
+    )
+    .await
+    .unwrap();
+    let (persisted, version) = fixture.store().connection(&record.id).await.unwrap();
+    assert_eq!(version, 2);
+    assert_eq!(persisted.material.as_ref().unwrap().token, CHILD_TOKEN);
+    assert!(matches!(
+        fixture.store().load(&claim_id).await,
+        Err(Error::NotFound)
+    ));
+    fixture
+        .service()
+        .cancel(&owner("alice", false), &record.id)
+        .await
+        .unwrap();
+    fixture.peer.resume_mutation.notify_one();
+    let result = tokio::time::timeout(Duration::from_secs(3), completion)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(result, Err(Error::Conflict)));
+    let (cancelled, _) = fixture.store().connection(&record.id).await.unwrap();
+    assert_eq!(cancelled.status, Status::Cancelled);
+    assert!(cancelled.browser_nonce.is_none());
+    let (claim, _) = fixture.store().load(&claim_id).await.unwrap();
+    assert!(matches!(claim,Stored::BotClaim(value) if value.released));
+    fixture
+        .store()
+        .claim_bot("9901", "bob", &uuid::Uuid::new_v4().to_string())
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn terminal_claim_cleanup_retries_after_lost_response_without_releasing_replacement_claim() {
+    for terminal in [Status::Cancelled, Status::Expired] {
+        let fixture = Fixture::new().await;
+        let mut record = connection("alice", false);
+        record.status = if terminal == Status::Expired {
+            Status::AwaitingPlatform
+        } else {
+            terminal
+        };
+        if terminal == Status::Expired {
+            record.expires_at = now() - 1;
+        }
+        fixture
+            .store()
+            .save_connection(&record, None)
+            .await
+            .unwrap();
+        fixture
+            .store()
+            .claim_bot("9901", "alice", &record.id)
+            .await
+            .unwrap();
+        let claim_id = index_id("platform-bot", &["telegram", "9901"]);
+        *fixture.peer.lose_next_put_for.lock().unwrap() = Some(claim_id.clone());
+        // The real worker must reconcile terminal records even though they
+        // never qualify for a completion notification or platform refresh.
+        let launcher = Arc::new(RecordingLauncher::default());
+        let worker = fixture.service().start_completion_worker(launcher.clone());
+        tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                let (stored, _) = fixture.store().load(&claim_id).await.unwrap();
+                if matches!(stored,Stored::BotClaim(value) if value.released) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        drop(worker);
+        assert!(fixture.peer.lose_next_put_for.lock().unwrap().is_none());
+        assert!(launcher.requests.lock().unwrap().is_empty());
+        let replacement = uuid::Uuid::new_v4().to_string();
+        fixture
+            .store()
+            .claim_bot("9901", "bob", &replacement)
+            .await
+            .unwrap();
+        // Restart with only the durable record, as the worker's next scan does.
+        let restarted = fixture.service();
+        let (retained, _) = restarted.store.connection(&record.id).await.unwrap();
+        restarted.reconcile_terminal_claim(&retained).await.unwrap();
+        restarted.reconcile_terminal_claim(&retained).await.unwrap();
+        fixture
+            .store()
+            .claim_bot("9901", "bob", &replacement)
+            .await
+            .unwrap();
+        let (claim, _) = fixture.store().load(&claim_id).await.unwrap();
+        assert!(
+            matches!(claim,Stored::BotClaim(value) if !value.released && value.owner=="bob" && value.connection_id==replacement)
+        );
+    }
 }
 
 #[tokio::test]
