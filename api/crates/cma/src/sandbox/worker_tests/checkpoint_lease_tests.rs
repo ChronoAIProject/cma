@@ -142,6 +142,87 @@ async fn minute() {
     tokio::task::yield_now().await;
 }
 
+#[tokio::test]
+async fn foreground_checkpoint_revision_conflict_retries_without_waiting_for_capture_lease() {
+    let (harness, active, now, gate, _) = fixture().await;
+    harness
+        .store
+        .schedule_sandbox_lifecycle(SandboxLifecycleCommand::pause(
+            active.id.clone(),
+            active.owner.clone(),
+            rfc3339_at(now),
+            None,
+        ))
+        .await
+        .unwrap();
+    let adapter = Arc::new(CodexAdapter::new(gate.clone(), CodexSandboxSpec::default()));
+    let worker = harness.worker_with_adapter("foreground", adapter);
+    let task = tokio::spawn({
+        let worker = worker.clone();
+        let id = active.id.clone();
+        async move { worker.run_one(&id, now).await }
+    });
+    gate.entered.notified().await;
+    let mut changed = harness.stored(&active.id).await;
+    let operation = changed.lifecycle.operation.clone();
+    let revision = changed.revision;
+    changed.revision += 1;
+    changed.updated_at = rfc3339_at(now + Duration::from_secs(1));
+    harness.store.save_sandbox(revision, changed).await.unwrap();
+    gate.release.notify_one();
+    assert!(task.await.unwrap().unwrap());
+    let retry = harness.stored(&active.id).await;
+    assert!(retry.work.lease.is_none());
+    assert_eq!(retry.work.attempts, 1);
+    assert_eq!(retry.lifecycle.operation, operation);
+    let retry_at = now + Duration::from_secs(6);
+    for _ in 0..4 {
+        worker.run_one(&active.id, retry_at).await.unwrap();
+    }
+    let stopped = harness.stored(&active.id).await;
+    assert_eq!(stopped.status, SandboxStatus::Paused);
+    assert!(stopped.runtime.is_none());
+    assert!(stopped.lifecycle.checkpoints.latest.is_some());
+}
+
+#[tokio::test]
+async fn foreground_checkpoint_conflict_cannot_release_a_successor_worker_lease() {
+    let (harness, active, now, gate, _) = fixture().await;
+    harness
+        .store
+        .schedule_sandbox_lifecycle(SandboxLifecycleCommand::pause(
+            active.id.clone(),
+            active.owner.clone(),
+            rfc3339_at(now),
+            None,
+        ))
+        .await
+        .unwrap();
+    let adapter = Arc::new(CodexAdapter::new(gate.clone(), CodexSandboxSpec::default()));
+    let worker = harness.worker_with_adapter("foreground", adapter);
+    let task = tokio::spawn({
+        let id = active.id.clone();
+        async move { worker.run_one(&id, now).await }
+    });
+    gate.entered.notified().await;
+    let claimed = harness.stored(&active.id).await;
+    let expiry = claimed.work.lease.as_ref().unwrap().expires_at.clone();
+    let successor = harness
+        .store
+        .claim_sandbox_work(
+            &active.id,
+            "successor",
+            expiry,
+            rfc3339_at(now + Duration::from_secs(7_200)),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    gate.release.notify_one();
+    assert_eq!(task.await.unwrap(), Err(SandboxStoreError::Conflict));
+    assert_eq!(harness.stored(&active.id).await, successor);
+}
+
 #[tokio::test(start_paused = true)]
 async fn long_capture_renews_one_fence_and_publishes_with_fresh_completion_time() {
     let (harness, active, now, gate, worker) = fixture().await;
