@@ -10,6 +10,11 @@ use utoipa::OpenApi;
     modifiers(&ManagementSecurity, &ProfileCompatibility, &ProtocolBase),
     components(schemas(crate::providers::EventContextSnapshot, cmaeg_core::channel::ProviderTarget)),
     paths(
+        http::connections::capabilities,
+        http::connections::create,
+        http::connections::list,
+        http::connections::read,
+        http::connections::cancel,
         http::management::create_channel,
         http::creation::recover_channel,
         http::management::get_channel,

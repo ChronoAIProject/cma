@@ -22,8 +22,9 @@ use uuid::Uuid;
 pub async fn create(
     state: &ManagementState,
     creator: &Creator,
-    request: ChannelCreateRequest,
+    mut request: ChannelCreateRequest,
 ) -> Result<CreatedChannel, ManagementError> {
+    crate::connections::binding::expand_create(state, creator, &mut request).await?;
     validate_create_request(&request).map_err(ManagementError::Invalid)?;
     if request.profile.metadata.owner.subject != creator.subject {
         return Err(ManagementError::Invalid(ValidationError::new(
@@ -120,11 +121,19 @@ pub async fn update(
     state: &ManagementState,
     creator: &Creator,
     channel_id: &ChannelId,
-    request: ChannelUpdateRequest,
+    mut request: ChannelUpdateRequest,
 ) -> Result<LoadedChannel, ManagementError> {
-    validate_update_request(&request).map_err(ManagementError::Invalid)?;
     let _guard = state.mutation_guard(channel_id.as_str()).await;
     let current = load(state, creator, channel_id).await?;
+    crate::connections::binding::expand_update(
+        state,
+        creator,
+        &current.definition.record_id,
+        current.definition.connection_ref.as_deref(),
+        &mut request,
+    )
+    .await?;
+    validate_update_request(&request).map_err(ManagementError::Invalid)?;
     if current
         .definition
         .creation
@@ -204,6 +213,7 @@ pub async fn delete(
             actual: Some(current.record.version),
         });
     }
+    crate::connections::binding::disconnect(state, &current.definition, channel_id).await?;
     state.resolver.invalidate(channel_id.as_str());
     let credential = current
         .definition
@@ -228,6 +238,7 @@ pub async fn delete(
         .await
     {
         Ok(true) | Ok(false) => {
+            crate::connections::binding::release(state, &current.definition).await?;
             state.resolver.invalidate(channel_id.as_str());
             Ok(())
         }

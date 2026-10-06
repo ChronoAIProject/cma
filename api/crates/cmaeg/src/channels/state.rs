@@ -24,6 +24,7 @@ pub struct ManagementState {
     pub cma_base_url: String,
     pub tools_nyxid_slug: String,
     pub cma_service_token: cmaeg_core::channel::Secret,
+    pub telegram: Option<Arc<crate::telegram::TelegramClient>>,
     mutations: Arc<[Mutex<()>; 64]>,
     pub(crate) idempotency: Arc<Mutex<BTreeMap<(String, String), CachedResponse>>>,
 }
@@ -59,6 +60,7 @@ impl ManagementState {
             cma_base_url: config.cma_base_url,
             tools_nyxid_slug: config.tools_nyxid_slug,
             cma_service_token: config.cma_service_token,
+            telegram: None,
             idempotency: Arc::new(Mutex::new(BTreeMap::new())),
             mutations: Arc::new(std::array::from_fn(|_| Mutex::new(()))),
         }

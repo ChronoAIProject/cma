@@ -1,6 +1,9 @@
 //! HTTP projections for CMAEG management operations.
 
 pub mod callbacks;
+pub(crate) mod connection_browser;
+pub mod connections;
+pub(crate) mod connections_ui;
 pub mod creation;
 pub(crate) mod docs;
 pub mod events;
