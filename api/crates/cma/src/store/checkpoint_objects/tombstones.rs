@@ -19,7 +19,10 @@ struct Tombstone {
     id: String,
     document_schema_version: i64,
     object_key: String,
-    next_attempt_at: DateTime,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    next_attempt_at: Option<DateTime>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    deletion_fenced_at: Option<DateTime>,
     attempts: i64,
 }
 
@@ -46,7 +49,8 @@ pub(super) async fn retain(
         id: manifest.id.clone(),
         document_schema_version: DOCUMENT_SCHEMA_VERSION,
         object_key: manifest.object_key.clone(),
-        next_attempt_at: next_attempt(now, 0),
+        next_attempt_at: Some(next_attempt(now, 0)),
+        deletion_fenced_at: None,
         attempts: 0,
     };
     let mut session = store
@@ -145,14 +149,39 @@ pub(super) async fn cleanup_due(
     let mut error = None;
     for document in documents {
         let tombstone = read(document)?;
-        let result = store.objects.delete(&tombstone.object_key).await;
+        let result = store.objects.finalize_delete(&tombstone.object_key).await;
+        if matches!(result, Ok(true)) {
+            // Every part and manifest now has storage-owned authority rejecting
+            // late uploads. No recurring DELETE/GET loop is necessary, including
+            // for tombstones created by older CMA versions.
+            // Retain immutable identity for channel_history_references while
+            // removing this record from the indexed retry schedule.
+            let settled = store
+                .tombstones
+                .update_one(
+                    doc! {
+                        "_id": &tombstone.id,
+                        "object_key": &tombstone.object_key,
+                        "attempts": tombstone.attempts,
+                        "next_attempt_at": tombstone.next_attempt_at,
+                    },
+                    doc! {
+                        "$set": { "deletion_fenced_at": now },
+                        "$unset": { "next_attempt_at": "" },
+                    },
+                )
+                .await
+                .map_err(|_| unavailable("checkpoint deletion fence retirement failed"))?;
+            completed += settled.modified_count as usize;
+            continue;
+        }
         let attempts = tombstone.attempts.saturating_add(1).min(20);
         // Back off both successful absence checks and failures. Ownership never expires.
-        store.tombstones.update_one(doc! { "_id": &tombstone.id, "attempts": tombstone.attempts }, doc! {
+        store.tombstones.update_one(doc! { "_id": &tombstone.id, "attempts": tombstone.attempts, "next_attempt_at": tombstone.next_attempt_at }, doc! {
             "$set": { "attempts": attempts, "next_attempt_at": next_attempt(now, attempts) },
         }).await.map_err(|_| unavailable("checkpoint cleanup tombstone retry scheduling failed"))?;
         match result {
-            Ok(()) => completed += 1,
+            Ok(_) => completed += 1,
             Err(failure) => {
                 error.get_or_insert(failure);
             }
@@ -188,7 +217,8 @@ fn read(document: Document) -> AdapterResult<Tombstone> {
                     .is_ok_and(|base| base == format!("{}.cma", value.id))
         })
         || !(0..=20).contains(&value.attempts)
-        || value.next_attempt_at.timestamp_millis() <= 0
+        || !matches!((value.next_attempt_at, value.deletion_fenced_at),
+            (Some(at), None) | (None, Some(at)) if at.timestamp_millis() > 0)
     {
         return Err(unavailable("checkpoint cleanup tombstone is corrupt"));
     }
@@ -207,6 +237,13 @@ mod tests {
         let id = format!("cpa_{}", "a".repeat(32));
         let valid = doc! { "_id": &id, "document_schema_version": DOCUMENT_SCHEMA_VERSION, "object_key": format!("cma/checkpoints/{}/{id}.cma", "b".repeat(64)), "next_attempt_at": now, "attempts": 0_i64 };
         assert!(read(valid.clone()).is_ok());
+        let mut settled = valid.clone();
+        settled.remove("next_attempt_at");
+        assert!(read(settled.clone()).is_err());
+        settled.insert("deletion_fenced_at", now);
+        assert!(read(settled.clone()).is_ok());
+        settled.insert("next_attempt_at", now);
+        assert!(read(settled).is_err());
         let base = valid.get_str("object_key").unwrap();
         for size in [
             33_554_433,
