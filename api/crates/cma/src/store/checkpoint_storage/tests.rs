@@ -17,6 +17,7 @@ use tokio::sync::{mpsc, Notify, Semaphore};
 
 use super::*;
 
+mod deletion_fence;
 mod part_deletion;
 mod part_download;
 mod part_recovery;
@@ -83,6 +84,8 @@ struct Fixture {
     read_gates: Mutex<BTreeMap<String, Arc<Semaphore>>>,
     faults: Mutex<BTreeMap<(String, String), VecDeque<Fault>>>,
     requests_changed: Notify,
+    fenced_deletes: AtomicBool,
+    deleted_keys: Mutex<std::collections::BTreeSet<String>>,
 }
 
 impl Fixture {
@@ -149,6 +152,9 @@ async fn upload(
         .unwrap()
         .push(("POST".into(), query["key"].clone()));
     fixture.requests_changed.notify_one();
+    if fixture.deleted_keys.lock().unwrap().contains(&query["key"]) {
+        return StatusCode::CONFLICT.into_response();
+    }
     if fixture.redirect.load(Ordering::SeqCst) {
         return (StatusCode::TEMPORARY_REDIRECT, [("location", "/forbidden")]).into_response();
     }
@@ -209,17 +215,30 @@ async fn delete(
     State(fixture): State<Arc<Fixture>>,
     Query(query): Query<BTreeMap<String, String>>,
     headers: HeaderMap,
-) -> StatusCode {
+) -> Response {
     authorized(&headers);
     fixture
         .calls
         .lock()
         .unwrap()
         .push(("DELETE".into(), query["key"].clone()));
+    if let Some(fault) = fixture.fault("DELETE", &query["key"]) {
+        return fault.response();
+    }
+    if fixture.fenced_deletes.load(Ordering::SeqCst) {
+        assert_eq!(query["mutationGeneration"], "2");
+        fixture
+            .deleted_keys
+            .lock()
+            .unwrap()
+            .insert(query["key"].clone());
+        fixture.objects.lock().unwrap().remove(&query["key"]);
+        return Json(serde_json::json!({"data":{"deleted":true,"generation":2,"fenceVersion":1},"error":null})).into_response();
+    }
     if !fixture.ignore_delete.load(Ordering::SeqCst) {
         fixture.objects.lock().unwrap().remove(&query["key"]);
     }
-    StatusCode::NO_CONTENT
+    StatusCode::NO_CONTENT.into_response()
 }
 
 async fn fixture() -> (ChronoStorage, Arc<Fixture>, tokio::task::JoinHandle<()>) {
