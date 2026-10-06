@@ -169,6 +169,7 @@ fn server_state_controls_completion_and_pending_pages_have_no_creation_side_effe
             href: "https://t.me/newbot/ExampleManager/paper_bot?name=Paper+assistant".into(),
         }),
         refresh_path: "/connect".into(),
+        retry: None,
     });
     let html = render_document(&input).unwrap();
     assert!(html.contains("Waiting for you"));
@@ -194,6 +195,62 @@ fn management_is_optional_and_never_an_exclusive_bot_type() {
     assert!(!html.contains("name=\"request_management\""));
     assert!(html.contains("Connect an existing bot"));
     assert!(html.contains("Create a new bot"));
+}
+
+#[test]
+fn pending_retry_uses_only_the_existing_browser_operation_and_same_origin_csrf_post() {
+    let input = page(ConnectionSetupState::AwaitingPlatform {
+        message: "Use the creation button in your conversation.".into(),
+        action: None,
+        refresh_path: "/connect".into(),
+        retry: Some(ConnectionRetry {
+            form_action: "/connect/submit".into(),
+            csrf_token: "browser-csrf\"'><unsafe>".into(),
+        }),
+    });
+    let html = render_document(&input).unwrap();
+    assert_eq!(html.matches("<form").count(), 1);
+    assert!(html.contains("method=\"post\" action=\"/connect/submit\""));
+    assert!(html.contains("name=\"intent\" value=\"retry_creation\""));
+    assert!(
+        html.contains("name=\"csrf_token\" value=\"browser-csrf&quot;&#39;&gt;&lt;unsafe&gt;\"")
+    );
+    assert!(html.contains("Resend creation button"));
+    assert!(html.contains("Resend only if the creation button is missing"));
+    for field in [
+        "create_managed",
+        "connect_existing",
+        "name=\"bot_token\"",
+        "name=\"record_id\"",
+    ] {
+        assert!(!html.contains(field));
+    }
+    assert!(!html.contains("<unsafe>"));
+    for (action, csrf, expected) in [
+        (
+            "https://foreign.example/collect",
+            "csrf",
+            RenderError::InvalidAction,
+        ),
+        (
+            "//foreign.example/collect",
+            "csrf",
+            RenderError::InvalidAction,
+        ),
+        ("/connect?csrf=leaked", "csrf", RenderError::InvalidAction),
+        ("/connect/submit", "   ", RenderError::MissingCsrf),
+    ] {
+        let input = page(ConnectionSetupState::AwaitingPlatform {
+            message: "Pending".into(),
+            action: None,
+            refresh_path: "/connect".into(),
+            retry: Some(ConnectionRetry {
+                form_action: action.into(),
+                csrf_token: csrf.into(),
+            }),
+        });
+        assert_eq!(render_document(&input).unwrap_err(), expected);
+    }
 }
 
 #[tokio::test]

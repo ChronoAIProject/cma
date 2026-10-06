@@ -1284,6 +1284,12 @@ Generated from the reviewed OpenAPI snapshot; effective paths include its server
 | `POST /v1/events/{event_ref}/replies` | `replyToEvent` |
 | `POST /v1/events/{event_ref}/typing` | `sendTyping` |
 | `POST /v1/messages/{message_ref}/update` | `updateMessage` |
+| `POST /v1/telegram/{channel_id}` | Receive an authenticated native Telegram webhook. |
+| `GET /v1/channel-capabilities` | Discover platform setup methods and optional capabilities. |
+| `POST /v1/channel-connections` | Begin a durable owner-authorized gateway connection setup. |
+| `GET /v1/channel-connections` | List eligible ready connections for the selected owner. |
+| `GET /v1/channel-connections/{connection_ref}` | Read generic connection status and setup action. |
+| `DELETE /v1/channel-connections/{connection_ref}` | Cancel an unbound connection operation. |
 <!-- openapi-operations:end -->
 
 ## Platform connections and optional management capabilities
@@ -1371,6 +1377,15 @@ webhook for a gateway-owned child connection.
 
 Connection references are immutable on a bound channel. Generic updates retain
 the opaque reference and supply the new `connection_admission`; platform secrets
-remain gateway-owned. Deletion removes only the exact retained gateway webhook,
-unbinds the provider and releases the connection reservation. Recovery never
-removes another integration's webhook or borrows another owner's credential.
+remain gateway-owned. Deletion checks the exact retained gateway webhook,
+unbinds the provider and durably retires the connection reservation. A pending
+activation or uncertain platform response keeps its reservation and credential
+claim until reconciliation finishes, including after a replica restart. Another
+channel cannot reuse that connection during retirement. Cleanup skips a webhook
+whose observed URL belongs to another integration.
+
+Telegram offers no conditional webhook update or delete. Gateway replicas use
+durable operation leases and recheck their intent before platform calls, but an
+external administrator changing a webhook concurrently, or a platform operation
+delayed beyond the lease, cannot be fenced atomically. Do not configure another
+webhook controller for the same bot.

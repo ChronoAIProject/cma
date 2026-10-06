@@ -119,6 +119,7 @@ async fn submit(
             .save_connection(&record, Some(version))
             .await?;
         let outcome = match form.intent.as_str() {
+            "retry_creation" => service.retry_keyboard(&record).await,
             "connect_existing" => {
                 service
                     .connect_existing(
@@ -235,6 +236,7 @@ async fn render_record(
         Status::AwaitingPlatform=>ConnectionSetupState::AwaitingPlatform {
             message:if record.material.is_some() {"Enable Bot Management Mode for your new bot in official @BotFather, then check the connection."} else {"Return to your Telegram conversation and use the Create a bot button. Telegram will ask you to confirm the new bot."}.into(),
             action:record.material.as_ref().map(|_|PageLink {label:"Open official @BotFather".into(),href:"https://t.me/BotFather".into()}),refresh_path:"/connect".into(),
+            retry: if record.material.is_none() {record.browser_nonce.as_deref().and_then(|nonce|service.capability(record,"csrf",nonce).ok()).map(|csrf_token|ConnectionRetry {form_action:"/connect/submit".into(),csrf_token})} else {None},
         },
         Status::Ready=>ConnectionSetupState::Complete {connection_label:record.material.as_ref().map_or("Your bot",|m|m.name.as_str()).into(),action:None},
         _=>ConnectionSetupState::Expired {restart:None},
