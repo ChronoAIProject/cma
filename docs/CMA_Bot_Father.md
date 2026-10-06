@@ -129,6 +129,27 @@ it is not a new user instruction or a gateway reply capability. CMA retains the
 24-hour reply target before returning a login link and sends the callback result
 to the original source chat. Credentials never enter the agent prompt.
 
+## Registering the user's Telegram bot
+
+At the external Bot step, CMA returns NyxID's
+`/channel-bots/connect/telegram` page. The user creates a bot through Telegram's
+official [@BotFather](https://t.me/BotFather), or uses an existing bot they
+control, then enters its token directly on that NyxID page. Bot tokens must not
+be sent to CMA Bot Father in chat. An organization setup includes
+`target_org_id` in the link; the user must register under the same owner they
+selected in CMA.
+
+After registration, the user returns to the CMA conversation. The assistant
+refreshes the eligible bot list, selects that bot, and continues the access-rule
+and final-review steps. CMA configures the route to CMAEG during provisioning;
+the user does not need to assign a NyxBot agent in NyxID.
+
+NyxID stores the Telegram credential and relays messages. CMAEG forwards those
+events to CMA and delivers the replies. The assistant runs in a CMA Sandbox.
+NyxID's separate `/channel-bots/connect/telegram-new` page uses a Telegram
+manager bot for managed creation; that manager is not the CMA agent provider,
+and this CMA registration handoff does not require that flow.
+
 ## Delegated operations and isolation
 
 The binding-authenticated `POST /api/v1/agent-delegations/identity` resolves
