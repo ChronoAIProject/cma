@@ -123,8 +123,14 @@ impl BotSetupDependencies for Dependencies {
     ) -> Result<Vec<SetupExternalBot>, BotError> {
         panic!("not linked")
     }
-    async fn external_bot_registration_url(&self, _: &ResourceOwner) -> Result<String, BotError> {
-        panic!("not linked")
+    async fn connection_authority_stamp(&self, _: &BotSetup) -> Result<String, BotError> {
+        unreachable!("fixture does not request channel connections")
+    }
+    async fn channel_connection(&self, _: &BotSetup) -> Result<SetupConnectionStatus, BotError> {
+        unreachable!("fixture does not request channel connections")
+    }
+    async fn cancel_channel_connection(&self, _: &BotSetup) -> Result<(), BotError> {
+        unreachable!("fixture does not request channel connections")
     }
     async fn provision(&self, _: &BotSetup) -> Result<SetupResult, BotError> {
         panic!("not linked")
@@ -518,4 +524,19 @@ fn verified_input_preserves_user_words_for_agent_action_consent() {
         let input = setup_input(&json!({"type":"command", "name":name, "args":args})).unwrap();
         assert!(matches!(input, SetupInput::Text(ref value) if value == expected));
     }
+}
+
+#[test]
+fn connection_completion_is_a_notification_without_human_consent() {
+    let mut activity = json!({"actor":{"kind":"system","id":"original-sender"},
+        "kind":{"type":"event","ce":{"type":"gateway.connection.ready","data":{"connection_ref":"opaque","status":"ready"}}}});
+    assert!(is_connection_notification(&activity));
+    assert!(matches!(
+        setup_input(&activity["kind"]).unwrap(),
+        SetupInput::Notification
+    ));
+    activity["kind"]["ce"]["type"] = "arbitrary.event".into();
+    assert!(!is_connection_notification(&activity));
+    activity["kind"] = json!({"type":"message","text":"Create Bot"});
+    assert!(!is_connection_notification(&activity));
 }

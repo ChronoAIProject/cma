@@ -27,7 +27,7 @@ pub struct BotKeyRef {
 }
 pub struct BotSecrets {
     pub agent: ProvidedCredential,
-    pub route: ProvidedCredential,
+    pub route: Option<ProvidedCredential>,
 }
 #[derive(Debug, Clone)]
 pub struct BotChannelObservation {
@@ -39,7 +39,7 @@ pub struct BotChannelObservation {
 impl BotChannelObservation {
     pub fn uses(&self, keys: &BotCredentialSet) -> bool {
         keys.agent_key_hash.as_deref() == Some(self.agent_key_hash.as_str())
-            && keys.route_key_id.as_deref() == Some(self.route_key_id.as_str())
+            && keys.route_key_id.as_deref().unwrap_or_default() == self.route_key_id
     }
 }
 
@@ -189,7 +189,7 @@ impl BotWorker {
             return Err(BotError::Unavailable);
         }
         let enabled = operation == BotOperation::Enable;
-        if enabled {
+        if enabled && bot.request.connection_ref.is_none() {
             // Disabled renewal may have retained a key still used by an old
             // route. Reconcile that route before admitting any new messages.
             // A removed or transferred route leaves this Bot disabled.

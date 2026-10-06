@@ -41,7 +41,7 @@ impl BotWorker {
                 return Err(BotError::Unavailable);
             }
             bot.resources.channel = Some(restored.channel);
-            if bot.state != BotState::Disabled {
+            if bot.state != BotState::Disabled && bot.request.connection_ref.is_none() {
                 self.step(bot, "restore_retained_route_key").await?;
                 self.external
                     .set_route_key(
@@ -76,17 +76,19 @@ impl BotWorker {
             .channel(bot)
             .await?
             .ok_or(BotError::Unavailable)?;
-        self.step(bot, "set_replacement_callback").await?;
-        self.external
-            .set_callback(
-                bot,
-                replacement
-                    .route_key_id
-                    .as_deref()
-                    .ok_or(BotError::Unavailable)?,
-                &current.channel.callback_url,
-            )
-            .await?;
+        if bot.request.connection_ref.is_none() {
+            self.step(bot, "set_replacement_callback").await?;
+            self.external
+                .set_callback(
+                    bot,
+                    replacement
+                        .route_key_id
+                        .as_deref()
+                        .ok_or(BotError::Unavailable)?,
+                    &current.channel.callback_url,
+                )
+                .await?;
+        }
         self.step(bot, "replace_channel_keys").await?;
         let changed = self
             .external
@@ -126,7 +128,7 @@ impl BotWorker {
             return Err(BotError::Unavailable);
         }
         bot.resources.channel = Some(current.channel);
-        if bot.state != BotState::Disabled {
+        if bot.state != BotState::Disabled && bot.request.connection_ref.is_none() {
             self.step(bot, "replace_route_key").await?;
             self.external
                 .set_route_key(
@@ -154,12 +156,13 @@ impl BotWorker {
         bot: &mut Bot,
         retained: &BotCredentialSet,
     ) -> Result<(), BotError> {
-        let active_route_key = if bot.state == BotState::Disabled {
-            self.step(bot, "read_retained_route_key").await?;
-            self.external.active_route_key(bot).await?
-        } else {
-            None
-        };
+        let active_route_key =
+            if bot.state == BotState::Disabled && bot.request.connection_ref.is_none() {
+                self.step(bot, "read_retained_route_key").await?;
+                self.external.active_route_key(bot).await?
+            } else {
+                None
+            };
         self.step(bot, "discover_obsolete_keys").await?;
         let keys = self.external.keys(bot).await?;
         for key in keys {
