@@ -179,6 +179,8 @@ use super::trigger_openapi_shapes::*;
         super::admin::activity,
         super::bindings::put_binding, super::bindings::get_binding, super::bindings::delete_binding, super::bindings::put_conversation, super::bindings::delete_conversation, super::gateway_records::put_record, super::gateway_records::get_record,
         super::gateway_records::delete_record, super::gateway_records::list,
+        super::gateway_connections::write, super::gateway_connections::read,
+        super::gateway_connections::remove, super::gateway_connections::list,
         super::gateway_interactions::write, super::gateway_interactions::read, super::gateway_interactions::delete,
     ),
     components(schemas(

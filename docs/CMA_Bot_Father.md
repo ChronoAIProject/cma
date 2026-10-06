@@ -15,7 +15,7 @@ operation, ask for missing choices, or continue an earlier task.
 CMAEG authenticates and normalizes source events, forwards the configured target
 and verified source metadata to the provider, and delivers replies and generic
 interactions. The provider selects the actual agent and owns user affinity. CMAEG does not
-interpret `/setup`, decide whether a message requests a Bot, run a setup state
+interpret `/setup`, decide whether a message requests a Bot, run a CMA resource setup state
 machine, manage user login, or retain end-user NyxID delegation grants.
 
 CMA retains linked user identities, encrypted credential custody, revocation,
@@ -129,26 +129,30 @@ it is not a new user instruction or a gateway reply capability. CMA retains the
 24-hour reply target before returning a login link and sends the callback result
 to the original source chat. Credentials never enter the agent prompt.
 
-## Registering the user's Telegram bot
+## Connecting an event channel
 
-At the external Bot step, CMA returns NyxID's
-`/channel-bots/connect/telegram` page. The user creates a bot through Telegram's
-official [@BotFather](https://t.me/BotFather), or uses an existing bot they
-control, then enters its token directly on that NyxID page. Bot tokens must not
-be sent to CMA Bot Father in chat. An organization setup includes
-`target_org_id` in the link; the user must register under the same owner they
-selected in CMA.
+CMA works with opaque gateway connection references. The agent asks CMA for a
+connection setup operation using the current verified event. CMA rechecks that
+event's linked user grant, incarnation, selected personal or organization owner,
+and binding credential, then calls the gateway on behalf of that owner. A durable
+operation UUID and the original event reference make retries recoverable.
 
-After registration, the user returns to the CMA conversation. The assistant
-refreshes the eligible bot list, selects that bot, and continues the access-rule
-and final-review steps. CMA configures the route to CMAEG during provisioning;
-the user does not need to assign a NyxBot agent in NyxID.
+The gateway returns its own setup URL. All platform selection, credential entry,
+creation methods and optional platform capabilities are presented there. The
+provider receives generic status, a display label and an opaque connection
+reference; platform credentials never enter CMA or the agent conversation.
+NyxID user credentials remain in CMA's delegation broker and are used transiently
+for authenticated gateway requests. There is no NyxBot creation dependency.
 
-NyxID stores the Telegram credential and relays messages. CMAEG forwards those
-events to CMA and delivers the replies. The assistant runs in a CMA Sandbox.
-NyxID's separate `/channel-bots/connect/telegram-new` page uses a Telegram
-manager bot for managed creation; that manager is not the CMA agent provider,
-and this CMA registration handoff does not require that flow.
+Gateway completion is a verified event notification to the original agent and
+conversation. CMA refreshes the pending operation and continues the access-rule
+and review steps. This notification is not fresh human consent: creating CMA
+resources still requires the subsequent reviewed-plan confirmation. On
+confirmation CMA binds its provider profile or agent to the returned connection.
+New connection-based Bots use only the agent credential; retained legacy Bots
+keep their existing transport records and lifecycle.
+
+The gateway's public [protocol](CMAEG_Protocol.md) owns the platform setup contract.
 
 ## Delegated operations and isolation
 
