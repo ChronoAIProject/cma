@@ -5,7 +5,7 @@ use std::{
 
 use async_trait::async_trait;
 use axum::{
-    body::Body,
+    body::{to_bytes, Body},
     http::{header, Request, StatusCode},
     Router,
 };
@@ -18,7 +18,7 @@ use layer2_core::{
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
-use super::gateway_record_router;
+use super::{gateway_connection_record_router, gateway_record_router};
 use crate::AuthenticatedSubject;
 
 #[derive(Default)]
@@ -125,6 +125,13 @@ fn app() -> Router {
     let records = Arc::new(MemoryRecords::default());
     let activity = ActivityService::new(Arc::new(MemoryActivity));
     gateway_record_router(GatewayRecordService::new(records, activity))
+}
+
+fn namespaced_app() -> Router {
+    app().merge(gateway_connection_record_router(GatewayRecordService::new(
+        Arc::new(MemoryRecords::default()),
+        ActivityService::new(Arc::new(MemoryActivity)),
+    )))
 }
 
 fn request(
@@ -316,4 +323,132 @@ async fn gateway_routes_round_trip_and_report_cas_and_size_errors() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+}
+
+#[tokio::test]
+async fn connection_record_routes_require_authenticated_gateway_capability_for_every_operation() {
+    let app = namespaced_app();
+    let id = "123e4567-e89b-42d3-a456-426614174001";
+    let record = format!("/api/v1/gateway/connection-records/{id}");
+    for (method, path) in [
+        ("GET", "/api/v1/gateway/connection-records"),
+        ("GET", record.as_str()),
+        ("PUT", record.as_str()),
+        ("DELETE", record.as_str()),
+    ] {
+        let body = (method == "PUT").then(
+            || json!({"owner":"subject","blob":STANDARD.encode([7]),"expected_version":null}),
+        );
+        for authenticated in [false, true] {
+            let mut request = request(
+                path,
+                method,
+                body.clone(),
+                authenticated.then(|| Authorization::new([Capability::ManageOwnBots])),
+            );
+            if !authenticated {
+                request.extensions_mut().remove::<AuthenticatedSubject>();
+            }
+            let response = app.clone().oneshot(request).await.unwrap();
+            assert_eq!(
+                response.status(),
+                if authenticated {
+                    StatusCode::FORBIDDEN
+                } else {
+                    StatusCode::UNAUTHORIZED
+                },
+                "{method} {path}"
+            );
+            assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+        }
+    }
+    let response = app
+        .oneshot(request(
+            &record,
+            "GET",
+            None,
+            Some(Authorization::new([Capability::ManageGatewayRecords])),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::NOT_FOUND,
+        "refused PUT did not persist a record"
+    );
+}
+
+#[tokio::test]
+async fn connection_and_channel_routes_keep_same_uuid_isolated_with_independent_cas() {
+    let app = namespaced_app();
+    let id = "123e4567-e89b-42d3-a456-426614174001";
+    let authority = Authorization::new([Capability::ManageGatewayRecords]);
+    for (namespace, owner, blob) in [
+        ("channel-records", "channel-owner", [1_u8]),
+        ("connection-records", "connection-owner", [2_u8]),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(request(
+                &format!("/api/v1/gateway/{namespace}/{id}"),
+                "PUT",
+                Some(json!({"owner":owner,"blob":STANDARD.encode(blob),"expected_version":null})),
+                Some(authority.clone()),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+    let connection = format!("/api/v1/gateway/connection-records/{id}");
+    let response = app.clone().oneshot(request(&connection, "PUT",
+        Some(json!({"owner":"connection-owner","blob":STANDARD.encode([3_u8]),"expected_version":1})), Some(authority.clone()))).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let response = app
+        .clone()
+        .oneshot(request(
+            &connection,
+            "DELETE",
+            None,
+            Some(authority.clone()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    let response = app
+        .clone()
+        .oneshot(request(&connection, "GET", None, Some(authority.clone())))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let response = app
+        .clone()
+        .oneshot(request(
+            &format!("/api/v1/gateway/channel-records/{id}"),
+            "GET",
+            None,
+            Some(authority.clone()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let value: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap())
+            .unwrap();
+    assert_eq!(value["owner"], "channel-owner");
+    assert_eq!(value["blob"], STANDARD.encode([1_u8]));
+    assert_eq!(value["version"], 1);
+    let response = app
+        .oneshot(request(
+            &format!("/api/v1/gateway/channel-records/{id}?expected_version=2"),
+            "DELETE",
+            None,
+            Some(authority),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::CONFLICT,
+        "connection updates did not advance channel CAS"
+    );
 }

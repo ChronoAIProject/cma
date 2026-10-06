@@ -23,6 +23,12 @@ pub(crate) struct Connection {
     pub url: Option<String>,
 }
 
+#[derive(Clone, Copy)]
+enum Target<'a> {
+    Collection { after: Option<&'a str> },
+    Record(&'a str),
+}
+
 impl ChannelConnections {
     pub(crate) fn new(http: Client, base: &str, public: &str) -> Result<Self, String> {
         Ok(Self {
@@ -37,18 +43,22 @@ impl ChannelConnections {
         token: &str,
         owner: &ResourceOwner,
         method: Method,
-        id: Option<&str>,
+        target: Target<'_>,
         body: Option<Value>,
         agent_credential: Option<&str>,
     ) -> Result<Value, BotError> {
         let mut url = self.base.clone();
         let mut path = url.path_segments_mut().map_err(|_| BotError::Unavailable)?;
         path.pop_if_empty().extend(["v1", "channel-connections"]);
-        if let Some(id) = id {
+        if let Target::Record(id) = target {
             reference(id)?;
             path.push(id);
         }
         drop(path);
+        if let Target::Collection { after: Some(after) } = target {
+            reference(after)?;
+            url.query_pairs_mut().append_pair("after", after);
+        }
         let mut request = self.http.request(method, url).bearer_auth(token);
         if let ResourceOwner::Organization { subject } = owner {
             request = request.header("X-CMAEG-Owner", subject.as_str());
@@ -69,6 +79,15 @@ impl ChannelConnections {
         if response.status() == 404 {
             return Err(BotError::NotFound);
         }
+        if response.status().is_success()
+            && response
+                .headers()
+                .get("cmaeg-protocol-version")
+                .and_then(|value| value.to_str().ok())
+                != Some("1")
+        {
+            return Err(BotError::Unavailable);
+        }
         if response.status() == 204 {
             return Ok(Value::Null);
         }
@@ -88,27 +107,52 @@ impl ChannelConnections {
         #[derive(Deserialize)]
         struct Listing {
             items: Vec<Connection>,
-        }
-        let result: Listing = serde_json::from_value(
-            self.request(token, owner, Method::GET, None, None, None)
-                .await?,
-        )
-        .map_err(|_| BotError::Unavailable)?;
-        if result.items.len() > 1000 {
-            return Err(BotError::Unavailable);
+            #[serde(default)]
+            next_after: Option<String>,
         }
         let mut seen = std::collections::BTreeSet::new();
-        for item in &result.items {
-            self.validate(item)?;
-            if !seen.insert(&item.connection_ref) {
+        let mut cursors = std::collections::BTreeSet::new();
+        let mut after = None;
+        let mut ready = Vec::new();
+        for _ in 0..20 {
+            let page: Listing = serde_json::from_value(
+                self.request(
+                    token,
+                    owner,
+                    Method::GET,
+                    Target::Collection {
+                        after: after.as_deref(),
+                    },
+                    None,
+                    None,
+                )
+                .await?,
+            )
+            .map_err(|_| BotError::Unavailable)?;
+            if seen.len() + page.items.len() > 1000 {
                 return Err(BotError::Unavailable);
             }
+            for item in page.items {
+                self.validate(&item)?;
+                if !seen.insert(item.connection_ref.clone()) {
+                    return Err(BotError::Unavailable);
+                }
+                if item.status == "ready" {
+                    ready.push(item);
+                }
+            }
+            let Some(next) = page.next_after else {
+                return Ok(ready);
+            };
+            reference(&next)?;
+            if !cursors.insert(next.clone()) {
+                return Err(BotError::Unavailable);
+            }
+            // A gateway page may contain only opaque lock records and expose
+            // zero connections. Its cursor still advances the complete scan.
+            after = Some(next);
         }
-        Ok(result
-            .items
-            .into_iter()
-            .filter(|item| item.status == "ready")
-            .collect())
+        Err(BotError::Unavailable)
     }
 
     pub(crate) async fn create(
@@ -124,7 +168,7 @@ impl ChannelConnections {
         if id.get_version_num() != 4 {
             return Err(BotError::Conflict);
         }
-        let value = self.request(token, owner, Method::POST, None,
+        let value = self.request(token, owner, Method::POST, Target::Collection { after: None },
             Some(json!({"record_id": record_id, "event_ref": event_ref, "suggested_name": suggested_name})),
             Some(agent_credential)).await?;
         let connection = serde_json::from_value(value).map_err(|_| BotError::Unavailable)?;
@@ -142,7 +186,7 @@ impl ChannelConnections {
         id: &str,
     ) -> Result<Connection, BotError> {
         let connection: Connection = serde_json::from_value(
-            self.request(token, owner, Method::GET, Some(id), None, None)
+            self.request(token, owner, Method::GET, Target::Record(id), None, None)
                 .await?,
         )
         .map_err(|_| BotError::Unavailable)?;
@@ -160,7 +204,7 @@ impl ChannelConnections {
         id: &str,
     ) -> Result<(), BotError> {
         match self
-            .request(token, owner, Method::DELETE, Some(id), None, None)
+            .request(token, owner, Method::DELETE, Target::Record(id), None, None)
             .await
         {
             Ok(_) | Err(BotError::NotFound) => Ok(()),
