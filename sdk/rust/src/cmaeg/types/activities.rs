@@ -266,6 +266,14 @@ pub struct PublicActivity {
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum SourceKind {
+    /// Native Telegram ingress.
+    #[serde(rename = "telegram")]
+    Telegram {
+        /// Source platform.
+        platform: Platform,
+        /// Telegram bot identifier.
+        bot_id: String,
+    },
     /// Wire variant `nyxid_relay`.
     #[serde(rename = "nyxid_relay")]
     NyxidRelay {

@@ -87,7 +87,11 @@ describe('CMAEG schema inventory', () => {
   it('matches every snapshot type, property, enum, nullability and required field', () => {
     const diagnostics = check(snapshot.components.schemas);
     expect(
-      diagnostics.map((value) => ts.flattenDiagnosticMessageText(value.messageText, '\n')),
+      diagnostics.map((value) => {
+        const line = value.file?.getLineAndCharacterOfPosition(value.start ?? 0).line;
+        const declaration = line === undefined ? '' : value.file?.text.split('\n')[line];
+        return `${declaration ?? ''}: ${ts.flattenDiagnosticMessageText(value.messageText, '\n')}`;
+      }),
     ).toEqual([]);
   }, 30_000);
 

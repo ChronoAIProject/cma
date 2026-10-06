@@ -101,6 +101,11 @@ export type ActivityKind = Output<typeof ActivityKindSchema>;
 
 export const SourceKindSchema = tagged(
   {
+    telegram: object({
+      platform: PlatformSchema,
+      bot_id: text,
+      type: enumeration('telegram'),
+    }),
     nyxid_relay: object({
       platform: PlatformSchema,
       route_id: text,

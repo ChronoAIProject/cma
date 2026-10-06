@@ -33,6 +33,12 @@ pub enum AdmissionPolicy {
 /// CMAEG `ChannelCreateRequest` wire shape.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChannelCreateRequest {
+    /// Opaque gateway connection selected for this channel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection_ref: Option<String>,
+    /// Admission policy applied to the selected connection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection_admission: Option<AdmissionPolicy>,
     /// Wire field `credentials`.
     pub credentials: CredentialsRequest,
     /// Wire field `name`.
@@ -85,6 +91,12 @@ pub struct ChannelResponse {
 /// CMAEG `ChannelUpdateRequest` wire shape.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChannelUpdateRequest {
+    /// Opaque gateway connection selected for this channel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection_ref: Option<String>,
+    /// Admission policy applied to the selected connection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection_admission: Option<AdmissionPolicy>,
     /// Wire field `credentials`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub credentials: Option<CredentialPatch>,
@@ -115,6 +127,12 @@ pub struct CredentialPatch {
     /// Wire field `channel_key`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub channel_key: Option<Secret>,
+    /// Native Telegram bot credential.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub telegram_bot_token: Option<Secret>,
+    /// Native Telegram webhook authentication secret.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub telegram_webhook_secret: Option<Secret>,
     /// Wire field `hmac_secrets`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hmac_secrets: Option<Vec<HmacSecretRequest>>,
@@ -128,6 +146,12 @@ pub struct CredentialsRequest {
     /// Wire field `channel_key`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub channel_key: Option<Secret>,
+    /// Native Telegram bot credential.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub telegram_bot_token: Option<Secret>,
+    /// Native Telegram webhook authentication secret.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub telegram_webhook_secret: Option<Secret>,
     /// Wire field `hmac_secrets`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hmac_secrets: Option<Vec<HmacSecretRequest>>,
@@ -158,6 +182,9 @@ pub struct EndpointResponse {
     pub custom_event_url: String,
     /// Wire field `nyxid_callback_url`.
     pub nyxid_callback_url: String,
+    /// Native Telegram callback endpoint, when available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub telegram_webhook_url: Option<String>,
 }
 
 /// CMAEG `FieldRefusal` wire shape.
@@ -260,6 +287,9 @@ pub struct ProviderResponse {
 /// CMAEG `PublicChannelDefinition` wire shape.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct PublicChannelDefinition {
+    /// Opaque connection retained by the channel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection_ref: Option<String>,
     /// Wire field `created_at`.
     pub created_at: String,
     /// Wire field `creation`.
@@ -342,6 +372,17 @@ pub enum Sink {
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum Source {
+    /// Native Telegram ingress owned by the gateway.
+    #[serde(rename = "telegram")]
+    Telegram {
+        /// Telegram bot identifier.
+        bot_id: String,
+        /// Telegram bot username when available.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        bot_username: Option<String>,
+        /// Event admission policy.
+        admission: AdmissionPolicy,
+    },
     /// Wire variant `nyxid_relay`.
     #[serde(rename = "nyxid_relay")]
     NyxidRelay {
@@ -385,6 +426,17 @@ pub enum Source {
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum SourceRequest {
+    /// Native Telegram ingress owned by the gateway.
+    #[serde(rename = "telegram")]
+    Telegram {
+        /// Telegram bot identifier.
+        bot_id: String,
+        /// Telegram bot username when available.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        bot_username: Option<String>,
+        /// Event admission policy.
+        admission: AdmissionPolicy,
+    },
     /// Wire variant `nyxid_relay`.
     #[serde(rename = "nyxid_relay")]
     NyxidRelay {
