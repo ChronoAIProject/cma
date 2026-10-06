@@ -13,7 +13,19 @@ use layer2_core::{
 use super::Scenario;
 
 #[derive(Default)]
-struct Records(Mutex<BTreeMap<String, GatewayRecord>>);
+struct Records {
+    values: Mutex<BTreeMap<String, GatewayRecord>>,
+    unavailable: bool,
+}
+impl Records {
+    fn available(&self) -> Result<(), StoreError> {
+        if self.unavailable {
+            Err(StoreError::Unavailable("fixture unavailable".into()))
+        } else {
+            Ok(())
+        }
+    }
+}
 
 #[async_trait]
 impl GatewayRecordStore for Records {
@@ -24,7 +36,8 @@ impl GatewayRecordStore for Records {
         blob: Vec<u8>,
         expected: Option<u64>,
     ) -> Result<GatewayRecord, StoreError> {
-        let mut records = self.0.lock().unwrap();
+        self.available()?;
+        let mut records = self.values.lock().unwrap();
         if let Some(expected) = expected {
             let record = records.get_mut(id).ok_or(StoreError::RevisionConflict {
                 expected,
@@ -60,11 +73,13 @@ impl GatewayRecordStore for Records {
     }
 
     async fn get(&self, id: &str) -> Result<Option<GatewayRecord>, StoreError> {
-        Ok(self.0.lock().unwrap().get(id).cloned())
+        self.available()?;
+        Ok(self.values.lock().unwrap().get(id).cloned())
     }
 
     async fn delete(&self, id: &str, expected: Option<u64>) -> Result<bool, StoreError> {
-        let mut records = self.0.lock().unwrap();
+        self.available()?;
+        let mut records = self.values.lock().unwrap();
         let Some(record) = records.get(id) else {
             return Ok(false);
         };
@@ -84,8 +99,9 @@ impl GatewayRecordStore for Records {
         after: Option<&str>,
         limit: usize,
     ) -> Result<Vec<GatewayRecordHead>, StoreError> {
+        self.available()?;
         Ok(self
-            .0
+            .values
             .lock()
             .unwrap()
             .values()
@@ -115,16 +131,35 @@ impl ActivityStore for Activity {
 }
 
 pub(super) async fn scenario(name: &str) -> Option<Scenario> {
-    (name == "gateway_records").then(|| {
-        let service = GatewayRecordService::new(
-            Arc::new(Records::default()),
+    if name != "gateway_records"
+        && !matches!(
+            name,
+            "gateway_connections"
+                | "gateway_connections_anonymous"
+                | "gateway_connections_forbidden"
+                | "gateway_connections_unavailable"
+        )
+    {
+        return None;
+    }
+    let service = || {
+        GatewayRecordService::new(
+            Arc::new(Records {
+                unavailable: name == "gateway_connections_unavailable",
+                ..Default::default()
+            }),
             ActivityService::new(Arc::new(Activity)),
-        );
-        Scenario {
-            router: crate::rest::gateway_record_router(service),
-            subject: Some("gateway-owner"),
-            authorization: Authorization::new([Capability::ManageGatewayRecords]),
-            symbols: BTreeMap::new(),
-        }
+        )
+    };
+    Some(Scenario {
+        router: crate::rest::gateway_record_router(service())
+            .merge(crate::rest::gateway_connection_record_router(service())),
+        subject: (name != "gateway_connections_anonymous").then_some("gateway-owner"),
+        authorization: if name == "gateway_connections_forbidden" {
+            Authorization::new([Capability::ManageOwnBots])
+        } else {
+            Authorization::new([Capability::ManageGatewayRecords])
+        },
+        symbols: BTreeMap::new(),
     })
 }
