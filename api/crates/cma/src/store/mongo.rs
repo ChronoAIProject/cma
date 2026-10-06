@@ -36,6 +36,7 @@ pub struct MongoStores {
     pub settings: Arc<MongoPlatformSettingsStore>,
     pub operations: Arc<MongoOperationStore>,
     pub gateway_records: Arc<MongoGatewayRecordStore>,
+    pub(crate) gateway_connections: Arc<MongoGatewayRecordStore>,
     pub(crate) gateway_interactions: Arc<super::MongoGatewayInteractionStore>,
     client: Client,
     database: String,
@@ -82,6 +83,8 @@ impl MongoStores {
         let settings = Arc::new(MongoPlatformSettingsStore::open(&client, database).await?);
         let operations = Arc::new(MongoOperationStore::open(&client, database).await?);
         let gateway_records = Arc::new(MongoGatewayRecordStore::open(&client, database).await?);
+        let gateway_connections =
+            Arc::new(MongoGatewayRecordStore::open_connections(&client, database).await?);
         let gateway_interactions =
             Arc::new(super::MongoGatewayInteractionStore::open(&client, database).await?);
         let bot_setups = Arc::new(
@@ -129,6 +132,7 @@ impl MongoStores {
             settings,
             operations,
             gateway_records,
+            gateway_connections,
             gateway_interactions,
             client,
             database: database.to_owned(),

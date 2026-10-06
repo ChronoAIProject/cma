@@ -1,12 +1,19 @@
 import { resolveConfig, type ClientConfig, type ResolvedConfig } from '../config.js';
 import type { OperationOptions } from '../http.js';
 import { CmaegChannels, type CreateChannelOptions } from './channels.js';
+import {
+  CmaegConnections,
+  type ConnectionOptions,
+  type CreateConnectionOptions,
+  type ListConnectionsOptions,
+} from './connections.js';
 import { CmaegEvents, type EventOptions } from './events.js';
 import { CmaegTools } from './tools.js';
 import type {
   ChannelCreateRequest,
   ChannelUpdateRequest,
   CloudEvent,
+  CreateConnection,
   OutboundMessage,
 } from './types.js';
 
@@ -18,6 +25,7 @@ export interface CmaegConfig extends ClientConfig {
 /** CMAEG management, custom event and tool operations. No mutation is retried automatically. */
 export class Cmaeg {
   readonly #channels: CmaegChannels;
+  readonly #connections: CmaegConnections;
   readonly #events: CmaegEvents;
   readonly #tools: CmaegTools;
   constructor(config: CmaegConfig) {
@@ -27,8 +35,24 @@ export class Cmaeg {
       fetch: (input, init) => resolved.fetch(input, { ...init, redirect: 'manual' }),
     };
     this.#channels = new CmaegChannels(transport);
+    this.#connections = new CmaegConnections(transport);
     this.#events = new CmaegEvents(transport);
     this.#tools = new CmaegTools(transport);
+  }
+  getChannelCapabilities(options?: OperationOptions) {
+    return this.#connections.getChannelCapabilities(options);
+  }
+  createChannelConnection(body: CreateConnection, options: CreateConnectionOptions) {
+    return this.#connections.createChannelConnection(body, options);
+  }
+  listChannelConnections(options?: ListConnectionsOptions) {
+    return this.#connections.listChannelConnections(options);
+  }
+  getChannelConnection(ref: string, options?: ConnectionOptions) {
+    return this.#connections.getChannelConnection(ref, options);
+  }
+  cancelChannelConnection(ref: string, options?: ConnectionOptions) {
+    return this.#connections.cancelChannelConnection(ref, options);
   }
   createChannel(body: ChannelCreateRequest, options?: CreateChannelOptions) {
     return this.#channels.createChannel(body, options);
@@ -87,3 +111,8 @@ export type { CreateChannelOptions } from './channels.js';
 export type { EventOptions } from './events.js';
 export type { GatewayStreamEvent } from './stream.js';
 export type * from './types.js';
+export type {
+  ConnectionOptions,
+  CreateConnectionOptions,
+  ListConnectionsOptions,
+} from './connections.js';

@@ -769,10 +769,40 @@
         ],
         "type": "object"
       },
+      "CapabilityView": {
+        "properties": {
+          "platforms": {
+            "items": {
+              "$ref": "#/components/schemas/PlatformCapability"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "platforms"
+        ],
+        "type": "object"
+      },
       "ChannelCreateRequest": {
         "additionalProperties": false,
         "description": "Request wrapper used by channel creation.",
         "properties": {
+          "connection_admission": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AdmissionPolicy"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "connection_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "credentials": {
             "$ref": "#/components/schemas/CredentialsRequest"
           },
@@ -888,6 +918,22 @@
         "additionalProperties": false,
         "description": "Update body; credentials are retained when this field is absent.",
         "properties": {
+          "connection_admission": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AdmissionPolicy"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "connection_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "credentials": {
             "oneOf": [
               {
@@ -1023,6 +1069,59 @@
         ],
         "type": "string"
       },
+      "ConnectionPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ConnectionView"
+            },
+            "type": "array"
+          },
+          "next_after": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "ConnectionView": {
+        "properties": {
+          "connection_ref": {
+            "type": "string"
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "setup_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/Status"
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "connection_ref",
+          "status"
+        ],
+        "type": "object"
+      },
       "ContextConfig": {
         "additionalProperties": false,
         "properties": {
@@ -1101,6 +1200,28 @@
         ],
         "type": "string"
       },
+      "CreateConnection": {
+        "additionalProperties": false,
+        "properties": {
+          "event_ref": {
+            "type": "string"
+          },
+          "record_id": {
+            "type": "string"
+          },
+          "suggested_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "record_id",
+          "event_ref"
+        ],
+        "type": "object"
+      },
       "CredentialPatch": {
         "additionalProperties": false,
         "properties": {
@@ -1132,6 +1253,26 @@
               "array",
               "null"
             ]
+          },
+          "telegram_bot_token": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Secret"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "telegram_webhook_secret": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Secret"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object"
@@ -1157,6 +1298,26 @@
               "$ref": "#/components/schemas/HmacSecretRequest"
             },
             "type": "array"
+          },
+          "telegram_bot_token": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Secret"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "telegram_webhook_secret": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Secret"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -1308,6 +1469,12 @@
           },
           "nyxid_callback_url": {
             "type": "string"
+          },
+          "telegram_webhook_url": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -1861,6 +2028,35 @@
         ],
         "type": "string"
       },
+      "PlatformCapability": {
+        "properties": {
+          "connection_methods": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "optional_capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "connection_methods",
+          "optional_capabilities"
+        ],
+        "type": "object"
+      },
       "Problem": {
         "additionalProperties": false,
         "properties": {
@@ -2081,6 +2277,12 @@
       },
       "PublicChannelDefinition": {
         "properties": {
+          "connection_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "created_at": {
             "type": "string"
           },
@@ -2497,6 +2699,34 @@
                 "$ref": "#/components/schemas/AdmissionPolicy"
               },
               "bot_id": {
+                "type": "string"
+              },
+              "bot_username": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "type": {
+                "enum": [
+                  "telegram"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "bot_id",
+              "admission",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "admission": {
+                "$ref": "#/components/schemas/AdmissionPolicy"
+              },
+              "bot_id": {
                 "type": [
                   "string",
                   "null"
@@ -2578,6 +2808,28 @@
         "oneOf": [
           {
             "properties": {
+              "bot_id": {
+                "type": "string"
+              },
+              "platform": {
+                "$ref": "#/components/schemas/Platform"
+              },
+              "type": {
+                "enum": [
+                  "telegram"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "platform",
+              "bot_id",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
               "platform": {
                 "$ref": "#/components/schemas/Platform"
               },
@@ -2616,6 +2868,34 @@
       },
       "SourceRequest": {
         "oneOf": [
+          {
+            "properties": {
+              "admission": {
+                "$ref": "#/components/schemas/AdmissionPolicy"
+              },
+              "bot_id": {
+                "type": "string"
+              },
+              "bot_username": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "type": {
+                "enum": [
+                  "telegram"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "bot_id",
+              "admission",
+              "type"
+            ],
+            "type": "object"
+          },
           {
             "properties": {
               "admission": {
@@ -2694,6 +2974,16 @@
             "type": "object"
           }
         ]
+      },
+      "Status": {
+        "enum": [
+          "draft",
+          "awaiting_platform",
+          "ready",
+          "cancelled",
+          "expired"
+        ],
+        "type": "string"
       },
       "TestChannelResponse": {
         "properties": {
@@ -2864,6 +3154,258 @@
         },
         "tags": [
           "ingress"
+        ]
+      }
+    },
+    "/channel-capabilities": {
+      "get": {
+        "operationId": "getChannelCapabilities",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CapabilityView"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "connections"
+        ]
+      }
+    },
+    "/channel-connections": {
+      "get": {
+        "operationId": "listChannelConnections",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionPage"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "connections"
+        ]
+      },
+      "post": {
+        "operationId": "createChannelConnection",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "description": "Bearer authorizing the originating event's channel",
+            "in": "header",
+            "name": "X-CMAEG-Agent-Authorization",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateConnection"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionView"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "connections"
+        ]
+      }
+    },
+    "/channel-connections/{connection_ref}": {
+      "delete": {
+        "operationId": "cancelChannelConnection",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connection_ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "connections"
+        ]
+      },
+      "get": {
+        "operationId": "getChannelConnection",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connection_ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionView"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "connections"
         ]
       }
     },
@@ -3864,6 +4406,62 @@
         ],
         "tags": [
           "provider integration"
+        ]
+      }
+    },
+    "/telegram/{channel_id}": {
+      "post": {
+        "operationId": "receiveTelegramUpdate",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "channel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-telegram-bot-api-secret-token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {}
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CallbackResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "tags": [
+          "ingress"
         ]
       }
     }

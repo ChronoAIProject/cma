@@ -28,24 +28,30 @@ export interface GatewayRecordListOptions extends OperationOptions {
   readonly after?: string;
   readonly limit?: number;
 }
-const base = '/api/v1/gateway/channel-records';
 /** Management-only encrypted record storage. Blobs contain base64 ciphertext. */
 export class GatewayRecords {
-  constructor(private readonly config: ResolvedConfig) {}
+  private readonly base: string;
+
+  constructor(
+    private readonly config: ResolvedConfig,
+    namespace: 'channel-records' | 'connection-records' = 'channel-records',
+  ) {
+    this.base = `/api/v1/gateway/${namespace}`;
+  }
   put(id: string, body: PutGatewayRecord, options: OperationOptions = {}) {
-    return read(this.config, `${base}/${segment(id)}`, receipt, {
+    return read(this.config, `${this.base}/${segment(id)}`, receipt, {
       ...options,
       method: 'PUT',
       body: input(putRecord, body),
     });
   }
   get(id: string, options: OperationOptions = {}) {
-    return read(this.config, `${base}/${segment(id)}`, record, options);
+    return read(this.config, `${this.base}/${segment(id)}`, record, options);
   }
   list(options: GatewayRecordListOptions = {}) {
     return read(
       this.config,
-      query(base, { owner: options.owner, after: options.after, limit: options.limit }),
+      query(this.base, { owner: options.owner, after: options.after, limit: options.limit }),
       object({ items: array(recordHead), next_after: nullable(text) }),
       options,
     );
@@ -53,7 +59,7 @@ export class GatewayRecords {
   delete(id: string, expectedVersion?: number, options: OperationOptions = {}) {
     return requestVoid(
       this.config,
-      query(`${base}/${segment(id)}`, { expected_version: expectedVersion }),
+      query(`${this.base}/${segment(id)}`, { expected_version: expectedVersion }),
       {
         ...options,
         method: 'DELETE',

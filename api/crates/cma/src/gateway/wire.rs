@@ -10,6 +10,10 @@ pub(super) struct Policy {
     pub profile: Value,
     pub provider: ProviderRequest,
     pub sources: Vec<SourceRequest>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub connection_ref: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub connection_admission: Option<BotAdmission>,
     pub partition: Value,
     pub reply: Value,
 }
@@ -32,7 +36,8 @@ pub(super) struct SourceRequest {
 #[derive(Serialize)]
 pub(super) struct Credentials<'a> {
     pub agent_key: &'a str,
-    pub channel_key: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub channel_key: Option<&'a str>,
 }
 #[derive(Serialize)]
 pub(super) struct Create<'a> {
@@ -84,20 +89,27 @@ pub(super) struct Definition {
     pub owner: Owner,
     pub profile: Value,
     pub sources: Vec<Source>,
+    #[serde(default)]
+    pub connection_ref: Option<String>,
     pub secrets: Secrets,
     pub creation: Option<Creation>,
 }
 #[derive(Deserialize)]
 pub(super) struct Owner {
+    pub kind: String,
     pub subject: String,
 }
 #[derive(Deserialize)]
 pub(super) struct Source {
     #[serde(rename = "type")]
     pub kind: String,
+    #[serde(default)]
     pub issuer: String,
+    #[serde(default)]
     pub key_id: String,
+    #[serde(default)]
     pub route_ids: Vec<String>,
+    #[serde(default)]
     pub platform: String,
     pub bot_username: Option<String>,
 }

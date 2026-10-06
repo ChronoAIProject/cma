@@ -109,7 +109,7 @@ ordinary greeting is not a reason to call this API.
 
 Successful responses are a setup view directly, not an envelope. Read `step`,
 `setup_id`, `revision`, `configuration`, `choices`, `services`, `connection_url`,
-`identity`, `owner`, `name`, `external_bot_id`, `admission`,
+`identity`, `owner`, `name`, `connection_ref`, `external_bot_id`, `admission`,
 `confirmation_digest`, `result` and `notice`.
 
 CMA authorizes every action using the signed sender plus their linked NyxID
@@ -164,8 +164,15 @@ connection link or advances to channel selection. Use `view` after the user
 returns to refresh connection status, then `done` to continue. Do not connect a
 personal service as a substitute for an organization's connection.
 
-At External Bot, `register` returns the registration URL; `refresh` reloads
-eligible Bots. The backend does not mint a new Telegram Bot token in chat.
+At the connection step, `register` creates or resumes an owner-authorized gateway
+connection operation and returns its setup URL. Share this exact URL. Platform
+selection, existing/new connection choices and optional capabilities belong on
+that gateway page. `refresh` reloads eligible connections. Reuse the retained
+operation after an uncertain response; never start a second registration to
+work around a timeout. A verified `gateway.connection.ready` notification is a
+system event: call `view` to refresh and continue the pending setup. It never
+authorizes `confirm` or changes ownership. `connection_ref` is opaque; do not
+interpret its platform or derive any registration URL from it.
 At Admission, `private` means only the current sender, `public` means anyone
 in private chat, and `groups` additionally permits group mentions/replies.
 

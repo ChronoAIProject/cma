@@ -63,7 +63,10 @@ impl ReplyTargetRef {
             || p.issued_at >= p.event.expires_at
             || p.event.activity_sha256.is_none()
             || p.event.validate().is_err()
-            || !matches!(p.event.reply, super::ReplyAddress::NyxidRelay { .. })
+            || !matches!(
+                p.event.reply,
+                super::ReplyAddress::NyxidRelay { .. } | super::ReplyAddress::Telegram { .. }
+            )
         {
             return Err(OpenError::Format);
         }

@@ -120,6 +120,13 @@ record-id order and returns `{ items, next_after }`. The default limit is 100
 and valid limits are 1 through 200. Listing and all mutations require the same
 capability; an authenticated caller without it receives `403 forbidden`.
 
+The `/api/v1/gateway/connection-records` namespace provides the same list, read,
+compare-and-set write and delete contract in an independent collection. CMAEG
+uses it for encrypted platform connection setup, credential claims and durable
+completion notifications. The same `cma:gateway:records` permission applies;
+record IDs, versions and deletions are isolated from channel records. CMA treats
+these blobs as opaque and does not own platform credentials or setup logic.
+
 ## Event Gateway Interaction Records
 
 `PUT`, `GET`, and `DELETE /api/v1/gateway/interaction-records/{record_id}` use a
@@ -999,6 +1006,10 @@ returns 409, including changing an omitted default into an explicit reference.
 | `PUT /api/v1/gateway/channel-records/{record_id}` | PutGatewayRecordRequest | - | 200 PutGatewayRecordView |
 | `GET /api/v1/gateway/channel-records/{record_id}` | - | - | 200 GatewayRecordView; 404 ProblemDocument |
 | `DELETE /api/v1/gateway/channel-records/{record_id}` | - | expected_version | 204 empty; 404/409 ProblemDocument |
+| `GET /api/v1/gateway/connection-records` | - | owner, after, limit | 200 GatewayRecordPageView |
+| `PUT /api/v1/gateway/connection-records/{record_id}` | PutGatewayRecordRequest | - | 200 PutGatewayRecordView |
+| `GET /api/v1/gateway/connection-records/{record_id}` | - | - | 200 GatewayRecordView; 404 ProblemDocument |
+| `DELETE /api/v1/gateway/connection-records/{record_id}` | - | expected_version | 204 empty; 404/409 ProblemDocument |
 | `PUT /api/v1/gateway/interaction-records/{record_id}` | PutInteraction | - | 200 PutGatewayRecordView; 400/403/409/413/503 ProblemDocument |
 | `GET /api/v1/gateway/interaction-records/{record_id}` | - | - | 200 GatewayRecordView; 404 empty; 400/403/503 ProblemDocument |
 | `DELETE /api/v1/gateway/interaction-records/{record_id}` | - | expected_version | 204 empty; 404 empty; 400/403/409/503 ProblemDocument |

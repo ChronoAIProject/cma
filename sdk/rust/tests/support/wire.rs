@@ -117,6 +117,8 @@ async fn handle(
         "content-type",
         "if-none-match",
         "last-event-id",
+        "x-cmaeg-owner",
+        "x-cmaeg-agent-authorization",
     ] {
         assert_eq!(
             request

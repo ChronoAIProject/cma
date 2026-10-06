@@ -5,7 +5,7 @@ impl BotSetupService {
     pub(super) async fn view(
         &self,
         setup: &BotSetup,
-        notice: Option<String>,
+        mut notice: Option<String>,
         mut connection_url: Option<String>,
     ) -> Result<SetupView, BotError> {
         let identity = self.dependencies.identity(&setup.actor).await?;
@@ -92,13 +92,10 @@ impl BotSetupService {
                     .into_iter()
                     .take(16)
                 {
-                    choices.push(SetupChoice::new(
-                        format!("bot:{}", bot.id),
-                        format!("{} (@{})", bot.name, bot.username),
-                    ));
+                    choices.push(SetupChoice::new(format!("bot:{}", bot.id), bot.name));
                 }
-                choices.push(SetupChoice::new("register", "Register my channel bot"));
-                choices.push(SetupChoice::new("refresh", "Refresh bots"));
+                choices.push(SetupChoice::new("register", "Create or connect a channel"));
+                choices.push(SetupChoice::new("refresh", "Refresh channels"));
             }
             SetupStep::Admission => {
                 choices.push(SetupChoice::new("private", "Only me"));
@@ -159,6 +156,12 @@ impl BotSetupService {
         ) {
             choices.push(SetupChoice::new("cancel", "Cancel"));
         }
+        if let Some(pending) = &setup.pending_connection {
+            connection_url = pending.setup_url.clone();
+            if pending.terminal() && notice.is_none() {
+                notice = Some("The channel connection did not complete. Choose Create or connect a channel to try again.".into());
+            }
+        }
         if setup.step == SetupStep::Login {
             connection_url = identity.login_url.clone();
         }
@@ -175,6 +178,12 @@ impl BotSetupService {
             services,
             connection_url,
             external_bot_id: setup.external_bot_id.clone(),
+            connection_ref: setup.connection_ref.clone(),
+            connection_status: setup
+                .pending_connection
+                .as_ref()
+                .map(|pending| pending.status.clone())
+                .or_else(|| setup.connection_ref.as_ref().map(|_| "ready".into())),
             admission: setup.admission.clone(),
             confirmation_digest: setup.confirmation_digest.clone(),
             result,

@@ -20,6 +20,8 @@ pub struct PublicChannelDefinition {
     pub profile_digest: String,
     pub provider: ProviderBinding,
     pub sources: Vec<Source>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub connection_ref: Option<String>,
     pub partition: PartitionRule,
     pub reply: ReplyPolicy,
     pub secrets: PublicSecrets,
@@ -42,6 +44,7 @@ impl PublicChannelDefinition {
             profile_digest: value.profile_digest.clone(),
             provider: value.provider.clone(),
             sources: value.sources.clone(),
+            connection_ref: value.connection_ref.clone(),
             partition: value.partition.clone(),
             reply: value.reply.clone(),
             secrets: PublicSecrets {

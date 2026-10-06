@@ -100,49 +100,19 @@ impl SetupDependencies {
             .auth
             .context_for_grant(grant, &actor(value), owner)
             .await?;
-        let mut request = self
-            .http
-            .get(format!("{}/api/v1/channel-bots", self.nyxid))
-            .bearer_auth(token.expose());
-        if let ResourceOwner::Organization { subject } = owner {
-            request = request.query(&[("org_id", subject.as_str())]);
-        }
-        let response = self.json(request).await?;
-        let rows = response
-            .get("bots")
-            .or_else(|| response.get("channel_bots"))
-            .or_else(|| response.get("items"))
-            .and_then(serde_json::Value::as_array)
-            .or_else(|| response.as_array())
-            .ok_or(BotError::Unavailable)?;
-        let selected = match owner {
-            ResourceOwner::Person { subject } | ResourceOwner::Organization { subject } => {
-                subject.as_str()
-            }
-        };
-        let mut result = vec![];
-        for row in rows {
-            if !matches!(
-                row["platform"].as_str(),
-                Some("telegram") | Some("telegram-new")
-            ) || row["is_active"].as_bool() != Some(true)
-                || row["user_id"].as_str() != Some(selected)
-            {
-                continue;
-            }
-            result.push(SetupExternalBot {
-                id: row["id"].as_str().ok_or(BotError::Unavailable)?.into(),
-                name: row["label"]
-                    .as_str()
-                    .or_else(|| row["name"].as_str())
-                    .unwrap_or("Telegram bot")
-                    .into(),
-                username: row["platform_bot_username"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .into(),
-            });
-        }
-        Ok(result)
+        self.connections
+            .list(token.expose(), owner)
+            .await
+            .map(|items| {
+                items
+                    .into_iter()
+                    .map(|item| SetupExternalBot {
+                        id: item.connection_ref.clone(),
+                        name: item.label.unwrap_or_else(|| "Channel".into()),
+                        username: String::new(),
+                        connection_ref: Some(item.connection_ref),
+                    })
+                    .collect()
+            })
     }
 }

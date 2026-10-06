@@ -35,6 +35,8 @@ pub enum TokenKind {
     Blob,
     Interaction,
     ReplyTarget,
+    Connection,
+    ConnectionSetup,
 }
 
 impl TokenKind {
@@ -46,6 +48,8 @@ impl TokenKind {
             Self::Blob => "bl",
             Self::Interaction => "in",
             Self::ReplyTarget => "rt",
+            Self::Connection => "cn",
+            Self::ConnectionSetup => "cs",
         }
     }
 }
@@ -305,6 +309,23 @@ pub fn seal_interaction(
     plaintext: &[u8],
 ) -> Result<Vec<u8>, SealError> {
     seal_bound_blob(ring, TokenKind::Interaction, id, plaintext)
+}
+
+/// Connection data is bound to its namespace and record identity.
+pub fn seal_connection(
+    ring: &MasterKeyRing,
+    id: &str,
+    plaintext: &[u8],
+) -> Result<Vec<u8>, SealError> {
+    seal_bound_blob(ring, TokenKind::Connection, id, plaintext)
+}
+
+pub fn open_connection(
+    ring: &MasterKeyRing,
+    id: &str,
+    token: &[u8],
+) -> Result<Opened<Vec<u8>>, OpenError> {
+    open_bound_blob(ring, TokenKind::Connection, id, token)
 }
 
 fn seal_bound_blob(

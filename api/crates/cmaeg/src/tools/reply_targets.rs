@@ -171,25 +171,21 @@ impl ToolsState {
     }
 }
 fn destination(channel: &ResolvedChannel, reply: &ReplyAddress) -> Result<(), Problem> {
-    let ReplyAddress::NyxidRelay {
-        route_id, platform, ..
-    } = reply
-    else {
-        return Err(invalid("delayed replies require a relay destination"));
+    let valid = match reply {
+        ReplyAddress::NyxidRelay { route_id, platform, .. } => channel.definition.secrets.channel_key.is_some()
+            && channel.definition.sources.iter().any(|s| matches!(s, Source::NyxidRelay { route_ids, platform: current, .. } if current==platform && route_ids.contains(route_id))),
+        ReplyAddress::Telegram { bot_id, .. } => channel.definition.secrets.telegram_bot_token.is_some()
+            && channel.definition.sources.iter().any(|s| matches!(s, Source::Telegram { bot_id:current, .. } if current==bot_id)),
+        _ => return Err(invalid("delayed replies require a chat destination")),
     };
-    if channel.definition.secrets.channel_key.is_none()
-        || !channel.definition.sources.iter().any(|s| {
-            matches!(s,
-            Source::NyxidRelay { route_ids, platform: current, .. }
-                if current == platform && route_ids.contains(route_id))
-        })
-    {
+    if !valid {
         return Err(Problem::new(
             ProblemCode::Forbidden,
             403,
             "reply_destination_revoked",
         ));
     }
+
     Ok(())
 }
 fn now() -> i64 {

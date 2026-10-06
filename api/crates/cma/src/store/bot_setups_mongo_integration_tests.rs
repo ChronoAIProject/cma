@@ -54,6 +54,8 @@ fn setup() -> BotSetup {
         },
         selected_services: vec![],
         external_bot_id: None,
+        connection_ref: None,
+        pending_connection: None,
         admission: None,
         service_page: 0,
         confirmation_digest: None,

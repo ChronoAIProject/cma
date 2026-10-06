@@ -39,6 +39,21 @@ export const resourceDispatch: Record<string, Dispatch> = {
       param('record_id'),
       query.has('expected_version') ? Number(query.get('expected_version')) : undefined,
     ),
+  'PUT /api/v1/gateway/connection-records/{record_id}': ({ client, param, body }) =>
+    client.gatewayConnectionRecords.put(param('record_id'), body),
+  'GET /api/v1/gateway/connection-records/{record_id}': ({ client, param }) =>
+    client.gatewayConnectionRecords.get(param('record_id')),
+  'GET /api/v1/gateway/connection-records': ({ client, query }) =>
+    client.gatewayConnectionRecords.list({
+      owner: query.get('owner') ?? undefined,
+      after: query.get('after') ?? undefined,
+      limit: query.has('limit') ? Number(query.get('limit')) : undefined,
+    }),
+  'DELETE /api/v1/gateway/connection-records/{record_id}': ({ client, param, query }) =>
+    client.gatewayConnectionRecords.delete(
+      param('record_id'),
+      query.has('expected_version') ? Number(query.get('expected_version')) : undefined,
+    ),
   'GET /api/v1/agents/{id}/channel-usage': ({ client, param }) =>
     client.agents.channelUsage(param('id')),
   'GET /api/v1/agents/{id}/channel-usage/history': ({ client, param, options }) =>

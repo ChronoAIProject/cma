@@ -4,6 +4,7 @@ use crate::ingress::admission::Refusal;
 use cmaeg_core::{
     activity::{ActorKind, ConversationKind},
     channel::{AdmissionPolicy, GroupAdmission, Platform, Source},
+    cloudevent::CloudEvent,
 };
 
 #[derive(Clone)]
@@ -16,6 +17,7 @@ pub struct CallbackFacts {
 /// evidence, which admission treats differently from a verified `Some(false)`.
 pub struct RelayFacts {
     pub callback: Option<CallbackFacts>,
+    pub event: Option<Box<CloudEvent>>,
     pub conversation: ConversationKind,
     pub thread_id: Option<String>,
     pub mentioned: Option<bool>,

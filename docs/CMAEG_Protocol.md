@@ -659,7 +659,7 @@ differs is whether the gateway can corroborate the platform's own event.
 
 | Platform | Facts |
 | --- | --- |
-| Telegram | Raw Telegram update in `raw_platform_data`; chat and sender IDs must match the envelope. Human text messages only; `private` or `group`/`supergroup` chats; forum topic IDs when `is_topic_message`; mention entities against `bot_username`; reply evidence from the parent's `is_bot`. |
+| Telegram | Raw Telegram update in `raw_platform_data`; chat and sender IDs must match the envelope. Human text messages and original private `managed_bot_created` receipts (see §7); `private` or `group`/`supergroup` chats; forum topic IDs when `is_topic_message`; mention entities against `bot_username`; reply evidence from the parent's `is_bot`. |
 | Lark, Feishu | Raw `im.message.receive_v1` event in `raw_platform_data`; any other `header.event_type` is refused as `system_event`. `event.message.chat_id` must equal `conversation.platform_id` and `event.sender.sender_id.open_id` must equal `sender.platform_id` (a mismatch or a human sender without `open_id` is 401). `sender_type` `user` is a human; `app` is refused as `bot_sender`, anything else as `unknown_sender`. `chat_type` `p2p` is private, `group` is group and any other value is `system_event`. Only `message_type:"text"` whose content JSON `text` equals `content.text` is admitted; image, file, audio, media and sticker messages are `attachment_unsupported`, other types `content_unsupported`. `message.thread_id` is the topic thread. A message is mentioned when any `mentions[].id.open_id` equals the pinned `bot_id`; without a pinned `bot_id`, any mention counts, because Lark only delivers group messages that @mention the bot unless the app may read all group messages. Pin `bot_id` when the app holds that permission. A message with `parent_id` has no reply evidence, because the parent's author is absent. |
 | Discord, Slack, WhatsApp | No raw-event verifier, so the source must set `trust_normalized:true` and the normalized envelope is trusted as-is. A definition stored without it (management refuses to create one) has every callback refused as `platform_verifier_unavailable`. `conversation.type` `private`, `group` or `channel` maps to the same conversation kind and any other value is `system_event`. The actor is `sender.platform_id` with kind `unknown`, because bot senders cannot be recognized. Text only. There is no mention, reply or thread evidence, so group `mention`/`reply_to_bot` admission yields `addressing_evidence_unavailable` and thread partitions yield `thread_evidence_unavailable`. |
 
@@ -674,7 +674,7 @@ supports a platform before any source for it is enabled.
 
 | Capability | Telegram | Lark, Feishu | Discord, Slack, WhatsApp |
 | --- | --- | --- | --- |
-| Input | Human text and authenticated callbacks from gateway-issued inline controls; edits, system and attachment input refused | Human text messages; bot, system and attachment input refused | Text from the trusted normalized envelope; actor kind `unknown` |
+| Input | Human text, private managed-bot creation receipts and authenticated callbacks from gateway-issued inline controls; other edits, system and attachment input refused | Human text messages; bot, system and attachment input refused | Text from the trusted normalized envelope; actor kind `unknown` |
 | Group addressing | Pinned bot username and UTF-16 mention entities; bot reply evidence from raw Telegram payload | Mention `open_id` against the pinned `bot_id`, or any mention without one; no reply evidence | None |
 | Topics | Verified forum topic evidence required for thread partitioning | Raw `thread_id` | None |
 | Output | Escaped text; rich blocks degrade as §8 specifies | Plain text; buttons and choices degrade to numbered text | Plain text; buttons and choices degrade to numbered text |
@@ -686,6 +686,52 @@ supports a platform before any source for it is enabled.
 Replies on every platform go through NyxID's generic
 `/api/v1/channel-relay/reply`; NyxID performs the platform send. Only Telegram
 replies carry `metadata.reply_markup`.
+
+### Native Telegram source
+
+A gateway-owned Telegram connection uses a source
+`{type:"telegram",bot_id,bot_username?,admission}`. `bot_id` is the bot's positive
+numeric user ID as a string; `bot_username` excludes `@`. Admission has the same
+sender, chat and group policy as the relay source. Native and relay sources both
+use the ordinary provider turn path for every admitted message, including slash
+text: the gateway reserves no application commands.
+
+The private credentials `telegram_bot_token` and `telegram_webhook_secret` are
+stored only in the encrypted channel record, never in the public channel view,
+activity, model prompt, message reference or reply target. A native source
+requires both; the bot ID must agree with the token's bot ID. A relay source may
+retain a Telegram token for platform management while keeping its current relay
+webhook and ordinary relay delivery.
+
+Native channel responses include `endpoints.telegram_webhook_url`. Telegram
+posts JSON updates to `POST /v1/telegram/{channel_id}` with exactly one
+`X-Telegram-Bot-Api-Secret-Token` header. The gateway loads current channel
+credentials, compares the secret in constant time, then applies the same strict
+Telegram observer and admission policy as relay ingress. `update_id` determines
+the stable event identity; source bot, chat, original message and topic are sealed
+into the reply address. Replica restart preserves these identities and requires
+no local webhook session state. Failed receipt persistence or provider admission
+returns a retryable error; a successful or deliberately refused update returns
+202. Native callback acknowledgments clear only the platform spinner and do not
+claim that the selected operation succeeded.
+
+Native Telegram replies, edits and typing use the Bot API directly. Inline cards
+retain the existing durable actor/chat/message/revision fences. Plain message
+edits are supported for gateway-issued message references. Attachments still
+render as safe links; media upload/download is not implied by native transport.
+Delayed reply targets support native chat destinations and recheck the current
+channel, binding, agent key and bot identity before delivery. Platform credentials
+are read from the current encrypted channel record. A lost or contradictory send
+receipt is reported as unknown and is not automatically resent.
+
+Platform provisioning may inspect `getMe`, `getWebhookInfo`, and a manager bot's
+`can_manage_bots` capability; creating a managed bot uses Telegram's native
+`request_managed_bot` **reply keyboard**, and token retrieval uses
+`getManagedBotToken(user_id=<child bot ID>)`. Gateway provisioning must preserve
+an unrelated existing webhook and never rotate a token merely to recover it.
+Native webhook registration subscribes to `message` and `callback_query` and
+preserves pending updates. The broader `managed_bot` lifecycle update is not
+subscribed to or interpreted as creation consent in this version.
 
 ### Custom CloudEvents
 
@@ -772,7 +818,8 @@ capacity includes `Retry-After: 2`. Custom authentication failure is 401.
 A full activity is `{schema_version:1,event_id,kind,actor,conversation,occurred_at,source}`.
 Actor is `{id,kind,display_name?}`, kind `human|bot|system|unknown`. Conversation
 is `{id,kind,thread_id?}`, kind `private|group|channel|thread|custom`. Source is
-`{type:"nyxid_relay",platform,route_id}`, with a §6 platform, or `{type:"custom"}`.
+`{type:"nyxid_relay",platform,route_id}`, with a §6 platform, `{type:"telegram",platform:"telegram",bot_id}` for a native
+Telegram source, or `{type:"custom"}`.
 NyxID managed Telegram bots may identify the transport as `telegram-new`; CMAEG
 accepts that alias and normalizes it to the canonical Telegram protocol platform.
 Activity kind is one of:
@@ -787,6 +834,29 @@ Activity kind is one of:
 Attachment fields are `reference,kind,mime_type?,filename?,size_bytes?`, with
 kind `image|file|audio|video|other`. Custom actor and subject URIs are retained in
 full in provider context; compact references/metadata may use digests.
+
+An authenticated original private Telegram `Message.managed_bot_created` is
+normalized as an `event` with CloudEvent type `telegram.managed_bot_created`.
+The raw human sender must equal the private chat ID and match the relay envelope
+when relayed. Group, forwarded, edited, bot-sender and mixed-content receipts are
+refused. `ce.id` is the Telegram update ID as a string, `ce.source` identifies the
+verified relay route (`nyxid:route:<route_id>`) or configured native bot
+(`telegram:bot:<bot_id>`), and `ce.subject` is `telegram:bot:<child_bot_id>`.
+`ce.time` and `activity.occurred_at` use the original message date. Data contains
+only `update_id`, `message_id`, `creator_id` and
+`bot:{id,first_name,username?}`; every ID is a decimal string. Unknown raw fields,
+including credentials, are not projected. The activity retains its original
+human actor, private chat and reply transport, and the sealed reference binds the
+complete normalized event digest.
+
+This receipt is **platform fulfillment evidence**. It neither identifies a NyxID
+user nor authorizes creation of agent resources. A consumer must correlate it to
+a current durable operation and its already-authorized owner/actor/conversation.
+Telegram does not echo the keyboard request ID in this receipt. A generic
+`Update.managed_bot` can also signal owner or token changes and is not substituted
+for this creation receipt. The native creation deep-link alone does not guarantee
+this particular receipt; use the documented platform action or a separately
+verified adoption confirmation.
 
 Partition is `{version:1,key}`. Relay keys are `conversation_and_sender`,
 `conversation` and `thread`; thread requires verified topic evidence. Custom keys
@@ -1214,4 +1284,108 @@ Generated from the reviewed OpenAPI snapshot; effective paths include its server
 | `POST /v1/events/{event_ref}/replies` | `replyToEvent` |
 | `POST /v1/events/{event_ref}/typing` | `sendTyping` |
 | `POST /v1/messages/{message_ref}/update` | `updateMessage` |
+| `POST /v1/telegram/{channel_id}` | Receive an authenticated native Telegram webhook. |
+| `GET /v1/channel-capabilities` | Discover platform setup methods and optional capabilities. |
+| `POST /v1/channel-connections` | Begin a durable owner-authorized gateway connection setup. |
+| `GET /v1/channel-connections` | List eligible ready connections for the selected owner. |
+| `GET /v1/channel-connections/{connection_ref}` | Read generic connection status and setup action. |
+| `DELETE /v1/channel-connections/{connection_ref}` | Cancel an unbound connection operation. |
 <!-- openapi-operations:end -->
+
+## Platform connections and optional management capabilities
+
+Platform connection setup belongs to Agent Event Gateway. Agent providers keep
+user sign-in, authorization delegation, conversation logic, worker profiles and
+agent lifecycle. The gateway never retains an end user's NyxID access/refresh
+token. It retains platform credentials only inside encrypted gateway records.
+A provider must establish the association between the authenticated user and the
+verified originating source actor before combining that user's bearer with the
+originating channel's agent credential. Channel ownership alone does not prove
+this association: a shared assistant channel can serve many different users.
+
+`GET /v1/channel-capabilities` describes supported platforms, connection methods
+and optional capabilities. Telegram supports connecting an existing bot token
+or native managed creation. Bot Management Mode is an additional capability of
+an ordinary bot, not an exclusive replacement for a normal conversational bot.
+The owner enables it in official @BotFather; the gateway discovers it through
+`getMe.can_manage_bots`. No public API claims to enable that mode silently.
+
+The provider-facing connection operations are generic:
+
+| Operation | Contract |
+| --- | --- |
+| `POST /v1/channel-connections` | Creator bearer plus `X-CMAEG-Agent-Authorization: Bearer …`; body contains a caller-reserved UUID v4 `record_id`, original `event_ref` and optional `suggested_name`. Both the channel agent and the digest-verified private human event are checked. |
+| `GET /v1/channel-connections/{connection_ref}` | Owner-scoped status, label, optional public entry URL and gateway setup URL; no platform credentials. |
+| `GET /v1/channel-connections` | Owner-scoped ready connections with bounded cursor pagination. |
+| `DELETE /v1/channel-connections/{connection_ref}` | Cancel an unbound operation. A live matching channel must be deleted through channel management first. |
+
+Organization ownership uses the existing `X-CMAEG-Owner` header and current
+NyxID organization authorization. Cross-owner or cross-owner-kind reads and
+cancellation return 404. A repeated create must use the same record ID, event
+and parameters; changing the retained request conflicts. Public status values
+are `draft`, `awaiting_platform`, `ready`, `cancelled`, and `expired`.
+
+The `setup_url` opens the gateway's `/connect` interface. It offers an existing
+bot or a new managed bot and separately offers optional management capability.
+The short-lived link exchanges for a Secure, HttpOnly, SameSite browser
+capability and redirects to a clean path. GETs, including platform link previews,
+do not claim the operation. An explicit same-origin, CSRF-checked POST claims
+that browser; later cancellation, expiry or nonce replacement revokes it.
+Platform tokens are submitted directly to the gateway by POST, never through
+an agent prompt, CMA API field, query string or browser persistent storage.
+
+For managed creation the complete flow is:
+
+1. The provider authenticates the end user, selects personal or organization
+   ownership and retains the exact source-actor association in its own custody.
+2. The provider starts the generic connection operation and sends its setup URL.
+3. The user selects new-bot creation on the gateway page. The gateway verifies
+   the originating bot's management capability and reserves one pending request
+   for that manager/source actor in durable storage.
+4. The gateway sends Telegram's native `request_managed_bot` reply keyboard in
+   the verified private chat. Telegram asks the user to confirm creation.
+5. A verified `managed_bot_created` service message identifies the new bot.
+   Neither that message nor `managed_bot` echoes `request_id`; the gateway uses
+   the durable manager/actor reservation, creation time, message ordering and
+   immutable receipt to prevent concurrent requests from adopting one another's
+   result. A generic `managed_bot` owner/token update is not creation consent.
+6. The gateway reads the child's token with `getManagedBotToken`, verifies the
+   exact child identity with `getMe` and retains the credential encrypted. It
+   never rotates a token as a retry strategy. If the user requested management
+   on the child, readiness waits for Telegram to report that capability.
+7. A durable `gateway.connection.ready` notification wakes the original provider
+   conversation. It retains the originating actor ID and conversation but uses
+   a system actor. Its body contains only `connection_ref` and status. Retries
+   preserve the same event reference and idempotency identity. Providers treat
+   it as status evidence, never as new human permission to provision resources.
+8. After its own resource review/consent, the provider creates the channel with
+   `connection_ref`, generic `connection_admission`, and `sources: []`. The
+   gateway resolves the private source and credential. Creator-supplied platform
+   sources or credentials cannot override the connection. The provider supplies
+   its normal profile/target, partition, reply policy and agent credential.
+9. The gateway reserves the binding durably, verifies webhook ownership and
+   activates the child's native webhook before returning ready creation. It
+   refuses to replace a different existing webhook silently. Future text and
+   interactions use the same neutral event/reply protocol as other channels.
+
+The existing creation bot can retain a NyxID relay ingress while the gateway
+sends its native creation button; the verified service message arrives through
+that relay. New child connections use the gateway's native Telegram transport.
+No NyxBot manager, agent or creation API participates. The platform's one-webhook
+rule still applies: an unrelated registration service must not re-register a
+webhook for a gateway-owned child connection.
+
+Connection references are immutable on a bound channel. Generic updates retain
+the opaque reference and supply the new `connection_admission`; platform secrets
+remain gateway-owned. Deletion checks the exact retained gateway webhook,
+unbinds the provider and durably retires the connection reservation. A pending
+activation or uncertain platform response keeps its reservation and credential
+claim until reconciliation finishes, including after a replica restart. Another
+channel cannot reuse that connection during retirement. Cleanup skips a webhook
+whose observed URL belongs to another integration.
+
+Telegram offers no conditional webhook update or delete. Gateway replicas use
+durable operation leases and recheck their intent before platform calls, but an
+external administrator changing a webhook concurrently, or a platform operation
+delayed beyond the lease, cannot be fenced atomically. Do not configure another
+webhook controller for the same bot.
