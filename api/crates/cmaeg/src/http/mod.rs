@@ -4,6 +4,7 @@ pub mod callbacks;
 pub(crate) mod connection_browser;
 pub mod connections;
 pub(crate) mod connections_ui;
+mod chat_dispatch;
 pub mod creation;
 pub(crate) mod docs;
 pub mod events;
@@ -14,6 +15,7 @@ pub mod problems;
 pub mod readiness;
 pub mod reply_targets;
 pub mod schema;
+pub mod telegram;
 pub mod tools;
 
 pub use crate::channels::management::ManagementState;

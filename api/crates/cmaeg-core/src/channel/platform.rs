@@ -54,10 +54,11 @@ impl FromStr for Platform {
 }
 
 impl ChannelDefinition {
-    /// The platform of the channel's NyxID relay source, if it has one.
+    /// The platform of the channel's first chat source, if it has one.
     pub fn relay_platform(&self) -> Option<Platform> {
         self.sources.iter().find_map(|source| match source {
             Source::NyxidRelay { platform, .. } => Some(*platform),
+            Source::Telegram { .. } => Some(Platform::Telegram),
             Source::Custom { .. } => None,
         })
     }

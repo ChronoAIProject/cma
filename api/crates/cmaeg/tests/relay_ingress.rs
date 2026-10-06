@@ -19,3 +19,6 @@ pub mod fake_nyxid_reply;
 mod fake_provider;
 #[path = "relay/runner_binary.rs"]
 mod runner_binary;
+
+#[path = "relay/managed_creation.rs"]
+mod managed_creation;
