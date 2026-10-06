@@ -11,3 +11,5 @@ mod primitives;
 pub use primitives::*;
 mod activities;
 pub use activities::*;
+mod connections;
+pub use connections::*;

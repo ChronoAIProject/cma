@@ -1,5 +1,7 @@
 //! Independent CMAEG v1 management, custom event and agent tool clients.
 mod channels;
+mod connections;
+pub use connections::ConnectionOptions;
 mod events;
 mod signing;
 mod tools;

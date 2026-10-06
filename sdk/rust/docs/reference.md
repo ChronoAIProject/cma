@@ -131,6 +131,16 @@ without `/v1`. Methods are `create_channel`, `get_channel`, `recover_channel`,
 `stream_event`, `reply_to_event`, `update_message`, `send_typing` and
 `read_event_context`. Wire types live in `cma_sdk::cmaeg::types`.
 
+Connection setup uses `get_channel_capabilities`, `create_channel_connection`,
+`list_channel_connections`, `get_channel_connection`, and
+`cancel_channel_connection`. Use the creator-token client and pass the separate
+originating channel agent key to creation. `ConnectionOptions { owner: Some(id) }`
+selects an organization for one operation; the default selects the creator.
+Reserve and retain the request's `record_id` for durable retries. Listing returns
+one page; follow `next_after` even when `items` is empty. Channel creation/update
+includes optional `connection_ref` and `connection_admission`. Native Telegram
+source, credential and webhook endpoint fields are available in the wire types.
+
 ```rust
 use cma_sdk::cmaeg::{Cmaeg, types::OutboundMessage};
 

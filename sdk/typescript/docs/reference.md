@@ -421,6 +421,16 @@ Provider binding management uses `client.providerBindings.put/get/delete/ensureC
 `streamEvent`, `replyToEvent`, `updateMessage`, `sendTyping` and `readEventContext`.
 Gateway wire types and `signWebhook` are exported under `cmaeg`.
 
+Connection setup uses `getChannelCapabilities`, `createChannelConnection`,
+`listChannelConnections`, `getChannelConnection`, and `cancelChannelConnection`.
+Use the creator-token client and supply `{agentKey, owner?}` to creation: the
+separate agent key must authorize the originating `event_ref`. Reserve the
+request's `record_id` before creation and retain it for retries. Owner selection
+is per operation; omit `owner` for personal resources. Listing accepts `after`
+and returns one page; follow `next_after` even when `items` is empty. Channel
+creation/update accepts `connection_ref` and `connection_admission`. Native
+Telegram source, credential and webhook endpoint fields are typed as well.
+
 ```ts
 import { Cmaeg, type cmaeg } from '@chronoai/cma-sdk';
 
