@@ -8,5 +8,6 @@ pub mod relay_client;
 pub mod render;
 mod send;
 pub mod sync;
+mod telegram;
 pub mod webhook_client;
 mod worker;

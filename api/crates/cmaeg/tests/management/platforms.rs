@@ -203,3 +203,39 @@ async fn http_create_and_update_fail_fast_for_unverified_platforms_and_unknown_s
     cma.close().await;
     nyxid.close().await;
 }
+
+#[tokio::test]
+async fn native_source_exposes_webhook_endpoint_and_never_returns_platform_credentials() {
+    let provider = FakeProvider::start(FakeProviderConfig::default()).await;
+    let cma = FakeCma::start(false).await;
+    let nyxid = FakeNyxid::start().await;
+    let (base, stop, task) = app(&provider, &cma, &nyxid).await;
+    let mut body = create_body();
+    body["sources"] = json!([{"type":"telegram","bot_id":"77","bot_username":"fixture_bot","admission":{"type":"all"}}]);
+    body["credentials"]["telegram_bot_token"] = "77:fixture".into();
+    body["credentials"]["telegram_webhook_secret"] = "webhook-fixture".into();
+    let response = Client::new()
+        .post(format!("{base}/v1/channels"))
+        .bearer_auth("token-alice")
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 201);
+    let value: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(
+        value["endpoints"]["telegram_webhook_url"],
+        format!(
+            "http://127.0.0.1:8090/v1/telegram/{}",
+            value["channel_id"].as_str().unwrap()
+        )
+    );
+    let public = value.to_string();
+    assert!(!public.contains("77:fixture"));
+    assert!(!public.contains("webhook-fixture"));
+    assert!(value["definition"]["secrets"]
+        .get("telegram_bot_token")
+        .is_none());
+    stop.send(()).unwrap();
+    task.await.unwrap();
+}

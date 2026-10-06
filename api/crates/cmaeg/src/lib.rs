@@ -13,6 +13,7 @@ pub mod openapi;
 pub mod providers;
 pub mod records;
 mod service_auth;
+pub mod telegram;
 pub mod telemetry;
 pub mod tools;
 pub mod turns;

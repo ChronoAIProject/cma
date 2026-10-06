@@ -149,6 +149,21 @@ impl App {
             platform: cmaeg_core::channel::Platform::Telegram,
             route_id: format!("route-{actor}"),
         };
+        let native = self
+            .definition
+            .sources
+            .iter()
+            .find_map(|source| match source {
+                cmaeg_core::channel::Source::Telegram { bot_id, .. } => Some(bot_id.clone()),
+                _ => None,
+            });
+        if let Some(bot_id) = &native {
+            activity.source = cmaeg_core::activity::SourceKind::Telegram {
+                platform: cmaeg_core::channel::Platform::Telegram,
+                bot_id: bot_id.clone(),
+            };
+            activity.conversation.id = actor.into();
+        }
         let conversation_id = ConversationId::derive(&self.state.keys, &self.id, 1, actor);
         let event = EventRefPayload {
             v: 1,
@@ -159,12 +174,21 @@ impl App {
             partition_key: actor.into(),
             conversation_id: conversation_id.clone(),
             expires_at: now() + 600,
-            reply: ReplyAddress::NyxidRelay {
-                message_id: name.into(),
-                route_id: format!("route-{actor}"),
-                platform: cmaeg_core::channel::Platform::Telegram,
-                reply_token: cmaeg_core::channel::Secret::new("fixture-unused-reply-token"),
-                reply_token_expires_at: now() + 600,
+            reply: if let Some(bot_id) = native {
+                ReplyAddress::Telegram {
+                    bot_id,
+                    chat_id: actor.into(),
+                    message_id: "5".into(),
+                    thread_id: None,
+                }
+            } else {
+                ReplyAddress::NyxidRelay {
+                    message_id: name.into(),
+                    route_id: format!("route-{actor}"),
+                    platform: cmaeg_core::channel::Platform::Telegram,
+                    reply_token: cmaeg_core::channel::Secret::new("fixture-unused-reply-token"),
+                    reply_token_expires_at: now() + 600,
+                }
             },
         };
         let event_ref = EventRef::seal(&event, &self.state.keys).unwrap();
