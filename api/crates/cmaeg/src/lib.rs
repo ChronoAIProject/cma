@@ -3,6 +3,7 @@
 pub mod auth;
 pub mod channels;
 mod config;
+pub mod connections;
 pub mod delivery;
 pub mod http;
 pub mod ingress;

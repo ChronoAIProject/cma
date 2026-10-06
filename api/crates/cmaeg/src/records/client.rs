@@ -118,6 +118,11 @@ impl RecordClient {
             .is_ok_and(|response| response.status().is_success())
     }
 
+    pub fn connections(mut self) -> Self {
+        self.record_path = "/api/v1/gateway/connection-records";
+        self
+    }
+
     pub fn interactions(mut self) -> Self {
         self.record_path = "/api/v1/gateway/interaction-records";
         self
@@ -276,7 +281,7 @@ impl RecordClient {
     ) -> Result<Vec<RecordHead>, RecordError> {
         let url = self
             .base_url
-            .join(RECORD_PATH)
+            .join(self.record_path)
             .map_err(|error| RecordError::Rejected(error.to_string()))?;
         let mut query = Vec::<(&str, String)>::new();
         if let Some(owner) = owner {
