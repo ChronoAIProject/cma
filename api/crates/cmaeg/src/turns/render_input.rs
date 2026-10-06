@@ -69,7 +69,9 @@ fn strip_address(text: &str, source: &SourceKind, definition: &ChannelDefinition
         return strip_mention_keys(text);
     }
     let Some(username) = definition.sources.iter().find_map(|source| match source {
-        Source::NyxidRelay { bot_username, .. } => bot_username.as_deref(),
+        Source::NyxidRelay { bot_username, .. } | Source::Telegram { bot_username, .. } => {
+            bot_username.as_deref()
+        }
         _ => None,
     }) else {
         return text.to_owned();

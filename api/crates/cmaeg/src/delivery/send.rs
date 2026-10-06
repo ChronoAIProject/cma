@@ -34,6 +34,7 @@ impl Sender {
             crate::telemetry::names::PLATFORM,
             match &state.event.reply {
                 ReplyAddress::NyxidRelay { platform, .. } => platform.as_str(),
+                ReplyAddress::Telegram { .. } => "telegram",
                 _ => "custom",
             },
         );
@@ -46,6 +47,9 @@ impl Sender {
         state: &mut EventState,
         message: &OutboundMessage,
     ) -> IntentReceipt {
+        if matches!(state.event.reply, ReplyAddress::Telegram { .. }) {
+            return self.native_reply(state, message).await;
+        }
         let ReplyAddress::NyxidRelay { platform, .. } = &state.event.reply else {
             return self
                 .custom
@@ -275,6 +279,15 @@ impl Sender {
         reference: &MessageRefPayload,
         message: &OutboundMessage,
     ) -> IntentReceipt {
+        if reference.route_id.starts_with("telegram:")
+            && channel
+                .definition
+                .sources
+                .iter()
+                .any(|source| matches!(source, cmaeg_core::channel::Source::Telegram { .. }))
+        {
+            return self.native_update(channel, reference, message).await;
+        }
         let Some(store) = &self.relay.interactions else {
             return unsupported();
         };

@@ -175,3 +175,44 @@ async fn mint_requires_verified_context_and_cannot_accept_a_caller_selected_dest
     assert_eq!(response.status(), 400);
     assert!(app.relay.requests.lock().unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn native_reply_target_survives_restart_and_refuses_changed_bot_before_dispatch() {
+    let mut app = App::new(vec![]).await;
+    app.definition.sources = vec![Source::Telegram {
+        bot_id: "77".into(),
+        bot_username: Some("fixture_bot".into()),
+        admission: cmaeg_core::channel::AdmissionPolicy::All {},
+    }];
+    app.definition.secrets.telegram_bot_token =
+        Some(cmaeg_core::channel::Secret::new("77:fixture"));
+    app.definition.secrets.telegram_webhook_secret =
+        Some(cmaeg_core::channel::Secret::new("webhook-fixture"));
+    app.update().await;
+    let event = app.event("42", "native-target").await;
+    let target = app.target(&event).await;
+    app.restart().await;
+    let reopened = target
+        .parse::<ReplyTargetRef>()
+        .unwrap()
+        .open(&app.state.keys, now())
+        .unwrap();
+    assert!(
+        matches!(reopened.payload.event.reply,cmaeg_core::seal::ReplyAddress::Telegram{chat_id,bot_id,..}if chat_id=="42"&&bot_id=="77")
+    );
+    if let Source::Telegram { bot_id, .. } = &mut app.definition.sources[0] {
+        *bot_id = "88".into();
+    }
+    app.definition.secrets.telegram_bot_token =
+        Some(cmaeg_core::channel::Secret::new("88:fixture"));
+    app.update().await;
+    assert_eq!(
+        app.send(&target, "late", "must not dispatch")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        403
+    );
+    assert!(app.relay.requests.lock().unwrap().is_empty());
+}

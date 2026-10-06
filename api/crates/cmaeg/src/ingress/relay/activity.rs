@@ -28,10 +28,14 @@ pub fn launch_request(
         payload.message_id.clone()
     })
     .map_err(|_| "activity_invalid")?;
-    let activity = Activity {
-        schema_version: 1,
-        event_id: event_id.clone(),
-        kind: ActivityKind::Message {
+    let occurred_at = facts
+        .event
+        .as_ref()
+        .and_then(|ce| ce.time.clone())
+        .unwrap_or(payload.timestamp);
+    let kind = match facts.event {
+        Some(ce) => ActivityKind::Event { ce: *ce },
+        None => ActivityKind::Message {
             text: payload.content.text.unwrap_or_default(),
             attachments: Vec::new(),
             mentions_bot: facts.mentioned == Some(true),
@@ -41,6 +45,11 @@ pub fn launch_request(
                 .transpose()
                 .map_err(|_| "activity_invalid")?,
         },
+    };
+    let activity = Activity {
+        schema_version: 1,
+        event_id: event_id.clone(),
+        kind,
         actor: Actor {
             id: payload.sender.platform_id,
             display_name: payload.sender.display_name,
@@ -51,7 +60,7 @@ pub fn launch_request(
             kind: facts.conversation,
             thread_id: facts.thread_id,
         },
-        occurred_at: payload.timestamp,
+        occurred_at,
         source: SourceKind::NyxidRelay {
             platform,
             route_id: payload.conversation.id.clone(),

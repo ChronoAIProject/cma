@@ -14,6 +14,7 @@ pub struct RelayClient {
     http: Client,
     endpoint: Url,
     timeout: Duration,
+    pub telegram: crate::telegram::TelegramClient,
     pub interactions: Option<std::sync::Arc<crate::interactions::InteractionStore>>,
 }
 #[derive(Deserialize)]
@@ -22,6 +23,10 @@ struct ReplyResponse {
     platform_message_id: Option<String>,
 }
 impl RelayClient {
+    pub fn with_telegram(mut self, client: crate::telegram::TelegramClient) -> Self {
+        self.telegram = client;
+        self
+    }
     pub fn with_interactions(
         mut self,
         store: std::sync::Arc<crate::interactions::InteractionStore>,
@@ -49,6 +54,7 @@ impl RelayClient {
             endpoint,
             timeout,
             interactions: None,
+            telegram: crate::telegram::TelegramClient::production(timeout)?,
         })
     }
     pub async fn send(

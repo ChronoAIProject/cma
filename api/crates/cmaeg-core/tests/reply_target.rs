@@ -111,3 +111,31 @@ fn target_refuses_unverified_context_and_issuance_after_original_event_expiry() 
         );
     }
 }
+
+#[test]
+fn native_target_preserves_original_chat_without_platform_credentials() {
+    let ring = keys(1);
+    let mut value = payload(&ring);
+    value.event.reply = ReplyAddress::Telegram {
+        bot_id: "77".into(),
+        chat_id: "42".into(),
+        message_id: "5".into(),
+        thread_id: None,
+    };
+    let target = ReplyTargetRef::seal(&value, &ring).unwrap();
+    let opened = target.open(&ring, 300).unwrap();
+    assert_eq!(opened.payload.event.reply, value.event.reply);
+    let json = serde_json::to_value(&opened.payload.event).unwrap();
+    assert_eq!(json["reply"]["chat_id"], "42");
+    assert!(json["reply"].get("token").is_none());
+    for id in ["0", "-1", "not-an-id"] {
+        let mut bad = value.clone();
+        if let ReplyAddress::Telegram { bot_id, .. } = &mut bad.event.reply {
+            *bot_id = id.into();
+        }
+        assert!(ReplyTargetRef::seal(&bad, &ring)
+            .unwrap()
+            .open(&ring, 300)
+            .is_err());
+    }
+}

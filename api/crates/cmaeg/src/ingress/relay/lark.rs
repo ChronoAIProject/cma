@@ -102,6 +102,7 @@ pub fn observe(
         None => Some(false),
     };
     Ok(Observation::Message(RelayFacts {
+        event: None,
         callback: None,
         conversation,
         thread_id: identifier(message.get("thread_id"))?.map(str::to_owned),
