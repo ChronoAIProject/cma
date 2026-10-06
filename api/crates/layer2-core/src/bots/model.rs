@@ -54,7 +54,11 @@ pub struct CreateBot {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub event_worker_profile: Option<crate::event_workers::EventWorkerProfileRef>,
     pub name: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub external_bot_id: String,
+    /// Opaque gateway-owned channel connection. Mutually exclusive with legacy external_bot_id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection_ref: Option<String>,
     pub profile: AgentProfileRef,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sandbox_profile: Option<SandboxProfileRef>,
@@ -160,7 +164,10 @@ impl CreateBot {
         if self.name.trim().is_empty()
             || self.name.len() > 80
             || self.name.chars().any(char::is_control)
-            || self.external_bot_id.is_empty()
+            || (self.external_bot_id.is_empty() == self.connection_ref.is_none())
+            || self.connection_ref.as_ref().is_some_and(|value| {
+                value.is_empty() || value.len() > 4096 || value.chars().any(char::is_control)
+            })
             || self.external_bot_id.len() > 512
             || self.external_bot_id.chars().any(char::is_control)
             || self.profile.revision == 0

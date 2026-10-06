@@ -41,6 +41,12 @@ pub(super) fn external(server: &Server, gateway: &Gateway) -> Arc<GatewayBots> {
             http: http.clone(),
             base: server.base.clone(),
         },
+        connections: connections::ChannelConnections::new(
+            http.clone(),
+            &gateway.base,
+            &gateway.base,
+        )
+        .unwrap(),
         issuer: KeyIssuer::new(http, &server.base, "test"),
         public: gateway.base.clone(),
     })

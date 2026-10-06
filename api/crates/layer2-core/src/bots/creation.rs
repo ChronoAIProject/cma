@@ -11,6 +11,12 @@ impl BotWorker {
             return Err(BotError::Unavailable);
         }
         bot.resources.channel = Some(current.channel.clone());
+        if bot.request.connection_ref.is_some() {
+            return self
+                .service
+                .complete(bot, &self.holder, BotState::Active)
+                .await;
+        }
         self.step(bot, "set_callback").await?;
         self.external
             .set_callback(bot, &current.route_key_id, &current.channel.callback_url)
@@ -47,6 +53,13 @@ impl BotWorker {
         keys.agent_key_id = Some(agent.id);
         keys.agent_key_hash = Some(agent.value.sha256());
         keys.expires_at = Some(agent.expires_at.clone());
+        if bot.request.connection_ref.is_some() {
+            self.step(bot, "keys_minted").await?;
+            return Ok(BotSecrets {
+                agent: agent.value,
+                route: None,
+            });
+        }
         self.step(bot, "mint_route_key").await?;
         let route = self.external.mint(bot, BotKeyRole::Route).await?;
         let keys = keys_mut(bot, replacement)?;
@@ -64,7 +77,7 @@ impl BotWorker {
         self.step(bot, "keys_minted").await?;
         Ok(BotSecrets {
             agent: agent.value,
-            route: route.value,
+            route: Some(route.value),
         })
     }
     pub(super) async fn cleanup(&self, bot: &mut Bot) -> Result<(), BotError> {
@@ -92,7 +105,9 @@ impl BotWorker {
             }
         }
         self.step(bot, "delete_routes").await?;
-        self.external.delete_routes(bot, &route_keys).await?;
+        if bot.request.connection_ref.is_none() {
+            self.external.delete_routes(bot, &route_keys).await?;
+        }
         bot.resources.route_id = None;
         for key in keys {
             self.step(bot, "revoke_owned_key").await?;

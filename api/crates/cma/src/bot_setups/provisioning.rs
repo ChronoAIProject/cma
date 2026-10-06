@@ -51,14 +51,22 @@ impl SetupDependencies {
         {
             return Err(BotError::Conflict);
         }
-        let external = setup.external_bot_id.as_deref().ok_or(BotError::Conflict)?;
-        if !self
-            .channel_bots(&setup.actor, grant, owner)
-            .await?
-            .iter()
-            .any(|bot| bot.id == external)
-        {
-            return Err(BotError::Forbidden);
+        if let Some(reference) = &setup.connection_ref {
+            let (_, token) = self.auth.context_for_grant(grant, &actor, owner).await?;
+            if self
+                .connections
+                .get(token.expose(), owner, reference)
+                .await?
+                .status
+                != "ready"
+            {
+                return Err(BotError::Conflict);
+            }
+        } else {
+            // Retained pre-connection setup plans cannot silently gain a different source.
+            return Err(BotError::Invalid(
+                "Select a channel connection before creating the Bot.".into(),
+            ));
         }
         let name = setup.draft.name.as_deref().ok_or(BotError::Conflict)?;
         let description = "Created through the owner-authorized Bot setup workflow";
@@ -130,7 +138,8 @@ impl SetupDependencies {
                 CreateBot {
                     event_worker_profile: None,
                     name: name.into(),
-                    external_bot_id: external.into(),
+                    external_bot_id: String::new(),
+                    connection_ref: setup.connection_ref.clone(),
                     profile: agent_ref,
                     sandbox_profile: Some(SandboxProfileRef {
                         id: sandbox.profile_id,
@@ -210,24 +219,20 @@ impl SetupDependencies {
                 }
             }
         }
-        if let Some(external) = self
-            .channel_bots(
-                &setup.actor,
-                setup.grant_id.as_deref().ok_or(BotError::Forbidden)?,
-                setup.owner.as_ref().ok_or(BotError::Forbidden)?,
-            )
-            .await?
-            .into_iter()
-            .find(|b| b.id == bot.request.external_bot_id)
-        {
-            if !external.username.is_empty()
-                && external
-                    .username
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b == b'_')
-            {
-                result.bot_url = Some(format!("https://t.me/{}", external.username));
-            }
+        if let Some(reference) = &bot.request.connection_ref {
+            let (_, token) = self
+                .auth
+                .context_for_grant(
+                    setup.grant_id.as_deref().ok_or(BotError::Forbidden)?,
+                    &authorization::actor(&setup.actor),
+                    setup.owner.as_ref().ok_or(BotError::Forbidden)?,
+                )
+                .await?;
+            result.bot_url = self
+                .connections
+                .get(token.expose(), &bot.resource_owner(), reference)
+                .await?
+                .url;
         }
         Ok(result)
     }

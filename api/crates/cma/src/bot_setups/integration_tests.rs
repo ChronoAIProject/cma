@@ -2,6 +2,7 @@
 use super::*;
 use serde_json::{json, Value};
 use std::sync::Mutex;
+mod connections;
 mod corpus;
 mod fixture;
 mod ports;

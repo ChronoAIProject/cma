@@ -123,6 +123,8 @@ struct ActivityIdentity {
     event_id: String,
     actor: SourceActor,
     source: ActivitySource,
+    #[serde(default)]
+    kind: serde_json::Value,
 }
 #[derive(Deserialize)]
 struct SourceActor {
@@ -130,10 +132,9 @@ struct SourceActor {
     kind: String,
 }
 #[derive(Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-enum ActivitySource {
-    NyxidRelay { platform: String },
-    Custom,
+struct ActivitySource {
+    #[serde(default)]
+    platform: Option<String>,
 }
 
 async fn verify_activity(
@@ -199,10 +200,17 @@ fn source_user_session(
     generation: u64,
     activity: &ActivityIdentity,
 ) -> Result<String, BindingRouteError> {
-    let ActivitySource::NyxidRelay { platform } = &activity.source else {
+    let Some(platform) = &activity.source.platform else {
         return Err(BindingRouteError::Invalid);
     };
-    if activity.actor.kind != "human" {
+    let completion = activity.actor.kind == "system"
+        && activity.kind["type"].as_str() == Some("event")
+        && activity.kind["ce"]["type"].as_str() == Some("gateway.connection.ready");
+    if (activity.actor.kind != "human" && !completion)
+        || activity.actor.id.is_empty()
+        || platform.is_empty()
+        || platform.len() > 32
+    {
         return Err(BindingRouteError::Invalid);
     }
     layer2_core::profiles::content_digest(&(
@@ -262,6 +270,25 @@ mod tests {
         first["actor"]["kind"] = "human".into();
         first["source"] = json!({"type":"custom"});
         assert!(source_user_session("binding", 1, &identity(&first)).is_err());
+    }
+
+    #[test]
+    fn attested_connection_completion_and_native_source_keep_original_actor_affinity() {
+        let mut value = activity();
+        let expected = source_user_session("binding", 1, &identity(&value)).unwrap();
+        value["source"] = json!({"type":"native-fixture", "platform":"telegram", "bot_id":"123"});
+        assert_eq!(
+            source_user_session("binding", 1, &identity(&value)).unwrap(),
+            expected
+        );
+        value["actor"]["kind"] = "system".into();
+        value["kind"] = json!({"type":"event","ce":{"type":"gateway.connection.ready","data":{"connection_ref":"opaque","status":"ready"}}});
+        assert_eq!(
+            source_user_session("binding", 1, &identity(&value)).unwrap(),
+            expected
+        );
+        value["kind"]["ce"]["type"] = "unrelated.system.event".into();
+        assert!(source_user_session("binding", 1, &identity(&value)).is_err());
     }
 
     #[tokio::test]
