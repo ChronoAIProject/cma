@@ -22,6 +22,7 @@ pub(crate) enum ConnectionSetupState {
         message: String,
         action: Option<PageLink>,
         refresh_path: String,
+        retry: Option<ConnectionRetry>,
     },
     Complete {
         connection_label: String,
@@ -42,6 +43,11 @@ pub(crate) struct ConnectionChoices {
     pub registration_help: Option<PageLink>,
     /// A safe user-facing error. Handlers must not copy upstream error bodies.
     pub error: Option<String>,
+}
+
+pub(crate) struct ConnectionRetry {
+    pub form_action: String,
+    pub csrf_token: String,
 }
 
 #[derive(Clone, Copy)]
@@ -112,16 +118,17 @@ fn render_document(page: &ConnectionSetupPage) -> Result<String, RenderError> {
             "Choose an existing bot or create a new one. Your agent setup will continue when the connection is ready.",
             render_choices(choices, &page.platform_label)?,
         ),
-        ConnectionSetupState::AwaitingPlatform { message, action, refresh_path } => {
+        ConnectionSetupState::AwaitingPlatform { message, action, refresh_path, retry } => {
             if !same_origin_path(refresh_path) {
                 return Err(RenderError::InvalidAction);
             }
             let action = optional_link(action, "button")?;
+            let retry = render_retry(retry)?;
             (
                 "Finish connecting your bot",
                 "Complete the platform step, then check the connection here.",
                 format!(
-                    "<section class=\"status-card\" aria-labelledby=\"status-heading\"><span class=\"status-label\">Waiting for you</span><h2 id=\"status-heading\">One more step</h2><p>{}</p><div class=\"actions\">{action}<a class=\"button secondary\" href=\"{}\">Check connection</a></div></section>",
+                    "<section class=\"status-card\" aria-labelledby=\"status-heading\"><span class=\"status-label\">Waiting for you</span><h2 id=\"status-heading\">One more step</h2><p>{}</p><div class=\"actions\">{action}<a class=\"button secondary\" href=\"{}\">Check connection</a></div>{retry}</section>",
                     escape(message), escape(refresh_path),
                 ),
             )
@@ -213,6 +220,22 @@ fn render_choices(choices: &ConnectionChoices, platform: &str) -> Result<String,
 <label class="field" for="connection-label">Connection name <span class="optional">optional</span><input id="connection-label" name="label" maxlength="128" placeholder="My assistant"></label>
 <label class="field" for="bot-token">Bot token<input id="bot-token" type="password" name="bot_token" required maxlength="512" autocomplete="off" autocapitalize="none" spellcheck="false" aria-describedby="token-help"></label><p id="token-help" class="hint">Use the token supplied by your bot platform. It is sent directly to the gateway when you connect.</p>{help}{management}<button type="submit">Connect bot</button></form></section>
 <section class="panel create-panel" aria-labelledby="create-heading"><h2 id="create-heading">Create a new bot</h2>{create_form}</section></div>"#,
+    ))
+}
+
+fn render_retry(retry: &Option<ConnectionRetry>) -> Result<String, RenderError> {
+    let Some(retry) = retry else {
+        return Ok(String::new());
+    };
+    if !same_origin_path(&retry.form_action) {
+        return Err(RenderError::InvalidAction);
+    }
+    if retry.csrf_token.trim().is_empty() {
+        return Err(RenderError::MissingCsrf);
+    }
+    Ok(format!(
+        "<form class=\"actions\" method=\"post\" action=\"{}\"><input type=\"hidden\" name=\"csrf_token\" value=\"{}\"><input type=\"hidden\" name=\"intent\" value=\"retry_creation\"><div><p id=\"retry-help\" class=\"hint\">Resend only if the creation button is missing from your conversation.</p><button class=\"secondary\" type=\"submit\" aria-describedby=\"retry-help\">Resend creation button</button></div></form>",
+        escape(&retry.form_action),escape(&retry.csrf_token),
     ))
 }
 

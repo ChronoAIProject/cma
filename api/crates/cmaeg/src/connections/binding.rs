@@ -1,29 +1,19 @@
 //! Resolve opaque connection references and own their platform webhook lifecycle.
-use super::{model::*, store::Store, Error};
+use super::{model::*, recovery, webhook, Error};
 use crate::{
     auth::Creator,
     channels::{
         management::{ManagementError, ManagementState},
         ChannelCreateRequest, ChannelUpdateRequest, SourceRequest,
     },
-    telegram::TelegramClient,
 };
 use cmaeg_core::{
     channel::{AdmissionPolicy, ChannelDefinition, Secret},
     ids::{ChannelId, RecordId},
     ValidationError,
 };
-use std::time::Duration;
+use webhook::store;
 
-fn store(state: &ManagementState) -> Store {
-    Store::new((*state.records).clone(), state.master_keys.clone())
-}
-fn client(state: &ManagementState) -> Result<TelegramClient, ManagementError> {
-    match &state.telegram {
-        Some(client) => Ok((**client).clone()),
-        None => TelegramClient::production(Duration::from_secs(8)).map_err(|_| failed()),
-    }
-}
 fn failed() -> ManagementError {
     ManagementError::Internal("connection platform operation unavailable".into())
 }
@@ -50,7 +40,7 @@ async fn owned(
     if record.owner != creator.subject || record.organization != creator.organization {
         return Err(ManagementError::NotFound);
     }
-    if record.status != Status::Ready {
+    if record.status != Status::Ready || record.webhook_retiring {
         return Err(invalid("connection is not ready"));
     }
     Ok((record, version))
@@ -172,38 +162,42 @@ pub async fn activate(
     {
         return Err(invalid("connection channel identity changed"));
     }
-    if record.channel_id.is_none() {
-        record.channel_id = Some(channel_id.to_string());
-        store(state)
-            .save_connection(&record, Some(version))
-            .await
-            .map_err(error)?;
-    }
-    let material = record.material.as_ref().ok_or_else(failed)?;
-    let token = Secret::new(material.token.clone());
-    let telegram = client(state)?;
-    if telegram.get_me(&token).await.map_err(|_| failed())?.id != material.bot_id {
-        return Err(invalid("platform credential identity changed"));
-    }
-    let expected = format!("{}/v1/telegram/{channel_id}", state.public_url);
-    let current = telegram
-        .get_webhook_url(&token)
+    record.channel_id = Some(channel_id.to_string());
+    let (record, lease) = webhook::claim(state, record, version, WebhookOperation::Activate)
         .await
-        .map_err(|_| failed())?;
-    if !current.is_empty() && current != expected {
-        return Err(invalid(
-            "this bot already has a webhook; disconnect its previous integration before linking it",
-        ));
-    }
-    telegram
-        .set_webhook(
-            &token,
-            &expected,
-            &Secret::new(material.webhook_secret.clone()),
-        )
+        .map_err(error)?;
+    let mut mutation_started = false;
+    let result = async {
+        let material = record.material.as_ref().ok_or_else(failed)?;
+        let token = Secret::new(material.token.clone());
+        let telegram = webhook::client(state).map_err(error)?;
+        if telegram.get_me(&token).await.map_err(|_| failed())?.id != material.bot_id {
+            return Err(invalid("platform credential identity changed"));
+        }
+        let expected = format!("{}/v1/telegram/{channel_id}", state.public_url);
+        let current = telegram.get_webhook_url(&token).await.map_err(|_| failed())?;
+        if !current.is_empty() && current != expected {
+            return Err(invalid("this bot already has a webhook; disconnect its previous integration before linking it"));
+        }
+        if !webhook::may_activate(state, id, channel_id.as_str(), &lease).await.map_err(error)? {
+            return Err(error(Error::Conflict));
+        }
+        mutation_started = true;
+        telegram.set_webhook(&token, &expected, &Secret::new(material.webhook_secret.clone()))
+            .await.map_err(|_| failed())
+    }.await;
+    let wanted = webhook::finish_activation(state, id, &lease, result.is_ok() || !mutation_started)
         .await
-        .map_err(|_| failed())
+        .map_err(error)?;
+    if !wanted {
+        // Retirement survives process death. The live caller also reconciles as
+        // soon as its own remote operation is known to have finished.
+        let _ = recovery::reconcile(state, id).await;
+        return Err(error(Error::Conflict));
+    }
+    result
 }
+
 /// Remove only the webhook whose exact retained channel identity is being deleted.
 pub async fn disconnect(
     state: &ManagementState,
@@ -213,7 +207,7 @@ pub async fn disconnect(
     let Some(id) = definition.connection_ref.as_deref() else {
         return Ok(());
     };
-    let (record, _) = store(state).connection(id).await.map_err(error)?;
+    let (mut record, version) = store(state).connection(id).await.map_err(error)?;
     if (record.organization
         != (definition.owner.kind == cmaeg_core::profile::NyxIdIdentityKind::Organization))
         || record.owner != definition.owner.subject
@@ -225,22 +219,21 @@ pub async fn disconnect(
     {
         return Err(ManagementError::NotFound);
     }
-    let material = record.material.as_ref().ok_or_else(failed)?;
-    let token = Secret::new(material.token.clone());
-    let telegram = client(state)?;
-    let expected = format!("{}/v1/telegram/{channel_id}", state.public_url);
-    let current = telegram
-        .get_webhook_url(&token)
+    // Keep the exact pointer even when deletion wins before activation started.
+    record.channel_id = Some(channel_id.to_string());
+    record.webhook_retiring = true;
+    store(state)
+        .save_connection(&record, Some(version))
         .await
-        .map_err(|_| failed())?;
-    if current == expected {
-        telegram
-            .delete_webhook(&token)
-            .await
-            .map_err(|_| failed())?;
+        .map_err(error)?;
+    match webhook::cleanup(state, id, false).await {
+        // A live activation is not a reason to lose the delete intent. It or the
+        // durable worker will clean up after the platform operation settles.
+        Ok(()) | Err(Error::Conflict) => Ok(()),
+        Err(value) => Err(error(value)),
     }
-    Ok(())
 }
+
 pub async fn release(
     state: &ManagementState,
     definition: &ChannelDefinition,
@@ -248,7 +241,7 @@ pub async fn release(
     let Some(id) = definition.connection_ref.as_deref() else {
         return Ok(());
     };
-    let (mut record, version) = store(state).connection(id).await.map_err(error)?;
+    let (record, version) = store(state).connection(id).await.map_err(error)?;
     if (record.organization
         != (definition.owner.kind == cmaeg_core::profile::NyxIdIdentityKind::Organization))
         || record.owner != definition.owner.subject
@@ -261,11 +254,11 @@ pub async fn release(
     if record.channel_record.as_deref() != Some(definition.record_id.as_str()) {
         return Err(ManagementError::NotFound);
     }
-    record.channel_record = None;
-    record.channel_id = None;
-    store(state)
-        .save_connection(&record, Some(version))
+    webhook::retire(state, record, version)
         .await
         .map_err(error)?;
-    Ok(())
+    match recovery::reconcile(state, id).await {
+        Ok(()) | Err(Error::Conflict) => Ok(()),
+        Err(value) => Err(error(value)),
+    }
 }

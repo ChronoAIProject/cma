@@ -31,7 +31,7 @@ impl ConnectionService {
         let channel = self
             .management
             .resolver
-            .resolve(record.origin.event.channel_id.as_str())
+            .resolve_current(record.origin.event.channel_id.as_str())
             .await
             .map_err(|_| Error::NotFound)?;
         if channel.definition.record_id != record.origin.event.record_id
@@ -162,6 +162,8 @@ impl ConnectionService {
             created_at: now(),
             expires_at: record.expires_at,
             prompt_message: None,
+            suggested_name: name.clone(),
+            suggested_username: username.clone(),
             receipt: None,
         };
         let pending_version = match self
@@ -289,7 +291,32 @@ impl ConnectionService {
             } else {
                 Status::Ready
             };
-        self.store.save_connection(&record, Some(reserved)).await?;
+        if let Err(error) = self.store.save_connection(&record, Some(reserved)).await {
+            // A cancellation may have released the slot before this operation
+            // acquired it. Re-read durable authority before releasing anything;
+            // a lost successful Ready response must retain its valid claim.
+            if let Ok((current, _)) = self.store.connection(&record.id).await {
+                let _ = self.reconcile_terminal_claim(&current).await;
+            }
+            return Err(error);
+        }
+        Ok(())
+    }
+    pub(super) async fn reconcile_terminal_claim(&self, record: &Connection) -> Result<(), Error> {
+        if matches!(
+            effective_status(record),
+            Status::Cancelled | Status::Expired
+        ) && record.channel_record.is_none()
+            && record.channel_id.is_none()
+            && !record.webhook_retiring
+            && record.webhook_lease.is_none()
+        {
+            if let Some(material) = &record.material {
+                self.store
+                    .release_bot_claim(&material.bot_id, &record.owner, &record.id)
+                    .await?;
+            }
+        }
         Ok(())
     }
     pub async fn observe_creation(
@@ -337,9 +364,13 @@ impl ConnectionService {
             .as_ref()
             .ok_or(Error::Invalid("invalid platform receipt"))?;
         let bot_id = data["bot"]["id"]
-            .as_i64()
-            .filter(|id| *id > 0)
-            .map(|id| id.to_string())
+            .as_str()
+            .filter(|value| {
+                value
+                    .parse::<i64>()
+                    .is_ok_and(|id| id > 0 && id.to_string() == *value)
+            })
+            .map(str::to_owned)
             .ok_or(Error::Invalid("invalid created bot"))?;
         let message_id = data["message_id"]
             .as_str()

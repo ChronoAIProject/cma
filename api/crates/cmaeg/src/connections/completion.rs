@@ -42,6 +42,28 @@ impl ConnectionService {
                             Ok(v) => v,
                             Err(_) => continue,
                         };
+                    if record.channel_id.is_some() || record.webhook_retiring {
+                        let _ = service
+                            .recover_deleted_channel(record.clone(), version)
+                            .await;
+                        match service.store.connection(&head.record_id).await {
+                            Ok((current, revision)) => {
+                                record = current;
+                                version = revision;
+                            }
+                            Err(_) => continue,
+                        }
+                    }
+                    // Cancellation and claim acquisition are separate CAS
+                    // records. Recover a late claim even after either replica
+                    // dies or loses the final save response.
+                    if matches!(
+                        super::service::effective_status(&record),
+                        Status::Cancelled | Status::Expired
+                    ) {
+                        let _ = service.reconcile_terminal_claim(&record).await;
+                        continue;
+                    }
                     if record.status == Status::AwaitingPlatform
                         && record.requested_manager
                         && record.material.is_some()
@@ -53,11 +75,6 @@ impl ConnectionService {
                             record = next;
                             version = next_version;
                         }
-                    }
-                    if record.channel_id.is_some() {
-                        let _ = service
-                            .recover_deleted_channel(record.clone(), version)
-                            .await;
                     }
                     if record.status != Status::Ready
                         || record.notified
