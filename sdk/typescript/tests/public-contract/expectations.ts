@@ -3,6 +3,8 @@ import type { ContractCase } from './context.js';
 import { browserOperations } from './navigation.js';
 
 export const localCodes = new Map([
+  ['gateway-connection-list-invalid-query', 'invalid_query'],
+  ['gateway-connection-delete-invalid-query', 'invalid_query'],
   ['queued-cancellation-v2-invalid-revision', 'invalid_queued_cancellation_request'],
   ['queued-cancellation-v2-unknown-field', 'invalid_queued_cancellation_request'],
   ['agent-events-v2-snapshot-invalid', 'invalid_agent_cursor'],

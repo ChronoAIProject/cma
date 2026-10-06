@@ -56,6 +56,34 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
                 .delete(c.param("record_id"), c.number("expected_version")?)
                 .await,
         ),
+        "PUT /api/v1/gateway/connection-records/{record_id}" => c.check(
+            client
+                .gateway_connection_records()
+                .put(c.param("record_id"), &c.body()?)
+                .await,
+        ),
+        "GET /api/v1/gateway/connection-records/{record_id}" => c.check(
+            client
+                .gateway_connection_records()
+                .get(c.param("record_id"))
+                .await,
+        ),
+        "GET /api/v1/gateway/connection-records" => c.check(
+            client
+                .gateway_connection_records()
+                .list(&cma_sdk::gateway_records::GatewayRecordListOptions {
+                    owner: c.q("owner"),
+                    after: c.q("after"),
+                    limit: c.number("limit")?,
+                })
+                .await,
+        ),
+        "DELETE /api/v1/gateway/connection-records/{record_id}" => c.check(
+            client
+                .gateway_connection_records()
+                .delete(c.param("record_id"), c.number("expected_version")?)
+                .await,
+        ),
         "GET /api/v1/agents/{id}/channel-usage" => {
             c.check(client.agents().channel_usage(c.param("id")).await)
         }

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 183,
+  "openapi_operations": 187,
   "operations": {
     "GET /api/v1/organizations": {
       "classification": "openapi",
@@ -2527,6 +2527,54 @@
       "source": "api/crates/cma/src/bot_setups/delegation.rs# CMA-owned binding authentication resolves the admitted source actor and dispatches real consent and resource operations; external dependencies are fixture ports.",
       "required_problems": [
         "delegated_operation_refused"
+      ]
+    },
+    "DELETE /api/v1/gateway/connection-records/{record_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/gateway_connections.rs# Connection records reuse capability-gated record handlers with an independent namespace; the executable gateway-connections corpus covers success, authority, validation, storage and CAS outcomes.",
+      "required_problems": [
+        "conflict",
+        "forbidden",
+        "gateway_record_not_found",
+        "invalid_gateway_record",
+        "invalid_query",
+        "not_authenticated",
+        "store_failed"
+      ]
+    },
+    "GET /api/v1/gateway/connection-records": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/gateway_connections.rs# Connection records reuse capability-gated record handlers with an independent namespace; the executable gateway-connections corpus covers success, authority, validation, storage and CAS outcomes.",
+      "required_problems": [
+        "forbidden",
+        "invalid_gateway_record",
+        "invalid_query",
+        "not_authenticated",
+        "store_failed"
+      ]
+    },
+    "GET /api/v1/gateway/connection-records/{record_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/gateway_connections.rs# Connection records reuse capability-gated record handlers with an independent namespace; the executable gateway-connections corpus covers success, authority, validation, storage and CAS outcomes.",
+      "required_problems": [
+        "forbidden",
+        "gateway_record_not_found",
+        "invalid_gateway_record",
+        "not_authenticated",
+        "store_failed"
+      ]
+    },
+    "PUT /api/v1/gateway/connection-records/{record_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/gateway_connections.rs# Connection records reuse capability-gated record handlers with an independent namespace; the executable gateway-connections corpus covers success, authority, validation, storage and CAS outcomes.",
+      "required_problems": [
+        "conflict",
+        "forbidden",
+        "gateway_record_too_large",
+        "invalid_gateway_record",
+        "invalid_json",
+        "not_authenticated",
+        "store_failed"
       ]
     }
   }
