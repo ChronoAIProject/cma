@@ -70,11 +70,15 @@ pub struct GatewayRecordListOptions {
     pub limit: Option<u32>,
 }
 /// Operations requiring the gateway management capability.
-pub struct GatewayRecords<'a>(&'a Client);
+pub struct GatewayRecords<'a>(&'a Client, &'static str);
 impl Client {
     /// Manage opaque encrypted gateway records.
     pub fn gateway_records(&self) -> GatewayRecords<'_> {
-        GatewayRecords(self)
+        GatewayRecords(self, "channel-records")
+    }
+    /// Manage opaque encrypted gateway connection records in their separate namespace.
+    pub fn gateway_connection_records(&self) -> GatewayRecords<'_> {
+        GatewayRecords(self, "connection-records")
     }
 }
 impl GatewayRecords<'_> {
@@ -83,7 +87,7 @@ impl GatewayRecords<'_> {
         self.0
             .operation(
                 Method::PUT,
-                &["gateway", "channel-records", id],
+                &["gateway", self.1, id],
                 Some(body),
                 StatusCode::OK,
             )
@@ -91,7 +95,7 @@ impl GatewayRecords<'_> {
     }
     /// Read the full encrypted record.
     pub async fn get(&self, id: &str) -> Result<GatewayRecord> {
-        self.0.get(&["gateway", "channel-records", id], &[]).await
+        self.0.get(&["gateway", self.1, id], &[]).await
     }
     /// List metadata without downloading ciphertext.
     pub async fn list(&self, options: &GatewayRecordListOptions) -> Result<GatewayRecordPage> {
@@ -105,11 +109,11 @@ impl GatewayRecords<'_> {
         if let Some(value) = options.limit {
             query.push(("limit", value.to_string()));
         }
-        self.0.get(&["gateway", "channel-records"], &query).await
+        self.0.get(&["gateway", self.1], &query).await
     }
     /// Delete a record, optionally requiring its current version.
     pub async fn delete(&self, id: &str, expected_version: Option<u64>) -> Result<()> {
-        let path = ["gateway", "channel-records", id];
+        let path = ["gateway", self.1, id];
         let mut request =
             Request::operation::<()>(Method::DELETE, &path, None, StatusCode::NO_CONTENT)?;
         let query = expected_version

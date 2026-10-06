@@ -3,6 +3,7 @@
 pub mod auth;
 pub mod channels;
 mod config;
+pub mod connections;
 pub mod delivery;
 pub mod http;
 pub mod ingress;
@@ -12,6 +13,7 @@ pub mod openapi;
 pub mod providers;
 pub mod records;
 mod service_auth;
+pub mod telegram;
 pub mod telemetry;
 pub mod tools;
 pub mod turns;
@@ -107,13 +109,17 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let creator_auth = std::sync::Arc::new(auth::CreatorAuthenticator::new(
         &config.management.nyxid_base_url,
     )?);
-    let state = http::ManagementState::new(
+    let mut state = http::ManagementState::new(
         providers.clone(),
         records,
         creator_auth,
         config.management.clone(),
         config.channel_cache,
     );
+    let telegram = std::sync::Arc::new(telegram::TelegramClient::production(
+        config.delivery.reply_timeout,
+    )?);
+    state.telegram = Some(telegram.clone());
     let _reachability_probe = state.readiness.start_probe(state.records.clone());
     let tracker = turns::TurnTracker::new(state.readiness.clone());
     let (delivery, outcomes) = tokio::sync::mpsc::channel(256);
@@ -148,8 +154,9 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         state.resolver.clone(),
         state.master_keys.clone(),
         config.ingress,
-        runner,
+        runner.clone(),
     )?
+    .with_telegram(telegram)
     .with_interactions(interactions);
     let tools_state = tools::ToolsState {
         resolver: state.resolver.clone(),
@@ -159,6 +166,9 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         tracker: tracker.clone(),
         public_origin: config.management.public_url.clone(),
     };
+    let connections = connections::ConnectionService::new(state.clone(), tools_state.clone());
+    let ingress = ingress.with_receipt_observer(std::sync::Arc::new(connections.clone()));
+    let _connection_worker = connections.start_completion_worker(runner);
     let listener = tokio::net::TcpListener::bind(config.listen).await?;
     let _metrics =
         http::metrics::MetricsServer::start(config.metrics_listen, telemetry::install()?).await?;
@@ -172,9 +182,13 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 ingress: ingress.clone(),
                 waiters,
             }))
+            .merge(http::connections::router(connections.clone()))
+            .merge(http::connection_browser::router(connections))
+            .merge(http::telegram::router(ingress.clone()))
             .merge(http::callbacks::router(ingress))
             .merge(http::tools::router(tools_state.clone()))
             .merge(mcp::router(tools_state))
+            .layer(RequestBodyLimitLayer::new(REQUEST_BODY_LIMIT_BYTES))
             .into_make_service_with_connect_info::<SocketAddr>(),
     )
     .with_graceful_shutdown(async move {

@@ -186,6 +186,10 @@ of the public contract.
 | `DELETE /api/v1/gateway/channel-records/{record_id}` |
 | `GET /api/v1/gateway/channel-records/{record_id}` |
 | `PUT /api/v1/gateway/channel-records/{record_id}` |
+| `GET /api/v1/gateway/connection-records` |
+| `DELETE /api/v1/gateway/connection-records/{record_id}` |
+| `GET /api/v1/gateway/connection-records/{record_id}` |
+| `PUT /api/v1/gateway/connection-records/{record_id}` |
 
 ### event worker profiles
 

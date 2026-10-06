@@ -27,6 +27,7 @@ impl ExternalActor {
 pub struct SetupEvent {
     pub actor: ExternalActor,
     pub event_id: String,
+    pub reference: String,
     pub occurred_at: String,
     pub input: SetupInput,
 }
@@ -34,7 +35,12 @@ pub struct SetupEvent {
 #[derive(Debug, Clone)]
 pub enum SetupInput {
     Text(String),
-    Interaction { block_id: String, action_id: String },
+    /// An authenticated provider notification conveys state, never human consent.
+    Notification,
+    Interaction {
+        block_id: String,
+        action_id: String,
+    },
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -95,6 +101,10 @@ pub struct BotSetup {
     pub configuration: SetupConfiguration,
     pub selected_services: Vec<String>,
     pub external_bot_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_connection: Option<SetupConnectionRequest>,
     pub admission: Option<crate::bots::BotAdmission>,
     pub service_page: usize,
     pub confirmation_digest: Option<String>,
@@ -111,12 +121,15 @@ impl BotSetup {
         format!("{}.{}", self.id, self.revision)
     }
     pub fn plan_digest(&self) -> Result<String, crate::bots::BotError> {
-        crate::profiles::content_digest(&serde_json::json!({
+        let mut plan = serde_json::json!({
             "id":self.id,"grant":self.grant_id,"owner":self.owner,"name":self.draft.name,
             "configuration":self.configuration,"services":self.selected_services,
             "external_bot_id":self.external_bot_id,"admission":self.admission,
-        }))
-        .map_err(|_| crate::bots::BotError::Unavailable)
+        });
+        if let Some(reference) = &self.connection_ref {
+            plan["connection_ref"] = reference.clone().into();
+        }
+        crate::profiles::content_digest(&plan).map_err(|_| crate::bots::BotError::Unavailable)
     }
 }
 
@@ -135,6 +148,10 @@ pub struct SetupView {
     pub services: Vec<SetupServiceChoice>,
     pub connection_url: Option<String>,
     pub external_bot_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub connection_ref: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub connection_status: Option<String>,
     pub admission: Option<crate::bots::BotAdmission>,
     pub confirmation_digest: Option<String>,
     pub result: Option<SetupResult>,
@@ -186,6 +203,7 @@ pub struct SetupExternalBot {
     pub id: String,
     pub name: String,
     pub username: String,
+    pub connection_ref: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -198,4 +216,29 @@ pub struct SetupResult {
     pub workspace_id: Option<String>,
     pub agent_id: Option<String>,
     pub bot_url: Option<String>,
+}
+
+/// Durable creation identity; no platform options or credentials belong in this record.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SetupConnectionRequest {
+    pub record_id: String,
+    pub source_event_id: String,
+    pub source_event_ref: String,
+    pub authority_stamp: String,
+    pub plan_digest: String,
+    pub connection_ref: Option<String>,
+    pub status: String,
+    pub setup_url: Option<String>,
+}
+#[derive(Debug, Clone)]
+pub struct SetupConnectionStatus {
+    pub connection_ref: String,
+    pub status: String,
+    pub setup_url: Option<String>,
+}
+impl SetupConnectionRequest {
+    pub(super) fn terminal(&self) -> bool {
+        matches!(self.status.as_str(), "failed" | "cancelled" | "expired")
+    }
 }

@@ -1,7 +1,7 @@
 ---
 name: cma-bot-father
 description: Answer CMA questions, operate CMA resources with the signed-in user's authority, and help Telegram users create personal or organization CMA Agent Bots through natural conversation. Use for CMA operations or Bot creation; greetings and general questions remain normal assistant conversation.
-version: "3.0"
+version: "4.0"
 metadata:
   category: plain
   tags: [cma, telegram, bot, channels]
@@ -61,13 +61,17 @@ custom choices should reflect what they requested.
    returned connection link when one needs connecting. Continue after the user
    returns. Organization Bots must use that organization's inventory,
    connections and service scope; personal connections do not satisfy it.
-4. **Telegram channel and access.** Select a Bot from that owner's returned
-   choices. If none is suitable, obtain CMA's registration link, let the user
-   register their Bot there, and refresh the choices. Explain who may message
-   the Bot: only the user, anyone in private chat, or private chats plus group
-   mentions/replies. Use their choice.
-5. **Review and creation.** Show the returned effective owner, name, Telegram
-   Bot, access rules, selected services, Agent instructions and model, Workspace
+4. **Gateway connection and access.** Select a connection from the owner's
+   returned choices. If they need a new connection, choose `register` and share
+   the exact returned gateway setup URL. The gateway handles platform setup,
+   credentials and optional capabilities on its own page. Never send the user
+   to a guessed NyxID registration route or request a platform token in chat.
+   A verified connection-completed notification resumes this conversation;
+   call `view` with that notification's event reference and continue from the
+   returned step. Explain who may message the Bot using the returned access
+   choices and use the user's selection.
+5. **Review and creation.** Show the returned effective owner, name, gateway
+   connection, access rules, selected services, Agent instructions and model, Workspace
    location/setup, Sandbox resources/software/environment and availability.
    Describe defaults with their actual values. Ask for a fresh **Create Bot**
    or **确认创建** reply to confirm this complete plan. Wait for that new event,
@@ -97,7 +101,7 @@ explanation. Follow topic changes without cancelling or advancing the setup.
 When the user returns to setup, recover the current view rather than reconstructing
 state from memory. Handle cancellation through the available cancel choice.
 
-Login, service connection and Bot registration use the URLs CMA returns. All
+Login, service connection and gateway setup use the URLs CMA returns. All
 other choices can be discussed in chat. Reply through the active conversation
 or the gateway's generic reply tools; keep event references, request IDs,
 configuration digests and internal credentials out of the user's reply.

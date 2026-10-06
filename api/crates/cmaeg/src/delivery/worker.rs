@@ -1,6 +1,6 @@
 use super::{
     event::{key, now, EventKey, EventState},
-    intents::{DeliveryCommand, DeliveryOutcome, ReplySource, TypingOutcome, TypingReceipt},
+    intents::{DeliveryCommand, DeliveryOutcome, ReplySource},
     send::{unsupported, Sender},
 };
 use crate::{
@@ -54,10 +54,13 @@ async fn handle(
         } => {
             let _ = receipt.send(sender.update(&channel, &message_ref, &message).await);
         }
-        DeliveryCommand::Typing { receipt, .. } => {
-            let _ = receipt.send(TypingReceipt {
-                outcome: TypingOutcome::Unsupported,
-            });
+        DeliveryCommand::Typing {
+            channel,
+            event,
+            receipt,
+            ..
+        } => {
+            let _ = receipt.send(sender.typing(&channel, &event.reply).await);
         }
         DeliveryCommand::Reply {
             channel,

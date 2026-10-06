@@ -191,21 +191,25 @@ RUN set -eux; \
 # Keep the package manager useful for repository work while replacing the
 # vulnerable packages bundled by this exact Node/npm line with pinned fixes.
 ARG NPM_VERSION=12.0.2
-ARG BRACE_EXPANSION_VERSION=5.0.9
+ARG BRACE_EXPANSION_VERSION=5.0.12
 ARG IP_ADDRESS_VERSION=10.3.1
 ARG TAR_VERSION=7.5.21
+ARG UNDICI_VERSION=6.28.1
 RUN set -eux; \
     npm install -g "npm@${NPM_VERSION}"; \
     bundled=/usr/local/lib/node_modules/npm/node_modules; \
     npm install --no-save --prefix /tmp/npmfix \
         "brace-expansion@${BRACE_EXPANSION_VERSION}" \
         "ip-address@${IP_ADDRESS_VERSION}" \
-        "tar@${TAR_VERSION}"; \
-    for package in brace-expansion ip-address tar; do \
+        "tar@${TAR_VERSION}" \
+        "undici@${UNDICI_VERSION}"; \
+    for package in brace-expansion ip-address tar undici; do \
       rm -rf "$bundled/$package"; \
       cp -a "/tmp/npmfix/node_modules/$package" "$bundled/$package"; \
     done; \
     test "$(node -p "require('/usr/local/lib/node_modules/npm/node_modules/tar/package.json').version")" = "${TAR_VERSION}"; \
+    test "$(node -p "require('/usr/local/lib/node_modules/npm/node_modules/brace-expansion/package.json').version")" = "${BRACE_EXPANSION_VERSION}"; \
+    test "$(node -p "require('/usr/local/lib/node_modules/npm/node_modules/undici/package.json').version")" = "${UNDICI_VERSION}"; \
     rm -rf /tmp/npmfix; \
     npm cache clean --force; \
     npm --version

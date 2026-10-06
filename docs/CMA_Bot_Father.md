@@ -15,7 +15,7 @@ operation, ask for missing choices, or continue an earlier task.
 CMAEG authenticates and normalizes source events, forwards the configured target
 and verified source metadata to the provider, and delivers replies and generic
 interactions. The provider selects the actual agent and owns user affinity. CMAEG does not
-interpret `/setup`, decide whether a message requests a Bot, run a setup state
+interpret `/setup`, decide whether a message requests a Bot, run a CMA resource setup state
 machine, manage user login, or retain end-user NyxID delegation grants.
 
 CMA retains linked user identities, encrypted credential custody, revocation,
@@ -128,6 +128,31 @@ delegated and setup APIs. It resolves to the original signed event and timestamp
 it is not a new user instruction or a gateway reply capability. CMA retains the
 24-hour reply target before returning a login link and sends the callback result
 to the original source chat. Credentials never enter the agent prompt.
+
+## Connecting an event channel
+
+CMA works with opaque gateway connection references. The agent asks CMA for a
+connection setup operation using the current verified event. CMA rechecks that
+event's linked user grant, incarnation, selected personal or organization owner,
+and binding credential, then calls the gateway on behalf of that owner. A durable
+operation UUID and the original event reference make retries recoverable.
+
+The gateway returns its own setup URL. All platform selection, credential entry,
+creation methods and optional platform capabilities are presented there. The
+provider receives generic status, a display label and an opaque connection
+reference; platform credentials never enter CMA or the agent conversation.
+NyxID user credentials remain in CMA's delegation broker and are used transiently
+for authenticated gateway requests. There is no NyxBot creation dependency.
+
+Gateway completion is a verified event notification to the original agent and
+conversation. CMA refreshes the pending operation and continues the access-rule
+and review steps. This notification is not fresh human consent: creating CMA
+resources still requires the subsequent reviewed-plan confirmation. On
+confirmation CMA binds its provider profile or agent to the returned connection.
+New connection-based Bots use only the agent credential; retained legacy Bots
+keep their existing transport records and lifecycle.
+
+The gateway's public [protocol](CMAEG_Protocol.md) owns the platform setup contract.
 
 ## Delegated operations and isolation
 

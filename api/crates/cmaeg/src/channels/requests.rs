@@ -20,6 +20,10 @@ pub struct ChannelCreateRequest {
     pub profile: EventWorkerProfile,
     pub provider: ProviderRequest,
     pub sources: Vec<SourceRequest>,
+    #[serde(default)]
+    pub connection_ref: Option<String>,
+    #[serde(default)]
+    pub connection_admission: Option<AdmissionPolicy>,
     pub partition: cmaeg_core::channel::PartitionRule,
     pub reply: ReplyPolicy,
     pub credentials: CredentialsRequest,
@@ -34,6 +38,10 @@ pub struct ChannelUpdateRequest {
     pub profile: EventWorkerProfile,
     pub provider: ProviderRequest,
     pub sources: Vec<SourceRequest>,
+    #[serde(default)]
+    pub connection_ref: Option<String>,
+    #[serde(default)]
+    pub connection_admission: Option<AdmissionPolicy>,
     pub partition: cmaeg_core::channel::PartitionRule,
     pub reply: ReplyPolicy,
     #[serde(default)]
@@ -55,6 +63,12 @@ pub struct ProviderRequest {
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 pub enum SourceRequest {
+    Telegram {
+        bot_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        bot_username: Option<String>,
+        admission: AdmissionPolicy,
+    },
     NyxidRelay {
         issuer: String,
         key_id: String,
@@ -85,6 +99,10 @@ pub struct CredentialsRequest {
     #[serde(default)]
     pub channel_key: Option<Secret>,
     #[serde(default)]
+    pub telegram_bot_token: Option<Secret>,
+    #[serde(default)]
+    pub telegram_webhook_secret: Option<Secret>,
+    #[serde(default)]
     pub hmac_secrets: Vec<HmacSecretRequest>,
 }
 
@@ -95,6 +113,10 @@ pub struct CredentialPatch {
     pub agent_key: Option<Secret>,
     #[serde(default)]
     pub channel_key: Option<Secret>,
+    #[serde(default)]
+    pub telegram_bot_token: Option<Secret>,
+    #[serde(default)]
+    pub telegram_webhook_secret: Option<Secret>,
     #[serde(default)]
     pub hmac_secrets: Option<Vec<HmacSecretRequest>>,
 }

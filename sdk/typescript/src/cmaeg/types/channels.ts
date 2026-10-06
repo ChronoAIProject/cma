@@ -55,6 +55,8 @@ export type HmacSecretRequest = Output<typeof HmacSecretRequestSchema>;
 export const CredentialsRequestSchema = object({
   agent_key: SecretSchema,
   channel_key: optional(nullable(SecretSchema)),
+  telegram_bot_token: optional(nullable(SecretSchema)),
+  telegram_webhook_secret: optional(nullable(SecretSchema)),
   hmac_secrets: optional(array(HmacSecretRequestSchema)),
 });
 export type CredentialsRequest = Output<typeof CredentialsRequestSchema>;
@@ -105,6 +107,12 @@ export type CustomAuth = Output<typeof CustomAuthSchema>;
 
 export const SourceRequestSchema = tagged(
   {
+    telegram: object({
+      admission: AdmissionPolicySchema,
+      bot_id: text,
+      bot_username: optional(nullable(text)),
+      type: enumeration('telegram'),
+    }),
     nyxid_relay: object({
       admission: AdmissionPolicySchema,
       bot_id: optional(nullable(text)),
@@ -128,6 +136,8 @@ export const SourceRequestSchema = tagged(
 export type SourceRequest = Output<typeof SourceRequestSchema>;
 
 export const ChannelCreateRequestSchema = object({
+  connection_ref: optional(nullable(text)),
+  connection_admission: optional(nullable(AdmissionPolicySchema)),
   credentials: CredentialsRequestSchema,
   name: text,
   partition: PartitionRuleSchema,
@@ -160,6 +170,12 @@ export type PublicSecrets = Output<typeof PublicSecretsSchema>;
 
 export const SourceSchema = tagged(
   {
+    telegram: object({
+      admission: AdmissionPolicySchema,
+      bot_id: text,
+      bot_username: optional(nullable(text)),
+      type: enumeration('telegram'),
+    }),
     nyxid_relay: object({
       admission: AdmissionPolicySchema,
       bot_id: optional(nullable(text)),
@@ -184,6 +200,7 @@ export const SourceSchema = tagged(
 export type Source = Output<typeof SourceSchema>;
 
 export const PublicChannelDefinitionSchema = object({
+  connection_ref: optional(nullable(text)),
   created_at: text,
   creation: optional(nullable(ChannelCreationSchema)),
   name: optional(text),
@@ -201,7 +218,11 @@ export const PublicChannelDefinitionSchema = object({
 });
 export type PublicChannelDefinition = Output<typeof PublicChannelDefinitionSchema>;
 
-export const EndpointResponseSchema = object({ custom_event_url: text, nyxid_callback_url: text });
+export const EndpointResponseSchema = object({
+  custom_event_url: text,
+  nyxid_callback_url: text,
+  telegram_webhook_url: optional(nullable(text)),
+});
 export type EndpointResponse = Output<typeof EndpointResponseSchema>;
 
 export const FieldRefusalSchema = object({ field: text, reason: text });
@@ -229,11 +250,15 @@ export type ChannelResponse = Output<typeof ChannelResponseSchema>;
 export const CredentialPatchSchema = object({
   agent_key: optional(nullable(SecretSchema)),
   channel_key: optional(nullable(SecretSchema)),
+  telegram_bot_token: optional(nullable(SecretSchema)),
+  telegram_webhook_secret: optional(nullable(SecretSchema)),
   hmac_secrets: optional(nullable(array(HmacSecretRequestSchema))),
 });
 export type CredentialPatch = Output<typeof CredentialPatchSchema>;
 
 export const ChannelUpdateRequestSchema = object({
+  connection_ref: optional(nullable(text)),
+  connection_admission: optional(nullable(AdmissionPolicySchema)),
   credentials: optional(nullable(CredentialPatchSchema)),
   expected_version: integer,
   name: text,

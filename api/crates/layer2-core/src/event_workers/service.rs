@@ -165,6 +165,7 @@ impl EventWorkerProfileService {
         let request = CreateBot {
             name: source.name.clone(),
             external_bot_id: "profile-authoring".into(),
+            connection_ref: None,
             profile: source.agent_profile.clone(),
             sandbox_profile: Some(source.sandbox_profile.clone()),
             workspace_profile: Some(source.workspace_profile.clone()),

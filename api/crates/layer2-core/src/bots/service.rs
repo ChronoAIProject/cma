@@ -338,10 +338,16 @@ impl BotService {
             )
             | (BotOperation::Disable | BotOperation::Rotate, BotState::Disabled) => {
                 bot.resources.channel.is_some()
-                    && bot.resources.route_id.is_some()
                     && bot.resources.credentials.agent_key_id.is_some()
-                    && bot.resources.credentials.route_key_id.is_some()
                     && bot.resources.credentials.expires_at.is_some()
+                    && if bot.request.connection_ref.is_some() {
+                        bot.resources.route_id.is_none()
+                            && bot.resources.credentials.route_key_id.is_none()
+                            && bot.resources.credentials.route_key_hash.is_none()
+                    } else {
+                        bot.resources.route_id.is_some()
+                            && bot.resources.credentials.route_key_id.is_some()
+                    }
             }
             (BotOperation::Delete, BotState::Deleted) => bot.resources == BotResources::default(),
             (_, BotState::Failed { .. }) => bot.resources == BotResources::default(),

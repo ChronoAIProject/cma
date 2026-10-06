@@ -93,7 +93,8 @@ impl SetupAuthority {
             || source.conversation_id != actor.conversation_id
             || source.event_id != event
             || source.payload["activity"]["actor"]["id"].as_str() != Some(&actor.actor_id)
-            || source.payload["activity"]["actor"]["kind"].as_str() != Some("human")
+            || (source.payload["activity"]["actor"]["kind"].as_str() != Some("human")
+                && !super::events::is_connection_notification(&source.payload["activity"]))
             || source.payload["activity"]["source"]["platform"].as_str() != Some(&actor.platform)
         {
             return Err(BotError::Forbidden);

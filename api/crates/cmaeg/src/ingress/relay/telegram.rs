@@ -93,6 +93,9 @@ pub fn observe(
     {
         return Ok(Observation::Refused(Refusal::AttachmentUnsupported));
     }
+    if message.get("managed_bot_created").is_some() {
+        return super::telegram_managed::observe(payload, raw, message);
+    }
     let text = message.get("text").and_then(Value::as_str);
     if [
         "contact",
@@ -139,6 +142,7 @@ pub fn observe(
             .and_then(Value::as_bool),
     };
     Ok(Observation::Message(RelayFacts {
+        event: None,
         callback: None,
         conversation,
         thread_id,
@@ -236,6 +240,7 @@ fn observe_callback(
         .map(|id| numeric(Some(id)))
         .transpose()?;
     Ok(Observation::Message(RelayFacts {
+        event: None,
         callback: Some(CallbackFacts {
             id,
             data,

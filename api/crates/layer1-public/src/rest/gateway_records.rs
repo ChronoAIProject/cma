@@ -79,7 +79,10 @@ pub fn gateway_record_router(service: std::sync::Arc<GatewayRecordService>) -> R
         .layer(axum::middleware::from_fn(add_no_store))
 }
 
-async fn add_no_store(request: axum::extract::Request, next: axum::middleware::Next) -> Response {
+pub(super) async fn add_no_store(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
     no_store(next.run(request).await)
 }
 
@@ -91,7 +94,7 @@ async fn add_no_store(request: axum::extract::Request, next: axum::middleware::N
     request_body = PutGatewayRecordRequest,
     responses((status = 200, body = PutGatewayRecordView), (status = 400, body = crate::rest::ProblemDocument), (status = 401, body = crate::rest::ProblemDocument), (status = 403, body = crate::rest::ProblemDocument), (status = 409, body = crate::rest::ProblemDocument), (status = 413, body = crate::rest::ProblemDocument), (status = 503, body = crate::rest::ProblemDocument))
 )]
-async fn put_record(
+pub(super) async fn put_record(
     State(service): State<std::sync::Arc<GatewayRecordService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     Path(record_id): Path<String>,
@@ -151,7 +154,7 @@ async fn put_record(
     params(("record_id" = String, Path)),
     responses((status = 200, body = GatewayRecordView), (status = 400, body = crate::rest::ProblemDocument), (status = 401, body = crate::rest::ProblemDocument), (status = 403, body = crate::rest::ProblemDocument), (status = 404, body = crate::rest::ProblemDocument), (status = 503, body = crate::rest::ProblemDocument))
 )]
-async fn get_record(
+pub(super) async fn get_record(
     State(service): State<std::sync::Arc<GatewayRecordService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     Path(record_id): Path<String>,
@@ -170,7 +173,7 @@ async fn get_record(
     params(("record_id" = String, Path), GatewayRecordDeleteQuery),
     responses((status = 204), (status = 400, body = crate::rest::ProblemDocument), (status = 401, body = crate::rest::ProblemDocument), (status = 403, body = crate::rest::ProblemDocument), (status = 404, body = crate::rest::ProblemDocument), (status = 409, body = crate::rest::ProblemDocument), (status = 503, body = crate::rest::ProblemDocument))
 )]
-async fn delete_record(
+pub(super) async fn delete_record(
     State(service): State<std::sync::Arc<GatewayRecordService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     Path(record_id): Path<String>,
@@ -204,7 +207,7 @@ async fn delete_record(
     params(GatewayRecordListQuery),
     responses((status = 200, body = GatewayRecordPageView), (status = 400, body = crate::rest::ProblemDocument), (status = 401, body = crate::rest::ProblemDocument), (status = 403, body = crate::rest::ProblemDocument), (status = 503, body = crate::rest::ProblemDocument))
 )]
-async fn list(
+pub(super) async fn list(
     State(service): State<std::sync::Arc<GatewayRecordService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     query: Result<Query<GatewayRecordListQuery>, axum::extract::rejection::QueryRejection>,

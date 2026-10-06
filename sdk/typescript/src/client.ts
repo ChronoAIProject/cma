@@ -37,6 +37,7 @@ export class Cma {
   readonly #config: ResolvedConfig;
   readonly providerBindings: ProviderBindings;
   readonly gatewayRecords: GatewayRecords;
+  readonly gatewayConnectionRecords: GatewayRecords;
   readonly bots: Bots;
   readonly botSetups: BotSetups;
   readonly agentDelegations: AgentDelegations;
@@ -71,6 +72,7 @@ export class Cma {
     this.#config = resolveConfig(config);
     this.providerBindings = new ProviderBindings(this.#config);
     this.gatewayRecords = new GatewayRecords(this.#config);
+    this.gatewayConnectionRecords = new GatewayRecords(this.#config, 'connection-records');
     this.bots = new Bots(this.#config);
     this.botSetups = new BotSetups(this.#config);
     this.agentDelegations = new AgentDelegations(this.#config);
