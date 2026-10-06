@@ -66,6 +66,7 @@ pub(super) fn input() -> CreateBot {
         event_worker_profile: None,
         name: "test bot".into(),
         external_bot_id: uuid::Uuid::new_v4().to_string(),
+        connection_ref: None,
         profile: AgentProfileRef::new(crate::AgentProfileId("agp_test".into()), 1),
         sandbox_profile: None,
         workspace_profile: None,

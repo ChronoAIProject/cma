@@ -152,8 +152,12 @@ impl InteractionStore {
         if context.channel_id != channel.id || !event.verifies_activity(&context.activity) {
             return Err(Error::Denied);
         }
-        let ReplyAddress::NyxidRelay { route_id, .. } = &event.reply else {
-            return Err(Error::Denied);
+        let route_id = match &event.reply {
+            ReplyAddress::NyxidRelay { route_id, .. } => route_id.clone(),
+            ReplyAddress::Telegram {
+                bot_id, chat_id, ..
+            } => crate::telegram::route(bot_id, chat_id),
+            _ => return Err(Error::Denied),
         };
         let card = Card {
             id: uuid::Uuid::new_v4().to_string(),

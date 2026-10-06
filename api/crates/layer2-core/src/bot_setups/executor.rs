@@ -14,6 +14,11 @@ impl BotSetupService {
         request: Option<&SetupActionRequest>,
     ) -> Result<SetupView, BotError> {
         let mut setup = self.load(&event.actor).await?;
+        if matches!(event.input, SetupInput::Notification)
+            && request.is_some_and(|request| !matches!(request.action, SetupAction::View))
+        {
+            return Err(BotError::Forbidden);
+        }
         if setup.actor != event.actor {
             return Err(BotError::Forbidden);
         }
@@ -51,6 +56,7 @@ impl BotSetupService {
                     Some(action_id.clone())
                 }
                 SetupInput::Text(text) => text_action(&setup, text),
+                SetupInput::Notification => None,
             },
         };
         let signed_text = match &event.input {
@@ -60,6 +66,11 @@ impl BotSetupService {
         let text = if request.is_none() { signed_text } else { None };
         let mut connection_url = None;
         let mut notice = None;
+        if setup.pending_connection.is_some()
+            && matches!(action.as_deref(), Some("cancel" | "edit"))
+        {
+            self.abandon_connection(&mut setup).await?;
+        }
         if action.as_deref() == Some("cancel")
             && !matches!(setup.step, SetupStep::Provisioning | SetupStep::Complete)
         {
@@ -75,6 +86,8 @@ impl BotSetupService {
             setup.configuration = self.dependencies.defaults().await?;
             setup.selected_services.clear();
             setup.external_bot_id = None;
+            setup.connection_ref = None;
+            setup.pending_connection = None;
             setup.admission = None;
             setup.confirmation_digest = None;
             setup.bot_id = None;
@@ -99,6 +112,10 @@ impl BotSetupService {
                     setup.step = SetupStep::Login;
                     setup.grant_id = None;
                     setup.owner = None;
+                    setup.pending_connection = None;
+                    setup.connection_ref = None;
+                    setup.external_bot_id = None;
+                    setup.selected_services.clear();
                     setup.confirmation_digest = None;
                 } else if setup.step == SetupStep::Login {
                     setup.grant_id = identity.grant_id;
@@ -147,6 +164,14 @@ impl BotSetupService {
                         };
                         if !owners.iter().any(|candidate| candidate.owner == owner) {
                             return Err(BotError::Forbidden);
+                        }
+                        if setup.owner.as_ref() != Some(&owner) {
+                            self.abandon_connection(&mut setup).await?;
+                            setup.connection_ref = None;
+                            setup.external_bot_id = None;
+                            setup.selected_services.clear();
+                            setup.configuration.sandbox.nyxid_services.clear();
+                            setup.admission = None;
                         }
                         setup.owner = Some(owner);
                         setup.step = if setup.draft.name.is_some() {
@@ -285,28 +310,8 @@ impl BotSetupService {
                         }
                     }
                     SetupStep::ExternalBot => {
-                        if action == "register" {
-                            connection_url = Some(
-                                self.dependencies
-                                    .external_bot_registration_url(owner(&setup)?)
-                                    .await?,
-                            );
-                            notice = Some(
-                                "Register a bot you control, then return and refresh the list."
-                                    .into(),
-                            );
-                        } else if action != "refresh" {
-                            let id = action.strip_prefix("bot:").ok_or_else(invalid_action)?;
-                            let bots = self
-                                .dependencies
-                                .external_bots(&setup.actor, grant(&setup)?, owner(&setup)?)
-                                .await?;
-                            if !bots.iter().any(|bot| bot.id == id) {
-                                return Err(BotError::Forbidden);
-                            }
-                            setup.external_bot_id = Some(id.into());
-                            setup.step = SetupStep::Admission;
-                        }
+                        self.choose_external_connection(&mut setup, &event, action)
+                            .await?;
                     }
                     SetupStep::Admission => {
                         setup.admission = Some(match action {
@@ -469,7 +474,7 @@ impl BotSetupService {
             setup.processed_events.remove(0);
         }
         self.store.replace(&setup, previous_revision).await?;
-        if setup.step == SetupStep::Provisioning {
+        if setup.step == SetupStep::Provisioning || setup.pending_connection.is_some() {
             return self.finish_or_view(setup, notice).await;
         }
         self.view(&setup, notice, connection_url).await

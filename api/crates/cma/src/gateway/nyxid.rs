@@ -1,6 +1,6 @@
 //! Owner-only channel metadata and bounded route mutations.
 use crate::auth::{keys::valid_provider_key_id, provider_http::read_json};
-use layer2_core::bots::{Bot, BotError, ExternalBot};
+use layer2_core::bots::{Bot, BotError};
 use reqwest::{Client, Method};
 use serde::{de::DeserializeOwned, Deserialize};
 use serde_json::{json, Value};
@@ -10,16 +10,10 @@ pub(super) struct NyxidClient {
     pub base: String,
 }
 #[derive(Deserialize)]
-struct Bots {
-    bots: Vec<ChannelBot>,
-    total: u64,
-}
-#[derive(Deserialize)]
 pub(super) struct ChannelBot {
     pub id: String,
     pub user_id: String,
     pub platform: String,
-    pub label: String,
     pub platform_bot_username: String,
     pub is_active: bool,
 }
@@ -58,26 +52,6 @@ impl NyxidClient {
         read_json(request.send().await.map_err(|_| BotError::Unavailable)?)
             .await
             .map_err(|_| BotError::Unavailable)
-    }
-    pub async fn available(&self, token: &str, owner: &str) -> Result<Vec<ExternalBot>, BotError> {
-        let result: Bots = self
-            .json(token, Method::GET, "/api/v1/channel-bots", None)
-            .await?;
-        complete(result.total, result.bots.iter().map(|b| b.id.as_str()))?;
-        Ok(result
-            .bots
-            .into_iter()
-            .filter(|b| {
-                b.user_id == owner
-                    && b.is_active
-                    && matches!(b.platform.as_str(), "telegram" | "telegram-new")
-            })
-            .map(|b| ExternalBot {
-                id: b.id,
-                name: b.label,
-                platform: b.platform,
-            })
-            .collect())
     }
     pub async fn bot(&self, token: &str, bot: &Bot) -> Result<ChannelBot, BotError> {
         identifier(&bot.request.external_bot_id)?;

@@ -50,6 +50,7 @@ pub fn build_definition(
             level,
         },
         sources: build_sources(&request.sources)?,
+        connection_ref: request.connection_ref.clone(),
         partition: request.partition.clone(),
         reply: request.reply.clone(),
         secrets: build_secrets(credentials),
@@ -149,6 +150,12 @@ pub fn build_update(
         if let Some(channel_key) = &patch.channel_key {
             credentials.channel_key = Some(channel_key.clone());
         }
+        if let Some(token) = &patch.telegram_bot_token {
+            credentials.telegram_bot_token = Some(token.clone());
+        }
+        if let Some(secret) = &patch.telegram_webhook_secret {
+            credentials.telegram_webhook_secret = Some(secret.clone());
+        }
         if let Some(hmac_secrets) = &patch.hmac_secrets {
             credentials.hmac_secrets = hmac_secrets
                 .iter()
@@ -166,6 +173,7 @@ pub fn build_update(
         profile_digest: request.profile.digest(),
         provider: current.provider.clone(),
         sources: build_sources(&request.sources)?,
+        connection_ref: request.connection_ref.clone(),
         partition: request.partition.clone(),
         reply: request.reply.clone(),
         secrets: credentials,
@@ -214,6 +222,15 @@ fn build_sources(sources: &[SourceRequest]) -> Result<Vec<Source>, ValidationErr
             }
         }
         result.push(match source {
+            SourceRequest::Telegram {
+                bot_id,
+                bot_username,
+                admission,
+            } => Source::Telegram {
+                bot_id: bot_id.clone(),
+                bot_username: bot_username.clone(),
+                admission: admission.clone(),
+            },
             SourceRequest::NyxidRelay {
                 issuer,
                 key_id,
@@ -261,6 +278,8 @@ fn build_secrets(credentials: &CredentialsRequest) -> ChannelSecrets {
             .map(|secret| (secret.key_id.clone(), secret.secret.clone()))
             .collect(),
         provider_credential: Some(credentials.agent_key.clone()),
+        telegram_bot_token: credentials.telegram_bot_token.clone(),
+        telegram_webhook_secret: credentials.telegram_webhook_secret.clone(),
     }
 }
 
@@ -369,6 +388,8 @@ fn validate_definition(definition: &ChannelDefinition) -> Result<(), ValidationE
             .clone()
             .unwrap_or_else(|| Secret::new("")),
         channel_key: definition.secrets.channel_key.clone(),
+        telegram_bot_token: definition.secrets.telegram_bot_token.clone(),
+        telegram_webhook_secret: definition.secrets.telegram_webhook_secret.clone(),
         hmac_secrets: definition
             .secrets
             .hmac_secrets
@@ -418,7 +439,7 @@ fn validate_definition(definition: &ChannelDefinition) -> Result<(), ValidationE
 
 impl ChannelCreateRequest {
     pub(crate) fn fingerprint(&self) -> String {
-        let value = serde_json::json!({
+        let mut value = serde_json::json!({
             "record_id": self.record_id,
             "schema_version": self.schema_version, "name": self.name, "profile": self.profile,
             "provider": self.provider, "sources": self.sources, "partition": self.partition,
@@ -426,6 +447,20 @@ impl ChannelCreateRequest {
             "channel_key": self.credentials.channel_key.as_ref().map(|key| hash_secret(key.as_str())),
             "hmac_secrets": self.credentials.hmac_secrets.iter().map(|value| (&value.key_id, hash_secret(value.secret.as_str()))).collect::<Vec<_>>(),
         });
+        if let Some(reference) = &self.connection_ref {
+            value["connection_ref"] = reference.clone().into();
+        }
+        if let Some(admission) = &self.connection_admission {
+            value["connection_admission"] =
+                serde_json::to_value(admission).expect("admission serializes");
+        }
+        // Omit absent additions so retained creation fingerprints stay stable.
+        if let Some(token) = &self.credentials.telegram_bot_token {
+            value["telegram_bot_token"] = hash_secret(token.as_str()).into();
+        }
+        if let Some(secret) = &self.credentials.telegram_webhook_secret {
+            value["telegram_webhook_secret"] = hash_secret(secret.as_str()).into();
+        }
         hash_secret(&cmaeg_core::profile::canonical_json(value))
     }
 }

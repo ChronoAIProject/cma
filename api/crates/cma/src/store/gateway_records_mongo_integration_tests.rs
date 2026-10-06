@@ -72,3 +72,112 @@ async fn mongo_round_trip_cas_delete_and_stable_listing() {
 
     client.database(&database).drop().await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable MongoDB replica set"]
+async fn mongo_channel_and_connection_namespaces_keep_same_uuid_and_cas_independent() {
+    let (client, database, channels) = fixture().await;
+    let connections = MongoGatewayRecordStore::open_connections(&client, &database)
+        .await
+        .unwrap();
+    let id = "123e4567-e89b-42d3-a456-426614174001";
+    let channel_owner = SubjectId::new("channel-owner");
+    let connection_owner = SubjectId::new("connection-owner");
+    let channel = channels
+        .put(id, &channel_owner, vec![1], None)
+        .await
+        .unwrap();
+    let connection = connections
+        .put(id, &connection_owner, vec![2], None)
+        .await
+        .unwrap();
+    assert_eq!(channel.version, 1);
+    assert_eq!(connection.version, 1);
+
+    // These are the same UUID and CAS version in different durable namespaces.
+    let (channel, connection) = tokio::join!(
+        channels.put(id, &channel_owner, vec![3], Some(1)),
+        connections.put(id, &connection_owner, vec![4], Some(1)),
+    );
+    let channel = channel.unwrap();
+    let connection = connection.unwrap();
+    assert_eq!(channel.version, 2);
+    assert_eq!(connection.version, 2);
+    assert!(matches!(
+        connections
+            .put(id, &connection_owner, vec![5], Some(1))
+            .await,
+        Err(StoreError::RevisionConflict {
+            expected: 1,
+            actual: 2
+        })
+    ));
+    assert_eq!(channels.get(id).await.unwrap(), Some(channel.clone()));
+    assert_eq!(connections.get(id).await.unwrap(), Some(connection.clone()));
+
+    for (collection, owner, bytes) in [
+        (GATEWAY_CHANNEL_RECORDS, &channel_owner, &[3_u8][..]),
+        ("gateway_connection_records", &connection_owner, &[4_u8][..]),
+    ] {
+        let raw = client
+            .database(&database)
+            .collection::<mongodb::bson::Document>(collection)
+            .find_one(doc! { "_id": id })
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(raw.get_str("owner").unwrap(), owner.as_str());
+        assert_eq!(raw.get_binary_generic("blob").unwrap(), bytes);
+        assert_eq!(raw.get_i64("version").unwrap(), 2);
+    }
+
+    // Replica restart must reopen the same distinct collections and inventories.
+    let channels = MongoGatewayRecordStore::open(&client, &database)
+        .await
+        .unwrap();
+    let connections = MongoGatewayRecordStore::open_connections(&client, &database)
+        .await
+        .unwrap();
+    assert_eq!(channels.get(id).await.unwrap(), Some(channel));
+    assert_eq!(connections.get(id).await.unwrap(), Some(connection.clone()));
+    assert!(channels
+        .list(Some(&connection_owner), None, 100)
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(connections
+        .list(Some(&channel_owner), None, 100)
+        .await
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        channels
+            .list(Some(&channel_owner), None, 100)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        connections
+            .list(Some(&connection_owner), None, 100)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+
+    assert!(channels.delete(id, Some(2)).await.unwrap());
+    assert!(channels.get(id).await.unwrap().is_none());
+    assert_eq!(connections.get(id).await.unwrap(), Some(connection));
+    assert!(matches!(
+        connections.delete(id, Some(1)).await,
+        Err(StoreError::RevisionConflict {
+            expected: 1,
+            actual: 2
+        })
+    ));
+    assert!(connections.delete(id, Some(2)).await.unwrap());
+    assert!(connections.get(id).await.unwrap().is_none());
+    client.database(&database).drop().await.unwrap();
+}

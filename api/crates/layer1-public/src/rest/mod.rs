@@ -88,8 +88,10 @@ mod bindings;
 #[cfg(test)]
 mod bindings_tests;
 pub use bindings::{binding_router, binding_router_with_native_tools};
+mod gateway_connections;
 mod gateway_interactions;
 mod gateway_records;
+pub use gateway_connections::gateway_connection_record_router;
 pub use gateway_interactions::gateway_interaction_router;
 #[cfg(test)]
 mod gateway_records_tests;

@@ -2,6 +2,7 @@
 mod authority;
 mod authorization;
 mod configuration;
+mod connections;
 mod continuation;
 mod delegation;
 mod events;
@@ -27,8 +28,7 @@ pub(crate) struct SetupDependencies {
     settings: Arc<PlatformSettingsService>,
     bots: Arc<BotService>,
     profiles: Arc<PrivateProfileCreationService>,
-    nyxid: String,
-    nyxid_public: String,
+    connections: crate::gateway::connections::ChannelConnections,
     required_services: Vec<String>,
 }
 impl std::ops::Deref for SetupDependencies {
@@ -50,7 +50,7 @@ impl SetupDependencies {
             .as_ref()
             .ok_or("Bot Father is not configured")?;
         let gateway = config.gateway.as_ref().ok_or("Bot Father requires CMAEG")?;
-        let crate::auth::AuthMode::Provider { base_url, .. } = &config.auth_mode else {
+        let crate::auth::AuthMode::Provider { .. } = &config.auth_mode else {
             return Err("Bot Father requires NyxID".into());
         };
         let policy = crate::profile_policy::profile_route_policy();
@@ -90,13 +90,17 @@ impl SetupDependencies {
                 gateway: gateway.base_url.trim_end_matches('/').into(),
                 binding: father.binding_id.clone(),
             }),
-            nyxid: base_url.trim_end_matches('/').into(),
-            nyxid_public: config
-                .nyxid_public_url
-                .as_deref()
-                .unwrap_or(base_url)
-                .trim_end_matches('/')
-                .into(),
+            connections: crate::gateway::connections::ChannelConnections::new(
+                reqwest::Client::builder()
+                    .connect_timeout(Duration::from_secs(3))
+                    .timeout(Duration::from_secs(20))
+                    .redirect(reqwest::redirect::Policy::none())
+                    .retry(reqwest::retry::never())
+                    .build()
+                    .map_err(|_| "connection HTTP client configuration failed")?,
+                &gateway.base_url,
+                &gateway.public_url,
+            )?,
             required_services,
         });
         Ok(dependencies)
@@ -200,20 +204,17 @@ impl BotSetupDependencies for SetupDependencies {
     ) -> Result<Vec<SetupExternalBot>, BotError> {
         self.channel_bots(actor, grant, owner).await
     }
-    async fn external_bot_registration_url(
+    async fn connection_authority_stamp(&self, setup: &BotSetup) -> Result<String, BotError> {
+        self.connection_stamp(setup).await
+    }
+    async fn channel_connection(
         &self,
-        owner: &layer2_core::resource_access::ResourceOwner,
-    ) -> Result<String, BotError> {
-        let mut url = reqwest::Url::parse(&format!(
-            "{}/channel-bots/connect/telegram-new",
-            self.nyxid_public
-        ))
-        .map_err(|_| BotError::Unavailable)?;
-        if let layer2_core::resource_access::ResourceOwner::Organization { subject } = owner {
-            url.query_pairs_mut()
-                .append_pair("target_org_id", subject.as_str());
-        }
-        Ok(url.to_string())
+        setup: &BotSetup,
+    ) -> Result<SetupConnectionStatus, BotError> {
+        self.resolve_connection(setup).await
+    }
+    async fn cancel_channel_connection(&self, setup: &BotSetup) -> Result<(), BotError> {
+        self.cancel_connection(setup).await
     }
     async fn provision(&self, setup: &BotSetup) -> Result<SetupResult, BotError> {
         self.create(setup).await
