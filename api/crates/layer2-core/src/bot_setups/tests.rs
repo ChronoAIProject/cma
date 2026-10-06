@@ -47,6 +47,10 @@ struct Dependencies {
     active: AtomicBool,
     organization_connected: AtomicBool,
     connections: Mutex<Vec<(ResourceOwner, String)>>,
+    channel_ready: AtomicBool,
+    channel_calls: Mutex<Vec<String>>,
+    channel_cancellations: Mutex<Vec<String>>,
+    channel_incarnation: AtomicUsize,
 }
 impl Dependencies {
     fn check(&self, actor: &ExternalActor, grant: &str) -> Result<(), BotError> {
@@ -225,10 +229,62 @@ impl BotSetupDependencies for Dependencies {
             id: "external-bot".into(),
             name: "Example".into(),
             username: "example".into(),
+            connection_ref: None,
         }])
     }
-    async fn external_bot_registration_url(&self, _: &ResourceOwner) -> Result<String, BotError> {
-        Ok("https://identity.invalid/bots".into())
+    async fn connection_authority_stamp(&self, setup: &BotSetup) -> Result<String, BotError> {
+        self.check(
+            &setup.actor,
+            setup.grant_id.as_deref().ok_or(BotError::Forbidden)?,
+        )?;
+        Ok(format!(
+            "{}:{}",
+            setup.grant_id.as_deref().unwrap(),
+            self.channel_incarnation.load(Ordering::SeqCst)
+        ))
+    }
+    async fn channel_connection(
+        &self,
+        setup: &BotSetup,
+    ) -> Result<SetupConnectionStatus, BotError> {
+        let request = setup
+            .pending_connection
+            .as_ref()
+            .ok_or(BotError::Conflict)?;
+        if request.authority_stamp != self.connection_authority_stamp(setup).await? {
+            return Err(BotError::Forbidden);
+        }
+        self.channel_calls
+            .lock()
+            .unwrap()
+            .push(request.record_id.clone());
+        Ok(SetupConnectionStatus {
+            connection_ref: request.record_id.clone(),
+            status: if self.channel_ready.load(Ordering::SeqCst) {
+                "ready"
+            } else {
+                "pending"
+            }
+            .into(),
+            setup_url: Some(format!(
+                "https://gateway.invalid/connect/{}",
+                request.record_id
+            )),
+        })
+    }
+    async fn cancel_channel_connection(&self, setup: &BotSetup) -> Result<(), BotError> {
+        let request = setup
+            .pending_connection
+            .as_ref()
+            .ok_or(BotError::Conflict)?;
+        if request.authority_stamp != self.connection_authority_stamp(setup).await? {
+            return Err(BotError::Forbidden);
+        }
+        self.channel_cancellations
+            .lock()
+            .unwrap()
+            .push(request.record_id.clone());
+        Ok(())
     }
     async fn provision(&self, setup: &BotSetup) -> Result<SetupResult, BotError> {
         self.check(
@@ -306,6 +362,10 @@ impl Fixture {
             active: AtomicBool::new(false),
             organization_connected: AtomicBool::new(false),
             connections: Mutex::new(vec![]),
+            channel_ready: AtomicBool::new(false),
+            channel_calls: Mutex::new(vec![]),
+            channel_cancellations: Mutex::new(vec![]),
+            channel_incarnation: AtomicUsize::new(1),
         });
         let service = BotSetupService::new(store.clone(), dependencies.clone());
         Self {
@@ -322,6 +382,7 @@ impl Fixture {
         self.dependencies.events.lock().unwrap().insert(
             id.clone(),
             SetupEvent {
+                reference: "cmaeg1.ev.fixture".into(),
                 actor: self.actor.clone(),
                 event_id: id.clone(),
                 occurred_at: (time::OffsetDateTime::now_utc()
@@ -411,3 +472,4 @@ mod customization;
 mod flows;
 
 mod agent_actions;
+mod channel_connections;

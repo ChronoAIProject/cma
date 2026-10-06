@@ -46,8 +46,9 @@ impl EventVerifier<'_> {
                 .map_err(|_| BotError::Unavailable)?;
         if context.provider_binding_id != binding
             || !context.activity_verified
-            || (context.source["type"].as_str() != Some("nyxid_relay")
-                || context.source["platform"].as_str() != Some("telegram"))
+            || context.source["platform"]
+                .as_str()
+                .is_none_or(|platform| platform.is_empty() || platform.len() > 32)
         {
             tracing::warn!(
                 stage = "context",
@@ -60,7 +61,9 @@ impl EventVerifier<'_> {
             return Err(BotError::Forbidden);
         }
         let activity = &context.activity;
-        if activity["actor"]["kind"].as_str() != Some("human") {
+        if activity["actor"]["kind"].as_str() != Some("human")
+            && !is_connection_notification(activity)
+        {
             tracing::warn!(stage = "actor_kind", "Bot Father event actor was not human");
             return Err(BotError::Forbidden);
         }
@@ -113,9 +116,13 @@ impl EventVerifier<'_> {
                 channel_id: context.channel_id,
                 conversation_id: context.conversation_id,
                 actor_id,
-                platform: "telegram".into(),
+                platform: context.source["platform"]
+                    .as_str()
+                    .ok_or(BotError::Forbidden)?
+                    .into(),
             },
             event_id: context.event_id,
+            reference: reference.into(),
             occurred_at: activity["occurred_at"]
                 .as_str()
                 .ok_or(BotError::Forbidden)?
@@ -124,6 +131,12 @@ impl EventVerifier<'_> {
         })
     }
 }
+pub(super) fn is_connection_notification(activity: &serde_json::Value) -> bool {
+    activity["actor"]["kind"].as_str() == Some("system")
+        && activity["kind"]["type"].as_str() == Some("event")
+        && activity["kind"]["ce"]["type"].as_str() == Some("gateway.connection.ready")
+}
+
 fn setup_input(kind: &serde_json::Value) -> Result<SetupInput, BotError> {
     match kind["type"].as_str() {
         Some("message") => Ok(SetupInput::Text(
@@ -138,6 +151,7 @@ fn setup_input(kind: &serde_json::Value) -> Result<SetupInput, BotError> {
             .trim_end()
             .into(),
         )),
+        Some("event") => Ok(SetupInput::Notification),
         Some("interaction") => Ok(SetupInput::Interaction {
             block_id: kind["block_id"].as_str().ok_or(BotError::Forbidden)?.into(),
             action_id: kind["action_id"]
@@ -227,6 +241,7 @@ impl SetupAuthority {
         Ok(SetupEvent {
             actor,
             event_id: source.event_id.clone(),
+            reference: source.reference.clone(),
             occurred_at: activity["occurred_at"]
                 .as_str()
                 .ok_or(BotError::Forbidden)?

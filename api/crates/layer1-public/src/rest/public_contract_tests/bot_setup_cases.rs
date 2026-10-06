@@ -93,6 +93,7 @@ impl BotSetupDependencies for Dependencies {
             }
         };
         Ok(SetupEvent {
+            reference: "cmaeg1.ev.fixture".into(),
             occurred_at: "2026-09-28T10:00:00Z".into(),
             actor: actor(),
             event_id: reference.into(),
@@ -158,8 +159,14 @@ impl BotSetupDependencies for Dependencies {
     ) -> Result<Vec<SetupExternalBot>, BotError> {
         unreachable!("setup contract does not enumerate bots")
     }
-    async fn external_bot_registration_url(&self, _: &ResourceOwner) -> Result<String, BotError> {
-        unreachable!("setup contract does not register bots")
+    async fn connection_authority_stamp(&self, _: &BotSetup) -> Result<String, BotError> {
+        unreachable!("fixture does not request channel connections")
+    }
+    async fn channel_connection(&self, _: &BotSetup) -> Result<SetupConnectionStatus, BotError> {
+        unreachable!("fixture does not request channel connections")
+    }
+    async fn cancel_channel_connection(&self, _: &BotSetup) -> Result<(), BotError> {
+        unreachable!("fixture does not request channel connections")
     }
     async fn provision(&self, _: &BotSetup) -> Result<SetupResult, BotError> {
         panic!("REST setup advance must not provision before explicit consent")
@@ -182,6 +189,8 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
         configuration: configuration(),
         selected_services: vec![],
         external_bot_id: None,
+        connection_ref: None,
+        pending_connection: None,
         admission: None,
         service_page: 0,
         confirmation_digest: None,
