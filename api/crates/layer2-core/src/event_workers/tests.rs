@@ -106,6 +106,7 @@ async fn bots_pin_full_worker_configuration_and_retirement_does_not_rewrite_it()
     let request = CreateBot {
         name: "Bot".into(),
         external_bot_id: "external".into(),
+        connection_ref: None,
         profile: row.source.agent_profile.clone(),
         workspace_profile: Some(row.source.workspace_profile.clone()),
         sandbox_profile: Some(row.source.sandbox_profile.clone()),

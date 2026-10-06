@@ -48,6 +48,12 @@ impl Capabilities {
             max_text_chars: 32768,
         }
     }
+    pub fn native_telegram() -> Self {
+        Self {
+            typing: true,
+            ..Self::telegram()
+        }
+    }
     pub fn telegram() -> Self {
         Self {
             edit: true,
@@ -122,6 +128,7 @@ pub(super) fn project(
     activity_verified: bool,
 ) -> ContextResponse {
     let capabilities = match activity.source {
+        SourceKind::Telegram { .. } => Capabilities::native_telegram(),
         SourceKind::Custom => Capabilities::custom(),
         SourceKind::NyxidRelay { platform, .. } => Capabilities::relay(platform),
     };

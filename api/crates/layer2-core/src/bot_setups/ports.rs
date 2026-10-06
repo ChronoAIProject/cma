@@ -63,10 +63,10 @@ pub trait BotSetupDependencies: Send + Sync {
         grant: &str,
         owner: &ResourceOwner,
     ) -> Result<Vec<SetupExternalBot>, BotError>;
-    async fn external_bot_registration_url(
-        &self,
-        owner: &ResourceOwner,
-    ) -> Result<String, BotError>;
+    async fn connection_authority_stamp(&self, setup: &BotSetup) -> Result<String, BotError>;
+    async fn channel_connection(&self, setup: &BotSetup)
+        -> Result<SetupConnectionStatus, BotError>;
+    async fn cancel_channel_connection(&self, setup: &BotSetup) -> Result<(), BotError>;
     /// Must recheck current grant, membership, services and the immutable plan.
     /// Replays use the setup ID as a durable, owner-scoped idempotency key.
     async fn provision(&self, setup: &BotSetup) -> Result<SetupResult, BotError>;

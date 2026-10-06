@@ -361,7 +361,9 @@
             "key_id": "fixture",
             "secret": "fixture"
           }
-        ]
+        ],
+        "telegram_bot_token": "fixture",
+        "telegram_webhook_secret": "fixture"
       },
       "name": "fixture",
       "partition": {
@@ -446,7 +448,11 @@
           "trust_normalized": false,
           "type": "nyxid_relay"
         }
-      ]
+      ],
+      "connection_admission": {
+        "type": "all"
+      },
+      "connection_ref": "fixture"
     }
   ],
   "ChannelCreation": [
@@ -564,11 +570,13 @@
             "type": "nyxid_relay"
           }
         ],
-        "version": 1
+        "version": 1,
+        "connection_ref": "fixture"
       },
       "endpoints": {
         "custom_event_url": "fixture",
-        "nyxid_callback_url": "fixture"
+        "nyxid_callback_url": "fixture",
+        "telegram_webhook_url": "fixture"
       },
       "provider": {
         "binding_id": "fixture",
@@ -598,7 +606,9 @@
             "key_id": "fixture",
             "secret": "fixture"
           }
-        ]
+        ],
+        "telegram_bot_token": "fixture",
+        "telegram_webhook_secret": "fixture"
       },
       "expected_version": 1,
       "name": "fixture",
@@ -683,7 +693,11 @@
           "trust_normalized": false,
           "type": "nyxid_relay"
         }
-      ]
+      ],
+      "connection_admission": {
+        "type": "all"
+      },
+      "connection_ref": "fixture"
     }
   ],
   "ChoiceOption": [
@@ -803,7 +817,9 @@
           "key_id": "fixture",
           "secret": "fixture"
         }
-      ]
+      ],
+      "telegram_bot_token": "fixture",
+      "telegram_webhook_secret": "fixture"
     }
   ],
   "CredentialsRequest": [
@@ -815,7 +831,9 @@
           "key_id": "fixture",
           "secret": "fixture"
         }
-      ]
+      ],
+      "telegram_bot_token": "fixture",
+      "telegram_webhook_secret": "fixture"
     }
   ],
   "CustomAuth": [
@@ -854,7 +872,8 @@
   "EndpointResponse": [
     {
       "custom_event_url": "fixture",
-      "nyxid_callback_url": "fixture"
+      "nyxid_callback_url": "fixture",
+      "telegram_webhook_url": "fixture"
     }
   ],
   "EventAccepted": [
@@ -1332,7 +1351,8 @@
           "type": "nyxid_relay"
         }
       ],
-      "version": 1
+      "version": 1,
+      "connection_ref": "fixture"
     }
   ],
   "PublicSecrets": [
@@ -1536,6 +1556,14 @@
       "prompt_template": "fixture",
       "schema": true,
       "type": "custom"
+    },
+    {
+      "admission": {
+        "type": "all"
+      },
+      "bot_id": "12345678",
+      "bot_username": "fixture_bot",
+      "type": "telegram"
     }
   ],
   "SourceKind": [
@@ -1551,6 +1579,11 @@
     },
     {
       "type": "custom"
+    },
+    {
+      "type": "telegram",
+      "platform": "telegram",
+      "bot_id": "12345678"
     }
   ],
   "SourceRequest": [
@@ -1607,6 +1640,14 @@
       "prompt_template": "fixture",
       "schema": true,
       "type": "custom"
+    },
+    {
+      "admission": {
+        "type": "all"
+      },
+      "bot_id": "12345678",
+      "bot_username": "fixture_bot",
+      "type": "telegram"
     }
   ],
   "TestChannelResponse": [
@@ -1686,5 +1727,70 @@
       "type": "existing_agent",
       "agent_id": "agt_existing"
     }
+  ],
+  "CapabilityView": [
+    {
+      "platforms": [
+        {
+          "connection_methods": [
+            "fixture"
+          ],
+          "id": "fixture",
+          "label": "fixture",
+          "optional_capabilities": [
+            "fixture"
+          ]
+        }
+      ]
+    }
+  ],
+  "ConnectionPage": [
+    {
+      "items": [
+        {
+          "connection_ref": "fixture",
+          "label": "fixture",
+          "setup_url": "fixture",
+          "status": "draft",
+          "url": "fixture"
+        }
+      ],
+      "next_after": "fixture"
+    }
+  ],
+  "ConnectionView": [
+    {
+      "connection_ref": "fixture",
+      "label": "fixture",
+      "setup_url": "fixture",
+      "status": "draft",
+      "url": "fixture"
+    }
+  ],
+  "CreateConnection": [
+    {
+      "event_ref": "fixture",
+      "record_id": "fixture",
+      "suggested_name": "fixture"
+    }
+  ],
+  "PlatformCapability": [
+    {
+      "connection_methods": [
+        "fixture"
+      ],
+      "id": "fixture",
+      "label": "fixture",
+      "optional_capabilities": [
+        "fixture"
+      ]
+    }
+  ],
+  "Status": [
+    "draft",
+    "awaiting_platform",
+    "ready",
+    "cancelled",
+    "expired"
   ]
 }

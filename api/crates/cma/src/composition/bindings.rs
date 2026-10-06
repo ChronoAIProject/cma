@@ -43,7 +43,16 @@ impl BindingComposition {
         };
         Ok(routes
             .merge(rest::gateway_record_router(
-                layer2_core::GatewayRecordService::new(stores.gateway_records.clone(), activity),
+                layer2_core::GatewayRecordService::new(
+                    stores.gateway_records.clone(),
+                    activity.clone(),
+                ),
+            ))
+            .merge(rest::gateway_connection_record_router(
+                layer2_core::GatewayRecordService::new(
+                    stores.gateway_connections.clone(),
+                    activity,
+                ),
             ))
             .merge(rest::gateway_interaction_router(
                 layer2_core::gateway_interactions::GatewayInteractionService::new(

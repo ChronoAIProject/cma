@@ -1,5 +1,6 @@
 //! Production Bot effects over the CMAEG and NyxID HTTP contracts.
 mod client;
+pub(crate) mod connections;
 mod keys;
 mod nyxid;
 mod profile;
@@ -18,6 +19,7 @@ pub(crate) struct GatewayBots {
     gateway: client::GatewayClient,
     nyxid: nyxid::NyxidClient,
     issuer: KeyIssuer,
+    connections: connections::ChannelConnections,
     public: String,
 }
 #[async_trait::async_trait]
@@ -74,6 +76,11 @@ impl GatewayBots {
                 http: http.clone(),
                 base: nyxid_url.trim_end_matches('/').into(),
             },
+            connections: connections::ChannelConnections::new(
+                http.clone(),
+                &config.base_url,
+                &config.public_url,
+            )?,
             issuer: KeyIssuer::new(http, nyxid_url, deployment),
             public: config.public_url.trim_end_matches('/').into(),
         }))
@@ -91,7 +98,24 @@ impl BotExternal for GatewayBots {
     async fn available(&self, owner: &SubjectId) -> Result<Vec<ExternalBot>, BotError> {
         bounded(async {
             let token = self.auth.bot_owner_token(owner).await?;
-            self.nyxid.available(token.expose(), owner.as_str()).await
+            self.connections
+                .list(
+                    token.expose(),
+                    &layer2_core::resource_access::ResourceOwner::Person {
+                        subject: owner.clone(),
+                    },
+                )
+                .await
+                .map(|items| {
+                    items
+                        .into_iter()
+                        .map(|item| ExternalBot {
+                            id: item.connection_ref,
+                            name: item.label.unwrap_or_else(|| "Channel".into()),
+                            platform: String::new(),
+                        })
+                        .collect()
+                })
         })
         .await
     }
@@ -99,6 +123,17 @@ impl BotExternal for GatewayBots {
         bounded(async {
             let token = self.auth.bot_authority_token(bot).await?;
             profile::snapshot(bot)?;
+            if let Some(reference) = &bot.request.connection_ref {
+                let connection = self
+                    .connections
+                    .get(token.expose(), &bot.resource_owner(), reference)
+                    .await?;
+                return if connection.status == "ready" {
+                    Ok(())
+                } else {
+                    Err(BotError::Conflict)
+                };
+            }
             self.nyxid.bot(token.expose(), bot).await?;
             if self
                 .nyxid
@@ -173,6 +208,12 @@ impl BotExternal for GatewayBots {
     ) -> Result<BotChannelObservation, BotError> {
         bounded(async {
             let token = self.auth.bot_authority_token(bot).await?;
+            if bot.request.connection_ref.is_some() {
+                return self
+                    .gateway
+                    .create(token.expose(), bot, secrets, None)
+                    .await;
+            }
             let external = self.nyxid.bot(token.expose(), bot).await?;
             let username = (!external.platform_bot_username.is_empty())
                 .then_some(external.platform_bot_username);

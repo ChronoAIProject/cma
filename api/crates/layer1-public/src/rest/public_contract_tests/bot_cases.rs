@@ -136,6 +136,7 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
         event_worker_profile: None,
         name: "Example bot".into(),
         external_bot_id: "external-bot".into(),
+        connection_ref: None,
         profile: AgentProfileRef {
             id: layer2_core::AgentProfileId("agp_bot".into()),
             revision: 1,
