@@ -204,8 +204,10 @@ impl BotSetupDependencies for SetupDependencies {
         &self,
         owner: &layer2_core::resource_access::ResourceOwner,
     ) -> Result<String, BotError> {
+        // Register the user's own bot token. The telegram-new page starts
+        // NyxID's manager-assisted creation flow instead of this handoff.
         let mut url = reqwest::Url::parse(&format!(
-            "{}/channel-bots/connect/telegram-new",
+            "{}/channel-bots/connect/telegram",
             self.nyxid_public
         ))
         .map_err(|_| BotError::Unavailable)?;
