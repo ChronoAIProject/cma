@@ -11,6 +11,7 @@ h2 = { workspace = true }
 http-body-util = { workspace = true }
 hyper = { workspace = true }
 hyper-util = { workspace = true }
+image = { workspace = true }
 infer = { workspace = true }
 moka = { workspace = true }
 rustls = { workspace = true }
@@ -40,6 +41,8 @@ uuid = { workspace = true }
 pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
 
 [dev-dependencies]
+# The progressive JPEG fixture of the image decode bound test.
+jpeg-encoder = { workspace = true }
 # Paused time drives the media deadline and job tests deterministically.
 tokio = { workspace = true, features = ["test-util"] }
 tracing-log = { workspace = true }

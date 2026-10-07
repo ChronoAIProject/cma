@@ -6,6 +6,10 @@ mod budget;
 pub mod fake_nyxid;
 #[path = "media/forward.rs"]
 mod forward;
+#[path = "media/image.rs"]
+mod image;
+#[path = "media/image_fixtures.rs"]
+pub mod image_fixtures;
 #[path = "media/inline_source.rs"]
 mod inline_source;
 #[path = "media/jobs.rs"]

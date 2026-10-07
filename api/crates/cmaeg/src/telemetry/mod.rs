@@ -56,6 +56,12 @@ fn describe_media() {
         "CMAEG media fetch duration in seconds by source and outcome"
     );
     let _ = metrics::histogram!(names::MEDIA_FETCH_SECONDS);
+    metrics::describe_histogram!(
+        names::MEDIA_DERIVE,
+        metrics::Unit::Seconds,
+        "Media derivation time by artifact and outcome"
+    );
+    let _ = metrics::histogram!(names::MEDIA_DERIVE);
     metrics::describe_counter!(
         names::MEDIA_FETCH_BYTES,
         metrics::Unit::Bytes,
