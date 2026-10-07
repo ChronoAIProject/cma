@@ -8,6 +8,7 @@
 //! error, a log line or a span.
 pub mod nyxid;
 pub mod telegram;
+pub mod url;
 
 pub use crate::media::body::SourceStream;
 

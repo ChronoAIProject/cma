@@ -16,3 +16,5 @@ mod sniff;
 pub mod support;
 #[path = "media/telegram_source.rs"]
 mod telegram_source;
+#[path = "media/url_source.rs"]
+mod url_source;
