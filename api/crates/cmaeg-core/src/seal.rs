@@ -11,11 +11,13 @@ use ring::{
 use serde::{de::DeserializeOwned, Serialize};
 
 pub mod event_ref;
+pub mod media_link;
 pub mod message_ref;
 pub mod pointer;
 pub mod reply_target;
 
 pub use event_ref::{EventRef, EventRefPayload, ReplyAddress};
+pub use media_link::{MediaLinkPayload, MediaLinkRef, MAX_MEDIA_LINK_TTL};
 pub use message_ref::MessageRefPayload;
 pub use pointer::ChannelPointer;
 pub use reply_target::{ReplyTargetPayload, ReplyTargetRef, REPLY_TARGET_TTL};
@@ -37,6 +39,7 @@ pub enum TokenKind {
     ReplyTarget,
     Connection,
     ConnectionSetup,
+    MediaLink,
 }
 
 impl TokenKind {
@@ -50,6 +53,7 @@ impl TokenKind {
             Self::ReplyTarget => "rt",
             Self::Connection => "cn",
             Self::ConnectionSetup => "cs",
+            Self::MediaLink => "md",
         }
     }
 }
