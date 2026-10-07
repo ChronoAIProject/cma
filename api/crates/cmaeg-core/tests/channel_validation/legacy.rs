@@ -15,6 +15,7 @@
 //! - a native Telegram `bot_id` refused as a non-numeric user ID: the native
 //!   check already demands a canonical positive 64-bit integer.
 
+use cmaeg_core::channel::ChannelDefinition;
 use serde_json::{json, Value};
 
 use super::{channel, relay, relay_channel, relay_on, validate};
@@ -158,5 +159,35 @@ fn legacy_valid_shapes_are_accepted() {
     for value in valid_shapes() {
         let shown = value.to_string();
         validate(value).unwrap_or_else(|error| panic!("{shown}: {error}"));
+    }
+}
+
+#[test]
+fn legacy_source_and_partition_predicate_answers_only_for_its_own_rules() {
+    let parse = |value| serde_json::from_value::<ChannelDefinition>(value).unwrap();
+    for (value, pointer, message) in refusals() {
+        // This row pins the head check ahead of the sources it also breaks.
+        if pointer == "/profile_digest" {
+            continue;
+        }
+        let error = parse(value)
+            .validate_legacy_sources_and_partition()
+            .unwrap_err();
+        assert_eq!(
+            (error.pointer.as_str(), error.message.as_str()),
+            (pointer, message)
+        );
+    }
+    for value in valid_shapes() {
+        for (pointer, replacement) in [
+            ("/schema_version", json!(2)),
+            ("/reply/sinks", json!(vec![json!({"type":"sync"}); 4])),
+        ] {
+            let mut broken = value.clone();
+            *broken.pointer_mut(pointer).unwrap() = replacement;
+            let definition = parse(broken);
+            definition.validate_legacy_sources_and_partition().unwrap();
+            assert_eq!(definition.validate_legacy().unwrap_err().pointer, pointer);
+        }
     }
 }

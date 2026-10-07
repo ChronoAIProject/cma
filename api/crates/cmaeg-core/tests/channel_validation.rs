@@ -22,10 +22,14 @@ fn relay_channel() -> Value {
     value
 }
 
+/// Validate against the legacy rules, which these tables pin even once the
+/// reader accepts more.
 fn validate(value: Value) -> Result<(), cmaeg_core::ValidationError> {
-    serde_json::from_value::<ChannelDefinition>(value)
-        .unwrap()
-        .validate()
+    let definition = serde_json::from_value::<ChannelDefinition>(value).unwrap();
+    let legacy = definition.validate_legacy();
+    // The reader still applies exactly the legacy rules to every fixture.
+    assert_eq!(definition.validate(), legacy);
+    legacy
 }
 
 #[test]

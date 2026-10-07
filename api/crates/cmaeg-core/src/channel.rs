@@ -240,8 +240,33 @@ pub struct ChannelCreation {
 }
 
 impl ChannelDefinition {
-    /// Validate the complete definition before it is persisted.
+    /// The reader: the rules every definition this image accepts must meet,
+    /// whether restored from storage or admitted by management. It applies
+    /// exactly the legacy rules until readers that understand extended
+    /// routing widen it.
     pub fn validate(&self) -> Result<(), ValidationError> {
+        self.validate_legacy()
+    }
+
+    /// Today's complete validation, kept verbatim. The write gate answers a
+    /// write that older images could not read with this error while its flag
+    /// is off, so the caller sees the pointer and message it always has.
+    pub fn validate_legacy(&self) -> Result<(), ValidationError> {
+        // The first error wins, so this order is part of the refusal contract.
+        self.validate_head()?;
+        self.validate_legacy_sources_and_partition()?;
+        self.validate_tail()
+    }
+
+    /// Today's source and partition rules alone. They are the only rules the
+    /// multi-consumer extensions relax, so they decide whether an older image
+    /// can still read a definition, for readers and the routing audit alike.
+    pub fn validate_legacy_sources_and_partition(&self) -> Result<(), ValidationError> {
+        sources::validate_legacy_sources(&self.sources, &self.secrets)?;
+        self.partition.validate_legacy(&self.sources)
+    }
+
+    fn validate_head(&self) -> Result<(), ValidationError> {
         if self.schema_version != CHANNEL_SCHEMA_VERSION {
             return Err(ValidationError::new(
                 "/schema_version",
@@ -262,8 +287,10 @@ impl ChannelDefinition {
                 "does not match profile",
             ));
         }
-        sources::validate_legacy_sources(&self.sources, &self.secrets)?;
-        self.partition.validate_legacy(&self.sources)?;
+        Ok(())
+    }
+
+    fn validate_tail(&self) -> Result<(), ValidationError> {
         if self.reply.sinks.len() > MAX_SINKS {
             return Err(ValidationError::new("/reply/sinks", "too many sinks"));
         }
