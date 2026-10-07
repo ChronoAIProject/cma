@@ -1,7 +1,7 @@
 use super::ToolsState;
 use crate::channels::resolver::ResolvedChannel;
 use cmaeg_core::{
-    activity::{ActivityConversation, ActivityKind, Actor, SourceKind},
+    activity::{Activity, ActivityConversation, ActivityKind, Actor, SourceKind},
     channel::Platform,
     ids::{ConversationId, EventId},
     problem::{Problem, ProblemCode},
@@ -89,6 +89,20 @@ pub(super) async fn read(
     channel: &ResolvedChannel,
     event: &EventRefPayload,
 ) -> Result<ContextResponse, Problem> {
+    let (activity, activity_verified) = read_activity(state, channel, event).await?;
+    Ok(project(channel, event, activity, activity_verified))
+}
+
+/// The provider's persisted activity for `event` and whether the event_ref's
+/// sealed digest verifies it.
+///
+/// An event_ref sealed without a digest yields an unverified activity; callers
+/// that act on the activity's contents must refuse that themselves.
+pub(super) async fn read_activity(
+    state: &ToolsState,
+    channel: &ResolvedChannel,
+    event: &EventRefPayload,
+) -> Result<(Activity, bool), Problem> {
     let credential = channel
         .definition
         .secrets
@@ -113,18 +127,13 @@ pub(super) async fn read(
     if event.activity_sha256.is_some() && !activity_verified {
         return Err(unavailable());
     }
-    Ok(project(
-        channel,
-        event,
-        snapshot.activity,
-        activity_verified,
-    ))
+    Ok((snapshot.activity, activity_verified))
 }
 
 pub(super) fn project(
     channel: &ResolvedChannel,
     event: &EventRefPayload,
-    activity: cmaeg_core::activity::Activity,
+    activity: Activity,
     activity_verified: bool,
 ) -> ContextResponse {
     let capabilities = match activity.source {
