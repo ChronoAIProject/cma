@@ -12,6 +12,7 @@ pub mod mcp;
 pub mod openapi;
 pub mod providers;
 pub mod records;
+pub mod runtime;
 mod service_auth;
 pub mod telegram;
 pub mod telemetry;
