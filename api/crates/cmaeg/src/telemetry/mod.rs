@@ -68,6 +68,12 @@ fn describe_media() {
         "Time a turn waited for its conversation predecessor to start"
     );
     let _ = metrics::histogram!(names::FENCE_WAIT);
+    metrics::describe_histogram!(
+        names::MEDIA_PREPARE,
+        metrics::Unit::Seconds,
+        "Time a turn spent on its eager attachment items, by outcome"
+    );
+    let _ = metrics::histogram!(names::MEDIA_PREPARE);
     metrics::describe_counter!(
         names::MEDIA_FETCH_BYTES,
         metrics::Unit::Bytes,

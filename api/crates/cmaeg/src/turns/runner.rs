@@ -9,6 +9,10 @@ use super::{
 };
 use crate::{
     ingress::launch::{LaunchOutcome, LaunchRequest, TurnLauncher},
+    media::{
+        prepare::{prepare, PrepareConfig, Prepared},
+        service::MediaService,
+    },
     providers::{ProviderClient, ProviderError, TurnRequest, TurnStream},
     telemetry::timing::MediaLabel,
     MediaToolProviders, TurnConfig,
@@ -41,6 +45,10 @@ pub struct TurnRunner {
     /// Best-effort provider start order within a conversation while a media
     /// turn is part of it.
     sequencer: Arc<Sequencer>,
+    /// The media service while inbound media is enabled; `None` renders
+    /// attachment descriptors only.
+    media: Option<Arc<MediaService>>,
+    prepare: PrepareConfig,
 }
 impl TurnRunner {
     pub fn new(
@@ -56,7 +64,15 @@ impl TurnRunner {
             config,
             media_tool_providers: Arc::default(),
             sequencer: Arc::default(),
+            media: None,
+            prepare: PrepareConfig::default(),
         }
+    }
+    /// Prepare media turns with `media` under `prepare`'s bounds.
+    pub fn with_media(mut self, media: Option<Arc<MediaService>>, prepare: PrepareConfig) -> Self {
+        self.media = media;
+        self.prepare = prepare;
+        self
     }
     /// The order chains this runner keeps, for tests and diagnostics.
     pub fn sequencer(&self) -> &Sequencer {
@@ -79,15 +95,33 @@ impl TurnRunner {
         let provider = turn.channel.definition.provider.slug.to_string();
         let mut observation = Operation::new(names::TURN_DURATION, names::PROVIDER, &provider);
         let deadline = turn.received_at + self.config.turn_timeout;
+        let audience = Audience::of(&turn.channel.definition, &self.media_tool_providers);
+        // One nonce per turn: busy retries resend this exact input under the
+        // same idempotency key. Text-only turns make no RNG call.
+        let nonce = if has_attachments(&turn.activity) {
+            render_media::nonce()
+        } else {
+            None
+        };
+        let prepare_deadline = (turn.received_at + self.prepare.budget).min(deadline);
         let mut admitted = Some(sender);
         let result = tokio::time::timeout_at(deadline.into(), async {
-            if ticket.waits() {
-                if let Some(timing) = &turn.timing {
+            let fenced = ticket.waits();
+            // A predecessor may itself prepare for the whole budget before its
+            // busy retries, so the fence covers both.
+            let fence = self.config.busy_retry_max + self.prepare.budget + FENCE_SLACK;
+            let (_, prepared) = tokio::join!(
+                ticket.wait(fence),
+                self.prepare_or_empty(&turn, audience, nonce, prepare_deadline),
+            );
+            if let Some(timing) = &turn.timing {
+                if fenced {
                     timing.mark_media(MediaLabel::Fenced);
+                } else if prepared.eager {
+                    timing.mark_media(MediaLabel::Prepared);
                 }
             }
-            ticket.wait(self.config.busy_retry_max + FENCE_SLACK).await;
-            let started = self.start(&turn).await;
+            let started = self.start(&turn, &prepared.media, audience).await;
             // The successor may start once this start has returned, accepted
             // or not; a later failure is this turn's own.
             ticket.release();
@@ -131,7 +165,41 @@ impl TurnRunner {
             );
         }
     }
-    async fn start(&self, turn: &LaunchRequest) -> Result<TurnStream, ProviderError> {
+    /// The turn's media, prepared when there is a media service and the
+    /// activity carries attachments, and otherwise descriptors only.
+    async fn prepare_or_empty(
+        &self,
+        turn: &LaunchRequest,
+        audience: Audience,
+        nonce: Option<String>,
+        deadline: Instant,
+    ) -> Prepared {
+        match &self.media {
+            Some(service) if has_attachments(&turn.activity) => {
+                let now = time::OffsetDateTime::now_utc().unix_timestamp();
+                prepare(
+                    service,
+                    turn,
+                    audience,
+                    &self.prepare,
+                    nonce,
+                    deadline.into(),
+                    now,
+                )
+                .await
+            }
+            _ => Prepared {
+                media: RenderMedia::empty(nonce),
+                eager: false,
+            },
+        }
+    }
+    async fn start(
+        &self,
+        turn: &LaunchRequest,
+        media: &RenderMedia,
+        audience: Audience,
+    ) -> Result<TurnStream, ProviderError> {
         let definition = &turn.channel.definition;
         let credential = definition
             .secrets
@@ -140,18 +208,10 @@ impl TurnRunner {
             .ok_or_else(|| {
                 ProviderError::InvalidRequest("channel has no provider credential".into())
             })?;
-        // One nonce per turn: busy retries resend this exact input under the
-        // same idempotency key. Text-only turns make no RNG call.
-        let media = if render_media::attachments(&turn.activity).is_empty() {
-            RenderMedia::empty(None)
-        } else {
-            RenderMedia::empty(render_media::nonce())
-        };
-        let audience = Audience::of(definition, &self.media_tool_providers);
         let request = TurnRequest {
             timing: turn.timing.clone(),
             conversation_id: turn.conversation_id.clone(),
-            input: render_input::render(&turn.activity, definition, &media, audience),
+            input: render_input::render(&turn.activity, definition, media, audience),
             idempotency_key: turn.idempotency_key.clone(),
             metadata: metadata::render(turn),
             agent_key: credential.clone(),

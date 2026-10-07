@@ -184,3 +184,21 @@ fn the_model_is_bounded_printable_ascii() {
         );
     }
 }
+
+#[test]
+fn the_eager_audio_threshold_is_bounded_and_zero_disables_it() {
+    assert_eq!(lookup(&[]).unwrap().eager_max_seconds, 300);
+    for (value, seconds) in [("0", 0), ("600", 600), ("60", 60)] {
+        let config = lookup(&[("CMAEG_STT_EAGER_MAX_SECONDS", value)]).unwrap();
+        assert_eq!(config.eager_max_seconds, seconds);
+    }
+    for value in ["601", "-1", "", "5m"] {
+        assert_eq!(
+            detail(lookup(&[("CMAEG_STT_EAGER_MAX_SECONDS", value)]).unwrap_err()),
+            "CMAEG_STT_EAGER_MAX_SECONDS must be an unsigned decimal from 0 to 600",
+            "{value:?}"
+        );
+    }
+    let config = lookup(&[("CMAEG_STT_EAGER_MAX_SECONDS", "120")]).unwrap();
+    assert!(format!("{config:?}").contains("eager_max_seconds: 120"));
+}
