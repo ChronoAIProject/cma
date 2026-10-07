@@ -88,7 +88,7 @@ pub(super) fn budgets(
 
 /// An unset key takes its default; a set one must be plain ASCII digits (no
 /// sign, space or separator) within `min..=max`.
-fn bounded(
+pub(in crate::config) fn bounded(
     key: &'static str,
     value: Option<&str>,
     default: u64,

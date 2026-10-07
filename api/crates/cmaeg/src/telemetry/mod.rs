@@ -62,6 +62,18 @@ fn describe_media() {
         "Media derivation time by artifact and outcome"
     );
     let _ = metrics::histogram!(names::MEDIA_DERIVE);
+    metrics::describe_histogram!(
+        names::FENCE_WAIT,
+        metrics::Unit::Seconds,
+        "Time a turn waited for its conversation predecessor to start"
+    );
+    let _ = metrics::histogram!(names::FENCE_WAIT);
+    metrics::describe_histogram!(
+        names::MEDIA_PREPARE,
+        metrics::Unit::Seconds,
+        "Time a turn spent on its eager attachment items, by outcome"
+    );
+    let _ = metrics::histogram!(names::MEDIA_PREPARE);
     metrics::describe_counter!(
         names::MEDIA_FETCH_BYTES,
         metrics::Unit::Bytes,
@@ -86,6 +98,12 @@ fn describe_media() {
         "CMAEG media download link mints by outcome"
     );
     metrics::counter!(names::MEDIA_LINKS).absolute(0);
+    metrics::describe_counter!(
+        names::STT_AUDIO_SECONDS,
+        metrics::Unit::Seconds,
+        "CMAEG metered speech-to-text audio seconds, reconciled with reported usage"
+    );
+    metrics::counter!(names::STT_AUDIO_SECONDS).absolute(0);
     for (name, unit, description) in [
         (
             names::MEDIA_INFLIGHT_BYTES,
@@ -106,6 +124,11 @@ fn describe_media() {
             names::MEDIA_CACHE_BYTES,
             metrics::Unit::Bytes,
             "CMAEG weighted bytes held by the derived-media cache",
+        ),
+        (
+            names::STT_CHANNELS_AT_BUDGET,
+            metrics::Unit::Count,
+            "CMAEG channels refused by their own speech-to-text budget in the last hour",
         ),
     ] {
         metrics::describe_gauge!(name, unit, description);

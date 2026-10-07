@@ -31,19 +31,19 @@ use utoipa::OpenApi;
 
 pub use config::{
     ChannelCacheConfig, Config, ConfigError, DeliveryConfig, IngressConfig, ManagementConfig,
-    MediaConfig, MediaToolProviders, ServiceAccountConfig, TurnConfig, CMAEG_ACCEPT_BUDGET_MS,
-    CMAEG_ACK_TEXT, CMAEG_BUSY_RETRY_MAX_MS, CMAEG_CHANNEL_CACHE_MAX, CMAEG_CHANNEL_CACHE_TTL_MS,
-    CMAEG_CHANNEL_NEGATIVE_TTL_MS, CMAEG_CMA_BASE_URL, CMAEG_CMA_SERVICE_TOKEN_FILE,
-    CMAEG_DRAIN_SECONDS, CMAEG_FAILURE_TEXT, CMAEG_HEARTBEAT_MS, CMAEG_INGRESS_INFLIGHT,
-    CMAEG_INGRESS_MAX_BODY, CMAEG_JWKS_TTL_MS, CMAEG_LISTEN, CMAEG_MASTER_KEYS_FILE,
-    CMAEG_MEDIA_CACHE_BYTES, CMAEG_MEDIA_DOWNLOAD_BYTES_PER_HOUR, CMAEG_MEDIA_ENABLED,
-    CMAEG_MEDIA_INFLIGHT_BYTES, CMAEG_MEDIA_LINK_TTL_SECONDS, CMAEG_MEDIA_MAX_BYTES,
-    CMAEG_MEDIA_MAX_JOBS, CMAEG_MEDIA_RATE_PER_MINUTE, CMAEG_MEDIA_RESPONSE_BYTES,
-    CMAEG_MEDIA_TOOL_PROVIDERS, CMAEG_METRICS_LISTEN, CMAEG_NYXID_BASE_URL,
-    CMAEG_NYXID_REPLY_TIMEOUT_MS, CMAEG_PROVIDERS, CMAEG_PROVIDER_CONNECT_TIMEOUT_MS,
-    CMAEG_PROVIDER_MAX_INFLIGHT, CMAEG_PROVIDER_REQUEST_TIMEOUT_MS, CMAEG_PUBLIC_URL,
-    CMAEG_RESTORE_RATE_PER_MINUTE, CMAEG_RESTORE_TIMEOUT_MS, CMAEG_TOOLS_NYXID_SLUG,
-    CMAEG_TURN_TIMEOUT_MS,
+    MediaConfig, MediaToolProviders, ServiceAccountConfig, SttConfig, SttEndpoint, TurnConfig,
+    CMAEG_ACCEPT_BUDGET_MS, CMAEG_ACK_TEXT, CMAEG_BUSY_RETRY_MAX_MS, CMAEG_CHANNEL_CACHE_MAX,
+    CMAEG_CHANNEL_CACHE_TTL_MS, CMAEG_CHANNEL_NEGATIVE_TTL_MS, CMAEG_CMA_BASE_URL,
+    CMAEG_CMA_SERVICE_TOKEN_FILE, CMAEG_DRAIN_SECONDS, CMAEG_FAILURE_TEXT, CMAEG_HEARTBEAT_MS,
+    CMAEG_INGRESS_INFLIGHT, CMAEG_INGRESS_MAX_BODY, CMAEG_JWKS_TTL_MS, CMAEG_LISTEN,
+    CMAEG_MASTER_KEYS_FILE, CMAEG_MEDIA_CACHE_BYTES, CMAEG_MEDIA_DOWNLOAD_BYTES_PER_HOUR,
+    CMAEG_MEDIA_ENABLED, CMAEG_MEDIA_INFLIGHT_BYTES, CMAEG_MEDIA_LINK_TTL_SECONDS,
+    CMAEG_MEDIA_MAX_BYTES, CMAEG_MEDIA_MAX_JOBS, CMAEG_MEDIA_PREPARE_BUDGET_MS,
+    CMAEG_MEDIA_RATE_PER_MINUTE, CMAEG_MEDIA_RESPONSE_BYTES, CMAEG_MEDIA_TOOL_PROVIDERS,
+    CMAEG_METRICS_LISTEN, CMAEG_NYXID_BASE_URL, CMAEG_NYXID_REPLY_TIMEOUT_MS, CMAEG_PROVIDERS,
+    CMAEG_PROVIDER_CONNECT_TIMEOUT_MS, CMAEG_PROVIDER_MAX_INFLIGHT,
+    CMAEG_PROVIDER_REQUEST_TIMEOUT_MS, CMAEG_PUBLIC_URL, CMAEG_RESTORE_RATE_PER_MINUTE,
+    CMAEG_RESTORE_TIMEOUT_MS, CMAEG_TOOLS_NYXID_SLUG, CMAEG_TURN_TIMEOUT_MS,
 };
 
 const REQUEST_BODY_LIMIT_BYTES: usize = 1024 * 1024;
@@ -151,7 +151,9 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         ),
     );
     let tool_providers = std::sync::Arc::new(config.media.tool_providers.clone());
-    // The one media service of the process, or None while media is off.
+    // The one media service of the process, or `None` while
+    // CMAEG_MEDIA_ENABLED=false so nothing is allocated. Turn preparation and
+    // the attachment tools share it, so they share its budgets and cache.
     let media = media::service::compose(
         &config,
         media::service::ComposeDeps {
@@ -167,7 +169,14 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             delivery.clone(),
             config.turns.clone(),
         )
-        .with_media_tool_providers(tool_providers),
+        .with_media_tool_providers(tool_providers)
+        .with_media(
+            media.clone(),
+            media::prepare::PrepareConfig {
+                budget: config.media.prepare_budget,
+                eager_audio_max_seconds: config.stt.eager_max_seconds,
+            },
+        ),
     );
     let ingress = ingress::IngressState::new(
         state.resolver.clone(),

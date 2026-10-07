@@ -19,7 +19,7 @@ use cmaeg::{
     },
     telegram::TelegramClient,
     ChannelCacheConfig, Config, DeliveryConfig, IngressConfig, ManagementConfig, MediaConfig,
-    MediaToolProviders, TurnConfig,
+    MediaToolProviders, SttConfig, TurnConfig,
 };
 use cmaeg_core::{
     activity::{Activity, ActivityKind, AttachmentKind, SourceKind},
@@ -242,6 +242,7 @@ fn config(media: MediaConfig) -> Config {
         turns: TurnConfig::default(),
         delivery: DeliveryConfig::default(),
         media,
+        stt: SttConfig::default(),
     }
 }
 

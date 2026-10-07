@@ -27,6 +27,10 @@ pub const MEDIA_DERIVE: &str = "cmaeg_media_derive_seconds";
 pub const MEDIA_TOOL_READS: &str = "cmaeg_media_tool_reads_total";
 pub const MEDIA_DOWNLOADS: &str = "cmaeg_media_downloads_total";
 pub const MEDIA_LINKS: &str = "cmaeg_media_links_total";
+pub const STT_AUDIO_SECONDS: &str = "cmaeg_stt_audio_seconds_total";
+pub const STT_CHANNELS_AT_BUDGET: &str = "cmaeg_stt_channels_at_budget";
+pub const FENCE_WAIT: &str = "cmaeg_media_fence_wait_seconds";
+pub const MEDIA_PREPARE: &str = "cmaeg_media_prepare_seconds";
 pub const SOURCE: &str = "source";
 pub const COLD: &str = "cold";
 pub const OUTCOME: &str = "outcome";
@@ -40,6 +44,7 @@ pub const DETAIL: &str = "detail";
 pub const OP: &str = "op";
 pub const VIEW: &str = "view";
 pub const STATUS: &str = "status";
+pub const MEDIA: &str = "media";
 pub const HISTOGRAMS: [&str; 6] = [
     INGRESS_TO_PROVIDER,
     RESTORE_DURATION,
@@ -66,18 +71,21 @@ pub const BUCKETS: [f64; 11] = [
 ];
 /// Media metrics carry their own units and descriptions, so they are listed
 /// apart from the generic families above.
-pub const MEDIA_HISTOGRAMS: [&str; 2] = [MEDIA_FETCH_SECONDS, MEDIA_DERIVE];
-pub const MEDIA_COUNTERS: [&str; 4] = [
+pub const MEDIA_HISTOGRAMS: [&str; 4] =
+    [MEDIA_FETCH_SECONDS, MEDIA_DERIVE, FENCE_WAIT, MEDIA_PREPARE];
+pub const MEDIA_COUNTERS: [&str; 5] = [
     MEDIA_FETCH_BYTES,
     MEDIA_TOOL_READS,
     MEDIA_DOWNLOADS,
     MEDIA_LINKS,
+    STT_AUDIO_SECONDS,
 ];
-pub const MEDIA_GAUGES: [&str; 4] = [
+pub const MEDIA_GAUGES: [&str; 5] = [
     MEDIA_INFLIGHT_BYTES,
     MEDIA_RESPONSE_BYTES,
     MEDIA_JOBS_INFLIGHT,
     MEDIA_CACHE_BYTES,
+    STT_CHANNELS_AT_BUDGET,
 ];
 /// Media work spans an 8 s tool budget, a 15 s preparation budget and a 90 s
 /// background budget, well past the 10 s top of [`BUCKETS`].

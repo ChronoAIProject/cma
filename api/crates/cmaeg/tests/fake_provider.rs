@@ -24,6 +24,9 @@ pub struct FakeProviderConfig {
     pub response_delay: Duration,
     pub terminal_delay: Duration,
     pub header_delay: Duration,
+    /// A header delay for turns whose input carries an attachment block only,
+    /// so a test can hold media turns while text turns answer at once.
+    pub attachment_delay: Duration,
     pub missing_turn_once: bool,
     pub busy_always: bool,
     pub frames: Option<Vec<Value>>,
@@ -44,6 +47,7 @@ impl Default for FakeProviderConfig {
             response_delay: Duration::ZERO,
             terminal_delay: Duration::ZERO,
             header_delay: Duration::ZERO,
+            attachment_delay: Duration::ZERO,
             missing_turn_once: false,
             busy_always: false,
             frames: None,
@@ -235,9 +239,13 @@ async fn responses(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
+    let attachments = String::from_utf8_lossy(&body).contains("[Attachments:");
     record(&state, "POST", "/api/v2/responses".into(), headers, body);
     if !state.config.header_delay.is_zero() {
         sleep(state.config.header_delay).await;
+    }
+    if attachments && !state.config.attachment_delay.is_zero() {
+        sleep(state.config.attachment_delay).await;
     }
     if state.missing_turn_once.swap(false, Ordering::SeqCst) {
         return (

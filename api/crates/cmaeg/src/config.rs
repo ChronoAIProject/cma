@@ -12,6 +12,7 @@ mod ingress;
 mod media;
 mod secrets;
 mod service_account;
+mod stt;
 mod turns;
 pub use cache::*;
 pub use delivery::*;
@@ -19,10 +20,11 @@ pub use ingress::*;
 pub use media::{
     MediaConfig, MediaToolProviders, CMAEG_MEDIA_CACHE_BYTES, CMAEG_MEDIA_DOWNLOAD_BYTES_PER_HOUR,
     CMAEG_MEDIA_ENABLED, CMAEG_MEDIA_INFLIGHT_BYTES, CMAEG_MEDIA_LINK_TTL_SECONDS,
-    CMAEG_MEDIA_MAX_BYTES, CMAEG_MEDIA_MAX_JOBS, CMAEG_MEDIA_RATE_PER_MINUTE,
-    CMAEG_MEDIA_RESPONSE_BYTES, CMAEG_MEDIA_TOOL_PROVIDERS,
+    CMAEG_MEDIA_MAX_BYTES, CMAEG_MEDIA_MAX_JOBS, CMAEG_MEDIA_PREPARE_BUDGET_MS,
+    CMAEG_MEDIA_RATE_PER_MINUTE, CMAEG_MEDIA_RESPONSE_BYTES, CMAEG_MEDIA_TOOL_PROVIDERS,
 };
 pub use service_account::*;
+pub use stt::*;
 pub use turns::*;
 
 /// The listener address used by CMAEG.
@@ -118,6 +120,7 @@ pub struct Config {
     pub turns: TurnConfig,
     pub delivery: DeliveryConfig,
     pub media: MediaConfig,
+    pub stt: SttConfig,
 }
 
 /// Secrets and origins used by the channel management plane.
@@ -150,6 +153,7 @@ impl Config {
         let providers = ProviderRegistry::parse(&providers_json)?;
         // Validated against the registry, so it can only follow it.
         let media = media::config_from_env(&providers)?;
+        let stt = stt::config_from_env()?;
         let provider_connect_timeout = positive_duration(CMAEG_PROVIDER_CONNECT_TIMEOUT_MS, 2_000)?;
         let provider_request_timeout =
             positive_duration(CMAEG_PROVIDER_REQUEST_TIMEOUT_MS, 30_000)?;
@@ -162,6 +166,8 @@ impl Config {
                 value: env::var(CMAEG_PROVIDER_MAX_INFLIGHT).unwrap_or_else(|_| "256".to_owned()),
             })?;
         let management = ManagementConfig::from_env()?;
+        let turns = TurnConfig::from_env()?;
+        media.check_turn_timeout(turns.turn_timeout)?;
         Ok(Self {
             listen,
             metrics_listen,
@@ -173,9 +179,10 @@ impl Config {
             cma_service_account: ServiceAccountConfig::from_env()?,
             channel_cache: ChannelCacheConfig::from_env()?,
             ingress: IngressConfig::from_env()?,
-            turns: TurnConfig::from_env()?,
+            turns,
             delivery: DeliveryConfig::from_env()?,
             media,
+            stt,
         })
     }
 }

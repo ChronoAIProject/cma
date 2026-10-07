@@ -9,12 +9,15 @@ use cmaeg::{
         derive::DeriveError,
         image::NormalizedImage,
         service::{MediaDeps, MediaService},
-        transcribe::{AudioContainer, AudioInput, TranscribeError, Transcriber, Transcript},
+        transcribe::{
+            meter::SttSpend, upload::NoTranscoder, AudioContainer, AudioInput, TranscribeError,
+            Transcriber, Transcript,
+        },
         visual::{PlatformThumbnail, VisualExtractor, VisualKind, VisualRequest},
         MediaLimits,
     },
     tools::MediaDownloads,
-    MediaConfig, MediaToolProviders,
+    MediaConfig, MediaToolProviders, SttConfig,
 };
 use cmaeg_core::{
     activity::{ActivityKind, Attachment, AttachmentKind, AttachmentSource, SourceKind},
@@ -317,9 +320,15 @@ impl MediaSetup {
         } else {
             self.fakes.visuals.clone()
         };
+        // The direct upload path under the default spend limits, which no
+        // test here comes near.
+        let stt = SttConfig::default();
+        let transcriber: Arc<dyn Transcriber> = self.fakes.transcriber.clone();
         MediaService::new(MediaDeps {
             sources,
-            transcriber: self.fakes.transcriber.clone(),
+            transcoder: Arc::new(NoTranscoder::new(&stt, transcriber.clone())),
+            stt: Arc::new(SttSpend::new(&stt)),
+            transcriber,
             visuals,
             limits: self.limits,
             keys,

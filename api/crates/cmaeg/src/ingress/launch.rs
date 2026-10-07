@@ -8,6 +8,7 @@ use cmaeg_core::{
 };
 use futures_util::future::BoxFuture;
 use std::{sync::Arc, time::Instant};
+use tokio::sync::OwnedSemaphorePermit;
 
 #[derive(Debug)]
 pub struct LaunchRequest {
@@ -28,6 +29,20 @@ pub enum LaunchOutcome {
 }
 pub trait TurnLauncher: Send + Sync {
     fn launch(&self, request: LaunchRequest) -> BoxFuture<'_, LaunchOutcome>;
+    /// The permit bounds shared ingress capacity. The default holds it until
+    /// `launch` completes; implementations may release it earlier but must
+    /// keep their acceptance semantics.
+    fn launch_holding(
+        &self,
+        request: LaunchRequest,
+        hold: OwnedSemaphorePermit,
+    ) -> BoxFuture<'_, LaunchOutcome> {
+        Box::pin(async move {
+            let outcome = self.launch(request).await;
+            drop(hold);
+            outcome
+        })
+    }
 }
 /// Explicit refusal for integrations that compose ingress without a turn runner.
 pub struct UnavailableLauncher;

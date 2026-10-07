@@ -36,7 +36,11 @@ pub struct Fixture {
 impl Fixture {
     pub async fn new(fake_config: FakeProviderConfig, config: TurnConfig, capacity: usize) -> Self {
         let fake = FakeProvider::start(fake_config).await;
-        let registry = ProviderRegistry::parse(&json!([{"slug":"cma_codex","base_url":fake.base_url(),"kind":"responses_http","paths":{"agent_card":"/.well-known/agent-card.json","binding":"/api/v1/cmaeg/bindings/{binding_id}","conversation":"/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}","responses":"/api/v2/responses"},"max_inflight":capacity}]).to_string()).unwrap();
+        // Two slugs on one fake, so a channel can be rebound to `nyxbot`.
+        let entry = |slug: &str| json!({"slug":slug,"base_url":fake.base_url(),"kind":"responses_http","paths":{"agent_card":"/.well-known/agent-card.json","binding":"/api/v1/cmaeg/bindings/{binding_id}","conversation":"/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}","responses":"/api/v2/responses"},"max_inflight":capacity});
+        let registry =
+            ProviderRegistry::parse(&json!([entry("cma_codex"), entry("nyxbot")]).to_string())
+                .unwrap();
         let client = Arc::new(
             ProviderClient::new(
                 registry,
