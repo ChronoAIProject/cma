@@ -201,10 +201,22 @@ fn image_decode_bounds() {
         &profiled,
     );
     drop(profiled);
+    // The lossless WebP decoder has no memory bound, so whatever reaches it
+    // is refused before it reads a byte, at any size: a lossless image, and
+    // lossy pixels whose alpha libwebp compressed losslessly.
     let lossless = fixtures::webp_lossless(&rgba);
     drop(rgba);
-    measure(&format!("lossless webp {WIDTH}x{HEIGHT}"), &lossless);
+    refused(
+        &format!("lossless webp {WIDTH}x{HEIGHT}"),
+        &lossless,
+        ImageError::UnsupportedFormat,
+    );
     drop(lossless);
+    refused(
+        "lossy webp with lossless alpha",
+        webp::LOSSY_ALPHA,
+        ImageError::UnsupportedFormat,
+    );
     // `image` cannot write lossy WebP, so a small lossy frame on a canvas at
     // the limit stands in. The decoder composes it on a full-size RGBA
     // canvas and copies the canvas into a full-size output, the most a lossy

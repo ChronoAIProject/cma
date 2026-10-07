@@ -48,3 +48,5 @@ mod transcribe;
 mod upload;
 #[path = "media/url_source.rs"]
 mod url_source;
+#[path = "media/webp_fixtures.rs"]
+pub mod webp_fixtures;

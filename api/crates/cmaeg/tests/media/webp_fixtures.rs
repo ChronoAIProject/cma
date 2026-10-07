@@ -1,12 +1,16 @@
 //! WebP fixtures.
 //!
-//! `image` writes only lossless WebP, so the lossy sample is checked in.
-//! cwebp 1.6.0 wrote [`LOSSY`] with `-q 80 -metadata none` from the opaque
-//! 64x48 gradient that `image_fixtures::rgba(64, 48, 0, false)` draws, as a
-//! simple-format `VP8 ` image. Everything else is assembled from its chunks.
+//! `image` writes only lossless WebP, so the two lossy samples are checked
+//! in. cwebp 1.6.0 wrote them with `-q 80 -metadata none` from the 64x48
+//! gradient that `image_fixtures::rgba(64, 48, 0, transparent)` draws:
+//! [`LOSSY`] from the opaque one, as a simple-format `VP8 ` image, and
+//! [`LOSSY_ALPHA`] from the transparent one, as an extended image whose
+//! `ALPH` chunk libwebp compressed losslessly, its default. Everything else
+//! is assembled from their chunks and from `image`'s lossless output.
 
 pub const LOSSY: &[u8] = include_bytes!("../fixtures/webp/gradient_lossy.webp");
-/// The size of the sample.
+pub const LOSSY_ALPHA: &[u8] = include_bytes!("../fixtures/webp/gradient_lossy_alpha.webp");
+/// The size of both samples.
 pub const WIDTH: u32 = 64;
 pub const HEIGHT: u32 = 48;
 
@@ -14,6 +18,9 @@ pub const HEIGHT: u32 = 48;
 pub const ALPHA: u8 = 0b0001_0000;
 /// The `VP8X` flag of an animation.
 pub const ANIMATION: u8 = 0b0000_0010;
+/// The `ALPH` header byte of raw alpha: no preprocessing, no filtering and
+/// no compression.
+pub const ALPHA_RAW: u8 = 0;
 
 /// A chunk: its type, its little-endian length and its data, padded to an
 /// even length as RIFF requires.
@@ -61,6 +68,13 @@ pub fn extended(flags: u8, width: u32, height: u32) -> Vec<u8> {
     chunk(b"VP8X", &data)
 }
 
+/// An `ALPH` chunk of raw alpha: the header byte, then one byte a pixel.
+pub fn raw_alpha(alpha: &[u8]) -> Vec<u8> {
+    let mut data = vec![ALPHA_RAW];
+    data.extend_from_slice(alpha);
+    chunk(b"ALPH", &data)
+}
+
 /// An `ANMF` chunk: a `width` by `height` frame at the canvas origin, not
 /// blended, holding `chunks`.
 pub fn frame(width: u32, height: u32, chunks: &[Vec<u8>]) -> Vec<u8> {
@@ -90,6 +104,23 @@ pub fn animation(flags: u8, width: u32, height: u32, frames: &[Vec<u8>]) -> Vec<
 /// A frame of [`LOSSY`]'s image.
 pub fn lossy_frame() -> Vec<u8> {
     frame(WIDTH, HEIGHT, &[find_chunk(LOSSY, b"VP8 ")])
+}
+
+/// A frame of [`LOSSY_ALPHA`]'s image, with its lossless alpha.
+pub fn lossy_alpha_frame() -> Vec<u8> {
+    frame(
+        WIDTH,
+        HEIGHT,
+        &[
+            find_chunk(LOSSY_ALPHA, b"ALPH"),
+            find_chunk(LOSSY_ALPHA, b"VP8 "),
+        ],
+    )
+}
+
+/// A frame holding the `VP8L` chunk of `lossless`, a WebP `image` wrote.
+pub fn lossless_frame(lossless: &[u8], width: u32, height: u32) -> Vec<u8> {
+    frame(width, height, &[find_chunk(lossless, b"VP8L")])
 }
 
 fn u24(value: u32) -> [u8; 3] {
