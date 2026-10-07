@@ -14,12 +14,18 @@ use cmaeg::{
         service::{compose, ComposeDeps, MediaCapabilities},
         target::TargetError,
         transcribe::DisabledTranscriber,
+        transform::{
+            jobdir::MediaRoot,
+            launcher::{JobLauncher, JobResult, JobSpec},
+            outcome::TransformOutcome,
+            setup::TransformerRuntime,
+        },
         visual::VisualKind,
         MediaLimits,
     },
     telegram::TelegramClient,
     ChannelCacheConfig, Config, DeliveryConfig, IngressConfig, ManagementConfig, MediaConfig,
-    MediaToolProviders, SttConfig, TurnConfig,
+    MediaToolProviders, SttConfig, TransformerConfig, TurnConfig,
 };
 use cmaeg_core::{
     activity::{Activity, ActivityKind, AttachmentKind, SourceKind},
@@ -27,6 +33,7 @@ use cmaeg_core::{
     ids::{ChannelId, IdempotencyKey},
     seal::{event_ref::activity_digest, EventRef, ReplyAddress},
 };
+use futures_util::future::BoxFuture;
 use std::{sync::Arc, time::Duration};
 
 #[tokio::test(start_paused = true)]
@@ -243,6 +250,7 @@ fn config(media: MediaConfig) -> Config {
         delivery: DeliveryConfig::default(),
         media,
         stt: SttConfig::default(),
+        transformer: TransformerConfig::default(),
     }
 }
 
@@ -253,6 +261,7 @@ fn compose_deps() -> ComposeDeps {
         telegram: Arc::new(
             TelegramClient::new("https://api.telegram.org", Duration::from_secs(1)).unwrap(),
         ),
+        transformer: None,
     }
 }
 
@@ -284,4 +293,34 @@ fn composition_is_skipped_while_media_is_off() {
         MediaConfig::default().response_bytes
     );
     assert!(on.limiter().slots.is_empty());
+}
+
+/// A launcher that is never reached by composition alone.
+struct Unused;
+
+impl JobLauncher for Unused {
+    fn run(&self, _spec: JobSpec) -> BoxFuture<'_, JobResult> {
+        Box::pin(async { JobResult::unavailable(TransformOutcome::SandboxUnavailable) })
+    }
+}
+
+#[test]
+fn a_ready_transformer_is_composed_behind_the_media_seams() {
+    let config = config(MediaConfig {
+        enabled: true,
+        ..MediaConfig::default()
+    });
+    let mut deps = compose_deps();
+    deps.transformer = Some(TransformerRuntime {
+        launcher: Box::new(Unused),
+        root: MediaRoot::new(std::env::temp_dir()),
+    });
+    let on = compose(&config, deps).unwrap().expect("media is on");
+    assert_eq!(
+        on.capabilities(),
+        MediaCapabilities {
+            transcriber_enabled: false,
+            visuals: VisualKind::Keyframes,
+        }
+    );
 }
