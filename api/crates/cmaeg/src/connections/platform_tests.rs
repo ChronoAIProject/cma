@@ -165,7 +165,7 @@ impl Native {
         else {
             panic!("fixture must pass native normalization")
         };
-        crate::ingress::telegram::launch(
+        let built = crate::ingress::telegram::launch(
             self.channel.clone(),
             "77",
             *observed,
@@ -173,8 +173,11 @@ impl Native {
             Instant::now(),
             now(),
         )
-        .unwrap()
-        .activity
+        .unwrap();
+        let crate::ingress::media_guard::Built::Launch(request) = built else {
+            panic!("fixture must launch")
+        };
+        request.activity
     }
     fn methods(&self) -> Vec<String> {
         self.peer

@@ -7,6 +7,7 @@ use super::{
 use crate::{
     ingress::{
         admission::{admit, AdmissionFacts, Refusal},
+        media_guard::Built,
         relay::{verify, VerificationError},
         telegram::{self, Outcome},
         IngressState,
@@ -230,7 +231,9 @@ async fn admit_update(
         timing.received(),
         now,
     ) {
-        Ok(request) => request,
+        Ok(Built::Launch(request)) => *request,
+        // A 202 refusal, so Telegram does not redeliver the update.
+        Ok(Built::Refused(reason)) => return Err(refused(reason)),
         Err(error) => return Err(invalid(SOURCE, error)),
     };
     Ok(AdmittedChat {
