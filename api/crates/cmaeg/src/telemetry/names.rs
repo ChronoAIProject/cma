@@ -26,6 +26,7 @@ pub const MEDIA_CACHE_BYTES: &str = "cmaeg_media_cache_bytes";
 pub const MEDIA_DERIVE: &str = "cmaeg_media_derive_seconds";
 pub const MEDIA_TOOL_READS: &str = "cmaeg_media_tool_reads_total";
 pub const MEDIA_DOWNLOADS: &str = "cmaeg_media_downloads_total";
+pub const MEDIA_LINKS: &str = "cmaeg_media_links_total";
 pub const SOURCE: &str = "source";
 pub const COLD: &str = "cold";
 pub const OUTCOME: &str = "outcome";
@@ -66,7 +67,12 @@ pub const BUCKETS: [f64; 11] = [
 /// Media metrics carry their own units and descriptions, so they are listed
 /// apart from the generic families above.
 pub const MEDIA_HISTOGRAMS: [&str; 2] = [MEDIA_FETCH_SECONDS, MEDIA_DERIVE];
-pub const MEDIA_COUNTERS: [&str; 3] = [MEDIA_FETCH_BYTES, MEDIA_TOOL_READS, MEDIA_DOWNLOADS];
+pub const MEDIA_COUNTERS: [&str; 4] = [
+    MEDIA_FETCH_BYTES,
+    MEDIA_TOOL_READS,
+    MEDIA_DOWNLOADS,
+    MEDIA_LINKS,
+];
 pub const MEDIA_GAUGES: [&str; 4] = [
     MEDIA_INFLIGHT_BYTES,
     MEDIA_RESPONSE_BYTES,

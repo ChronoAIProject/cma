@@ -660,6 +660,17 @@
               "null"
             ]
           },
+          "download": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MediaDownload",
+                "description": "With view `download` and status `ready`: the one command that saves\nthe original. It carries a single-use link."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "duration_seconds": {
             "format": "int32",
             "minimum": 0,
@@ -2354,6 +2365,36 @@
         "required": [
           "url",
           "auth"
+        ],
+        "type": "object"
+      },
+      "MediaDownload": {
+        "additionalProperties": false,
+        "description": "A ready download: one `curl` command that works once and expires at\n`expires_at`. Only `curl` carries the link; `url` never does.",
+        "properties": {
+          "curl": {
+            "description": "The command to run once in the agent's workspace; its\n`Authorization` header carries the link.",
+            "type": "string"
+          },
+          "expires_at": {
+            "description": "Unix seconds after which the link is refused.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "method": {
+            "description": "Always `GET`.",
+            "type": "string"
+          },
+          "url": {
+            "description": "`<CMAEG_PUBLIC_URL>/v1/media/content`, without the link.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "method",
+          "url",
+          "expires_at",
+          "curl"
         ],
         "type": "object"
       },

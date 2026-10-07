@@ -13,16 +13,18 @@ use cmaeg::{
         visual::{PlatformThumbnail, VisualExtractor, VisualKind, VisualRequest},
         MediaLimits,
     },
+    tools::MediaDownloads,
     MediaConfig, MediaToolProviders,
 };
 use cmaeg_core::{
     activity::{ActivityKind, Attachment, AttachmentKind, AttachmentSource, SourceKind},
     channel::Platform,
-    seal::{event_ref::activity_digest, EventRef, MasterKeyRing},
+    seal::{event_ref::activity_digest, EventRef, MasterKeyRing, ReplyAddress},
 };
 use futures_util::future::BoxFuture;
 use serde_json::Value;
 use std::{
+    num::NonZeroU32,
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc, Mutex,
@@ -177,6 +179,10 @@ pub struct MediaSetup {
     pub custom: bool,
     /// The providers whose bindings install the gateway tools.
     pub tool_providers: Vec<&'static str>,
+    /// A pod-wide mint rate below the production one.
+    pub global_mints: Option<NonZeroU32>,
+    /// Seal the event_ref with the longest partition key it can carry.
+    pub longest_partition_key: bool,
     /// Seal the activity digest into the event_ref.
     pub digest: bool,
     /// Extract frames with the production platform-thumbnail extractor over
@@ -195,6 +201,8 @@ impl MediaSetup {
             native: false,
             custom: false,
             tool_providers: vec!["cma_codex"],
+            global_mints: None,
+            longest_partition_key: false,
             digest: true,
             thumbnails: false,
             limits: MediaLimits::from_config(&MediaConfig::default()),
@@ -215,6 +223,25 @@ impl MediaSetup {
     pub fn tool_providers(mut self, providers: Vec<&'static str>) -> Self {
         self.tool_providers = providers;
         self
+    }
+
+    pub fn global_mints(mut self, per_minute: u32) -> Self {
+        self.global_mints = NonZeroU32::new(per_minute);
+        self
+    }
+
+    pub fn longest_partition_key(mut self) -> Self {
+        self.longest_partition_key = true;
+        self
+    }
+
+    /// The download state of an app built from this setup.
+    pub fn downloads(&self) -> MediaDownloads {
+        let downloads = MediaDownloads::default();
+        match self.global_mints {
+            Some(per_minute) => downloads.with_global_mint_rate(per_minute),
+            None => downloads,
+        }
     }
 
     pub fn platform_thumbnails(mut self) -> Self {
@@ -262,6 +289,22 @@ impl MediaSetup {
             .unwrap()
             .payload;
         payload.activity_sha256 = self.digest.then(|| activity_digest(&request.activity));
+        if self.custom {
+            // A custom event without a result sink has no reply address.
+            payload.reply = ReplyAddress::None;
+        }
+        if self.longest_partition_key {
+            // Grow the key until the event_ref is at its size limit, which
+            // leaves no room for the fields a media link adds.
+            let mut length = 4_096;
+            while length > 0 {
+                payload.partition_key = PARTITION_MARKER.repeat(length / PARTITION_MARKER.len());
+                if EventRef::seal(&payload, keys).is_ok() {
+                    break;
+                }
+                length -= PARTITION_MARKER.len();
+            }
+        }
         request.event_ref = EventRef::seal(&payload, keys).unwrap();
         request
     }
@@ -287,6 +330,9 @@ impl MediaSetup {
         })
     }
 }
+
+/// The text a longest partition key repeats, so a test can find it in logs.
+pub const PARTITION_MARKER: &str = "partition-marker-";
 
 /// A relayed attachment of `kind` at callback position `index`.
 pub fn relayed(index: u8, kind: AttachmentKind) -> Attachment {

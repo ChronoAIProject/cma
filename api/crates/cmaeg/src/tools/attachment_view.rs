@@ -5,6 +5,7 @@
 //! sends them as separate image content items and REST never sends them.
 use cmaeg_core::activity::{AttachmentKind, MediaVariant};
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use utoipa::ToSchema;
 
 /// What the caller asks to read from an attachment.
@@ -178,6 +179,39 @@ pub struct AttachmentView {
     pub images: Vec<AttachmentImage>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notice: Option<String>,
+    /// With view `download` and status `ready`: the one command that saves
+    /// the original. It carries a single-use link.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub download: Option<MediaDownload>,
+}
+
+/// A ready download: one `curl` command that works once and expires at
+/// `expires_at`. Only `curl` carries the link; `url` never does.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MediaDownload {
+    /// Always `GET`.
+    pub method: String,
+    /// `<CMAEG_PUBLIC_URL>/v1/media/content`, without the link.
+    pub url: String,
+    /// Unix seconds after which the link is refused.
+    pub expires_at: i64,
+    /// The command to run once in the agent's workspace; its
+    /// `Authorization` header carries the link.
+    pub curl: String,
+}
+
+/// The command carries a live capability, so it is never shown.
+impl fmt::Debug for MediaDownload {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("MediaDownload")
+            .field("method", &self.method)
+            .field("url", &self.url)
+            .field("expires_at", &self.expires_at)
+            .field("curl", &"[redacted]")
+            .finish()
+    }
 }
 
 /// The still images a gateway can show for a video.

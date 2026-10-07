@@ -1,11 +1,22 @@
-//! Single-use media links: the per-pod redemption set and the stream slots
-//! every download holds.
+//! Single-use media links: minting for autonomous tool-bearing bindings, the
+//! per-pod redemption set, and the stream slots every download holds.
 //!
 //! A link is a standalone bearer seen by the model provider and stored by CMA
 //! as a tool-call title, so it must be worthless once redeemed or expired.
-use cmaeg_core::{ids::ChannelId, seal::MAX_MEDIA_LINK_TTL};
+use super::{MediaDownload, ToolsState};
+use crate::{
+    channels::resolver::ResolvedChannel,
+    telemetry::{self, names},
+};
+use cmaeg_core::{
+    activity::Attachment,
+    ids::ChannelId,
+    seal::{media_link, EventRefPayload, MediaLinkPayload, SealError, MAX_MEDIA_LINK_TTL},
+};
 use dashmap::DashMap;
+use governor::{DefaultDirectRateLimiter, Quota, RateLimiter};
 use std::{
+    num::NonZeroU32,
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc,
@@ -33,13 +44,20 @@ pub const DOWNLOAD_RESPONSE_WEIGHT: u64 = 262_144;
 /// Idle per-channel slots are swept once every this many acquisitions.
 const SWEEP_EVERY: u64 = 256;
 const JTI_BYTES: usize = 16;
+/// The configuration's default link lifetime.
+const DEFAULT_LINK_TTL_SECONDS: i64 = 120;
 
-/// Pod-local state of media downloads.
+/// Pod-local state of media links: minting limits, redemptions and stream
+/// slots.
 pub struct MediaDownloads {
     redeemed: moka::sync::Cache<[u8; JTI_BYTES], ()>,
     streams: Arc<Semaphore>,
     channel_streams: DashMap<ChannelId, Arc<Semaphore>>,
     acquisitions: AtomicU64,
+    /// Bounds the links live at once, so the redemption set can never evict
+    /// a jti whose link has not expired.
+    mints: DefaultDirectRateLimiter,
+    link_ttl: i64,
 }
 
 impl Default for MediaDownloads {
@@ -52,6 +70,10 @@ impl Default for MediaDownloads {
             streams: Arc::new(Semaphore::new(DOWNLOAD_STREAMS_GLOBAL)),
             channel_streams: DashMap::new(),
             acquisitions: AtomicU64::new(0),
+            mints: RateLimiter::direct(Quota::per_minute(
+                NonZeroU32::new(GLOBAL_LINK_MINTS_PER_MINUTE).unwrap_or(NonZeroU32::MIN),
+            )),
+            link_ttl: DEFAULT_LINK_TTL_SECONDS,
         }
     }
 }
@@ -64,6 +86,24 @@ pub(crate) struct StreamSlots {
 }
 
 impl MediaDownloads {
+    /// Links live `seconds`, which the configuration bounds to 30..=600; the
+    /// sealed format refuses anything longer regardless.
+    pub fn with_link_ttl(mut self, seconds: u64) -> Self {
+        self.link_ttl = i64::try_from(seconds)
+            .unwrap_or(MAX_MEDIA_LINK_TTL)
+            .min(MAX_MEDIA_LINK_TTL);
+        self
+    }
+
+    /// A lower pod-wide mint rate. Only a lower rate keeps the redemption
+    /// set's bound, so a higher one is ignored.
+    pub fn with_global_mint_rate(mut self, per_minute: NonZeroU32) -> Self {
+        if per_minute.get() <= GLOBAL_LINK_MINTS_PER_MINUTE {
+            self.mints = RateLimiter::direct(Quota::per_minute(per_minute));
+        }
+        self
+    }
+
     /// Mark `jti` redeemed; true only the first time on this pod. A jti of
     /// the wrong shape never reaches here, because opening the link refuses it.
     pub(super) fn redeem(&self, jti: &str) -> bool {
@@ -114,6 +154,116 @@ impl MediaDownloads {
             .map_or(DOWNLOAD_STREAMS_PER_CHANNEL, |semaphore| {
                 semaphore.available_permits()
             })
+    }
+}
+
+/// Why no link was minted; each maps to one unavailable reason.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinkRefusal {
+    /// The binding is not autonomous or installs no gateway tools.
+    NotPermitted,
+    RateLimited,
+    /// The link could not be produced, such as one too large to seal.
+    Unavailable,
+}
+
+impl LinkRefusal {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::NotPermitted => "not_permitted",
+            Self::RateLimited => "rate_limited",
+            Self::Unavailable => "unavailable",
+        }
+    }
+}
+
+impl ToolsState {
+    /// Mint a single-use link to attachment `index` of `event` for
+    /// `channel`'s binding and current agent key, as one ready `curl`
+    /// command. The caller has already refused an attachment without a
+    /// source. The token appears only inside `curl` and is never logged.
+    pub fn mint_link(
+        &self,
+        channel: &ResolvedChannel,
+        event: &EventRefPayload,
+        attachment: &Attachment,
+        index: u8,
+    ) -> Result<MediaDownload, LinkRefusal> {
+        let result = self.mint(channel, event, attachment, index);
+        let outcome = result
+            .as_ref()
+            .map_or_else(|refusal| refusal.as_str(), |_| "minted");
+        metrics::counter!(names::MEDIA_LINKS, names::OUTCOME => outcome).increment(1);
+        result
+    }
+
+    fn mint(
+        &self,
+        channel: &ResolvedChannel,
+        event: &EventRefPayload,
+        attachment: &Attachment,
+        index: u8,
+    ) -> Result<MediaDownload, LinkRefusal> {
+        // Only an autonomous binding whose provider installs the gateway
+        // tools may save originals; media off permits nothing.
+        let media = self.media.as_deref().ok_or(LinkRefusal::NotPermitted)?;
+        if !media.audience(&channel.definition).downloads {
+            return Err(LinkRefusal::NotPermitted);
+        }
+        let channel_hash = telemetry::channel_hash(channel.id.as_str());
+        if !media.limiter().link.check(&channel.id) {
+            tracing::info!(channel = %channel_hash, "media link refused: channel mint quota spent");
+            return Err(LinkRefusal::RateLimited);
+        }
+        if self.downloads.mints.check().is_err() {
+            tracing::warn!(channel = %channel_hash, "media link refused: pod mint quota spent");
+            return Err(LinkRefusal::RateLimited);
+        }
+        let provider = &channel.definition.provider;
+        let payload = MediaLinkPayload::new(
+            provider.slug.clone(),
+            provider.binding_id.clone(),
+            &channel.agent_key_hash,
+            event.clone(),
+            index,
+            time::OffsetDateTime::now_utc().unix_timestamp(),
+            self.downloads.link_ttl,
+        )
+        .map_err(|_| {
+            tracing::error!(channel = %channel_hash, "media link unavailable: no secure random jti");
+            LinkRefusal::Unavailable
+        })?;
+        let token = match media_link::seal(&self.keys, &payload) {
+            Ok(token) => token,
+            Err(SealError::TooLarge) => {
+                let payload_bytes = serde_json::to_vec(&payload).map_or(0, |bytes| bytes.len());
+                tracing::warn!(channel = %channel_hash, payload_bytes, "media link exceeds the token limit");
+                return Err(LinkRefusal::Unavailable);
+            }
+            Err(_) => {
+                tracing::error!(channel = %channel_hash, "media link could not be sealed");
+                return Err(LinkRefusal::Unavailable);
+            }
+        };
+        let url = format!("{}/v1/media/content", self.public_origin);
+        // Neither the token's alphabet nor a safe name contains `'`, so the
+        // single-quoted words cannot be broken out of.
+        let curl = format!(
+            "curl -fsSL -H 'Authorization: Bearer {}' -o '{}' '{url}'",
+            token.expose_header_value(),
+            safe_name(attachment.filename.as_deref()),
+        );
+        tracing::debug!(
+            channel = %channel_hash,
+            lifetime = payload.expires_at - payload.issued_at,
+            "media link minted"
+        );
+        Ok(MediaDownload {
+            method: "GET".into(),
+            url,
+            expires_at: payload.expires_at,
+            curl,
+        })
     }
 }
 

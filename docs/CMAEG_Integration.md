@@ -272,7 +272,7 @@ JSON-RPC protocol `2025-06-18`, `Content-Type: application/json`, then
 | `replyToEvent` | `{event_ref,message:{text}}` | Send a reply |
 | `updateMessage` | `{event_ref,message_ref,message:{text}}` | Edit when supported |
 | `sendTyping` | `{event_ref}` | Typing indicator when supported |
-| `readEventAttachment` | `{event_ref,index,view?,page?}` | Read one attachment as an image, transcript, frames or document page; listed only when media is enabled |
+| `readEventAttachment` | `{event_ref,index,view?,page?}` | Read one attachment as an image, transcript, frames or document page, or get a single-use download command; listed only when media is enabled |
 
 `readEventAttachment` returns a text item with the view JSON followed by MCP
 image items, and no `structuredContent`. In code mode the model must call
@@ -332,6 +332,33 @@ link, file identifier, `event_ref` or credential; use your own `event_ref` and
 the index. See the protocol's
 [attachment block](CMAEG_Protocol.md#attachment-block-in-turn-input) for the
 exact template, hints and size bounds.
+
+### Save an attachment into the workspace
+
+An autonomous agent can save an attachment's original, such as a PDF, an Office
+file, an archive or a full-resolution image, into its workspace and open it
+with its own tools. Call `readEventAttachment` with `view: "download"` and the
+attachment's index. A `ready` view carries `download.curl`, one command such as
+
+```text
+curl -fsSL -H 'Authorization: Bearer <link>' -o 'report.pdf' 'https://gateway.example/v1/media/content'
+```
+
+Run it once, in your workspace, as it is; it saves the file under the safe
+name in the command. The link works once and expires at `download.expires_at`
+(two minutes by default, never after the event's own expiry), so request a new
+one rather than retrying a used or expired command. Only autonomous bindings of
+providers that install the gateway tools may download; others get
+`download_not_permitted`, and `readEventContext` reports
+`capabilities.inbound_media.downloads` accordingly. A channel may request 30
+links a minute; past that the view is `unavailable` with `rate_limited`.
+
+The command line, bearer included, is visible in the conversation, is sent to
+the model provider with the tool result, and is stored by CMA as the shell tool
+call's title, which the dashboard shows. That exposure is why the link works
+once and expires within its short lifetime: a redeemed or expired link is
+worthless. Never copy it anywhere else, such as into a reply, a file or another
+command.
 
 ## Reply after a delayed provider operation
 

@@ -66,6 +66,7 @@ impl Built {
                 text: None,
                 images: Vec::new(),
                 notice: None,
+                download: None,
             },
             page,
             images: Vec::new(),

@@ -8,7 +8,7 @@
 use super::{
     attachment_compose::{Built, Part},
     attachment_view::{AttachmentUnavailableReason as Reason, AttachmentView, AttachmentViewKind},
-    context, ToolsState,
+    context, LinkRefusal, ToolsState,
 };
 use crate::{
     auth::AgentCaller,
@@ -57,6 +57,10 @@ const BINARY_NOTICE: &str = "binary file: only metadata is available to this age
 const NO_FRAMES_NOTICE: &str =
     "frames are not available for this attachment on this gateway; the transcript is";
 const USE_IMAGE_NOTICE: &str = "use view \"image\"";
+const NOT_PERMITTED_NOTICE: &str =
+    "downloads are available only to autonomous agents with gateway tools";
+const DOWNLOAD_NOTICE: &str =
+    "the command works once and expires at expires_at; run it in your workspace";
 const USE_FRAMES_NOTICE: &str = "use view \"frames\"";
 
 /// A view and the image bytes that belong with it. Only MCP sends the bytes;
@@ -185,6 +189,7 @@ impl ToolsState {
         let target =
             MediaTarget::new(channel, event, Arc::new(activity)).map_err(|_| unverified())?;
         let reader = Reader {
+            tools: self,
             media: &media,
             target: &target,
             attachment: &attachment,
@@ -206,8 +211,8 @@ fn unverified() -> Problem {
 
 /// The artifacts a view needs, decided by the attachment's family.
 enum Plan {
-    /// No download link can be produced on this gateway yet.
-    NoLink,
+    /// A single-use link to the original.
+    Link,
     Derive(Artifact),
     /// A video's frames and transcript, derived concurrently.
     VideoAuto,
@@ -218,7 +223,7 @@ enum Plan {
 fn plan(family: Family, view: AttachmentViewKind) -> Plan {
     use AttachmentViewKind as View;
     match (family, view) {
-        (_, View::Download) => Plan::NoLink,
+        (_, View::Download) => Plan::Link,
         (Family::Image, View::Auto | View::Image) => Plan::Derive(Artifact::Image),
         (Family::Image, View::Text | View::Frames) => Plan::Unsupported(Some(USE_IMAGE_NOTICE)),
         (Family::Audio, View::Auto | View::Text) => Plan::Derive(Artifact::Transcript),
@@ -235,6 +240,7 @@ fn plan(family: Family, view: AttachmentViewKind) -> Plan {
 }
 
 struct Reader<'a> {
+    tools: &'a ToolsState,
     media: &'a MediaService,
     target: &'a MediaTarget,
     attachment: &'a Attachment,
@@ -252,11 +258,35 @@ impl Reader<'_> {
             .into()
     }
 
+    /// Mint the download link, or say why there is none.
+    fn link(&self, built: &mut Built) {
+        if self.attachment.source.is_none() {
+            built.unavailable(Reason::NotRetrievable);
+            return;
+        }
+        let target = self.target;
+        match self
+            .tools
+            .mint_link(&target.channel, &target.event, self.attachment, self.index)
+        {
+            Ok(download) => {
+                built.view.download = Some(download);
+                built.notices.push(DOWNLOAD_NOTICE.into());
+            }
+            Err(LinkRefusal::NotPermitted) => {
+                built.notices.push(NOT_PERMITTED_NOTICE.into());
+                built.unavailable(Reason::DownloadNotPermitted);
+            }
+            Err(LinkRefusal::RateLimited) => built.unavailable(Reason::RateLimited),
+            Err(LinkRefusal::Unavailable) => built.unavailable(Reason::LinkUnavailable),
+        }
+    }
+
     async fn read(&self, view: AttachmentViewKind) -> AttachmentRead {
         let mut built = Built::new(self.index, self.attachment, self.page);
         // A download needs no derivation, not even a file's sniffed type.
         if view == AttachmentViewKind::Download {
-            built.unavailable(Reason::LinkUnavailable);
+            self.link(&mut built);
             return built.finish();
         }
         let family = match self.attachment.kind {
@@ -286,7 +316,7 @@ impl Reader<'_> {
             }
         };
         match plan(family, view) {
-            Plan::NoLink => built.unavailable(Reason::LinkUnavailable),
+            Plan::Link => self.link(&mut built),
             Plan::Derive(artifact) => match self.derive(artifact).await {
                 Part::Ready(derived) => {
                     if !built.take(&derived) {

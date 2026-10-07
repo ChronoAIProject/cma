@@ -150,12 +150,30 @@ pub struct AttachmentImage {
     pub width: u64,
 }
 
+/// CMAEG `MediaDownload` wire shape: a ready download as one `curl` command
+/// that works once and expires at `expires_at`. Only `curl` carries the
+/// single-use link.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct MediaDownload {
+    /// Wire field `curl`.
+    pub curl: String,
+    /// Wire field `expires_at`.
+    pub expires_at: i64,
+    /// Wire field `method`.
+    pub method: String,
+    /// Wire field `url`.
+    pub url: String,
+}
+
 /// CMAEG `AttachmentView` wire shape: one attachment's facts and the requested view.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct AttachmentView {
     /// Wire field `detected_type`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detected_type: Option<String>,
+    /// Wire field `download`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub download: Option<MediaDownload>,
     /// Wire field `duration_seconds`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duration_seconds: Option<u64>,

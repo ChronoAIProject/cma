@@ -13,7 +13,7 @@ use cmaeg::{
     mcp,
     media::service::MediaService,
     providers::{EventContextSnapshot, ProviderClient, ProviderRegistry, TurnRequest},
-    tools::ToolsState,
+    tools::{MediaDownloads, ToolsState},
     turns::TurnTracker,
 };
 use cmaeg_core::{
@@ -174,6 +174,11 @@ impl App {
                 }
             }
         });
+        let downloads = Arc::new(
+            media
+                .as_ref()
+                .map_or_else(MediaDownloads::default, MediaSetup::downloads),
+        );
         let media = media.map(|setup| Arc::new(setup.service(fixture.state.master_keys.clone())));
         let state = ToolsState {
             resolver: fixture.state.resolver.clone(),
@@ -183,7 +188,7 @@ impl App {
             tracker: TurnTracker::new(http::readiness::Readiness::initialized()),
             public_origin: "https://gateway.example".into(),
             media: media.clone(),
-            downloads: Default::default(),
+            downloads,
         };
         let router = http::tools::router(state.clone())
             .merge(http::media::router(state.clone()))

@@ -150,7 +150,7 @@ EXPOSE 9091
 # mode=stream SSE, and signed HTTPS result webhooks with DNS pinning per attempt.
 # Inbound media: CMAEG_MEDIA_TOOL_PROVIDERS=cma_codex lists the providers whose profile bindings install the gateway MCP tools.
 # CMAEG_MEDIA_ENABLED=false keeps inbound media refused as attachment_unsupported.
-# Inbound media (off by default): CMAEG_MEDIA_MAX_BYTES=20971520, CMAEG_MEDIA_INFLIGHT_BYTES=67108864, CMAEG_MEDIA_RESPONSE_BYTES=25165824, CMAEG_MEDIA_MAX_JOBS=6, CMAEG_MEDIA_CACHE_BYTES=33554432, CMAEG_MEDIA_RATE_PER_MINUTE=60 and CMAEG_MEDIA_DOWNLOAD_BYTES_PER_HOUR=268435456.
+# Inbound media (off by default): CMAEG_MEDIA_MAX_BYTES=20971520, CMAEG_MEDIA_INFLIGHT_BYTES=67108864, CMAEG_MEDIA_RESPONSE_BYTES=25165824, CMAEG_MEDIA_MAX_JOBS=6, CMAEG_MEDIA_CACHE_BYTES=33554432, CMAEG_MEDIA_RATE_PER_MINUTE=60, CMAEG_MEDIA_DOWNLOAD_BYTES_PER_HOUR=268435456 and CMAEG_MEDIA_LINK_TTL_SECONDS=120.
 # See docs/CMA_Operations.md.
 ENTRYPOINT ["/usr/local/bin/cmaeg"]
 # Health is asserted by the Kubernetes probes in infra/cmaeg/deployment.yaml.

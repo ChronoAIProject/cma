@@ -24,6 +24,7 @@ pub const CMAEG_MEDIA_MAX_JOBS: &str = "CMAEG_MEDIA_MAX_JOBS";
 pub const CMAEG_MEDIA_CACHE_BYTES: &str = "CMAEG_MEDIA_CACHE_BYTES";
 pub const CMAEG_MEDIA_RATE_PER_MINUTE: &str = "CMAEG_MEDIA_RATE_PER_MINUTE";
 pub const CMAEG_MEDIA_DOWNLOAD_BYTES_PER_HOUR: &str = "CMAEG_MEDIA_DOWNLOAD_BYTES_PER_HOUR";
+pub const CMAEG_MEDIA_LINK_TTL_SECONDS: &str = "CMAEG_MEDIA_LINK_TTL_SECONDS";
 
 const MIB: u64 = 1024 * 1024;
 /// The one provider whose binding contract promises to install the gateway MCP
@@ -58,6 +59,10 @@ pub struct MediaConfig {
     pub rate_per_minute: u32,
     /// Download bytes per channel per hour.
     pub download_bytes_per_hour: u64,
+    /// Lifetime of a media download link. A link is exposed to the model
+    /// provider in the tool result and stored by CMA in the shell tool call's
+    /// title, so it must expire quickly; it never outlives its event either.
+    pub link_ttl_seconds: u64,
 }
 
 impl Default for MediaConfig {
@@ -72,6 +77,7 @@ impl Default for MediaConfig {
             cache_bytes: 32 * MIB,
             rate_per_minute: 60,
             download_bytes_per_hour: 256 * MIB,
+            link_ttl_seconds: 120,
         }
     }
 }

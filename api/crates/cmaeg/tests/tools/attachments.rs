@@ -412,13 +412,14 @@ async fn video_auto_reports_the_missing_part_in_the_notice() {
 }
 
 #[tokio::test]
-async fn download_view_is_link_unavailable() {
+async fn download_view_needs_an_autonomous_binding() {
     let app = App::with_media(MediaSetup::new(vec![relayed(0, AttachmentKind::File)])).await;
     let body = view(app.attachment("0", "?view=download").await).await;
     assert_eq!(
         (body["status"].as_str(), body["reason"].as_str()),
-        (Some("unavailable"), Some("link_unavailable"))
+        (Some("unavailable"), Some("download_not_permitted"))
     );
+    assert!(body.get("download").is_none());
     // No derivation runs for a link, not even the file's type sniff.
     assert!(body.get("detected_type").is_none());
 }

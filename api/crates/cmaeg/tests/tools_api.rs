@@ -21,6 +21,8 @@ pub mod download_support;
 mod link_redemption;
 #[path = "tools/media_downloads.rs"]
 mod media_downloads;
+#[path = "tools/media_links.rs"]
+mod media_links;
 #[path = "tools/media_support.rs"]
 pub mod media_support;
 #[path = "relay/support.rs"]

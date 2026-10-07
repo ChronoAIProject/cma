@@ -1346,7 +1346,7 @@ context is unchanged. Both `readEventContext` and `verifyEventContext` report it
 | `read_tool` | The binding installs `readEventAttachment`: a profile binding of a provider named in `CMAEG_MEDIA_TOOL_PROVIDERS`. Existing-agent bindings and other providers report `false`. |
 | `transcripts` | A transcriber is configured, so audio and video can be transcribed. |
 | `visuals` | `keyframes` when the gateway extracts video keyframes; otherwise `platform_thumbnail` for natively received Telegram activities, whose videos can carry the platform's preview image; otherwise `none`. |
-| `downloads` | Always `false` in this release: download links do not exist yet, and an ability is never advertised before it is implemented. |
+| `downloads` | The binding may save originals with `readEventAttachment` view `download`: `read_tool` is true and the profile's `action_mode` is `autonomous` (see [Media downloads](#media-downloads)). Guarded and other bindings report `false`. |
 
 ### Event attachments
 
@@ -1385,8 +1385,8 @@ types are never trusted.
 | file whose bytes are an image, audio or video | as that row | as that row | as that row | as that row |
 | other binary file | metadata only, `ready`, notice `binary file: only metadata is available to this agent` | `unsupported_format` | `unsupported_format` | `unsupported_format` |
 
-`download` always returns `unavailable` with reason `link_unavailable` in this
-release. Frames are the platform's own thumbnail where one exists (native
+`download` answers with a single-use link to the original, never with
+content; see [Media downloads](#media-downloads). Frames are the platform's own thumbnail where one exists (native
 Telegram) and video keyframes where the gateway extracts them. A video with
 neither returns `unavailable` with `not_retrievable` and the notice `frames are
 not available for this attachment on this gateway; the transcript is`. A video's
@@ -1406,6 +1406,7 @@ The response is an `AttachmentView`:
 | `text?` | `{source,content,page,pages,truncated}`: one page of at most 16 KiB of a `transcript` or `document`. `page` is 1-based; `truncated` means the transcript or document text was itself cut at its cap (document text is read up to 1 MiB). |
 | `images[]` | Metadata of each delivered image, in order: `{origin,mime_type,width,height,bytes,at_ms?}`. `origin` is `normalized` (the attachment itself, re-encoded within 2048 px and 1 MiB), `platform_thumbnail` or `keyframe`, decided per image; `at_ms` is a keyframe's position in the video. |
 | `notice?` | Human-readable guidance; several notices are joined with `; `. |
+| `download?` | With view `download` and status `ready`: `{method,url,expires_at,curl}`, a single-use link to the original as one ready `curl` command. |
 
 A page past the last returns `unavailable` with `not_found`, and `text.pages`
 still says how many pages exist. The reasons are:
@@ -1423,10 +1424,10 @@ still says how many pages exist. The reasons are:
 | `transcriber_disabled` | unavailable | No transcriber is configured. |
 | `transcriber_failed` | unavailable | The transcriber call failed. |
 | `too_long` | unavailable | The media exceeds the speech-to-text limits. |
-| `rate_limited` | unavailable | The channel's fetch quota, or a speech-to-text budget, refused the item. It is a view status, never a 429. |
+| `rate_limited` | unavailable | The channel's fetch quota, a speech-to-text budget, or a download-link mint quota refused the item. It is a view status, never a 429. |
 | `transform_failed` | unavailable | A sandboxed media job failed. |
-| `download_not_permitted` | unavailable | This binding may not download originals. |
-| `link_unavailable` | unavailable | No download link can be produced. |
+| `download_not_permitted` | unavailable | This binding may not download originals: it is not autonomous, or its provider does not install the gateway tools. |
+| `link_unavailable` | unavailable | No download link can be produced, such as for an event too large to fit a link's 4096-character token limit. |
 | `images_truncated` | ready | Some images were left out to keep one result within its image budget. |
 | `response_budget` | pending | The gateway's media response budget is exhausted. |
 
@@ -1474,16 +1475,48 @@ attachment bytes and text are not stored by CMA.
 
 ### Media downloads
 
-`GET /v1/media/content` streams the original bytes of one attachment to the
-holder of a media link, so an agent can save a PDF, an archive or a
-full-resolution image into its own workspace. It is not an agent tool: it never
-accepts the agent key, and the SDKs have no method for it, because the link is
-meant for `curl` in an agent's sandbox. Links are not minted yet in this
-release step: `readEventAttachment` with view `download` still answers
-`link_unavailable` and `inbound_media.downloads` is `false`, so this operation
-only serves links the gateway itself sealed. The route is always mounted;
-while `CMAEG_MEDIA_ENABLED` is `false` it answers `503 media_unavailable` with
-detail `media_disabled`.
+An autonomous agent can save an attachment's original, such as a PDF, an
+archive, a large video or a full-resolution image, into its own workspace and
+open it with its own tools. It calls `readEventAttachment` with view
+`download` and runs the returned `curl` command once; that command fetches
+`GET /v1/media/content` with a single-use media link. The operation is not an
+agent tool: it never accepts the agent key, and the SDKs have no method for
+it, because the link is meant for `curl` in an agent's sandbox. The route is
+always mounted; while `CMAEG_MEDIA_ENABLED` is `false` it answers
+`503 media_unavailable` with detail `media_disabled`.
+
+**Minting.** Only a profile binding whose provider is in
+`CMAEG_MEDIA_TOOL_PROVIDERS` and whose action mode is `autonomous` may mint a
+link; guarded agents have no network, and any other binding gets the view
+`unavailable` with reason `download_not_permitted` and the notice
+`downloads are available only to autonomous agents with gateway tools`. That
+is also what `inbound_media.downloads` in `readEventContext` reports. An
+attachment without a locator is `unavailable` with `not_retrievable`. A
+channel mints at most 30 links per minute and a replica at most 600; past
+either, the view is `unavailable` with `rate_limited`. A link lives
+`CMAEG_MEDIA_LINK_TTL_SECONDS` (120 seconds by default, at most 600) and never
+past its event's own expiry. It carries the minting binding, provider and the
+hash of the agent key, the event and the attachment index, but never the
+event's reply token. A link that would not fit the 4096-character token
+limit, such as one for an event with a very large partition key, is never
+truncated: the view is `unavailable` with `link_unavailable`.
+
+A minted view is `ready`, with the notice `the command works once and expires
+at expires_at; run it in your workspace` and `download`:
+
+| Field | Meaning |
+| --- | --- |
+| `method` | Always `GET`. |
+| `url` | `<CMAEG_PUBLIC_URL>/v1/media/content`; it never carries the link. |
+| `expires_at` | Unix seconds after which the link is refused. |
+| `curl` | `curl -fsSL -H 'Authorization: Bearer <link>' -o '<name>' '<url>'`, the only place the link appears; `<name>` is the safe file name described below. |
+
+The REST twin returns the same view. When the media response budget defers an
+MCP result, the deferred `pending` view carries no `download`, so a link never
+reaches the agent half-delivered. The link appears nowhere else: not in turn
+input, not in `readEventContext`, and not in a log line. It is exposed
+wherever the tool result and the command line go, so it is single use and
+short-lived, which makes a redeemed or expired link worthless.
 
 **Authorization.** The link travels only as the request's single
 `Authorization: Bearer <link>` header; the scheme is case-insensitive. The

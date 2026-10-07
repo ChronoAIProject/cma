@@ -69,8 +69,18 @@ export const AttachmentImageSchema = object({
 });
 export type AttachmentImage = Output<typeof AttachmentImageSchema>;
 
+// A ready download: only `curl` carries the single-use link.
+export const MediaDownloadSchema = object({
+  curl: text,
+  expires_at: integer,
+  method: text,
+  url: text,
+});
+export type MediaDownload = Output<typeof MediaDownloadSchema>;
+
 export const AttachmentViewSchema = object({
   detected_type: optional(nullable(text)),
+  download: optional(nullable(MediaDownloadSchema)),
   duration_seconds: optional(nullable(integer)),
   filename: optional(nullable(text)),
   height: optional(nullable(integer)),

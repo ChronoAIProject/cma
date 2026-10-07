@@ -68,6 +68,8 @@ fn budget_pending(mut view: AttachmentView) -> AttachmentView {
     view.text = None;
     view.images.clear();
     view.notice = None;
+    // A deferred result never reaches the agent, so neither does its link.
+    view.download = None;
     view
 }
 
