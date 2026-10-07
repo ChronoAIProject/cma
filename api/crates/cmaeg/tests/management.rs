@@ -1,7 +1,7 @@
 #[path = "fake_cma.rs"]
 pub mod fake_cma;
 #[path = "fake_nyxid.rs"]
-mod fake_nyxid;
+pub mod fake_nyxid;
 #[path = "fake_provider.rs"]
 mod fake_provider;
 

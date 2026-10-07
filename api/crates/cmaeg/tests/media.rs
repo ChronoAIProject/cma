@@ -2,9 +2,15 @@
 mod body;
 #[path = "media/budget.rs"]
 mod budget;
+#[path = "fake_nyxid.rs"]
+pub mod fake_nyxid;
 #[path = "media/forward.rs"]
 mod forward;
+#[path = "media/nyxid_source.rs"]
+mod nyxid_source;
+#[path = "media/registry.rs"]
+mod registry;
 #[path = "media/sniff.rs"]
 mod sniff;
 #[path = "media/support.rs"]
-mod support;
+pub mod support;

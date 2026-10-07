@@ -411,6 +411,7 @@ dependencies = [
  "tokio-rustls",
  "tower-http",
  "tracing",
+ "tracing-log",
  "tracing-subscriber",
  "url",
  "uuid",
