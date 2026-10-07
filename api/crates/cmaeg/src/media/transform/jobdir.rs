@@ -50,6 +50,10 @@ impl MediaRoot {
     }
 
     /// Remove every entry except `keep`, returning how many were removed.
+    ///
+    /// A finished set removes its own directory after releasing the slot, so
+    /// the next set's sweep can race that removal: an entry that vanishes
+    /// first is already gone, not an error.
     pub fn sweep(&self, keep: Option<&Path>) -> io::Result<usize> {
         let mut removed = 0;
         for entry in fs::read_dir(&self.path)? {
@@ -58,12 +62,16 @@ impl MediaRoot {
             if keep == Some(path.as_path()) {
                 continue;
             }
-            if entry.file_type()?.is_dir() {
-                fs::remove_dir_all(&path)?;
-            } else {
-                fs::remove_file(&path)?;
+            let outcome = match entry.file_type() {
+                Ok(kind) if kind.is_dir() => fs::remove_dir_all(&path),
+                Ok(_) => fs::remove_file(&path),
+                Err(error) => Err(error),
+            };
+            match outcome {
+                Ok(()) => removed += 1,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
             }
-            removed += 1;
         }
         Ok(removed)
     }
