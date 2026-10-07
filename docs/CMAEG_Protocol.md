@@ -1324,8 +1324,21 @@ provider persistence described below; if unavailable it returns 503
 `provider_unavailable` with `detail:"event_context_unavailable"`.
 `expires_at` is the sealed event reference's Unix expiry in seconds; receiving a
 context response never extends that deadline.
+
 Tool errors additionally include 400 invalid request/reference, 401 missing/invalid
 key, 403 mismatched authority, 410 expired reference and restore errors from §3.
+
+While inbound media is enabled (`CMAEG_MEDIA_ENABLED=true`), `capabilities` also
+carries `inbound_media`, describing what the calling binding can do with the
+event's attachments; with media disabled the property is absent and the
+context is unchanged. Both `readEventContext` and `verifyEventContext` report it.
+
+| `inbound_media` field | True or value when |
+| --- | --- |
+| `read_tool` | The binding installs `readEventAttachment`: a profile binding of a provider named in `CMAEG_MEDIA_TOOL_PROVIDERS`. Existing-agent bindings and other providers report `false`. |
+| `transcripts` | A transcriber is configured, so audio and video can be transcribed. |
+| `visuals` | `keyframes` when the gateway extracts video keyframes; otherwise `platform_thumbnail` for natively received Telegram activities, whose videos can carry the platform's preview image; otherwise `none`. |
+| `downloads` | Always `false` in this release: download links do not exist yet, and an ability is never advertised before it is implemented. |
 
 ### Event attachments
 

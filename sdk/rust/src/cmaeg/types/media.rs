@@ -199,3 +199,32 @@ pub struct AttachmentView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub width: Option<u64>,
 }
+
+/// CMAEG `VisualSupport` wire shape: the still images a gateway can show for
+/// a video.
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum VisualSupport {
+    /// Wire value `none`.
+    #[serde(rename = "none")]
+    None,
+    /// Wire value `platform_thumbnail`.
+    #[serde(rename = "platform_thumbnail")]
+    PlatformThumbnail,
+    /// Wire value `keyframes`.
+    #[serde(rename = "keyframes")]
+    Keyframes,
+}
+
+/// CMAEG `InboundMediaCapabilities` wire shape: what the calling binding can
+/// do with an event's inbound attachments.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct InboundMediaCapabilities {
+    /// Wire field `downloads`.
+    pub downloads: bool,
+    /// Wire field `read_tool`.
+    pub read_tool: bool,
+    /// Wire field `transcripts`.
+    pub transcripts: bool,
+    /// Wire field `visuals`.
+    pub visuals: VisualSupport,
+}

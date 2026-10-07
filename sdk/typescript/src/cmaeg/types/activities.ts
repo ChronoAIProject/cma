@@ -28,6 +28,7 @@ import {
   type Output,
 } from '../../schema.js';
 import { anything, extensible } from './helpers.js';
+import { InboundMediaCapabilitiesSchema } from './media.js';
 
 export const ReplyTargetResponseSchema = object({
   reply_target_ref: ReplyTargetRefSchema,
@@ -163,6 +164,7 @@ export const CapabilitiesSchema = object({
   buttons: text,
   cards: text,
   edit: boolean,
+  inbound_media: optional(nullable(InboundMediaCapabilitiesSchema)),
   max_text_chars: integer,
   typing: boolean,
 });

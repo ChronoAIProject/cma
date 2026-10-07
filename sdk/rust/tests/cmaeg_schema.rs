@@ -89,6 +89,7 @@ fn every_gateway_wire_type_replays_the_protocol_examples_without_losing_properti
         GroupAdmission,
         HmacSecretRequest,
         IdentityAdmission,
+        InboundMediaCapabilities,
         IntentReceipt,
         InteractionResult,
         McpAuth,
@@ -139,7 +140,8 @@ fn every_gateway_wire_type_replays_the_protocol_examples_without_losing_properti
         TestChannelResponse,
         ThinkingEffort,
         TypingOutcome,
-        TypingReceipt
+        TypingReceipt,
+        VisualSupport
     );
     inventory.sort_unstable();
     assert_eq!(

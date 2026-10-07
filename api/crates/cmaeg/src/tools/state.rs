@@ -210,7 +210,14 @@ impl ToolsState {
         if !event.verifies_activity(&activity) {
             return Err(invalid("activity does not match the sealed event"));
         }
-        Ok(super::context::project(&channel, &event, activity, true))
+        let inbound_media = super::context::inbound_media(self, &channel, &activity.source);
+        Ok(super::context::project(
+            &channel,
+            &event,
+            activity,
+            true,
+            inbound_media,
+        ))
     }
     pub(super) async fn deliver<T>(
         &self,

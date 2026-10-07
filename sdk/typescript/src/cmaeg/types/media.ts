@@ -88,3 +88,14 @@ export const AttachmentViewSchema = object({
   width: optional(nullable(integer)),
 });
 export type AttachmentView = Output<typeof AttachmentViewSchema>;
+
+export const VisualSupportSchema = enumeration('none', 'platform_thumbnail', 'keyframes');
+export type VisualSupport = Output<typeof VisualSupportSchema>;
+
+export const InboundMediaCapabilitiesSchema = object({
+  downloads: boolean,
+  read_tool: boolean,
+  transcripts: boolean,
+  visuals: VisualSupportSchema,
+});
+export type InboundMediaCapabilities = Output<typeof InboundMediaCapabilitiesSchema>;

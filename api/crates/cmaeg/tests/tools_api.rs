@@ -9,6 +9,8 @@ pub mod media {
     #[path = "support.rs"]
     pub mod support;
 }
+#[path = "tools/attachment_capabilities.rs"]
+mod attachment_capabilities;
 #[path = "tools/attachments.rs"]
 mod attachments;
 #[path = "tools/attachments_mcp.rs"]

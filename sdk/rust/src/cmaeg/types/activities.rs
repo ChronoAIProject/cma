@@ -232,6 +232,9 @@ pub struct Capabilities {
     pub cards: String,
     /// Wire field `edit`.
     pub edit: bool,
+    /// Wire field `inbound_media`; absent while inbound media is disabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inbound_media: Option<super::InboundMediaCapabilities>,
     /// Wire field `max_text_chars`.
     pub max_text_chars: u64,
     /// Wire field `typing`.

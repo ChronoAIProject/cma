@@ -1179,6 +1179,17 @@
           "edit": {
             "type": "boolean"
           },
+          "inbound_media": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/InboundMediaCapabilities",
+                "description": "What this binding can do with inbound attachments; absent while\ninbound media is disabled."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "max_text_chars": {
             "format": "int32",
             "minimum": 0,
@@ -2216,6 +2227,34 @@
             "type": "object"
           }
         ]
+      },
+      "InboundMediaCapabilities": {
+        "additionalProperties": false,
+        "description": "What the calling binding can do with an event's inbound attachments.",
+        "properties": {
+          "downloads": {
+            "description": "The binding may save originals into its workspace.",
+            "type": "boolean"
+          },
+          "read_tool": {
+            "description": "The binding has `readEventAttachment`.",
+            "type": "boolean"
+          },
+          "transcripts": {
+            "description": "Audio and video can be transcribed.",
+            "type": "boolean"
+          },
+          "visuals": {
+            "$ref": "#/components/schemas/VisualSupport"
+          }
+        },
+        "required": [
+          "read_tool",
+          "transcripts",
+          "visuals",
+          "downloads"
+        ],
+        "type": "object"
       },
       "IntentReceipt": {
         "additionalProperties": false,
@@ -3528,6 +3567,15 @@
           "outcome"
         ],
         "type": "object"
+      },
+      "VisualSupport": {
+        "description": "The still images a gateway can show for a video.",
+        "enum": [
+          "none",
+          "platform_thumbnail",
+          "keyframes"
+        ],
+        "type": "string"
       }
     },
     "securitySchemes": {
