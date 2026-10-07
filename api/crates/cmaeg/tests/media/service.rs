@@ -12,6 +12,7 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 use cmaeg::{
     media::{
         body::Overflow,
+        budget::InflightBytes,
         derive::{Artifact, DeriveError, Derived},
         jobs::JobOutcome,
         service::{MediaCapabilities, MediaDeps, MediaService},
@@ -121,6 +122,7 @@ pub(super) fn service_from(
         keys: Arc::new(ring()),
         tool_providers: Arc::new(MediaToolProviders::default()),
         decode,
+        inflight: InflightBytes::new(&limits),
     })
 }
 

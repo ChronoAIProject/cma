@@ -83,6 +83,9 @@ spec:
                   name: cmaeg-stt
                   key: CMAEG_STT_API_KEY
                   optional: true
+          volumeMounts:
+            - name: media-jobs
+              mountPath: /var/cmaeg/media
           securityContext:
             allowPrivilegeEscalation: false
             privileged: false
@@ -115,3 +118,13 @@ spec:
             preStop:
               exec:
                 command: ["/bin/sleep", "5"]
+      # Only the gateway writes here: one media job input at a time (at most
+      # CMAEG_MEDIA_MAX_BYTES, mode 0400, in a random 0700 directory), which
+      # jobs open read-only. It is inert while CMAEG_MEDIA_FFMPEG_DIR is empty.
+      # Its pages count against the container memory limit and are the memory
+      # gate's 32 MiB term.
+      volumes:
+        - name: media-jobs
+          emptyDir:
+            medium: Memory
+            sizeLimit: 32Mi

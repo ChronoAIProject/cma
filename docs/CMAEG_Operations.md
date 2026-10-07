@@ -73,6 +73,8 @@ applies with all media flags off.**
 | `CMAEG_MEDIA_RATE_PER_MINUTE` | unsigned decimal | `60` | 1..=6000. Media fetch starts per channel per minute, with a burst of the same size. |
 | `CMAEG_MEDIA_DOWNLOAD_BYTES_PER_HOUR` | unsigned decimal, bytes | `268435456` | 20971520..=4294967296. Download bytes per channel per hour, counted in KiB; enforced once download links exist. |
 | `CMAEG_MEDIA_PREPARE_BUDGET_MS` | unsigned decimal, ms | `15000` | 1000..=60000, and below `CMAEG_TURN_TIMEOUT_MS`; startup fails naming both keys otherwise. How long a media turn waits for its eager items (inline transcripts and text excerpts) before its provider turn starts without them. Items not ready by then render `transcript is still being prepared` and keep running in the background. See [Media turn preparation](#media-turn-preparation). |
+| `CMAEG_MEDIA_FFMPEG_DIR` | absolute directory path | `""` | Empty disables the media transformer: videos keep platform thumbnails and transcripts the direct upload path. Otherwise an absolute, canonical directory owned by root and not group- or other-writable, holding regular, root-owned, executable `ffmpeg` and `ffprobe` files (no symlinks); startup checks all of this. A non-empty value fails startup on any platform but linux/amd64. The transformer runs only while `CMAEG_MEDIA_ENABLED` is `true`; set while media is off, it is ignored with a warning. Configured, it requires `CMAEG_MEDIA_INFLIGHT_BYTES` ≥ `CMAEG_MEDIA_MAX_BYTES` + `CMAEG_STT_MAX_BYTES` (startup fails naming the three keys), a `sleep` preStop hook, and a memory request equal to a limit of at least 2Gi; `tests/infra_manifests.rs` enforces the last two. See [Media transformer](#media-transformer). |
+| `CMAEG_MEDIA_VIDEO_FRAMES` | unsigned decimal | `6` | 1..=6. Keyframes extracted per video while the transformer is configured. |
 | `CMAEG_STT_MAX_SECONDS` | unsigned decimal, seconds | `600` | 1..=1500. Most metered seconds one transcription call may cost. With `CMAEG_STT_MAX_BYTES` it sets the direct-upload cap, `min(CMAEG_STT_MAX_BYTES, CMAEG_STT_MAX_SECONDS × 4000)` bytes. Like every speech-to-text key, validated at startup even while speech-to-text is disabled; an out-of-bounds or non-decimal value fails startup naming the key. See [Speech-to-text spend](#speech-to-text-spend). |
 | `CMAEG_STT_MAX_BYTES` | unsigned decimal, bytes | `20971520` | 1048576..=24000000, below the speech-to-text API's 25 MB upload limit. Most bytes one upload may carry. |
 | `CMAEG_STT_RATE_PER_MINUTE` | unsigned decimal | `20` | 1..=600. Transcription calls per channel per minute, with a burst of the same size. |
@@ -721,6 +723,109 @@ writes `cmaeg media-sandbox-check: <check> failed` and exits 125. The image
 build runs it on the musl binary (`linux/amd64` must pass; other architectures
 must exit 125), because CI tests use glibc. Building `linux/amd64` under QEMU
 user emulation is unsupported for this step; CI builds natively.
+
+### Media transformer
+
+With `CMAEG_MEDIA_FFMPEG_DIR` set and media on, the gateway runs sandboxed
+FFmpeg jobs inside its own pod: no other workload, Secret or manifest file is
+involved, only the memory `emptyDir` mounted at `/var/cmaeg/media`.
+
+**How it runs.** `TransformerKeyframes` replaces the platform-thumbnail
+extractor and `TransformerTranscoder` the direct upload path; each keeps the
+one it replaces as its fallback. Both run inside the existing single-flight
+derivation job, so the tool's pending answer and the preparation budget are
+unchanged. A keyframe set probes the video and extracts up to
+`CMAEG_MEDIA_VIDEO_FRAMES` JPEG keyframes at evenly spread positions (one at
+the start when the duration is unknown), skipping any frame that fails, and
+normalizes each to a 768 px preview with its position. A failed set falls back
+to a native Telegram thumbnail when the attachment has one. Every
+speech-to-text input, audio or the audio track of video in any container, is
+transcoded to 16 kHz mono PCM covering at most
+`T = min(CMAEG_STT_MAX_SECONDS, ⌊(CMAEG_STT_MAX_BYTES − 44) / 32000⌋)` seconds
+(600 at the defaults) and uploaded as WAV, metered exactly at
+`⌈PCM bytes / 32000⌉` seconds; a transcript cut at `T` carries the notice
+`[transcript covers the first m:ss]`. A failed transcode still uploads the
+original directly when the direct path accepts it; otherwise the transform's
+reason is reported. An endpoint whose `CMAEG_STT_FORMATS` omits `wav` keeps the
+direct path.
+
+The pod has **one transform slot**. A set holds it from its first job to its
+last, so one FFmpeg process and one job directory exist at a time. Audio sets
+are served before keyframe sets, each class in arrival order. A channel has at
+most one set in the global queue; its later sets wait, never refused, in that
+channel's FIFO and join the queue in order, so channels interleave fairly.
+
+**Limits and deadlines.** Each process runs for at most 20 s (and 20 s of CPU).
+A keyframe set has 30 s and an audio set 20 s, counted from when the set joins
+the global queue, so they include the wait for the slot. The derivation job's
+90 s cap bounds everything, including a channel FIFO wait. Every job's stdout
+cap (16 KiB for the probe, 256 KiB per frame, `44 + T × 32000` bytes for audio)
+is reserved in `CMAEG_MEDIA_INFLIGHT_BYTES` before it is spawned.
+
+| Outcome | Reason reported |
+| --- | --- |
+| `timeout`, `cpu_limit`, or a keyframe set stopped by its deadline with no frame | `timed_out` |
+| `exit_nonzero`, `output_invalid` | `decode_failed`, or `unsupported_format` when FFmpeg reported an unknown or missing decoder |
+| `resource_limit`, `killed`, `sandbox_unavailable` | `transform_failed` |
+
+**Watchdog.** One dedicated thread samples the container's cgroup every 10 ms
+while a job runs and kills the job through its pidfd once `memory.current`
+less `inactive_file` reaches 0.9 × `memory.max`. Page tables, VMAs and thread
+stacks a job makes the kernel allocate are charged to the container but not to
+the job's `RLIMIT_AS`, and with `memory.oom.group` an OOM would kill the whole
+container; the watchdog kills the job first (`resource_limit`).
+
+**Startup.** Before the listener binds, the gateway validates
+`CMAEG_MEDIA_FFMPEG_DIR` (owner root), checks and sweeps `/var/cmaeg/media`,
+reads `/sys/fs/cgroup/memory.max` (it must be a number, not `max`), starts the
+watchdog thread, and runs `cmaeg --media-sandbox-check` through the production
+launcher with a pidfd and a watchdog registration. Any failure stops startup
+(`media transformer unavailable: …`, for example
+`media sandbox self-check failed: sandbox_unavailable`); the old pod keeps
+serving because `maxUnavailable` is 0. On success it sets
+`cmaeg_media_sandbox_ready` to 1 and logs `media transformer ready` with
+`dumpable=false`, `sandbox_check="passed"`, `memory_max_bytes` and
+`watchdog_threshold_bytes`. Unconfigured, none of this runs and the gauge
+stays 0.
+
+**Metrics.** `cmaeg_media_transform_total{op,outcome}`,
+`cmaeg_media_transform_seconds{op}` and `cmaeg_media_sandbox_ready`, described
+under [Observability](#observability). Logs carry only the channel hash, op,
+outcome, durations and byte counts: never FFmpeg's output, file names, media
+bytes or transcripts.
+
+**Alerts**, on the private metrics scrape while the transformer is configured:
+
+| Severity | Condition | Meaning |
+| --- | --- | --- |
+| Warn | `increase(cmaeg_media_transform_total{outcome="sandbox_unavailable"}[30m]) > 0` | A job could not be started, sandboxed or observed. |
+| Warn | non-`ok` jobs above 20 % of `cmaeg_media_transform_total` over 30 m | Media is failing to transform. |
+| Warn | `increase(cmaeg_media_transform_total{outcome="killed"}[30m]) > 0` | Only the gateway, the watchdog and the CPU limit should kill a job. |
+| Warn | `increase(cmaeg_media_transform_total{outcome="resource_limit"}[30m]) > 0` | Hostile input or a memory gate violation. |
+
+**Operations rule.** While `CMAEG_MEDIA_FFMPEG_DIR` is set, **no `kubectl exec`
+of any kind** into the gateway: an exec'd process holds the Secret environment
+variables and is dumpable until its first instruction, so a job could read
+them. The custom-attachment audit subcommand runs only after the flags are off
+(see [Rolling back below inbound media](#rolling-back-below-inbound-media)).
+
+**preStop prerequisite.** The shipped `exec` `/bin/sleep` preStop hook is
+dumpable for the same reason. Setting `CMAEG_MEDIA_FFMPEG_DIR` requires
+`lifecycle.preStop.sleep` (probe P15: the cluster accepts it).
+
+**Accepted residual risk** (recorded on #961). On linux/amd64, with the
+enablement probes recorded, a compromised FFmpeg or ffprobe runs as uid 10001
+at `SCHED_IDLE` under `no_new_privs`, both filters, the limits and the
+watchdog. It cannot open sockets or io_uring, create or modify any file, signal
+or trace another process or read its memory or environment, change another
+process's limits or scheduling, create a process, or get the container
+OOM-killed, and it never overlaps another job. It can read what uid 10001 can
+read (image binaries, its own input, pod metadata under `/proc`; no secret is a
+readable file), choose its own validated stdout (which reaches only the agent
+of the channel that sent the media), exec another image binary under the same
+filters and limits, and spend for at most 20 s per process the CPU that
+`SCHED_IDLE` leaves, threads up to the pod PID limit and memory up to the
+watchdog threshold. Follow-ups: Landlock and per-job uids.
 
 ### Rolling back below inbound media
 

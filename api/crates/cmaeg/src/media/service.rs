@@ -26,6 +26,13 @@ use super::{
         upload::{AudioTranscoder, NoTranscoder},
         DisabledTranscriber, Transcriber,
     },
+    transform::{
+        adapters::{TransformerKeyframes, TransformerTranscoder},
+        ffmpeg::FfmpegJobTransformer,
+        scheduler::TransformScheduler,
+        setup::TransformerRuntime,
+        MediaTransformer,
+    },
     visual::{PlatformThumbnail, VisualExtractor, VisualKind},
     MediaLimits,
 };
@@ -60,6 +67,8 @@ pub struct MediaDeps {
     pub tool_providers: Arc<MediaToolProviders>,
     /// One permit, shared with the visual extractor.
     pub decode: Arc<Semaphore>,
+    /// The pod-wide in-flight byte budget, shared with the transformer.
+    pub inflight: InflightBytes,
 }
 
 /// What the configured implementations can produce.
@@ -110,7 +119,7 @@ impl MediaService {
                 visuals: deps.visuals,
                 limits,
                 decode: deps.decode,
-                inflight: InflightBytes::new(&limits),
+                inflight: deps.inflight,
             }),
             keys: deps.keys,
             tool_providers: deps.tool_providers,
@@ -330,6 +339,9 @@ pub struct ComposeDeps {
     pub keys: Arc<MasterKeyRing>,
     pub tool_providers: Arc<MediaToolProviders>,
     pub telegram: Arc<TelegramClient>,
+    /// The media transformer's launcher and root once its startup setup
+    /// passed; `None` while it is not configured.
+    pub transformer: Option<TransformerRuntime>,
 }
 
 /// The media service, or `None` while media is off, so that no budget or
@@ -357,18 +369,51 @@ pub fn compose(
         Some(endpoint) => Arc::new(OpenAiCompatibleTranscriber::new(endpoint, &config.stt)?),
         None => Arc::new(DisabledTranscriber),
     };
+    let inflight = InflightBytes::new(&limits);
+    // Without the transformer, platform thumbnails and the direct upload
+    // path; with it, keyframes and PCM, each keeping the former as fallback.
+    let (visuals, transcoder): (Arc<dyn VisualExtractor>, Arc<dyn AudioTranscoder>) =
+        match deps.transformer {
+            None => (
+                Arc::new(PlatformThumbnail::new(sources.clone(), decode.clone())),
+                Arc::new(NoTranscoder::new(&config.stt, transcriber.clone())),
+            ),
+            Some(runtime) => {
+                let transformer: Arc<dyn MediaTransformer> = Arc::new(FfmpegJobTransformer::new(
+                    runtime.launcher,
+                    runtime.root,
+                    TransformScheduler::new(),
+                    inflight.clone(),
+                    config.transformer.video_frames,
+                ));
+                (
+                    Arc::new(TransformerKeyframes::new(
+                        transformer.clone(),
+                        sources.clone(),
+                        decode.clone(),
+                        limits.max_bytes,
+                        config.transformer.video_frames,
+                    )),
+                    Arc::new(TransformerTranscoder::new(
+                        transformer,
+                        &config.stt,
+                        transcriber.clone(),
+                        limits.max_bytes,
+                    )),
+                )
+            }
+        };
     let service = MediaService::new(MediaDeps {
-        visuals: Arc::new(PlatformThumbnail::new(sources.clone(), decode.clone())),
+        visuals,
         sources,
-        // The direct path is the only transcoder until the audio transformer
-        // exists.
-        transcoder: Arc::new(NoTranscoder::new(&config.stt, transcriber.clone())),
+        transcoder,
         stt: Arc::new(SttSpend::new(&config.stt)),
         transcriber,
         limits,
         keys: deps.keys,
         tool_providers: deps.tool_providers,
         decode,
+        inflight,
     });
     tracing::info!(?limits, capabilities = ?service.capabilities(), "inbound media service composed");
     Ok(Some(Arc::new(service)))

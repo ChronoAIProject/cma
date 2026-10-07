@@ -6,11 +6,16 @@
 //! indentation-aware line scanner reads them; a YAML crate would be a new
 //! dependency for a test that only needs a handful of scalar paths.
 
+use cmaeg::media::transform::MEDIA_ROOT;
+
 const CONFIGMAP: &str = include_str!("../../../../infra/cmaeg/configmap.yaml");
 const DEPLOYMENT: &str = include_str!("../../../../infra/cmaeg/deployment.yaml");
 /// Media fetch and decode buffers need headroom a 1Gi limit does not leave, and
 /// a request below the limit lets the scheduler overcommit the node.
 const MIN_MEDIA_MEMORY_MIB: u64 = 1536;
+/// The transformer adds one job (384 MiB of address space) and its 32 MiB
+/// input volume to the media gate.
+const MIN_TRANSFORMER_MEMORY_MIB: u64 = 2048;
 const MIB: u64 = 1024 * 1024;
 
 struct Line<'a> {
@@ -58,20 +63,29 @@ fn configmap_value<'a>(configmap: &'a str, key: &str) -> Option<&'a str> {
     value(&lines[child(&lines, data, key)?], key)
 }
 
-/// `resources.<section>.memory` of the container named `name`, in bytes.
-fn container_memory(deployment: &str, name: &str, section: &str) -> Result<u64, String> {
-    let lines = lines(deployment);
+/// The index of the list item `- name: <name>` inside the block at `parent`.
+fn item(lines: &[Line<'_>], parent: usize, name: &str) -> Option<usize> {
+    let item = format!("- name: {name}");
+    lines[parent + 1..]
+        .iter()
+        .take_while(|line| line.indent > lines[parent].indent)
+        .position(|line| line.text == item)
+        .map(|offset| parent + 1 + offset)
+}
+
+/// The index of the container named `name`.
+fn container(lines: &[Line<'_>], name: &str) -> Result<usize, String> {
     let containers = lines
         .iter()
         .position(|line| line.text == "containers:")
         .ok_or("the deployment has no containers")?;
-    let item = format!("- name: {name}");
-    let container = lines[containers + 1..]
-        .iter()
-        .take_while(|line| line.indent > lines[containers].indent)
-        .position(|line| line.text == item)
-        .map(|offset| containers + 1 + offset)
-        .ok_or(format!("the deployment has no {name} container"))?;
+    item(lines, containers, name).ok_or(format!("the deployment has no {name} container"))
+}
+
+/// `resources.<section>.memory` of the container named `name`, in bytes.
+fn container_memory(deployment: &str, name: &str, section: &str) -> Result<u64, String> {
+    let lines = lines(deployment);
+    let container = container(&lines, name)?;
     let memory = child(&lines, container, "resources")
         .and_then(|resources| child(&lines, resources, section))
         .and_then(|section| child(&lines, section, "memory"))
@@ -188,4 +202,130 @@ fn media_enabled_with_1gi_is_rejected() {
     assert!(media_memory_rule(&on, &unreadable)
         .unwrap_err()
         .contains("is not a quantity"));
+}
+
+/// The media job volume as `(mountPath, medium, sizeLimit)`: where the
+/// `cmaeg` container mounts it, and its `emptyDir` settings.
+fn media_volume(deployment: &str) -> Result<(String, String, String), String> {
+    let lines = lines(deployment);
+    let container = container(&lines, "cmaeg")?;
+    let mount = child(&lines, container, "volumeMounts")
+        .and_then(|mounts| item(&lines, mounts, "media-jobs"))
+        .and_then(|mount| child(&lines, mount, "mountPath"))
+        .ok_or("the cmaeg container does not mount media-jobs")?;
+    let volumes = lines
+        .iter()
+        .position(|line| line.text == "volumes:")
+        .ok_or("the pod declares no volumes")?;
+    let empty_dir = item(&lines, volumes, "media-jobs")
+        .and_then(|volume| child(&lines, volume, "emptyDir"))
+        .ok_or("media-jobs is not an emptyDir volume")?;
+    let field = |key: &str| {
+        child(&lines, empty_dir, key)
+            .and_then(|line| value(&lines[line], key))
+            .unwrap_or_default()
+            .to_owned()
+    };
+    Ok((
+        value(&lines[mount], "mountPath")
+            .unwrap_or_default()
+            .to_owned(),
+        field("medium"),
+        field("sizeLimit"),
+    ))
+}
+
+/// With `CMAEG_MEDIA_FFMPEG_DIR` set, the gateway container needs a `sleep`
+/// preStop (an exec'd process is dumpable and holds the Secret variables),
+/// and guaranteed memory of at least 2Gi.
+fn transformer_rule(configmap: &str, deployment: &str) -> Result<(), String> {
+    if configmap_value(configmap, "CMAEG_MEDIA_FFMPEG_DIR").is_none_or(str::is_empty) {
+        return Ok(());
+    }
+    let lines = lines(deployment);
+    let container = container(&lines, "cmaeg")?;
+    let pre_stop = child(&lines, container, "lifecycle")
+        .and_then(|lifecycle| child(&lines, lifecycle, "preStop"))
+        .ok_or("CMAEG_MEDIA_FFMPEG_DIR requires a sleep preStop hook on cmaeg")?;
+    if child(&lines, pre_stop, "exec").is_some() || child(&lines, pre_stop, "sleep").is_none() {
+        return Err(
+            "CMAEG_MEDIA_FFMPEG_DIR requires the cmaeg preStop hook to be a sleep action, not exec"
+                .into(),
+        );
+    }
+    let request = container_memory(deployment, "cmaeg", "requests")?;
+    let limit = container_memory(deployment, "cmaeg", "limits")?;
+    if request != limit {
+        return Err(format!(
+            "CMAEG_MEDIA_FFMPEG_DIR requires the cmaeg memory request ({request} bytes) to equal its limit ({limit} bytes)"
+        ));
+    }
+    if limit < MIN_TRANSFORMER_MEMORY_MIB * MIB {
+        return Err(format!(
+            "CMAEG_MEDIA_FFMPEG_DIR requires at least 2Gi of cmaeg memory, not {limit} bytes"
+        ));
+    }
+    Ok(())
+}
+
+fn with_ffmpeg_dir(configmap: &str) -> String {
+    let set = configmap.replace(
+        "CMAEG_MEDIA_FFMPEG_DIR: \"\"",
+        "CMAEG_MEDIA_FFMPEG_DIR: \"/opt/ffmpeg/bin\"",
+    );
+    assert_ne!(set, configmap, "the shipped directory line changed shape");
+    set
+}
+
+fn with_sleep_pre_stop(deployment: &str) -> String {
+    let edited = deployment.replace(
+        "exec:\n                command: [\"/bin/sleep\", \"5\"]",
+        "sleep:\n                seconds: 5",
+    );
+    assert_ne!(edited, deployment, "the shipped preStop hook changed shape");
+    edited
+}
+
+#[test]
+fn the_media_job_volume_is_a_32mi_memory_empty_dir_at_the_media_root() {
+    assert_eq!(
+        media_volume(DEPLOYMENT),
+        Ok((MEDIA_ROOT.to_owned(), "Memory".into(), "32Mi".into()))
+    );
+    let moved = DEPLOYMENT.replace("mountPath: /var/cmaeg/media", "mountPath: /tmp/media");
+    assert_ne!(media_volume(&moved).unwrap().0, MEDIA_ROOT);
+    let unmounted = DEPLOYMENT.replace(
+        "- name: media-jobs\n              mountPath",
+        "- name: other\n              mountPath",
+    );
+    assert_eq!(
+        media_volume(&unmounted),
+        Err("the cmaeg container does not mount media-jobs".into())
+    );
+}
+
+#[test]
+fn the_ffmpeg_dir_requires_a_sleep_pre_stop_and_2gi_of_guaranteed_memory() {
+    assert_eq!(
+        configmap_value(CONFIGMAP, "CMAEG_MEDIA_FFMPEG_DIR"),
+        Some("")
+    );
+    assert_eq!(transformer_rule(CONFIGMAP, DEPLOYMENT), Ok(()));
+    let set = with_ffmpeg_dir(CONFIGMAP);
+    let ready = with_sleep_pre_stop(&with_memory(DEPLOYMENT, "2Gi", "2Gi"));
+    assert_eq!(transformer_rule(&set, &ready), Ok(()));
+    let exec = with_memory(DEPLOYMENT, "2Gi", "2Gi");
+    assert!(transformer_rule(&set, &exec)
+        .unwrap_err()
+        .contains("sleep action, not exec"));
+    let small = with_sleep_pre_stop(&with_memory(DEPLOYMENT, "1536Mi", "1536Mi"));
+    assert!(transformer_rule(&set, &small)
+        .unwrap_err()
+        .contains("at least 2Gi"));
+    let burstable = with_sleep_pre_stop(&with_memory(DEPLOYMENT, "1536Mi", "2Gi"));
+    assert!(transformer_rule(&set, &burstable)
+        .unwrap_err()
+        .contains("to equal its limit"));
+    // The enablement also needs the media rule, which 2Gi satisfies.
+    assert_eq!(media_memory_rule(&enabled(&set), &ready), Ok(()));
 }

@@ -1618,6 +1618,12 @@ Text means a MIME type under `text/`, or `application/json`, `application/xml`,
   - without the audio transformer, transcripts exist only for files of at most
     2.4 MB (audio of about 10 minutes at 32 kbps; MP4 or WebM video of about
     19 seconds at 1 Mbps);
+  - with the operator's media transformer configured, transcripts cover audio,
+    and the audio track of video, in any container the gateway admits
+    (Telegram and Lark Opus voice included) up to the 20 MiB fetch cap. Audio
+    longer than the operator's speech-to-text limit (10 minutes by default) is
+    transcribed from its start and marked
+    `[transcript covers the first m:ss]`;
   - excerpts of at most 4 KiB are taken from text-like files of at most
     256 KiB, or of unknown size;
   - work not ready within `CMAEG_MEDIA_PREPARE_BUDGET_MS` renders
@@ -1625,6 +1631,15 @@ Text means a MIME type under `text/`, or `application/json`, `application/xml`,
     tool-bearing agents can read it later;
   - failures render `transcript unavailable: <reason>`;
   - transcripts and excerpts are nonce-fenced data, never instructions.
+- **Frames and transform reasons.** With the media transformer configured, a
+  video's frames are up to `CMAEG_MEDIA_VIDEO_FRAMES` (at most 6) keyframes
+  spread over its duration, each at most 768 px on its longer side and carrying
+  its position; when a keyframe set fails, a native Telegram video falls back
+  to its platform thumbnail, which carries no position. The reason
+  `transform_failed` means the sandboxed transform itself failed (stopped by
+  its memory watchdog, killed, or its sandbox unavailable); a transform that
+  ran out of time is `timed_out`, and media FFmpeg could not decode is
+  `decode_failed`, or `unsupported_format` for an unknown codec.
 - **Sanitization.** C0 and C1 controls other than newline and tab, and the
   bidirectional formatting characters, are removed from every value the block
   renders.

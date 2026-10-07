@@ -161,6 +161,7 @@ EXPOSE 9091
 # Speech-to-text spend: CMAEG_STT_MAX_SECONDS=600, CMAEG_STT_MAX_BYTES=20971520, CMAEG_STT_RATE_PER_MINUTE=20, CMAEG_STT_CHANNEL_SECONDS_PER_HOUR=3600 and CMAEG_STT_SECONDS_PER_HOUR=36000, validated at startup even while speech-to-text is off.
 # Media turn preparation: CMAEG_MEDIA_PREPARE_BUDGET_MS=15000 (below CMAEG_TURN_TIMEOUT_MS) and CMAEG_STT_EAGER_MAX_SECONDS=300 (0 disables eager audio transcripts).
 # Speech-to-text (off while CMAEG_STT_URL is empty): CMAEG_STT_MODEL, CMAEG_STT_FORMATS, CMAEG_STT_TIMEOUT_MS; inject CMAEG_STT_API_KEY from the cmaeg-stt Secret.
+# Media transformer (off while CMAEG_MEDIA_FFMPEG_DIR is empty; linux/amd64 only): CMAEG_MEDIA_FFMPEG_DIR names a root-owned directory holding ffmpeg and ffprobe, CMAEG_MEDIA_VIDEO_FRAMES=6 keyframes per video, and job inputs live on the memory emptyDir at /var/cmaeg/media.
 # See docs/CMA_Operations.md.
 ENTRYPOINT ["/usr/local/bin/cmaeg"]
 # Health is asserted by the Kubernetes probes in infra/cmaeg/deployment.yaml.

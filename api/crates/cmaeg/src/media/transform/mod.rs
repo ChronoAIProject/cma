@@ -9,8 +9,11 @@
 //!
 //! Callers depend on [`MediaTransformer`] only. [`NoTransformer`] refuses
 //! everything; [`ffmpeg::FfmpegJobTransformer`] runs the jobs over an
-//! injected [`launcher::JobLauncher`].
+//! injected [`launcher::JobLauncher`]. [`setup`] proves the sandbox at
+//! startup, and [`adapters`] put the transformer behind the media seams.
+pub mod adapters;
 pub mod argv;
+pub mod bin_dir;
 pub mod ffmpeg;
 pub mod jobdir;
 pub mod launcher;
@@ -20,7 +23,10 @@ pub mod probe_json;
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub mod sandbox;
 pub mod scheduler;
+pub mod setup;
 pub mod watchdog;
+
+pub use jobdir::MEDIA_ROOT;
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub use sandbox::{job_main, sandbox_check_main};
