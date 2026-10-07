@@ -30,11 +30,15 @@ mod service_admission;
 mod sniff;
 #[path = "media/stt_meter.rs"]
 mod stt_meter;
+#[path = "media/stt_service.rs"]
+mod stt_service;
 #[path = "media/support.rs"]
 pub mod support;
 #[path = "media/telegram_source.rs"]
 mod telegram_source;
 #[path = "media/text.rs"]
 mod text;
+#[path = "media/upload.rs"]
+mod upload;
 #[path = "media/url_source.rs"]
 mod url_source;
