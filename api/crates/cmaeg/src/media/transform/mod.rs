@@ -12,6 +12,7 @@ pub mod launcher;
 pub mod outcome;
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub mod sandbox;
+pub mod watchdog;
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub use sandbox::{job_main, sandbox_check_main};

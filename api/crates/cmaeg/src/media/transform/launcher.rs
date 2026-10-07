@@ -132,6 +132,7 @@ mod process {
     use crate::media::transform::{
         argv,
         outcome::{classify, ClassifyInput, Exit, StderrClass, TransformOutcome, STDERR_HEAD},
+        watchdog::{Registration, WatchdogHandle},
     };
     use bytes::BytesMut;
     use futures_util::future::BoxFuture;
@@ -154,10 +155,12 @@ mod process {
 
     const CHUNK: usize = 16 * 1024;
 
-    /// Executes `job_exe --media-job ...`, one process at a time.
+    /// Executes `job_exe --media-job ...`, one process at a time, each
+    /// watched by the memory watchdog when there is one.
     pub struct ProcessLauncher {
         job_exe: PathBuf,
         bin_dir: PathBuf,
+        watchdog: Option<WatchdogHandle>,
         /// Held from before a spawn until that process is reaped, even when
         /// the caller is cancelled, so processes never overlap and the
         /// `RUSAGE_CHILDREN` difference is exactly one job's.
@@ -167,12 +170,24 @@ mod process {
     impl ProcessLauncher {
         /// `job_exe` is `current_exe()` in production and the test build's
         /// `cmaeg` binary in tests.
-        pub fn new(job_exe: PathBuf, bin_dir: PathBuf) -> Self {
+        pub fn new(job_exe: PathBuf, bin_dir: PathBuf, watchdog: Option<WatchdogHandle>) -> Self {
             Self {
                 job_exe,
                 bin_dir,
+                watchdog,
                 reaped: Arc::new(Semaphore::new(1)),
             }
+        }
+
+        /// The watchdog's registration for job `pid`, holding a duplicate of
+        /// its pidfd; `Some(None)` without a watchdog, `None` when the
+        /// descriptor cannot be duplicated.
+        fn watch(&self, pid: u32, pidfd: &OwnedFd) -> Option<Option<Registration>> {
+            let Some(watchdog) = &self.watchdog else {
+                return Some(None);
+            };
+            let duplicate = pidfd.try_clone().ok()?;
+            Some(Some(watchdog.register(pid, duplicate)))
         }
     }
 
@@ -264,12 +279,18 @@ mod process {
                 }
             };
             // Nothing has reaped the child yet, so its pid still names it.
-            let Some(_pidfd) = running.child().id().and_then(pidfd_open) else {
+            let watched = running
+                .child()
+                .id()
+                .and_then(|pid| Some((pid, pidfd_open(pid)?)))
+                .and_then(|(pid, pidfd)| self.watch(pid, &pidfd).map(|watch| (pidfd, watch)));
+            let Some((_pidfd, registration)) = watched else {
                 let _ = running.child().start_kill();
                 let _ = running.child().wait().await;
                 drop(running.reaped());
                 return JobResult::unavailable(TransformOutcome::SandboxUnavailable);
             };
+            let errors_before = self.watchdog.as_ref().map(WatchdogHandle::sample_errors);
             let (Some(stdout), Some(stderr)) =
                 (running.child().stdout.take(), running.child().stderr.take())
             else {
@@ -289,13 +310,21 @@ mod process {
             let elapsed = spawned_at.elapsed();
             let cpu = children_cpu().saturating_sub(cpu_before);
             drop(running.reaped());
+            let watchdog_killed = registration.is_some_and(Registration::finish);
+            let errors = self.watchdog.as_ref().map(WatchdogHandle::sample_errors);
+            if errors > errors_before {
+                tracing::warn!(
+                    op = spec.op.as_str(),
+                    "the memory watchdog could not read or signal during a media job"
+                );
+            }
             let exit = match status {
                 Some(status) => exit_of(status),
                 None => return JobResult::unavailable(TransformOutcome::SandboxUnavailable),
             };
             let outcome = classify(&ClassifyInput {
                 deadline_killed,
-                watchdog_killed: false,
+                watchdog_killed,
                 overflow_killed: output.overflowed,
                 exit,
                 cpu,
