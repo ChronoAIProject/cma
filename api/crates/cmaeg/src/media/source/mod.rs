@@ -6,6 +6,7 @@
 //! credential or allowlist removed since the event arrived is no longer used.
 //! No source puts a URL, token, file identifier, file name or message ID in an
 //! error, a log line or a span.
+pub mod inline;
 pub mod nyxid;
 pub mod telegram;
 pub mod url;
