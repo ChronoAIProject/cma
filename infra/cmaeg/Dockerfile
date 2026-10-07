@@ -97,6 +97,15 @@ RUN --mount=type=cache,id=cma-api-registry,target=/usr/local/cargo/registry,shar
     cargo build --release --locked --bin cmaeg \
     && mkdir /out \
     && cp /build/target/release/cmaeg /out/cmaeg
+# Exercise the musl binary's sandbox (CI tests use glibc): gaps such as the
+# sched_setscheduler stub or a missing close_range fail the image build here.
+RUN --network=none <<'SANDBOX_CHECK'
+set -eu
+case "${TARGETARCH}" in
+  amd64) /out/cmaeg --media-sandbox-check ;;
+  *) set +e; /out/cmaeg --media-sandbox-check; status=$?; set -e; test "${status}" -eq 125 ;;
+esac
+SANDBOX_CHECK
 
 FROM alpine:3.22 AS runtime
 ARG CHRONO_BUILD=development

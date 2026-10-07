@@ -645,6 +645,80 @@ Runbook: the `speech-to-text` log lines in the alert window give the status
 class the endpoint answered; check the provider's status and the key's quota
 before raising `CMAEG_STT_TIMEOUT_MS`.
 
+### Media job sandbox
+
+Keyframes and audio transcoding run FFmpeg, a large C decoder, on hostile
+input. It never runs in the gateway process: each job is a fresh exec of the
+gateway binary, `cmaeg --media-job <op> <bin-dir> <job-dir> [arg]`, that
+sandboxes itself and then executes `ffmpeg` or `ffprobe` exactly once with a
+fixed argv. The sandbox exists on **linux/amd64 only**; on any other platform
+both job modes exit 125 without executing anything.
+
+Before its first step the wrapper parses its arguments (`probe`, `frame` with
+a time `^[0-9]{1,5}\.[0-9]{3}$` of at most `86400.000`, or `audio` with
+1..=1500 seconds; absolute UTF-8 directories), builds the program path, argv
+and an empty environment, takes its own pid and compiles both filters. It then:
+
+1. closes every descriptor above stderr (`close_range`, a raw syscall because
+   musl has no wrapper);
+2. sets every limit below with soft = hard;
+3. switches to `SCHED_IDLE` (a raw syscall: musl's `sched_setscheduler` is an
+   `ENOSYS` stub), which FFmpeg's threads inherit;
+4. sets `no_new_privs`;
+5. installs Filter E, then Filter A;
+6. executes the program.
+
+Nothing allocates after step 5. Any failure writes the static line
+`cmaeg media-job: step <n> failed` (step 0 is argument parsing) and exits 125,
+which the gateway classifies as `sandbox_unavailable`. The job modes are
+dispatched before the gateway makes itself non-dumpable, read no environment,
+log nothing and build no runtime.
+
+**Filters.** Filter E answers `clone3` with `ENOSYS` and allows everything
+else, so libc falls back to `clone`. Filter A is a default-deny allowlist:
+anything else fails with `EPERM`. It allows `openat` and `open` only with
+`O_ACCMODE`, `O_CREAT`, `O_TRUNC` and `__O_TMPFILE` clear (every open is
+read-only; empty files on the memory `emptyDir` would pin inodes outside its
+`sizeLimit`), `clone` only with `CLONE_THREAD`, signals (`kill`, `tkill`,
+`tgkill`, `rt_sigqueueinfo`, `rt_tgsigqueueinfo`) only to the job's own pid,
+`prlimit64` and `sched_getaffinity` only on itself, and fixed `fcntl`, `ioctl`,
+`prctl` and `arch_prctl` commands. The order is fixed: Filter A denies the
+`prctl` and `seccomp` calls that installing a filter needs, so it comes last,
+and the kernel keeps the lowest action, so E's `ENOSYS` wins over A's allow
+entry for `clone3`. Syscall numbers outside the x86_64 table (x32 included)
+never match A, and any other architecture is killed. The allow table may
+never contain the socket family, `io_uring`, process creation or namespaces,
+any call aimed at another process (`ptrace`, `process_vm_*`, `pidfd_*`,
+`kcmp`), `perf_event_open`, `bpf`, `userfaultfd`, keyrings, mounts, scheduling
+or I/O priority of others, `memfd_create`, `inotify`, `fanotify`,
+`timer_create`, System V and POSIX IPC, `personality`, `seccomp`,
+`execveat`, any file creation or mutation, `openat2`, handle opens, or
+permission and attribute changes; a test fails if it ever does.
+
+**Limits** (soft = hard, so `prlimit64` on itself cannot raise them):
+
+| Limit | Value | Why |
+| --- | --- | --- |
+| `RLIMIT_AS` | 402653184 (384 MiB) | One job's term in the memory gate. |
+| `RLIMIT_CPU` | 20 s | The kernel sends SIGKILL, never SIGXCPU (FFmpeg's handler would exit 255). |
+| `RLIMIT_FSIZE` | 0 | The job writes no file. |
+| `RLIMIT_NOFILE` | 64 | |
+| `RLIMIT_CORE` | 0 | |
+| `RLIMIT_MEMLOCK` | 0 | |
+| `RLIMIT_SIGPENDING` | 64 | Bounds the job's own memcg-charged queue of real-time signals. |
+
+`RLIMIT_NPROC` is deliberately absent: it counts per uid across the node, and
+uid 10001 is shared; seccomp refuses process creation instead.
+
+**Self-check.** `cmaeg --media-sandbox-check` runs steps 1 to 5 in its own
+process and then requires that a thread can still start, `clone3` fails with
+`ENOSYS`, `socket`, `openat(".", O_CREAT | O_WRONLY)` and `kill(<parent>, 0)`
+fail with `EPERM`, and `/proc/self/status` opens read-only. It exits 0, or
+writes `cmaeg media-sandbox-check: <check> failed` and exits 125. The image
+build runs it on the musl binary (`linux/amd64` must pass; other architectures
+must exit 125), because CI tests use glibc. Building `linux/amd64` under QEMU
+user emulation is unsupported for this step; CI builds natively.
+
 ### Rolling back below inbound media
 
 An image older than the inbound-media release cannot parse a stored channel

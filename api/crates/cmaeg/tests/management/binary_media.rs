@@ -5,7 +5,7 @@ use super::binary_support::{free_address, spawn_ready};
 use super::*;
 use cmaeg_core::{profile::canonical_json, seal::seal_blob};
 
-const USAGE: &str = "usage: cmaeg [--print-openapi | --audit-custom-attachments [--clear]]\n";
+const USAGE: &str = "usage: cmaeg [--print-openapi | --audit-custom-attachments [--clear] | --media-job <op> <bin-dir> <job-dir> [arg] | --media-sandbox-check]\n";
 const OWNER: &str = "binary-audit-owner-fixture";
 
 struct Run {

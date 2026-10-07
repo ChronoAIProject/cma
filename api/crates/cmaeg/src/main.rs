@@ -1,13 +1,29 @@
+use cmaeg::media::transform::argv::{
+    MEDIA_JOB_FLAG as MEDIA_JOB, SANDBOX_CHECK_FLAG as SANDBOX_CHECK,
+};
 use std::{ffi::OsString, io::Write};
 
-const USAGE: &str = "usage: cmaeg [--print-openapi | --audit-custom-attachments [--clear]]";
+const USAGE: &str = "usage: cmaeg [--print-openapi | --audit-custom-attachments [--clear] | --media-job <op> <bin-dir> <job-dir> [arg] | --media-sandbox-check]";
 
 fn main() {
     // `args_os` never panics: `args` aborts with exit 101 on a non-UTF-8
     // argument before any usage handling could run.
     let arguments: Vec<OsString> = std::env::args_os().skip(1).collect();
-    // First, before any mode, log line or runtime: every mode the process
-    // can run in holds or can load the gateway's secrets.
+    // The media job modes come first and are matched on the raw arguments:
+    // a malformed job must exit 125 (sandbox unavailable), never 2 or 101.
+    // Neither reads the environment, logs or builds a runtime, and a job must
+    // not inherit the gateway's non-dumpable flag.
+    match arguments.first().map(OsString::as_os_str) {
+        Some(flag) if flag == MEDIA_JOB => {
+            cmaeg::media::transform::job_main(arguments[1..].to_vec())
+        }
+        Some(flag) if flag == SANDBOX_CHECK && arguments.len() == 1 => {
+            cmaeg::media::transform::sandbox_check_main()
+        }
+        _ => {}
+    }
+    // Then, before any other mode, log line or runtime: every other mode
+    // holds or can load the gateway's secrets.
     if let Err(error) = cmaeg::hardening::disable_dumping() {
         eprintln!("cmaeg: cannot make the process non-dumpable: {error}");
         std::process::exit(1);
