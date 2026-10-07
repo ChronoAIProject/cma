@@ -16,14 +16,28 @@ use axum::{
     Json,
 };
 use cmaeg_core::problem::ProblemCode;
+/// Everything an admitted chat turn needs once its request has been released.
+///
+/// Admission helpers return this instead of dispatching themselves so that the
+/// raw body, its headers and every parsed copy are dropped before the
+/// acceptance wait; a waiting handler then holds only this small context.
+pub(crate) struct AdmittedChat {
+    pub request: LaunchRequest,
+    pub callback: Option<CallbackFacts>,
+    pub route: String,
+    pub now: i64,
+}
 pub(crate) async fn dispatch(
     state: IngressState,
-    mut request: LaunchRequest,
-    callback: Option<CallbackFacts>,
-    route: String,
+    admitted: AdmittedChat,
     timing: IngressTiming,
-    now: i64,
 ) -> Response {
+    let AdmittedChat {
+        mut request,
+        callback,
+        route,
+        now,
+    } = admitted;
     if let Some(callback) = callback {
         let Some(store) = &state.interactions else {
             return refused(Refusal::InteractiveActionUnsupported);

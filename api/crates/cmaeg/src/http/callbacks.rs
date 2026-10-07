@@ -1,5 +1,8 @@
 //! Verified callback ingress with deliberate refusals acknowledged as 202.
-use super::problems::{problem, protocol_headers};
+use super::{
+    chat_dispatch::AdmittedChat,
+    problems::{problem, protocol_headers},
+};
 use crate::ingress::{
     admission::{admit, AdmissionFacts, Refusal},
     relay::{
@@ -82,6 +85,25 @@ pub async fn callback(
             .insert(header::RETRY_AFTER, HeaderValue::from_static("1"));
         return response;
     };
+    // The permit stays held across dispatch; the request itself is consumed by
+    // admission so its body is released before the acceptance wait.
+    match admit_callback(&state, &channel_id, request, &timing).await {
+        Ok(admitted) => super::chat_dispatch::dispatch(state, admitted, timing).await,
+        Err(response) => response,
+    }
+}
+
+/// Verifies and normalizes one relay callback into an admitted chat turn.
+///
+/// Taking `request` by value means `parts`, `body`, the verified envelope and
+/// every parsed copy are dropped when this returns, before the caller waits for
+/// acceptance. Every early return is the handler's final response.
+async fn admit_callback(
+    state: &IngressState,
+    channel_id: &str,
+    request: Request,
+    timing: &IngressTiming,
+) -> Result<AdmittedChat, Response> {
     let (parts, body) = request.into_parts();
     let media = verify::single(&parts.headers, "content-type", false);
     if !media.ok().flatten().is_some_and(|media| {
@@ -90,11 +112,11 @@ pub async fn callback(
             .next()
             .is_some_and(|kind| kind.trim().eq_ignore_ascii_case("application/json"))
     }) {
-        return problem(
+        return Err(problem(
             StatusCode::UNSUPPORTED_MEDIA_TYPE,
             ProblemCode::UnsupportedMediaType,
             "application/json is required",
-        );
+        ));
     }
     if parts
         .headers
@@ -103,7 +125,7 @@ pub async fn callback(
         .and_then(|value| value.parse::<u64>().ok())
         .is_some_and(|size| size > state.config.max_body as u64)
     {
-        return too_large();
+        return Err(too_large());
     }
     let body = match tokio::time::timeout(
         Duration::from_secs(5),
@@ -112,37 +134,37 @@ pub async fn callback(
     .await
     {
         Err(_) => {
-            return problem(
+            return Err(problem(
                 StatusCode::REQUEST_TIMEOUT,
                 ProblemCode::InvalidRequest,
                 "body_timeout",
-            )
+            ))
         }
-        Ok(Err(_)) => return too_large(),
+        Ok(Err(_)) => return Err(too_large()),
         Ok(Ok(body)) => body,
     };
     let body_received_at = timing.received();
     let channel = match state
         .resolver
-        .resolve_observed(&channel_id, Some(&timing))
+        .resolve_observed(channel_id, Some(timing))
         .await
     {
         Ok(channel) => channel,
         Err(error) => {
             let error = error.problem();
-            return problem(
+            return Err(problem(
                 StatusCode::from_u16(error.status).unwrap(),
                 error.code,
                 error.detail.unwrap_or_default(),
-            );
+            ));
         }
     };
     let verify_time = timing.verify();
-    let verify_span = tracing::info_span!("cmaeg.verify", channel = %crate::telemetry::channel_hash(&channel_id), event_id = tracing::field::Empty);
+    let verify_span = tracing::info_span!("cmaeg.verify", channel = %crate::telemetry::channel_hash(channel_id), event_id = tracing::field::Empty);
     let wire_platform = match verify::single(&parts.headers, "x-nyxid-platform", true) {
         Ok(Some(platform)) => platform,
-        Err(error) => return invalid(SOURCE, error),
-        _ => return invalid(SOURCE, VerificationError("header_missing")),
+        Err(error) => return Err(invalid(SOURCE, error)),
+        _ => return Err(invalid(SOURCE, VerificationError("header_missing"))),
     };
     let Some((index, source, admission, platform)) = channel
         .definition
@@ -160,15 +182,15 @@ pub async fn callback(
             _ => None,
         })
     else {
-        return problem(
+        return Err(problem(
             StatusCode::BAD_REQUEST,
             ProblemCode::InvalidRequest,
             "no matching relay source",
-        );
+        ));
     };
     let headers = match CallbackHeaders::read(&parts.headers) {
         Ok(headers) => headers,
-        Err(error) => return invalid(SOURCE, error),
+        Err(error) => return Err(invalid(SOURCE, error)),
     };
     let verified = match verify::verify(
         &channel,
@@ -182,12 +204,12 @@ pub async fn callback(
     .await
     {
         Ok(verified) => verified,
-        Err(error) => return invalid(SOURCE, error),
+        Err(error) => return Err(invalid(SOURCE, error)),
     };
     let facts = match observe(source, &verified.payload) {
         Ok(Observation::Message(facts)) => facts,
-        Ok(Observation::Refused(reason)) => return refused(reason),
-        Err(error) => return invalid(SOURCE, error),
+        Ok(Observation::Refused(reason)) => return Err(refused(reason)),
+        Err(error) => return Err(invalid(SOURCE, error)),
     };
     if let Err(reason) = admit(
         admission,
@@ -200,14 +222,14 @@ pub async fn callback(
             addressed: facts.addressed(admission),
         },
     ) {
-        return refused(reason);
+        return Err(refused(reason));
     }
     if channel.definition.partition.key == PartitionKey::Thread && facts.thread_id.is_none() {
-        return refused(Refusal::ThreadEvidenceUnavailable);
+        return Err(refused(Refusal::ThreadEvidenceUnavailable));
     }
     let now = time::OffsetDateTime::now_utc().unix_timestamp();
     if verified.reply_expires_at <= now || verified.callback_deadline <= now {
-        return invalid(SOURCE, VerificationError("token_time"));
+        return Err(invalid(SOURCE, VerificationError("token_time")));
     }
     let callback = facts.callback.clone();
     let route = verified.payload.conversation.id.clone();
@@ -222,12 +244,21 @@ pub async fn callback(
     ) {
         Ok(request) => request,
         Err(reason) => {
-            return problem(StatusCode::BAD_REQUEST, ProblemCode::InvalidRequest, reason)
+            return Err(problem(
+                StatusCode::BAD_REQUEST,
+                ProblemCode::InvalidRequest,
+                reason,
+            ))
         }
     };
     verify_span.record("event_id", request.activity.event_id.as_str());
     drop(verify_time);
-    super::chat_dispatch::dispatch(state, request, callback, route, timing, now).await
+    Ok(AdmittedChat {
+        request,
+        callback,
+        route,
+        now,
+    })
 }
 
 pub(crate) fn refused(reason: Refusal) -> Response {

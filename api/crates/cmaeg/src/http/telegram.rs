@@ -1,6 +1,7 @@
 //! Native Telegram webhook; authentication precedes all platform interpretation.
 use super::{
     callbacks::{invalid, refused, too_large, CallbackResponse},
+    chat_dispatch::AdmittedChat,
     problems::{problem, protocol_headers},
 };
 use crate::{
@@ -60,6 +61,25 @@ pub async fn callback(
             "ingress capacity exhausted",
         );
     };
+    // The permit stays held across dispatch; the request itself is consumed by
+    // admission so its body is released before the acceptance wait.
+    match admit_update(&state, &channel_id, request, &timing).await {
+        Ok(admitted) => super::chat_dispatch::dispatch(state, admitted, timing).await,
+        Err(response) => response,
+    }
+}
+
+/// Authenticates and normalizes one native update into an admitted chat turn.
+///
+/// Taking `request` by value means `parts`, `body` and the parsed update are
+/// dropped when this returns, before the caller waits for acceptance. The
+/// callback-query acknowledgement stays here so it still precedes dispatch.
+async fn admit_update(
+    state: &IngressState,
+    channel_id: &str,
+    request: Request,
+    timing: &IngressTiming,
+) -> Result<AdmittedChat, Response> {
     let (parts, body) = request.into_parts();
     if !verify::single(&parts.headers, "content-type", false)
         .ok()
@@ -70,25 +90,30 @@ pub async fn callback(
                 .is_some_and(|v| v.trim().eq_ignore_ascii_case("application/json"))
         })
     {
-        return problem(
+        return Err(problem(
             StatusCode::UNSUPPORTED_MEDIA_TYPE,
             ProblemCode::UnsupportedMediaType,
             "application/json is required",
-        );
+        ));
     }
     let secret = match verify::single(&parts.headers, "x-telegram-bot-api-secret-token", true) {
         Ok(Some(secret)) if secret.len() <= 256 => secret,
-        _ => return invalid(SOURCE, VerificationError("telegram_webhook_secret")),
+        _ => {
+            return Err(invalid(
+                SOURCE,
+                VerificationError("telegram_webhook_secret"),
+            ))
+        }
     };
-    let channel = match state.resolver.resolve_current(&channel_id).await {
+    let channel = match state.resolver.resolve_current(channel_id).await {
         Ok(channel) => channel,
         Err(error) => {
             let error = error.problem();
-            return problem(
+            return Err(problem(
                 StatusCode::from_u16(error.status).unwrap_or(StatusCode::SERVICE_UNAVAILABLE),
                 error.code,
                 error.detail.unwrap_or_default(),
-            );
+            ));
         }
     };
     let Some((bot_id, bot_username, admission)) =
@@ -105,15 +130,24 @@ pub async fn callback(
                 _ => None,
             })
     else {
-        return invalid(SOURCE, VerificationError("telegram_source_missing"));
+        return Err(invalid(
+            SOURCE,
+            VerificationError("telegram_source_missing"),
+        ));
     };
     let Some(expected) = channel.definition.secrets.telegram_webhook_secret.as_ref() else {
-        return invalid(SOURCE, VerificationError("telegram_webhook_secret"));
+        return Err(invalid(
+            SOURCE,
+            VerificationError("telegram_webhook_secret"),
+        ));
     };
     if !bool::from(
         Sha256::digest(secret.as_bytes()).ct_eq(&Sha256::digest(expected.as_str().as_bytes())),
     ) {
-        return invalid(SOURCE, VerificationError("telegram_webhook_secret"));
+        return Err(invalid(
+            SOURCE,
+            VerificationError("telegram_webhook_secret"),
+        ));
     }
     if parts
         .headers
@@ -122,7 +156,7 @@ pub async fn callback(
         .and_then(|v| v.parse::<usize>().ok())
         .is_some_and(|size| size > state.config.max_body)
     {
-        return too_large();
+        return Err(too_large());
     }
     let body = match tokio::time::timeout(
         Duration::from_secs(5),
@@ -131,23 +165,28 @@ pub async fn callback(
     .await
     {
         Ok(Ok(body)) => body,
-        Ok(Err(_)) => return too_large(),
+        Ok(Err(_)) => return Err(too_large()),
         Err(_) => {
-            return problem(
+            return Err(problem(
                 StatusCode::REQUEST_TIMEOUT,
                 ProblemCode::InvalidRequest,
                 "body_timeout",
-            )
+            ))
         }
     };
     let raw = match serde_json::from_slice(&body) {
         Ok(raw) => raw,
-        Err(_) => return invalid(SOURCE, VerificationError("telegram_update_invalid")),
+        Err(_) => {
+            return Err(invalid(
+                SOURCE,
+                VerificationError("telegram_update_invalid"),
+            ))
+        }
     };
     let observed = match telegram::observe(raw, &bot_id, bot_username.as_deref()) {
         Ok(Outcome::Admitted(observed)) => *observed,
-        Ok(Outcome::Refused(reason)) => return refused(reason),
-        Err(error) => return invalid(SOURCE, error),
+        Ok(Outcome::Refused(reason)) => return Err(refused(reason)),
+        Err(error) => return Err(invalid(SOURCE, error)),
     };
     if let Err(reason) = admit(
         admission,
@@ -161,12 +200,12 @@ pub async fn callback(
             addressed: observed.facts.addressed(admission),
         },
     ) {
-        return refused(reason);
+        return Err(refused(reason));
     }
     if channel.definition.partition.key == PartitionKey::Thread
         && observed.facts.thread_id.is_none()
     {
-        return refused(Refusal::ThreadEvidenceUnavailable);
+        return Err(refused(Refusal::ThreadEvidenceUnavailable));
     }
     let callback = observed.facts.callback.clone();
     let route = observed.payload.conversation.id.clone();
@@ -192,7 +231,12 @@ pub async fn callback(
         now,
     ) {
         Ok(request) => request,
-        Err(error) => return invalid(SOURCE, error),
+        Err(error) => return Err(invalid(SOURCE, error)),
     };
-    super::chat_dispatch::dispatch(state, request, callback, route, timing, now).await
+    Ok(AdmittedChat {
+        request,
+        callback,
+        route,
+        now,
+    })
 }
