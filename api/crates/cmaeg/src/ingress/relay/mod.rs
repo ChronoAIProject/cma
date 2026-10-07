@@ -1,6 +1,7 @@
 //! NyxID relay authentication and per-platform event normalization.
 pub mod activity;
 pub mod attachments;
+mod envelope_errors;
 pub mod facts;
 mod generic;
 pub mod jwks;

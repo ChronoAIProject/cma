@@ -99,6 +99,7 @@ and idempotent. All duration histograms use seconds with buckets
 | `cmaeg_events_total` | `source`, `outcome` | Ingress responses, distinguishing deliberate refusals from accepted and rejected requests. |
 | `cmaeg_refusals_total` | `reason` | Bounded admission refusals and protocol error codes. |
 | `cmaeg_provider_errors_total` | `provider`, `kind` | Classified turn failures; provider diagnostic strings are never labels. |
+| `cmaeg_callback_invalid_total` | `source`, `detail` | Relay and native Telegram callbacks answered 401 `callback_invalid`. `source` is `nyxid_relay` or `telegram`; `detail` is the static verification code returned as the problem detail, such as `payload_invalid` or `telegram_webhook_secret`. |
 | `cmaeg_relay_envelope_repairs_total` | `field` | Authenticated NyxID relay envelope facts repaired or dropped instead of rejecting the callback. `field` is one of `attachment_item`, `attachment_overflow`, `attachment_container`, `content_type`, `url`, `platform_message_id`, `file_key`, `image_key`, `filename`, `mime_type`, `size_bytes`, `download_url` or `sender_display_name`. |
 | `cmaeg_turns_inflight` | none | Admitted local consumers; decremented on completion or cancellation. |
 | `cmaeg_channels_cached` | none | Locally retained positive and negative cache entries, including entries awaiting eviction. |
@@ -331,6 +332,46 @@ admission; that can create another turn. For uncertain platform delivery, inspec
 the receipt's `unknown` outcome and the sink, then reconcile manually if needed.
 The gateway does not blindly resend unknown Telegram sends. Webhook receivers
 must deduplicate stable webhook IDs across the four bounded attempts.
+
+### Relay callback rejection alerts
+
+NyxID records a callback that CMAEG answers with 401 as failed and never
+retries it, so a rejected authenticated relay callback is a lost message.
+`cmaeg_callback_invalid_total{source,detail}` makes every rejection visible.
+Configure these alerts on the private metrics scrape:
+
+| Severity | Expression | Meaning |
+| --- | --- | --- |
+| Page | `sum(increase(cmaeg_callback_invalid_total{source="nyxid_relay",detail=~"payload_invalid\|payload_bounds\|payload_binding_mismatch"}[15m])) > 0` | Authenticated NyxID callbacks rejected after the signature was verified: messages are being lost. |
+| Warn | `sum(increase(cmaeg_callback_invalid_total{source="nyxid_relay",detail="route_denied"}[15m])) > 0` | NyxID delivers a route the channel does not list: tenant route drift. |
+| Warn (ratio) | `sum(increase(cmaeg_callback_invalid_total{source="nyxid_relay",detail=~"header_.*\|callback_bounds\|token_.*\|jwks_.*\|signing_key_unknown"}[15m])) / sum(increase(cmaeg_events_total{source="nyxid_relay"}[15m])) > 0.05` | More than 5% of relay callbacks fail before their signature is verified. Such requests can be unauthenticated noise, so they never page. |
+
+Runbook for each alert:
+
+- **Envelope rejection (page).** Find the `relay callback envelope rejected`
+  warning in the alert window. Its `field=` names the unknown body field; `-`
+  means the failure was not an unknown field, and `category=` then says whether
+  it was a syntax, data or truncated-body error. The log never contains the
+  offending value. Compare NyxID's callback serializer at its deployed version
+  (`backend/src/services/channel_relay_service.rs`) with §6 of the protocol and
+  the `CallbackPayload` schema. A new NyxID field needs an additive gateway
+  release, as `thread_context` and `activity` received. `payload_bounds` means a
+  non-attachment field exceeded its bound; `payload_binding_mismatch` means the
+  body disagrees with its signed callback claims and points at a NyxID defect.
+  Record the request IDs of the lost messages for their channel owners.
+- **Route drift (warn).** Compare the channel's relay `route_ids` with the
+  NyxID route that serves the bot, then update the channel with the exact route
+  ID. An empty list is a pending binding and denies every callback.
+- **Pre-signature failures (ratio warn).** Check the NyxID issuer, JWKS
+  reachability and signing-key rotation first, then the callback headers and
+  clock skew. A rise without a matching NyxID change is likely unauthenticated
+  traffic and needs no data repair.
+
+`cmaeg_relay_envelope_repairs_total` is informational and does not alert.
+Non-zero values mean NyxID sent sender facts outside CMAEG's bounds, such as an
+oversized file name or display name, and the gateway repaired or dropped them
+instead of losing the message. A `field` label that keeps rising is a reason to
+compare NyxID's serializer with the protocol, not an outage.
 
 ### Recovering channel creation
 
