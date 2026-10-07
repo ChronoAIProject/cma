@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
+import { AttachmentSchema, AttachmentSourceSchema } from '../src/cmaeg/types.js';
 
 interface Schema {
   readonly $ref?: string;
@@ -104,4 +105,35 @@ describe('CMAEG schema inventory', () => {
     schemas.ContextResponse = { ...response, properties };
     expect(check(schemas).some((value) => value.code === 2344)).toBe(true);
   }, 30_000);
+});
+
+describe('CMAEG attachment locators', () => {
+  const examples = JSON.parse(
+    readFileSync(
+      new URL('../../../api/crates/cmaeg/tests/fixtures/sdk-contract.json', import.meta.url),
+      'utf8',
+    ),
+  ) as Record<string, readonly unknown[]>;
+
+  it('parses every locator type and media fact from the contract examples', () => {
+    const locators = examples.AttachmentSource ?? [];
+    expect(locators.map((value) => (value as { type: string }).type)).toEqual([
+      'nyxid_relay',
+      'telegram',
+      'url',
+      'inline',
+    ]);
+    for (const example of locators) expect(AttachmentSourceSchema(example)).toEqual(example);
+    for (const example of examples.Attachment ?? [])
+      expect(AttachmentSchema(example)).toEqual(example);
+  });
+
+  it('refuses an unknown locator type and a malformed media fact', () => {
+    expect(() => AttachmentSourceSchema({ type: 'lark', key: 'fixture' })).toThrow(
+      'unknown type discriminator',
+    );
+    expect(() =>
+      AttachmentSchema({ reference: 'fixture', kind: 'file', variant: 'hologram' }),
+    ).toThrow('variant');
+  });
 });

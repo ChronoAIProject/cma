@@ -8,6 +8,7 @@ import {
   ConversationKindSchema,
   EventIdSchema,
   EventRefSchema,
+  MediaVariantSchema,
   MessageRefSchema,
   ReplyTargetRefSchema,
   PlatformSchema,
@@ -48,12 +49,36 @@ export const ActivityConversationSchema = object({
 });
 export type ActivityConversation = Output<typeof ActivityConversationSchema>;
 
+// A non-secret locator bound into the activity digest; fetching still requires
+// the event reference's authority.
+export const AttachmentSourceSchema = tagged(
+  {
+    nyxid_relay: object({ index: integer, type: enumeration('nyxid_relay') }),
+    telegram: object({
+      file_id: text,
+      file_unique_id: text,
+      type: enumeration('telegram'),
+    }),
+    url: object({ type: enumeration('url'), url: text }),
+    inline: object({ pointer: text, type: enumeration('inline') }),
+  },
+  'type',
+);
+export type AttachmentSource = Output<typeof AttachmentSourceSchema>;
+
 export const AttachmentSchema = object({
+  duration_seconds: optional(nullable(integer)),
+  emoji: optional(nullable(text)),
   filename: optional(nullable(text)),
+  height: optional(nullable(integer)),
   kind: AttachmentKindSchema,
   mime_type: optional(nullable(text)),
   reference: text,
   size_bytes: optional(nullable(integer)),
+  source: optional(nullable(AttachmentSourceSchema)),
+  thumbnail: optional(nullable(AttachmentSourceSchema)),
+  variant: optional(nullable(MediaVariantSchema)),
+  width: optional(nullable(integer)),
 });
 export type Attachment = Output<typeof AttachmentSchema>;
 

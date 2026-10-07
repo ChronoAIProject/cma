@@ -873,9 +873,48 @@ Activity kind is one of:
 | `command` | `name,args` |
 | `event` | `ce`, the complete CloudEvent |
 
-Attachment fields are `reference,kind,mime_type?,filename?,size_bytes?`, with
-kind `image|file|audio|video|other`. Custom actor and subject URIs are retained in
-full in provider context; compact references/metadata may use digests.
+Attachment fields are
+`reference,kind,filename?,mime_type?,size_bytes?,source?,variant?,duration_seconds?,width?,height?,thumbnail?,emoji?`,
+with kind `image|file|audio|video|other`. `reference` is a stable, non-secret
+identifier such as `telegram:<file_unique_id>`, `lark:<key>`,
+`<platform>:item-<i>` or an owner-supplied value. Every other field is optional
+and omitted when absent, so an activity stored before these fields existed keeps
+its exact bytes and `activity_sha256`. Every replica parses and validates the
+fields before any source emits them. Facts are what the sender declared;
+content derived from the bytes (transcripts, pixels, extracted text) never
+enters the Activity.
+
+| Field | Domain |
+| --- | --- |
+| `filename` | 1..=255 bytes, without C0 or C1 controls or the bidirectional formatting characters U+200E, U+200F, U+202A–U+202E and U+2066–U+2069 |
+| `mime_type` | lowercase RFC 6838 restricted name `type/subtype` without parameters; each part 1..=127 bytes, starting with `[a-z0-9]` and continuing with `[a-z0-9!#$&^_.+-]` |
+| `size_bytes` | any unsigned 64-bit value |
+| `variant` | the platform's own media name: `photo`, `document`, `audio`, `voice`, `video`, `video_note`, `animation`, `sticker`, `image`, `file`, `media` or `embedded` |
+| `duration_seconds` | at most 86400 |
+| `width`, `height` | both or neither, each 1..=100000 |
+| `emoji` | 1..=32 bytes, with the `filename` character rule |
+| `source`, `thumbnail` | a locator, below |
+
+`source` says where the attachment's bytes can be fetched; when it is absent the
+attachment is not retrievable and only its facts are known. A locator is valid
+only with its activity source:
+
+| Locator | Grammar | Activity source |
+| --- | --- | --- |
+| `{type:"nyxid_relay",index}` | `index` at most 31: the position in the relay callback | `nyxid_relay` |
+| `{type:"telegram",file_id,file_unique_id}` | `[A-Za-z0-9_-]{1,256}` and `[A-Za-z0-9_-]{1,128}` | `telegram` |
+| `{type:"url",url}` | absolute `https` URL of at most 2048 bytes with a host, and no userinfo, fragment, whitespace or control characters; local `http` is refused | `custom` |
+| `{type:"inline",pointer}` | RFC 6901 pointer of 1..=256 bytes that starts with `/`, every `~` followed by `0` or `1` | `custom` |
+
+`thumbnail` is only a `telegram` locator on a native Telegram activity.
+Attachment and locator objects refuse unknown keys. Locators are non-secret and
+bound into the activity digest, but they never carry retrieval authority: the
+NyxID message ID stays inside the sealed reply address, and every fetch is
+authorized by the event_ref. A violation fails activity validation at
+`/kind/attachments/<i>/<field>`.
+
+Custom actor and subject URIs are retained in full in provider context; compact
+references/metadata may use digests.
 
 An authenticated original private Telegram `Message.managed_bot_created` is
 normalized as an `event` with CloudEvent type `telegram.managed_bot_created`.

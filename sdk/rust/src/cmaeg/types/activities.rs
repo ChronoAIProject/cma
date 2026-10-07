@@ -105,9 +105,18 @@ pub struct Actor {
 /// CMAEG `Attachment` wire shape.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct Attachment {
+    /// Wire field `duration_seconds`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_seconds: Option<u64>,
+    /// Wire field `emoji`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub emoji: Option<String>,
     /// Wire field `filename`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub filename: Option<String>,
+    /// Wire field `height`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height: Option<u64>,
     /// Wire field `kind`.
     pub kind: AttachmentKind,
     /// Wire field `mime_type`.
@@ -118,6 +127,92 @@ pub struct Attachment {
     /// Wire field `size_bytes`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub size_bytes: Option<u64>,
+    /// Where the bytes can be fetched; absent means not retrievable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<AttachmentSource>,
+    /// Wire field `thumbnail`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thumbnail: Option<AttachmentSource>,
+    /// Wire field `variant`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub variant: Option<MediaVariant>,
+    /// Wire field `width`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<u64>,
+}
+
+/// CMAEG `AttachmentSource` wire shape: a non-secret locator bound into the
+/// activity digest. Fetching still requires the event reference's authority.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum AttachmentSource {
+    /// Wire variant `nyxid_relay`.
+    #[serde(rename = "nyxid_relay")]
+    NyxidRelay {
+        /// Wire field `index`.
+        index: u64,
+    },
+    /// Wire variant `telegram`.
+    #[serde(rename = "telegram")]
+    Telegram {
+        /// Wire field `file_id`.
+        file_id: String,
+        /// Wire field `file_unique_id`.
+        file_unique_id: String,
+    },
+    /// Wire variant `url`.
+    #[serde(rename = "url")]
+    Url {
+        /// Wire field `url`.
+        url: String,
+    },
+    /// Wire variant `inline`.
+    #[serde(rename = "inline")]
+    Inline {
+        /// Wire field `pointer`.
+        pointer: String,
+    },
+}
+
+/// CMAEG `MediaVariant` wire shape.
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MediaVariant {
+    /// Wire value `photo`.
+    #[serde(rename = "photo")]
+    Photo,
+    /// Wire value `document`.
+    #[serde(rename = "document")]
+    Document,
+    /// Wire value `audio`.
+    #[serde(rename = "audio")]
+    Audio,
+    /// Wire value `voice`.
+    #[serde(rename = "voice")]
+    Voice,
+    /// Wire value `video`.
+    #[serde(rename = "video")]
+    Video,
+    /// Wire value `video_note`.
+    #[serde(rename = "video_note")]
+    VideoNote,
+    /// Wire value `animation`.
+    #[serde(rename = "animation")]
+    Animation,
+    /// Wire value `sticker`.
+    #[serde(rename = "sticker")]
+    Sticker,
+    /// Wire value `image`.
+    #[serde(rename = "image")]
+    Image,
+    /// Wire value `file`.
+    #[serde(rename = "file")]
+    File,
+    /// Wire value `media`.
+    #[serde(rename = "media")]
+    Media,
+    /// Wire value `embedded`.
+    #[serde(rename = "embedded")]
+    Embedded,
 }
 
 /// CMAEG `Capabilities` wire shape.
