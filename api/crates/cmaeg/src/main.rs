@@ -1,6 +1,6 @@
-use std::ffi::OsString;
+use std::{ffi::OsString, io::Write};
 
-const USAGE: &str = "usage: cmaeg [--print-openapi]";
+const USAGE: &str = "usage: cmaeg [--print-openapi | --audit-custom-attachments [--clear]]";
 
 fn main() {
     // `args_os` never panics: `args` aborts with exit 101 on a non-UTF-8
@@ -19,10 +19,12 @@ fn main() {
     else {
         usage();
     };
-    if !arguments.is_empty() {
-        usage();
+    match arguments.as_slice() {
+        [] => serve(),
+        ["--audit-custom-attachments"] => audit(false),
+        ["--audit-custom-attachments", "--clear"] => audit(true),
+        _ => usage(),
     }
-    serve();
 }
 
 fn usage() -> ! {
@@ -50,4 +52,36 @@ fn serve() {
         tracing::error!(%error, "CMAEG stopped");
         std::process::exit(1);
     }
+}
+
+/// The rollback audit. Stdout carries only the JSON report, so logs go to
+/// stderr, and an error is printed as its classified name alone. It exits 0
+/// only when no setting remains and every record could be read.
+fn audit(clear: bool) {
+    cmaeg::init_logging_to_stderr();
+    cmaeg::install_panic_hook();
+    let runtime = match cmaeg::runtime::build() {
+        Ok(runtime) => runtime,
+        Err(cmaeg::runtime::RuntimeError::Prewarm) => fail("blocking pool prewarm failed"),
+        Err(_) => fail("runtime unavailable"),
+    };
+    let report = match runtime.block_on(cmaeg::audit_custom_attachments(clear)) {
+        Ok(report) => report,
+        Err(error) => fail(&error.to_string()),
+    };
+    let mut stdout = std::io::stdout().lock();
+    let written = report
+        .lines()
+        .iter()
+        .try_for_each(|line| writeln!(stdout, "{line}"))
+        .and_then(|()| stdout.flush());
+    if written.is_err() {
+        fail("stdout unavailable");
+    }
+    std::process::exit(if report.complete() { 0 } else { 1 });
+}
+
+fn fail(reason: &str) -> ! {
+    eprintln!("{reason}");
+    std::process::exit(1);
 }

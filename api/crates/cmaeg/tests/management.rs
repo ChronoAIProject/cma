@@ -181,3 +181,6 @@ mod targets;
 
 #[path = "management/custom_attachments.rs"]
 mod custom_attachments;
+
+#[path = "management/audit.rs"]
+mod audit;

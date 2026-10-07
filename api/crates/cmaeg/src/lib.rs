@@ -106,13 +106,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let providers = std::sync::Arc::new(
         providers::ProviderClient::from_config(&config)?.with_service_auth(service_auth.clone()),
     );
-    let records = std::sync::Arc::new(
-        records::RecordClient::new(
-            &config.management.cma_base_url,
-            config.management.cma_service_token.as_str(),
-        )?
-        .with_service_auth(service_auth),
-    );
+    let records = std::sync::Arc::new(record_client(&config, service_auth)?);
     let creator_auth = std::sync::Arc::new(auth::CreatorAuthenticator::new(
         &config.management.nyxid_base_url,
     )?);
@@ -234,6 +228,44 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     Ok(())
 }
 
+/// The CMA channel-record client, authenticated as the gateway service.
+fn record_client(
+    config: &Config,
+    service_auth: service_auth::ServiceAuth,
+) -> Result<records::RecordClient, records::RecordError> {
+    Ok(records::RecordClient::new(
+        &config.management.cma_base_url,
+        config.management.cma_service_token.as_str(),
+    )?
+    .with_service_auth(service_auth))
+}
+
+/// Audit every stored channel definition for a custom `attachments` setting
+/// and, with `clear`, remove it, so an image older than the setting can read
+/// every record. It binds no listener and starts no worker. Every error is a
+/// classified [`channels::audit::AuditError`], so printing it never reveals a
+/// URL, token or upstream body.
+pub async fn audit_custom_attachments(
+    clear: bool,
+) -> Result<channels::audit::AuditReport, Box<dyn std::error::Error + Send + Sync>> {
+    use channels::audit::AuditError;
+    // Configuration details can name origins; the gateway's own startup log
+    // reports them, so the audit only classifies the failure.
+    let config = Config::from_env().map_err(|_| AuditError::Configuration)?;
+    let service_auth =
+        service_auth::ServiceAuth::from_config(&config).map_err(|_| AuditError::ServiceAuth)?;
+    // Prove the credential before reading any record, as the gateway does.
+    service_auth
+        .bearer()
+        .await
+        .map_err(|_| AuditError::ServiceAuth)?;
+    let records = record_client(&config, service_auth).map_err(AuditError::from)?;
+    Ok(
+        channels::audit::audit_custom_attachments(&records, &config.management.master_keys, clear)
+            .await?,
+    )
+}
+
 async fn wait_for_shutdown_signal() {
     #[cfg(unix)]
     {
@@ -277,9 +309,21 @@ pub fn install_panic_hook() {
 pub fn init_logging() {
     tracing_subscriber::fmt()
         .with_ansi(false)
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_env("RUST_LOG")
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(DEFAULT_LOG_FILTER)),
-        )
+        .with_env_filter(log_filter())
         .init();
+}
+
+/// Initialize the same logger on stderr, for operator commands whose stdout
+/// carries a machine-readable report.
+pub fn init_logging_to_stderr() {
+    tracing_subscriber::fmt()
+        .with_ansi(false)
+        .with_env_filter(log_filter())
+        .with_writer(std::io::stderr)
+        .init();
+}
+
+fn log_filter() -> tracing_subscriber::EnvFilter {
+    tracing_subscriber::EnvFilter::try_from_env("RUST_LOG")
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(DEFAULT_LOG_FILTER))
 }
