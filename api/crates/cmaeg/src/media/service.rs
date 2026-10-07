@@ -22,6 +22,7 @@ use super::{
     target::{MediaTarget, TargetError},
     transcribe::{
         meter::SttSpend,
+        openai::OpenAiCompatibleTranscriber,
         upload::{AudioTranscoder, NoTranscoder},
         DisabledTranscriber, Transcriber,
     },
@@ -351,7 +352,11 @@ pub fn compose(
         Arc::new(InlineSource),
     ));
     let decode = Arc::new(Semaphore::new(1));
-    let transcriber: Arc<dyn Transcriber> = Arc::new(DisabledTranscriber);
+    // An empty CMAEG_STT_URL leaves speech-to-text off.
+    let transcriber: Arc<dyn Transcriber> = match &config.stt.endpoint {
+        Some(endpoint) => Arc::new(OpenAiCompatibleTranscriber::new(endpoint, &config.stt)?),
+        None => Arc::new(DisabledTranscriber),
+    };
     let service = MediaService::new(MediaDeps {
         visuals: Arc::new(PlatformThumbnail::new(sources.clone(), decode.clone())),
         sources,

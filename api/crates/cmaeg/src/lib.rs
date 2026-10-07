@@ -31,7 +31,7 @@ use utoipa::OpenApi;
 
 pub use config::{
     ChannelCacheConfig, Config, ConfigError, DeliveryConfig, IngressConfig, ManagementConfig,
-    MediaConfig, MediaToolProviders, ServiceAccountConfig, SttConfig, TurnConfig,
+    MediaConfig, MediaToolProviders, ServiceAccountConfig, SttConfig, SttEndpoint, TurnConfig,
     CMAEG_ACCEPT_BUDGET_MS, CMAEG_ACK_TEXT, CMAEG_BUSY_RETRY_MAX_MS, CMAEG_CHANNEL_CACHE_MAX,
     CMAEG_CHANNEL_CACHE_TTL_MS, CMAEG_CHANNEL_NEGATIVE_TTL_MS, CMAEG_CMA_BASE_URL,
     CMAEG_CMA_SERVICE_TOKEN_FILE, CMAEG_DRAIN_SECONDS, CMAEG_FAILURE_TEXT, CMAEG_HEARTBEAT_MS,

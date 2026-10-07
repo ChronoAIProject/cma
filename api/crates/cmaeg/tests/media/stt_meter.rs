@@ -191,6 +191,7 @@ fn unset_spend_keys_take_their_documented_defaults() {
             rate_per_minute: 20,
             channel_seconds_per_hour: 3_600,
             seconds_per_hour: 36_000,
+            ..SttConfig::default()
         }
     );
     assert_eq!(config_with(&[]).unwrap(), SttConfig::default());
@@ -214,6 +215,7 @@ fn spend_keys_accept_their_bounds_inclusive() {
             rate_per_minute: 1,
             channel_seconds_per_hour: 600,
             seconds_per_hour: 600,
+            ..SttConfig::default()
         }
     );
     let high = config_with(&[
@@ -232,6 +234,7 @@ fn spend_keys_accept_their_bounds_inclusive() {
             rate_per_minute: 600,
             channel_seconds_per_hour: 86_400,
             seconds_per_hour: 360_000,
+            ..SttConfig::default()
         }
     );
 }

@@ -2,10 +2,13 @@
 //!
 //! Callers depend on [`Transcriber`] only. [`DisabledTranscriber`] is the
 //! baseline: with no speech-to-text configured, a transcript is refused as
-//! `transcriber_disabled` before anything is fetched. [`meter`] decides what
-//! a transcription costs and whether a channel may still spend, and
-//! [`upload`] turns a fetched original into the upload a transcriber receives.
+//! `transcriber_disabled` before anything is fetched;
+//! [`openai::OpenAiCompatibleTranscriber`] is selected once an endpoint is
+//! configured. [`meter`] decides what a transcription costs and whether a
+//! channel may still spend, and [`upload`] turns a fetched original into the
+//! upload a transcriber receives.
 pub mod meter;
+pub mod openai;
 pub mod upload;
 
 use bytes::Bytes;
@@ -14,7 +17,7 @@ use std::fmt;
 use tokio::time::Instant;
 
 /// An audio container a transcriber may accept, from the sniffed type.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum AudioContainer {
     Mp3,
     Mp4,
