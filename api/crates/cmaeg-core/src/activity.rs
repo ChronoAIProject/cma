@@ -21,6 +21,8 @@ pub use attachment::{
     MAX_EMOJI_BYTES, MAX_FILENAME_BYTES, MAX_FILE_ID_BYTES, MAX_FILE_UNIQUE_ID_BYTES,
     MAX_INLINE_POINTER_BYTES, MAX_MIME_PART_BYTES, MAX_NYXID_INDEX, MAX_REFERENCE_BYTES,
 };
+mod attachment_facts;
+pub use attachment_facts::FactRepairs;
 
 pub const ACTIVITY_SCHEMA_VERSION: u16 = 1;
 
