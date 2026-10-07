@@ -34,7 +34,10 @@ pub fn launch_request(
         .and_then(|ce| ce.time.clone())
         .unwrap_or(payload.timestamp);
     let kind = match facts.event {
-        Some(ce) => ActivityKind::Event { ce: *ce },
+        Some(ce) => ActivityKind::Event {
+            ce: *ce,
+            attachments: Vec::new(),
+        },
         None => ActivityKind::Message {
             text: payload.content.text.unwrap_or_default(),
             attachments: Vec::new(),

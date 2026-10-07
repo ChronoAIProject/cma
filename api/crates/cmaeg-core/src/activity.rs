@@ -58,6 +58,10 @@ pub enum ActivityKind {
     },
     Event {
         ce: CloudEvent,
+        /// Media the custom source extracted from the event; omitted when empty
+        /// so events stored without attachments keep their exact bytes.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        attachments: Vec<Attachment>,
     },
 }
 
@@ -175,9 +179,12 @@ impl Activity {
                 require_string(name, "/kind/name", 1, 512)?;
                 require_string(args, "/kind/args", 0, 32 * 1_024)?;
             }
-            ActivityKind::Event { ce } => ce.validate().map_err(|error| {
-                ValidationError::new(format!("/kind/ce{}", error.pointer), error.message)
-            })?,
+            ActivityKind::Event { ce, attachments } => {
+                ce.validate().map_err(|error| {
+                    ValidationError::new(format!("/kind/ce{}", error.pointer), error.message)
+                })?;
+                validate_attachments(attachments, &self.source, "/kind/attachments")?;
+            }
         }
         Ok(())
     }
@@ -196,7 +203,7 @@ impl Activity {
             ),
             PartitionKey::Fixed => "fixed".to_owned(),
             PartitionKey::EventSubject => match &self.kind {
-                ActivityKind::Event { ce } => {
+                ActivityKind::Event { ce, .. } => {
                     ce.subject.clone().unwrap_or_else(|| ce.source.clone())
                 }
                 _ => self.conversation.id.clone(),

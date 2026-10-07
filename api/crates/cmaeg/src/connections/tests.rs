@@ -1593,7 +1593,7 @@ async fn completion_outbox_replays_stable_system_event_after_restart_and_only_ac
     assert_eq!(first.activity.actor.id, record.origin.actor);
     assert_eq!(first.activity.conversation, record.origin.conversation);
     assert_eq!(first.conversation_id, record.origin.event.conversation_id);
-    let ActivityKind::Event { ce } = &first.activity.kind else {
+    let ActivityKind::Event { ce, .. } = &first.activity.kind else {
         panic!("completion must be a system event");
     };
     assert_eq!(ce.r#type, "gateway.connection.ready");

@@ -1,5 +1,5 @@
-//! Attachments carried by a message activity: a stable reference, an optional
-//! retrieval locator and optional platform facts.
+//! Attachments carried by a message or custom event activity: a stable
+//! reference, an optional retrieval locator and optional platform facts.
 //!
 //! The bounds below are the single definition of the attachment domain. The
 //! validator, the fact normalizer and every source's extractor share them, so a

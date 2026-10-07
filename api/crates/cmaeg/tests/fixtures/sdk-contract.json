@@ -112,6 +112,29 @@
       "type": "command"
     },
     {
+      "attachments": [
+        {
+          "duration_seconds": 1,
+          "emoji": "fixture",
+          "filename": "fixture",
+          "height": 1,
+          "kind": "image",
+          "mime_type": "fixture",
+          "reference": "fixture",
+          "size_bytes": 1,
+          "source": {
+            "type": "url",
+            "url": "https://fixture.example/attachment"
+          },
+          "thumbnail": {
+            "file_id": "fixture",
+            "file_unique_id": "fixture",
+            "type": "telegram"
+          },
+          "variant": "embedded",
+          "width": 1
+        }
+      ],
       "ce": {
         "data": true,
         "datacontenttype": "fixture",

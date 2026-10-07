@@ -316,3 +316,57 @@ fn activity_validation_reports_attachment_pointers_against_its_own_source() {
         "/kind/attachments/1/source"
     );
 }
+
+fn custom_event(attachments: Value) -> Value {
+    let mut value: Value = serde_json::from_str(include_str!("fixtures/activity.json")).unwrap();
+    let ce: Value = serde_json::from_str(include_str!("fixtures/cloudevent.json")).unwrap();
+    value["source"] = json!({"type":"custom"});
+    value["kind"] = json!({"type":"event","ce":ce,"attachments":attachments});
+    value
+}
+
+#[test]
+fn custom_event_attachments_validate_and_round_trip() {
+    let value = custom_event(json!([{
+        "reference":"order-9:item-0","kind":"image","mime_type":"image/png",
+        "source":{"type":"url","url":"https://files.example/a.png"}
+    }]));
+    let activity: Activity = serde_json::from_value(value.clone()).unwrap();
+    activity.validate().unwrap();
+    assert_eq!(serde_json::to_value(&activity).unwrap(), value);
+    let empty: Activity = serde_json::from_value(custom_event(json!([]))).unwrap();
+    empty.validate().unwrap();
+    assert!(!serde_json::to_string(&empty)
+        .unwrap()
+        .contains("attachments"));
+}
+
+#[test]
+fn custom_event_attachments_are_held_to_the_same_domain() {
+    let refused = |attachments: Value| {
+        serde_json::from_value::<Activity>(custom_event(attachments))
+            .unwrap()
+            .validate()
+            .unwrap_err()
+            .pointer
+    };
+    assert_eq!(
+        refused(json!([{"reference":"r","kind":"file","source":telegram_locator()}])),
+        "/kind/attachments/0/source"
+    );
+    assert_eq!(
+        refused(json!([{"reference":"r","kind":"file","mime_type":"Text/Plain"}])),
+        "/kind/attachments/0/mime_type"
+    );
+    assert_eq!(
+        refused(json!(vec![json!({"reference":"r","kind":"file"}); 17])),
+        "/kind/attachments"
+    );
+    let mut invalid_event = custom_event(json!([{"reference":"r","kind":"file"}]));
+    invalid_event["kind"]["ce"]["specversion"] = json!("0.3");
+    let activity: Activity = serde_json::from_value(invalid_event).unwrap();
+    assert_eq!(
+        activity.validate().unwrap_err().pointer,
+        "/kind/ce/specversion"
+    );
+}

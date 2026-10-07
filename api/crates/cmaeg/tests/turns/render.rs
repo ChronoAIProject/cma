@@ -60,13 +60,19 @@ fn cloud_event_data_is_canonical_and_bounded_without_splitting_utf8() {
     ))
     .unwrap();
     event.data = Some(json!({"z":1,"a":2}));
-    activity.kind = ActivityKind::Event { ce: event.clone() };
+    activity.kind = ActivityKind::Event {
+        ce: event.clone(),
+        attachments: Vec::new(),
+    };
     assert!(render(&activity, &definition)[0]["content"][0]["text"]
         .as_str()
         .unwrap()
         .ends_with("{\"a\":2,\"z\":1}"));
     event.data = Some(json!("🤖".repeat(10000)));
-    activity.kind = ActivityKind::Event { ce: event };
+    activity.kind = ActivityKind::Event {
+        ce: event,
+        attachments: Vec::new(),
+    };
     let input = render(&activity, &definition);
     let text = input[0]["content"][0]["text"].as_str().unwrap();
     assert!(text.split_once('\n').unwrap().1.len() <= 8192);

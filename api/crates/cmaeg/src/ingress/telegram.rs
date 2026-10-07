@@ -127,7 +127,10 @@ pub fn launch(
         schema_version: 1,
         event_id: event_id.clone(),
         kind: match facts.event {
-            Some(ce) => ActivityKind::Event { ce: *ce },
+            Some(ce) => ActivityKind::Event {
+                ce: *ce,
+                attachments: Vec::new(),
+            },
             None => ActivityKind::Message {
                 text: payload.content.text.unwrap_or_default(),
                 attachments: vec![],

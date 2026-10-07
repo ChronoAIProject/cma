@@ -99,7 +99,7 @@ impl PlatformReceiptObserver for Observer {
         activity: &'a Activity,
     ) -> BoxFuture<'a, Result<(), Problem>> {
         assert!(
-            matches!(&activity.kind,ActivityKind::Event{ce}if ce.r#type=="telegram.managed_bot_created")
+            matches!(&activity.kind,ActivityKind::Event{ce,..}if ce.r#type=="telegram.managed_bot_created")
         );
         self.calls.fetch_add(1, Ordering::SeqCst);
         Box::pin(async move {
@@ -202,7 +202,7 @@ async fn authenticated_creation_receipt_has_safe_projection_and_observer_retry()
     app.accepted(&raw).await;
     let requests = app.fixture.recorder.requests.lock().unwrap();
     let activity = &requests[0].activity;
-    let ActivityKind::Event { ce } = &activity.kind else {
+    let ActivityKind::Event { ce, .. } = &activity.kind else {
         panic!("expected creation event")
     };
     assert_eq!(ce.source, "telegram:bot:77");

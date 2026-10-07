@@ -328,7 +328,7 @@ async fn managed_creation_reserves_before_button_then_verifies_exact_child_and_k
     app.begin(false).await;
     assert!(app.peer.reserved_before_button.load(Ordering::SeqCst));
     let receipt = app.receipt(42, now(), 101);
-    let cmaeg_core::activity::ActivityKind::Event { ce } = &receipt.kind else {
+    let cmaeg_core::activity::ActivityKind::Event { ce, .. } = &receipt.kind else {
         unreachable!()
     };
     assert_eq!(ce.data.as_ref().unwrap()["bot"]["id"], "88");
