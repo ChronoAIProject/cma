@@ -32,8 +32,14 @@ fn usage() -> ! {
 
 fn serve() {
     cmaeg::init_logging();
+    // Both failures exit through `process::exit`: threads a failed prewarm
+    // left parked on its barrier end with the process, before any listener binds.
     let runtime = match cmaeg::runtime::build() {
         Ok(runtime) => runtime,
+        Err(cmaeg::runtime::RuntimeError::Prewarm) => {
+            tracing::error!("CMAEG blocking pool prewarm failed");
+            std::process::exit(1);
+        }
         Err(error) => {
             tracing::error!(%error, "CMAEG runtime unavailable");
             std::process::exit(1);
