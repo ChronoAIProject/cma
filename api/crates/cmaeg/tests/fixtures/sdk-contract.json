@@ -284,6 +284,100 @@
       "type": "inline"
     }
   ],
+  "AttachmentImage": [
+    {
+      "at_ms": 1,
+      "bytes": 1,
+      "height": 1,
+      "mime_type": "fixture",
+      "origin": "keyframe",
+      "width": 1
+    }
+  ],
+  "AttachmentImageOrigin": [
+    "normalized",
+    "platform_thumbnail",
+    "keyframe"
+  ],
+  "AttachmentStatus": [
+    "ready",
+    "pending",
+    "unavailable"
+  ],
+  "AttachmentText": [
+    {
+      "content": "fixture",
+      "page": 1,
+      "pages": 1,
+      "source": "transcript",
+      "truncated": true
+    }
+  ],
+  "AttachmentTextSource": [
+    "transcript",
+    "document"
+  ],
+  "AttachmentUnavailableReason": [
+    "not_retrievable",
+    "not_found",
+    "too_large",
+    "too_large_pixels",
+    "unsupported_format",
+    "decode_failed",
+    "timed_out",
+    "source_unavailable",
+    "transcriber_disabled",
+    "transcriber_failed",
+    "too_long",
+    "rate_limited",
+    "transform_failed",
+    "download_not_permitted",
+    "link_unavailable",
+    "images_truncated",
+    "response_budget"
+  ],
+  "AttachmentView": [
+    {
+      "detected_type": "fixture",
+      "duration_seconds": 1,
+      "filename": "fixture",
+      "height": 1,
+      "images": [
+        {
+          "at_ms": 1,
+          "bytes": 1,
+          "height": 1,
+          "mime_type": "fixture",
+          "origin": "keyframe",
+          "width": 1
+        }
+      ],
+      "index": 1,
+      "kind": "video",
+      "mime_type": "fixture",
+      "notice": "fixture",
+      "reason": "images_truncated",
+      "retry_after_ms": 1,
+      "size_bytes": 1,
+      "status": "ready",
+      "text": {
+        "content": "fixture",
+        "page": 1,
+        "pages": 1,
+        "source": "transcript",
+        "truncated": true
+      },
+      "variant": "video",
+      "width": 1
+    }
+  ],
+  "AttachmentViewKind": [
+    "auto",
+    "image",
+    "text",
+    "frames",
+    "download"
+  ],
   "BindingId": [
     "fixture"
   ],
@@ -1302,7 +1396,9 @@
     "conflict",
     "payload_too_large",
     "unsupported_media_type",
-    "internal"
+    "internal",
+    "attachment_not_found",
+    "media_unavailable"
   ],
   "ProfileMetadata": [
     {

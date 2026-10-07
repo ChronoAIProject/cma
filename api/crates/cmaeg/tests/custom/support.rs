@@ -124,6 +124,7 @@ impl App {
             delivery,
             tracker: tracker.clone(),
             public_origin: "https://gateway.example".into(),
+            media: None,
         };
         let router = http::events::router(CustomIngressState {
             ingress,

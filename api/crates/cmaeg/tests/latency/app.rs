@@ -116,6 +116,7 @@ impl App {
             delivery,
             tracker: tracker.clone(),
             public_origin: "http://127.0.0.1:8090".into(),
+            media: None,
         };
         let router = cmaeg::router_with_state(state.clone())
             .merge(http::callbacks::router(ingress))

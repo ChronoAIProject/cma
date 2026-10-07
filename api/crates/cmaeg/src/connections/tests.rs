@@ -135,6 +135,7 @@ impl Fixture {
             delivery,
             tracker: TurnTracker::new(Readiness::initialized()),
             public_origin: management.public_url.clone(),
+            media: None,
         };
         ConnectionService::new(management, tools)
     }

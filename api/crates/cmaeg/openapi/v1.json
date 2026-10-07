@@ -425,6 +425,59 @@
         ],
         "type": "object"
       },
+      "AttachmentImage": {
+        "additionalProperties": false,
+        "description": "Metadata of one image delivered with the view; never its bytes.",
+        "properties": {
+          "at_ms": {
+            "description": "The frame's position in the video, for keyframes only.",
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "bytes": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "height": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "mime_type": {
+            "type": "string"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/AttachmentImageOrigin"
+          },
+          "width": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "origin",
+          "mime_type",
+          "width",
+          "height",
+          "bytes"
+        ],
+        "type": "object"
+      },
+      "AttachmentImageOrigin": {
+        "description": "How an image was produced. It is decided per image, because one set of\nframes can mix extracted keyframes with a platform thumbnail fallback.",
+        "enum": [
+          "normalized",
+          "platform_thumbnail",
+          "keyframe"
+        ],
+        "type": "string"
+      },
       "AttachmentKind": {
         "enum": [
           "image",
@@ -521,6 +574,215 @@
             "type": "object"
           }
         ]
+      },
+      "AttachmentStatus": {
+        "enum": [
+          "ready",
+          "pending",
+          "unavailable"
+        ],
+        "type": "string"
+      },
+      "AttachmentText": {
+        "additionalProperties": false,
+        "description": "One page of a transcript or of a document's text.",
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "page": {
+            "description": "1-based page number of `content`.",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "pages": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "source": {
+            "$ref": "#/components/schemas/AttachmentTextSource"
+          },
+          "truncated": {
+            "description": "The transcript or document text was itself cut at its cap.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "source",
+          "content",
+          "page",
+          "pages",
+          "truncated"
+        ],
+        "type": "object"
+      },
+      "AttachmentTextSource": {
+        "description": "Where a page of text came from.",
+        "enum": [
+          "transcript",
+          "document"
+        ],
+        "type": "string"
+      },
+      "AttachmentUnavailableReason": {
+        "description": "Why a view is unavailable, pending on the response budget, or ready with\nsome images left out. Every value is a fixed code, so it is safe in logs.",
+        "enum": [
+          "not_retrievable",
+          "not_found",
+          "too_large",
+          "too_large_pixels",
+          "unsupported_format",
+          "decode_failed",
+          "timed_out",
+          "source_unavailable",
+          "transcriber_disabled",
+          "transcriber_failed",
+          "too_long",
+          "rate_limited",
+          "transform_failed",
+          "download_not_permitted",
+          "link_unavailable",
+          "images_truncated",
+          "response_budget"
+        ],
+        "type": "string"
+      },
+      "AttachmentView": {
+        "additionalProperties": false,
+        "description": "One attachment's facts and the requested view of its content.",
+        "properties": {
+          "detected_type": {
+            "description": "The MIME type sniffed from the bytes, when it was determined.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "duration_seconds": {
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "filename": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "height": {
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "images": {
+            "items": {
+              "$ref": "#/components/schemas/AttachmentImage"
+            },
+            "type": "array"
+          },
+          "index": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/AttachmentKind"
+          },
+          "mime_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "notice": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reason": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AttachmentUnavailableReason"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "retry_after_ms": {
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "size_bytes": {
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/AttachmentStatus"
+          },
+          "text": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AttachmentText"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "variant": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MediaVariant"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "width": {
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "index",
+          "kind",
+          "status"
+        ],
+        "type": "object"
+      },
+      "AttachmentViewKind": {
+        "description": "What the caller asks to read from an attachment.",
+        "enum": [
+          "auto",
+          "image",
+          "text",
+          "frames",
+          "download"
+        ],
+        "type": "string"
       },
       "BindingId": {
         "type": "string"
@@ -2317,7 +2579,9 @@
           "conflict",
           "payload_too_large",
           "unsupported_media_type",
-          "internal"
+          "internal",
+          "attachment_not_found",
+          "media_unavailable"
         ],
         "type": "string"
       },
@@ -4267,6 +4531,81 @@
         ],
         "tags": [
           "channels"
+        ]
+      }
+    },
+    "/events/{event_ref}/attachments/{index}": {
+      "get": {
+        "operationId": "readEventAttachment",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "event_ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "index",
+            "required": true,
+            "schema": {
+              "format": "int32",
+              "maximum": 15,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "view",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/AttachmentViewKind"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "maximum": 64,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttachmentView"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "agentBearer": []
+          }
+        ],
+        "tags": [
+          "tools"
         ]
       }
     },
