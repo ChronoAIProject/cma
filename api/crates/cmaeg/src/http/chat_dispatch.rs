@@ -54,14 +54,14 @@ pub(crate) async fn dispatch(
         request.activity.kind = cmaeg_core::activity::ActivityKind::Interaction(interaction.0);
         request.activity.occurred_at = interaction.1;
         let Ok(mut opened) = request.event_ref.open(&state.master_keys, now) else {
-            return invalid(VerificationError("event_ref_invalid"));
+            return invalid(timing.source(), VerificationError("event_ref_invalid"));
         };
         opened.payload.activity_sha256 = Some(cmaeg_core::seal::event_ref::activity_digest(
             &request.activity,
         ));
         let Ok(reference) = cmaeg_core::seal::EventRef::seal(&opened.payload, &state.master_keys)
         else {
-            return invalid(VerificationError("event_ref_invalid"));
+            return invalid(timing.source(), VerificationError("event_ref_invalid"));
         };
         request.event_ref = reference;
     }

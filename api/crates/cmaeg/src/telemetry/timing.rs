@@ -34,6 +34,10 @@ impl IngressTiming {
             verify: Mutex::new(Duration::ZERO),
         }))
     }
+    /// The bounded ingress source this request was created for.
+    pub fn source(&self) -> &'static str {
+        self.0.source
+    }
     pub fn received(&self) -> Instant {
         *self.0.received.get_or_init(Instant::now)
     }
