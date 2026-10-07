@@ -96,6 +96,9 @@ reqwest = { version = "0.12", default-features = false, features = [
     "stream",
 ] }
 ring = "0.17.14"
+# The CMAEG media job's seccomp filters (Apache-2.0 OR BSD-3-Clause), compiled
+# from typed rules into the BPF program the job installs before executing FFmpeg.
+seccompiler = "0.5"
 base64 = "0.22"
 dashmap = "6"
 subtle = "2.6"

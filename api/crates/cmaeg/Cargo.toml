@@ -44,6 +44,8 @@ pulldown-cmark = { version = "0.13", default-features = false, features = ["html
 [target.'cfg(target_os = "linux")'.dependencies]
 # Process hardening: prctl(PR_SET_DUMPABLE).
 libc = { workspace = true }
+# The media job's seccomp filters.
+seccompiler = { workspace = true }
 
 [dev-dependencies]
 # The progressive JPEG fixture of the image decode bound test.
