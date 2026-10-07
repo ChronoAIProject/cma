@@ -17,6 +17,7 @@ pub async fn create(
     request: ChannelCreateRequest,
     record_id: RecordId,
 ) -> Result<CreatedChannel, ManagementError> {
+    custom_attachments_allowed(state, &request.sources)?;
     let uuid = uuid::Uuid::parse_str(record_id.as_str()).map_err(|_| {
         ManagementError::Invalid(ValidationError::new("/record_id", "must be a UUID"))
     })?;

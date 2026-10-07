@@ -948,6 +948,14 @@
       "telegram_webhook_secret": "fixture"
     }
   ],
+  "CustomAttachments": [
+    {
+      "origins": [
+        "https://fixture.example"
+      ],
+      "pointer": "/attachments"
+    }
+  ],
   "CustomAuth": [
     {
       "key_id": "fixture",
@@ -1709,6 +1717,12 @@
       "type": "nyxid_relay"
     },
     {
+      "attachments": {
+        "origins": [
+          "https://fixture.example"
+        ],
+        "pointer": "/attachments"
+      },
       "auth": {
         "key_id": "fixture",
         "type": "hmac"
@@ -1793,6 +1807,12 @@
       "type": "nyxid_relay"
     },
     {
+      "attachments": {
+        "origins": [
+          "https://fixture.example"
+        ],
+        "pointer": "/attachments"
+      },
       "auth": {
         "key_id": "fixture",
         "type": "hmac"

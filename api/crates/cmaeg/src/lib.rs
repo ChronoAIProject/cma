@@ -127,6 +127,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         config.delivery.reply_timeout,
     )?);
     state.telegram = Some(telegram.clone());
+    state.media_enabled = config.media.enabled;
     let _reachability_probe = state.readiness.start_probe(state.records.clone());
     let tracker = turns::TurnTracker::new(state.readiness.clone());
     let (delivery, outcomes) = tokio::sync::mpsc::channel(256);

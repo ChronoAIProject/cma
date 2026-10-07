@@ -12,9 +12,14 @@ use crate::{
     require_string, ValidationError,
 };
 
+mod custom_attachments;
 mod platform;
 mod secrets;
 mod telegram;
+pub use custom_attachments::{
+    CustomAttachments, DEFAULT_CUSTOM_ATTACHMENT_POINTER, MAX_CUSTOM_ATTACHMENT_ORIGINS,
+    MAX_CUSTOM_ATTACHMENT_POINTER_BYTES,
+};
 pub use secrets::{ChannelSecrets, Secret};
 mod validation;
 pub use platform::Platform;
@@ -117,6 +122,9 @@ pub enum Source {
         prompt_template: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         schema: Option<Value>,
+        // Omitted when absent, so definitions without it keep their bytes.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        attachments: Option<CustomAttachments>,
     },
 }
 
@@ -330,6 +338,7 @@ impl ChannelDefinition {
                     auth,
                     prompt_template,
                     schema,
+                    attachments,
                 } => {
                     if has_custom {
                         return Err(ValidationError::new(
@@ -353,6 +362,9 @@ impl ChannelDefinition {
                             format!("{pointer}/schema"),
                             "must be null in v1",
                         ));
+                    }
+                    if let Some(attachments) = attachments {
+                        attachments.validate(&format!("{pointer}/attachments"))?;
                     }
                 }
             }
