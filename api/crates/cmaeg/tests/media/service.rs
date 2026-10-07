@@ -209,12 +209,14 @@ async fn audio_is_transcribed_normalized_and_paged() {
     let Derived::Transcript {
         document,
         usage_seconds,
+        truncated_at_seconds,
     } = &*derived
     else {
         panic!("{derived:?}");
     };
     assert_eq!(document.pages, ["line one\nline two"]);
     assert_eq!(*usage_seconds, Some(7));
+    assert_eq!(*truncated_at_seconds, None);
     // Text is not audio, whatever the transcriber accepts.
     let text = files(&source, &[("not-audio", b"just words".to_vec())]);
     assert_eq!(

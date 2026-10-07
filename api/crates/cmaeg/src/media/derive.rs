@@ -65,6 +65,11 @@ pub enum Derived {
     Transcript {
         document: TextDocument,
         usage_seconds: Option<u32>,
+        /// Where the audio was cut before transcription, in seconds; `None`
+        /// when the whole recording was transcribed. Only an audio transform
+        /// that shortens long recordings sets it, so agents can be told the
+        /// transcript is partial.
+        truncated_at_seconds: Option<u32>,
     },
     Visuals(Vec<NormalizedImage>),
     Metadata {
@@ -99,10 +104,12 @@ impl fmt::Debug for Derived {
             Self::Transcript {
                 document,
                 usage_seconds,
+                truncated_at_seconds,
             } => formatter
                 .debug_struct("Transcript")
                 .field("document", document)
                 .field("usage_seconds", usage_seconds)
+                .field("truncated_at_seconds", truncated_at_seconds)
                 .finish(),
             Self::Visuals(frames) => formatter.debug_tuple("Visuals").field(frames).finish(),
             Self::Metadata { mime, family } => formatter
@@ -346,6 +353,8 @@ impl Pipeline {
         Ok(Derived::Transcript {
             document: TextDocument::from_normalized(&text::normalize(&transcript.text), false),
             usage_seconds: transcript.usage_seconds,
+            // The direct upload sends the whole recording.
+            truncated_at_seconds: None,
         })
     }
 
