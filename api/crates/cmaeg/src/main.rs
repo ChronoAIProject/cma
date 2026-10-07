@@ -32,6 +32,7 @@ fn usage() -> ! {
 
 fn serve() {
     cmaeg::init_logging();
+    cmaeg::install_panic_hook();
     // Both failures exit through `process::exit`: threads a failed prewarm
     // left parked on its barrier end with the process, before any listener binds.
     let runtime = match cmaeg::runtime::build() {
