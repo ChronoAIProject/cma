@@ -1345,7 +1345,7 @@ context is unchanged. Both `readEventContext` and `verifyEventContext` report it
 | --- | --- |
 | `read_tool` | The binding installs `readEventAttachment`: a profile binding of a provider named in `CMAEG_MEDIA_TOOL_PROVIDERS`. Existing-agent bindings and other providers report `false`. |
 | `transcripts` | A transcriber is configured, so audio and video can be transcribed. |
-| `visuals` | `keyframes` when the gateway extracts video keyframes; otherwise `platform_thumbnail` for natively received Telegram activities, whose videos can carry the platform's preview image; otherwise `none`. |
+| `visuals` | `keyframes` while the operator's media transformer is configured, for every source (see [Event attachments](#event-attachments)); otherwise `platform_thumbnail` for natively received Telegram activities, whose videos can carry the platform's preview image; otherwise `none`. |
 | `downloads` | The binding may save originals with `readEventAttachment` view `download`: `read_tool` is true and the profile's `action_mode` is `autonomous` (see [Media downloads](#media-downloads)). Guarded and other bindings report `false`. |
 
 ### Event attachments
@@ -1394,13 +1394,33 @@ because libwebp compresses transparency losslessly by default. A lossy WebP
 that is opaque or carries uncompressed transparency is normalized.
 
 `download` answers with a single-use link to the original, never with
-content; see [Media downloads](#media-downloads). Frames are the platform's own thumbnail where one exists (native
-Telegram) and video keyframes where the gateway extracts them. A video with
-neither returns `unavailable` with `not_retrievable` and the notice `frames are
-not available for this attachment on this gateway; the transcript is`. A video's
-`auto` view is `ready` when either its frames or its transcript is; the other
-part's outcome is in `notice`, for example `transcript pending` or `frames
-unavailable: not_retrievable`. When both fail, `reason` is the transcript's.
+content; see [Media downloads](#media-downloads).
+
+A video's frames depend on the operator's media transformer, a sandboxed
+FFmpeg the gateway runs for itself. Without it, frames are the platform's own
+thumbnail where one exists (native Telegram), with `origin`
+`platform_thumbnail` and no `at_ms`. With it configured, frames are up to
+`CMAEG_MEDIA_VIDEO_FRAMES` (at most 6) keyframes spread over the video's
+duration, each re-encoded within 768 px on its longer side, with `origin`
+`keyframe` and its position in `at_ms`, in order; when a keyframe set fails, a
+native Telegram video falls back to its platform thumbnail, which carries no
+position, and any other video returns `unavailable` with the transform's
+reason. A video with nothing to take frames from returns `unavailable` with
+`not_retrievable` and the notice `frames are not available for this attachment
+on this gateway; the transcript is`. A video's `auto` view is `ready` when
+either its frames or its transcript is; the other part's outcome is in
+`notice`, for example `transcript pending` or `frames unavailable:
+not_retrievable`. When both fail, `reason` is the transcript's.
+
+Transcripts cover audio, and the audio track of video. Without the media
+transformer, only files of at most 2.4 MB (by default) in a container the
+speech-to-text endpoint accepts are transcribed; with it, any container the
+gateway admits up to `CMAEG_MEDIA_MAX_BYTES`. Audio longer than the operator's
+speech-to-text limit (10 minutes by default) is then transcribed from its
+start, and its view carries the notice `transcript covers only the first m:ss
+of the audio` (`h:mm:ss` from one hour), after any other notice.
+`text.truncated` is unaffected: it says only whether the transcript's text was
+cut.
 
 The response is an `AttachmentView`:
 
@@ -1425,15 +1445,15 @@ still says how many pages exist. The reasons are:
 | `not_found` | unavailable | The source answered not found, or the page is past the last page. |
 | `too_large` | unavailable | The item exceeds `CMAEG_MEDIA_MAX_BYTES`. |
 | `too_large_pixels` | unavailable | The image exceeds 18 megapixels or 12 000 px on a side. |
-| `unsupported_format` | unavailable | The sniffed format is not supported for this view, or is a WebP compressed losslessly. |
-| `decode_failed` | unavailable | The bytes could not be decoded. |
-| `timed_out` | unavailable | The background job hit its 90-second cap or a deadline. |
+| `unsupported_format` | unavailable | The sniffed format is not supported for this view, is a WebP compressed losslessly, or uses a codec the media transformer's FFmpeg does not decode. |
+| `decode_failed` | unavailable | The bytes could not be decoded, by the gateway or by the media transformer's FFmpeg. |
+| `timed_out` | unavailable | The background job hit its 90-second cap or a deadline, or a sandboxed transform ran out of time or CPU, or a keyframe set's deadline passed before its first frame. |
 | `source_unavailable` | unavailable | NyxID, Telegram or the custom origin failed transiently, refused the credential, or was busy. |
 | `transcriber_disabled` | unavailable | No transcriber is configured. |
 | `transcriber_failed` | unavailable | The transcriber call failed. |
 | `too_long` | unavailable | The media exceeds the speech-to-text limits. |
 | `rate_limited` | unavailable | The channel's fetch quota, a speech-to-text budget, or a download-link mint quota refused the item. It is a view status, never a 429. |
-| `transform_failed` | unavailable | A sandboxed media job failed. |
+| `transform_failed` | unavailable | The media transformer's sandboxed job itself failed: its memory watchdog stopped it, it was killed, or its sandbox was unavailable. |
 | `download_not_permitted` | unavailable | This binding may not download originals: it is not autonomous, or its provider does not install the gateway tools. |
 | `link_unavailable` | unavailable | No download link can be produced, such as for an event too large to fit a link's 4096-character token limit. |
 | `images_truncated` | ready | Some images were left out to keep one result within its image budget. |
@@ -1917,7 +1937,8 @@ Text means a MIME type under `text/`, or `application/json`, `application/xml`,
     (Telegram and Lark Opus voice included) up to the 20 MiB fetch cap. Audio
     longer than the operator's speech-to-text limit (10 minutes by default) is
     transcribed from its start and marked
-    `[transcript covers the first m:ss]`;
+    `[transcript covers the first m:ss]`; its tool view says the same in
+    `notice` (see [Event attachments](#event-attachments));
   - excerpts of at most 4 KiB are taken from text-like files of at most
     256 KiB, or of unknown size;
   - work not ready within `CMAEG_MEDIA_PREPARE_BUDGET_MS` renders
@@ -1925,15 +1946,9 @@ Text means a MIME type under `text/`, or `application/json`, `application/xml`,
     tool-bearing agents can read it later;
   - failures render `transcript unavailable: <reason>`;
   - transcripts and excerpts are nonce-fenced data, never instructions.
-- **Frames and transform reasons.** With the media transformer configured, a
-  video's frames are up to `CMAEG_MEDIA_VIDEO_FRAMES` (at most 6) keyframes
-  spread over its duration, each at most 768 px on its longer side and carrying
-  its position; when a keyframe set fails, a native Telegram video falls back
-  to its platform thumbnail, which carries no position. The reason
-  `transform_failed` means the sandboxed transform itself failed (stopped by
-  its memory watchdog, killed, or its sandbox unavailable); a transform that
-  ran out of time is `timed_out`, and media FFmpeg could not decode is
-  `decode_failed`, or `unsupported_format` for an unknown codec.
+- **Transform reasons.** A status note's reason uses the codes of
+  [Event attachments](#event-attachments), including those the media
+  transformer produces.
 - **Sanitization.** C0 and C1 controls other than newline and tab, and the
   bidirectional formatting characters, are removed from every value the block
   renders.

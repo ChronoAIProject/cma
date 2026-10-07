@@ -780,16 +780,20 @@ unchanged. A keyframe set probes the video and extracts up to
 `CMAEG_MEDIA_VIDEO_FRAMES` JPEG keyframes at evenly spread positions (one at
 the start when the duration is unknown), skipping any frame that fails, and
 normalizes each to a 768 px preview with its position. A failed set falls back
-to a native Telegram thumbnail when the attachment has one. Every
-speech-to-text input, audio or the audio track of video in any container, is
-transcoded to 16 kHz mono PCM covering at most
-`T = min(CMAEG_STT_MAX_SECONDS, ⌊(CMAEG_STT_MAX_BYTES − 44) / 32000⌋)` seconds
-(600 at the defaults) and uploaded as WAV, metered exactly at
-`⌈PCM bytes / 32000⌉` seconds; a transcript cut at `T` carries the notice
-`[transcript covers the first m:ss]`. A failed transcode still uploads the
-original directly when the direct path accepts it; otherwise the transform's
-reason is reported. An endpoint whose `CMAEG_STT_FORMATS` omits `wav` keeps the
-direct path.
+to a native Telegram thumbnail when the attachment has one.
+`readEventAttachment` view `frames` reports keyframes with `origin` `keyframe`
+and `at_ms`, and the fallback as `platform_thumbnail` without a position; event
+context reports `inbound_media.visuals` as `keyframes` for every source once
+the transformer is configured. Every speech-to-text input, audio or the audio
+track of video in any container, is transcoded to 16 kHz mono PCM covering at
+most `T = min(CMAEG_STT_MAX_SECONDS, ⌊(CMAEG_STT_MAX_BYTES − 44) / 32000⌋)`
+seconds (600 at the defaults) and uploaded as WAV, metered exactly at `⌈PCM
+bytes / 32000⌉` seconds; a transcript cut at `T` is marked `[transcript covers
+the first m:ss]` in turn input, and its `readEventAttachment` view carries the
+notice `transcript covers only the first m:ss of the audio`. A failed transcode
+still uploads the original directly when the direct path accepts it; otherwise
+the transform's reason is reported. An endpoint whose `CMAEG_STT_FORMATS` omits
+`wav` keeps the direct path.
 
 The pod has **one transform slot**. A set holds it from its first job to its
 last, so one FFmpeg process and one job directory exist at a time. Audio sets
