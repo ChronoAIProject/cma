@@ -15,6 +15,7 @@ pub mod image;
 pub mod jobs;
 pub mod sniff;
 pub mod source;
+pub mod text;
 
 use crate::MediaConfig;
 use std::fmt;
