@@ -130,7 +130,7 @@ impl AudioTranscoder for FakeTranscoder {
     }
 }
 
-/// A custom message on `channel` carrying one audio note of `length` bytes.
+/// A custom message on `channel` carrying one MP3 note of `length` bytes.
 pub(super) fn voice(
     source: &FakeSource,
     channel: &str,
@@ -138,7 +138,19 @@ pub(super) fn voice(
     length: usize,
     edit: impl FnOnce(&mut Attachment),
 ) -> MediaTarget {
-    source.serve(&url(name), Ok(mp3_of(length)));
+    audio_note(source, channel, name, mp3_of(length), edit)
+}
+
+/// A custom message on `channel` carrying one audio attachment, served as
+/// `body`.
+pub(super) fn audio_note(
+    source: &FakeSource,
+    channel: &str,
+    name: &str,
+    body: Vec<u8>,
+    edit: impl FnOnce(&mut Attachment),
+) -> MediaTarget {
+    source.serve(&url(name), Ok(body));
     let mut item = attachment(AttachmentKind::Audio, Some(url(name)));
     edit(&mut item);
     target_on(channel, SourceKind::Custom, message(vec![item]))

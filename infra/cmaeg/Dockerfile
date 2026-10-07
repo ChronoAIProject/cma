@@ -150,6 +150,7 @@ EXPOSE 9091
 # CMAEG_MEDIA_ENABLED=false keeps inbound media refused as attachment_unsupported.
 # Inbound media (off by default): CMAEG_MEDIA_MAX_BYTES=20971520, CMAEG_MEDIA_INFLIGHT_BYTES=67108864, CMAEG_MEDIA_RESPONSE_BYTES=25165824, CMAEG_MEDIA_MAX_JOBS=6, CMAEG_MEDIA_CACHE_BYTES=33554432, CMAEG_MEDIA_RATE_PER_MINUTE=60 and CMAEG_MEDIA_DOWNLOAD_BYTES_PER_HOUR=268435456.
 # Speech-to-text spend: CMAEG_STT_MAX_SECONDS=600, CMAEG_STT_MAX_BYTES=20971520, CMAEG_STT_RATE_PER_MINUTE=20, CMAEG_STT_CHANNEL_SECONDS_PER_HOUR=3600 and CMAEG_STT_SECONDS_PER_HOUR=36000, validated at startup even while speech-to-text is off.
+# Speech-to-text (off while CMAEG_STT_URL is empty): CMAEG_STT_MODEL, CMAEG_STT_FORMATS, CMAEG_STT_TIMEOUT_MS; inject CMAEG_STT_API_KEY from the cmaeg-stt Secret.
 # See docs/CMA_Operations.md.
 ENTRYPOINT ["/usr/local/bin/cmaeg"]
 # Health is asserted by the Kubernetes probes in infra/cmaeg/deployment.yaml.

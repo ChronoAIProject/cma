@@ -77,6 +77,12 @@ spec:
                 secretKeyRef:
                   name: cmaeg-cma-service-token
                   key: CMAEG_CMA_CLIENT_SECRET
+            - name: CMAEG_STT_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: cmaeg-stt
+                  key: CMAEG_STT_API_KEY
+                  optional: true
           securityContext:
             allowPrivilegeEscalation: false
             privileged: false

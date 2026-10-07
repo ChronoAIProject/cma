@@ -24,7 +24,8 @@ futures-util = { workspace = true }
 governor = { workspace = true }
 metrics = { workspace = true }
 metrics-exporter-prometheus = { workspace = true }
-reqwest = { workspace = true }
+# Speech-to-text uploads are multipart forms.
+reqwest = { workspace = true, features = ["multipart"] }
 ring = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
