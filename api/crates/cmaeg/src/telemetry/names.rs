@@ -17,6 +17,12 @@ pub const MEDIA_ACTIVITY_DEGRADED: &str = "cmaeg_media_activity_degraded_total";
 pub const MEDIA_FACTS_REPAIRED: &str = "cmaeg_media_facts_repaired_total";
 pub const MEDIA_ITEMS: &str = "cmaeg_media_items_total";
 pub const MEDIA_RELAY_CORRELATION: &str = "cmaeg_media_relay_correlation_total";
+pub const MEDIA_FETCH_SECONDS: &str = "cmaeg_media_fetch_seconds";
+pub const MEDIA_FETCH_BYTES: &str = "cmaeg_media_fetch_bytes_total";
+pub const MEDIA_INFLIGHT_BYTES: &str = "cmaeg_media_inflight_bytes";
+pub const MEDIA_RESPONSE_BYTES: &str = "cmaeg_media_response_bytes";
+pub const MEDIA_JOBS_INFLIGHT: &str = "cmaeg_media_jobs_inflight";
+pub const MEDIA_CACHE_BYTES: &str = "cmaeg_media_cache_bytes";
 pub const SOURCE: &str = "source";
 pub const COLD: &str = "cold";
 pub const OUTCOME: &str = "outcome";
@@ -50,4 +56,19 @@ pub const COUNTERS: [&str; 10] = [
 pub const GAUGES: [&str; 2] = [TURNS_INFLIGHT, CHANNELS_CACHED];
 pub const BUCKETS: [f64; 11] = [
     0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0,
+];
+/// Media metrics carry their own units and descriptions, so they are listed
+/// apart from the generic families above.
+pub const MEDIA_HISTOGRAMS: [&str; 1] = [MEDIA_FETCH_SECONDS];
+pub const MEDIA_COUNTERS: [&str; 1] = [MEDIA_FETCH_BYTES];
+pub const MEDIA_GAUGES: [&str; 4] = [
+    MEDIA_INFLIGHT_BYTES,
+    MEDIA_RESPONSE_BYTES,
+    MEDIA_JOBS_INFLIGHT,
+    MEDIA_CACHE_BYTES,
+];
+/// Media work spans an 8 s tool budget, a 15 s preparation budget and a 90 s
+/// background budget, well past the 10 s top of [`BUCKETS`].
+pub const MEDIA_BUCKETS: [f64; 13] = [
+    0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 15.0, 30.0, 60.0, 90.0,
 ];

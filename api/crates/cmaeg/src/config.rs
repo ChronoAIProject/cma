@@ -16,7 +16,11 @@ mod turns;
 pub use cache::*;
 pub use delivery::*;
 pub use ingress::*;
-pub use media::{MediaConfig, MediaToolProviders, CMAEG_MEDIA_ENABLED, CMAEG_MEDIA_TOOL_PROVIDERS};
+pub use media::{
+    MediaConfig, MediaToolProviders, CMAEG_MEDIA_CACHE_BYTES, CMAEG_MEDIA_DOWNLOAD_BYTES_PER_HOUR,
+    CMAEG_MEDIA_ENABLED, CMAEG_MEDIA_INFLIGHT_BYTES, CMAEG_MEDIA_MAX_BYTES, CMAEG_MEDIA_MAX_JOBS,
+    CMAEG_MEDIA_RATE_PER_MINUTE, CMAEG_MEDIA_RESPONSE_BYTES, CMAEG_MEDIA_TOOL_PROVIDERS,
+};
 pub use service_account::*;
 pub use turns::*;
 
@@ -144,10 +148,7 @@ impl Config {
         let providers_json = env::var(CMAEG_PROVIDERS).unwrap_or_else(|_| "[]".to_owned());
         let providers = ProviderRegistry::parse(&providers_json)?;
         // Validated against the registry, so it can only follow it.
-        let media = MediaConfig {
-            tool_providers: media::from_env(&providers)?,
-            enabled: media::enabled_from_env()?,
-        };
+        let media = media::config_from_env(&providers)?;
         let provider_connect_timeout = positive_duration(CMAEG_PROVIDER_CONNECT_TIMEOUT_MS, 2_000)?;
         let provider_request_timeout =
             positive_duration(CMAEG_PROVIDER_REQUEST_TIMEOUT_MS, 30_000)?;
