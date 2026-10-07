@@ -70,7 +70,11 @@ impl MediaDownloads {
         let Some(key) = hex_bytes::<JTI_BYTES>(jti) else {
             return false;
         };
-        self.redeemed.entry(key).or_insert(()).is_fresh()
+        // Only `or_insert_with` coalesces simultaneous first insertions of one
+        // key into a single fresh entry; `or_insert` is a get then an insert,
+        // so every caller that misses the get reports fresh and one link
+        // would be served to each racing request.
+        self.redeemed.entry(key).or_insert_with(|| ()).is_fresh()
     }
 
     /// A global and a per-channel stream slot, without waiting.
@@ -177,6 +181,35 @@ mod tests {
         assert!(!downloads.redeem(jti));
         assert!(downloads.redeem("fedcba9876543210fedcba9876543210"));
         assert!(!downloads.redeem("short"));
+    }
+
+    #[test]
+    fn simultaneous_redemptions_of_one_jti_have_one_winner() {
+        const THREADS: usize = 8;
+        // Each round is one jti that every thread redeems at once; the race
+        // is a narrow window, so many rounds make a regression show.
+        const ROUNDS: u32 = 1_000;
+        let downloads = MediaDownloads::default();
+        for round in 0..ROUNDS {
+            let jti = format!("{round:032x}");
+            let barrier = std::sync::Barrier::new(THREADS);
+            let winners = std::thread::scope(|scope| {
+                let redemptions: Vec<_> = (0..THREADS)
+                    .map(|_| {
+                        scope.spawn(|| {
+                            barrier.wait();
+                            downloads.redeem(&jti)
+                        })
+                    })
+                    .collect();
+                redemptions
+                    .into_iter()
+                    .map(|redemption| redemption.join().unwrap())
+                    .filter(|fresh| *fresh)
+                    .count()
+            });
+            assert_eq!(winners, 1, "round {round}");
+        }
     }
 
     #[test]
