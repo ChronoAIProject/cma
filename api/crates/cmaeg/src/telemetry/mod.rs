@@ -62,6 +62,12 @@ fn describe_media() {
         "Media derivation time by artifact and outcome"
     );
     let _ = metrics::histogram!(names::MEDIA_DERIVE);
+    metrics::describe_histogram!(
+        names::FENCE_WAIT,
+        metrics::Unit::Seconds,
+        "Time a turn waited for its conversation predecessor to start"
+    );
+    let _ = metrics::histogram!(names::FENCE_WAIT);
     metrics::describe_counter!(
         names::MEDIA_FETCH_BYTES,
         metrics::Unit::Bytes,

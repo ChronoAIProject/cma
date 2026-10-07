@@ -26,6 +26,7 @@ pub const MEDIA_CACHE_BYTES: &str = "cmaeg_media_cache_bytes";
 pub const MEDIA_DERIVE: &str = "cmaeg_media_derive_seconds";
 pub const STT_AUDIO_SECONDS: &str = "cmaeg_stt_audio_seconds_total";
 pub const STT_CHANNELS_AT_BUDGET: &str = "cmaeg_stt_channels_at_budget";
+pub const FENCE_WAIT: &str = "cmaeg_media_fence_wait_seconds";
 pub const SOURCE: &str = "source";
 pub const COLD: &str = "cold";
 pub const OUTCOME: &str = "outcome";
@@ -37,6 +38,7 @@ pub const KIND: &str = "kind";
 pub const FIELD: &str = "field";
 pub const DETAIL: &str = "detail";
 pub const OP: &str = "op";
+pub const MEDIA: &str = "media";
 pub const HISTOGRAMS: [&str; 6] = [
     INGRESS_TO_PROVIDER,
     RESTORE_DURATION,
@@ -63,7 +65,7 @@ pub const BUCKETS: [f64; 11] = [
 ];
 /// Media metrics carry their own units and descriptions, so they are listed
 /// apart from the generic families above.
-pub const MEDIA_HISTOGRAMS: [&str; 2] = [MEDIA_FETCH_SECONDS, MEDIA_DERIVE];
+pub const MEDIA_HISTOGRAMS: [&str; 3] = [MEDIA_FETCH_SECONDS, MEDIA_DERIVE, FENCE_WAIT];
 pub const MEDIA_COUNTERS: [&str; 2] = [MEDIA_FETCH_BYTES, STT_AUDIO_SECONDS];
 pub const MEDIA_GAUGES: [&str; 5] = [
     MEDIA_INFLIGHT_BYTES,
