@@ -1,9 +1,10 @@
-use cmaeg::media::transform::argv::{
-    MEDIA_JOB_FLAG as MEDIA_JOB, SANDBOX_CHECK_FLAG as SANDBOX_CHECK,
+use cmaeg::media::transform::{
+    argv::{MEDIA_JOB_FLAG as MEDIA_JOB, SANDBOX_CHECK_FLAG as SANDBOX_CHECK},
+    self_test::SELF_TEST_FLAG as SELF_TEST,
 };
-use std::{ffi::OsString, io::Write};
+use std::{ffi::OsString, io::Write, path::Path};
 
-const USAGE: &str = "usage: cmaeg [--print-openapi | --audit-custom-attachments [--clear] | --media-job <op> <bin-dir> <job-dir> [arg] | --media-sandbox-check]";
+const USAGE: &str = "usage: cmaeg [--print-openapi | --audit-custom-attachments [--clear] | --media-job <op> <bin-dir> <job-dir> [arg] | --media-sandbox-check | --media-self-test <fixtures-dir>]";
 
 fn main() {
     // `args_os` never panics: `args` aborts with exit 101 on a non-UTF-8
@@ -29,10 +30,16 @@ fn main() {
         std::process::exit(1);
     }
     // Modes that need no runtime are matched on the raw arguments first, so
-    // they run before one exists.
+    // they run before one exists. The self-test builds its own, and takes
+    // its fixtures path as given, UTF-8 or not.
     if arguments == ["--print-openapi"] {
         print!("{}", cmaeg::openapi::snapshot());
         return;
+    }
+    if let [flag, fixtures] = arguments.as_slice() {
+        if flag == SELF_TEST {
+            media_self_test(Path::new(fixtures));
+        }
     }
     let Some(arguments) = arguments
         .iter()
@@ -47,6 +54,14 @@ fn main() {
         ["--audit-custom-attachments", "--clear"] => audit(true),
         _ => usage(),
     }
+}
+
+/// The build-time media self-test. Its report is the only stdout; logs go
+/// to stderr.
+fn media_self_test(fixtures: &Path) -> ! {
+    cmaeg::init_logging_to_stderr();
+    cmaeg::install_panic_hook();
+    cmaeg::media::transform::self_test::main(fixtures)
 }
 
 fn usage() -> ! {

@@ -7,7 +7,9 @@
 //! mode reports `name=value` lines on stdout; `stdout-flood <bytes>` writes
 //! that many bytes and exits 0, and without a count it writes until stdout
 //! fails. The parent's pid comes from `/proc/self/status`, because the
-//! sandbox refuses `getppid`. The `denied` mode lives in its own module.
+//! sandbox refuses `getppid`. The `denied` mode lives in its own module, as
+//! does `media`, which writes well-formed output for whichever op runs it;
+//! `broken` exits 1.
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 fn main() {
@@ -22,6 +24,9 @@ fn main() {
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 #[path = "media_probe/denied.rs"]
 mod denied;
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[path = "media_probe/media.rs"]
+mod media;
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 mod probe {
@@ -37,6 +42,8 @@ mod probe {
         let ppid = parent_pid();
         match mode.split_whitespace().collect::<Vec<_>>().as_slice() {
             ["denied"] => crate::denied::denied(ppid),
+            ["media"] => crate::media::media(&program_name()),
+            ["broken"] => std::process::exit(1),
             ["clone3"] => report(
                 "clone3",
                 // SAFETY: a null clone_args with size 0 is refused before use.
@@ -111,13 +118,17 @@ mod probe {
         report("kill_self", kill);
         report("tgkill_self", tgkill);
         println!("read={}", input.len());
+        println!("program={}", program_name());
+    }
+
+    /// argv[0]'s basename: `ffmpeg` or `ffprobe`.
+    fn program_name() -> String {
         let program = std::env::args_os().next().unwrap_or_default();
-        let name = std::path::Path::new(&program)
+        std::path::Path::new(&program)
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or_default()
-            .to_owned();
-        println!("program={name}");
+            .to_owned()
     }
 
     fn inode_flood() {
