@@ -34,6 +34,15 @@ The wire authority is [CMAEG protocol](CMAEG_Protocol.md). Configuration is load
 once before binding; invalid values fail startup. Restart through the drain
 procedure to apply changes. Configuration is operator-owned.
 
+Before loading configuration, the gateway builds its Tokio runtime and starts
+16 blocking threads that it keeps for its whole lifetime. When the OS refuses
+new threads, for example at the pod PID limit, DNS lookups and file IO queue on
+those threads until one is free instead of stalling until thread creation
+recovers. If the 16 threads do not all start within ten seconds, the gateway
+logs `CMAEG blocking pool prewarm failed` and exits 1 before any listener
+binds. `--print-openapi` builds no runtime. This behaviour is unconditional; it
+applies with all media flags off.
+
 ## Configuration
 
 | Environment key | Type | Default | Meaning |
@@ -110,6 +119,11 @@ event IDs, request IDs, credentials, and message contents are never metric label
 `cold=true` belongs to the request that initiated the restore flight; concurrent
 waiters and cache hits do not claim to have initiated it. A stale cache lookup
 that starts a background refresh also triggers a restore.
+
+The process holds the 16 prewarmed blocking threads in addition to one Tokio
+worker per CPU, so a thread count at that floor is expected, not a leak. While
+the pod is at its PID limit, slow DNS resolution or file IO means that work is
+waiting for one of those threads rather than for a new one.
 
 Every public router generates a UUID v4 `x-request-id` when the caller did not
 provide one, propagates it in the response, and creates one
