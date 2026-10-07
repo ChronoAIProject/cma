@@ -7,6 +7,8 @@
 //! sequentially inside the one test below.
 #[path = "media/image_fixtures.rs"]
 pub mod image_fixtures;
+#[path = "media/webp_fixtures.rs"]
+pub mod webp_fixtures;
 
 use cmaeg::media::image::{
     normalize_blocking, ImageError, NormalizedImage, DECODE_PEAK_BUDGET, DECODE_WALL_BUDGET, FULL,
@@ -18,6 +20,7 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
     time::Instant,
 };
+use webp_fixtures as webp;
 
 struct Counting;
 
@@ -198,10 +201,20 @@ fn image_decode_bounds() {
         &profiled,
     );
     drop(profiled);
-    let webp = fixtures::webp_lossless(&rgba);
+    let lossless = fixtures::webp_lossless(&rgba);
     drop(rgba);
-    measure(&format!("lossless webp {WIDTH}x{HEIGHT}"), &webp);
-    drop(webp);
+    measure(&format!("lossless webp {WIDTH}x{HEIGHT}"), &lossless);
+    drop(lossless);
+    // `image` cannot write lossy WebP, so a small lossy frame on a canvas at
+    // the limit stands in. The decoder composes it on a full-size RGBA
+    // canvas and copies the canvas into a full-size output, the most a lossy
+    // WebP allocates.
+    let animation = webp::animation(webp::ALPHA, WIDTH, HEIGHT, &[webp::lossy_frame()]);
+    measure(
+        &format!("lossy webp animation {WIDTH}x{HEIGHT}"),
+        &animation,
+    );
+    drop(animation);
 
     // Bounded by the allocation limit rather than the pixel limit.
     let deep = fixtures::png_rgba16(4000, 4000);
