@@ -1,7 +1,7 @@
 //! Channels wire types for the independent CMAEG v1 protocol.
 use super::{
     BindingId, ChannelId, ConformanceLevel, EventWorkerProfile, GroupAdmission, NyxIdIdentity,
-    PartitionKey, Platform, ProviderSlug, RecordId, Secret,
+    PartitionKey, Platform, ProviderSlug, RecordId, Secret, ThreadContract,
 };
 use serde::{Deserialize, Serialize};
 
@@ -74,6 +74,9 @@ pub struct ChannelCreation {
 /// CMAEG `ChannelResponse` wire shape.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChannelResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Versions this channel can explicitly negotiate; absent means unsupported.
+    pub thread_contract_versions: Option<Vec<u16>>,
     /// Wire field `channel_id`.
     pub channel_id: String,
     /// Wire field `definition`.
@@ -339,6 +342,9 @@ pub struct RekeyResponse {
 /// CMAEG `ReplyPolicy` wire shape.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct ReplyPolicy {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Opt in to verified thread facts, admission and bound replies.
+    pub thread_contract: Option<ThreadContract>,
     /// Wire field `ack_after_ms`.
     pub ack_after_ms: u64,
     /// Wire field `auto_final`.

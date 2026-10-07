@@ -41,6 +41,9 @@ pub fn management_router(state: ManagementState) -> Router {
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ChannelResponse {
+    /// Explicit opt-in support; absent/empty means unsupported.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub thread_contract_versions: Vec<u16>,
     pub channel_id: String,
     pub record_id: String,
     pub version: u64,

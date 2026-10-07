@@ -41,6 +41,7 @@ fn payload(keys: &MasterKeyRing) -> ReplyTargetPayload {
             ),
             expires_at: 200,
             reply: ReplyAddress::NyxidRelay {
+                thread_reply: false,
                 message_id: "original".into(),
                 route_id: "route-1".into(),
                 platform: cmaeg_core::channel::Platform::Telegram,

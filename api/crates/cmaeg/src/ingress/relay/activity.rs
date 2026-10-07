@@ -46,7 +46,9 @@ pub fn launch_request(
                 .map_err(|_| "activity_invalid")?,
         },
     };
+    let thread_reply = facts.thread.is_some();
     let activity = Activity {
+        thread: facts.thread.map(|thread| *thread),
         schema_version: 1,
         event_id: event_id.clone(),
         kind,
@@ -85,6 +87,7 @@ pub fn launch_request(
             conversation_id: conversation_id.clone(),
             expires_at: verified.reply_expires_at.min(now.saturating_add(1800)),
             reply: ReplyAddress::NyxidRelay {
+                thread_reply,
                 message_id: payload.message_id,
                 route_id: payload.conversation.id,
                 platform,

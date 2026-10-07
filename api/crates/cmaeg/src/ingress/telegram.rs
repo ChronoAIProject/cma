@@ -121,6 +121,7 @@ pub fn launch(
     } = observed;
     let event_id = EventId::new(format!("telegram:{bot_id}:{update_id}")).map_err(|_| invalid())?;
     let activity = Activity {
+        thread: None,
         schema_version: 1,
         event_id: event_id.clone(),
         kind: match facts.event {

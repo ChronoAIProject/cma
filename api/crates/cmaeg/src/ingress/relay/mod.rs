@@ -4,7 +4,7 @@ pub mod facts;
 mod generic;
 pub mod jwks;
 mod jwt;
-mod lark;
+pub(crate) mod lark;
 pub mod payload;
 pub(crate) mod telegram;
 mod telegram_managed;

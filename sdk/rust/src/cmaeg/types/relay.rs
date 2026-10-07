@@ -5,6 +5,9 @@ use serde::{Deserialize, Serialize};
 /// CMAEG `CallbackPayload` wire shape.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct CallbackPayload {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Optional normalized hint; the gateway verifies raw platform data instead.
+    pub thread_context: Option<serde_json::Value>,
     /// Wire field `agent`.
     pub agent: RelayAgent,
     /// Wire field `content`.

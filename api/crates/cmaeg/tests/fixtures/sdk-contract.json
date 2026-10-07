@@ -40,6 +40,18 @@
         "platform": "telegram",
         "route_id": "fixture",
         "type": "nyxid_relay"
+      },
+      "thread": {
+        "address": "mention",
+        "chat_id": "fixture",
+        "kind": "native",
+        "mentions_others": false,
+        "message_id": "fixture",
+        "native_thread_id": "fixture",
+        "parent_message_id": "fixture",
+        "root_id": "fixture",
+        "sender_kind": "human",
+        "version": 1
       }
     }
   ],
@@ -327,7 +339,19 @@
         "platform_id": "fixture"
       },
       "thread_id": "fixture",
-      "timestamp": "fixture"
+      "timestamp": "fixture",
+      "thread_context": {
+        "address": "mention",
+        "chat_id": "fixture",
+        "kind": "native",
+        "mentions_others": false,
+        "message_id": "fixture",
+        "native_thread_id": "fixture",
+        "parent_message_id": "fixture",
+        "root_id": "fixture",
+        "sender_kind": "human",
+        "version": 1
+      }
     }
   ],
   "CallbackResponse": [
@@ -429,7 +453,13 @@
           {
             "type": "source"
           }
-        ]
+        ],
+        "thread_contract": {
+          "follow_chat_ids": [
+            "fixture"
+          ],
+          "version": 1
+        }
       },
       "schema_version": 1,
       "sources": [
@@ -546,7 +576,13 @@
             {
               "type": "source"
             }
-          ]
+          ],
+          "thread_contract": {
+            "follow_chat_ids": [
+              "fixture"
+            ],
+            "version": 1
+          }
         },
         "schema_version": 1,
         "secrets": {
@@ -593,7 +629,10 @@
         "slug": "fixture"
       },
       "record_id": "fixture",
-      "version": 1
+      "version": 1,
+      "thread_contract_versions": [
+        1
+      ]
     }
   ],
   "ChannelUpdateRequest": [
@@ -674,7 +713,13 @@
           {
             "type": "source"
           }
-        ]
+        ],
+        "thread_contract": {
+          "follow_chat_ids": [
+            "fixture"
+          ],
+          "version": 1
+        }
       },
       "schema_version": 1,
       "sources": [
@@ -918,6 +963,18 @@
           "platform": "telegram",
           "route_id": "fixture",
           "type": "nyxid_relay"
+        },
+        "thread": {
+          "address": "mention",
+          "chat_id": "fixture",
+          "kind": "native",
+          "mentions_others": false,
+          "message_id": "fixture",
+          "native_thread_id": "fixture",
+          "parent_message_id": "fixture",
+          "root_id": "fixture",
+          "sender_kind": "human",
+          "version": 1
         }
       },
       "channel_id": "fixture",
@@ -1090,7 +1147,8 @@
         }
       ],
       "reply_to": "fixture",
-      "text": "fixture"
+      "text": "fixture",
+      "thread_reply": true
     }
   ],
   "PartitionKey": [
@@ -1327,7 +1385,13 @@
           {
             "type": "source"
           }
-        ]
+        ],
+        "thread_contract": {
+          "follow_chat_ids": [
+            "fixture"
+          ],
+          "version": 1
+        }
       },
       "schema_version": 1,
       "secrets": {
@@ -1461,7 +1525,13 @@
         {
           "type": "source"
         }
-      ]
+      ],
+      "thread_contract": {
+        "follow_chat_ids": [
+          "fixture"
+        ],
+        "version": 1
+      }
     }
   ],
   "ReplyTargetRef": [
@@ -1792,5 +1862,36 @@
     "ready",
     "cancelled",
     "expired"
+  ],
+  "ThreadAddress": [
+    "mention",
+    "reply_to_bot",
+    "not_addressed",
+    "unknown"
+  ],
+  "ThreadContract": [
+    {
+      "follow_chat_ids": [
+        "fixture"
+      ],
+      "version": 1
+    }
+  ],
+  "ThreadFacts": [
+    {
+      "address": "mention",
+      "chat_id": "fixture",
+      "kind": "native",
+      "mentions_others": false,
+      "message_id": "fixture",
+      "native_thread_id": "fixture",
+      "parent_message_id": "fixture",
+      "root_id": "fixture",
+      "sender_kind": "human",
+      "version": 1
+    }
+  ],
+  "ThreadKind": [
+    "native"
   ]
 }
