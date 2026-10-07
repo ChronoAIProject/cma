@@ -1,5 +1,7 @@
 //! Telegram platform transport. Errors and tracing never contain token-bearing URLs.
 mod management;
+#[cfg(test)]
+mod tests;
 use cmaeg_core::channel::Secret;
 use reqwest::{Client, Url};
 use serde_json::{json, Value};
@@ -42,7 +44,17 @@ impl TelegramClient {
     pub fn production(timeout: Duration) -> Result<Self, crate::ConfigError> {
         Self::new("https://api.telegram.org", timeout)
     }
-    async fn call(&self, token: &Secret, method: &str, body: &Value) -> Result<Value, Error> {
+    /// Sends one Bot API call and returns its HTTP status with the parsed body.
+    ///
+    /// Callers that must read Telegram's own `description`, for example to
+    /// tell a too-large file from other refusals, use this form; everything
+    /// else uses `call`, which maps the outcome onto [`Error`].
+    async fn call_raw(
+        &self,
+        token: &Secret,
+        method: &str,
+        body: &Value,
+    ) -> Result<(reqwest::StatusCode, Value), Error> {
         let value = token.as_str();
         let valid = value.split_once(':').is_some_and(|(id, key)| {
             id.parse::<i64>().is_ok_and(|id| id > 0)
@@ -66,19 +78,27 @@ impl TelegramClient {
             .json(body)
             .send()
             .await
-            .map_err(|_| Error::Unconfirmed)?;
+            .map_err(|error| transport_failure(error.without_url()))?;
         if response.content_length().is_some_and(|size| size > 32_768) {
             return Err(Error::Unconfirmed);
         }
         let status = response.status();
         let mut bytes = Vec::new();
-        while let Some(chunk) = response.chunk().await.map_err(|_| Error::Unconfirmed)? {
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|error| transport_failure(error.without_url()))?
+        {
             if bytes.len() + chunk.len() > 32_768 {
                 return Err(Error::Unconfirmed);
             }
             bytes.extend_from_slice(&chunk);
         }
         let value: Value = serde_json::from_slice(&bytes).map_err(|_| Error::Unconfirmed)?;
+        Ok((status, value))
+    }
+    async fn call(&self, token: &Secret, method: &str, body: &Value) -> Result<Value, Error> {
+        let (status, value) = self.call_raw(token, method, body).await?;
         if status.as_u16() == 429 || value["error_code"] == 429 {
             return Err(Error::RateLimited(
                 value["parameters"]["retry_after"]
@@ -182,6 +202,12 @@ fn positive(value: &Value) -> Result<String, Error> {
         .filter(|id| *id > 0)
         .map(|id| id.to_string())
         .ok_or(Error::Unconfirmed)
+}
+/// Classifies a transport failure. It only receives errors already stripped
+/// of their token-bearing URL, so a classifier that later inspects or logs
+/// the error cannot expose the bot token.
+fn transport_failure(_error: reqwest::Error) -> Error {
+    Error::Unconfirmed
 }
 fn config_error() -> crate::ConfigError {
     crate::ConfigError::InvalidManagement {
