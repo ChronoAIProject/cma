@@ -133,6 +133,7 @@ pub fn launch(
                 attachments: vec![],
                 mentions_bot: facts.mentioned == Some(true),
                 reply_to: None,
+                album_id: None,
             },
         },
         actor: Actor {

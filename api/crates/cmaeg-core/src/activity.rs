@@ -46,6 +46,10 @@ pub enum ActivityKind {
         mentions_bot: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reply_to: Option<MessageRef>,
+        /// Shared by every message of one platform media group (a Telegram
+        /// album). Each item of the group is still its own activity.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        album_id: Option<String>,
     },
     Interaction(InteractionResult),
     Command {
@@ -152,10 +156,16 @@ impl Activity {
         }
         match &self.kind {
             ActivityKind::Message {
-                text, attachments, ..
+                text,
+                attachments,
+                album_id,
+                ..
             } => {
                 require_string(text, "/kind/text", 0, 32 * 1_024)?;
                 validate_attachments(attachments, &self.source, "/kind/attachments")?;
+                if let Some(album_id) = album_id {
+                    attachment::require_text(album_id, "/kind/album_id", MAX_ALBUM_ID_BYTES)?;
+                }
             }
             ActivityKind::Interaction(result) => {
                 require_string(&result.block_id, "/kind/block_id", 1, 512)?;

@@ -141,3 +141,41 @@ fn event_partition_uses_subject_then_source_and_preserves_thread_identity() {
         "chat-1\u{1f}thread-1"
     );
 }
+
+#[test]
+fn message_album_identity_is_bounded_name_text() {
+    let mut value = activity();
+    validate(value.clone()).unwrap();
+    for album_id in [
+        "13579246801357924".to_owned(),
+        "x".repeat(128),
+        "相册".into(),
+    ] {
+        value["kind"]["album_id"] = json!(album_id);
+        validate(value.clone()).unwrap();
+    }
+    for album_id in [
+        String::new(),
+        "x".repeat(129),
+        "album\u{202E}".into(),
+        "album\u{0007}".into(),
+    ] {
+        value["kind"]["album_id"] = json!(album_id);
+        assert_eq!(
+            validate(value.clone()).unwrap_err().pointer,
+            "/kind/album_id"
+        );
+    }
+}
+
+#[test]
+fn album_identity_round_trips_only_on_messages() {
+    let mut value = activity();
+    let plain: Activity = serde_json::from_value(value.clone()).unwrap();
+    assert!(!serde_json::to_string(&plain).unwrap().contains("album_id"));
+    value["kind"]["album_id"] = json!("13579246801357924");
+    let grouped: Activity = serde_json::from_value(value.clone()).unwrap();
+    assert_eq!(serde_json::to_value(&grouped).unwrap(), value);
+    value["kind"] = json!({"type":"command","name":"run","args":"","album_id":"1"});
+    assert!(serde_json::from_value::<Activity>(value).is_err());
+}

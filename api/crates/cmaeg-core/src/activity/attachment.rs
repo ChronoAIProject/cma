@@ -278,7 +278,9 @@ impl Attachment {
     }
 }
 
-fn require_text(value: &str, pointer: &str, max: usize) -> Result<(), ValidationError> {
+/// A bounded name-like value: 1..=`max` bytes with no character that could
+/// disguise it in a log line or a rendered prompt.
+pub(super) fn require_text(value: &str, pointer: &str, max: usize) -> Result<(), ValidationError> {
     require_string(value, pointer, 1, max)?;
     if value.chars().any(forbidden_text_char) {
         return Err(ValidationError::new(
