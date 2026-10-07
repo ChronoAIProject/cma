@@ -417,3 +417,50 @@ async fn dormant_nyxid_thread_and_activity_fields_are_accepted_and_ignored() {
     problem(fixture.send(&unknown).await, 401, "payload_invalid").await;
     assert_eq!(fixture.recorder.requests.lock().unwrap().len(), 2);
 }
+
+/// A text callback whose display name NyxID built from `first_name` and, when
+/// present, `" " + last_name`.
+fn named(first: &str, last: Option<&str>) -> Envelope {
+    let mut envelope = Envelope::new();
+    let from = &mut envelope.payload["raw_platform_data"]["message"]["from"];
+    from["first_name"] = first.into();
+    let display = match last {
+        Some(last) => {
+            from["last_name"] = last.into();
+            format!("{first} {last}")
+        }
+        None => first.to_owned(),
+    };
+    envelope.payload["sender"]["display_name"] = display.into();
+    envelope
+}
+
+#[tokio::test]
+async fn oversized_and_control_only_display_names_are_repaired_not_rejected() {
+    let metrics = cmaeg::telemetry::install().unwrap();
+    let fixture = Fixture::new(|_| {}, Default::default()).await;
+    let cjk = named(&"名".repeat(64), Some(&"姓".repeat(64)));
+    let original = cjk.payload["sender"]["display_name"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_eq!(original.len(), 385);
+    let before = counter(&metrics.render(), &repairs("sender_display_name"));
+    for envelope in [&cjk, &named("\u{7}\u{1b}", None)] {
+        let response = fixture.send(envelope).await;
+        assert_eq!(response.status(), 202);
+        assert_eq!(
+            response.json::<Value>().await.unwrap()["status"],
+            "accepted"
+        );
+    }
+    assert_eq!(
+        counter(&metrics.render(), &repairs("sender_display_name")),
+        before + 2
+    );
+    let requests = fixture.recorder.requests.lock().unwrap();
+    let truncated = requests[0].activity.actor.display_name.as_deref().unwrap();
+    assert!(truncated.len() <= 256);
+    assert!(original.starts_with(truncated));
+    assert_eq!(requests[1].activity.actor.display_name, None);
+}

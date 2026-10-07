@@ -651,6 +651,12 @@ makes a callback fail parsing or bounds:
   `attachment_unsupported` like any other non-empty list; it is never admitted
   as a text-only message.
 
+`sender.display_name` is a sender-controlled fact too: NyxID builds it as
+`first_name + " " + last_name`, which reaches 385 bytes for a CJK Telegram name.
+The gateway removes control characters and truncates it to 256 bytes on a
+character boundary; a name that becomes empty is absent. A display name never
+makes a callback fail.
+
 Each repair increments `cmaeg_relay_envelope_repairs_total{field}`.
 
 All three token kinds use RS256, base64url without padding, and a header containing
@@ -743,7 +749,9 @@ posts JSON updates to `POST /v1/telegram/{channel_id}` with exactly one
 credentials, compares the secret in constant time, then applies the same strict
 Telegram observer and admission policy as relay ingress. `update_id` determines
 the stable event identity; source bot, chat, original message and topic are sealed
-into the reply address. Replica restart preserves these identities and requires
+into the reply address. The sender's `first_name` becomes the actor's display
+name with the same control-character removal and 256-byte truncation as relay
+ingress, so an unusual name is never refused. Replica restart preserves these identities and requires
 no local webhook session state. Failed receipt persistence or provider admission
 returns a retryable error; a successful or deliberately refused update returns
 202. Native callback acknowledgments clear only the platform spinner and do not
