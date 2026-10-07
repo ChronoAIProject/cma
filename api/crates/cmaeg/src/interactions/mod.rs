@@ -6,16 +6,22 @@ use crate::{
 };
 use cmaeg_core::{
     activity::{Activity, InteractionResult},
-    ids::{ChannelId, EventId, MessageRef, RecordId},
-    message::{Block, OutboundMessage},
+    ids::{MessageRef, RecordId},
+    message::OutboundMessage,
     seal::{
         open_interaction, seal_interaction, EventRefPayload, MasterKeyRing, MessageRefPayload,
         ReplyAddress,
     },
 };
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use keyboard::{actions, keyboard};
+use serde_json::json;
 use std::sync::Arc;
+
+mod card;
+mod keyboard;
+
+pub use card::*;
+pub use keyboard::has_controls;
 
 const TTL: i64 = 24 * 60 * 60;
 #[derive(Clone)]
@@ -23,63 +29,6 @@ pub struct InteractionStore {
     records: RecordClient,
     keys: Arc<MasterKeyRing>,
     providers: Arc<ProviderClient>,
-}
-#[derive(Clone, Serialize, Deserialize)]
-pub struct Card {
-    pub id: String,
-    owner: String,
-    channel_id: ChannelId,
-    event_id: EventId,
-    route_id: String,
-    actor: String,
-    chat: String,
-    thread: Option<String>,
-    pub expires_at: i64,
-    pub revision: u64,
-    pub message: OutboundMessage,
-    pub destination: Option<Destination>,
-    pub reference: Option<MessageRef>,
-    pub consumed: Option<Click>,
-    pub superseded: bool,
-}
-#[derive(Clone, Serialize, Deserialize)]
-pub struct Destination {
-    pub outbound_id: String,
-    pub platform_id: String,
-}
-#[derive(Clone, Serialize, Deserialize)]
-pub struct Click {
-    event_id: String,
-    callback_id: String,
-    action: usize,
-    occurred_at: String,
-}
-pub struct PreparedCard {
-    pub card: Card,
-    pub version: u64,
-    pub markup: Value,
-}
-#[derive(Debug)]
-pub enum Error {
-    Denied,
-    Unavailable,
-}
-#[derive(Clone)]
-struct Action {
-    block: String,
-    id: String,
-    selected: Vec<String>,
-}
-pub fn has_controls(message: &OutboundMessage) -> bool {
-    message.blocks.iter().any(|b| {
-        matches!(
-            b,
-            Block::Buttons { .. } | Block::Choice { .. } | Block::Link { .. }
-        )
-    })
-}
-fn now() -> i64 {
-    time::OffsetDateTime::now_utc().unix_timestamp()
 }
 impl InteractionStore {
     pub fn new(
@@ -333,90 +282,4 @@ impl InteractionStore {
         }
         self.reference(&card)
     }
-}
-fn decode(value: &str) -> Result<(String, usize), Error> {
-    if value.len() > 64 {
-        return Err(Error::Denied);
-    }
-    let mut parts = value.split(':');
-    if parts.next() != Some("ce1") {
-        return Err(Error::Denied);
-    }
-    let id =
-        uuid::Uuid::parse_str(parts.next().ok_or(Error::Denied)?).map_err(|_| Error::Denied)?;
-    let index = parts
-        .next()
-        .ok_or(Error::Denied)?
-        .parse()
-        .map_err(|_| Error::Denied)?;
-    if id.get_version_num() != 4 || parts.next().is_some() {
-        return Err(Error::Denied);
-    }
-    Ok((id.to_string(), index))
-}
-fn actions(message: &OutboundMessage) -> Vec<Action> {
-    let mut result = Vec::new();
-    for block in &message.blocks {
-        match block {
-            Block::Buttons { id, options } => {
-                for option in options {
-                    result.push(Action {
-                        block: id.clone(),
-                        id: option.id.clone(),
-                        selected: vec![option.id.clone()],
-                    });
-                }
-            }
-            Block::Choice {
-                id, options, multi, ..
-            } => {
-                for option in options {
-                    let selected = if *multi {
-                        options
-                            .iter()
-                            .filter(|o| {
-                                if o.id == option.id {
-                                    !o.selected
-                                } else {
-                                    o.selected
-                                }
-                            })
-                            .map(|o| o.id.clone())
-                            .collect()
-                    } else {
-                        vec![option.id.clone()]
-                    };
-                    result.push(Action {
-                        block: id.clone(),
-                        id: option.id.clone(),
-                        selected,
-                    });
-                }
-            }
-            _ => {}
-        }
-    }
-    result
-}
-fn keyboard(card: &Card) -> Result<Value, Error> {
-    let mut rows = Vec::new();
-    let mut index = 0;
-    for block in &card.message.blocks {
-        match block {
-            Block::Buttons { options, .. } | Block::Choice { options, .. } => {
-                for option in options {
-                    rows.push(json!([{"text":format!("{}{}",if option.selected{"✓ "}else{""},option.label),"callback_data":format!("ce1:{}:{index}",card.id.replace('-',""))}]));
-                    index += 1;
-                }
-            }
-            Block::Link { url, label } => {
-                rows.push(json!([{"text":label.as_deref().unwrap_or("Open link"),"url":url}]))
-            }
-            _ => {}
-        }
-    }
-    if rows.len() > 100 {
-        return Err(Error::Denied);
-    }
-    Ok(json!({"inline_keyboard":rows}))
 }
