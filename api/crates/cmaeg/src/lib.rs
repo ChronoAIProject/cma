@@ -9,6 +9,7 @@ pub mod http;
 pub mod ingress;
 pub mod interactions;
 pub mod mcp;
+pub mod net;
 pub mod openapi;
 pub mod providers;
 pub mod records;
