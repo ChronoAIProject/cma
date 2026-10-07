@@ -628,6 +628,7 @@
       "CallbackPayload": {
         "additionalProperties": false,
         "properties": {
+          "activity": {},
           "agent": {
             "$ref": "#/components/schemas/RelayAgent"
           },
@@ -665,6 +666,7 @@
           "sender": {
             "$ref": "#/components/schemas/RelaySender"
           },
+          "thread_context": {},
           "thread_id": {
             "oneOf": [
               {
