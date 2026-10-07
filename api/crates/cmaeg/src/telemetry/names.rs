@@ -11,6 +11,7 @@ pub const PROVIDER_ERRORS: &str = "cmaeg_provider_errors_total";
 pub const TURNS_INFLIGHT: &str = "cmaeg_turns_inflight";
 pub const CHANNELS_CACHED: &str = "cmaeg_channels_cached";
 pub const RELAY_ENVELOPE_REPAIRS: &str = "cmaeg_relay_envelope_repairs_total";
+pub const CALLBACK_INVALID: &str = "cmaeg_callback_invalid_total";
 pub const SOURCE: &str = "source";
 pub const COLD: &str = "cold";
 pub const OUTCOME: &str = "outcome";
@@ -20,6 +21,7 @@ pub const TOOL: &str = "tool";
 pub const REASON: &str = "reason";
 pub const KIND: &str = "kind";
 pub const FIELD: &str = "field";
+pub const DETAIL: &str = "detail";
 pub const HISTOGRAMS: [&str; 6] = [
     INGRESS_TO_PROVIDER,
     RESTORE_DURATION,
@@ -28,7 +30,13 @@ pub const HISTOGRAMS: [&str; 6] = [
     DELIVERY_DURATION,
     TOOL_DURATION,
 ];
-pub const COUNTERS: [&str; 4] = [EVENTS, REFUSALS, PROVIDER_ERRORS, RELAY_ENVELOPE_REPAIRS];
+pub const COUNTERS: [&str; 5] = [
+    EVENTS,
+    REFUSALS,
+    PROVIDER_ERRORS,
+    RELAY_ENVELOPE_REPAIRS,
+    CALLBACK_INVALID,
+];
 pub const GAUGES: [&str; 2] = [TURNS_INFLIGHT, CHANNELS_CACHED];
 pub const BUCKETS: [f64; 11] = [
     0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0,
