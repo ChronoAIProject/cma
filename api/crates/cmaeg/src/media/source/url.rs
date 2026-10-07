@@ -120,6 +120,11 @@ impl UrlSource {
     }
 }
 
+/// Whether `url`'s origin is in `channel`'s current allowlist.
+pub(super) fn configured(channel: &ResolvedChannel, url: &str) -> bool {
+    Url::parse(url).is_ok_and(|url| allowed(channel, &url.origin().ascii_serialization()))
+}
+
 fn allowed(channel: &ResolvedChannel, origin: &str) -> bool {
     channel.definition.sources.iter().any(|source| {
         matches!(

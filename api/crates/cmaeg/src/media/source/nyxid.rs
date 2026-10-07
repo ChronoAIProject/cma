@@ -5,11 +5,18 @@
 //! of the event_ref, so an Activity alone can never direct a fetch. The reply
 //! token and the channel key are sent to NyxID and nowhere else.
 use super::{FetchRequest, MediaSource, SourceCredential, SourceStream};
-use crate::media::{
-    body::{read_capped, stream_capped, transport, FetchedBody},
-    FetchError,
+use crate::{
+    channels::resolver::ResolvedChannel,
+    media::{
+        body::{read_capped, stream_capped, transport, FetchedBody},
+        FetchError,
+    },
 };
-use cmaeg_core::{activity::AttachmentSource, channel::Secret, seal::ReplyAddress};
+use cmaeg_core::{
+    activity::{AttachmentSource, SourceKind},
+    channel::{Secret, Source},
+    seal::ReplyAddress,
+};
 use futures_util::future::BoxFuture;
 use reqwest::{StatusCode, Url};
 use std::time::Duration;
@@ -135,6 +142,21 @@ impl NyxidSource {
             Ok(Ok(response)) => Ok(response),
         }
     }
+}
+
+/// Whether `channel` still has a relay source for the activity's platform
+/// that routes the activity's route.
+pub(super) fn configured(channel: &ResolvedChannel, source: &SourceKind) -> bool {
+    let SourceKind::NyxidRelay { platform, route_id } = source else {
+        return false;
+    };
+    channel.definition.sources.iter().any(|configured| {
+        matches!(
+            configured,
+            Source::NyxidRelay { platform: current, route_ids, .. }
+                if current == platform && route_ids.contains(route_id)
+        )
+    })
 }
 
 fn refused(status: StatusCode) -> bool {

@@ -63,14 +63,21 @@ pub fn forward_bytes(bytes: Bytes, permits: PermitSet, deadline: Instant) -> Bod
         let completed = timeout_at(deadline, send_bytes(&sender, &bytes))
             .await
             .unwrap_or(false);
-        finish(completed, &flag, sender, permits);
+        finish(completed, &flag, sender, permits, |_| {});
     });
     body(receiver, aborted)
 }
 
 /// Forward `stream` in chunks of at most 64 KiB until `deadline`; an
-/// upstream error aborts the body.
-pub fn forward_stream(stream: SourceStream, permits: PermitSet, deadline: Instant) -> Body {
+/// upstream error aborts the body. `on_end` learns whether every byte was
+/// handed on: false after an upstream error, the deadline, or a reader that
+/// went away.
+pub fn forward_stream(
+    stream: SourceStream,
+    permits: PermitSet,
+    deadline: Instant,
+    on_end: impl FnOnce(bool) + Send + 'static,
+) -> Body {
     let (sender, receiver) = mpsc::channel::<Chunk>(1);
     let aborted = Arc::new(AtomicBool::new(false));
     let flag = aborted.clone();
@@ -78,20 +85,28 @@ pub fn forward_stream(stream: SourceStream, permits: PermitSet, deadline: Instan
         let completed = timeout_at(deadline, pump(&sender, stream))
             .await
             .unwrap_or(false);
-        finish(completed, &flag, sender, permits);
+        finish(completed, &flag, sender, permits, on_end);
     });
     body(receiver, aborted)
 }
 
-/// The abort flag is set and the permits released before the sender closes
-/// the channel, so a reader that sees the channel end also sees whether the
-/// body was cut short, and the budget is already free.
-fn finish(completed: bool, aborted: &AtomicBool, sender: mpsc::Sender<Chunk>, permits: PermitSet) {
+/// The abort flag is set, the permits released and `on_end` told before the
+/// sender closes the channel, so a reader that sees the channel end also sees
+/// whether the body was cut short, the budget is already free and the
+/// outcome is already recorded.
+fn finish(
+    completed: bool,
+    aborted: &AtomicBool,
+    sender: mpsc::Sender<Chunk>,
+    permits: PermitSet,
+    on_end: impl FnOnce(bool),
+) {
     if !completed {
         aborted.store(true, Ordering::Release);
         tracing::debug!(permits = permits.len(), "media response body aborted");
     }
     drop(permits);
+    on_end(completed);
     drop(sender);
 }
 
@@ -109,11 +124,20 @@ async fn send_bytes(sender: &mpsc::Sender<Chunk>, bytes: &Bytes) -> bool {
     true
 }
 
-/// True when the upstream ended cleanly and everything was handed on; false
-/// on an upstream error or when the reader went away, noticed even while the
-/// upstream is quiet.
+/// True when the upstream ended cleanly, or delivered its whole declared
+/// length, and everything was handed on; false on an upstream error or when
+/// the reader went away, noticed even while the upstream is quiet.
+///
+/// A declared length is complete as soon as its last byte is handed on: the
+/// server stops reading a body at its `Content-Length`, so waiting for the
+/// upstream's own end could see the reader leave first and misreport a
+/// whole body as cut short.
 async fn pump(sender: &mpsc::Sender<Chunk>, mut source: SourceStream) -> bool {
+    let mut sent: u64 = 0;
     loop {
+        if source.content_length.is_some_and(|length| sent >= length) {
+            return true;
+        }
         let next = tokio::select! {
             _ = sender.closed() => return false,
             next = source.stream.next() => next,
@@ -125,6 +149,7 @@ async fn pump(sender: &mpsc::Sender<Chunk>, mut source: SourceStream) -> bool {
                 if !send_bytes(sender, &chunk).await {
                     return false;
                 }
+                sent = sent.saturating_add(chunk.len() as u64);
             }
         }
     }

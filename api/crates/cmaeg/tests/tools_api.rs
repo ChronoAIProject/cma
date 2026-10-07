@@ -15,6 +15,10 @@ mod attachment_capabilities;
 mod attachments;
 #[path = "tools/attachments_mcp.rs"]
 mod attachments_mcp;
+#[path = "tools/download_support.rs"]
+pub mod download_support;
+#[path = "tools/media_downloads.rs"]
+mod media_downloads;
 #[path = "tools/media_support.rs"]
 pub mod media_support;
 #[path = "relay/support.rs"]

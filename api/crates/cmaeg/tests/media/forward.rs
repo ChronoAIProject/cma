@@ -6,7 +6,10 @@ use cmaeg::media::{
     FetchError,
 };
 use futures_util::StreamExt;
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 use tokio::{sync::Semaphore, time::Instant};
 
 /// A one-permit semaphore whose permit rides in the set, so the test can see
@@ -21,6 +24,17 @@ fn held() -> (Arc<Semaphore>, PermitSet) {
 
 fn payload(length: usize) -> Bytes {
     Bytes::from((0..length).map(|index| index as u8).collect::<Vec<_>>())
+}
+
+/// What a body's `on_end` reported, if it ran yet.
+type Ended = Arc<Mutex<Option<bool>>>;
+
+fn outcome() -> (Ended, impl FnOnce(bool) + Send + 'static) {
+    let ended = Ended::default();
+    let report = ended.clone();
+    (ended, move |completed| {
+        *report.lock().unwrap() = Some(completed);
+    })
 }
 
 async fn settle() {
@@ -103,10 +117,12 @@ fn source(chunks: Vec<Result<Bytes, FetchError>>, then_wait: bool) -> SourceStre
 #[tokio::test(start_paused = true)]
 async fn forwarded_streams_are_split_into_bounded_chunks() {
     let (semaphore, permits) = held();
+    let (ended, on_end) = outcome();
     let body = forward_stream(
         source(vec![Ok(payload(150 * 1024)), Ok(payload(10))], false),
         permits,
         Instant::now() + Duration::from_secs(15),
+        on_end,
     );
     let sizes: Vec<usize> = body
         .into_data_stream()
@@ -115,20 +131,25 @@ async fn forwarded_streams_are_split_into_bounded_chunks() {
         .await;
     assert_eq!(sizes, [65_536, 65_536, 22_528, 10]);
     assert_eq!(semaphore.available_permits(), 1);
+    // Reported before the body ended, so a reader that saw the end can rely on it.
+    assert_eq!(*ended.lock().unwrap(), Some(true));
 }
 
 #[tokio::test(start_paused = true)]
 async fn an_upstream_error_aborts_the_forwarded_body() {
     let (semaphore, permits) = held();
+    let (ended, on_end) = outcome();
     let body = forward_stream(
         source(vec![Ok(payload(10)), Err(FetchError::TooLarge)], false),
         permits,
         Instant::now() + Duration::from_secs(15),
+        on_end,
     );
     let mut stream = body.into_data_stream();
     assert_eq!(stream.next().await.unwrap().unwrap().len(), 10);
     assert!(stream.next().await.unwrap().is_err());
     assert_eq!(semaphore.available_permits(), 1);
+    assert_eq!(*ended.lock().unwrap(), Some(false));
 }
 
 #[tokio::test(start_paused = true)]
@@ -138,6 +159,7 @@ async fn a_quiet_upstream_still_releases_when_the_reader_leaves_or_the_deadline_
         source(vec![Ok(payload(10))], true),
         permits,
         Instant::now() + Duration::from_secs(300),
+        |_| {},
     );
     let mut stream = body.into_data_stream();
     assert_eq!(stream.next().await.unwrap().unwrap().len(), 10);
@@ -146,13 +168,16 @@ async fn a_quiet_upstream_still_releases_when_the_reader_leaves_or_the_deadline_
     assert_eq!(left.available_permits(), 1);
 
     let (expired, permits) = held();
+    let (ended, on_end) = outcome();
     let body = forward_stream(
         source(Vec::new(), true),
         permits,
         Instant::now() + Duration::from_secs(15),
+        on_end,
     );
     tokio::time::sleep(Duration::from_secs(16)).await;
     assert_eq!(expired.available_permits(), 1);
+    assert_eq!(*ended.lock().unwrap(), Some(false));
     assert!(body.into_data_stream().next().await.unwrap().is_err());
 }
 
@@ -166,4 +191,26 @@ async fn an_empty_body_ends_cleanly() {
     );
     assert!(body.into_data_stream().next().await.is_none());
     assert_eq!(semaphore.available_permits(), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_declared_length_completes_without_waiting_for_the_upstream_end() {
+    let (semaphore, permits) = held();
+    let (ended, on_end) = outcome();
+    let mut quiet = source(vec![Ok(payload(70 * 1024))], true);
+    quiet.content_length = Some(70 * 1024);
+    let body = forward_stream(
+        quiet,
+        permits,
+        Instant::now() + Duration::from_secs(300),
+        on_end,
+    );
+    let sizes: Vec<usize> = body
+        .into_data_stream()
+        .map(|chunk| chunk.unwrap().len())
+        .collect()
+        .await;
+    assert_eq!(sizes, [65_536, 6_144]);
+    assert_eq!(semaphore.available_permits(), 1);
+    assert_eq!(*ended.lock().unwrap(), Some(true));
 }

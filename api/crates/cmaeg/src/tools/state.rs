@@ -1,4 +1,4 @@
-use super::context::ContextResponse;
+use super::{context::ContextResponse, MediaDownloads};
 use crate::{
     auth::AgentCaller,
     channels::resolver::{ChannelResolver, ResolvedChannel},
@@ -29,6 +29,8 @@ pub struct ToolsState {
     /// The media service turns share, or `None` while inbound media is
     /// disabled; attachment reads are then refused.
     pub media: Option<Arc<MediaService>>,
+    /// The pod's download redemptions and stream slots.
+    pub downloads: Arc<MediaDownloads>,
 }
 impl ToolsState {
     pub async fn authorize_event(

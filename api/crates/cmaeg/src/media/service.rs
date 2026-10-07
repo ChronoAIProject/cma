@@ -256,6 +256,12 @@ impl MediaService {
     pub fn sources(&self) -> &SourceRegistry {
         &self.pipeline.sources
     }
+
+    /// The configured budgets, such as the per-attachment byte cap a
+    /// streamed original is held to.
+    pub fn limits(&self) -> &MediaLimits {
+        &self.pipeline.limits
+    }
 }
 
 enum Admission {

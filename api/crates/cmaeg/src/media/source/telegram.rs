@@ -5,6 +5,7 @@
 //! holds its token, so removing either stops retrieval at once.
 use super::{FetchRequest, MediaSource, SourceStream};
 use crate::{
+    channels::resolver::ResolvedChannel,
     media::{
         body::{read_capped, stream_capped, FetchedBody},
         FetchError,
@@ -69,10 +70,19 @@ impl TelegramFileSource {
 /// The bot token, only while the current definition still configures the
 /// bot that received the activity.
 fn current_token<'a>(request: &FetchRequest<'a>) -> Option<&'a Secret> {
-    let SourceKind::Telegram { bot_id, .. } = &request.activity.source else {
+    configured_token(request.channel, &request.activity.source)
+}
+
+/// The bot token of `channel`, only while its definition still configures the
+/// bot that received an activity from `source`.
+pub(super) fn configured_token<'a>(
+    channel: &'a ResolvedChannel,
+    source: &SourceKind,
+) -> Option<&'a Secret> {
+    let SourceKind::Telegram { bot_id, .. } = source else {
         return None;
     };
-    let definition = &request.channel.definition;
+    let definition = &channel.definition;
     let configured = definition.sources.iter().any(
         |source| matches!(source, Source::Telegram { bot_id: current, .. } if current == bot_id),
     );

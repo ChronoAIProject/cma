@@ -173,6 +173,10 @@ pub struct MediaSetup {
     pub attachments: Vec<Attachment>,
     /// A natively received Telegram message instead of a relayed one.
     pub native: bool,
+    /// A custom event instead of a relayed message.
+    pub custom: bool,
+    /// The providers whose bindings install the gateway tools.
+    pub tool_providers: Vec<&'static str>,
     /// Seal the activity digest into the event_ref.
     pub digest: bool,
     /// Extract frames with the production platform-thumbnail extractor over
@@ -189,6 +193,8 @@ impl MediaSetup {
             fakes: MediaFakes::default(),
             attachments,
             native: false,
+            custom: false,
+            tool_providers: vec!["cma_codex"],
             digest: true,
             thumbnails: false,
             limits: MediaLimits::from_config(&MediaConfig::default()),
@@ -198,6 +204,16 @@ impl MediaSetup {
 
     pub fn native(mut self) -> Self {
         self.native = true;
+        self
+    }
+
+    pub fn custom(mut self) -> Self {
+        self.custom = true;
+        self
+    }
+
+    pub fn tool_providers(mut self, providers: Vec<&'static str>) -> Self {
+        self.tool_providers = providers;
         self
     }
 
@@ -230,6 +246,9 @@ impl MediaSetup {
                 bot_id: "77".into(),
             };
         }
+        if self.custom {
+            request.activity.source = SourceKind::Custom;
+        }
         request.activity.kind = ActivityKind::Message {
             text: "see attached".into(),
             attachments: self.attachments.clone(),
@@ -261,9 +280,9 @@ impl MediaSetup {
             visuals,
             limits: self.limits,
             keys,
-            tool_providers: Arc::new(MediaToolProviders::from_iter(["cma_codex"
-                .parse()
-                .unwrap()])),
+            tool_providers: Arc::new(MediaToolProviders::from_iter(
+                self.tool_providers.iter().map(|slug| slug.parse().unwrap()),
+            )),
             decode,
         })
     }

@@ -194,6 +194,7 @@ fn gateway(backend: &str, keys: Arc<MasterKeyRing>) -> ToolsState {
         tracker: TurnTracker::new(Readiness::initialized()),
         public_origin: "https://gateway.example".into(),
         media: None,
+        downloads: Default::default(),
     }
 }
 fn advance_router(

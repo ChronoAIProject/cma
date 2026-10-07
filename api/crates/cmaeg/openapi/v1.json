@@ -3589,6 +3589,11 @@
         "scheme": "bearer",
         "type": "http"
       },
+      "mediaBearer": {
+        "description": "Single-use media link capability minted by readEventAttachment view download; Authorization header only",
+        "scheme": "bearer",
+        "type": "http"
+      },
       "serviceBearer": {
         "description": "CMA service token; rekey only",
         "scheme": "bearer",
@@ -4905,6 +4910,37 @@
         ],
         "tags": [
           "tools"
+        ]
+      }
+    },
+    "/media/content": {
+      "get": {
+        "operationId": "downloadMedia",
+        "responses": {
+          "200": {
+            "content": {
+              "application/octet-stream": {}
+            },
+            "description": "the attachment bytes"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "mediaBearer": []
+          }
+        ],
+        "tags": [
+          "media"
         ]
       }
     },
