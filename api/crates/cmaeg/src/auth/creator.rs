@@ -129,6 +129,17 @@ impl CreatorAuthenticator {
     pub async fn authenticate(&self, headers: &HeaderMap) -> Result<Creator, CreatorAuthError> {
         let token = bearer(headers).ok_or(CreatorAuthError::NotAuthenticated)?;
         let owner = selected_owner(headers)?;
+        self.authenticate_token(token, owner).await
+    }
+
+    /// Identify a NyxID bearer and, when `owner` is given, verify the bearer may act
+    /// for that organization, through the shared 60 s cache. REST calls it after parsing
+    /// headers; the console's uncached `verify_uncached` shares its fetch.
+    pub async fn authenticate_token(
+        &self,
+        token: &str,
+        owner: Option<&str>,
+    ) -> Result<Creator, CreatorAuthError> {
         let token_hash = token_hash(token);
         let cache_key = owner.map_or_else(
             || token_hash.clone(),
@@ -146,11 +157,12 @@ impl CreatorAuthenticator {
             self.cache.remove(&cache_key);
         }
         let started = Instant::now();
-        let result = tokio::time::timeout(Duration::from_secs(3), self.fetch_creator(token, owner))
-            .await
-            .unwrap_or(Err(CreatorAuthError::ProviderUnavailable));
+        let result = self.fetch_verified(token, owner).await;
         let (ttl, cached) = match &result {
-            Ok(subject) => (SUCCESS_TTL, Ok(subject.clone())),
+            Ok(creator) => (
+                SUCCESS_TTL,
+                Ok((creator.subject.clone(), creator.organization)),
+            ),
             Err(error) => (FAILURE_TTL, Err(error.clone())),
         };
         self.insert_cache(
@@ -161,10 +173,24 @@ impl CreatorAuthenticator {
                 sequence: self.sequence.fetch_add(1, Ordering::Relaxed),
             },
         );
+        result
+    }
+
+    // The one identity and organization-admin rule. Keeping the timeout and the
+    // Creator construction here, outside the cache, lets an uncached caller share
+    // it so the rule cannot drift between callers (Amendment R3 §R3.2).
+    async fn fetch_verified(
+        &self,
+        token: &str,
+        owner: Option<&str>,
+    ) -> Result<Creator, CreatorAuthError> {
+        let result = tokio::time::timeout(Duration::from_secs(3), self.fetch_creator(token, owner))
+            .await
+            .unwrap_or(Err(CreatorAuthError::ProviderUnavailable));
         result.map(|(subject, organization)| Creator {
             subject,
             organization,
-            token_hash,
+            token_hash: token_hash(token),
         })
     }
 
