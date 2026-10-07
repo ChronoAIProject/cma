@@ -390,3 +390,30 @@ async fn repaired_attachment_facts_are_counted_by_field() {
         );
     }
 }
+
+#[tokio::test]
+async fn dormant_nyxid_thread_and_activity_fields_are_accepted_and_ignored() {
+    let fixture = Fixture::new(|_| {}, Default::default()).await;
+    let plain = Envelope::new();
+    let mut dormant = Envelope::new();
+    dormant.payload["timestamp"] = plain.payload["timestamp"].clone();
+    dormant.payload["thread_context"] = json!({"root_id": "x"});
+    dormant.payload["activity"] = json!({"kind": "message"});
+    for envelope in [&plain, &dormant] {
+        let response = fixture.send(envelope).await;
+        assert_eq!(response.status(), 202);
+        assert_eq!(
+            response.json::<Value>().await.unwrap()["status"],
+            "accepted"
+        );
+    }
+    {
+        let requests = fixture.recorder.requests.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[1].activity, requests[0].activity);
+    }
+    let mut unknown = Envelope::new();
+    unknown.payload["surprise"] = json!({"root_id": "x"});
+    problem(fixture.send(&unknown).await, 401, "payload_invalid").await;
+    assert_eq!(fixture.recorder.requests.lock().unwrap().len(), 2);
+}

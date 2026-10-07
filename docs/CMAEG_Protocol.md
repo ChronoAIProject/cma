@@ -615,7 +615,11 @@ Body fields: `message_id`, `correlation_id`, `platform`, `reply_token`,
 `agent:{api_key_id,name}`, `conversation:{id,platform_id,type}`,
 `sender:{platform_id,display_name?}`, `content:{type,text?,attachments?}`,
 `timestamp`. Optional fields are `thread_id`, `reply_to_message_id`,
-`reply_to_platform_message_id`, and `raw_platform_data`. Attachment entries have
+`reply_to_platform_message_id`, `raw_platform_data`, `thread_context` and
+`activity`. `thread_context` and `activity` are NyxID facts that are dormant for
+gateway routes; they accept any JSON value and are ignored, and the raw platform
+event stays authoritative for threads and admission. Any other unknown body
+field is still 401 `callback_invalid`. Attachment entries have
 required `content_type,url` and optional `download_url,image_key,file_key,
 platform_message_id,filename,mime_type,size_bytes`. `download_url` is NyxID's
 own download endpoint for the entry; the gateway never dereferences

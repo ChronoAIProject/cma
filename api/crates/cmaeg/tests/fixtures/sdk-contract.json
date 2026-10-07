@@ -290,6 +290,9 @@
   ],
   "CallbackPayload": [
     {
+      "activity": {
+        "fixture": "fixture"
+      },
       "agent": {
         "api_key_id": "fixture",
         "name": "fixture"
@@ -326,6 +329,9 @@
       "sender": {
         "display_name": "fixture",
         "platform_id": "fixture"
+      },
+      "thread_context": {
+        "fixture": "fixture"
       },
       "thread_id": "fixture",
       "timestamp": "fixture"
