@@ -132,8 +132,20 @@ impl Fixture {
     pub async fn new(edit: impl FnOnce(&mut Value), config: IngressConfig) -> Self {
         Self::on("telegram", edit, config).await
     }
+    /// A Telegram relay channel served with `CMAEG_MEDIA_ENABLED=true`.
+    pub async fn with_media(edit: impl FnOnce(&mut Value), config: IngressConfig) -> Self {
+        Self::build("telegram", edit, config, true).await
+    }
     /// A channel whose single relay source serves `platform` (a protocol value).
     pub async fn on(platform: &str, edit: impl FnOnce(&mut Value), config: IngressConfig) -> Self {
+        Self::build(platform, edit, config, false).await
+    }
+    async fn build(
+        platform: &str,
+        edit: impl FnOnce(&mut Value),
+        config: IngressConfig,
+        media_enabled: bool,
+    ) -> Self {
         let signer = Signer::shared();
         let backend = Backend {
             jwks: Arc::new(Mutex::new(signer.jwks())),
@@ -182,7 +194,9 @@ impl Fixture {
             seal_blob(&keys, definition.to_blob_json().to_string().as_bytes()).unwrap();
         let resolver = ChannelResolver::new(records, keys.clone(), ChannelCacheConfig::default());
         let recorder = Arc::new(Recorder::default());
-        let state = IngressState::new(resolver, keys, config, recorder.clone()).unwrap();
+        let state = IngressState::new(resolver, keys, config, recorder.clone())
+            .unwrap()
+            .with_media_enabled(media_enabled);
         let (gateway, app) = serve(callbacks::router(state.clone())).await;
         Self {
             platform: platform.to_owned(),

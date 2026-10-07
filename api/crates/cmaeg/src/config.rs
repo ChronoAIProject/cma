@@ -16,7 +16,7 @@ mod turns;
 pub use cache::*;
 pub use delivery::*;
 pub use ingress::*;
-pub use media::{MediaConfig, MediaToolProviders, CMAEG_MEDIA_TOOL_PROVIDERS};
+pub use media::{MediaConfig, MediaToolProviders, CMAEG_MEDIA_ENABLED, CMAEG_MEDIA_TOOL_PROVIDERS};
 pub use service_account::*;
 pub use turns::*;
 
@@ -146,6 +146,7 @@ impl Config {
         // Validated against the registry, so it can only follow it.
         let media = MediaConfig {
             tool_providers: media::from_env(&providers)?,
+            enabled: media::enabled_from_env()?,
         };
         let provider_connect_timeout = positive_duration(CMAEG_PROVIDER_CONNECT_TIMEOUT_MS, 2_000)?;
         let provider_request_timeout =

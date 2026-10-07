@@ -311,3 +311,80 @@ async fn nyxid_photo_callback_is_refused_not_rejected_by_the_real_binary() {
     );
     provider.close().await;
 }
+
+#[tokio::test]
+async fn relay_video_with_sender_facts_reaches_provider_when_media_enabled() {
+    use super::nyxid_shapes::{attachment, file, telegram, TELEGRAM_FILE_ID};
+    let provider = FakeProvider::start(FakeProviderConfig::default()).await;
+    let mut fixture = Fixture::new(credential, Default::default()).await;
+    let enabled = [("CMAEG_MEDIA_ENABLED", "true")];
+    let mut process = Process::with_env(
+        &mut fixture,
+        &provider,
+        20000,
+        "https://nyx.example",
+        &enabled,
+    )
+    .await;
+    let name = format!("{}.mp4", "文".repeat(100));
+    let video = json!({"width": 0, "height": 0, "duration": 9, "file_name": name, "mime_type": "video/mp4", "file_size": 9_000_000});
+    let facts = json!({"filename": name, "mime_type": "video/mp4", "size_bytes": 9_000_000});
+    let envelope = telegram(
+        json!({ "video": file(video) }),
+        "video",
+        Some("clip caption fixture"),
+        vec![attachment(0, "video", TELEGRAM_FILE_ID, facts)],
+    );
+    let response = fixture.send(&envelope).await;
+    assert_eq!(response.status(), 202);
+    assert_eq!(
+        response.json::<Value>().await.unwrap()["status"],
+        "accepted"
+    );
+    let posted = provider
+        .requests()
+        .into_iter()
+        .find(|request| request.method == "POST")
+        .expect("the turn reached the provider");
+    let body: Value = serde_json::from_str(&posted.body).unwrap();
+    let input = body["input"][0]["content"][0]["text"].as_str().unwrap();
+    assert!(
+        input.starts_with("clip caption fixture\n\n[Attachments: 1"),
+        "{input}"
+    );
+    assert!(
+        input.contains("\n[0] video · video/mp4 · 0:09 · "),
+        "{input}"
+    );
+    let metrics = reqwest::get(&process.metrics)
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    for field in ["dimensions", "filename"] {
+        let series = format!(
+            "cmaeg_media_facts_repaired_total{{source=\"nyxid_relay\",field=\"{field}\"}} 1"
+        );
+        assert!(metrics.contains(&series), "{series} missing");
+    }
+    let logs = process.logs();
+    for private in [
+        TELEGRAM_FILE_ID,
+        name.as_str(),
+        "文",
+        "clip caption fixture",
+    ] {
+        assert!(!logs.contains(private), "attachment fact appeared in trace");
+    }
+    process.assert_safe_logs();
+    process.terminate().await;
+    assert!(
+        tokio::time::timeout(Duration::from_secs(3), process.child.wait())
+            .await
+            .unwrap()
+            .unwrap()
+            .success()
+    );
+    provider.close().await;
+}

@@ -147,6 +147,7 @@ EXPOSE 9091
 # Custom ingress: POST /v1/channels/{channel_id}/events (256 KiB), optional
 # mode=stream SSE, and signed HTTPS result webhooks with DNS pinning per attempt.
 # Inbound media: CMAEG_MEDIA_TOOL_PROVIDERS=cma_codex lists the providers whose profile bindings install the gateway MCP tools.
+# CMAEG_MEDIA_ENABLED=false keeps inbound media refused as attachment_unsupported.
 # See docs/CMA_Operations.md.
 ENTRYPOINT ["/usr/local/bin/cmaeg"]
 # Health is asserted by the Kubernetes probes in infra/cmaeg/deployment.yaml.

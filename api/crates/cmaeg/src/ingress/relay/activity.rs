@@ -49,14 +49,14 @@ pub(crate) fn launch_request(
         },
         None => ActivityKind::Message {
             text: payload.content.text.unwrap_or_default(),
-            attachments: Vec::new(),
+            attachments: facts.attachments,
             mentions_bot: facts.mentioned == Some(true),
             reply_to: payload
                 .reply_to_message_id
                 .map(MessageRef::new)
                 .transpose()
                 .map_err(|_| "activity_invalid")?,
-            album_id: None,
+            album_id: facts.album_id,
         },
     };
     let activity = Activity {

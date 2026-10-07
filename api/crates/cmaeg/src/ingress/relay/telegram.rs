@@ -2,15 +2,20 @@
 use super::{
     facts::{CallbackFacts, Observation, RelayFacts},
     payload::CallbackPayload,
+    telegram_media::{extract, MediaIngress, TelegramMedia, Transport, MEDIA_FIELDS},
     VerificationError,
 };
 use crate::ingress::admission::Refusal;
 use cmaeg_core::activity::{ActorKind, ConversationKind};
 use serde_json::Value;
 
+/// Longest message text or media caption admitted, matching the activity bound.
+const MAX_TEXT_BYTES: usize = 32 * 1024;
+
 pub fn observe(
     payload: &CallbackPayload,
     bot_username: Option<&str>,
+    ingress: MediaIngress,
 ) -> Result<Observation, VerificationError> {
     let Some(raw) = payload
         .raw_platform_data
@@ -77,26 +82,31 @@ pub fn observe(
     {
         return Ok(Observation::Refused(Refusal::SystemEvent));
     }
-    if [
-        "photo",
-        "document",
-        "video",
-        "audio",
-        "voice",
-        "animation",
-        "sticker",
-        "video_note",
-    ]
-    .iter()
-    .any(|field| message.get(*field).is_some())
-        || payload.received_attachments() > 0
-    {
-        return Ok(Observation::Refused(Refusal::AttachmentUnsupported));
-    }
+    let media = match media(payload, message, ingress) {
+        Ok(media) => media,
+        Err(reason) => return Ok(Observation::Refused(reason)),
+    };
     if message.get("managed_bot_created").is_some() {
         return super::telegram_managed::observe(payload, raw, message);
     }
     let text = message.get("text").and_then(Value::as_str);
+    // NyxID's content type and text must describe the raw message: text for a
+    // plain message, NyxID's media type and the caption for a media message.
+    let content_agrees = match &media {
+        None => {
+            payload.content.kind == "text"
+                && payload.content.text.as_deref() == text
+                && text.is_some_and(|text| !text.is_empty() && text.len() <= MAX_TEXT_BYTES)
+        }
+        Some(media) => {
+            payload.content.kind == media.nyxid_type
+                && payload.content.text.as_deref() == media.caption.as_deref()
+                && media
+                    .caption
+                    .as_ref()
+                    .is_none_or(|caption| caption.len() <= MAX_TEXT_BYTES)
+        }
+    };
     if [
         "contact",
         "location",
@@ -109,10 +119,7 @@ pub fn observe(
     ]
     .iter()
     .any(|field| message.get(*field).is_some())
-        || payload.content.kind != "text"
-        || text.is_none()
-        || payload.content.text.as_deref() != text
-        || text.is_some_and(|text| text.is_empty() || text.len() > 32 * 1024)
+        || !content_agrees
     {
         return Ok(Observation::Refused(Refusal::ContentUnsupported));
     }
@@ -131,8 +138,17 @@ pub fn observe(
         }
         _ => None,
     };
+    // A caption's mentions are in caption_entities, with offsets into the caption.
     let mentioned = bot_username
-        .map(|username| mention(message, text.unwrap(), username))
+        .map(|username| match &media {
+            None => mention(message, "entities", text.unwrap_or_default(), username),
+            Some(media) => mention(
+                message,
+                "caption_entities",
+                media.caption.as_deref().unwrap_or_default(),
+                username,
+            ),
+        })
         .transpose()?;
     let replied_to_bot = match message.get("reply_to_message") {
         None => Some(false),
@@ -141,6 +157,9 @@ pub fn observe(
             .and_then(|from| from.get("is_bot"))
             .and_then(Value::as_bool),
     };
+    let (attachments, album_id) = media
+        .map(|media| (media.attachments, media.album_id))
+        .unwrap_or_default();
     Ok(Observation::Message(RelayFacts {
         event: None,
         callback: None,
@@ -149,7 +168,42 @@ pub fn observe(
         mentioned,
         replied_to_bot,
         actor: ActorKind::Human,
+        attachments,
+        album_id,
     }))
+}
+
+/// The message's media under `ingress`, or the refusal it earns. Off, any media
+/// field or envelope attachment is refused exactly as before media existed.
+fn media(
+    payload: &CallbackPayload,
+    message: &Value,
+    ingress: MediaIngress,
+) -> Result<Option<TelegramMedia>, Refusal> {
+    let (transport, source) = match ingress {
+        MediaIngress::Off => {
+            let present = MEDIA_FIELDS
+                .iter()
+                .any(|field| message.get(*field).is_some());
+            return if present || payload.received_attachments() > 0 {
+                Err(Refusal::AttachmentUnsupported)
+            } else {
+                Ok(None)
+            };
+        }
+        MediaIngress::Relay => (
+            Transport::Relay(&payload.content.attachments),
+            "nyxid_relay",
+        ),
+        MediaIngress::Native => (Transport::Native, "telegram"),
+    };
+    match extract(message, transport, source) {
+        // The envelope lists attachments that the raw message does not carry.
+        None if payload.received_attachments() > 0 => Err(Refusal::AttachmentUnsupported),
+        None => Ok(None),
+        Some(media) if media.attachments.is_empty() => Err(Refusal::AttachmentUnsupported),
+        Some(media) => Ok(Some(media)),
+    }
 }
 fn numeric(value: Option<&Value>) -> Result<String, VerificationError> {
     value
@@ -157,8 +211,14 @@ fn numeric(value: Option<&Value>) -> Result<String, VerificationError> {
         .map(|id| id.to_string())
         .ok_or(VerificationError("telegram_numeric_id"))
 }
-fn mention(message: &Value, text: &str, username: &str) -> Result<bool, VerificationError> {
-    let Some(entities) = message.get("entities") else {
+/// Whether a `mention` entity in `entities_field` names the bot within `text`.
+fn mention(
+    message: &Value,
+    entities_field: &str,
+    text: &str,
+    username: &str,
+) -> Result<bool, VerificationError> {
+    let Some(entities) = message.get(entities_field) else {
         return Ok(false);
     };
     let entities = entities
@@ -251,5 +311,7 @@ fn observe_callback(
         mentioned: Some(true),
         replied_to_bot: Some(true),
         actor: ActorKind::Human,
+        attachments: Vec::new(),
+        album_id: None,
     }))
 }

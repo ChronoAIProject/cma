@@ -10,6 +10,8 @@ mod platforms;
 mod signer;
 #[path = "relay/support.rs"]
 mod support;
+#[path = "relay/telegram_media.rs"]
+mod telegram_media;
 #[path = "relay/transport.rs"]
 mod transport;
 #[path = "relay/verification.rs"]

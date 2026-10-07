@@ -8,6 +8,8 @@ pub struct Process {
     pub child: Child,
     pub dir: PathBuf,
     pub base: String,
+    /// The private Prometheus scrape URL.
+    pub metrics: String,
 }
 impl Drop for Process {
     fn drop(&mut self) {
@@ -24,6 +26,16 @@ impl Process {
         provider: &FakeProvider,
         budget_ms: u64,
         nyxid: &str,
+    ) -> Self {
+        Self::with_env(fixture, provider, budget_ms, nyxid, &[]).await
+    }
+    /// Start the executable with `env` added to its fixed environment.
+    pub async fn with_env(
+        fixture: &mut Fixture,
+        provider: &FakeProvider,
+        budget_ms: u64,
+        nyxid: &str,
+        env: &[(&str, &str)],
     ) -> Self {
         let resolved = fixture
             .state
@@ -42,22 +54,29 @@ impl Process {
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).unwrap();
         }
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
-        drop(listener);
+        let free = || {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            listener.local_addr().unwrap()
+        };
+        let (address, metrics) = (free(), free());
         let base = format!("http://{address}");
         let log = fs::File::create(dir.join("trace.log")).unwrap();
         let child=Command::new(env!("CARGO_BIN_EXE_cmaeg")).kill_on_drop(true)
             .env_clear().env("RUST_LOG","cmaeg=info")
             .env("CMAEG_LISTEN",address.to_string()).env("CMAEG_PUBLIC_URL",&base)
-            .env("CMAEG_METRICS_LISTEN", "127.0.0.1:0")
+            .env("CMAEG_METRICS_LISTEN", metrics.to_string()).envs(env.iter().copied())
             .env("CMAEG_CMA_BASE_URL",cma).env("CMAEG_NYXID_BASE_URL",nyxid)
             .env("CMAEG_MASTER_KEYS",format!("1:{}", STANDARD.encode([1; 32])))
             .env("CMAEG_CMA_SERVICE_TOKEN","test-service-bearer")
             .env("CMAEG_ACCEPT_BUDGET_MS",budget_ms.to_string()).env("CMAEG_DRAIN_SECONDS","15")
             .env("CMAEG_PROVIDERS",json!([{"slug":"cma_codex","base_url":provider.base_url(),"kind":"responses_http","paths":{"agent_card":"/.well-known/agent-card.json","binding":"/api/v1/cmaeg/bindings/{binding_id}","conversation":"/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}","responses":"/api/v2/responses"},"max_inflight":1}]).to_string())
             .stdout(Stdio::from(log.try_clone().unwrap())).stderr(Stdio::from(log)).spawn().unwrap();
-        let mut process = Self { child, dir, base };
+        let mut process = Self {
+            child,
+            dir,
+            base,
+            metrics: format!("http://{metrics}/metrics"),
+        };
         tokio::time::timeout(Duration::from_secs(5), async {
             loop {
                 assert!(

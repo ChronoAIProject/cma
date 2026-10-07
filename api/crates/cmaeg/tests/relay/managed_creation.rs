@@ -2,7 +2,7 @@ use super::support::*;
 use cmaeg_core::{activity::ActivityKind, seal::ReplyAddress};
 use serde_json::{json, Value};
 
-fn creation() -> Envelope {
+pub fn creation() -> Envelope {
     let mut envelope = Envelope::new();
     envelope.payload["conversation"]["platform_id"] = "7".into();
     envelope.payload["content"] = json!({"type":"unknown","text":null});
