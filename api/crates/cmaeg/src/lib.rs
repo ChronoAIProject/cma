@@ -310,23 +310,55 @@ pub fn install_panic_hook() {
 
 /// Initialize the container logger with the service's stable default filter.
 pub fn init_logging() {
-    tracing_subscriber::fmt()
-        .with_ansi(false)
-        .with_env_filter(log_filter())
+    use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, Layer};
+    tracing_subscriber::registry()
+        .with(
+            fmt::layer()
+                .with_ansi(false)
+                .with_filter(log_layer_filter(std::env::var("RUST_LOG").ok().as_deref())),
+        )
         .init();
 }
 
 /// Initialize the same logger on stderr, for operator commands whose stdout
 /// carries a machine-readable report.
 pub fn init_logging_to_stderr() {
-    tracing_subscriber::fmt()
-        .with_ansi(false)
-        .with_env_filter(log_filter())
-        .with_writer(std::io::stderr)
+    use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, Layer};
+    tracing_subscriber::registry()
+        .with(
+            fmt::layer()
+                .with_ansi(false)
+                .with_writer(std::io::stderr)
+                .with_filter(log_layer_filter(std::env::var("RUST_LOG").ok().as_deref())),
+        )
         .init();
 }
 
-fn log_filter() -> tracing_subscriber::EnvFilter {
-    tracing_subscriber::EnvFilter::try_from_env("RUST_LOG")
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(DEFAULT_LOG_FILTER))
+/// The gateway's log filter: the operator's `RUST_LOG` directives, or
+/// `cmaeg=info` when unset or unparsable, combined with a fixed cap that
+/// keeps the HTTP client crates at `warn`.
+///
+/// Their debug and trace events can carry token-bearing URLs, such as a
+/// Telegram file URL embedding the bot token. EnvFilter selects the most
+/// specific matching directive, so a cap appended to it would lose to
+/// `RUST_LOG=reqwest::connect=debug`; only a separate filter combined by AND
+/// can hold. `Targets` matches path prefixes, so `reqwest::connect` is capped
+/// with `reqwest`. Public so the tests can apply exactly this filter.
+pub fn log_layer_filter(
+    env: Option<&str>,
+) -> impl tracing_subscriber::layer::Filter<tracing_subscriber::Registry> + Send + Sync + 'static {
+    use tracing_subscriber::{
+        filter::{FilterExt, LevelFilter, Targets},
+        EnvFilter,
+    };
+    let env_filter = env
+        .and_then(|directives| EnvFilter::try_new(directives).ok())
+        .unwrap_or_else(|| EnvFilter::new(DEFAULT_LOG_FILTER));
+    let http_cap = Targets::new()
+        .with_default(LevelFilter::TRACE)
+        .with_target("reqwest", LevelFilter::WARN)
+        .with_target("hyper", LevelFilter::WARN)
+        .with_target("hyper_util", LevelFilter::WARN)
+        .with_target("h2", LevelFilter::WARN);
+    env_filter.and(http_cap)
 }

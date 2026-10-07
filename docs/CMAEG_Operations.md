@@ -98,7 +98,12 @@ Master keys and the CMA service bearer are Kubernetes Secret environment values,
 never ConfigMap values.
 Master key IDs are unsigned bytes; each base64 key decodes to 32 bytes, and the
 first key is current. RUST_LOG controls the tracing filter through the standard
-tracing subscriber. The latency harness has a separate test-only delay setting
+tracing subscriber, except that it cannot raise `reqwest`, `hyper`,
+`hyper_util` or `h2` (or any of their submodules) above `warn`: their debug
+and trace events can carry token-bearing URLs. A separate fixed filter
+combined with RUST_LOG enforces this, so even
+`RUST_LOG=trace,reqwest::connect=trace` prints none of them, and it applies
+with every media flag off. The latency harness has a separate test-only delay setting
 documented below; it is not a deployment key.
 
 ## Observability
