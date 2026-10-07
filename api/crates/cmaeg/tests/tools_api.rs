@@ -11,6 +11,8 @@ pub mod media {
 }
 #[path = "tools/attachments.rs"]
 mod attachments;
+#[path = "tools/attachments_mcp.rs"]
+mod attachments_mcp;
 #[path = "tools/media_support.rs"]
 pub mod media_support;
 #[path = "relay/support.rs"]

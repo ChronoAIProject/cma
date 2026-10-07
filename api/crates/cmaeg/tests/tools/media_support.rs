@@ -10,7 +10,7 @@ use cmaeg::{
         image::NormalizedImage,
         service::{MediaDeps, MediaService},
         transcribe::{AudioContainer, AudioInput, TranscribeError, Transcriber, Transcript},
-        visual::{VisualExtractor, VisualKind, VisualRequest},
+        visual::{PlatformThumbnail, VisualExtractor, VisualKind, VisualRequest},
         MediaLimits,
     },
     MediaConfig, MediaToolProviders,
@@ -175,6 +175,9 @@ pub struct MediaSetup {
     pub native: bool,
     /// Seal the activity digest into the event_ref.
     pub digest: bool,
+    /// Extract frames with the production platform-thumbnail extractor over
+    /// the fake source instead of the fake extractor.
+    pub thumbnails: bool,
     pub limits: MediaLimits,
     /// Applied to the channel definition before it is stored.
     pub edit: fn(&mut Value),
@@ -187,6 +190,7 @@ impl MediaSetup {
             attachments,
             native: false,
             digest: true,
+            thumbnails: false,
             limits: MediaLimits::from_config(&MediaConfig::default()),
             edit: |_| {},
         }
@@ -194,6 +198,11 @@ impl MediaSetup {
 
     pub fn native(mut self) -> Self {
         self.native = true;
+        self
+    }
+
+    pub fn platform_thumbnails(mut self) -> Self {
+        self.thumbnails = true;
         self
     }
 
@@ -240,10 +249,16 @@ impl MediaSetup {
 
     pub fn service(&self, keys: Arc<MasterKeyRing>) -> MediaService {
         let decode = Arc::new(Semaphore::new(1));
+        let sources = self.fakes.source.registry();
+        let visuals: Arc<dyn VisualExtractor> = if self.thumbnails {
+            Arc::new(PlatformThumbnail::new(sources.clone(), decode.clone()))
+        } else {
+            self.fakes.visuals.clone()
+        };
         MediaService::new(MediaDeps {
-            sources: self.fakes.source.registry(),
+            sources,
             transcriber: self.fakes.transcriber.clone(),
-            visuals: self.fakes.visuals.clone(),
+            visuals,
             limits: self.limits,
             keys,
             tool_providers: Arc::new(MediaToolProviders::from_iter(["cma_codex"
