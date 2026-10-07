@@ -92,6 +92,23 @@ pub struct Attachment {
     pub mime_type: Option<String>,
     pub size_bytes: Option<u64>,
 }
+const MAX_DISPLAY_NAME: usize = 256;
+impl Sender {
+    /// NyxID concatenates the sender's first and last name (up to 129 characters,
+    /// 387 bytes in CJK), and rejecting an oversized name lost the whole message.
+    /// Control characters are removed, the name is truncated to 256 bytes on a char
+    /// boundary, and an empty result becomes `None`. Returns whether it changed.
+    pub fn repair_display_name(&mut self) -> bool {
+        let Some(original) = self.display_name.take() else {
+            return false;
+        };
+        let mut name: String = original.chars().filter(|c| !c.is_control()).collect();
+        name.truncate(name.floor_char_boundary(MAX_DISPLAY_NAME));
+        let changed = name.is_empty() || name.len() != original.len();
+        self.display_name = (!name.is_empty()).then_some(name);
+        changed
+    }
+}
 pub(super) fn identifier(value: &str) -> bool {
     !value.is_empty() && value.len() <= 256 && !value.chars().any(char::is_control)
 }
@@ -130,7 +147,7 @@ impl CallbackPayload {
         .iter()
         .any(|value| !identifier(value))
             || self.agent.name.len() > 256
-            || !optional(self.sender.display_name.as_deref(), 256)
+            || !optional(self.sender.display_name.as_deref(), MAX_DISPLAY_NAME)
             || !optional(self.reply_to_message_id.as_deref(), 256)
             || !optional(self.reply_to_platform_message_id.as_deref(), 256)
             || !optional(self.thread_id.as_ref().map(Secret::as_str), 4096)
@@ -148,5 +165,46 @@ impl CallbackPayload {
             return Err(VerificationError("payload_bounds"));
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Sender;
+
+    fn repaired(name: Option<&str>) -> (bool, Option<String>) {
+        let mut sender = Sender {
+            platform_id: "7".into(),
+            display_name: name.map(str::to_owned),
+        };
+        (sender.repair_display_name(), sender.display_name)
+    }
+
+    #[test]
+    fn valid_and_absent_display_names_are_unchanged() {
+        assert_eq!(repaired(None), (false, None));
+        assert_eq!(repaired(Some("Alice")), (false, Some("Alice".into())));
+        let longest = "a".repeat(256);
+        assert_eq!(repaired(Some(&longest)), (false, Some(longest.clone())));
+    }
+
+    #[test]
+    fn oversized_names_are_truncated_on_a_char_boundary() {
+        let original = format!("{} {}", "名".repeat(64), "姓".repeat(64));
+        assert_eq!(original.len(), 385);
+        let (changed, name) = repaired(Some(&original));
+        let name = name.unwrap();
+        assert!(changed);
+        assert_eq!(name.len(), 256);
+        assert!(original.starts_with(&name));
+        let (_, name) = repaired(Some(&"名".repeat(86)));
+        assert_eq!(name.unwrap().len(), 255);
+    }
+
+    #[test]
+    fn control_characters_are_removed_and_empty_names_become_absent() {
+        assert_eq!(repaired(Some("Al\u{7}ice\n")), (true, Some("Alice".into())));
+        assert_eq!(repaired(Some("\u{7}\u{0}\t")), (true, None));
+        assert_eq!(repaired(Some("")), (true, None));
     }
 }

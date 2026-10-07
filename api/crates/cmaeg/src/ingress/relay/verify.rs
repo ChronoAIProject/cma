@@ -1,5 +1,6 @@
 //! Complete callback, optional relay-user, and reply-token binding checks.
 use super::{
+    attachments::RepairField,
     jwks::JwksCache,
     jwt::{StandardClaims, Token},
     payload::{identifier, timestamp, CallbackPayload},
@@ -141,6 +142,10 @@ pub async fn verify(
     let mut payload: CallbackPayload =
         serde_json::from_slice(body).map_err(|_| VerificationError("payload_invalid"))?;
     // The body digest is verified, so these repairs describe authenticated NyxID output.
+    if payload.sender.repair_display_name() {
+        let repairs = &mut payload.content.attachments.repairs;
+        repairs.record(RepairField::SenderDisplayName);
+    }
     payload.content.attachments.repairs.record_metrics();
     payload.validate()?;
     if payload.message_id != claims.message_id
