@@ -29,19 +29,80 @@ pub struct UpdateArguments {
 #[derive(OpenApi)]
 #[openapi(components(schemas(EventArguments, ReplyArguments, UpdateArguments)))]
 struct Schemas;
+/// One MCP tool's published description and behaviour hints.
+///
+/// Each hint is stated per tool rather than derived from a shared flag, so a
+/// tool whose hints do not follow the existing pattern needs no special case.
+struct ToolSpec {
+    name: &'static str,
+    description: &'static str,
+    /// The argument schema's component name in [`Schemas`].
+    schema: &'static str,
+    read_only: bool,
+    destructive: bool,
+    idempotent: bool,
+    open_world: bool,
+}
+const TOOLS: [ToolSpec; 4] = [
+    ToolSpec {
+        name: "replyToEvent",
+        description: "Send a message in reply to an event.",
+        schema: "ReplyArguments",
+        read_only: false,
+        destructive: false,
+        idempotent: false,
+        open_world: true,
+    },
+    ToolSpec {
+        name: "updateMessage",
+        description: "Update a confirmed message when its transport supports edits.",
+        schema: "UpdateArguments",
+        read_only: false,
+        destructive: true,
+        idempotent: false,
+        open_world: true,
+    },
+    ToolSpec {
+        name: "sendTyping",
+        description: "Send a typing indicator when supported.",
+        schema: "EventArguments",
+        read_only: false,
+        destructive: false,
+        idempotent: false,
+        open_world: true,
+    },
+    ToolSpec {
+        name: "readEventContext",
+        description: "Read the event's public activity and available reply capabilities.",
+        schema: "EventArguments",
+        read_only: true,
+        destructive: false,
+        idempotent: true,
+        open_world: false,
+    },
+];
 pub fn list() -> Value {
     let mut document = serde_json::to_value(Schemas::openapi()).unwrap();
     rewrite_refs(&mut document);
     let definitions = document["components"]["schemas"].clone();
-    let tools:Vec<_>=[
-        ("replyToEvent","Send a message in reply to an event.","ReplyArguments",false),
-        ("updateMessage","Update a confirmed message when its transport supports edits.","UpdateArguments",false),
-        ("sendTyping","Send a typing indicator when supported.","EventArguments",false),
-        ("readEventContext","Read the event's public activity and available reply capabilities.","EventArguments",true),
-    ].into_iter().map(|(name,description,schema,read_only)| {
-        let mut schema=definitions[schema].clone();schema["$defs"]=definitions.clone();
-        json!({"name":name,"description":description,"inputSchema":schema,"annotations":{"readOnlyHint":read_only,"destructiveHint":name=="updateMessage","idempotentHint":read_only,"openWorldHint":!read_only}})
-    }).collect();
+    let tools: Vec<_> = TOOLS
+        .iter()
+        .map(|tool| {
+            let mut schema = definitions[tool.schema].clone();
+            schema["$defs"] = definitions.clone();
+            json!({
+                "name": tool.name,
+                "description": tool.description,
+                "inputSchema": schema,
+                "annotations": {
+                    "readOnlyHint": tool.read_only,
+                    "destructiveHint": tool.destructive,
+                    "idempotentHint": tool.idempotent,
+                    "openWorldHint": tool.open_world,
+                },
+            })
+        })
+        .collect();
     json!({"tools":tools})
 }
 fn rewrite_refs(value: &mut Value) {
@@ -119,7 +180,12 @@ pub async fn call(
         }
     }
     .map_err(|_| Problem::new(ProblemCode::Internal, 500, "tool response unavailable"))?;
-    Ok(
-        json!({"content":[{"type":"text","text":value.to_string()}],"structuredContent":value,"isError":false}),
-    )
+    Ok(envelope(value))
+}
+/// The MCP result for a tool's structured value, mirrored as text content.
+///
+/// Wrapping happens per call site rather than once for every tool because a
+/// later tool may need a content-only result without `structuredContent`.
+fn envelope(value: Value) -> Value {
+    json!({"content":[{"type":"text","text":value.to_string()}],"structuredContent":value,"isError":false})
 }
