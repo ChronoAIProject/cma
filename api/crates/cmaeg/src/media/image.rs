@@ -24,8 +24,14 @@
 //! ICC segments to the 25 MiB `CMAEG_MEDIA_MAX_BYTES` ceiling, it peaks at
 //! 237.8 MiB; with a 23.5 MiB noisy input, at 212.7 MiB. The other fixtures
 //! peak at 62.3 MiB (baseline JPEG), 165.2 MiB (progressive RGB JPEG),
-//! 76.7 MiB (RGBA8 PNG and lossless WebP), 154.1 MiB (16-bit PNG) and
-//! 85.8 MiB (two-frame GIF), and every fixture finishes within 1.0 s.
+//! 76.7 MiB (RGBA8 PNG and lossless WebP), 154.1 MiB (16-bit PNG),
+//! 85.8 MiB (two-frame GIF) and 137.3 MiB (lossy WebP animation), and every
+//! fixture finishes within 1.0 s. `image` cannot write lossy WebP, so the one
+//! at the limit is a small checked-in frame on a full-size canvas, where WebP
+//! allocates the most: the canvas and the output beside it. A still lossy
+//! WebP at the limit, written by cwebp and measured by hand, peaked at
+//! 107.7 MiB in 1.7 s with random noise, the slowest decode, and at
+//! 111.6 MiB with an uncompressed alpha plane filling the input ceiling.
 //! [`MAX_PIXELS`] was lowered from 24,000,000 for the CMYK JPEG, which there
 //! peaked at 252 MiB plus its input, 277 MiB at the ceiling; at 20,000,000
 //! the padded one still peaked at 258.9 MiB.
