@@ -147,7 +147,7 @@ use cma_sdk::cmaeg::{Cmaeg, types::OutboundMessage};
 async fn reply(origin: &str, agent_key: &str, event_ref: &str) -> cma_sdk::Result<()> {
     let gateway = Cmaeg::builder(origin)?.bearer_token(agent_key)?.build()?;
     let receipt = gateway.reply_to_event(event_ref, &OutboundMessage {
-        thread_reply: false,
+        thread_reply: None,
         text: Some("Received".into()), blocks: None, reply_to: None,
     }).await?;
     // Inspect receipt.delivery and receipt.rendering before claiming delivery.
