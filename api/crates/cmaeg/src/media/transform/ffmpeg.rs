@@ -56,6 +56,12 @@ impl<L: JobLauncher> FfmpegJobTransformer<L> {
         }
     }
 
+    /// The injected launcher, so the build-time self-test can read what its
+    /// recording launcher saw.
+    pub fn launcher(&self) -> &L {
+        &self.launcher
+    }
+
     async fn keyframe_set(&self, request: KeyframeRequest) -> Result<Keyframes, TransformError> {
         let ticket = self
             .scheduler

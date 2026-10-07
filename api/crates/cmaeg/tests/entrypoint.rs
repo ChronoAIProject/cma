@@ -1,7 +1,7 @@
 //! Process argument dispatch: unknown arguments are a usage error, never a panic.
 use std::{ffi::OsStr, process::Output};
 
-const USAGE: &str = "usage: cmaeg [--print-openapi | --audit-custom-attachments [--clear] | --media-job <op> <bin-dir> <job-dir> [arg] | --media-sandbox-check]\n";
+const USAGE: &str = "usage: cmaeg [--print-openapi | --audit-custom-attachments [--clear] | --media-job <op> <bin-dir> <job-dir> [arg] | --media-sandbox-check | --media-self-test <fixtures-dir>]\n";
 
 fn run(arguments: &[&OsStr]) -> Output {
     std::process::Command::new(env!("CARGO_BIN_EXE_cmaeg"))
@@ -92,6 +92,20 @@ fn the_sandbox_check_takes_no_arguments() {
 #[test]
 fn the_sandbox_check_fails_where_no_sandbox_exists() {
     let output = run_strs(&["--media-sandbox-check"]);
+    assert_eq!(output.status.code(), Some(125));
+    assert!(output.stdout.is_empty());
+}
+
+#[test]
+fn the_self_test_takes_exactly_one_fixtures_directory() {
+    assert_usage(&run_strs(&["--media-self-test"]));
+    assert_usage(&run_strs(&["--media-self-test", "/fixtures", "extra"]));
+}
+
+#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+#[test]
+fn the_self_test_fails_where_no_sandbox_exists() {
+    let output = run_strs(&["--media-self-test", "/fixtures"]);
     assert_eq!(output.status.code(), Some(125));
     assert!(output.stdout.is_empty());
 }
