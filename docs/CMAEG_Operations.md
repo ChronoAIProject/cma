@@ -830,6 +830,152 @@ filters and limits, and spend for at most 20 s per process the CPU that
 `SCHED_IDLE` leaves, threads up to the pod PID limit and memory up to the
 watchdog threshold. Follow-ups: Landlock and per-job uids.
 
+### FFmpeg in the gateway image
+
+The gateway image ships a minimal, static, LGPL-only FFmpeg: `ffmpeg` and
+`ffprobe` in root-owned `/opt/ffmpeg/bin` (mode 0755), the directory
+`CMAEG_MEDIA_FFMPEG_DIR` names to enable the transformer on linux/amd64. The
+shipped ConfigMap keeps the key empty; enabling it is a separate, infra-only
+change.
+
+**Pin.** Every value is written literally in the `ffmpeg-build` stage of
+`infra/cmaeg/Dockerfile`, never through a build argument.
+
+| | |
+| --- | --- |
+| Version | FFmpeg 9.0.2 "Lei", the newest point release of the latest stable branch when pinned |
+| Source | `https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz` |
+| SHA-256 | `8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e` |
+| Signature | `ffmpeg-9.0.2.tar.xz.asc`, verified with `gpg --verify` against the release signing key published at `https://ffmpeg.org/ffmpeg-devel.asc` ("FFmpeg release signing key", fingerprint `FCF9 86EA 15E6 E293 A564 4F10 B432 2F04 D676 58D8`) |
+
+The stage checks the archive's SHA-256 and then builds with `--network=none`:
+
+```sh
+./configure --prefix=/opt/ffmpeg --enable-static --disable-shared \
+  --extra-ldflags=-static --pkg-config-flags=--static \
+  --disable-autodetect --disable-network --disable-everything --disable-doc \
+  --disable-debug --disable-ffplay --enable-ffmpeg --enable-ffprobe \
+  --enable-swscale --enable-swresample --enable-protocol=file,pipe \
+  --enable-demuxer=mov,matroska,ogg,mp3,wav,flac,aac,gif,amr \
+  --enable-parser=h264,hevc,vp8,vp9,mpeg4video,aac,opus,vorbis,flac,mpegaudio,gif \
+  --enable-decoder=h264,hevc,vp8,vp9,mpeg4,aac,mp3float,opus,vorbis,flac,pcm_s16le,pcm_f32le,amrnb,amrwb,gif,mjpeg \
+  --enable-encoder=mjpeg,pcm_s16le --enable-muxer=image2pipe,pcm_s16le \
+  --enable-filter=scale,format,aresample,aformat,trim,atrim,null,anull
+```
+
+Only what the fixed argv of the [media job sandbox](#media-job-sandbox) needs
+is compiled. `trim` and `atrim` serve accurate `-ss` and output `-t`; `null`,
+`anull`, `format` and `aformat` serve the filter graphs FFmpeg builds; every
+output goes to stdout, so the only muxers are `image2pipe` and `pcm_s16le`
+(the component behind `-f s16le`). FFmpeg itself selects what these depend on,
+such as the VP9 superframe bitstream filter and the rotation filters. `nasm`
+builds the x86 assembly. The stage fails unless both binaries are fully static
+(`readelf -d` shows no `NEEDED`), `ffmpeg -L` reports the GNU Lesser General
+Public License, and `-buildconf` shows none of `--enable-gpl`,
+`--enable-nonfree` or `--enable-version3`.
+
+**LGPL-2.1-or-later compliance.** `/usr/local/share/ffmpeg` in the image holds
+`LICENSE` (the source's `COPYING.LGPLv2.1`), `configure.txt` (the
+`-buildconf` output), `source.txt` (the version, the source URL and the
+archive's SHA-256) and `binaries.sha256`. The binaries are built from the
+unmodified source at the recorded URL, with no patch applied.
+
+**Build-time self-test.** The `media-self-test` stage copies the gateway
+binary, both FFmpeg binaries and the fixtures in
+`api/crates/cmaeg/tests/fixtures/media/` into a clean Alpine image and, as
+uid 10001 with `--network=none`, runs
+`CMAEG_MEDIA_FFMPEG_DIR=/opt/ffmpeg/bin cmaeg --media-self-test
+/opt/cmaeg-media-fixtures`. Every case goes through the production path: the
+transform scheduler, a job directory under `/var/cmaeg/media` and the
+sandboxed launcher, with a watchdog over a disabled gauge because a build
+container has no memory limit. The runtime stage copies the stage's report to
+`/usr/local/share/cmaeg/media-self-test.txt`, which forces it to run: a failed
+case fails the image build. On linux/arm64 the stage records that the
+transformer does not apply. As with the sandbox self-check, building
+linux/amd64 under QEMU user emulation is unsupported; CI builds natively.
+
+| Fixture | Op | Passes when |
+| --- | --- | --- |
+| `h264_aac.mp4`, `vp9_opus.webm` | keyframes (6), audio (5 s) | as below |
+| `anim.gif` | keyframes (6) | as below; with `-skip_frame nokey` a GIF may yield fewer frames |
+| `voice.ogg` | audio (5 s) | as below, with at least 64000 PCM bytes |
+| `tone.mp3`, `tone.amr` | audio (5 s) | as below |
+| `hevc_4k.mp4` | keyframes (1) | exactly one frame and every job `ok`: 3840×2160 HEVC decodes within `RLIMIT_AS` at `-max_pixels 8294400` |
+
+A keyframe case passes when the probe reported a duration, at least one JPEG
+came back, each is at most 768 px per side and normalizes as a preview, and
+no job ended `cpu_limit`, `resource_limit`, `killed` or `sandbox_unavailable`;
+another failed frame job only skips its position, as in production. An audio
+case passes when its job ended `ok` and the PCM is even, non-empty and behind
+exactly the WAV header the gateway writes. The report is one line per case and
+op, never media or FFmpeg's stderr:
+
+```text
+media-self-test case=<file> op=<keyframes|audio> outcome=<outcome> frames=<n> pcm_bytes=<n> ms=<n>
+```
+
+It exits 0 when every case passes, 1 when one fails, 2 on a usage or
+configuration error (`CMAEG_MEDIA_FFMPEG_DIR` missing or not root-owned, an
+unusable media root) and 125 where no sandbox exists. To repeat it by hand on
+a linux/amd64 Docker host (seccomp is not reliable under emulation):
+
+```sh
+docker run --rm -e CMAEG_MEDIA_FFMPEG_DIR=/opt/ffmpeg/bin \
+  --tmpfs /var/cmaeg/media:uid=10001,mode=0700 \
+  -v "$PWD/api/crates/cmaeg/tests/fixtures/media:/fx:ro" <image> --media-self-test /fx
+```
+
+**Fixtures.** The fixtures are synthetic (lavfi `testsrc2` and `sine`), with
+no third-party content. They were generated once with Debian trixie's FFmpeg
+7.1.5 and `libavcodec-extra`, which adds the AMR-NB encoder; any full build
+with these encoders works. Each is at most 64 KiB, except `hevc_4k.mp4` at
+most 256 KiB, and `tests/media_fixtures.rs` keeps the directory and the
+self-test's cases naming the same files. If gitleaks ever flags one,
+regenerate it; never add an allowlist entry.
+
+| File | Content | Command |
+| --- | --- | --- |
+| `h264_aac.mp4` | 2 s 320×240 H.264 and AAC | `ffmpeg -f lavfi -i testsrc2=size=320x240:rate=10:duration=2 -f lavfi -i sine=frequency=440:duration=2 -c:v libx264 -preset veryslow -crf 40 -pix_fmt yuv420p -g 5 -c:a aac -b:a 24k -shortest -movflags +faststart h264_aac.mp4` |
+| `vp9_opus.webm` | 2 s VP9 and Opus | `ffmpeg -f lavfi -i testsrc2=size=320x240:rate=10:duration=2 -f lavfi -i sine=frequency=440:duration=2 -c:v libvpx-vp9 -b:v 40k -g 5 -c:a libopus -b:a 16k -shortest vp9_opus.webm` |
+| `voice.ogg` | 3 s mono Ogg/Opus, like a Telegram `.oga` | `ffmpeg -f lavfi -i sine=frequency=300:duration=3 -ac 1 -c:a libopus -b:a 16k voice.ogg` |
+| `tone.mp3` | 3 s MP3 | `ffmpeg -f lavfi -i sine=frequency=440:duration=3 -c:a libmp3lame -b:a 32k tone.mp3` |
+| `tone.amr` | 3 s AMR-NB | `ffmpeg -f lavfi -i sine=frequency=440:duration=3 -ar 8000 -ac 1 -c:a libopencore_amrnb -b:a 12.2k tone.amr` |
+| `anim.gif` | 2 s 160×120 animation | `ffmpeg -f lavfi -i testsrc2=size=160x120:rate=5:duration=2 anim.gif` |
+| `hevc_4k.mp4` | two 3840×2160 HEVC intra frames at 2 fps (exactly 8 294 400 px, the `-max_pixels` value) | `ffmpeg -f lavfi -i testsrc2=size=3840x2160:rate=2 -frames:v 2 -c:v libx265 -g 1 -crf 45 -tag:v hvc1 hevc_4k.mp4` |
+
+`hevc_4k.mp4` holds two intra frames rather than one because a keyframe set
+asks for the frame at the middle of the duration: a one-frame clip has no
+frame there, and its set fails before anything is decoded.
+
+**Updating FFmpeg.**
+
+1. Bump the version and the SHA-256 literally in the `ffmpeg-build` stage and
+   in `source.txt`, after verifying the new archive's signature against the
+   release key above.
+2. Rebuild the image.
+3. Re-run the P8 strace of every op on every fixture and diff the syscall
+   list against Filter A. A missing call off the never-list is added with its
+   justification; one on the never-list is not added, and the update stops
+   for a design decision on #961.
+4. Check that the build-stage self-test passes, `hevc_4k.mp4` included.
+5. Check that trivy passes on the image.
+6. Record the result on the CVE review issue.
+
+**CVE review.** Trivy cannot see a binary built from source: it carries no
+package metadata, so the image scan covers the Alpine packages only. FFmpeg
+security fixes are reviewed monthly, and on every FFmpeg security
+announcement (`https://ffmpeg.org/security.html`), in the recurring issue
+"[chore] infra/cmaeg: review FFmpeg security releases for the gateway image".
+Act when a fixed CVE touches an enabled component: a demuxer, parser,
+decoder, encoder, filter or protocol in the configure line above, or
+`libswscale`, `libswresample` or `libavutil`.
+
+**The measured fallback.** `alpine:3.22` with `apk add ffmpeg` (FFmpeg 6.1.2)
+passes the same trivy scan with 0 findings at about 180 MB, but it enables
+hundreds of components, network protocols among them, links GPL libraries and
+follows Alpine's backports rather than this pin. Switching to it would need a
+new P8 record and an amendment on #961.
+
 ### Rolling back below inbound media
 
 An image older than the inbound-media release cannot parse a stored channel
