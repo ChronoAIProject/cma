@@ -381,6 +381,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "libc",
  "meteroid-utoipa",
  "metrics",
  "metrics-exporter-prometheus",

@@ -377,3 +377,44 @@ async fn sigterm_keeps_process_alive_until_ten_second_turn_finishes() {
     process.assert_safe_logs();
     fake.close().await;
 }
+
+#[tokio::test]
+async fn nyxid_photo_callback_is_refused_not_rejected_by_the_real_binary() {
+    use super::nyxid_shapes::{telegram_photo, TELEGRAM_FILE_ID};
+    let provider = FakeProvider::start(FakeProviderConfig::default()).await;
+    let mut fixture = Fixture::new(credential, Default::default()).await;
+    let mut process = Process::start(&mut fixture, &provider, 20000).await;
+    let response = fixture.send(&telegram_photo()).await;
+    assert_eq!(response.status(), 202);
+    assert_eq!(
+        response.json::<Value>().await.unwrap(),
+        json!({"status": "refused", "reason": "attachment_unsupported"})
+    );
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !process.logs().contains("status=202") {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(provider.requests().iter().all(|r| r.method != "POST"));
+    let logs = process.logs();
+    for private in [
+        TELEGRAM_FILE_ID,
+        "/api/v1/channel-relay/messages/",
+        "Mira Fixture",
+        "look at this",
+    ] {
+        assert!(!logs.contains(private), "attachment fact appeared in trace");
+    }
+    process.assert_safe_logs();
+    process.terminate().await;
+    assert!(
+        tokio::time::timeout(Duration::from_secs(3), process.child.wait())
+            .await
+            .unwrap()
+            .unwrap()
+            .success()
+    );
+    provider.close().await;
+}

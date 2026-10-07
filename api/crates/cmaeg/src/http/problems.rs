@@ -35,6 +35,19 @@ pub fn no_store(mut response: Response) -> Response {
     response
 }
 
+/// Answers a request whose handler or middleware panicked. The payload is
+/// dropped unread: a panic message can carry request data, which must reach
+/// neither a log nor the caller.
+pub(crate) fn panic_response(_: Box<dyn std::any::Any + Send + 'static>) -> Response {
+    tracing::error!("request handler panicked");
+    // The panic unwound past `protocol_headers`, so its headers are added here.
+    with_protocol_headers(problem(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        ProblemCode::Internal,
+        "internal_error",
+    ))
+}
+
 pub async fn protocol_headers(
     request: axum::extract::Request,
     next: axum::middleware::Next,
@@ -66,11 +79,12 @@ pub async fn protocol_headers(
             response.headers_mut().insert(header::ALLOW, allow);
         }
     }
+    with_protocol_headers(response)
+}
+
+fn with_protocol_headers(mut response: Response) -> Response {
     response
         .headers_mut()
         .insert(PROTOCOL_HEADER, HeaderValue::from_static(PROTOCOL_VERSION));
-    response
-        .headers_mut()
-        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    response
+    no_store(response)
 }

@@ -290,6 +290,9 @@
   ],
   "CallbackPayload": [
     {
+      "activity": {
+        "fixture": "fixture"
+      },
       "agent": {
         "api_key_id": "fixture",
         "name": "fixture"
@@ -298,6 +301,7 @@
         "attachments": [
           {
             "content_type": "fixture",
+            "download_url": "fixture",
             "file_key": "fixture",
             "filename": "fixture",
             "image_key": "fixture",
@@ -325,6 +329,9 @@
       "sender": {
         "display_name": "fixture",
         "platform_id": "fixture"
+      },
+      "thread_context": {
+        "fixture": "fixture"
       },
       "thread_id": "fixture",
       "timestamp": "fixture"
@@ -1395,6 +1402,7 @@
   "RelayAttachment": [
     {
       "content_type": "fixture",
+      "download_url": "fixture",
       "file_key": "fixture",
       "filename": "fixture",
       "image_key": "fixture",
@@ -1409,6 +1417,7 @@
       "attachments": [
         {
           "content_type": "fixture",
+          "download_url": "fixture",
           "file_key": "fixture",
           "filename": "fixture",
           "image_key": "fixture",
