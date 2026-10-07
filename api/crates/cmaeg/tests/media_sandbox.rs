@@ -5,5 +5,7 @@
 
 #[path = "media_sandbox/filters.rs"]
 mod filters;
+#[path = "media_sandbox/lifecycle.rs"]
+mod lifecycle;
 #[path = "media_sandbox/support.rs"]
 mod support;

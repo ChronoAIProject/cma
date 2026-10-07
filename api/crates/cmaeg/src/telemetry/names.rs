@@ -28,6 +28,9 @@ pub const STT_AUDIO_SECONDS: &str = "cmaeg_stt_audio_seconds_total";
 pub const STT_CHANNELS_AT_BUDGET: &str = "cmaeg_stt_channels_at_budget";
 pub const FENCE_WAIT: &str = "cmaeg_media_fence_wait_seconds";
 pub const MEDIA_PREPARE: &str = "cmaeg_media_prepare_seconds";
+pub const MEDIA_TRANSFORM_TOTAL: &str = "cmaeg_media_transform_total";
+pub const MEDIA_TRANSFORM_SECONDS: &str = "cmaeg_media_transform_seconds";
+pub const MEDIA_SANDBOX_READY: &str = "cmaeg_media_sandbox_ready";
 pub const SOURCE: &str = "source";
 pub const COLD: &str = "cold";
 pub const OUTCOME: &str = "outcome";
@@ -66,15 +69,21 @@ pub const BUCKETS: [f64; 11] = [
 ];
 /// Media metrics carry their own units and descriptions, so they are listed
 /// apart from the generic families above.
-pub const MEDIA_HISTOGRAMS: [&str; 4] =
-    [MEDIA_FETCH_SECONDS, MEDIA_DERIVE, FENCE_WAIT, MEDIA_PREPARE];
-pub const MEDIA_COUNTERS: [&str; 2] = [MEDIA_FETCH_BYTES, STT_AUDIO_SECONDS];
-pub const MEDIA_GAUGES: [&str; 5] = [
+pub const MEDIA_HISTOGRAMS: [&str; 5] = [
+    MEDIA_FETCH_SECONDS,
+    MEDIA_DERIVE,
+    FENCE_WAIT,
+    MEDIA_PREPARE,
+    MEDIA_TRANSFORM_SECONDS,
+];
+pub const MEDIA_COUNTERS: [&str; 3] = [MEDIA_FETCH_BYTES, STT_AUDIO_SECONDS, MEDIA_TRANSFORM_TOTAL];
+pub const MEDIA_GAUGES: [&str; 6] = [
     MEDIA_INFLIGHT_BYTES,
     MEDIA_RESPONSE_BYTES,
     MEDIA_JOBS_INFLIGHT,
     MEDIA_CACHE_BYTES,
     STT_CHANNELS_AT_BUDGET,
+    MEDIA_SANDBOX_READY,
 ];
 /// Media work spans an 8 s tool budget, a 15 s preparation budget and a 90 s
 /// background budget, well past the 10 s top of [`BUCKETS`].
