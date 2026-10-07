@@ -10,6 +10,7 @@ pub mod image_fixtures;
 
 use cmaeg::media::image::{
     normalize_blocking, ImageError, NormalizedImage, DECODE_PEAK_BUDGET, DECODE_WALL_BUDGET, FULL,
+    MAX_PIXELS,
 };
 use image_fixtures as fixtures;
 use std::{
@@ -79,6 +80,13 @@ unsafe impl GlobalAlloc for Counting {
 static ALLOCATOR: Counting = Counting;
 
 const MIB: f64 = 1024.0 * 1024.0;
+/// The photo fixtures are 3:2 or wider at the pixel limit, so they test the
+/// bound rather than a size under it.
+const WIDTH: u32 = 6000;
+const HEIGHT: u32 = (MAX_PIXELS / WIDTH as u64) as u32;
+/// The largest input `CMAEG_MEDIA_MAX_BYTES` admits. A JPEG decoder holds a
+/// copy of its whole input, so the worst JPEG fixture is near this size.
+const MAX_INPUT_BYTES: usize = 25 * 1024 * 1024;
 
 /// Normalize `input` to FULL and assert the peak above the baseline and the
 /// wall time, whatever the outcome: a refusal is bounded like a success.
@@ -125,6 +133,17 @@ fn measure(name: &str, input: &[u8]) {
     );
 }
 
+/// [`measure`] for a fixture whose cost grows with its input size, which
+/// must therefore be near the largest input admitted.
+fn measure_near_input_limit(name: &str, input: &[u8]) {
+    assert!(
+        (MAX_INPUT_BYTES * 9 / 10..=MAX_INPUT_BYTES).contains(&input.len()),
+        "{name}: {} bytes is not near the input limit",
+        input.len()
+    );
+    measure(name, input);
+}
+
 /// [`bounded`] for a fixture that must be refused with `expected`.
 fn refused(name: &str, input: &[u8], expected: ImageError) {
     match bounded(name, input) {
@@ -135,30 +154,54 @@ fn refused(name: &str, input: &[u8], expected: ImageError) {
 
 #[test]
 fn image_decode_bounds() {
-    let photo = fixtures::rgb(6000, 4000, 24);
+    let photo = fixtures::rgb(WIDTH, HEIGHT, 24);
     let baseline = fixtures::with_exif_orientation(&fixtures::jpeg(&photo, 90), 6);
-    measure("baseline jpeg 6000x4000 exif 6", &baseline);
+    measure(&format!("baseline jpeg {WIDTH}x{HEIGHT} exif 6"), &baseline);
     drop(baseline);
     let progressive = fixtures::progressive_jpeg(&photo, 90);
     drop(photo);
-    measure("progressive 4:4:4 jpeg 6000x4000", &progressive);
+    measure(
+        &format!("progressive 4:4:4 jpeg {WIDTH}x{HEIGHT}"),
+        &progressive,
+    );
     drop(progressive);
+    // Four planes of coefficients beside the RGB output, and a copy of an
+    // input near the largest admitted: the slowest JPEG decode.
+    let cmyk = fixtures::progressive_cmyk_jpeg(WIDTH, HEIGHT, 39, 90);
+    measure_near_input_limit(
+        &format!("progressive 4:4:4 cmyk jpeg {WIDTH}x{HEIGHT}"),
+        &cmyk,
+    );
+    drop(cmyk);
+    // The decoder also keeps a copy of every metadata segment, so the same
+    // image at its smallest, padded with ICC segments to the input limit,
+    // makes it hold the most beside its pixels.
+    let flat = fixtures::progressive_cmyk_jpeg(WIDTH, HEIGHT, 0, 90);
+    let padded = fixtures::with_icc_segments(&flat, MAX_INPUT_BYTES);
+    drop(flat);
+    measure_near_input_limit(
+        &format!("progressive 4:4:4 cmyk jpeg {WIDTH}x{HEIGHT} padded with icc segments"),
+        &padded,
+    );
+    drop(padded);
 
-    let rgba = fixtures::rgba(6000, 4000, 24, false);
+    let rgba = fixtures::rgba(WIDTH, HEIGHT, 24, false);
     let png = fixtures::png_rgba8(&rgba);
-    measure("rgba8 png 6000x4000", &png);
+    measure(&format!("rgba8 png {WIDTH}x{HEIGHT}"), &png);
     drop(png);
     let webp = fixtures::webp_lossless(&rgba);
     drop(rgba);
-    measure("lossless webp 6000x4000", &webp);
+    measure(&format!("lossless webp {WIDTH}x{HEIGHT}"), &webp);
     drop(webp);
 
+    // Bounded by the allocation limit rather than the pixel limit.
     let deep = fixtures::png_rgba16(4000, 4000);
     measure("rgba16 png 4000x4000", &deep);
     drop(deep);
 
-    let gif = fixtures::gif(4800, 4800, &[[200, 40, 40], [40, 40, 200]], true);
-    measure("two-frame gif 4800x4800", &gif);
+    let side = (MAX_PIXELS as f64).sqrt() as u32;
+    let gif = fixtures::gif(side, side, &[[200, 40, 40], [40, 40, 200]], true);
+    measure(&format!("two-frame gif {side}x{side}"), &gif);
     drop(gif);
 
     // Its header passes every check; decoded without the limits, the frame

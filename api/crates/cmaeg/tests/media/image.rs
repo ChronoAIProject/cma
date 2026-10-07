@@ -3,7 +3,7 @@
 use super::image_fixtures as fixtures;
 use bytes::Bytes;
 use cmaeg::media::image::{
-    normalize, normalize_blocking, ImageError, NormalizedImage, FULL, PREVIEW,
+    normalize, normalize_blocking, ImageError, NormalizedImage, FULL, MAX_PIXELS, PREVIEW,
 };
 use std::{
     sync::Arc,
@@ -106,6 +106,22 @@ fn a_pixel_bomb_is_refused_from_its_header_before_any_decode() {
     let wide = fixtures::png_without_pixels(11_000, 3_000);
     assert_eq!(
         normalize_blocking(&wide, FULL).unwrap_err(),
+        ImageError::TooLargePixels
+    );
+}
+
+#[test]
+fn the_header_admits_the_pixel_limit_and_refuses_one_row_more() {
+    let rows = u32::try_from(MAX_PIXELS / 6000).unwrap();
+    // Admitted from the header, so only the missing pixels fail the decode.
+    let at = fixtures::png_without_pixels(6000, rows);
+    assert_eq!(
+        normalize_blocking(&at, FULL).unwrap_err(),
+        ImageError::DecodeFailed
+    );
+    let over = fixtures::png_without_pixels(6000, rows + 1);
+    assert_eq!(
+        normalize_blocking(&over, FULL).unwrap_err(),
         ImageError::TooLargePixels
     );
 }

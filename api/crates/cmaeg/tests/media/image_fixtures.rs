@@ -75,16 +75,52 @@ pub fn jpeg(image: &RgbImage, quality: u8) -> Vec<u8> {
 
 /// A progressive 4:4:4 JPEG, which `image` cannot write.
 pub fn progressive_jpeg(image: &RgbImage, quality: u8) -> Vec<u8> {
+    progressive(
+        image.as_raw(),
+        image.width(),
+        image.height(),
+        jpeg_encoder::ColorType::Rgb,
+        quality,
+    )
+}
+
+/// A progressive 4:4:4 CMYK JPEG: four full-resolution components, the
+/// most coefficient storage a progressive decode can need. `noise` sets its
+/// size as in [`rgb`], and the key channel is noise alone.
+pub fn progressive_cmyk_jpeg(width: u32, height: u32, noise: u8, quality: u8) -> Vec<u8> {
+    let source = rgb(width, height, noise);
+    let mut random = Noise::new(u64::from(width) + u64::from(height) * 31);
+    let mut samples = Vec::with_capacity(width as usize * height as usize * 4);
+    for pixel in source.as_raw().chunks_exact(3) {
+        let key = if noise == 0 { 0 } else { random.byte() % noise };
+        samples.extend_from_slice(&[pixel[0], pixel[1], pixel[2], key]);
+    }
+    progressive(
+        &samples,
+        width,
+        height,
+        jpeg_encoder::ColorType::Cmyk,
+        quality,
+    )
+}
+
+fn progressive(
+    samples: &[u8],
+    width: u32,
+    height: u32,
+    color: jpeg_encoder::ColorType,
+    quality: u8,
+) -> Vec<u8> {
     let mut out = Vec::new();
     let mut encoder = jpeg_encoder::Encoder::new(&mut out, quality);
     encoder.set_progressive(true);
     encoder.set_sampling_factor(jpeg_encoder::SamplingFactor::R_4_4_4);
     encoder
         .encode(
-            image.as_raw(),
-            u16::try_from(image.width()).unwrap(),
-            u16::try_from(image.height()).unwrap(),
-            jpeg_encoder::ColorType::Rgb,
+            samples,
+            u16::try_from(width).unwrap(),
+            u16::try_from(height).unwrap(),
+            color,
         )
         .unwrap();
     out
@@ -108,6 +144,33 @@ pub fn with_exif_orientation(jpeg: &[u8], orientation: u16) -> Vec<u8> {
     out.extend_from_slice(&[0xFF, 0xE1]);
     out.extend_from_slice(&u16::try_from(exif.len() + 2).unwrap().to_be_bytes());
     out.extend_from_slice(&exif);
+    out.extend_from_slice(&jpeg[2..]);
+    out
+}
+
+/// `jpeg` with ICC profile segments spliced in after the SOI marker, as
+/// many whole segments as fit in `len` bytes. A JPEG decoder keeps a copy of
+/// every segment, so this is the most a JPEG of `len` bytes makes it hold
+/// beside its pixels.
+pub fn with_icc_segments(jpeg: &[u8], len: usize) -> Vec<u8> {
+    // A segment's length field counts itself, the identifier, the sequence
+    // number and count bytes, and the data, and is at most 65535.
+    const DATA: usize = 65_535 - 2 - 12 - 2;
+    const SEGMENT: usize = 2 + 65_535;
+    assert_eq!(&jpeg[..2], &[0xFF, 0xD8]);
+    let count = len.saturating_sub(jpeg.len()) / SEGMENT;
+    let mut out = Vec::with_capacity(jpeg.len() + count * SEGMENT);
+    out.extend_from_slice(&jpeg[..2]);
+    for index in 0..count {
+        out.extend_from_slice(&[0xFF, 0xE2]);
+        out.extend_from_slice(&65_535_u16.to_be_bytes());
+        out.extend_from_slice(b"ICC_PROFILE\0");
+        // Sequence numbers are one byte; the decoder keeps every segment
+        // whatever its number.
+        out.push(u8::try_from(index % 255 + 1).unwrap());
+        out.push(u8::MAX);
+        out.resize(out.len() + DATA, 0x5A);
+    }
     out.extend_from_slice(&jpeg[2..]);
     out
 }
