@@ -341,9 +341,13 @@ fn validate_locator(locator: &AttachmentSource, source: &SourceKind) -> Result<(
     Ok(())
 }
 
-/// Local http is deliberately refused here even though channel URLs allow it:
-/// a locator is fetched by the gateway on a sender's behalf.
-fn https_locator(value: &str) -> bool {
+/// Whether `value` is a URL locator this domain accepts: an absolute https
+/// URL of at most 2048 bytes with a host and no userinfo, fragment, whitespace
+/// or controls. Shared with extractors so a URL they accept is never refused
+/// by the validator. Local http is deliberately refused here even though
+/// channel URLs allow it: a locator is fetched by the gateway on a sender's
+/// behalf.
+pub fn https_locator(value: &str) -> bool {
     if value.len() > MAX_ATTACHMENT_URL_BYTES
         || value.chars().any(|c| c.is_whitespace() || c.is_control())
     {

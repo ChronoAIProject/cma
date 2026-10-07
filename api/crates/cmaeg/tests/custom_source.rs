@@ -1,3 +1,5 @@
+#[path = "custom/attachments.rs"]
+mod attachments;
 #[path = "fake_provider.rs"]
 pub mod fake_provider;
 #[path = "custom/ingress.rs"]

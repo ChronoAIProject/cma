@@ -15,11 +15,12 @@ use crate::{
 
 mod attachment;
 pub use attachment::{
-    forbidden_text_char, mime_restricted_name, telegram_ids_valid, validate_attachments,
-    Attachment, AttachmentKind, AttachmentSource, MediaVariant, MAX_ALBUM_ID_BYTES,
-    MAX_ATTACHMENTS, MAX_ATTACHMENT_URL_BYTES, MAX_DIMENSION, MAX_DURATION_SECONDS,
-    MAX_EMOJI_BYTES, MAX_FILENAME_BYTES, MAX_FILE_ID_BYTES, MAX_FILE_UNIQUE_ID_BYTES,
-    MAX_INLINE_POINTER_BYTES, MAX_MIME_PART_BYTES, MAX_NYXID_INDEX, MAX_REFERENCE_BYTES,
+    forbidden_text_char, https_locator, mime_restricted_name, telegram_ids_valid,
+    validate_attachments, Attachment, AttachmentKind, AttachmentSource, MediaVariant,
+    MAX_ALBUM_ID_BYTES, MAX_ATTACHMENTS, MAX_ATTACHMENT_URL_BYTES, MAX_DIMENSION,
+    MAX_DURATION_SECONDS, MAX_EMOJI_BYTES, MAX_FILENAME_BYTES, MAX_FILE_ID_BYTES,
+    MAX_FILE_UNIQUE_ID_BYTES, MAX_INLINE_POINTER_BYTES, MAX_MIME_PART_BYTES, MAX_NYXID_INDEX,
+    MAX_REFERENCE_BYTES,
 };
 mod attachment_facts;
 pub use attachment_facts::FactRepairs;

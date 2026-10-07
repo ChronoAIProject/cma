@@ -1,7 +1,8 @@
 //! Neutral user input. Source envelopes and credentials never enter the prompt.
 use super::render_media::{render_block, Audience, RenderMedia};
+use crate::ingress::custom::attachments::elided;
 use cmaeg_core::{
-    activity::{Activity, ActivityKind, SourceKind},
+    activity::{Activity, ActivityKind, Attachment, AttachmentSource, SourceKind},
     channel::{ChannelDefinition, Platform, Source},
     profile::canonical_json,
 };
@@ -49,6 +50,12 @@ pub fn render(
         }
         ActivityKind::Command { name, args } => format!("/{name} {args}").trim_end().to_owned(),
         ActivityKind::Event { ce, attachments } => {
+            // Inline payloads are base64 and item URLs are locators; neither
+            // may reach the prompt, which lists the items in its block instead.
+            let ce = match elision_pointer(attachments, definition) {
+                Some(pointer) => elided(ce, &pointer, attachments.len()),
+                None => std::borrow::Cow::Borrowed(ce),
+            };
             let text = if let Some(template) =
                 definition.sources.iter().find_map(|source| match source {
                     Source::Custom {
@@ -56,7 +63,7 @@ pub fn render(
                     } => prompt_template.as_deref(),
                     _ => None,
                 }) {
-                crate::ingress::custom::template::render(template, ce)
+                crate::ingress::custom::template::render(template, &ce)
             } else {
                 let data = ce
                     .data
@@ -74,6 +81,32 @@ pub fn render(
         }
     };
     vec![json!({"role":"user","content":[{"type":"input_text","text":text}]})]
+}
+/// Where an event with attachments listed them: the channel's configured
+/// pointer. An inline locator records the pointer the event was admitted
+/// under, which wins, so a setting changed or removed between admission and
+/// rendering cannot expose that event's inline payloads.
+fn elision_pointer(attachments: &[Attachment], definition: &ChannelDefinition) -> Option<String> {
+    if attachments.is_empty() {
+        return None;
+    }
+    let admitted = attachments.iter().enumerate().find_map(|(index, item)| {
+        let Some(AttachmentSource::Inline { pointer }) = &item.source else {
+            return None;
+        };
+        pointer
+            .strip_suffix(&format!("/{index}/url"))
+            .map(str::to_owned)
+    });
+    admitted.or_else(|| {
+        definition.sources.iter().find_map(|source| match source {
+            Source::Custom {
+                attachments: Some(config),
+                ..
+            } => Some(config.pointer.clone()),
+            _ => None,
+        })
+    })
 }
 /// A media-only message has blank text; its block alone keeps the input
 /// non-empty, which the provider requires.

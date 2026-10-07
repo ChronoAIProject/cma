@@ -1,8 +1,8 @@
 use crate::{channels::resolver::ResolvedChannel, ingress::launch::LaunchRequest};
 use cmaeg_core::{
     activity::{
-        Activity, ActivityConversation, ActivityKind, Actor, ActorKind, ConversationKind,
-        SourceKind,
+        Activity, ActivityConversation, ActivityKind, Actor, ActorKind, Attachment,
+        ConversationKind, SourceKind,
     },
     channel::PartitionKey,
     cloudevent::CloudEvent,
@@ -11,9 +11,12 @@ use cmaeg_core::{
 };
 use sha2::{Digest, Sha256};
 use std::{sync::Arc, time::Instant};
+/// Normalize an authenticated event and the attachments already extracted
+/// from it into a sealed, launchable turn.
 pub fn launch_request(
     channel: Arc<ResolvedChannel>,
     ce: CloudEvent,
+    attachments: Vec<Attachment>,
     reply: ReplyAddress,
     keys: &MasterKeyRing,
     received_at: Instant,
@@ -46,10 +49,7 @@ pub fn launch_request(
         },
         occurred_at,
         source: SourceKind::Custom,
-        kind: ActivityKind::Event {
-            ce,
-            attachments: Vec::new(),
-        },
+        kind: ActivityKind::Event { ce, attachments },
     };
     activity.validate().map_err(|_| "activity_invalid")?;
     let partition = activity.partition_key(&channel.definition.partition);
