@@ -13,6 +13,7 @@ pub const CHANNELS_CACHED: &str = "cmaeg_channels_cached";
 pub const RELAY_ENVELOPE_REPAIRS: &str = "cmaeg_relay_envelope_repairs_total";
 pub const CALLBACK_INVALID: &str = "cmaeg_callback_invalid_total";
 pub const DELIVERY_WORKER_RESTARTS: &str = "cmaeg_delivery_worker_restarts_total";
+pub const MEDIA_ACTIVITY_DEGRADED: &str = "cmaeg_media_activity_degraded_total";
 pub const SOURCE: &str = "source";
 pub const COLD: &str = "cold";
 pub const OUTCOME: &str = "outcome";
@@ -31,13 +32,14 @@ pub const HISTOGRAMS: [&str; 6] = [
     DELIVERY_DURATION,
     TOOL_DURATION,
 ];
-pub const COUNTERS: [&str; 6] = [
+pub const COUNTERS: [&str; 7] = [
     EVENTS,
     REFUSALS,
     PROVIDER_ERRORS,
     RELAY_ENVELOPE_REPAIRS,
     CALLBACK_INVALID,
     DELIVERY_WORKER_RESTARTS,
+    MEDIA_ACTIVITY_DEGRADED,
 ];
 pub const GAUGES: [&str; 2] = [TURNS_INFLIGHT, CHANNELS_CACHED];
 pub const BUCKETS: [f64; 11] = [

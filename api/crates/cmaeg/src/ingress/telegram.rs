@@ -1,6 +1,7 @@
 //! Native Telegram update normalization reuses the strict platform observer.
 use super::{
     launch::LaunchRequest,
+    media_guard::{self, Admit, Built},
     relay::{
         facts::{Observation, RelayFacts},
         payload::CallbackPayload,
@@ -107,14 +108,17 @@ pub fn observe(
         }
     }
 }
-pub fn launch(
+/// Build the sealed launch request, or the refusal the media guard chose. An
+/// error is answered 401, which makes Telegram redeliver the update, so only a
+/// failure unrelated to attachments may produce one.
+pub(crate) fn launch(
     channel: Arc<ResolvedChannel>,
     bot_id: &str,
     observed: Observed,
     keys: &MasterKeyRing,
     received: Instant,
     now: i64,
-) -> Result<LaunchRequest, VerificationError> {
+) -> Result<Built, VerificationError> {
     let invalid = || VerificationError("telegram_activity_invalid");
     let Observed {
         payload,
@@ -155,7 +159,11 @@ pub fn launch(
             bot_id: bot_id.into(),
         },
     };
-    activity.validate().map_err(|_| invalid())?;
+    let activity = match media_guard::admit(activity, "telegram") {
+        Ok(Admit::Ok(activity)) => *activity,
+        Ok(Admit::Refused(reason)) => return Ok(Built::Refused(reason)),
+        Err(_) => return Err(invalid()),
+    };
     let partition_key = activity.partition_key(&channel.definition.partition);
     let conversation_id = ConversationId::derive(
         keys,
@@ -183,7 +191,7 @@ pub fn launch(
         keys,
     )
     .map_err(|_| invalid())?;
-    Ok(LaunchRequest {
+    Ok(Built::Launch(Box::new(LaunchRequest {
         timing: None,
         trace: tracing::Span::current(),
         channel,
@@ -192,5 +200,5 @@ pub fn launch(
         event_ref,
         idempotency_key: IdempotencyKey::from_event(&event_id),
         received_at: received,
-    })
+    })))
 }

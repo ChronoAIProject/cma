@@ -5,6 +5,7 @@ use super::{
 };
 use crate::ingress::{
     admission::{admit, AdmissionFacts, Refusal},
+    media_guard::Built,
     relay::{
         activity::launch_request,
         facts::{observe, Observation},
@@ -242,7 +243,9 @@ async fn admit_callback(
         body_received_at,
         now,
     ) {
-        Ok(request) => request,
+        Ok(Built::Launch(request)) => *request,
+        // A 202 refusal, because NyxID never retries a rejected callback.
+        Ok(Built::Refused(reason)) => return Err(refused(reason)),
         Err(reason) => {
             return Err(problem(
                 StatusCode::BAD_REQUEST,
