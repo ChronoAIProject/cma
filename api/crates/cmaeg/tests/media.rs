@@ -8,6 +8,8 @@ pub mod fake_nyxid;
 mod forward;
 #[path = "media/inline_source.rs"]
 mod inline_source;
+#[path = "media/jobs.rs"]
+mod jobs;
 #[path = "media/nyxid_source.rs"]
 mod nyxid_source;
 #[path = "media/registry.rs"]
