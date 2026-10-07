@@ -46,6 +46,16 @@ operator command, not a serving mode: it builds the same runtime, binds no
 listener, starts no worker and exits when its report is printed (see
 [Rolling back below inbound media](#rolling-back-below-inbound-media)).
 
+The gateway makes itself non-dumpable (`PR_SET_DUMPABLE=0`) in every mode, as
+its first action after reading its arguments and before any logging or runtime.
+The files under its `/proc/<pid>` are then owned by root (the directory itself
+keeps uid 10001), so `/proc/1/environ` (the master keys and service tokens)
+and `/proc/1/mem` are unreadable from
+`kubectl exec` and from debuggers, it cannot be ptraced by a same-uid process,
+and core dumps are disabled. If the kernel refuses, the process prints
+`cmaeg: cannot make the process non-dumpable: <error>` and exits 1. **This
+applies with all media flags off.**
+
 ## Configuration
 
 | Environment key | Type | Default | Meaning |

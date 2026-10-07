@@ -6,6 +6,12 @@ fn main() {
     // `args_os` never panics: `args` aborts with exit 101 on a non-UTF-8
     // argument before any usage handling could run.
     let arguments: Vec<OsString> = std::env::args_os().skip(1).collect();
+    // First, before any mode, log line or runtime: every mode the process
+    // can run in holds or can load the gateway's secrets.
+    if let Err(error) = cmaeg::hardening::disable_dumping() {
+        eprintln!("cmaeg: cannot make the process non-dumpable: {error}");
+        std::process::exit(1);
+    }
     // Modes that need no runtime are matched on the raw arguments first, so
     // they run before one exists.
     if arguments == ["--print-openapi"] {

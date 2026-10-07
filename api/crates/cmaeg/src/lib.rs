@@ -5,6 +5,7 @@ pub mod channels;
 mod config;
 pub mod connections;
 pub mod delivery;
+pub mod hardening;
 pub mod http;
 pub mod ingress;
 pub mod interactions;
