@@ -41,7 +41,10 @@ those threads until one is free instead of stalling until thread creation
 recovers. If the 16 threads do not all start within ten seconds, the gateway
 logs `CMAEG blocking pool prewarm failed` and exits 1 before any listener
 binds. `--print-openapi` builds no runtime. This behaviour is unconditional; it
-applies with all media flags off.
+applies with all media flags off. `--audit-custom-attachments [--clear]` is an
+operator command, not a serving mode: it builds the same runtime, binds no
+listener, starts no worker and exits when its report is printed (see
+[Rolling back below inbound media](#rolling-back-below-inbound-media)).
 
 ## Configuration
 
@@ -51,7 +54,7 @@ applies with all media flags off.
 | `CMAEG_METRICS_LISTEN` | socket address | `0.0.0.0:9091` | Separate Prometheus scrape listener; `/metrics` is absent from the public router. |
 | `CMAEG_PROVIDERS` | JSON array | `[]` | Strict JSON provider allowlist described above. |
 | `CMAEG_MEDIA_TOOL_PROVIDERS` | comma-separated provider slugs | `cma_codex` when that provider is configured, otherwise empty | 0..=8 distinct slugs, each naming a `CMAEG_PROVIDERS` entry; startup fails otherwise. Profile bindings of these providers install the gateway MCP tools, so only their agents are told how to open an attachment through a gateway tool. Set it to the empty string to render no tool hints. A separate key because provider entries refuse unknown fields. |
-| `CMAEG_MEDIA_ENABLED` | `true` or `false` | `false` | Master switch for inbound media. Exactly `true` or `false`; any other value, including `True` or `1`, fails startup. Off, every media message is refused with 202 `attachment_unsupported`, and every Lark or Feishu rich-text post with `content_unsupported`, exactly as before media existed. On, authenticated Telegram media from the NyxID relay and the native webhook, and Lark and Feishu image, file, audio and media messages from the relay, are admitted as activity attachments, and Lark and Feishu posts as text the observer flattens from the raw event (protocol §6); Lark stickers stay refused. Enabling it requires the `cmaeg` container's memory request to equal its limit at 1536Mi or more; `tests/infra_manifests.rs` enforces this. |
+| `CMAEG_MEDIA_ENABLED` | `true` or `false` | `false` | Master switch for inbound media. Exactly `true` or `false`; any other value, including `True` or `1`, fails startup. Off, every media message is refused with 202 `attachment_unsupported`, and every Lark or Feishu rich-text post with `content_unsupported`, exactly as before media existed. On, authenticated Telegram media from the NyxID relay and the native webhook, and Lark and Feishu image, file, audio and media messages from the relay, are admitted as activity attachments, and Lark and Feishu posts as text the observer flattens from the raw event (protocol §6); Lark stickers stay refused. It also governs custom sources: off, management refuses a custom `attachments` setting with `custom_attachments_disabled` and ingress ignores a stored one; on, the setting can be stored and the items it names in custom events are admitted as attachments. Enabling it requires the `cmaeg` container's memory request to equal its limit at 1536Mi or more; `tests/infra_manifests.rs` enforces this. |
 | `CMAEG_PROVIDER_CONNECT_TIMEOUT_MS` | positive integer, ms | `2000` | TCP/TLS connection timeout for each provider pool. |
 | `CMAEG_PROVIDER_REQUEST_TIMEOUT_MS` | positive integer, ms | `30000` | Deadline for provider setup and probe requests, and receipt of streaming HTTP response headers. Active streams are owned and bounded by their consumer. |
 | `CMAEG_PROVIDER_MAX_INFLIGHT` | positive integer | `256` | Deployment-wide upper bound applied to each provider's semaphore. Calls wait at most 50 ms for a provider permit before returning a typed busy result. |
@@ -428,6 +431,62 @@ declare facts outside the domain, such as a 0×0 video. A rising
 envelope stopped listing the raw Telegram `file_id` as an entry's `url`, or the
 raw Lark `image_key` or `file_key` as the entry's key; compare NyxID's Telegram
 or Lark adapter with protocol §6.
+
+### Rolling back below inbound media
+
+An image older than the inbound-media release cannot parse a stored channel
+definition that carries a custom source's `attachments` setting, because
+definitions refuse unknown fields. Nor can it parse stored activities that
+carry attachments, and reply targets and interaction cards re-parse the
+activities they stored for 24 hours. The order below is mandatory:
+
+1. Set `CMAEG_MEDIA_ENABLED: "false"` in `infra/cmaeg/configmap.yaml`. If
+   `CMAEG_MEDIA_FFMPEG_DIR` is set, also set it to empty: no `kubectl exec` of
+   any kind is permitted while it is set.
+2. Roll the gateway with `kubectl rollout restart deployment/cmaeg -n chrono-bot`
+   and wait for the rollout to finish. Management then refuses new settings and
+   ingress ignores stored ones.
+3. Run
+   `kubectl exec -n chrono-bot deploy/cmaeg -- cmaeg --audit-custom-attachments --clear`.
+   It must exit 0 with `"remaining":0` and `"unreadable":0` in its summary. After
+   a `conflict`, run it again; resolve every unreadable record before going on.
+4. Wait at least 25 hours with the flag off, so that every reply target and
+   interaction card that stored an activity with attachments has expired.
+5. Only then deploy an image below the inbound-media release.
+
+Without `--clear` the command only reports. It pages through every channel
+record with the gateway's service credential, opens each with the mounted
+master keys, and clears a setting by rewriting the definition without it under
+compare-and-swap, re-reading once after a version conflict. A record listed
+under an owner other than its definition's owner is reported but never
+rewritten. Attachments do not affect the provider binding, so nothing is
+rebound. A running replica may serve the old definition from its channel cache
+for up to `CMAEG_CHANNEL_CACHE_TTL_MS`, which is harmless because the flag is
+already off.
+
+Stdout carries only the report: one JSON line for each definition that carries
+the setting, then a summary line. Logs, including one info line with the
+`record_id` and `channel_hash` of each cleared record, go to stderr. The command
+never prints or logs a definition, secret, blob or owner subject.
+
+```text
+{"record_id":"<record UUID>","channel_hash":"<16 hex digits>","action":"found"}
+{"scanned":12,"channels":12,"unreadable":0,"found":1,"cleared":0,"remaining":1}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `action` | `found` (reported, not cleared), `cleared`, or `conflict` (the record changed again while clearing; it remains). |
+| `channel_hash` | The 16-hex-digit hash used in logs and metrics, present only when the definition retains the channel ID from a reserved creation; otherwise `null`, and the record ID identifies the channel. |
+| `scanned`, `channels` | Records listed, and those opened as channel definitions. |
+| `unreadable` | Records that could not be opened as a definition, for example under a retired master key. They might carry the setting, so the audit fails closed on them. |
+| `found`, `cleared`, `remaining` | Definitions carrying the setting, those cleared by this run, and those still carrying it. |
+
+| Exit code | Meaning |
+| --- | --- |
+| 0 | Nothing remains and every record was readable. |
+| 1 | A setting remains, a record is unreadable, or the audit stopped. A stop prints only its classification to stderr: `configuration invalid`, `service authentication unavailable`, `record store unavailable`, `record store rejected a request`, `record store response malformed` or `channel definition cannot be sealed`; never a URL, token or upstream body. |
+| 2 | Usage error; stderr carries `usage: cmaeg [--print-openapi \| --audit-custom-attachments [--clear]]`. |
 
 ### Delivery worker restart alert
 

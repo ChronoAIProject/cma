@@ -1,5 +1,6 @@
 //! Channel-definition construction and management orchestration.
 
+pub mod audit;
 pub mod cache;
 pub mod creation;
 pub mod definition;
