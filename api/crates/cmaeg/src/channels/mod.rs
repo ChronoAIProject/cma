@@ -4,6 +4,7 @@ pub mod audit;
 pub mod cache;
 pub mod creation;
 pub mod definition;
+mod definition_sources;
 pub mod management;
 mod requests;
 pub mod resolver;
