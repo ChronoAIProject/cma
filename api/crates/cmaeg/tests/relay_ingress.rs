@@ -2,6 +2,8 @@
 mod keys;
 #[path = "relay/normalization.rs"]
 mod normalization;
+#[path = "relay/nyxid_shapes.rs"]
+mod nyxid_shapes;
 #[path = "relay/platforms.rs"]
 mod platforms;
 #[path = "relay/signer.rs"]

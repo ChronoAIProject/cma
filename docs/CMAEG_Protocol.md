@@ -616,8 +616,36 @@ Body fields: `message_id`, `correlation_id`, `platform`, `reply_token`,
 `sender:{platform_id,display_name?}`, `content:{type,text?,attachments?}`,
 `timestamp`. Optional fields are `thread_id`, `reply_to_message_id`,
 `reply_to_platform_message_id`, and `raw_platform_data`. Attachment entries have
-required `content_type,url` and optional `image_key,file_key,platform_message_id,
-filename,mime_type,size_bytes`. Attachment receipt is currently refused.
+required `content_type,url` and optional `download_url,image_key,file_key,
+platform_message_id,filename,mime_type,size_bytes`. `download_url` is NyxID's
+own download endpoint for the entry; the gateway never dereferences
+`download_url` or `url`. Messages carrying attachments are refused with 202
+`attachment_unsupported`.
+
+NyxID copies sender-controlled facts into attachment entries and adds entry
+fields over time, so the gateway parses the attachment list leniently while the
+rest of the body stays strict. No attachment content and no attachment count
+makes a callback fail parsing or bounds:
+
+- Entries at positions 32 and above are dropped.
+- An optional fact that is empty, contains a control character, exceeds its
+  bound or has the wrong JSON type is dropped. Bounds are 256 bytes for
+  `platform_message_id` and `mime_type`, 1024 for `file_key` and `image_key`,
+  512 for `filename` and 4096 for `download_url`; `size_bytes` must be a
+  non-negative integer below 2^63.
+- An invalid or missing `content_type` (bounded to 256 bytes) becomes
+  `unknown`. A `url` that is longer than 4096 bytes, contains a control
+  character, or is neither empty nor an `http(s)` URL with a host and no user
+  information becomes empty, meaning not retrievable.
+- Unknown entry fields are ignored; for a repeated field the first value wins.
+- A non-object entry is dropped and the remaining entries keep their original
+  index, which is the index in NyxID's attachment download route.
+- `attachments:null` is an empty list. Any other value that is not a list
+  counts as one malformed entry. A malformed list is refused as
+  `attachment_unsupported` like any other non-empty list; it is never admitted
+  as a text-only message.
+
+Each repair increments `cmaeg_relay_envelope_repairs_total{field}`.
 
 All three token kinds use RS256, base64url without padding, and a header containing
 only `alg:"RS256",typ:"JWT",kid`. Keys come only from the channel's pinned JWKS.

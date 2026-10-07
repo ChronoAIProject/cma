@@ -99,6 +99,7 @@ and idempotent. All duration histograms use seconds with buckets
 | `cmaeg_events_total` | `source`, `outcome` | Ingress responses, distinguishing deliberate refusals from accepted and rejected requests. |
 | `cmaeg_refusals_total` | `reason` | Bounded admission refusals and protocol error codes. |
 | `cmaeg_provider_errors_total` | `provider`, `kind` | Classified turn failures; provider diagnostic strings are never labels. |
+| `cmaeg_relay_envelope_repairs_total` | `field` | Authenticated NyxID relay envelope facts repaired or dropped instead of rejecting the callback. `field` is one of `attachment_item`, `attachment_overflow`, `attachment_container`, `content_type`, `url`, `platform_message_id`, `file_key`, `image_key`, `filename`, `mime_type`, `size_bytes`, `download_url` or `sender_display_name`. |
 | `cmaeg_turns_inflight` | none | Admitted local consumers; decremented on completion or cancellation. |
 | `cmaeg_channels_cached` | none | Locally retained positive and negative cache entries, including entries awaiting eviction. |
 

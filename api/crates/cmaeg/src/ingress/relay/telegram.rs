@@ -89,7 +89,7 @@ pub fn observe(
     ]
     .iter()
     .any(|field| message.get(*field).is_some())
-        || !payload.content.attachments.is_empty()
+        || payload.received_attachments() > 0
     {
         return Ok(Observation::Refused(Refusal::AttachmentUnsupported));
     }
@@ -214,7 +214,7 @@ fn observe_callback(
         || numeric(chat.get("id"))? != payload.conversation.platform_id
         || payload.reply_to_platform_message_id.as_deref() != Some(message_id.as_str())
         || payload.content.kind != "interaction"
-        || !payload.content.attachments.is_empty()
+        || payload.received_attachments() > 0
     {
         return Err(denied());
     }
