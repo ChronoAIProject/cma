@@ -3,7 +3,7 @@ use super::binary_support::{assert_no_secrets, curl, free_address, spawn_ready, 
 use super::*;
 use cmaeg_core::{profile::canonical_json, seal::seal_blob};
 
-const USAGE: &str = "usage: cmaeg [--print-openapi | --audit-custom-attachments [--clear]]\n";
+const USAGE: &str = "usage: cmaeg [--print-openapi | --audit-custom-attachments [--clear] | --media-job <op> <bin-dir> <job-dir> [arg] | --media-sandbox-check | --media-self-test <fixtures-dir>]\n";
 const OWNER: &str = "binary-audit-owner-fixture";
 
 struct Run {
@@ -245,6 +245,43 @@ async fn compiled_binary_lists_the_attachment_tool_with_media_enabled() {
     );
     child.kill().await.unwrap();
     child.wait().await.unwrap();
+    provider.close().await;
+    cma.close().await;
+    nyxid.close().await;
+}
+
+/// The gateway makes itself non-dumpable before anything else, so a same-uid
+/// process (a `kubectl exec`, a debugger) cannot read its secrets.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn the_running_gateway_is_not_dumpable() {
+    use std::os::unix::fs::MetadataExt;
+    // SAFETY: geteuid has no preconditions.
+    if unsafe { libc::geteuid() } == 0 {
+        eprintln!("skipped: root bypasses the /proc ownership check");
+        return;
+    }
+    let provider = FakeProvider::start(FakeProviderConfig::default()).await;
+    let cma = FakeCma::start(false).await;
+    let nyxid = FakeNyxid::start().await;
+    let files = MountedSecrets::new();
+    let address = free_address();
+    let log_path = files.dir.join("gateway.log");
+    let command = files.command(&address, &cma, &nyxid, &provider);
+    let mut child = spawn_ready(command, &address, &log_path).await;
+    let pid = child.id().expect("the gateway is running");
+    // The kernel leaves the world-readable `/proc/<pid>` directory with the
+    // task's own uid; the files in it are what non-dumpability hands to root.
+    let owner = std::fs::metadata(format!("/proc/{pid}/environ"))
+        .unwrap()
+        .uid();
+    let environ = std::fs::File::open(format!("/proc/{pid}/environ"));
+    child.kill().await.unwrap();
+    assert_eq!(owner, 0, "/proc/{pid}/environ must be owned by root");
+    assert_eq!(
+        environ.map(drop).unwrap_err().kind(),
+        std::io::ErrorKind::PermissionDenied
+    );
     provider.close().await;
     cma.close().await;
     nyxid.close().await;

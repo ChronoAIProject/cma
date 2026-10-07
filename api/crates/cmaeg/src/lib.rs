@@ -5,6 +5,7 @@ pub mod channels;
 mod config;
 pub mod connections;
 pub mod delivery;
+pub mod hardening;
 pub mod http;
 pub mod ingress;
 pub mod interactions;
@@ -31,15 +32,16 @@ use utoipa::OpenApi;
 
 pub use config::{
     ChannelCacheConfig, Config, ConfigError, DeliveryConfig, IngressConfig, ManagementConfig,
-    MediaConfig, MediaToolProviders, ServiceAccountConfig, SttConfig, SttEndpoint, TurnConfig,
-    CMAEG_ACCEPT_BUDGET_MS, CMAEG_ACK_TEXT, CMAEG_BUSY_RETRY_MAX_MS, CMAEG_CHANNEL_CACHE_MAX,
-    CMAEG_CHANNEL_CACHE_TTL_MS, CMAEG_CHANNEL_NEGATIVE_TTL_MS, CMAEG_CMA_BASE_URL,
-    CMAEG_CMA_SERVICE_TOKEN_FILE, CMAEG_DRAIN_SECONDS, CMAEG_FAILURE_TEXT, CMAEG_HEARTBEAT_MS,
-    CMAEG_INGRESS_INFLIGHT, CMAEG_INGRESS_MAX_BODY, CMAEG_JWKS_TTL_MS, CMAEG_LISTEN,
-    CMAEG_MASTER_KEYS_FILE, CMAEG_MEDIA_CACHE_BYTES, CMAEG_MEDIA_DOWNLOAD_BYTES_PER_HOUR,
-    CMAEG_MEDIA_ENABLED, CMAEG_MEDIA_INFLIGHT_BYTES, CMAEG_MEDIA_LINK_TTL_SECONDS,
-    CMAEG_MEDIA_MAX_BYTES, CMAEG_MEDIA_MAX_JOBS, CMAEG_MEDIA_PREPARE_BUDGET_MS,
-    CMAEG_MEDIA_RATE_PER_MINUTE, CMAEG_MEDIA_RESPONSE_BYTES, CMAEG_MEDIA_TOOL_PROVIDERS,
+    MediaConfig, MediaToolProviders, ServiceAccountConfig, SttConfig, SttEndpoint,
+    TransformerConfig, TurnConfig, CMAEG_ACCEPT_BUDGET_MS, CMAEG_ACK_TEXT, CMAEG_BUSY_RETRY_MAX_MS,
+    CMAEG_CHANNEL_CACHE_MAX, CMAEG_CHANNEL_CACHE_TTL_MS, CMAEG_CHANNEL_NEGATIVE_TTL_MS,
+    CMAEG_CMA_BASE_URL, CMAEG_CMA_SERVICE_TOKEN_FILE, CMAEG_DRAIN_SECONDS, CMAEG_FAILURE_TEXT,
+    CMAEG_HEARTBEAT_MS, CMAEG_INGRESS_INFLIGHT, CMAEG_INGRESS_MAX_BODY, CMAEG_JWKS_TTL_MS,
+    CMAEG_LISTEN, CMAEG_MASTER_KEYS_FILE, CMAEG_MEDIA_CACHE_BYTES,
+    CMAEG_MEDIA_DOWNLOAD_BYTES_PER_HOUR, CMAEG_MEDIA_ENABLED, CMAEG_MEDIA_FFMPEG_DIR,
+    CMAEG_MEDIA_INFLIGHT_BYTES, CMAEG_MEDIA_LINK_TTL_SECONDS, CMAEG_MEDIA_MAX_BYTES,
+    CMAEG_MEDIA_MAX_JOBS, CMAEG_MEDIA_PREPARE_BUDGET_MS, CMAEG_MEDIA_RATE_PER_MINUTE,
+    CMAEG_MEDIA_RESPONSE_BYTES, CMAEG_MEDIA_TOOL_PROVIDERS, CMAEG_MEDIA_VIDEO_FRAMES,
     CMAEG_METRICS_LISTEN, CMAEG_NYXID_BASE_URL, CMAEG_NYXID_REPLY_TIMEOUT_MS, CMAEG_PROVIDERS,
     CMAEG_PROVIDER_CONNECT_TIMEOUT_MS, CMAEG_PROVIDER_MAX_INFLIGHT,
     CMAEG_PROVIDER_REQUEST_TIMEOUT_MS, CMAEG_PUBLIC_URL, CMAEG_RESTORE_RATE_PER_MINUTE,
@@ -151,15 +153,23 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         ),
     );
     let tool_providers = std::sync::Arc::new(config.media.tool_providers.clone());
+    // Installed before the media transformer's setup so its readiness gauge
+    // is recorded; the metrics listener still binds after the gateway's.
+    let metrics = telemetry::install()?;
+    // Before the listener binds: a configured transformer must pass its
+    // sandbox self-check, or the gateway does not start.
+    let transformer = media::transform::setup::start_configured(&config).await?;
     // The one media service of the process, or `None` while
     // CMAEG_MEDIA_ENABLED=false so nothing is allocated. Turn preparation and
-    // the attachment tools share it, so they share its budgets and cache.
+    // the attachment tools share it, so they share its budgets, cache and
+    // transformer.
     let media = media::service::compose(
         &config,
         media::service::ComposeDeps {
             keys: state.master_keys.clone(),
             tool_providers: tool_providers.clone(),
             telegram: telegram.clone(),
+            transformer,
         },
     )?;
     let runner = std::sync::Arc::new(
@@ -203,8 +213,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let ingress = ingress.with_receipt_observer(std::sync::Arc::new(connections.clone()));
     let _connection_worker = connections.start_completion_worker(runner);
     let listener = tokio::net::TcpListener::bind(config.listen).await?;
-    let _metrics =
-        http::metrics::MetricsServer::start(config.metrics_listen, telemetry::install()?).await?;
+    let _metrics = http::metrics::MetricsServer::start(config.metrics_listen, metrics).await?;
     tracing::info!(bind = %config.listen, "CMAEG listening");
 
     let (shutdown_started, shutdown_signal) = oneshot::channel();

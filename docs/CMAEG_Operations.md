@@ -46,6 +46,16 @@ operator command, not a serving mode: it builds the same runtime, binds no
 listener, starts no worker and exits when its report is printed (see
 [Rolling back below inbound media](#rolling-back-below-inbound-media)).
 
+The gateway makes itself non-dumpable (`PR_SET_DUMPABLE=0`) in every mode, as
+its first action after reading its arguments and before any logging or runtime.
+The files under its `/proc/<pid>` are then owned by root (the directory itself
+keeps uid 10001), so `/proc/1/environ` (the master keys and service tokens)
+and `/proc/1/mem` are unreadable from
+`kubectl exec` and from debuggers, it cannot be ptraced by a same-uid process,
+and core dumps are disabled. If the kernel refuses, the process prints
+`cmaeg: cannot make the process non-dumpable: <error>` and exits 1. **This
+applies with all media flags off.**
+
 ## Configuration
 
 | Environment key | Type | Default | Meaning |
@@ -64,6 +74,8 @@ listener, starts no worker and exits when its report is printed (see
 | `CMAEG_MEDIA_DOWNLOAD_BYTES_PER_HOUR` | unsigned decimal, bytes | `268435456` | 20971520..=4294967296. Download bytes per channel per hour, counted in KiB and charged by `GET /v1/media/content` before an original's first byte; a spent quota answers `429 rate_limited` with `Retry-After: 60`. |
 | `CMAEG_MEDIA_LINK_TTL_SECONDS` | unsigned decimal, seconds | `120` | 30..=600. Lifetime of a media download link minted by `readEventAttachment` with view `download`, never past its event's own expiry. A link is sent to the model provider in the tool result and stored by CMA as the shell tool call's title, so it must expire quickly; an out-of-bounds or non-decimal value fails startup naming the key. |
 | `CMAEG_MEDIA_PREPARE_BUDGET_MS` | unsigned decimal, ms | `15000` | 1000..=60000, and below `CMAEG_TURN_TIMEOUT_MS`; startup fails naming both keys otherwise. How long a media turn waits for its eager items (inline transcripts and text excerpts) before its provider turn starts without them. Items not ready by then render `transcript is still being prepared` and keep running in the background. See [Media turn preparation](#media-turn-preparation). |
+| `CMAEG_MEDIA_FFMPEG_DIR` | absolute directory path | `""` | Empty disables the media transformer: videos keep platform thumbnails and transcripts the direct upload path. Otherwise an absolute, canonical directory owned by root and not group- or other-writable, holding regular, root-owned, executable `ffmpeg` and `ffprobe` files (no symlinks); startup checks all of this. A non-empty value fails startup on any platform but linux/amd64. The transformer runs only while `CMAEG_MEDIA_ENABLED` is `true`; set while media is off, it is ignored with a warning. Configured, it requires `CMAEG_MEDIA_INFLIGHT_BYTES` ≥ `CMAEG_MEDIA_MAX_BYTES` + `CMAEG_STT_MAX_BYTES` (startup fails naming the three keys), a `sleep` preStop hook, and a memory request equal to a limit of at least 2Gi; `tests/infra_manifests.rs` enforces the last two. See [Media transformer](#media-transformer). |
+| `CMAEG_MEDIA_VIDEO_FRAMES` | unsigned decimal | `6` | 1..=6. Keyframes extracted per video while the transformer is configured. |
 | `CMAEG_STT_MAX_SECONDS` | unsigned decimal, seconds | `600` | 1..=1500. Most metered seconds one transcription call may cost. With `CMAEG_STT_MAX_BYTES` it sets the direct-upload cap, `min(CMAEG_STT_MAX_BYTES, CMAEG_STT_MAX_SECONDS × 4000)` bytes. Like every speech-to-text key, validated at startup even while speech-to-text is disabled; an out-of-bounds or non-decimal value fails startup naming the key. See [Speech-to-text spend](#speech-to-text-spend). |
 | `CMAEG_STT_MAX_BYTES` | unsigned decimal, bytes | `20971520` | 1048576..=24000000, below the speech-to-text API's 25 MB upload limit. Most bytes one upload may carry. |
 | `CMAEG_STT_RATE_PER_MINUTE` | unsigned decimal | `20` | 1..=600. Transcription calls per channel per minute, with a burst of the same size. |
@@ -160,6 +172,9 @@ media work spans an 8-second tool budget, a 15-second preparation budget and a
 | `cmaeg_media_links_total` | `outcome` | Download links requested through `readEventAttachment` with view `download`. `outcome` is `minted`, `not_permitted` (the binding is not autonomous or installs no gateway tools), `rate_limited` (the channel's 30 per minute or the replica's 600 per minute) or `unavailable` (the link could not be sealed, such as an event too large for the 4096-character token limit, which also logs a warning with the payload's size only). Attachments without a source are answered `not_retrievable` before any link is requested and are not counted. |
 | `cmaeg_media_prepare_seconds` | `outcome` | Time a media turn spent on its eager items (transcripts and excerpts), recorded only when at least one ran. `outcome` is `ready` when every eager item was ready, otherwise `pending` when any was still being prepared at the budget, otherwise `unavailable`. The `cmaeg.media.prepare` span carries `items`, `eager`, `outcome` and the channel's hash, never a file name, transcript or excerpt. Uses the media buckets. |
 | `cmaeg_media_fence_wait_seconds` | none | Time a turn waited for an earlier turn of its conversation to return from its provider start, recorded only for a turn that had such a predecessor. A turn waits at most the busy-retry bound plus the preparation budget (`CMAEG_MEDIA_PREPARE_BUDGET_MS`) plus five seconds and then proceeds out of order with a `conversation order fence timed out` warning. Uses the media buckets. |
+| `cmaeg_media_transform_total` | `op`, `outcome` | Sandboxed media jobs (see [Media job sandbox](#media-job-sandbox)). `op` is `probe`, `frame`, `audio` or `sandbox_check`; `outcome` is `ok`, `timeout` (the gateway's deadline), `cpu_limit` (the 20 s CPU limit), `resource_limit` (the memory watchdog), `killed` (any other SIGKILL), `exit_nonzero`, `output_invalid` (over its stdout cap or failing validation) or `sandbox_unavailable` (exit 125, or the job could not be started or observed). The `cmaeg.media.transform` span carries `op`, `outcome`, `ms`, `cpu_ms` and `stdout_bytes`, never FFmpeg's output, a file name or media bytes. Zero while `CMAEG_MEDIA_FFMPEG_DIR` is empty. |
+| `cmaeg_media_transform_seconds` | `op` | One sandboxed media job, from spawn to reap. Uses the media buckets. |
+| `cmaeg_media_sandbox_ready` | none | `1` once the media transformer's startup sandbox self-check passed; `0` while the transformer is not configured. |
 | `cmaeg_stt_audio_seconds_total` | none | Speech-to-text audio seconds counted for finished calls: the metered seconds, or the provider's reported usage when it is larger. |
 | `cmaeg_stt_channels_at_budget` | none | Distinct channels refused by their own `CMAEG_STT_CHANNEL_SECONDS_PER_HOUR` budget within the last hour. It is refreshed on each such refusal and at least every 256 charges. |
 | `cmaeg_turns_inflight` | none | Admitted local consumers; decremented on completion or cancellation. |
@@ -673,6 +688,332 @@ transcript derivations over 30 minutes:
 Runbook: the `speech-to-text` log lines in the alert window give the status
 class the endpoint answered; check the provider's status and the key's quota
 before raising `CMAEG_STT_TIMEOUT_MS`.
+
+### Media job sandbox
+
+Keyframes and audio transcoding run FFmpeg, a large C decoder, on hostile
+input. It never runs in the gateway process: each job is a fresh exec of the
+gateway binary, `cmaeg --media-job <op> <bin-dir> <job-dir> [arg]`, that
+sandboxes itself and then executes `ffmpeg` or `ffprobe` exactly once with a
+fixed argv. The sandbox exists on **linux/amd64 only**; on any other platform
+both job modes exit 125 without executing anything.
+
+Before its first step the wrapper parses its arguments (`probe`, `frame` with
+a time `^[0-9]{1,5}\.[0-9]{3}$` of at most `86400.000`, or `audio` with
+1..=1500 seconds; absolute UTF-8 directories), builds the program path, argv
+and an empty environment, takes its own pid and compiles both filters. It then:
+
+1. closes every descriptor above stderr (`close_range`, a raw syscall because
+   musl has no wrapper);
+2. sets every limit below with soft = hard;
+3. switches to `SCHED_IDLE` (a raw syscall: musl's `sched_setscheduler` is an
+   `ENOSYS` stub), which FFmpeg's threads inherit;
+4. sets `no_new_privs`;
+5. installs Filter E, then Filter A;
+6. executes the program.
+
+Nothing allocates after step 5. Any failure writes the static line
+`cmaeg media-job: step <n> failed` (step 0 is argument parsing) and exits 125,
+which the gateway classifies as `sandbox_unavailable`. The job modes are
+dispatched before the gateway makes itself non-dumpable, read no environment,
+log nothing and build no runtime.
+
+**Filters.** Filter E answers `clone3` with `ENOSYS` and allows everything
+else, so libc falls back to `clone`. Filter A is a default-deny allowlist:
+anything else fails with `EPERM`. It allows `openat` and `open` only with
+`O_ACCMODE`, `O_CREAT`, `O_TRUNC` and `__O_TMPFILE` clear (every open is
+read-only; empty files on the memory `emptyDir` would pin inodes outside its
+`sizeLimit`), `clone` only with `CLONE_THREAD`, signals (`kill`, `tkill`,
+`tgkill`, `rt_sigqueueinfo`, `rt_tgsigqueueinfo`) only to the job's own pid,
+`prlimit64` and `sched_getaffinity` only on itself, and fixed `fcntl`, `ioctl`,
+`prctl` and `arch_prctl` commands. The order is fixed: Filter A denies the
+`prctl` and `seccomp` calls that installing a filter needs, so it comes last,
+and the kernel keeps the lowest action, so E's `ENOSYS` wins over A's allow
+entry for `clone3`. Syscall numbers outside the x86_64 table (x32 included)
+never match A, and any other architecture is killed. The allow table may
+never contain the socket family, `io_uring`, process creation or namespaces,
+any call aimed at another process (`ptrace`, `process_vm_*`, `pidfd_*`,
+`kcmp`), `perf_event_open`, `bpf`, `userfaultfd`, keyrings, mounts, scheduling
+or I/O priority of others, `memfd_create`, `inotify`, `fanotify`,
+`timer_create`, System V and POSIX IPC, `personality`, `seccomp`,
+`execveat`, any file creation or mutation, `openat2`, handle opens, or
+permission and attribute changes; a test fails if it ever does. The table
+covers every call the pinned FFmpeg makes, as probe P8's strace recorded it
+for each op on every fixture; that record added only `getrusage`, with which
+FFmpeg's command line reads its own CPU time.
+
+**Limits** (soft = hard, so `prlimit64` on itself cannot raise them):
+
+| Limit | Value | Why |
+| --- | --- | --- |
+| `RLIMIT_AS` | 402653184 (384 MiB) | One job's term in the memory gate. |
+| `RLIMIT_CPU` | 20 s | The kernel sends SIGKILL, never SIGXCPU (FFmpeg's handler would exit 255). |
+| `RLIMIT_FSIZE` | 0 | The job writes no file. |
+| `RLIMIT_NOFILE` | 64 | |
+| `RLIMIT_CORE` | 0 | |
+| `RLIMIT_MEMLOCK` | 0 | |
+| `RLIMIT_SIGPENDING` | 64 | Bounds the job's own memcg-charged queue of real-time signals. |
+
+`RLIMIT_NPROC` is deliberately absent: it counts per uid across the node, and
+uid 10001 is shared; seccomp refuses process creation instead.
+
+**Self-check.** `cmaeg --media-sandbox-check` runs steps 1 to 5 in its own
+process and then requires that a thread can still start, `clone3` fails with
+`ENOSYS`, `socket`, `openat(".", O_CREAT | O_WRONLY)` and `kill(<parent>, 0)`
+fail with `EPERM`, and `/proc/self/status` opens read-only. It exits 0, or
+writes `cmaeg media-sandbox-check: <check> failed` and exits 125. The image
+build runs it on the musl binary (`linux/amd64` must pass; other architectures
+must exit 125), because CI tests use glibc. Building `linux/amd64` under QEMU
+user emulation is unsupported for this step; CI builds natively.
+
+### Media transformer
+
+With `CMAEG_MEDIA_FFMPEG_DIR` set and media on, the gateway runs sandboxed
+FFmpeg jobs inside its own pod: no other workload, Secret or manifest file is
+involved, only the memory `emptyDir` mounted at `/var/cmaeg/media`.
+
+**How it runs.** `TransformerKeyframes` replaces the platform-thumbnail
+extractor and `TransformerTranscoder` the direct upload path; each keeps the
+one it replaces as its fallback. Both run inside the existing single-flight
+derivation job, so the tool's pending answer and the preparation budget are
+unchanged. A keyframe set probes the video and extracts up to
+`CMAEG_MEDIA_VIDEO_FRAMES` JPEG keyframes at evenly spread positions (one at
+the start when the duration is unknown), skipping any frame that fails, and
+normalizes each to a 768 px preview with its position. A failed set falls back
+to a native Telegram thumbnail when the attachment has one. Every
+speech-to-text input, audio or the audio track of video in any container, is
+transcoded to 16 kHz mono PCM covering at most
+`T = min(CMAEG_STT_MAX_SECONDS, ⌊(CMAEG_STT_MAX_BYTES − 44) / 32000⌋)` seconds
+(600 at the defaults) and uploaded as WAV, metered exactly at
+`⌈PCM bytes / 32000⌉` seconds; a transcript cut at `T` carries the notice
+`[transcript covers the first m:ss]`. A failed transcode still uploads the
+original directly when the direct path accepts it; otherwise the transform's
+reason is reported. An endpoint whose `CMAEG_STT_FORMATS` omits `wav` keeps the
+direct path.
+
+The pod has **one transform slot**. A set holds it from its first job to its
+last, so one FFmpeg process and one job directory exist at a time. Audio sets
+are served before keyframe sets, each class in arrival order. A channel has at
+most one set in the global queue; its later sets wait, never refused, in that
+channel's FIFO and join the queue in order, so channels interleave fairly.
+
+**Limits and deadlines.** Each process runs for at most 20 s (and 20 s of CPU).
+A keyframe set has 30 s and an audio set 20 s, counted from when the set joins
+the global queue, so they include the wait for the slot. The derivation job's
+90 s cap bounds everything, including a channel FIFO wait. Every job's stdout
+cap (16 KiB for the probe, 256 KiB per frame, `44 + T × 32000` bytes for audio)
+is reserved in `CMAEG_MEDIA_INFLIGHT_BYTES` before it is spawned.
+
+| Outcome | Reason reported |
+| --- | --- |
+| `timeout`, `cpu_limit`, or a keyframe set stopped by its deadline with no frame | `timed_out` |
+| `exit_nonzero`, `output_invalid` | `decode_failed`, or `unsupported_format` when FFmpeg reported an unknown or missing decoder |
+| `resource_limit`, `killed`, `sandbox_unavailable` | `transform_failed` |
+
+**Watchdog.** One dedicated thread samples the container's cgroup every 10 ms
+while a job runs and kills the job through its pidfd once `memory.current`
+less `inactive_file` reaches 0.9 × `memory.max`. Page tables, VMAs and thread
+stacks a job makes the kernel allocate are charged to the container but not to
+the job's `RLIMIT_AS`, and with `memory.oom.group` an OOM would kill the whole
+container; the watchdog kills the job first (`resource_limit`).
+
+**Startup.** Before the listener binds, the gateway validates
+`CMAEG_MEDIA_FFMPEG_DIR` (owner root), checks and sweeps `/var/cmaeg/media`,
+reads `/sys/fs/cgroup/memory.max` (it must be a number, not `max`), starts the
+watchdog thread, and runs `cmaeg --media-sandbox-check` through the production
+launcher with a pidfd and a watchdog registration. Any failure stops startup
+(`media transformer unavailable: …`, for example
+`media sandbox self-check failed: sandbox_unavailable`); the old pod keeps
+serving because `maxUnavailable` is 0. On success it sets
+`cmaeg_media_sandbox_ready` to 1 and logs `media transformer ready` with
+`dumpable=false`, `sandbox_check="passed"`, `memory_max_bytes` and
+`watchdog_threshold_bytes`. Unconfigured, none of this runs and the gauge
+stays 0.
+
+**Metrics.** `cmaeg_media_transform_total{op,outcome}`,
+`cmaeg_media_transform_seconds{op}` and `cmaeg_media_sandbox_ready`, described
+under [Observability](#observability). Logs carry only the channel hash, op,
+outcome, durations and byte counts: never FFmpeg's output, file names, media
+bytes or transcripts.
+
+**Alerts**, on the private metrics scrape while the transformer is configured:
+
+| Severity | Condition | Meaning |
+| --- | --- | --- |
+| Warn | `increase(cmaeg_media_transform_total{outcome="sandbox_unavailable"}[30m]) > 0` | A job could not be started, sandboxed or observed. |
+| Warn | non-`ok` jobs above 20 % of `cmaeg_media_transform_total` over 30 m | Media is failing to transform. |
+| Warn | `increase(cmaeg_media_transform_total{outcome="killed"}[30m]) > 0` | Only the gateway, the watchdog and the CPU limit should kill a job. |
+| Warn | `increase(cmaeg_media_transform_total{outcome="resource_limit"}[30m]) > 0` | Hostile input or a memory gate violation. |
+
+**Operations rule.** While `CMAEG_MEDIA_FFMPEG_DIR` is set, **no `kubectl exec`
+of any kind** into the gateway: an exec'd process holds the Secret environment
+variables and is dumpable until its first instruction, so a job could read
+them. The custom-attachment audit subcommand runs only after the flags are off
+(see [Rolling back below inbound media](#rolling-back-below-inbound-media)).
+
+**preStop prerequisite.** The shipped `exec` `/bin/sleep` preStop hook is
+dumpable for the same reason. Setting `CMAEG_MEDIA_FFMPEG_DIR` requires
+`lifecycle.preStop.sleep` (probe P15: the cluster accepts it).
+
+**Accepted residual risk** (recorded on #961). On linux/amd64, with the
+enablement probes recorded, a compromised FFmpeg or ffprobe runs as uid 10001
+at `SCHED_IDLE` under `no_new_privs`, both filters, the limits and the
+watchdog. It cannot open sockets or io_uring, create or modify any file, signal
+or trace another process or read its memory or environment, change another
+process's limits or scheduling, create a process, or get the container
+OOM-killed, and it never overlaps another job. It can read what uid 10001 can
+read (image binaries, its own input, pod metadata under `/proc`; no secret is a
+readable file), choose its own validated stdout (which reaches only the agent
+of the channel that sent the media), exec another image binary under the same
+filters and limits, and spend for at most 20 s per process the CPU that
+`SCHED_IDLE` leaves, threads up to the pod PID limit and memory up to the
+watchdog threshold. Follow-ups: Landlock and per-job uids.
+
+### FFmpeg in the gateway image
+
+The gateway image ships a minimal, static, LGPL-only FFmpeg: `ffmpeg` and
+`ffprobe` in root-owned `/opt/ffmpeg/bin` (mode 0755), the directory
+`CMAEG_MEDIA_FFMPEG_DIR` names to enable the transformer on linux/amd64. The
+shipped ConfigMap keeps the key empty; enabling it is a separate, infra-only
+change.
+
+**Pin.** Every value is written literally in the `ffmpeg-build` stage of
+`infra/cmaeg/Dockerfile`, never through a build argument.
+
+| | |
+| --- | --- |
+| Version | FFmpeg 9.0.2 "Lei", the newest point release of the latest stable branch when pinned |
+| Source | `https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz` |
+| SHA-256 | `8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e` |
+| Signature | `ffmpeg-9.0.2.tar.xz.asc`, verified with `gpg --verify` against the release signing key published at `https://ffmpeg.org/ffmpeg-devel.asc` ("FFmpeg release signing key", fingerprint `FCF9 86EA 15E6 E293 A564 4F10 B432 2F04 D676 58D8`) |
+
+The stage checks the archive's SHA-256 and then builds with `--network=none`:
+
+```sh
+./configure --prefix=/opt/ffmpeg --enable-static --disable-shared \
+  --extra-ldflags=-static --pkg-config-flags=--static \
+  --disable-autodetect --disable-network --disable-everything --disable-doc \
+  --disable-debug --disable-ffplay --enable-ffmpeg --enable-ffprobe \
+  --enable-swscale --enable-swresample --enable-protocol=file,pipe \
+  --enable-demuxer=mov,matroska,ogg,mp3,wav,flac,aac,gif,amr \
+  --enable-parser=h264,hevc,vp8,vp9,mpeg4video,aac,opus,vorbis,flac,mpegaudio,gif \
+  --enable-decoder=h264,hevc,vp8,vp9,mpeg4,aac,mp3float,opus,vorbis,flac,pcm_s16le,pcm_f32le,amrnb,amrwb,gif,mjpeg \
+  --enable-encoder=mjpeg,pcm_s16le --enable-muxer=image2pipe,pcm_s16le \
+  --enable-filter=scale,format,aresample,aformat,trim,atrim,null,anull
+```
+
+Only what the fixed argv of the [media job sandbox](#media-job-sandbox) needs
+is compiled. `trim` and `atrim` serve accurate `-ss` and output `-t`; `null`,
+`anull`, `format` and `aformat` serve the filter graphs FFmpeg builds; every
+output goes to stdout, so the only muxers are `image2pipe` and `pcm_s16le`
+(the component behind `-f s16le`). FFmpeg itself selects what these depend on,
+such as the VP9 superframe bitstream filter and the rotation filters. `nasm`
+builds the x86 assembly. The stage fails unless both binaries are fully static
+(`readelf -d` shows no `NEEDED`), `ffmpeg -L` reports the GNU Lesser General
+Public License, and `-buildconf` shows none of `--enable-gpl`,
+`--enable-nonfree` or `--enable-version3`.
+
+**LGPL-2.1-or-later compliance.** `/usr/local/share/ffmpeg` in the image holds
+`LICENSE` (the source's `COPYING.LGPLv2.1`), `configure.txt` (the
+`-buildconf` output), `source.txt` (the version, the source URL and the
+archive's SHA-256) and `binaries.sha256`. The binaries are built from the
+unmodified source at the recorded URL, with no patch applied.
+
+**Build-time self-test.** The `media-self-test` stage copies the gateway
+binary, both FFmpeg binaries and the fixtures in
+`api/crates/cmaeg/tests/fixtures/media/` into a clean Alpine image and, as
+uid 10001 with `--network=none`, runs
+`CMAEG_MEDIA_FFMPEG_DIR=/opt/ffmpeg/bin cmaeg --media-self-test
+/opt/cmaeg-media-fixtures`. Every case goes through the production path: the
+transform scheduler, a job directory under `/var/cmaeg/media` and the
+sandboxed launcher, with a watchdog over a disabled gauge because a build
+container has no memory limit. The runtime stage copies the stage's report to
+`/usr/local/share/cmaeg/media-self-test.txt`, which forces it to run: a failed
+case fails the image build. On linux/arm64 the stage records that the
+transformer does not apply. As with the sandbox self-check, building
+linux/amd64 under QEMU user emulation is unsupported; CI builds natively.
+
+| Fixture | Op | Passes when |
+| --- | --- | --- |
+| `h264_aac.mp4`, `vp9_opus.webm` | keyframes (6), audio (5 s) | as below |
+| `anim.gif` | keyframes (6) | as below; with `-skip_frame nokey` a GIF may yield fewer frames |
+| `voice.ogg` | audio (5 s) | as below, with at least 64000 PCM bytes |
+| `tone.mp3`, `tone.amr` | audio (5 s) | as below |
+| `hevc_4k.mp4` | keyframes (1) | exactly one frame and every job `ok`: 3840×2160 HEVC decodes within `RLIMIT_AS` at `-max_pixels 8294400` |
+
+A keyframe case passes when the probe reported a duration, at least one JPEG
+came back, each is at most 768 px per side and normalizes as a preview, and
+no job ended `cpu_limit`, `resource_limit`, `killed` or `sandbox_unavailable`;
+another failed frame job only skips its position, as in production. An audio
+case passes when its job ended `ok` and the PCM is even, non-empty and behind
+exactly the WAV header the gateway writes. The report is one line per case and
+op, never media or FFmpeg's stderr:
+
+```text
+media-self-test case=<file> op=<keyframes|audio> outcome=<outcome> frames=<n> pcm_bytes=<n> ms=<n>
+```
+
+It exits 0 when every case passes, 1 when one fails, 2 on a usage or
+configuration error (`CMAEG_MEDIA_FFMPEG_DIR` missing or not root-owned, an
+unusable media root) and 125 where no sandbox exists. To repeat it by hand on
+a linux/amd64 Docker host (seccomp is not reliable under emulation):
+
+```sh
+docker run --rm -e CMAEG_MEDIA_FFMPEG_DIR=/opt/ffmpeg/bin \
+  --tmpfs /var/cmaeg/media:uid=10001,mode=0700 \
+  -v "$PWD/api/crates/cmaeg/tests/fixtures/media:/fx:ro" <image> --media-self-test /fx
+```
+
+**Fixtures.** The fixtures are synthetic (lavfi `testsrc2` and `sine`), with
+no third-party content. They were generated once with Debian trixie's FFmpeg
+7.1.5 and `libavcodec-extra`, which adds the AMR-NB encoder; any full build
+with these encoders works. Each is at most 64 KiB, except `hevc_4k.mp4` at
+most 256 KiB, and `tests/media_fixtures.rs` keeps the directory and the
+self-test's cases naming the same files. If gitleaks ever flags one,
+regenerate it; never add an allowlist entry.
+
+| File | Content | Command |
+| --- | --- | --- |
+| `h264_aac.mp4` | 2 s 320×240 H.264 and AAC | `ffmpeg -f lavfi -i testsrc2=size=320x240:rate=10:duration=2 -f lavfi -i sine=frequency=440:duration=2 -c:v libx264 -preset veryslow -crf 40 -pix_fmt yuv420p -g 5 -c:a aac -b:a 24k -shortest -movflags +faststart h264_aac.mp4` |
+| `vp9_opus.webm` | 2 s VP9 and Opus | `ffmpeg -f lavfi -i testsrc2=size=320x240:rate=10:duration=2 -f lavfi -i sine=frequency=440:duration=2 -c:v libvpx-vp9 -b:v 40k -g 5 -c:a libopus -b:a 16k -shortest vp9_opus.webm` |
+| `voice.ogg` | 3 s mono Ogg/Opus, like a Telegram `.oga` | `ffmpeg -f lavfi -i sine=frequency=300:duration=3 -ac 1 -c:a libopus -b:a 16k voice.ogg` |
+| `tone.mp3` | 3 s MP3 | `ffmpeg -f lavfi -i sine=frequency=440:duration=3 -c:a libmp3lame -b:a 32k tone.mp3` |
+| `tone.amr` | 3 s AMR-NB | `ffmpeg -f lavfi -i sine=frequency=440:duration=3 -ar 8000 -ac 1 -c:a libopencore_amrnb -b:a 12.2k tone.amr` |
+| `anim.gif` | 2 s 160×120 animation | `ffmpeg -f lavfi -i testsrc2=size=160x120:rate=5:duration=2 anim.gif` |
+| `hevc_4k.mp4` | two 3840×2160 HEVC intra frames at 2 fps (exactly 8 294 400 px, the `-max_pixels` value) | `ffmpeg -f lavfi -i testsrc2=size=3840x2160:rate=2 -frames:v 2 -c:v libx265 -g 1 -crf 45 -tag:v hvc1 hevc_4k.mp4` |
+
+`hevc_4k.mp4` holds two intra frames rather than one because a keyframe set
+asks for the frame at the middle of the duration: a one-frame clip has no
+frame there, and its set fails before anything is decoded.
+
+**Updating FFmpeg.**
+
+1. Bump the version and the SHA-256 literally in the `ffmpeg-build` stage and
+   in `source.txt`, after verifying the new archive's signature against the
+   release key above.
+2. Rebuild the image.
+3. Re-run the P8 strace of every op on every fixture and diff the syscall
+   list against Filter A. A missing call off the never-list is added with its
+   justification; one on the never-list is not added, and the update stops
+   for a design decision on #961.
+4. Check that the build-stage self-test passes, `hevc_4k.mp4` included.
+5. Check that trivy passes on the image.
+6. Record the result on the CVE review issue.
+
+**CVE review.** Trivy cannot see a binary built from source: it carries no
+package metadata, so the image scan covers the Alpine packages only. FFmpeg
+security fixes are reviewed monthly, and on every FFmpeg security
+announcement (`https://ffmpeg.org/security.html`), in the recurring issue
+"[chore] infra/cmaeg: review FFmpeg security releases for the gateway image".
+Act when a fixed CVE touches an enabled component: a demuxer, parser,
+decoder, encoder, filter or protocol in the configure line above, or
+`libswscale`, `libswresample` or `libavutil`.
+
+**The measured fallback.** `alpine:3.22` with `apk add ffmpeg` (FFmpeg 6.1.2)
+passes the same trivy scan with 0 findings at about 180 MB, but it enables
+hundreds of components, network protocols among them, links GPL libraries and
+follows Alpine's backports rather than this pin. Switching to it would need a
+new P8 record and an amendment on #961.
 
 ### Rolling back below inbound media
 

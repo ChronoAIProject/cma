@@ -13,6 +13,7 @@ mod media;
 mod secrets;
 mod service_account;
 mod stt;
+pub mod transformer;
 mod turns;
 pub use cache::*;
 pub use delivery::*;
@@ -25,6 +26,7 @@ pub use media::{
 };
 pub use service_account::*;
 pub use stt::*;
+pub use transformer::{TransformerConfig, CMAEG_MEDIA_FFMPEG_DIR, CMAEG_MEDIA_VIDEO_FRAMES};
 pub use turns::*;
 
 /// The listener address used by CMAEG.
@@ -62,6 +64,8 @@ pub enum ConfigError {
     InvalidManagement { detail: String },
     /// An inbound media setting was invalid.
     InvalidMedia { detail: String },
+    /// The configured media transformer failed its startup checks.
+    MediaTransformer { detail: String },
 }
 
 impl std::fmt::Display for ConfigError {
@@ -92,6 +96,9 @@ impl std::fmt::Display for ConfigError {
             Self::InvalidMedia { detail } => {
                 write!(formatter, "media configuration is invalid: {detail}")
             }
+            Self::MediaTransformer { detail } => {
+                write!(formatter, "media transformer unavailable: {detail}")
+            }
         }
     }
 }
@@ -121,6 +128,7 @@ pub struct Config {
     pub delivery: DeliveryConfig,
     pub media: MediaConfig,
     pub stt: SttConfig,
+    pub transformer: TransformerConfig,
 }
 
 /// Secrets and origins used by the channel management plane.
@@ -154,6 +162,8 @@ impl Config {
         // Validated against the registry, so it can only follow it.
         let media = media::config_from_env(&providers)?;
         let stt = stt::config_from_env()?;
+        let transformer = transformer::config_from_env()?;
+        transformer.check(&media, &stt)?;
         let provider_connect_timeout = positive_duration(CMAEG_PROVIDER_CONNECT_TIMEOUT_MS, 2_000)?;
         let provider_request_timeout =
             positive_duration(CMAEG_PROVIDER_REQUEST_TIMEOUT_MS, 30_000)?;
@@ -183,6 +193,7 @@ impl Config {
             delivery: DeliveryConfig::from_env()?,
             media,
             stt,
+            transformer,
         })
     }
 }

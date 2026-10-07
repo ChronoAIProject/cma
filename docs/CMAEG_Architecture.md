@@ -51,6 +51,16 @@ turn, event-context and idempotency records belong to the provider. Active HTTP
 connections are process-local: a restart can interrupt a connection, and recovery
 must use the original durable identity rather than infer that no work happened.
 
+Video keyframes and audio transcoding, when the operator configures them, run
+inside the gateway Pod rather than in a new workload: each FFmpeg job is a
+fresh, sandboxed exec of the gateway binary that limits itself, installs
+seccomp filters and executes FFmpeg once, reading its input from a memory
+volume and writing only to its stdout. The gateway runs one job at a time,
+signals it only through a pidfd, and a watchdog thread kills any job that
+pushes the container toward its memory limit. The gateway itself is
+non-dumpable, so a job cannot read its secrets. With the transformer off, the
+gateway keeps platform thumbnails and direct speech-to-text uploads.
+
 ## Event Worker Profiles
 
 `EventWorkerProfile` names the complete provider-neutral configuration sent to

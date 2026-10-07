@@ -6,6 +6,7 @@ use bytes::Bytes;
 use cmaeg::{
     ingress::launch::LaunchRequest,
     media::{
+        budget::InflightBytes,
         derive::DeriveError,
         image::NormalizedImage,
         service::{MediaDeps, MediaService},
@@ -336,6 +337,7 @@ impl MediaSetup {
                 self.tool_providers.iter().map(|slug| slug.parse().unwrap()),
             )),
             decode,
+            inflight: InflightBytes::new(&self.limits),
         })
     }
 }
