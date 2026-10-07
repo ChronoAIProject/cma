@@ -161,7 +161,8 @@ impl Native {
     fn receipt(&self, actor: i64, date: i64, update_id: i64) -> Activity {
         let raw = json!({"update_id":update_id,"message":{"message_id":101,"date":date,"chat":{"id":actor,"type":"private"},"from":{"id":actor,"is_bot":false,"first_name":"Alice"},"managed_bot_created":{"bot":{"id":88,"is_bot":true,"first_name":"Paper assistant","username":"paper_fixture_bot"}}}});
         let crate::ingress::telegram::Outcome::Admitted(observed) =
-            crate::ingress::telegram::observe(raw, "77", Some("manager_fixture_bot")).unwrap()
+            crate::ingress::telegram::observe(raw, "77", Some("manager_fixture_bot"), false)
+                .unwrap()
         else {
             panic!("fixture must pass native normalization")
         };

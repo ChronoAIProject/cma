@@ -184,11 +184,12 @@ async fn admit_update(
             ))
         }
     };
-    let observed = match telegram::observe(raw, &bot_id, bot_username.as_deref()) {
-        Ok(Outcome::Admitted(observed)) => *observed,
-        Ok(Outcome::Refused(reason)) => return Err(refused(reason)),
-        Err(error) => return Err(invalid(SOURCE, error)),
-    };
+    let observed =
+        match telegram::observe(raw, &bot_id, bot_username.as_deref(), state.media_enabled) {
+            Ok(Outcome::Admitted(observed)) => *observed,
+            Ok(Outcome::Refused(reason)) => return Err(refused(reason)),
+            Err(error) => return Err(invalid(SOURCE, error)),
+        };
     if let Err(reason) = admit(
         admission,
         &AdmissionFacts {

@@ -722,7 +722,7 @@ supports a platform before any source for it is enabled.
 | Edit | Confirmed gateway interactive cards can be updated using their opaque message reference | Unsupported | Unsupported |
 | Typing | Unsupported; never reported as performed | Unsupported | Unsupported |
 | Interactive callbacks | Native buttons and single/multi choices; exact actor, chat, message and current revision required | Unsupported | Unsupported |
-| Attachments | Inbound media admitted as activity attachments with relay locators while the operator enables it; replies: safe link text only, no file transfer | Safe link text only | Safe link text only |
+| Attachments | Inbound media admitted as activity attachments with relay or Bot API locators while the operator enables it; replies: safe link text only, no file transfer | Safe link text only | Safe link text only |
 
 Replies on every platform go through NyxID's generic
 `/api/v1/channel-relay/reply`; NyxID performs the platform send. Only Telegram
@@ -780,10 +780,10 @@ them. Lark, Feishu and the trusted platforms still refuse attachments.
   are dropped together), durations over 86400 seconds and emoji over 32 bytes
   are omitted. Each repair increments
   `cmaeg_media_facts_repaired_total{source,field}`.
-- **No loss.** No attachment fact makes a relay callback answer 400. An
-  activity that still failed validation would have its attachments reduced to
-  `reference`, `kind` and `source`, and failing that would be refused with 202
-  `attachment_unsupported`; both count
+- **No loss.** No attachment fact makes a relay callback answer 400 or a
+  native update answer 401. An activity that still failed validation would
+  have its attachments reduced to `reference`, `kind` and `source`, and failing
+  that would be refused with 202 `attachment_unsupported`; both count
   `cmaeg_media_activity_degraded_total{source}`.
 - A message whose envelope lists attachments while its raw message has no media
   field, or whose media fields yield no usable attachment, is refused as
@@ -818,6 +818,23 @@ no local webhook session state. Failed receipt persistence or provider admission
 returns a retryable error; a successful or deliberately refused update returns
 202. Native callback acknowledgments clear only the platform spinner and do not
 claim that the selected operation succeeded.
+
+Inbound media follows [Telegram media](#telegram-media) while
+`CMAEG_MEDIA_ENABLED` is on; while it is off, a media update is refused with 202
+`attachment_unsupported`. The gateway builds the same envelope NyxID would relay,
+with NyxID's media content type and the caption as text, so both transports
+apply one set of checks. A native attachment's `source` is
+`{type:"telegram",file_id,file_unique_id}` taken from the message itself;
+identifiers outside that locator grammar leave the attachment without `source`
+and count `cmaeg_media_items_total{outcome="invalid_locator"}`, while its text
+and caption are still delivered. Of a photo's sizes, the gateway keeps the
+largest whose longer side is at most 2048 px and whose declared `file_size` is
+at most 8 MiB (a size without `file_size` is not excluded), and otherwise the
+smallest. `document`, `audio`, `video`, `video_note`, `animation` and `sticker`
+attachments carry their Telegram `thumbnail` as a `telegram` locator when its
+identifiers are valid. No attachment fact makes a native update answer 401,
+which would make Telegram redeliver it: an update whose attachments still could
+not be admitted is refused with 202 `attachment_unsupported` instead.
 
 Native Telegram replies, edits and typing use the Bot API directly. Inline cards
 retain the existing durable actor/chat/message/revision fences. Plain message
