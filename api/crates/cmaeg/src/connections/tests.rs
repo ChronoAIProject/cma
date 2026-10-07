@@ -199,6 +199,7 @@ pub(super) fn connection(subject: &str, organization: bool) -> Connection {
                 conversation_id: "private-conversation".parse().unwrap(),
                 expires_at: timestamp + SETUP_TTL,
                 reply: ReplyAddress::NyxidRelay {
+                    thread_reply: false,
                     message_id: "fixture-message".into(),
                     route_id: "fixture-route".into(),
                     platform: Platform::Telegram,

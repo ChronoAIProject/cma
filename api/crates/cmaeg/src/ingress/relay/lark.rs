@@ -102,6 +102,7 @@ pub fn observe(
         None => Some(false),
     };
     Ok(Observation::Message(RelayFacts {
+        thread: None,
         event: None,
         callback: None,
         conversation,
@@ -122,4 +123,70 @@ fn identifier(value: Option<&Value>) -> Result<Option<&str>, VerificationError> 
         }
         Some(_) => Err(INVALID),
     }
+}
+
+/// Called only after `observe` authenticated and correlated the raw message.
+/// Missing ancestry remains unresolved; a parent is not assumed to be a root.
+pub(crate) fn thread_facts(
+    payload: &CallbackPayload,
+    bot_id: &str,
+) -> Result<Option<cmaeg_core::thread::ThreadFacts>, VerificationError> {
+    use cmaeg_core::thread::{ThreadAddress, ThreadFacts, ThreadKind};
+    let message = payload
+        .raw_platform_data
+        .as_ref()
+        .and_then(|raw| raw.pointer("/event/message"))
+        .ok_or(INVALID)?;
+    if message["chat_type"] != "group" {
+        return Ok(None);
+    }
+    let message_id = identifier(message.get("message_id"))?
+        .ok_or(INVALID)?
+        .to_owned();
+    let parent = identifier(message.get("parent_id"))?.map(str::to_owned);
+    let native = identifier(message.get("thread_id"))?.map(str::to_owned);
+    let root = identifier(message.get("root_id"))?
+        .map(str::to_owned)
+        .or_else(|| (parent.is_none() && native.is_none()).then(|| message_id.clone()));
+    let (mut bot, mut other, mut everyone) = (false, false, false);
+    for mention in message["mentions"].as_array().into_iter().flatten() {
+        let key = mention["key"].as_str().unwrap_or_default();
+        if matches!(key, "@_all" | "_all") {
+            everyone = true;
+            continue;
+        }
+        let ids: Vec<&str> = [
+            mention.pointer("/id/open_id"),
+            mention.pointer("/id/user_id"),
+            mention.get("id"),
+            mention.get("open_id"),
+            mention.get("user_id"),
+        ]
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .filter(|id| !id.is_empty())
+        .collect();
+        if ids.contains(&bot_id) {
+            bot = true;
+        } else if !ids.is_empty() || key.starts_with("@_user_") {
+            other = true;
+        }
+    }
+    Ok(Some(ThreadFacts {
+        version: 1,
+        kind: ThreadKind::Native,
+        chat_id: payload.conversation.platform_id.clone(),
+        message_id,
+        root_id: root,
+        native_thread_id: native,
+        parent_message_id: parent,
+        sender_kind: ActorKind::Human,
+        address: if bot {
+            ThreadAddress::Mention
+        } else {
+            ThreadAddress::NotAddressed
+        },
+        mentions_others: other && !bot && !everyone,
+    }))
 }

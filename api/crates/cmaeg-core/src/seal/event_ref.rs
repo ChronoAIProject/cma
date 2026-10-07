@@ -38,6 +38,7 @@ pub enum ReplyAddress {
     },
 
     NyxidRelay {
+        thread_reply: bool,
         message_id: String,
         route_id: String,
         platform: Platform,
@@ -109,6 +110,8 @@ enum ReplyAddressWire {
     },
 
     NyxidRelay {
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        thread_reply: bool,
         message_id: String,
         route_id: String,
         platform: Platform,
@@ -137,7 +140,9 @@ impl Serialize for ReplyAddress {
                 platform,
                 reply_token,
                 reply_token_expires_at,
+                thread_reply,
             } => ReplyAddressWire::NyxidRelay {
+                thread_reply: *thread_reply,
                 message_id: message_id.clone(),
                 route_id: route_id.clone(),
                 platform: *platform,
@@ -180,7 +185,9 @@ impl<'de> Deserialize<'de> for ReplyAddress {
                 platform,
                 reply_token,
                 reply_token_expires_at,
+                thread_reply,
             } => Self::NyxidRelay {
+                thread_reply,
                 message_id,
                 route_id,
                 platform,
@@ -317,8 +324,16 @@ impl EventRefPayload {
                 message_id,
                 route_id,
                 reply_token_expires_at,
+                platform,
+                thread_reply,
                 ..
             } => {
+                if *thread_reply && !matches!(platform, Platform::Lark | Platform::Feishu) {
+                    return Err(ValidationError::new(
+                        "/reply/thread_reply",
+                        "native thread reply unavailable",
+                    ));
+                }
                 require_string(message_id, "/reply/message_id", 1, 512)?;
                 require_string(route_id, "/reply/route_id", 1, 512)?;
                 if *reply_token_expires_at <= 0 {

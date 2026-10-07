@@ -124,6 +124,7 @@ export const IntentReceiptSchema = object({
 export type IntentReceipt = Output<typeof IntentReceiptSchema>;
 
 export const OutboundMessageSchema = object({
+  thread_reply: optional(boolean),
   blocks: optional(array(BlockSchema)),
   reply_to: optional(nullable(MessageRefSchema)),
   text: optional(nullable(text)),

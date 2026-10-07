@@ -12,6 +12,7 @@ pub(super) fn key(channel: &str, event: &str) -> EventKey {
     digest.finalize().into()
 }
 pub(super) struct EventState {
+    pub thread_reply: bool,
     pub trace: tracing::Span,
     pub channel: Arc<ResolvedChannel>,
     pub event: EventRefPayload,
@@ -30,6 +31,7 @@ impl EventState {
     pub fn new(channel: Arc<ResolvedChannel>, event: EventRefPayload) -> Self {
         let now = Instant::now();
         Self {
+            thread_reply: false,
             trace: tracing::Span::current(),
             channel,
             event,

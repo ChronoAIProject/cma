@@ -95,6 +95,7 @@ pub fn observe(
         extensions: Default::default(),
     };
     Ok(Observation::Message(RelayFacts {
+        thread: None,
         callback: None,
         event: Some(Box::new(ce)),
         conversation: ConversationKind::Private,

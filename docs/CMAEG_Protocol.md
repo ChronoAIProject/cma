@@ -1389,3 +1389,88 @@ durable operation leases and recheck their intent before platform calls, but an
 external administrator changing a webhook concurrently, or a platform operation
 delayed beyond the lease, cannot be fenced atomically. Do not configure another
 webhook controller for the same bot.
+
+## Opt-in verified native threads (contract 1)
+
+Channel management responses advertise `thread_contract_versions: [1]` when the
+channel has one verified NyxID relay Lark or Feishu source with a pinned `bot_id`.
+The field is omitted when unsupported. A client must discover support before
+sending `reply.thread_contract = {"version":1,"follow_chat_ids":["oc_chat"]}`
+and must verify the accepted definition in the update response. This opts in to
+metadata and explicit native targeting; it does not change default reply routing.
+`follow_chat_ids` holds at most 256 unique identifiers (1–512 bytes, no control
+characters). `trust_normalized` sources and other platforms cannot opt in.
+
+Deploy the NyxID consumer to all replicas first, and upgrade all gateway
+replicas before storing opted-in channel definitions: older readers reject
+unknown policy fields. Keep NyxID's Lark/Feishu gateway platform flags off during
+this first mixed-version deployment; enable routing/negotiation after both
+rollouts complete. Clients must preserve the legacy path when
+support is absent. No existing field, admission default, or platform capability
+changes for channels without this opt-in.
+
+For an opted-in Lark/Feishu group message, `event_context.activity.thread` contains:
+
+```json
+{
+  "version": 1,
+  "kind": "native",
+  "chat_id": "oc_chat",
+  "message_id": "om_message",
+  "root_id": "om_root",
+  "native_thread_id": "omt_thread",
+  "parent_message_id": "om_parent",
+  "sender_kind": "human",
+  "address": "not_addressed",
+  "mentions_others": true
+}
+```
+
+Facts come from the authenticated raw `im.message.receive_v1` event, correlated to
+the relay chat and human sender; normalized `thread_context` is not authority.
+`root_id`, `native_thread_id`, and `parent_message_id` are optional. An immediate
+parent never substitutes for an unknown root. A new top-level message without a
+parent or thread alias is its own root. Native IDs are metadata, not reply
+credentials. The sealed event's activity digest covers these facts.
+
+`address` is `mention` only for a structured mention matching the pinned bot's
+identity; otherwise it is `not_addressed`. `reply_to_bot` and `unknown` are
+reserved values; this verifier cannot prove the parent's author. Consumers may
+correlate that parent against their own authenticated outbound receipts.
+`mentions_others` is true only when structured mentions identify other users and
+neither the bot nor everyone is mentioned. Lark `@_all` suppresses this boolean but
+does not turn the message into a bot mention. No mentioned user IDs or names are
+copied into the facts. Private messages omit `thread` and retain legacy behavior.
+
+For selected `follow_chat_ids`, group admission accepts ordinary human messages
+in addition to mentions/replies. Existing sender and chat allowlists/denials and
+explicit `groups: "deny"` still apply. Other chats retain configured admission.
+The provider owns follow state, authorization and turn filtering. NyxID uses its
+existing child-thread policy: other-person-only mentions remain quiet, and
+metadata still contributes to subsequent bounded context. A broadcast cannot
+activate a follow by itself.
+
+Native replies require an explicit choice:
+
+- A provider's `response.created.response.thread_reply: true` chooses native
+  targeting for that stream's automatic replies, acknowledgements and notices.
+- `OutboundMessage.thread_reply: true` chooses it for event replies and durable
+  reply-target messages, including after a gateway restart.
+- Omission or false preserves existing sends, even on an opted-in channel.
+
+The sealed event/reply target binds whether native targeting is available. An
+explicit request without that authority is rejected; it never falls back to a
+parent-chat send. CMA sends additive `thread_reply: true` with the **original**
+NyxID `message_id` to `/api/v1/channel-relay/thread-reply`. An older NyxID replica returns 404
+without a send instead of ignoring the new field on its legacy `/reply` route.
+There is no retry or fallback to that legacy route. NyxID reconstructs the bound
+native target from retained ingress and the live admitted child binding. Clients
+cannot supply a replacement chat, root or thread ID. Durable reply targets retain
+the original destination, current route checks, expiry and payload-bound
+idempotency. All target/reference strings remain opaque and must not be logged.
+
+Lark/Feishu remain text-only in CMAEG. This contract adds no attachment fetching,
+media sends, edits, history API, or other-platform follow capability. NyxID may
+use its existing bounded provider history with metadata fallback and no silently
+added scopes. Slack/Discord need raw verifiers; Telegram needs the corresponding
+forum-topic/reply-chain and mention evidence before it can advertise this contract.

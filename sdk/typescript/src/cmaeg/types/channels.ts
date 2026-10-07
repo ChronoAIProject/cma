@@ -89,7 +89,14 @@ export const SinkSchema = tagged(
 );
 export type Sink = Output<typeof SinkSchema>;
 
+export const ThreadContractSchema = object({
+  version: integer,
+  follow_chat_ids: optional(array(text)),
+});
+export type ThreadContract = Output<typeof ThreadContractSchema>;
+
 export const ReplyPolicySchema = object({
+  thread_contract: optional(nullable(ThreadContractSchema)),
   ack_after_ms: integer,
   auto_final: boolean,
   sinks: optional(array(SinkSchema)),
@@ -238,6 +245,7 @@ export const ProviderResponseSchema = object({
 export type ProviderResponse = Output<typeof ProviderResponseSchema>;
 
 export const ChannelResponseSchema = object({
+  thread_contract_versions: optional(array(integer)),
   channel_id: text,
   definition: PublicChannelDefinitionSchema,
   endpoints: EndpointResponseSchema,

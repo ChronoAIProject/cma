@@ -44,6 +44,7 @@ export const RelaySenderSchema = object({
 export type RelaySender = Output<typeof RelaySenderSchema>;
 
 export const CallbackPayloadSchema = object({
+  thread_context: optional(anything),
   agent: RelayAgentSchema,
   content: RelayContentSchema,
   conversation: RelayConversationSchema,

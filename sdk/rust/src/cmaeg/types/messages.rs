@@ -214,6 +214,9 @@ pub struct IntentReceipt {
 /// CMAEG `OutboundMessage` wire shape.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct OutboundMessage {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Explicit native-thread choice; absence preserves legacy delivery.
+    pub thread_reply: Option<bool>,
     /// Wire field `blocks`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub blocks: Option<Vec<Block>>,
