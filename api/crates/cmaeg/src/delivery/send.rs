@@ -47,6 +47,26 @@ impl Sender {
         state: &mut EventState,
         message: &OutboundMessage,
     ) -> IntentReceipt {
+        if message.thread_reply
+            && !matches!(
+                state.event.reply,
+                ReplyAddress::NyxidRelay {
+                    thread_reply: true,
+                    ..
+                }
+            )
+        {
+            return IntentReceipt {
+                message_ref: None,
+                rendering: RenderingReport {
+                    outcome: RenderingOutcome::Unsupported,
+                    blocks: Vec::new(),
+                },
+                delivery: DeliveryOutcome::Rejected {
+                    reason: "thread_target_unavailable".into(),
+                },
+            };
+        }
         if matches!(state.event.reply, ReplyAddress::Telegram { .. }) {
             return self.native_reply(state, message).await;
         }
@@ -84,6 +104,10 @@ impl Sender {
             result.delivery = DeliveryOutcome::Unsupported;
             return result;
         };
+        let mut address = state.event.reply.clone();
+        if let ReplyAddress::NyxidRelay { thread_reply, .. } = &mut address {
+            *thread_reply = message.thread_reply;
+        }
         let mut confirmed_parts = 0;
         let mut first_platform_id = None;
         for (index, part) in parts.iter().enumerate() {
@@ -115,10 +139,7 @@ impl Sender {
                 break;
             };
             state.first_send_done = true;
-            let mut outcome = self
-                .relay
-                .send(&state.event.reply, credential, &part.text)
-                .await;
+            let mut outcome = self.relay.send(&address, credential, &part.text).await;
             if let DeliveryOutcome::RateLimited { retry_after } = outcome {
                 slot.cooldown(retry_after);
                 slot.retry().await;
@@ -126,7 +147,7 @@ impl Sender {
                 outcome = match state.channel.definition.secrets.channel_key.as_ref() {
                     Some(key) => {
                         self.relay
-                            .send(&state.event.reply, Credential::ChannelKey(key), &part.text)
+                            .send(&address, Credential::ChannelKey(key), &part.text)
                             .await
                     }
                     None => DeliveryOutcome::Rejected {

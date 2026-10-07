@@ -35,6 +35,7 @@ async fn messages_tools_and_final_snapshots_project_once_in_order() {
         fixture.terminal().await,
         vec![
             TurnOutcome::Accepted {
+                thread_reply: false,
                 response_id: "response-1".into()
             },
             TurnOutcome::TextDelta {

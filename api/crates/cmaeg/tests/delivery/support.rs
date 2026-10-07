@@ -54,7 +54,16 @@ impl App {
         config: DeliveryConfig,
         provider_config: FakeProviderConfig,
     ) -> Self {
-        Self::build("telegram", false, replies, ack_ms, config, provider_config).await
+        Self::build(
+            "telegram",
+            false,
+            false,
+            replies,
+            ack_ms,
+            config,
+            provider_config,
+        )
+        .await
     }
     /// A relay channel on `platform`. With `interactive`, the relay client holds an
     /// interaction store whose record service is unreachable, so any attempt to
@@ -63,6 +72,19 @@ impl App {
         Self::build(
             platform,
             interactive,
+            false,
+            vec![],
+            0,
+            DeliveryConfig::default(),
+            FakeProviderConfig::default(),
+        )
+        .await
+    }
+    pub async fn threaded_lark() -> Self {
+        Self::build(
+            "lark",
+            false,
+            true,
             vec![],
             0,
             DeliveryConfig::default(),
@@ -73,6 +95,7 @@ impl App {
     async fn build(
         platform: &str,
         interactive: bool,
+        threaded: bool,
         replies: Vec<Reply>,
         ack_ms: u32,
         config: DeliveryConfig,
@@ -84,6 +107,11 @@ impl App {
             platform,
             |value| {
                 value["reply"]["ack_after_ms"] = ack_ms.into();
+                if threaded {
+                    value["sources"][0]["bot_id"] = "ou_bot".into();
+                    value["reply"]["thread_contract"] =
+                        json!({"version":1,"follow_chat_ids":["oc_chat"]});
+                }
                 value["secrets"]["agent_key_hash"] =
                     format!("sha256:{:x}", Sha256::digest(key.as_bytes())).into();
                 value["secrets"]["provider_credential"] = key.clone().into();
@@ -92,7 +120,12 @@ impl App {
             Default::default(),
         )
         .await;
-        assert_eq!(fixture.send(&Envelope::on(platform)).await.status(), 202);
+        let mut envelope = Envelope::on(platform);
+        if threaded {
+            envelope.group();
+            envelope.lark_message()["root_id"] = "om_root".into();
+        }
+        assert_eq!(fixture.send(&envelope).await.status(), 202);
         let turn = Arc::new(fixture.recorder.requests.lock().unwrap().pop().unwrap());
         let event = turn
             .event_ref

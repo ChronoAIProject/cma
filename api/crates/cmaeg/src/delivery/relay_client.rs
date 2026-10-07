@@ -72,7 +72,12 @@ impl RelayClient {
         text: &str,
         markup: Option<&serde_json::Value>,
     ) -> (DeliveryOutcome, Option<String>) {
-        let ReplyAddress::NyxidRelay { message_id, .. } = address else {
+        let ReplyAddress::NyxidRelay {
+            message_id,
+            thread_reply,
+            ..
+        } = address
+        else {
             return (DeliveryOutcome::Unsupported, None);
         };
         let (Credential::ReplyToken(secret) | Credential::ChannelKey(secret)) = credential;
@@ -84,9 +89,12 @@ impl RelayClient {
                 None,
             );
         }
-        tokio::time::timeout(self.timeout, self.post(message_id, secret, text, markup))
-            .await
-            .unwrap_or_else(|_| (unknown("response_lost"), None))
+        tokio::time::timeout(
+            self.timeout,
+            self.post(message_id, secret, text, markup, *thread_reply),
+        )
+        .await
+        .unwrap_or_else(|_| (unknown("response_lost"), None))
     }
     pub async fn edit(
         &self,
@@ -117,17 +125,28 @@ impl RelayClient {
         secret: &Secret,
         text: &str,
         markup: Option<&serde_json::Value>,
+        thread_reply: bool,
     ) -> (DeliveryOutcome, Option<String>) {
+        let mut body = serde_json::json!({"message_id":message_id,"reply":{"text":text,"metadata":markup.map(|value|serde_json::json!({"reply_markup":value}))}});
+        if thread_reply {
+            body["thread_reply"] = true.into();
+        }
+        let mut endpoint = self.endpoint.clone();
+        if thread_reply {
+            // A legacy NyxID replica must return 404 before any send, not
+            // silently ignore the additive flag on its legacy reply endpoint.
+            endpoint.set_path("/api/v1/channel-relay/thread-reply");
+        }
         let mut response = match self
             .http
-            .post(self.endpoint.clone())
+            .post(endpoint)
             .bearer_auth(secret.as_str())
-            .json(&serde_json::json!({"message_id":message_id,"reply":{"text":text,"metadata":markup.map(|value|serde_json::json!({"reply_markup":value}))}}))
+            .json(&body)
             .send()
             .await
         {
             Ok(response) => response,
-            Err(_) => return (unknown("response_lost"),None),
+            Err(_) => return (unknown("response_lost"), None),
         };
         if response.status() == StatusCode::TOO_MANY_REQUESTS {
             return (

@@ -105,6 +105,7 @@ pub struct TurnRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Accepted {
+    pub thread_reply: bool,
     pub response_id: String,
     pub at: Instant,
 }

@@ -23,6 +23,9 @@ pub struct CallbackPayload {
     pub thread_id: Option<Secret>,
     pub timestamp: String,
     pub raw_platform_data: Option<Value>,
+    /// Additive NyxID hint; raw platform verification remains authoritative.
+    #[serde(default)]
+    pub thread_context: Option<Value>,
 }
 #[derive(Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]

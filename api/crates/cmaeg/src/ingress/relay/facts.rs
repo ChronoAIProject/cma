@@ -16,6 +16,7 @@ pub struct CallbackFacts {
 /// Facts a platform observer vouches for. `None` means the platform supplied no
 /// evidence, which admission treats differently from a verified `Some(false)`.
 pub struct RelayFacts {
+    pub thread: Option<Box<cmaeg_core::thread::ThreadFacts>>,
     pub callback: Option<CallbackFacts>,
     pub event: Option<Box<CloudEvent>>,
     pub conversation: ConversationKind,

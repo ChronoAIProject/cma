@@ -32,6 +32,7 @@ pub fn launch_request(
     });
     let event_id = EventId::new(ce.id.clone()).map_err(|_| "event_id_invalid")?;
     let activity = Activity {
+        thread: None,
         schema_version: 1,
         event_id: event_id.clone(),
         actor: Actor {

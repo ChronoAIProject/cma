@@ -181,13 +181,42 @@ pub async fn callback(
         Ok(verified) => verified,
         Err(error) => return invalid(error),
     };
-    let facts = match observe(source, &verified.payload) {
+    let mut facts = match observe(source, &verified.payload) {
         Ok(Observation::Message(facts)) => facts,
         Ok(Observation::Refused(reason)) => return refused(reason),
         Err(error) => return invalid(error),
     };
+    let mut selected_admission = std::borrow::Cow::Borrowed(admission);
+    if let Some(contract) = &channel.definition.reply.thread_contract {
+        if let cmaeg_core::channel::Source::NyxidRelay {
+            bot_id: Some(bot_id),
+            platform: cmaeg_core::channel::Platform::Lark | cmaeg_core::channel::Platform::Feishu,
+            ..
+        } = source
+        {
+            facts.thread =
+                match crate::ingress::relay::lark::thread_facts(&verified.payload, bot_id) {
+                    Ok(thread) => thread.map(Box::new),
+                    Err(error) => return invalid(error),
+                };
+            if let Some(thread) = &facts.thread {
+                facts.mentioned =
+                    Some(thread.address == cmaeg_core::thread::ThreadAddress::Mention);
+                if contract.follow_chat_ids.contains(&thread.chat_id) {
+                    if let cmaeg_core::channel::AdmissionPolicy::Scoped { groups, .. } =
+                        selected_admission.to_mut()
+                    {
+                        // Chat/sender ACL and an explicit group deny still win.
+                        if *groups != cmaeg_core::channel::GroupAdmission::Deny {
+                            *groups = cmaeg_core::channel::GroupAdmission::All;
+                        }
+                    }
+                }
+            }
+        }
+    }
     if let Err(reason) = admit(
-        admission,
+        &selected_admission,
         &AdmissionFacts {
             sender_id: &verified.payload.sender.platform_id,
             chat_id: &verified.payload.conversation.platform_id,
