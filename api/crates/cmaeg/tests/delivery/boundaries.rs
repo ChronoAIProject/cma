@@ -20,6 +20,7 @@ async fn admitted_turn_outlives_ref_expiry_and_uses_channel_key_for_final_delive
     Arc::get_mut(&mut app.turn).unwrap().event_ref =
         cmaeg_core::seal::EventRef::seal(&app.event, &app.fixture.state.master_keys).unwrap();
     app.outcome(TurnOutcome::Accepted {
+        thread_reply: false,
         response_id: "response".into(),
     })
     .await;
@@ -107,6 +108,7 @@ async fn auto_final_off_still_allows_tools_and_does_not_send_committed_output() 
         version: previous.version,
     });
     app.outcome(TurnOutcome::Accepted {
+        thread_reply: false,
         response_id: "response".into(),
     })
     .await;

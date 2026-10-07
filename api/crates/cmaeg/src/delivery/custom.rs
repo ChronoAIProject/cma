@@ -56,6 +56,7 @@ impl CustomDelivery {
                     event,
                     Some(text),
                     Some(&OutboundMessage {
+                        thread_reply: false,
                         text: Some(text.clone()),
                         blocks: vec![],
                         reply_to: None,

@@ -239,3 +239,48 @@ async fn native_source_exposes_webhook_endpoint_and_never_returns_platform_crede
     stop.send(()).unwrap();
     task.await.unwrap();
 }
+
+#[tokio::test]
+async fn thread_contract_is_advertised_then_echoed_only_for_supported_sources() {
+    let provider = FakeProvider::start(FakeProviderConfig::default()).await;
+    let cma = FakeCma::start(false).await;
+    let nyxid = FakeNyxid::start().await;
+    let (base, stop, task) = app(&provider, &cma, &nyxid).await;
+    let client = Client::new();
+    let mut body = relay_body("lark", None);
+    body["sources"][0]["bot_id"] = json!("ou_bot");
+    let response = client
+        .post(format!("{base}/v1/channels"))
+        .bearer_auth("token-alice")
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 201);
+    let created: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(created["thread_contract_versions"], json!([1]));
+    assert!(created["definition"]["reply"]
+        .get("thread_contract")
+        .is_none());
+    body.as_object_mut().unwrap().remove("credentials");
+    body["expected_version"] = created["version"].clone();
+    body["reply"]["thread_contract"] = json!({"version":1,"follow_chat_ids":["oc_chat"]});
+    let response = client
+        .put(format!(
+            "{base}/v1/channels/{}",
+            created["channel_id"].as_str().unwrap()
+        ))
+        .bearer_auth("token-alice")
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let updated: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(
+        updated["definition"]["reply"]["thread_contract"],
+        body["reply"]["thread_contract"]
+    );
+    stop.send(()).ok();
+    task.await.unwrap();
+}

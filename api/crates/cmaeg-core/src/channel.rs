@@ -185,6 +185,8 @@ pub struct PartitionRule {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ReplyPolicy {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_contract: Option<crate::thread::ThreadContract>,
     pub auto_final: bool,
     pub ack_after_ms: u32,
     #[serde(default)]
@@ -356,6 +358,9 @@ impl ChannelDefinition {
                     }
                 }
             }
+        }
+        if let Some(contract) = &self.reply.thread_contract {
+            contract.validate(self)?;
         }
         self.partition.validate(&self.sources)?;
         if self.reply.sinks.len() > MAX_SINKS {

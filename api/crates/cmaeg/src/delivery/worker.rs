@@ -173,7 +173,8 @@ async fn outcome_event(
     config: &DeliveryConfig,
 ) {
     match outcome {
-        TurnOutcome::Accepted { .. } => {
+        TurnOutcome::Accepted { thread_reply, .. } => {
+            state.thread_reply = thread_reply;
             state.terminal_at = None;
             if state.ack_due.is_none()
                 && !state.first_send_done
@@ -256,6 +257,7 @@ async fn send_text(sender: &Sender, state: &mut EventState, text: String) -> boo
         sender,
         state,
         OutboundMessage {
+            thread_reply: state.thread_reply,
             text: Some(text),
             blocks: vec![],
             reply_to: None,

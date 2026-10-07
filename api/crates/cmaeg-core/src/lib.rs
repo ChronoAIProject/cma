@@ -11,6 +11,9 @@ pub mod channel;
 /// Neutral inbound activity produced by an event source.
 pub mod activity;
 
+/// Verified opt-in native thread contract.
+pub mod thread;
+
 /// Neutral messages emitted by an agent turn.
 pub mod message;
 
