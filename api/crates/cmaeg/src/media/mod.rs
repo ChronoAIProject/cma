@@ -1,7 +1,8 @@
 //! Bounded retrieval of inbound media: the sources behind each attachment
 //! locator, byte-capped bodies, pod-wide and per-channel budgets,
-//! deadline-bounded response bodies, content sniffing, and a byte-bounded
-//! derived-media cache behind single-flight jobs.
+//! deadline-bounded response bodies, content sniffing, a byte-bounded
+//! derived-media cache behind single-flight jobs, and the bounded transforms
+//! that turn fetched bytes into what an agent can consume.
 //!
 //! Nothing here runs unless a later caller composes it, and every caller is
 //! gated on `CMAEG_MEDIA_ENABLED`. Errors are classifications only: no URL,
@@ -10,6 +11,7 @@ pub mod body;
 pub mod budget;
 pub mod cache;
 pub mod forward;
+pub mod image;
 pub mod jobs;
 pub mod sniff;
 pub mod source;

@@ -141,6 +141,7 @@ media work spans an 8-second tool budget, a 15-second preparation budget and a
 | `cmaeg_media_response_bytes` | none | Weighted bytes reserved against `CMAEG_MEDIA_RESPONSE_BYTES` by response bodies in flight, in whole KiB. |
 | `cmaeg_media_jobs_inflight` | none | Media jobs holding one of the `CMAEG_MEDIA_MAX_JOBS` permits. |
 | `cmaeg_media_cache_bytes` | none | Weighted bytes held by the derived-media cache. |
+| `cmaeg_media_derive_seconds` | `op`, `outcome` | One image normalization (`op="image"`): waiting for the single decode permit, decoding, downscaling, orienting and re-encoding an image within its budget. `outcome` is `ok` or one of `unsupported_format`, `too_large_pixels`, `decode_failed`, `too_large` or `timed_out`. Uses the media buckets. |
 | `cmaeg_turns_inflight` | none | Admitted local consumers; decremented on completion or cancellation. |
 | `cmaeg_channels_cached` | none | Locally retained positive and negative cache entries, including entries awaiting eviction. |
 
