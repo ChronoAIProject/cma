@@ -9,3 +9,5 @@ mod filters;
 mod lifecycle;
 #[path = "media_sandbox/support.rs"]
 mod support;
+#[path = "media_sandbox/watchdog.rs"]
+mod watchdog;

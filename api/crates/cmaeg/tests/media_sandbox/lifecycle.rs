@@ -29,7 +29,11 @@ impl Fixture {
     }
 
     fn launcher(&self) -> ProcessLauncher {
-        ProcessLauncher::new(env!("CARGO_BIN_EXE_cmaeg").into(), self.bin.path().into())
+        ProcessLauncher::new(
+            env!("CARGO_BIN_EXE_cmaeg").into(),
+            self.bin.path().into(),
+            None,
+        )
     }
 
     fn job(&self, mode: &str) -> JobDir {
