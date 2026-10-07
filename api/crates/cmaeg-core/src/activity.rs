@@ -13,8 +13,10 @@ use crate::{
     require_string, ValidationError,
 };
 
+mod attachment;
+pub use attachment::{Attachment, AttachmentKind, MAX_ATTACHMENTS};
+
 pub const ACTIVITY_SCHEMA_VERSION: u16 = 1;
-pub const MAX_ATTACHMENTS: usize = 16;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
@@ -47,29 +49,6 @@ pub enum ActivityKind {
     Event {
         ce: CloudEvent,
     },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct Attachment {
-    pub reference: String,
-    pub kind: AttachmentKind,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub filename: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mime_type: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub size_bytes: Option<u64>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum AttachmentKind {
-    Image,
-    File,
-    Audio,
-    Video,
-    Other,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -170,20 +149,7 @@ impl Activity {
                 text, attachments, ..
             } => {
                 require_string(text, "/kind/text", 0, 32 * 1_024)?;
-                if attachments.len() > MAX_ATTACHMENTS {
-                    return Err(ValidationError::new(
-                        "/kind/attachments",
-                        "too many attachments",
-                    ));
-                }
-                for (index, attachment) in attachments.iter().enumerate() {
-                    require_string(
-                        &attachment.reference,
-                        &format!("/kind/attachments/{index}/reference"),
-                        1,
-                        4_096,
-                    )?;
-                }
+                attachment::validate_message_attachments(attachments)?;
             }
             ActivityKind::Interaction(result) => {
                 require_string(&result.block_id, "/kind/block_id", 1, 512)?;
