@@ -138,7 +138,9 @@ EXPOSE 9091
 # CMAEG_BUSY_RETRY_MAX_MS=15000 and CMAEG_DRAIN_SECONDS=600. During shutdown,
 # /readyz returns 503 draining while tracked turns finish within the drain deadline.
 # Agent tools: /v1/events/{event_ref}/{replies,typing,context},
-# /v1/messages/{message_ref}/update and stateless POST /mcp (2025-06-18).
+# /v1/events/{event_ref}/attachments/{index}, /v1/messages/{message_ref}/update
+# and stateless POST /mcp (2025-06-18), which also lists readEventAttachment
+# when CMAEG_MEDIA_ENABLED=true.
 # Providers retain event_context on the Responses POST and serve authenticated
 # GET at the configured conversation path plus /events/{event_id}.
 # Delivery uses CMAEG_NYXID_REPLY_TIMEOUT_MS=5000, CMAEG_ACK_TEXT="Working on it…",

@@ -272,12 +272,21 @@ JSON-RPC protocol `2025-06-18`, `Content-Type: application/json`, then
 | `replyToEvent` | `{event_ref,message:{text}}` | Send a reply |
 | `updateMessage` | `{event_ref,message_ref,message:{text}}` | Edit when supported |
 | `sendTyping` | `{event_ref}` | Typing indicator when supported |
+| `readEventAttachment` | `{event_ref,index,view?,page?}` | Read one attachment as an image, transcript, frames or document page; listed only when media is enabled |
+
+`readEventAttachment` returns a text item with the view JSON followed by MCP
+image items, and no `structuredContent`. In code mode the model must call
+`image(result.content[i])` for each image item (i ≥ 1) to see it. A `pending`
+view asks you to call again after `retry_after_ms` with the same arguments.
 
 NyxID's OpenAPI discovery normalizes operation names to lowercase. Its discovered
 tools are `cmaeg__readeventcontext`, `cmaeg__replytoevent`,
-`cmaeg__updatemessage` and `cmaeg__sendtyping`. These use the discovered REST
+`cmaeg__updatemessage`, `cmaeg__sendtyping` and `cmaeg__readeventattachment`.
+The last is the REST twin of the attachment tool: it returns the view's
+metadata and text but never image bytes. These use the discovered REST
 parameter schemas; do not substitute native MCP argument shapes. Native MCP keeps
-the four camelCase names. The NyxID REST base does not include a `/mcp` endpoint.
+the four camelCase names, plus `readEventAttachment` when media is enabled. The
+NyxID REST base does not include a `/mcp` endpoint.
 
 Read `delivery.outcome` and rendering receipts. `unknown` means a reply might
 already have been delivered; blind resend can duplicate messages. Current Telegram
@@ -316,7 +325,7 @@ including `[truncated: …]` notes, are written by the gateway.
 The hint says what this agent can do. Only profile bindings of providers the
 operator lists as installing the gateway tools (by default `cma_codex`) are told
 to call `readEventAttachment`, and the hint adds "if that tool is available"
-because that tool is not in the list above yet. Only autonomous agents are
+because native MCP lists that tool only while the operator enables media. Only autonomous agents are
 offered `view "download"`. Other bindings, including existing-agent bindings
 and `nyxbot`, see what they cannot open instead. The block never contains a
 link, file identifier, `event_ref` or credential; use your own `event_ref` and
@@ -344,7 +353,7 @@ reconstructed or silently replaced with another user's latest event.
 
 This works after gateway restarts and after the short event reference expires.
 It requires a current relay channel key and unchanged channel/binding/key/route
-authority. The four native MCP tools stay unchanged. The TypeScript SDK exposes
+authority. The native MCP tools stay unchanged. The TypeScript SDK exposes
 `createReplyTarget` and `replyToTarget`; Rust exposes `create_reply_target` and
 `reply_to_target`. Use the service's `/v1` base once when calling via NyxID.
 

@@ -1,5 +1,5 @@
 //! Binary-level tests of inbound media modes; `binary.rs` keeps the original journeys.
-use super::binary_support::{assert_no_secrets, MountedSecrets};
+use super::binary_support::{assert_no_secrets, curl, free_address, spawn_ready, MountedSecrets};
 use super::*;
 use cmaeg_core::{profile::canonical_json, seal::seal_blob};
 
@@ -181,6 +181,70 @@ async fn audit_errors_print_only_their_classification() {
         "{stderr}"
     );
     assert!(!stderr.contains("CMAEG_MASTER_KEYS_FILE"), "{stderr}");
+    provider.close().await;
+    cma.close().await;
+    nyxid.close().await;
+}
+
+/// `tools/list` of the gateway at `address`, through curl like an agent.
+async fn listed_tools(address: &str) -> Vec<String> {
+    let output = tokio::process::Command::new("curl")
+        .args([
+            "--silent",
+            "--show-error",
+            "--fail",
+            "--max-time",
+            "5",
+            "--request",
+            "POST",
+            "--header",
+            "Content-Type: application/json",
+            "--header",
+            "Authorization: Bearer nyx_abcdefghijklmnop",
+            "--data-binary",
+            r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#,
+            &format!("http://{address}/mcp"),
+        ])
+        .output()
+        .await
+        .unwrap();
+    assert!(output.status.success());
+    let listed: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    listed["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+#[tokio::test]
+async fn compiled_binary_lists_the_attachment_tool_with_media_enabled() {
+    let provider = FakeProvider::start(FakeProviderConfig::default()).await;
+    let cma = FakeCma::start(false).await;
+    let nyxid = FakeNyxid::start().await;
+    let files = MountedSecrets::new();
+    let address = free_address();
+    let mut command = files.command(&address, &cma, &nyxid, &provider);
+    command.env("CMAEG_MEDIA_ENABLED", "true");
+    let mut child = spawn_ready(command, &address, &files.dir.join("trace.log")).await;
+    assert_eq!(
+        listed_tools(&address).await,
+        [
+            "replyToEvent",
+            "updateMessage",
+            "sendTyping",
+            "readEventContext",
+            "readEventAttachment"
+        ]
+    );
+    let document = curl("GET", &format!("http://{address}/openapi.json"), None, 200).await;
+    assert_eq!(
+        document["paths"]["/events/{event_ref}/attachments/{index}"]["get"]["operationId"],
+        "readEventAttachment"
+    );
+    child.kill().await.unwrap();
+    child.wait().await.unwrap();
     provider.close().await;
     cma.close().await;
     nyxid.close().await;

@@ -32,7 +32,7 @@ flowchart TB
 | Telegram Bot | NyxID Bot and agent route, pinned relay issuer/key/routes, returned callback URL, admission and reply policy | [Flow B](#flow-b-telegram-message-to-agent-reply) and [§6](#6-sources) |
 | Custom event producer | CloudEvents JSON plus HMAC or an explicitly allowed key; preserve event identity on retries | [Flow C](#flow-c-custom-event-ingress-and-response-modes) and [§6](#6-sources) |
 | Result consumer | Read the live SSE stream or verify and deduplicate signed result webhooks | [Flow D](#flow-d-deliver-results-and-interpret-receipts) and [§10](#10-delivery-semantics) |
-| Agent or tool client | Use the channel's agent key with the supplied event/message references | [Flow E](#flow-e-use-the-four-agent-tools) and [§8](#8-tools-api-and-mcp) |
+| Agent or tool client | Use the channel's agent key with the supplied event/message references | [Flow E](#flow-e-use-the-agent-tools) and [§8](#8-tools-api-and-mcp) |
 | Downstream agent provider | Implement Agent Card, binding, conversation, Responses SSE, durable idempotency and authenticated event-context reads | [Flow F](#flow-f-implement-a-downstream-agent-provider) and [§9](#9-provider-contract) |
 | Channel owner / operator | Reconcile versions and uncertain mutations; manage credentials and lifecycle within the correct authority | [Flow G](#flow-g-update-policy-rotate-credentials-and-delete), [Flow H](#flow-h-replica-restart-and-recovery-boundaries) and [§5](#5-management-api) |
 
@@ -153,7 +153,7 @@ to deliver. A confirmed or unknown explicit tool reply suppresses a later
 automatic answer. Partial chunk delivery is not full confirmation. External
 delivery state is not durable; the gateway does not promise exactly-once effects.
 
-### Flow E — Use the four agent tools
+### Flow E — Use the agent tools
 
 This sequence shows native MCP, where every tool receives `event_ref`. REST
 `updateMessage` uses only `message_ref`; the other REST tools use `event_ref`.
@@ -182,9 +182,13 @@ sequenceDiagram
     end
 ```
 
+With `CMAEG_MEDIA_ENABLED=true`, native MCP also lists `readEventAttachment`
+([§8 Event attachments](#event-attachments)).
+
 Use REST or native MCP; both verify the channel key and the references required
 by that operation. Native MCP keeps
-`replyToEvent`, `updateMessage`, `sendTyping`, `readEventContext`. NyxID-discovered
+`replyToEvent`, `updateMessage`, `sendTyping`, `readEventContext`, plus
+`readEventAttachment` when media is enabled. NyxID-discovered
 REST tool names are lowercase. Telegram reports interactive-card editing and
 inline callbacks when the card carries a gateway interaction record; typing and
 ordinary text-card edits remain unsupported. Other relay platforms report
@@ -1233,7 +1237,8 @@ once external delivery. Do not invent a new ID to retry an uncertain send. Multi
 different IDs are independent messages, with no ordering guarantee across events.
 Records persist through all capabilities that can be minted from the original
 event. Delivery records cannot authorize interaction callbacks. Native MCP keeps
-the four existing tools; delayed replies use these provider-integration REST APIs.
+the four existing tools, plus `readEventAttachment` when media is enabled; delayed
+replies use these provider-integration REST APIs.
 
 ### Immediate event tools
 
@@ -1252,6 +1257,10 @@ Notifications receive empty 202; calls use string/integer/null IDs (strings ≤2
 bytes). Tool refusals use JSON-RPC error `-32000` with the problem in `error.data`;
 parse/invalid request/unknown method/invalid params use `-32700/-32600/-32601/-32602`.
 Tool call results contain text JSON, matching `structuredContent`, and `isError`.
+`readEventAttachment` is the exception: its result contains a text item with the
+`AttachmentView` JSON followed by image items, and no `structuredContent`,
+because Codex converts MCP image content into model image input only when
+`structuredContent` is absent.
 A transport success alone does not mean platform delivery succeeded.
 
 | Name | REST | MCP arguments |
@@ -1260,11 +1269,15 @@ A transport success alone does not mean platform delivery succeeded.
 | `updateMessage` | POST `/v1/messages/{message_ref}/update`, body message | `{event_ref,message_ref,message}`; same event or verified callback for this exact card |
 | `sendTyping` | POST `/v1/events/{event_ref}/typing`, no body | `{event_ref}` |
 | `readEventContext` | GET `/v1/events/{event_ref}/context` | `{event_ref}` |
+| `readEventAttachment` | GET `/v1/events/{event_ref}/attachments/{index}` | `{event_ref,index,view?,page?}` |
 
-Native MCP preserves the four names above. NyxID's OpenAPI discovery normalizes
-operation IDs to lowercase, so its discovered tool names are
+Native MCP preserves the four original names above, and lists
+`readEventAttachment` only when media is enabled. NyxID's OpenAPI discovery
+normalizes operation IDs to lowercase, so its discovered tool names are
 `<configured-slug>__replytoevent`, `<configured-slug>__updatemessage`,
-`<configured-slug>__sendtyping`, and `<configured-slug>__readeventcontext`.
+`<configured-slug>__sendtyping`, `<configured-slug>__readeventcontext`, and
+`<configured-slug>__readeventattachment` (the REST twin, which carries no image
+bytes).
 Those tools use NyxID's discovered REST parameter schemas, not native MCP
 arguments. The default slug is `cmaeg`; its production display name is
 **Agent Event Gateway** and its NyxID service base includes `/v1`.
@@ -1405,6 +1418,38 @@ against the replica's media response budget (`CMAEG_MEDIA_RESPONSE_BYTES`); when
 no budget frees within two seconds, REST returns `429 rate_limited` with detail
 `response_budget` and `Retry-After: 1`. Attachment content is untrusted data
 from the sender, never instructions.
+
+Over native MCP, `readEventAttachment` takes `{event_ref,index,view?,page?}`
+with the same bounds; an argument error is the usual `400 invalid_request`
+problem with detail `invalid tool arguments`. Native MCP lists the tool only
+while `CMAEG_MEDIA_ENABLED=true`; otherwise a call is refused with `-32000` and
+problem `503 media_unavailable`, detail `media_disabled`. The tool is installed
+only by profile bindings of the providers named in
+`CMAEG_MEDIA_TOOL_PROVIDERS` (by default `cma_codex`); existing-agent bindings
+receive no gateway tools. Its annotations are read-only, non-destructive,
+idempotent and open-world, so clients need not ask for approval.
+
+An MCP result is content-only: `content[0]` is a text item holding the compact
+`AttachmentView` JSON, followed by one `image` item per entry of `images[]`,
+in the same order: `{type:"image",data,mimeType,_meta:{"codex/imageDetail"}}`
+with standard base64 `data`, `image/jpeg` or `image/png`, and detail `high`
+for a single image or `auto` for several. The result never has
+`structuredContent`; `pending` and `unavailable` views are text-only results
+with `isError: false`. In code mode, call `image(result.content[i])` for each
+image item (i ≥ 1), otherwise the model does not see it. One result carries at
+most 1 MiB of raw image bytes, about 1.4 MiB serialized: the agent's runtime
+drops output frames over 4 MiB and keeps unacknowledged frames in an 8 MiB
+journal, so four or five image reads fit beside the conversation's text. Images
+past the cap are left out with reason `images_truncated` and a notice. Each
+result holds three times its raw image bytes plus 128 KiB of the media response
+budget while its body is sent; when none frees within two seconds, the images
+are dropped and the result is a text-only view with status `pending`, reason
+`response_budget` and `retry_after_ms` 1000.
+
+Image results are sent to the model provider and held only transiently by the
+agent's runtime while they are delivered. CMA's durable conversation log keeps
+tool-call identifiers, titles, kinds and statuses, never tool results, so
+attachment bytes and text are not stored by CMA.
 
 ### Interactive Telegram flow
 
@@ -1608,7 +1653,8 @@ text and interaction results; it never routes product-specific input to a separa
 workflow endpoint. Model turns persist context with turn admission as described
 above. `verifyEventContext` is tagged **provider integration** in OpenAPI; the
 native MCP tool list remains exactly `replyToEvent`, `updateMessage`, `sendTyping`,
-and `readEventContext`.
+and `readEventContext` by default, plus `readEventAttachment` when media is
+enabled.
 
 429 indicates retryable upstream capacity; 409 with `stale_response`,
 `session_busy` or `conversation_in_progress` is also retryable. Other 5xx responses
@@ -1634,9 +1680,8 @@ its own level and field refusals for that channel.
 
 This subsection is informative: it describes text the gateway writes into
 `input`, not a wire field. Sources emit attachments only while the operator
-enables inbound media (§6), and `readEventAttachment` is not in the native tool
-list yet; a turn without attachments renders as it did before attachments
-existed.
+enables inbound media (§6), and native MCP lists `readEventAttachment` only
+then; a turn without attachments renders as it did before attachments existed.
 
 A turn's `input` is always one user message with one `input_text` part. When
 the activity carries attachments, the gateway appends one `[Attachments]` block
@@ -1752,7 +1797,10 @@ write of the provider Responses request. It excludes provider processing. Warm
 p99 MUST be ≤1000ms; cold p99 ≤2000ms, with restore wait p99 ≤800ms. The local
 harness additionally checks warm p50 <50ms. Tool delivery p99 MUST be ≤500ms for
 an available route; waiting behind another send includes its three-second pacing
-wait and is reported honestly rather than subtracted.
+wait and is reported honestly rather than subtracted. `readEventAttachment` is
+exempt from that tool-delivery target because it fetches and transforms media;
+its own targets are a cache-hit p95 of ≤300ms and an image cache-miss p95 of
+≤3s.
 
 Ingress `Server-Timing` fields are `restore`, `verify`, `launch`, `total`, in
 milliseconds. `launch` starts at body completion and overlaps restore/verification;
