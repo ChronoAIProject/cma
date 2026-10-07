@@ -71,6 +71,9 @@ pub struct RelayAgent {
 pub struct RelayAttachment {
     /// Wire field `content_type`.
     pub content_type: String,
+    /// Wire field `download_url`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub download_url: Option<String>,
     /// Wire field `file_key`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub file_key: Option<String>,

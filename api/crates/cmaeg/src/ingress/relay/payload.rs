@@ -1,5 +1,6 @@
 //! Strict, bounded NyxID callback envelope; raw facts remain in request memory only.
-use super::VerificationError;
+//! Attachment items are the one lenient part: see [`super::attachments`].
+use super::{attachments::RelayAttachments, VerificationError};
 use cmaeg_core::channel::Secret;
 use serde::Deserialize;
 use serde_json::Value;
@@ -55,13 +56,19 @@ pub struct Content {
     pub kind: String,
     pub text: Option<String>,
     #[serde(default)]
-    pub attachments: Vec<Attachment>,
+    #[schema(value_type = Vec<Attachment>)]
+    pub attachments: RelayAttachments,
 }
 #[derive(Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 #[schema(as = RelayAttachment)]
 pub struct Attachment {
     pub content_type: String,
+    /// NyxID's own download endpoint for this attachment. Accepted for envelope
+    /// compatibility and never dereferenced: media fetches build their URL from
+    /// CMAEG_NYXID_BASE_URL and the sealed message ID.
+    #[serde(default)]
+    pub download_url: Option<String>,
     pub url: String,
     pub platform_message_id: Option<String>,
     pub file_key: Option<String>,
@@ -88,6 +95,11 @@ pub fn timestamp(value: &str) -> Option<i64> {
     (seconds >= 0).then_some(seconds)
 }
 impl CallbackPayload {
+    /// Raw attachment positions, including dropped ones; presence checks use it so
+    /// a malformed list is refused rather than admitted as a text-only message.
+    pub fn received_attachments(&self) -> u32 {
+        self.content.attachments.received
+    }
     pub fn validate(&self) -> Result<(), VerificationError> {
         if [
             &self.message_id,
@@ -117,35 +129,8 @@ impl CallbackPayload {
                 .text
                 .as_ref()
                 .is_some_and(|text| text.len() > 524_288)
-            || self.content.attachments.len() > 32
         {
             return Err(VerificationError("payload_bounds"));
-        }
-        for attachment in &self.content.attachments {
-            if !identifier(&attachment.content_type)
-                || attachment.url.len() > 4096
-                || !optional(attachment.platform_message_id.as_deref(), 256)
-                || !optional(attachment.file_key.as_deref(), 1024)
-                || !optional(attachment.image_key.as_deref(), 1024)
-                || !optional(attachment.filename.as_deref(), 512)
-                || !optional(attachment.mime_type.as_deref(), 256)
-                || attachment
-                    .size_bytes
-                    .is_some_and(|size| size > i64::MAX as u64)
-            {
-                return Err(VerificationError("payload_bounds"));
-            }
-            if !attachment.url.is_empty() {
-                let url = reqwest::Url::parse(&attachment.url)
-                    .map_err(|_| VerificationError("attachment_url"))?;
-                if !matches!(url.scheme(), "https" | "http")
-                    || url.host_str().is_none()
-                    || !url.username().is_empty()
-                    || url.password().is_some()
-                {
-                    return Err(VerificationError("attachment_url"));
-                }
-            }
         }
         Ok(())
     }

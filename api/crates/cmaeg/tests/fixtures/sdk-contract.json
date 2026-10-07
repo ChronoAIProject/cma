@@ -298,6 +298,7 @@
         "attachments": [
           {
             "content_type": "fixture",
+            "download_url": "fixture",
             "file_key": "fixture",
             "filename": "fixture",
             "image_key": "fixture",
@@ -1395,6 +1396,7 @@
   "RelayAttachment": [
     {
       "content_type": "fixture",
+      "download_url": "fixture",
       "file_key": "fixture",
       "filename": "fixture",
       "image_key": "fixture",
@@ -1409,6 +1411,7 @@
       "attachments": [
         {
           "content_type": "fixture",
+          "download_url": "fixture",
           "file_key": "fixture",
           "filename": "fixture",
           "image_key": "fixture",
