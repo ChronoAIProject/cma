@@ -36,3 +36,6 @@ utoipa = { workspace = true }
 url = { workspace = true }
 uuid = { workspace = true }
 pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+libc = { workspace = true }
