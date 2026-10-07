@@ -698,7 +698,10 @@ any call aimed at another process (`ptrace`, `process_vm_*`, `pidfd_*`,
 or I/O priority of others, `memfd_create`, `inotify`, `fanotify`,
 `timer_create`, System V and POSIX IPC, `personality`, `seccomp`,
 `execveat`, any file creation or mutation, `openat2`, handle opens, or
-permission and attribute changes; a test fails if it ever does.
+permission and attribute changes; a test fails if it ever does. The table
+covers every call the pinned FFmpeg makes, as probe P8's strace recorded it
+for each op on every fixture; that record added only `getrusage`, with which
+FFmpeg's command line reads its own CPU time.
 
 **Limits** (soft = hard, so `prlimit64` on itself cannot raise them):
 
