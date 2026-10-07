@@ -9,12 +9,14 @@ use reqwest::Url;
 mod cache;
 mod delivery;
 mod ingress;
+mod media;
 mod secrets;
 mod service_account;
 mod turns;
 pub use cache::*;
 pub use delivery::*;
 pub use ingress::*;
+pub use media::{MediaConfig, MediaToolProviders, CMAEG_MEDIA_TOOL_PROVIDERS};
 pub use service_account::*;
 pub use turns::*;
 
@@ -51,6 +53,8 @@ pub enum ConfigError {
     InvalidMaxInflight { value: String },
     /// A management-plane origin, secret, or slug was invalid.
     InvalidManagement { detail: String },
+    /// An inbound media setting was invalid.
+    InvalidMedia { detail: String },
 }
 
 impl std::fmt::Display for ConfigError {
@@ -77,6 +81,9 @@ impl std::fmt::Display for ConfigError {
             }
             Self::InvalidManagement { detail } => {
                 write!(formatter, "management configuration is invalid: {detail}")
+            }
+            Self::InvalidMedia { detail } => {
+                write!(formatter, "media configuration is invalid: {detail}")
             }
         }
     }
@@ -105,6 +112,7 @@ pub struct Config {
     pub ingress: IngressConfig,
     pub turns: TurnConfig,
     pub delivery: DeliveryConfig,
+    pub media: MediaConfig,
 }
 
 /// Secrets and origins used by the channel management plane.
@@ -135,6 +143,10 @@ impl Config {
         })?;
         let providers_json = env::var(CMAEG_PROVIDERS).unwrap_or_else(|_| "[]".to_owned());
         let providers = ProviderRegistry::parse(&providers_json)?;
+        // Validated against the registry, so it can only follow it.
+        let media = MediaConfig {
+            tool_providers: media::from_env(&providers)?,
+        };
         let provider_connect_timeout = positive_duration(CMAEG_PROVIDER_CONNECT_TIMEOUT_MS, 2_000)?;
         let provider_request_timeout =
             positive_duration(CMAEG_PROVIDER_REQUEST_TIMEOUT_MS, 30_000)?;
@@ -160,6 +172,7 @@ impl Config {
             ingress: IngressConfig::from_env()?,
             turns: TurnConfig::from_env()?,
             delivery: DeliveryConfig::from_env()?,
+            media,
         })
     }
 }
