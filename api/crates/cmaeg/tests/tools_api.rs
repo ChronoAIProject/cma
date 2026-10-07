@@ -17,6 +17,8 @@ mod attachments;
 mod attachments_mcp;
 #[path = "tools/download_support.rs"]
 pub mod download_support;
+#[path = "tools/link_redemption.rs"]
+mod link_redemption;
 #[path = "tools/media_downloads.rs"]
 mod media_downloads;
 #[path = "tools/media_support.rs"]
