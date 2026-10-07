@@ -63,6 +63,18 @@ listener, starts no worker and exits when its report is printed (see
 | `CMAEG_MEDIA_RATE_PER_MINUTE` | unsigned decimal | `60` | 1..=6000. Media fetch starts per channel per minute, with a burst of the same size. |
 | `CMAEG_MEDIA_DOWNLOAD_BYTES_PER_HOUR` | unsigned decimal, bytes | `268435456` | 20971520..=4294967296. Download bytes per channel per hour, counted in KiB and charged by `GET /v1/media/content` before an original's first byte; a spent quota answers `429 rate_limited` with `Retry-After: 60`. |
 | `CMAEG_MEDIA_LINK_TTL_SECONDS` | unsigned decimal, seconds | `120` | 30..=600. Lifetime of a media download link minted by `readEventAttachment` with view `download`, never past its event's own expiry. A link is sent to the model provider in the tool result and stored by CMA as the shell tool call's title, so it must expire quickly; an out-of-bounds or non-decimal value fails startup naming the key. |
+| `CMAEG_MEDIA_PREPARE_BUDGET_MS` | unsigned decimal, ms | `15000` | 1000..=60000, and below `CMAEG_TURN_TIMEOUT_MS`; startup fails naming both keys otherwise. How long a media turn waits for its eager items (inline transcripts and text excerpts) before its provider turn starts without them. Items not ready by then render `transcript is still being prepared` and keep running in the background. See [Media turn preparation](#media-turn-preparation). |
+| `CMAEG_STT_MAX_SECONDS` | unsigned decimal, seconds | `600` | 1..=1500. Most metered seconds one transcription call may cost. With `CMAEG_STT_MAX_BYTES` it sets the direct-upload cap, `min(CMAEG_STT_MAX_BYTES, CMAEG_STT_MAX_SECONDS × 4000)` bytes. Like every speech-to-text key, validated at startup even while speech-to-text is disabled; an out-of-bounds or non-decimal value fails startup naming the key. See [Speech-to-text spend](#speech-to-text-spend). |
+| `CMAEG_STT_MAX_BYTES` | unsigned decimal, bytes | `20971520` | 1048576..=24000000, below the speech-to-text API's 25 MB upload limit. Most bytes one upload may carry. |
+| `CMAEG_STT_RATE_PER_MINUTE` | unsigned decimal | `20` | 1..=600. Transcription calls per channel per minute, with a burst of the same size. |
+| `CMAEG_STT_CHANNEL_SECONDS_PER_HOUR` | unsigned decimal, seconds | `3600` | 600..=86400. Metered seconds per channel per hour, checked before the global budget. Startup fails naming all three keys unless `CMAEG_STT_MAX_SECONDS` ≤ `CMAEG_STT_CHANNEL_SECONDS_PER_HOUR` ≤ `CMAEG_STT_SECONDS_PER_HOUR`. |
+| `CMAEG_STT_SECONDS_PER_HOUR` | unsigned decimal, seconds | `36000` | 600..=360000. Metered seconds per hour across every channel: the cost backstop, at most about $2.70 per hour at $0.0045 per minute. |
+| `CMAEG_STT_EAGER_MAX_SECONDS` | unsigned decimal, seconds | `300` | 0..=600. Audio whose *declared* duration exceeds this is not transcribed before its turn starts; undeclared audio is. `0` disables eager audio transcripts. Declared durations decide eligibility only and are never charged: the spend limits above still meter every upload. |
+| `CMAEG_STT_URL` | URL | `""` | Speech-to-text endpoint, speaking the OpenAI transcription protocol. Empty disables speech-to-text: transcripts are refused as `transcriber_disabled` without fetching, and `CMAEG_STT_API_KEY` is ignored. Otherwise an absolute `https` URL with a host and no userinfo, query or fragment; `http` only with a loopback host, for local tests. Startup errors never print the URL. See [Speech-to-text endpoint](#speech-to-text-endpoint). |
+| `CMAEG_STT_MODEL` | string | `gpt-transcribe` | 1..=128 printable ASCII characters without whitespace; sent as the multipart `model` field. |
+| `CMAEG_STT_FORMATS` | comma-separated formats | `mp3,mp4,mpeg,mpga,m4a,wav,webm` | 1..=9 distinct values from `mp3`, `mp4`, `mpeg`, `mpga`, `m4a`, `wav`, `webm`, `ogg` and `flac`, without spaces or empty entries. `mpeg` and `mpga` also admit the MP3 container. `ogg` covers Telegram `.oga` and Lark `.opus` voice; add it only after probe P3 passes. A container not listed is refused as `unsupported_format` without a request. |
+| `CMAEG_STT_TIMEOUT_MS` | unsigned decimal, ms | `30000` | 1000..=120000. Deadline of one request attempt, within the derivation's own deadline. |
+| `CMAEG_STT_API_KEY` | secret string | Required when `CMAEG_STT_URL` is set | Platform speech-to-text key from the optional `cmaeg-stt` Secret, sent only to `CMAEG_STT_URL` as a bearer token and never logged. 1..=4096 printable ASCII characters without whitespace. Never a tenant's key. |
 | `CMAEG_PROVIDER_CONNECT_TIMEOUT_MS` | positive integer, ms | `2000` | TCP/TLS connection timeout for each provider pool. |
 | `CMAEG_PROVIDER_REQUEST_TIMEOUT_MS` | positive integer, ms | `30000` | Deadline for provider setup and probe requests, and receipt of streaming HTTP response headers. Active streams are owned and bounded by their consumer. |
 | `CMAEG_PROVIDER_MAX_INFLIGHT` | positive integer | `256` | Deployment-wide upper bound applied to each provider's semaphore. Calls wait at most 50 ms for a provider permit before returning a typed busy result. |
@@ -120,7 +132,7 @@ media work spans an 8-second tool budget, a 15-second preparation budget and a
 
 | Metric | Labels | Measurement |
 | --- | --- | --- |
-| `cmaeg_ingress_to_provider_seconds` | `source`, `cold` | Last inbound body byte to first provider request socket write. The transport observation is required before recording a sample. |
+| `cmaeg_ingress_to_provider_seconds` | `source`, `cold`, `media` | Last inbound body byte to first provider request socket write. The transport observation is required before recording a sample. `media` is `none` for a turn that neither prepared attachments nor waited for an earlier turn of its conversation, `prepared` when it prepared eager attachment items first, and `fenced` when it waited for its conversation predecessor to start; it is always `none` while `CMAEG_MEDIA_ENABLED=false`. |
 | `cmaeg_restore_duration_seconds` | `outcome` | A shared restore flight, including the bounded CMA fetch, validation, and decryption. |
 | `cmaeg_provider_accept_seconds` | `provider` | First socket write of the accepted attempt through the provider's first valid acceptance frame. |
 | `cmaeg_turn_duration_seconds` | `provider`, `outcome` | Local turn consumer lifetime, including cancellation and timeout. |
@@ -134,7 +146,7 @@ media work spans an 8-second tool budget, a 15-second preparation budget and a
 | `cmaeg_delivery_worker_restarts_total` | none | Delivery workers replaced after they stopped, for example by panicking. Dispatch continues for every channel; commands already queued for the stopped worker are lost with it. |
 | `cmaeg_media_activity_degraded_total` | `source` | Relay (`nyxid_relay`) and native Telegram (`telegram`) activities that still failed validation after attachment fact normalization. Their attachments were reduced to reference, kind and locator, or the message was refused with 202 `attachment_unsupported` if it was still invalid, instead of answering 400 or 401 and losing the message. Only the failing field's JSON pointer is logged. |
 | `cmaeg_media_facts_repaired_total` | `source`, `field` | Sender-declared Telegram, Lark and Feishu media facts normalized into the attachment domain instead of refusing the message. `source` is `nyxid_relay` or `telegram`; `field` is one of `filename`, `mime_type`, `dimensions`, `duration_seconds` or `emoji`. |
-| `cmaeg_media_items_total` | `source`, `kind`, `outcome` | Telegram, Lark and Feishu media items turned into attachments. `kind` is `image`, `file`, `audio`, `video` or `other`; `outcome` is `extracted` for every attachment, and additionally `invalid_locator` for a native Telegram item whose file identifiers are invalid or a relayed Lark item whose resource key is invalid, which is delivered without a locator. |
+| `cmaeg_media_items_total` | `source`, `kind`, `outcome` | Telegram, Lark and Feishu media items turned into attachments. `kind` is `image`, `file`, `audio`, `video` or `other`; `outcome` is `extracted` for every attachment, and additionally `invalid_locator` for a native Telegram item whose file identifiers are invalid or a relayed Lark item whose resource key is invalid, which is delivered without a locator. A transcript refused by its speech-to-text spend limits counts once more, with `source` `telegram`, `nyxid_relay` or `custom` and `outcome` `stt_rate_limited`, `stt_channel_budget_exhausted` or `stt_budget_exhausted` (see [Speech-to-text spend](#speech-to-text-spend)). |
 | `cmaeg_media_relay_correlation_total` | `outcome` | Relayed media items matched (`matched`) or not (`unmatched`) to a NyxID envelope entry: a Telegram item by its `file_id` as the entry's `url`, a Lark item with a valid resource key by the entry's `image_key` or `file_key`. An unmatched item is delivered without a locator and cannot be fetched. |
 | `cmaeg_media_fetch_seconds` | `source`, `outcome` | One attachment retrieval through the source registry: a whole-body fetch from its start to its last body byte or its error, or a streamed open until the response is open. `source` is `nyxid`, `telegram`, `url` or `inline`; `outcome` is `ok` or one of `not_retrievable`, `too_large`, `unauthorized`, `not_found`, `timed_out`, `upstream`, `rejected`, `busy` or `rate_limited`. Never labelled with a URL, token or identifier. |
 | `cmaeg_media_fetch_bytes_total` | `source` | Attachment bytes fetched, by the same `source` values; a streamed body's bytes are counted as they pass. The `cmaeg.media.fetch` span carries the same `source` and `outcome`, the byte count and the channel's hash, never a URL, token, file identifier, file name or message ID. |
@@ -146,6 +158,10 @@ media work spans an 8-second tool budget, a 15-second preparation budget and a
 | `cmaeg_media_tool_reads_total` | `view`, `status` | Attachment reads through `readEventAttachment`. `view` is the requested `auto`, `image`, `text`, `frames` or `download`; `status` is the view's `ready`, `pending` or `unavailable`, or `refused` when the read was answered with a problem (media disabled, unverified context, a missing attachment, or a key or reference failure). The `cmaeg.media.read` span carries the same `view` and `status`, the view's `reason` and the channel's hash, never an event_ref, file name or content. Its duration is also recorded as `cmaeg_tool_call_seconds{tool="readEventAttachment"}`. |
 | `cmaeg_media_downloads_total` | `outcome` | Requests to `GET /v1/media/content`. A served original counts when its body ends: `served` when every byte was handed on, `aborted` when the 300-second deadline, the `CMAEG_MEDIA_MAX_BYTES` cap, an upstream error or a reader that went away cut it short. A refusal counts at once as `invalid`, `expired`, `used`, `revoked`, `not_found`, `busy`, `rate_limited`, `too_large` or `unavailable`. The `cmaeg.media.download` span carries the outcome, the bytes forwarded and the channel's hash, never a link, jti, URL, file name or `Authorization` value. |
 | `cmaeg_media_links_total` | `outcome` | Download links requested through `readEventAttachment` with view `download`. `outcome` is `minted`, `not_permitted` (the binding is not autonomous or installs no gateway tools), `rate_limited` (the channel's 30 per minute or the replica's 600 per minute) or `unavailable` (the link could not be sealed, such as an event too large for the 4096-character token limit, which also logs a warning with the payload's size only). Attachments without a source are answered `not_retrievable` before any link is requested and are not counted. |
+| `cmaeg_media_prepare_seconds` | `outcome` | Time a media turn spent on its eager items (transcripts and excerpts), recorded only when at least one ran. `outcome` is `ready` when every eager item was ready, otherwise `pending` when any was still being prepared at the budget, otherwise `unavailable`. The `cmaeg.media.prepare` span carries `items`, `eager`, `outcome` and the channel's hash, never a file name, transcript or excerpt. Uses the media buckets. |
+| `cmaeg_media_fence_wait_seconds` | none | Time a turn waited for an earlier turn of its conversation to return from its provider start, recorded only for a turn that had such a predecessor. A turn waits at most the busy-retry bound plus the preparation budget (`CMAEG_MEDIA_PREPARE_BUDGET_MS`) plus five seconds and then proceeds out of order with a `conversation order fence timed out` warning. Uses the media buckets. |
+| `cmaeg_stt_audio_seconds_total` | none | Speech-to-text audio seconds counted for finished calls: the metered seconds, or the provider's reported usage when it is larger. |
+| `cmaeg_stt_channels_at_budget` | none | Distinct channels refused by their own `CMAEG_STT_CHANNEL_SECONDS_PER_HOUR` budget within the last hour. It is refreshed on each such refusal and at least every 256 charges. |
 | `cmaeg_turns_inflight` | none | Admitted local consumers; decremented on completion or cancellation. |
 | `cmaeg_channels_cached` | none | Locally retained positive and negative cache entries, including entries awaiting eviction. |
 
@@ -484,6 +500,169 @@ links expire within minutes and every request re-validates the channel, the
 binding, the agent key and the source, so rotating the agent key, switching
 the binding to guarded, or removing the source revokes every outstanding link
 at once on every replica.
+
+### Media turn preparation
+
+With `CMAEG_MEDIA_ENABLED=true`, a turn whose activity carries attachments
+prepares them after admission and before its provider turn starts, so every
+binding class, including existing-agent bindings and providers without the
+gateway's tools such as `nyxbot`, receives audio transcripts and small text
+excerpts in its single input. Audio is eligible when its declared duration is at
+most `CMAEG_STT_EAGER_MAX_SECONDS` or undeclared, video when it is not an
+animation or sticker and declares at most 60 seconds, and video notes always;
+text-like files of at most 256 KiB, or of unknown size, give an excerpt of at
+most 4 KiB. The eager items run concurrently within
+`CMAEG_MEDIA_PREPARE_BUDGET_MS`; images, and video visuals when a thumbnail or
+keyframes exist, are only warmed in the background, never awaited, and only for
+tool-bearing bindings. A media turn releases its ingress permit right after it
+is spawned, so a burst of voice notes cannot exhaust `CMAEG_INGRESS_INFLIGHT`
+for text, and every transport answers exactly as before. Within one
+conversation on one replica, turns reach the provider in the order they reached
+launch: a turn that follows a media turn waits, at most for the busy-retry
+bound plus the preparation budget plus five seconds, until the media turn's
+provider start has returned.
+
+Service-level queries on the private metrics scrape:
+
+```promql
+# Text and attachment-free turns keep the warm p99 <= 1000 ms (protocol §11).
+histogram_quantile(0.99, sum by (le) (rate(cmaeg_ingress_to_provider_seconds_bucket{media="none",cold="false"}[5m])))
+# Eager preparation, target p95 <= 8 s for voice notes of up to 60 s.
+histogram_quantile(0.95, sum by (le) (rate(cmaeg_media_prepare_seconds_bucket[30m])))
+# Time turns waited behind an earlier media turn of their conversation.
+histogram_quantile(0.95, sum by (le) (rate(cmaeg_media_fence_wait_seconds_bucket[30m])))
+```
+
+A rising share of `cmaeg_media_prepare_seconds_count{outcome="pending"}` means
+transcripts routinely miss the budget: check the speech-to-text latency and the
+`cmaeg_media_jobs_inflight` saturation before raising
+`CMAEG_MEDIA_PREPARE_BUDGET_MS`, which delays every media turn and every turn
+queued behind one. `conversation order fence timed out` warnings name only the
+channel hash; a turn that logs one reached the provider out of order.
+
+### Speech-to-text spend
+
+Speech-to-text costs money per second of audio, so every call is metered
+before it is sent and charged against three limits.
+
+**Metering.** A direct upload is charged `ceil(bytes / 4000)` seconds, at
+least one: 4000 bytes per second is a 32 kbps floor, below Telegram and Lark
+voice bitrates, so the charge bounds the real duration from above. Only
+originals up to the direct cap, `min(CMAEG_STT_MAX_BYTES,
+CMAEG_STT_MAX_SECONDS × 4000)` bytes (2.4 MB at the defaults, about ten
+minutes at 32 kbps), are sent; a larger one is `too_long`. Declared durations
+are never charged: senders define them, and documents carry none. When the
+provider's response reports `usage` of type `duration` above the metered
+seconds, the excess is charged to both hourly budgets on a best-effort basis
+(a refusal is ignored, since the call already happened) and the larger value is
+counted in `cmaeg_stt_audio_seconds_total`. A call that fails after it was
+charged is not refunded.
+
+**Order and scope.** Each call first takes one of its channel's
+`CMAEG_STT_RATE_PER_MINUTE` calls, then charges its metered seconds to its
+channel's `CMAEG_STT_CHANNEL_SECONDS_PER_HOUR` budget and only then to the
+pod's `CMAEG_STT_SECONDS_PER_HOUR` backstop. The channel goes first so that
+one channel's senders exhaust that channel and never the budget every channel
+shares; a global refusal after a successful channel charge leaves the channel
+charged, which only errs towards spending less. Every refusal reaches the
+agent as `transcript unavailable: rate_limited` and counts in
+`cmaeg_media_items_total` with outcome `stt_rate_limited`,
+`stt_channel_budget_exhausted` or `stt_budget_exhausted`. The budgets are per
+pod, as is every media budget.
+
+**Known limit.** The floor assumes at least 32 kbps. Opus voice at 6-24 kbps
+can run up to 5.3 times longer than it is metered unless the endpoint reports
+usage. Probe P3 records real bitrates and whether usage is returned: if it is,
+reconciliation corrects the counter and the budgets; if it is not, enable the
+audio transformer, which meters decoded audio exactly, before raising any
+budget.
+
+**Trade-off.** High-bitrate audio over 2.4 MB is `too_long` until the audio
+transformer truncates it and meters its decoded audio exactly. Autonomous
+agents can still download the original.
+
+**Cost.** At $0.0045 per minute, the global default of 36000 seconds per hour
+spends at most about $2.70 per hour, and the per-channel default of 3600
+seconds per hour at most about $0.27 per hour for one channel.
+
+**Alerts.** Configure these on the private metrics scrape, substituting the
+configured `CMAEG_STT_SECONDS_PER_HOUR`:
+
+| Severity | Expression | Meaning |
+| --- | --- | --- |
+| Warn, for 15 m | `increase(cmaeg_stt_audio_seconds_total[1h]) > 0.8 * 36000` | Spend is near the global backstop. |
+| Page, for 15 m | `sum(rate(cmaeg_media_items_total{outcome="stt_budget_exhausted"}[5m])) > 0` | The global backstop is refusing transcripts for every channel. |
+| Warn | `increase(cmaeg_media_items_total{outcome="stt_channel_budget_exhausted"}[15m]) > 0` | A channel spent its hourly budget. The `speech-to-text channel budget exhausted` log line carries its `channel` hash for triage. |
+| Warn, for 15 m | `cmaeg_stt_channels_at_budget >= 3` | Several channels are at their budget: a sender may be spreading load across bots before the global backstop trips. |
+
+**Log query.** Metered seconds per channel hash per day, from the
+`speech-to-text call finished` line inside each `cmaeg.media.stt` span (one
+per call; its fields are `channel`, `metered_seconds`, `bytes`, `container`,
+`outcome` and `ms`, never a URL, key or transcript):
+
+```sh
+kubectl logs -n chrono-bot deploy/cmaeg --since=24h \
+  | grep 'speech-to-text call finished' \
+  | sed -nE 's/.*cmaeg\.media\.stt\{channel=([0-9a-f]+) metered_seconds=([0-9]+).*/\1 \2/p' \
+  | awk '{ seconds[$1] += $2 } END { for (channel in seconds) print channel, seconds[channel] }'
+```
+
+### Speech-to-text endpoint
+
+With `CMAEG_STT_URL` set, the gateway transcribes audio through an
+OpenAI-compatible endpoint: one multipart `POST` per attempt carries `file`
+(named `audio.<format>`, streamed from the fetched bytes without a copy),
+`model` and `response_format=json`, with the platform key as a bearer token.
+At most four calls run at once per pod; further calls wait for a permit
+within their deadline. A 429 or 5xx is retried once after 500 ms when at
+least two seconds of the deadline remain; a second 429 is `rate_limited` and
+a second 5xx `transcriber_failed`. Any other non-200 status, an unparsable
+body, a body without `text` or one over 256 KiB is `transcriber_failed`
+without a retry, and an attempt past `CMAEG_STT_TIMEOUT_MS` is `timed_out`.
+A `usage` object of type `duration` is read when present and reconciled as
+described above; any other `usage` is ignored.
+
+**Privacy.** Audio reaches the processor only after an operator sets both
+`CMAEG_STT_URL` and the `CMAEG_STT_API_KEY` Secret. From then on, the audio of
+every voice note, audio file and short video sent to any channel is sent to
+it; there is no per-channel opt-out yet. Announce this before rollout. The
+URL, the key, request and response bodies and transcripts are never logged:
+the `cmaeg.media.stt` span carries only the channel hash, metered seconds,
+size, container, outcome and duration.
+
+**Credential policy.** Only a platform key, from the `cmaeg-stt` Secret, is
+ever sent; the gateway never spends a tenant's key. `chrono-llm-public` may be
+used only with a platform key, and only after probe P3 passes.
+
+**Probe P3.** Before adding `ogg` to `CMAEG_STT_FORMATS`, prove the endpoint
+accepts Telegram and Lark voice. Keep the key in an environment variable and
+never paste it into a ticket. With a real Telegram `.oga` and a real Lark
+`.opus`, each renamed `voice.ogg`, run:
+
+```sh
+curl -sS -X POST "$CMAEG_STT_URL" -H "Authorization: Bearer $STT_KEY" \
+  -F model=gpt-transcribe -F response_format=json -F "file=@voice.ogg;type=audio/ogg"
+```
+
+Record on the epic whether each succeeds, whether the response carries
+`usage`, and the measured bitrate (bytes divided by duration). Add `ogg` only
+when both succeed. Until then such items render
+`transcript unavailable: unsupported_format`.
+
+**Failure alert.** Warn when transcriber failures and timeouts exceed 10% of
+transcript derivations over 30 minutes:
+
+```promql
+(
+  sum(increase(cmaeg_media_derive_seconds_count{op="transcript",outcome=~"transcriber_failed|timed_out"}[30m]))
+  /
+  sum(increase(cmaeg_media_derive_seconds_count{op="transcript"}[30m]))
+) > 0.1
+```
+
+Runbook: the `speech-to-text` log lines in the alert window give the status
+class the endpoint answered; check the provider's status and the key's quota
+before raising `CMAEG_STT_TIMEOUT_MS`.
 
 ### Rolling back below inbound media
 

@@ -14,6 +14,7 @@ pub mod derive;
 pub mod forward;
 pub mod image;
 pub mod jobs;
+pub mod prepare;
 pub mod service;
 pub mod sniff;
 pub mod source;

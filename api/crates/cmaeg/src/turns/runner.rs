@@ -4,21 +4,34 @@ use super::{
     outcomes::{DeliveryCommand, TurnOutcome},
     render_input,
     render_media::{self, Audience, RenderMedia},
+    sequencer::{Sequencer, Ticket},
     tracker::TurnTracker,
 };
 use crate::{
     ingress::launch::{LaunchOutcome, LaunchRequest, TurnLauncher},
+    media::{
+        prepare::{prepare, PrepareConfig, Prepared},
+        service::MediaService,
+    },
     providers::{ProviderClient, ProviderError, TurnRequest, TurnStream},
+    telemetry::timing::MediaLabel,
     MediaToolProviders, TurnConfig,
 };
-use cmaeg_core::problem::{Problem, ProblemCode};
+use cmaeg_core::{
+    activity::Activity,
+    problem::{Problem, ProblemCode},
+};
 use futures_util::future::BoxFuture;
 use ring::rand::{SecureRandom, SystemRandom};
 use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, OwnedSemaphorePermit};
+
+/// Headroom over the predecessor's own bound, so a fence normally ends with
+/// its predecessor's start rather than with its own timeout.
+const FENCE_SLACK: Duration = Duration::from_secs(5);
 
 #[derive(Clone)]
 pub struct TurnRunner {
@@ -29,6 +42,13 @@ pub struct TurnRunner {
     /// Providers whose profile bindings install the gateway MCP tools; only
     /// their agents are told how to open an attachment through a tool.
     media_tool_providers: Arc<MediaToolProviders>,
+    /// Best-effort provider start order within a conversation while a media
+    /// turn is part of it.
+    sequencer: Arc<Sequencer>,
+    /// The media service while inbound media is enabled; `None` renders
+    /// attachment descriptors only.
+    media: Option<Arc<MediaService>>,
+    prepare: PrepareConfig,
 }
 impl TurnRunner {
     pub fn new(
@@ -43,13 +63,31 @@ impl TurnRunner {
             delivery,
             config,
             media_tool_providers: Arc::default(),
+            sequencer: Arc::default(),
+            media: None,
+            prepare: PrepareConfig::default(),
         }
+    }
+    /// Prepare media turns with `media` under `prepare`'s bounds.
+    pub fn with_media(mut self, media: Option<Arc<MediaService>>, prepare: PrepareConfig) -> Self {
+        self.media = media;
+        self.prepare = prepare;
+        self
+    }
+    /// The order chains this runner keeps, for tests and diagnostics.
+    pub fn sequencer(&self) -> &Sequencer {
+        &self.sequencer
     }
     pub fn with_media_tool_providers(mut self, providers: Arc<MediaToolProviders>) -> Self {
         self.media_tool_providers = providers;
         self
     }
-    async fn execute(&self, turn: Arc<LaunchRequest>, sender: oneshot::Sender<LaunchOutcome>) {
+    async fn execute(
+        &self,
+        turn: Arc<LaunchRequest>,
+        sender: oneshot::Sender<LaunchOutcome>,
+        mut ticket: Ticket,
+    ) {
         use crate::telemetry::{
             names,
             operations::{provider_error, Operation},
@@ -57,9 +95,37 @@ impl TurnRunner {
         let provider = turn.channel.definition.provider.slug.to_string();
         let mut observation = Operation::new(names::TURN_DURATION, names::PROVIDER, &provider);
         let deadline = turn.received_at + self.config.turn_timeout;
+        let audience = Audience::of(&turn.channel.definition, &self.media_tool_providers);
+        // One nonce per turn: busy retries resend this exact input under the
+        // same idempotency key. Text-only turns make no RNG call.
+        let nonce = if has_attachments(&turn.activity) {
+            render_media::nonce()
+        } else {
+            None
+        };
+        let prepare_deadline = (turn.received_at + self.prepare.budget).min(deadline);
         let mut admitted = Some(sender);
         let result = tokio::time::timeout_at(deadline.into(), async {
-            let stream = self.start(&turn).await.map_err(|error| match error {
+            let fenced = ticket.waits();
+            // A predecessor may itself prepare for the whole budget before its
+            // busy retries, so the fence covers both.
+            let fence = self.config.busy_retry_max + self.prepare.budget + FENCE_SLACK;
+            let (_, prepared) = tokio::join!(
+                ticket.wait(fence),
+                self.prepare_or_empty(&turn, audience, nonce, prepare_deadline),
+            );
+            if let Some(timing) = &turn.timing {
+                if fenced {
+                    timing.mark_media(MediaLabel::Fenced);
+                } else if prepared.eager {
+                    timing.mark_media(MediaLabel::Prepared);
+                }
+            }
+            let started = self.start(&turn, &prepared.media, audience).await;
+            // The successor may start once this start has returned, accepted
+            // or not; a later failure is this turn's own.
+            ticket.release();
+            let stream = started.map_err(|error| match error {
                 ProviderError::Capacity | ProviderError::Busy { .. } => {
                     (ProblemCode::ProviderBusy, "provider_busy")
                 }
@@ -99,7 +165,41 @@ impl TurnRunner {
             );
         }
     }
-    async fn start(&self, turn: &LaunchRequest) -> Result<TurnStream, ProviderError> {
+    /// The turn's media, prepared when there is a media service and the
+    /// activity carries attachments, and otherwise descriptors only.
+    async fn prepare_or_empty(
+        &self,
+        turn: &LaunchRequest,
+        audience: Audience,
+        nonce: Option<String>,
+        deadline: Instant,
+    ) -> Prepared {
+        match &self.media {
+            Some(service) if has_attachments(&turn.activity) => {
+                let now = time::OffsetDateTime::now_utc().unix_timestamp();
+                prepare(
+                    service,
+                    turn,
+                    audience,
+                    &self.prepare,
+                    nonce,
+                    deadline.into(),
+                    now,
+                )
+                .await
+            }
+            _ => Prepared {
+                media: RenderMedia::empty(nonce),
+                eager: false,
+            },
+        }
+    }
+    async fn start(
+        &self,
+        turn: &LaunchRequest,
+        media: &RenderMedia,
+        audience: Audience,
+    ) -> Result<TurnStream, ProviderError> {
         let definition = &turn.channel.definition;
         let credential = definition
             .secrets
@@ -108,18 +208,10 @@ impl TurnRunner {
             .ok_or_else(|| {
                 ProviderError::InvalidRequest("channel has no provider credential".into())
             })?;
-        // One nonce per turn: busy retries resend this exact input under the
-        // same idempotency key. Text-only turns make no RNG call.
-        let media = if render_media::attachments(&turn.activity).is_empty() {
-            RenderMedia::empty(None)
-        } else {
-            RenderMedia::empty(render_media::nonce())
-        };
-        let audience = Audience::of(definition, &self.media_tool_providers);
         let request = TurnRequest {
             timing: turn.timing.clone(),
             conversation_id: turn.conversation_id.clone(),
-            input: render_input::render(&turn.activity, definition, &media, audience),
+            input: render_input::render(&turn.activity, definition, media, audience),
             idempotency_key: turn.idempotency_key.clone(),
             metadata: metadata::render(turn),
             agent_key: credential.clone(),
@@ -173,8 +265,21 @@ impl TurnRunner {
         }
     }
 }
-impl TurnLauncher for TurnRunner {
-    fn launch(&self, mut request: LaunchRequest) -> BoxFuture<'_, LaunchOutcome> {
+impl TurnRunner {
+    /// Spawn the turn and wait for its acceptance. `hold` is the shared
+    /// ingress permit, when the caller passed one.
+    fn launch_inner(
+        &self,
+        mut request: LaunchRequest,
+        hold: Option<OwnedSemaphorePermit>,
+    ) -> BoxFuture<'_, LaunchOutcome> {
+        // Before any await, so the chain follows the order of launch calls.
+        let media = has_attachments(&request.activity);
+        let ticket = self.sequencer.enter(
+            (request.channel.id.clone(), request.conversation_id.clone()),
+            media,
+        );
+        let fenced = ticket.waits();
         Box::pin(async move {
             let deadline = request.received_at + self.config.accept_budget;
             request.trace = tracing::Span::current();
@@ -183,7 +288,7 @@ impl TurnLauncher for TurnRunner {
             let runner = self.clone();
             let pending = turn.clone();
             if let Err(reason) = self.tracker.spawn(&turn, async move {
-                runner.execute(pending, sender).await;
+                runner.execute(pending, sender, ticket).await;
             }) {
                 return LaunchOutcome::Refused(Problem::new(
                     if reason == "draining" {
@@ -194,6 +299,16 @@ impl TurnLauncher for TurnRunner {
                     503,
                     reason,
                 ));
+            }
+            if media || fenced {
+                // Preparation and the order fence may take up to the
+                // acceptance budget, and the shared permit must not be held
+                // through them. The acceptance wait below keeps every
+                // transport's semantics. A released handler holds only a
+                // response context of under 4 KiB, because bodies were
+                // released before launch, and the turn tracker bounds such
+                // handlers at 4 096.
+                drop(hold);
             }
             match tokio::time::timeout_at(deadline.into(), accepted).await {
                 Ok(Ok(outcome)) => outcome,
@@ -206,6 +321,22 @@ impl TurnLauncher for TurnRunner {
             }
         })
     }
+}
+impl TurnLauncher for TurnRunner {
+    fn launch(&self, request: LaunchRequest) -> BoxFuture<'_, LaunchOutcome> {
+        self.launch_inner(request, None)
+    }
+    fn launch_holding(
+        &self,
+        request: LaunchRequest,
+        hold: OwnedSemaphorePermit,
+    ) -> BoxFuture<'_, LaunchOutcome> {
+        self.launch_inner(request, Some(hold))
+    }
+}
+/// A message or event that carries at least one attachment.
+fn has_attachments(activity: &Activity) -> bool {
+    !render_media::attachments(activity).is_empty()
 }
 fn jitter(max: Duration) -> Duration {
     let mut bytes = [0; 8];

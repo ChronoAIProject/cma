@@ -11,9 +11,10 @@
 use super::ConfigError;
 use crate::providers::ProviderRegistry;
 use cmaeg_core::ids::ProviderSlug;
-use std::{collections::BTreeSet, env};
+use std::{collections::BTreeSet, env, time::Duration};
 
 mod budgets;
+pub(super) use budgets::bounded;
 
 pub const CMAEG_MEDIA_TOOL_PROVIDERS: &str = "CMAEG_MEDIA_TOOL_PROVIDERS";
 pub const CMAEG_MEDIA_ENABLED: &str = "CMAEG_MEDIA_ENABLED";
@@ -25,6 +26,7 @@ pub const CMAEG_MEDIA_CACHE_BYTES: &str = "CMAEG_MEDIA_CACHE_BYTES";
 pub const CMAEG_MEDIA_RATE_PER_MINUTE: &str = "CMAEG_MEDIA_RATE_PER_MINUTE";
 pub const CMAEG_MEDIA_DOWNLOAD_BYTES_PER_HOUR: &str = "CMAEG_MEDIA_DOWNLOAD_BYTES_PER_HOUR";
 pub const CMAEG_MEDIA_LINK_TTL_SECONDS: &str = "CMAEG_MEDIA_LINK_TTL_SECONDS";
+pub const CMAEG_MEDIA_PREPARE_BUDGET_MS: &str = "CMAEG_MEDIA_PREPARE_BUDGET_MS";
 
 const MIB: u64 = 1024 * 1024;
 /// The one provider whose binding contract promises to install the gateway MCP
@@ -33,6 +35,9 @@ const DEFAULT_TOOL_PROVIDER: &str = "cma_codex";
 /// More slugs than any deployment configures providers; a longer list is an
 /// operator mistake rather than a policy.
 const MAX_TOOL_PROVIDERS: usize = 8;
+/// Long enough for a one-minute voice note's transcript, short enough that a
+/// turn still starts well inside the acceptance budget's order of magnitude.
+const PREPARE_BUDGET_MS: (u64, u64, u64) = (15_000, 1_000, 60_000);
 
 /// Inbound media settings loaded after, and validated against, the provider
 /// registry.
@@ -63,6 +68,9 @@ pub struct MediaConfig {
     /// provider in the tool result and stored by CMA in the shell tool call's
     /// title, so it must expire quickly; it never outlives its event either.
     pub link_ttl_seconds: u64,
+    /// How long a turn waits for its eager attachment items (transcripts and
+    /// excerpts) before its provider turn starts without them.
+    pub prepare_budget: Duration,
 }
 
 impl Default for MediaConfig {
@@ -78,6 +86,7 @@ impl Default for MediaConfig {
             rate_per_minute: 60,
             download_bytes_per_hour: 256 * MIB,
             link_ttl_seconds: 120,
+            prepare_budget: Duration::from_millis(PREPARE_BUDGET_MS.0),
         }
     }
 }
@@ -87,18 +96,55 @@ impl Default for MediaConfig {
 pub(super) fn config_from_env(registry: &ProviderRegistry) -> Result<MediaConfig, ConfigError> {
     let tool_providers = from_env(registry)?;
     let enabled = enabled_from_env()?;
-    budgets::budgets(|key| match env::var(key) {
+    let prepare_budget = prepare_budget(read_env(CMAEG_MEDIA_PREPARE_BUDGET_MS)?.as_deref())?;
+    budgets::budgets(read_env).map(|config| MediaConfig {
+        tool_providers,
+        enabled,
+        prepare_budget,
+        ..config
+    })
+}
+
+/// Read the preparation budget: unset is 15 s, a set value must lie within
+/// 1 s to 60 s.
+fn prepare_budget(value: Option<&str>) -> Result<Duration, ConfigError> {
+    let (default, min, max) = PREPARE_BUDGET_MS;
+    let millis = bounded(CMAEG_MEDIA_PREPARE_BUDGET_MS, value, default, min, max)?;
+    tracing::info!(
+        key = CMAEG_MEDIA_PREPARE_BUDGET_MS,
+        millis,
+        "media preparation budget"
+    );
+    Ok(Duration::from_millis(millis))
+}
+
+impl MediaConfig {
+    /// A turn's preparation must end before the turn itself times out, or
+    /// every media turn would time out while it waits for its attachments.
+    pub fn check_turn_timeout(&self, turn_timeout: Duration) -> Result<(), ConfigError> {
+        if self.prepare_budget < turn_timeout {
+            return Ok(());
+        }
+        Err(ConfigError::InvalidMedia {
+            detail: format!(
+                "{CMAEG_MEDIA_PREPARE_BUDGET_MS} ({}) must be below CMAEG_TURN_TIMEOUT_MS ({})",
+                self.prepare_budget.as_millis(),
+                turn_timeout.as_millis()
+            ),
+        })
+    }
+}
+
+/// One media key from the process environment: unset is `None`, and a value
+/// that is not UTF-8 fails startup naming the key.
+pub(super) fn read_env(key: &'static str) -> Result<Option<String>, ConfigError> {
+    match env::var(key) {
         Ok(value) => Ok(Some(value)),
         Err(env::VarError::NotPresent) => Ok(None),
         Err(env::VarError::NotUnicode(_)) => Err(ConfigError::InvalidMedia {
             detail: format!("{key} must be valid UTF-8"),
         }),
-    })
-    .map(|config| MediaConfig {
-        tool_providers,
-        enabled,
-        ..config
-    })
+    }
 }
 
 /// Providers whose profile bindings install the gateway's MCP tools. Only
@@ -252,6 +298,45 @@ mod tests {
                 "{value:?}"
             );
         }
+    }
+
+    #[test]
+    fn the_preparation_budget_is_bounded_and_below_the_turn_timeout() {
+        assert_eq!(prepare_budget(None).unwrap(), Duration::from_secs(15));
+        assert_eq!(
+            MediaConfig::default().prepare_budget,
+            Duration::from_secs(15)
+        );
+        assert_eq!(
+            prepare_budget(Some("1000")).unwrap(),
+            Duration::from_secs(1)
+        );
+        assert_eq!(
+            prepare_budget(Some("60000")).unwrap(),
+            Duration::from_secs(60)
+        );
+        for value in ["999", "60001", "", "15s", "-1"] {
+            assert_eq!(
+                detail(prepare_budget(Some(value)).unwrap_err()),
+                "CMAEG_MEDIA_PREPARE_BUDGET_MS must be an unsigned decimal from 1000 to 60000",
+                "{value:?}"
+            );
+        }
+        let config = MediaConfig {
+            prepare_budget: Duration::from_secs(20),
+            ..MediaConfig::default()
+        };
+        assert!(config
+            .check_turn_timeout(Duration::from_millis(20_001))
+            .is_ok());
+        assert_eq!(
+            detail(
+                config
+                    .check_turn_timeout(Duration::from_secs(20))
+                    .unwrap_err()
+            ),
+            "CMAEG_MEDIA_PREPARE_BUDGET_MS (20000) must be below CMAEG_TURN_TIMEOUT_MS (20000)"
+        );
     }
 
     #[test]

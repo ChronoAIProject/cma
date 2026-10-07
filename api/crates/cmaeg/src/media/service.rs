@@ -20,7 +20,12 @@ use super::{
         SourceRegistry,
     },
     target::{MediaTarget, TargetError},
-    transcribe::{DisabledTranscriber, Transcriber},
+    transcribe::{
+        meter::SttSpend,
+        openai::OpenAiCompatibleTranscriber,
+        upload::{AudioTranscoder, NoTranscoder},
+        DisabledTranscriber, Transcriber,
+    },
     visual::{PlatformThumbnail, VisualExtractor, VisualKind},
     MediaLimits,
 };
@@ -45,6 +50,10 @@ use tracing::{field::Empty, Instrument};
 pub struct MediaDeps {
     pub sources: Arc<SourceRegistry>,
     pub transcriber: Arc<dyn Transcriber>,
+    /// How a fetched original becomes the transcriber's upload.
+    pub transcoder: Arc<dyn AudioTranscoder>,
+    /// The speech-to-text call rate and hourly budgets.
+    pub stt: Arc<SttSpend>,
     pub visuals: Arc<dyn VisualExtractor>,
     pub limits: MediaLimits,
     pub keys: Arc<MasterKeyRing>,
@@ -96,6 +105,8 @@ impl MediaService {
             pipeline: Arc::new(Pipeline {
                 sources: deps.sources,
                 transcriber: deps.transcriber,
+                transcoder: deps.transcoder,
+                stt: deps.stt,
                 visuals: deps.visuals,
                 limits,
                 decode: deps.decode,
@@ -347,10 +358,19 @@ pub fn compose(
         Arc::new(InlineSource),
     ));
     let decode = Arc::new(Semaphore::new(1));
+    // An empty CMAEG_STT_URL leaves speech-to-text off.
+    let transcriber: Arc<dyn Transcriber> = match &config.stt.endpoint {
+        Some(endpoint) => Arc::new(OpenAiCompatibleTranscriber::new(endpoint, &config.stt)?),
+        None => Arc::new(DisabledTranscriber),
+    };
     let service = MediaService::new(MediaDeps {
         visuals: Arc::new(PlatformThumbnail::new(sources.clone(), decode.clone())),
         sources,
-        transcriber: Arc::new(DisabledTranscriber),
+        // The direct path is the only transcoder until the audio transformer
+        // exists.
+        transcoder: Arc::new(NoTranscoder::new(&config.stt, transcriber.clone())),
+        stt: Arc::new(SttSpend::new(&config.stt)),
+        transcriber,
         limits,
         keys: deps.keys,
         tool_providers: deps.tool_providers,

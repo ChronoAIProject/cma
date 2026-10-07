@@ -14,7 +14,11 @@ use super::{
     source::{FetchRequest, SourceCredential, SourceRegistry},
     target::MediaTarget,
     text::{self, TextDocument, TextError},
-    transcribe::{AudioContainer, AudioInput, TranscribeError, Transcriber},
+    transcribe::{
+        meter::SttSpend,
+        upload::{transcript_pipeline, AudioTranscoder},
+        TranscribeError, Transcriber,
+    },
     visual::{VisualExtractor, VisualKind, VisualRequest, THUMBNAIL_MAX_BYTES},
     FetchError, MediaLimits,
 };
@@ -66,8 +70,8 @@ pub enum Derived {
         document: TextDocument,
         usage_seconds: Option<u32>,
         /// Where the audio was cut before transcription, in seconds; `None`
-        /// when the whole recording was transcribed. Only an audio transform
-        /// that shortens long recordings sets it, so agents can be told the
+        /// when the whole recording was transcribed. Only a transcoder that
+        /// shortens long recordings sets it, so agents can be told the
         /// transcript is partial.
         truncated_at_seconds: Option<u32>,
     },
@@ -238,6 +242,10 @@ impl From<TranscribeError> for DeriveError {
 pub struct Pipeline {
     pub sources: Arc<SourceRegistry>,
     pub transcriber: Arc<dyn Transcriber>,
+    /// How a fetched original becomes the transcriber's upload.
+    pub transcoder: Arc<dyn AudioTranscoder>,
+    /// The speech-to-text call rate and hourly budgets.
+    pub stt: Arc<SttSpend>,
     pub visuals: Arc<dyn VisualExtractor>,
     pub limits: MediaLimits,
     /// The single decode permit, shared with the visual extractor.
@@ -296,7 +304,7 @@ impl Pipeline {
                 let (text, truncated) = text::excerpt(&text::decode(&body)?, text::EXCERPT_BYTES);
                 Ok(Derived::Excerpt { text, truncated })
             }
-            Artifact::Transcript => self.transcript(target, index, deadline).await,
+            Artifact::Transcript => transcript_pipeline(self, target, index, deadline).await,
             Artifact::Visuals => {
                 // The extractor fetches for itself; its largest fetch is held
                 // against the pod-wide budget for as long as it runs.
@@ -326,41 +334,9 @@ impl Pipeline {
         }
     }
 
-    async fn transcript(
-        &self,
-        target: &MediaTarget,
-        index: usize,
-        deadline: Instant,
-    ) -> Result<Derived, DeriveError> {
-        let (body, _held) = self
-            .fetch(
-                target,
-                index,
-                self.limits.max_bytes,
-                Overflow::Reject,
-                deadline,
-            )
-            .await?;
-        let sniffed = expect(&body, &[Family::Audio, Family::Video])?;
-        let container = AudioContainer::from_sniffed(sniffed.mime)
-            .filter(|container| self.transcriber.accepts(*container))
-            .ok_or(DeriveError::UnsupportedFormat)?;
-        let input = AudioInput {
-            bytes: body.bytes,
-            container,
-        };
-        let transcript = self.transcriber.transcribe(input, deadline).await?;
-        Ok(Derived::Transcript {
-            document: TextDocument::from_normalized(&text::normalize(&transcript.text), false),
-            usage_seconds: transcript.usage_seconds,
-            // The direct upload sends the whole recording.
-            truncated_at_seconds: None,
-        })
-    }
-
     /// Fetch the attachment's bytes under `cap`, holding a pod-wide
     /// reservation for them that the caller keeps until its transform ends.
-    async fn fetch(
+    pub(in crate::media) async fn fetch(
         &self,
         target: &MediaTarget,
         index: usize,
@@ -401,7 +377,10 @@ fn sniff_body(body: &FetchedBody) -> Sniffed {
 }
 
 /// The body's sniffed type, when its family is one of `families`.
-fn expect(body: &FetchedBody, families: &[Family]) -> Result<Sniffed, DeriveError> {
+pub(in crate::media) fn expect(
+    body: &FetchedBody,
+    families: &[Family],
+) -> Result<Sniffed, DeriveError> {
     let sniffed = sniff_body(body);
     if families.contains(&sniffed.family) {
         Ok(sniffed)

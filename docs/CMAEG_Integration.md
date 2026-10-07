@@ -333,6 +333,25 @@ the index. See the protocol's
 [attachment block](CMAEG_Protocol.md#attachment-block-in-turn-input) for the
 exact template, hints and size bounds.
 
+### Voice and video transcription
+
+Speech-to-text is off until the operator enables it. Once it is on, the audio
+of every voice note, audio file and short video sent to any channel is
+transcribed by the platform's speech-to-text processor, and the transcript is
+placed, fenced as described above, in the agent's input. This applies to every
+binding, including existing-agent bindings and `nyxbot`. There is no
+per-channel opt-out yet; it is planned as a follow-up.
+
+Audio files up to 2.4 MB (about ten minutes at 32 kbps), and MP4 or WebM clips
+of at most 60 seconds up to 2.4 MB (about 19 seconds at 1 Mbps), are
+transcribed. A larger file shows `transcript unavailable: too_long`; an
+autonomous agent can still download the original. Telegram and Lark voice
+notes are Ogg/Opus, which the operator enables separately once the processor
+is proven to accept it; until then they show
+`transcript unavailable: unsupported_format`. A channel that sends more audio
+than its hourly share shows `transcript unavailable: rate_limited` until its
+share refills over the following hour.
+
 ### Save an attachment into the workspace
 
 An autonomous agent can save an attachment's original, such as a PDF, an Office

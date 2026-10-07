@@ -20,13 +20,15 @@ use cmaeg::{
         target::MediaTarget,
         text::{EXCERPT_BYTES, EXCERPT_READ_LIMIT, TEXT_READ_LIMIT},
         transcribe::{
+            meter::SttSpend,
+            upload::{AudioTranscoder, NoTranscoder},
             AudioContainer, AudioInput, DisabledTranscriber, TranscribeError, Transcriber,
             Transcript,
         },
         visual::{PlatformThumbnail, VisualKind},
         MediaLimits,
     },
-    MediaConfig, MediaToolProviders,
+    MediaConfig, MediaToolProviders, SttConfig,
 };
 use cmaeg_core::{activity::AttachmentKind, seal::MasterKeyRing};
 use futures_util::future::BoxFuture;
@@ -82,10 +84,30 @@ impl Transcriber for FakeTranscriber {
     }
 }
 
+/// A service on the direct upload path under the default spend limits.
 pub(super) fn service_with(
     source: &Arc<FakeSource>,
     limits: MediaLimits,
     transcriber: Arc<dyn Transcriber>,
+) -> MediaService {
+    let stt = SttConfig::default();
+    let transcoder = Arc::new(NoTranscoder::new(&stt, transcriber.clone()));
+    service_from(
+        source,
+        limits,
+        transcriber,
+        Arc::new(SttSpend::new(&stt)),
+        transcoder,
+    )
+}
+
+/// A service with explicit spend limits and upload path.
+pub(super) fn service_from(
+    source: &Arc<FakeSource>,
+    limits: MediaLimits,
+    transcriber: Arc<dyn Transcriber>,
+    stt: Arc<SttSpend>,
+    transcoder: Arc<dyn AudioTranscoder>,
 ) -> MediaService {
     let decode = Arc::new(Semaphore::new(1));
     let registry = source.registry();
@@ -93,6 +115,8 @@ pub(super) fn service_with(
         visuals: Arc::new(PlatformThumbnail::new(registry.clone(), decode.clone())),
         sources: registry,
         transcriber,
+        transcoder,
+        stt,
         limits,
         keys: Arc::new(ring()),
         tool_providers: Arc::new(MediaToolProviders::default()),
@@ -189,10 +213,15 @@ async fn text_is_paged_and_excerpts_are_bounded() {
     );
 }
 
-fn mp3() -> Vec<u8> {
+/// An MP3 body of `length` bytes, by its ID3 header.
+pub(super) fn mp3_of(length: usize) -> Vec<u8> {
     let mut bytes = b"ID3\x04\0\0\0\0\0\0".to_vec();
-    bytes.resize(2048, 0);
+    bytes.resize(length, 0);
     bytes
+}
+
+fn mp3() -> Vec<u8> {
+    mp3_of(2048)
 }
 
 #[tokio::test]

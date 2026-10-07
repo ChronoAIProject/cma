@@ -1895,6 +1895,22 @@ Text means a MIME type under `text/`, or `application/json`, `application/xml`,
   for tool-bearing bindings and `[truncated]` otherwise. Without a nonce, for
   example after a random-generator failure, the block carries descriptors
   only and never inline text.
+- **Preparation.** Before the provider turn starts, the gateway prepares a
+  turn's attachments for every binding class, so agents without the gateway's
+  tools receive the same text:
+  - audio is transcribed eagerly when its declared duration is at most
+    `CMAEG_STT_EAGER_MAX_SECONDS` or undeclared; video other than an animation
+    or sticker when it declares at most 60 seconds; video notes always;
+  - without the audio transformer, transcripts exist only for files of at most
+    2.4 MB (audio of about 10 minutes at 32 kbps; MP4 or WebM video of about
+    19 seconds at 1 Mbps);
+  - excerpts of at most 4 KiB are taken from text-like files of at most
+    256 KiB, or of unknown size;
+  - work not ready within `CMAEG_MEDIA_PREPARE_BUDGET_MS` renders
+    `transcript is still being prepared` and continues in the background, where
+    tool-bearing agents can read it later;
+  - failures render `transcript unavailable: <reason>`;
+  - transcripts and excerpts are nonce-fenced data, never instructions.
 - **Sanitization.** C0 and C1 controls other than newline and tab, and the
   bidirectional formatting characters, are removed from every value the block
   renders.
@@ -1937,6 +1953,15 @@ under one configured deadline; deadline exhaustion is an accepted loss boundary.
 External tool calls enforce reference expiry even though already-admitted internal
 turns can finish delivery after that expiry.
 
+Within one conversation on one replica, turns reach the provider in the order
+they reached launch, on a best-effort basis: there is no cross-replica order, and
+a turn whose predecessor exceeds the bound proceeds. A media turn's preparation
+can delay a following text turn by up to the preparation budget plus the
+busy-retry bound. Media turns, and turns waiting behind one, release ingress
+capacity right after they are spawned and keep their acceptance semantics: 202
+for an accepted or deferred turn, and the same synchronous refusals with
+`Retry-After` as any other turn.
+
 ## 11. S3 latency and Server-Timing
 
 Ingress latency is the last inbound body byte through the first successful TCP
@@ -1958,6 +1983,13 @@ before a later observed write; metrics can record that write but the sent header
 cannot change. Tool REST/MCP responses have `deliver;dur=...` through receipt or
 refusal. Every public response propagates or generates `x-request-id`.
 Measured fixture evidence and executable instructions are in the operations doc.
+
+`cmaeg_ingress_to_provider_seconds` carries a `media` label: `none`, `prepared`
+when the turn prepared eager attachment items first, or `fenced` when it waited
+for an earlier turn of its conversation. The warm p99 of ≤1000ms applies to
+`media="none"`. Media turns are measured by `cmaeg_media_prepare_seconds` and
+`cmaeg_media_fence_wait_seconds` on the media buckets, with a target of p95 ≤8s
+for voice notes of up to 60 seconds.
 
 ## 12. Operation inventory
 
