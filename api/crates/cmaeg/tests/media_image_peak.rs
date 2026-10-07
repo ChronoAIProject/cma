@@ -188,7 +188,16 @@ fn image_decode_bounds() {
     let rgba = fixtures::rgba(WIDTH, HEIGHT, 24, false);
     let png = fixtures::png_rgba8(&rgba);
     measure(&format!("rgba8 png {WIDTH}x{HEIGHT}"), &png);
+    // Removing an ICC profile copies the input, so the copy is measured
+    // beside the largest PNG pixels, with a profile that would have inflated
+    // to 300 MiB beside them.
+    let profiled = fixtures::with_icc_profile(&png, 300 << 20);
     drop(png);
+    measure(
+        &format!("rgba8 png {WIDTH}x{HEIGHT} with a 300 MiB icc profile"),
+        &profiled,
+    );
+    drop(profiled);
     let webp = fixtures::webp_lossless(&rgba);
     drop(rgba);
     measure(&format!("lossless webp {WIDTH}x{HEIGHT}"), &webp);
@@ -198,6 +207,21 @@ fn image_decode_bounds() {
     let deep = fixtures::png_rgba16(4000, 4000);
     measure("rgba16 png 4000x4000", &deep);
     drop(deep);
+
+    // A decoder inflates a PNG's ICC profile before any pixel, bounded only
+    // by its 512 MiB allocation limit, and drops a larger one instead of
+    // refusing the image, so a profile just under that limit costs the most.
+    // Before profiles were removed this 512x512 PNG peaked at 529.5 MiB.
+    let small = fixtures::png_rgb8(&fixtures::rgb(512, 512, 8));
+    let bomb = fixtures::with_icc_profile(&small, 511 << 20);
+    measure("rgb8 png 512x512 with a 511 MiB icc profile", &bomb);
+    drop(bomb);
+    let late = fixtures::with_icc_profile_after_pixels(&small, 511 << 20);
+    measure(
+        "rgb8 png 512x512 with a 511 MiB icc profile after the image data",
+        &late,
+    );
+    drop(late);
 
     let side = (MAX_PIXELS as f64).sqrt() as u32;
     let gif = fixtures::gif(side, side, &[[200, 40, 40], [40, 40, 200]], true);
