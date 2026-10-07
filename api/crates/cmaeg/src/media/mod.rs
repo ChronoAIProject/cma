@@ -1,8 +1,9 @@
 //! Bounded retrieval of inbound media: the sources behind each attachment
 //! locator, byte-capped bodies, pod-wide and per-channel budgets,
 //! deadline-bounded response bodies, content sniffing, a byte-bounded
-//! derived-media cache behind single-flight jobs, and the bounded transforms
-//! that turn fetched bytes into what an agent can consume.
+//! derived-media cache behind single-flight jobs, the bounded transforms
+//! that turn fetched bytes into what an agent can consume, and the sandboxed
+//! FFmpeg jobs behind keyframes and audio transcoding.
 //!
 //! Nothing here runs unless a later caller composes it, and every caller is
 //! gated on `CMAEG_MEDIA_ENABLED`. Errors are classifications only: no URL,
@@ -21,6 +22,7 @@ pub mod source;
 pub mod target;
 pub mod text;
 pub mod transcribe;
+pub mod transform;
 pub mod visual;
 
 use crate::MediaConfig;
