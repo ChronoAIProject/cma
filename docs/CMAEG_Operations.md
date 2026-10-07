@@ -34,6 +34,15 @@ The wire authority is [CMAEG protocol](CMAEG_Protocol.md). Configuration is load
 once before binding; invalid values fail startup. Restart through the drain
 procedure to apply changes. Configuration is operator-owned.
 
+Before loading configuration, the gateway builds its Tokio runtime and starts
+16 blocking threads that it keeps for its whole lifetime. When the OS refuses
+new threads, for example at the pod PID limit, DNS lookups and file IO queue on
+those threads until one is free instead of stalling until thread creation
+recovers. If the 16 threads do not all start within ten seconds, the gateway
+logs `CMAEG blocking pool prewarm failed` and exits 1 before any listener
+binds. `--print-openapi` builds no runtime. This behaviour is unconditional; it
+applies with all media flags off.
+
 ## Configuration
 
 | Environment key | Type | Default | Meaning |
@@ -99,6 +108,9 @@ and idempotent. All duration histograms use seconds with buckets
 | `cmaeg_events_total` | `source`, `outcome` | Ingress responses, distinguishing deliberate refusals from accepted and rejected requests. |
 | `cmaeg_refusals_total` | `reason` | Bounded admission refusals and protocol error codes. |
 | `cmaeg_provider_errors_total` | `provider`, `kind` | Classified turn failures; provider diagnostic strings are never labels. |
+| `cmaeg_callback_invalid_total` | `source`, `detail` | Relay and native Telegram callbacks answered 401 `callback_invalid`. `source` is `nyxid_relay` or `telegram`; `detail` is the static verification code returned as the problem detail, such as `payload_invalid` or `telegram_webhook_secret`. |
+| `cmaeg_relay_envelope_repairs_total` | `field` | Authenticated NyxID relay envelope facts repaired or dropped instead of rejecting the callback. `field` is one of `attachment_item`, `attachment_overflow`, `attachment_container`, `content_type`, `url`, `platform_message_id`, `file_key`, `image_key`, `filename`, `mime_type`, `size_bytes`, `download_url` or `sender_display_name`. |
+| `cmaeg_delivery_worker_restarts_total` | none | Delivery workers replaced after they stopped, for example by panicking. Dispatch continues for every channel; commands already queued for the stopped worker are lost with it. |
 | `cmaeg_turns_inflight` | none | Admitted local consumers; decremented on completion or cancellation. |
 | `cmaeg_channels_cached` | none | Locally retained positive and negative cache entries, including entries awaiting eviction. |
 
@@ -109,6 +121,11 @@ event IDs, request IDs, credentials, and message contents are never metric label
 waiters and cache hits do not claim to have initiated it. A stale cache lookup
 that starts a background refresh also triggers a restore.
 
+The process holds the 16 prewarmed blocking threads in addition to one Tokio
+worker per CPU, so a thread count at that floor is expected, not a leak. While
+the pod is at its PID limit, slow DNS resolution or file IO means that work is
+waiting for one of those threads rather than for a new one.
+
 Every public router generates a UUID v4 `x-request-id` when the caller did not
 provide one, propagates it in the response, and creates one
 `cmaeg.request{request_id,route}` span. The route is a template, so event references
@@ -117,6 +134,16 @@ spans use a 16-character SHA-256 channel prefix and an event ID when available.
 Turn and delivery tasks retain the originating trace across task and queue
 boundaries. Info logs exclude bearer keys, reply tokens, event references, and
 message content. Provider-controlled parsing diagnostics are also excluded.
+
+A request handler that panics is answered with a 500 `internal` problem whose
+detail is `internal_error`, with the usual protocol headers and `x-request-id`;
+the gateway keeps serving every other request. The error log line is
+`request handler panicked`, emitted inside that request's `cmaeg.request` span,
+so the request ID and route template identify it. A panic in middleware outside
+that span is answered the same way. The process panic hook replaces Rust's
+default one and logs `panic` with only the source `location`. Panic payloads
+are never logged, because they can carry request data. This applies with all
+media flags off.
 
 Ingress responses include `Server-Timing` fields `restore`, `verify`, `launch`,
 and `total`, in milliseconds. `total` includes body reading and waiting for the
@@ -330,6 +357,71 @@ admission; that can create another turn. For uncertain platform delivery, inspec
 the receipt's `unknown` outcome and the sink, then reconcile manually if needed.
 The gateway does not blindly resend unknown Telegram sends. Webhook receivers
 must deduplicate stable webhook IDs across the four bounded attempts.
+
+### Relay callback rejection alerts
+
+NyxID records a callback that CMAEG answers with 401 as failed and never
+retries it, so a rejected authenticated relay callback is a lost message.
+`cmaeg_callback_invalid_total{source,detail}` makes every rejection visible.
+Configure these alerts on the private metrics scrape:
+
+| Severity | Expression | Meaning |
+| --- | --- | --- |
+| Page | `sum(increase(cmaeg_callback_invalid_total{source="nyxid_relay",detail=~"payload_invalid\|payload_bounds\|payload_binding_mismatch"}[15m])) > 0` | Authenticated NyxID callbacks rejected after the signature was verified: messages are being lost. |
+| Warn | `sum(increase(cmaeg_callback_invalid_total{source="nyxid_relay",detail="route_denied"}[15m])) > 0` | NyxID delivers a route the channel does not list: tenant route drift. |
+| Warn (ratio) | `sum(increase(cmaeg_callback_invalid_total{source="nyxid_relay",detail=~"header_.*\|callback_bounds\|token_.*\|jwks_.*\|signing_key_unknown"}[15m])) / sum(increase(cmaeg_events_total{source="nyxid_relay"}[15m])) > 0.05` | More than 5% of relay callbacks fail before their signature is verified. Such requests can be unauthenticated noise, so they never page. |
+
+Runbook for each alert:
+
+- **Envelope rejection (page).** Find the `relay callback envelope rejected`
+  warning in the alert window. Its `field=` names the unknown body field; `-`
+  means the failure was not an unknown field, and `category=` then says whether
+  it was a syntax, data or truncated-body error. The log never contains the
+  offending value. Compare NyxID's callback serializer at its deployed version
+  (`backend/src/services/channel_relay_service.rs`) with §6 of the protocol and
+  the `CallbackPayload` schema. A new NyxID field needs an additive gateway
+  release, as `thread_context` and `activity` received. `payload_bounds` means a
+  non-attachment field exceeded its bound; `payload_binding_mismatch` means the
+  body disagrees with its signed callback claims and points at a NyxID defect.
+  Record the request IDs of the lost messages for their channel owners.
+- **Route drift (warn).** Compare the channel's relay `route_ids` with the
+  NyxID route that serves the bot, then update the channel with the exact route
+  ID. An empty list is a pending binding and denies every callback.
+- **Pre-signature failures (ratio warn).** Check the NyxID issuer, JWKS
+  reachability and signing-key rotation first, then the callback headers and
+  clock skew. A rise without a matching NyxID change is likely unauthenticated
+  traffic and needs no data repair.
+
+`cmaeg_relay_envelope_repairs_total` is informational and does not alert.
+Non-zero values mean NyxID sent sender facts outside CMAEG's bounds, such as an
+oversized file name or display name, and the gateway repaired or dropped them
+instead of losing the message. A `field` label that keeps rising is a reason to
+compare NyxID's serializer with the protocol, not an outage.
+
+### Delivery worker restart alert
+
+Delivery runs on eight workers, each owning the outbound sends of the events
+routed to it. A worker that stops, for example by panicking, is replaced at its
+index on the next command routed there, and dispatch continues for every
+channel. This applies with all media flags off. Without replacement, one
+panicked worker would stop every reply, typing indicator, update and failure
+notice until the pod restarted, so a restart is a contained fault rather than an
+outage. Configure this alert on the private metrics scrape:
+
+| Severity | Expression | Meaning |
+| --- | --- | --- |
+| Warn | `increase(cmaeg_delivery_worker_restarts_total[15m]) > 0` | A delivery worker panicked; delivery continued. Investigate the logged error. |
+
+The replacement has an accepted loss: commands already queued for the stopped
+worker, at most 64, are lost with it. The gateway logs
+`delivery worker stopped; buffered commands lost` with the worker index when it
+replaces the worker, `delivery worker task ended` with `panicked=true` when it
+collects the panicked task, and `delivery command dropped after worker replacement failed`
+if the replacement stops before taking the command. None of these logs carries
+the panic payload, which can contain message content. Find the error logged
+just before the restart in the alert window to identify the fault. The lost
+commands cannot be recovered from the gateway; their turns' replies, typing
+indicators or updates may be missing on those channels.
 
 ### Recovering channel creation
 

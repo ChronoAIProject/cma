@@ -5,6 +5,9 @@ use serde::{Deserialize, Serialize};
 /// CMAEG `CallbackPayload` wire shape.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct CallbackPayload {
+    /// Wire field `activity`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activity: Option<serde_json::Value>,
     /// Wire field `agent`.
     pub agent: RelayAgent,
     /// Wire field `content`.
@@ -30,6 +33,9 @@ pub struct CallbackPayload {
     pub reply_token: Secret,
     /// Wire field `sender`.
     pub sender: RelaySender,
+    /// Wire field `thread_context`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_context: Option<serde_json::Value>,
     /// Wire field `thread_id`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thread_id: Option<Secret>,
@@ -71,6 +77,9 @@ pub struct RelayAgent {
 pub struct RelayAttachment {
     /// Wire field `content_type`.
     pub content_type: String,
+    /// Wire field `download_url`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub download_url: Option<String>,
     /// Wire field `file_key`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub file_key: Option<String>,

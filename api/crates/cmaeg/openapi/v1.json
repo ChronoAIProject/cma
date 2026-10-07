@@ -628,6 +628,7 @@
       "CallbackPayload": {
         "additionalProperties": false,
         "properties": {
+          "activity": {},
           "agent": {
             "$ref": "#/components/schemas/RelayAgent"
           },
@@ -665,6 +666,7 @@
           "sender": {
             "$ref": "#/components/schemas/RelaySender"
           },
+          "thread_context": {},
           "thread_id": {
             "oneOf": [
               {
@@ -2425,6 +2427,13 @@
         "properties": {
           "content_type": {
             "type": "string"
+          },
+          "download_url": {
+            "description": "NyxID's own download endpoint for this attachment. Accepted for envelope\ncompatibility and never dereferenced: media fetches build their URL from\nCMAEG_NYXID_BASE_URL and the sealed message ID.",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "file_key": {
             "type": [

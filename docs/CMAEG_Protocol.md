@@ -615,9 +615,49 @@ Body fields: `message_id`, `correlation_id`, `platform`, `reply_token`,
 `agent:{api_key_id,name}`, `conversation:{id,platform_id,type}`,
 `sender:{platform_id,display_name?}`, `content:{type,text?,attachments?}`,
 `timestamp`. Optional fields are `thread_id`, `reply_to_message_id`,
-`reply_to_platform_message_id`, and `raw_platform_data`. Attachment entries have
-required `content_type,url` and optional `image_key,file_key,platform_message_id,
-filename,mime_type,size_bytes`. Attachment receipt is currently refused.
+`reply_to_platform_message_id`, `raw_platform_data`, `thread_context` and
+`activity`. `thread_context` and `activity` are NyxID facts that are dormant for
+gateway routes; they accept any JSON value and are ignored, and the raw platform
+event stays authoritative for threads and admission. Any other unknown body
+field is still 401 `callback_invalid`. Attachment entries have
+required `content_type,url` and optional `download_url,image_key,file_key,
+platform_message_id,filename,mime_type,size_bytes`. `download_url` is NyxID's
+own download endpoint for the entry; the gateway never dereferences
+`download_url` or `url`. Messages carrying attachments are refused with 202
+`attachment_unsupported`.
+
+NyxID copies sender-controlled facts into attachment entries and adds entry
+fields over time, so the gateway parses the attachment list leniently while the
+rest of the body stays strict. No attachment content and no attachment count
+makes a callback fail parsing or bounds:
+
+- Entries at positions 32 and above are dropped.
+- An optional fact that is empty, contains a control character, exceeds its
+  bound or has the wrong JSON type is dropped. Bounds are 256 bytes for
+  `platform_message_id` and `mime_type`, 1024 for `file_key` and `image_key`,
+  512 for `filename` and 4096 for `download_url`; `size_bytes` must be a
+  non-negative integer below 2^63.
+- An invalid or missing `content_type` (bounded to 256 bytes) becomes
+  `unknown`.
+- `url` is an opaque provider handle, such as a Telegram `file_id` or a Lark
+  resource URL, kept verbatim and never parsed. A missing `url`, one that is
+  not a string, is longer than 4096 bytes or contains a control character
+  becomes empty, meaning not retrievable; the callback still returns 202.
+- Unknown entry fields are ignored; for a repeated field the first value wins.
+- A non-object entry is dropped and the remaining entries keep their original
+  index, which is the index in NyxID's attachment download route.
+- `attachments:null` is an empty list. Any other value that is not a list
+  counts as one malformed entry. A malformed list is refused as
+  `attachment_unsupported` like any other non-empty list; it is never admitted
+  as a text-only message.
+
+`sender.display_name` is a sender-controlled fact too: NyxID builds it as
+`first_name + " " + last_name`, which reaches 385 bytes for a CJK Telegram name.
+The gateway removes control characters and truncates it to 256 bytes on a
+character boundary; a name that becomes empty is absent. A display name never
+makes a callback fail.
+
+Each repair increments `cmaeg_relay_envelope_repairs_total{field}`.
 
 All three token kinds use RS256, base64url without padding, and a header containing
 only `alg:"RS256",typ:"JWT",kid`. Keys come only from the channel's pinned JWKS.
@@ -709,7 +749,9 @@ posts JSON updates to `POST /v1/telegram/{channel_id}` with exactly one
 credentials, compares the secret in constant time, then applies the same strict
 Telegram observer and admission policy as relay ingress. `update_id` determines
 the stable event identity; source bot, chat, original message and topic are sealed
-into the reply address. Replica restart preserves these identities and requires
+into the reply address. The sender's `first_name` becomes the actor's display
+name with the same control-character removal and 256-byte truncation as relay
+ingress, so an unusual name is never refused. Replica restart preserves these identities and requires
 no local webhook session state. Failed receipt persistence or provider admission
 returns a retryable error; a successful or deliberately refused update returns
 202. Native callback acknowledgments clear only the platform spinner and do not

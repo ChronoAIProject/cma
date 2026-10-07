@@ -11,7 +11,7 @@ use crate::ingress::admission::Refusal;
 use cmaeg_core::activity::{ActorKind, ConversationKind};
 
 pub fn observe(payload: &CallbackPayload) -> Result<Observation, VerificationError> {
-    if !payload.content.attachments.is_empty() {
+    if payload.received_attachments() > 0 {
         return Ok(Observation::Refused(Refusal::AttachmentUnsupported));
     }
     if payload.content.kind != "text"
