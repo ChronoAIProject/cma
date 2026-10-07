@@ -94,7 +94,7 @@ pub async fn receive_event(
         None => false,
         _ => return invalid("invalid mode"),
     };
-    let Ok(_permit) = state.ingress.inflight.clone().try_acquire_owned() else {
+    let Ok(permit) = state.ingress.inflight.clone().try_acquire_owned() else {
         let mut response = problem(
             StatusCode::TOO_MANY_REQUESTS,
             ProblemCode::RateLimited,
@@ -105,8 +105,8 @@ pub async fn receive_event(
             .insert("retry-after", HeaderValue::from_static("1"));
         return response;
     };
-    // The permit stays held across the launch; the request itself is consumed
-    // by preparation so its body is released before the acceptance wait.
+    // The request is consumed by preparation so its body is released before
+    // the acceptance wait; the launcher decides how long the permit is held.
     let PreparedEvent {
         turn,
         waiter,
@@ -115,7 +115,7 @@ pub async fn receive_event(
         Ok(prepared) => prepared,
         Err(response) => return response,
     };
-    match state.ingress.launcher.launch(turn).await {
+    match state.ingress.launcher.launch_holding(turn, permit).await {
         LaunchOutcome::Refused(error) => {
             let busy = error.code == ProblemCode::ProviderBusy;
             let mut response = super::tools::result::<()>(Err(error));

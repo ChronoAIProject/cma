@@ -16,6 +16,7 @@ use axum::{
     Json,
 };
 use cmaeg_core::problem::ProblemCode;
+use tokio::sync::OwnedSemaphorePermit;
 /// Everything an admitted chat turn needs once its request has been released.
 ///
 /// Admission helpers return this instead of dispatching themselves so that the
@@ -27,10 +28,14 @@ pub(crate) struct AdmittedChat {
     pub route: String,
     pub now: i64,
 }
+/// Dispatch an admitted chat turn. `hold` is the handler's ingress permit:
+/// every early return drops it, and the launcher decides how long a launched
+/// turn keeps it.
 pub(crate) async fn dispatch(
     state: IngressState,
     admitted: AdmittedChat,
     timing: IngressTiming,
+    hold: OwnedSemaphorePermit,
 ) -> Response {
     let AdmittedChat {
         mut request,
@@ -91,7 +96,7 @@ pub(crate) async fn dispatch(
     request.timing = Some(timing);
     let event_id = request.activity.event_id.to_string();
     let conversation_id = request.conversation_id.to_string();
-    match state.launcher.launch(request).await {
+    match state.launcher.launch_holding(request, hold).await {
         LaunchOutcome::Accepted { .. } | LaunchOutcome::Deferred => (
             StatusCode::ACCEPTED,
             Json(CallbackResponse::Accepted {
