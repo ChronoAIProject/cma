@@ -24,6 +24,18 @@ pub struct CallbackPayload {
     pub thread_id: Option<Secret>,
     pub timestamp: String,
     pub raw_platform_data: Option<Value>,
+    // NyxID's thread facts, dormant for CMAEG routes today. Accepted and ignored
+    // so a NyxID-side enablement cannot turn every callback into a 401 that NyxID
+    // never retries; the raw-event observers stay authoritative for threads, and
+    // the request body cap bounds the value.
+    #[serde(default)]
+    #[schema(value_type = Option<serde_json::Value>)]
+    pub thread_context: Option<serde::de::IgnoredAny>,
+    // NyxID's activity metadata, dormant for CMAEG routes today and ignored for
+    // the same reason; admission relies only on the raw platform event.
+    #[serde(default)]
+    #[schema(value_type = Option<serde_json::Value>)]
+    pub activity: Option<serde::de::IgnoredAny>,
 }
 #[derive(Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
