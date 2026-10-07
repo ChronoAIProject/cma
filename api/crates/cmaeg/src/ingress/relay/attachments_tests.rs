@@ -120,14 +120,32 @@ fn positions_beyond_thirty_two_are_counted_and_never_kept() {
 }
 
 #[test]
+fn a_url_is_an_opaque_handle_kept_verbatim() {
+    for url in [
+        "AgACAgIAAxkBAAIBX2Zx-test_file_id",
+        "https://open.larksuite.com/open-apis/im/v1/messages/om_1/resources/img_1?type=image",
+        "ftp://files.example/a",
+        "not a url",
+        "",
+    ] {
+        let (attachment, repairs) = item(|value| value["url"] = url.into());
+        assert_eq!(attachment.url, url);
+        assert_eq!(repairs, RelayRepairs::default());
+    }
+    let longest = "x".repeat(4096);
+    let (attachment, repairs) = item(|value| value["url"] = longest.clone().into());
+    assert_eq!(attachment.url, longest);
+    assert_eq!(repairs, RelayRepairs::default());
+}
+
+#[test]
 fn an_unusable_url_becomes_empty_and_not_retrievable() {
     for url in [
         json!(42),
-        json!("https://files.example/\u{7}"),
-        json!("ftp://files.example/a"),
-        json!("https://user:secret@files.example/a"),
-        json!("not a url"),
+        json!("AgACAgIAAxkBAAIBX2Zx\u{7}"),
+        json!("https://files.example/\u{0}"),
         Value::Null,
+        json!(["a"]),
         json!("x".repeat(4097)),
     ] {
         let (attachment, repairs) = item(|value| value["url"] = url);
@@ -139,9 +157,6 @@ fn an_unusable_url_becomes_empty_and_not_retrievable() {
     });
     assert_eq!(attachment.url, "");
     assert_eq!(repairs, expected(&[(RepairField::Url, 1)]));
-    let (attachment, repairs) = item(|value| value["url"] = "".into());
-    assert_eq!(attachment.url, "");
-    assert_eq!(repairs, RelayRepairs::default());
 }
 
 #[test]
