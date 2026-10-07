@@ -1,6 +1,9 @@
 use cmaeg_core::{channel::ChannelDefinition, profile::EventWorkerProfile};
 use serde_json::{json, Value};
 
+#[path = "channel_validation/legacy.rs"]
+mod legacy;
+
 fn channel() -> Value {
     let mut value: Value = serde_json::from_str(include_str!("fixtures/channel.json")).unwrap();
     let profile: EventWorkerProfile = serde_json::from_value(value["profile"].clone()).unwrap();
