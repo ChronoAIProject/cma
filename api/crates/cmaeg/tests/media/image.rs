@@ -145,6 +145,39 @@ fn a_gif_frame_larger_than_its_screen_is_refused_before_it_is_allocated() {
 }
 
 #[test]
+fn a_png_with_icc_profiles_normalizes_exactly_as_without_them() {
+    let plain = fixtures::png_rgb8(&fixtures::rgb(64, 48, 8));
+    let expected = normalize_blocking(&plain, FULL).unwrap();
+    // The profile is never applied, so removing it changes no output byte:
+    // one that would inflate to 511 MiB, two in a row, and one after the
+    // image data, which is left in place.
+    let bomb = fixtures::with_icc_profile(&plain, 511 << 20);
+    assert!(bomb.len() < 1024 * 1024);
+    let twice = fixtures::with_icc_profile(&fixtures::with_icc_profile(&plain, 4096), 4096);
+    let late = fixtures::with_icc_profile_after_pixels(&plain, 4096);
+    for input in [bomb, twice, late] {
+        let output = normalize_blocking(&input, FULL).unwrap();
+        assert_eq!(output.bytes, expected.bytes);
+        assert_eq!((output.width, output.height), (64, 48));
+    }
+}
+
+#[test]
+fn a_png_cut_inside_its_icc_profile_fails_to_decode() {
+    let profiled = fixtures::with_icc_profile(&fixtures::png_rgb8(&fixtures::rgb(64, 48, 8)), 4096);
+    let profile = profiled
+        .windows(4)
+        .position(|window| window == b"iCCP")
+        .unwrap();
+    // The profile chunk's length now runs past the input, and nothing
+    // follows it.
+    assert_eq!(
+        normalize_blocking(&profiled[..profile + 16], FULL).unwrap_err(),
+        ImageError::DecodeFailed
+    );
+}
+
+#[test]
 fn a_truncated_jpeg_fails_to_decode() {
     let input = fixtures::jpeg(&fixtures::rgb(64, 64, 8), 90);
     // Cut inside the quantization tables, before any frame header.

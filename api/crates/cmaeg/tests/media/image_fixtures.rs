@@ -306,7 +306,133 @@ pub fn png_without_pixels(width: u32, height: u32) -> Vec<u8> {
     out
 }
 
-/// The PNG chunk CRC (ISO 3309), bit by bit: fixtures are tiny.
+/// `png` with an ICC profile chunk after its IHDR, where a decoder inflates
+/// it while reading the header. The profile is `inflated` zero bytes rounded
+/// up to a whole deflate copy, stored in about a thousandth of that.
+pub fn with_icc_profile(png: &[u8], inflated: usize) -> Vec<u8> {
+    // The signature, then the IHDR's length, type, 13 data bytes and CRC.
+    const IHDR_END: usize = 8 + 4 + 4 + 13 + 4;
+    assert_eq!(&png[12..16], b"IHDR");
+    let mut out = png[..IHDR_END].to_vec();
+    out.extend_from_slice(&icc_profile_chunk(inflated));
+    out.extend_from_slice(&png[IHDR_END..]);
+    out
+}
+
+/// [`with_icc_profile`] with the chunk after the image data instead, just
+/// before the IEND, where the PNG specification does not allow it.
+pub fn with_icc_profile_after_pixels(png: &[u8], inflated: usize) -> Vec<u8> {
+    // The IEND is a bare chunk: length, type and CRC.
+    let iend = png.len() - 12;
+    assert_eq!(&png[iend + 4..iend + 8], b"IEND");
+    let mut out = png[..iend].to_vec();
+    out.extend_from_slice(&icc_profile_chunk(inflated));
+    out.extend_from_slice(&png[iend..]);
+    out
+}
+
+fn icc_profile_chunk(inflated: usize) -> Vec<u8> {
+    // A profile name, its terminator and compression method 0 (zlib).
+    let mut data = b"profile\0\0".to_vec();
+    data.extend_from_slice(&zlib_zeros(inflated.div_ceil(258)));
+    chunk(b"iCCP", &data)
+}
+
+/// Bits packed least significant first, as deflate packs them.
+struct Bits {
+    out: Vec<u8>,
+    used: u32,
+}
+
+impl Bits {
+    /// The `count` low bits of `value`, low bit first: a field or extra bits.
+    fn field(&mut self, value: u32, count: u32) {
+        for bit in 0..count {
+            self.bit((value >> bit) & 1);
+        }
+    }
+
+    /// A Huffman code of `len` bits, which deflate packs high bit first.
+    fn code(&mut self, code: u32, len: u32) {
+        for bit in (0..len).rev() {
+            self.bit((code >> bit) & 1);
+        }
+    }
+
+    fn bit(&mut self, bit: u32) {
+        if self.used.is_multiple_of(8) {
+            self.out.push(0);
+        }
+        if bit == 1 {
+            *self.out.last_mut().unwrap() |= 1 << (self.used % 8);
+        }
+        self.used += 1;
+    }
+}
+
+/// A zlib stream of `1 + 258 * copies` zero bytes, written by hand: a
+/// compressor would have to be fed every byte it describes, hundreds of MiB
+/// for the largest fixture. It is one dynamic Huffman block whose codes make
+/// a literal zero two bits and each 258-byte copy of the byte before two
+/// zero bits, about the densest deflate allows.
+fn zlib_zeros(copies: usize) -> Vec<u8> {
+    // Code lengths 2, 1 and 1 for the literal/length symbols 0, 256 (end of
+    // block) and 285 (a 258-byte copy), and 1 for distance codes 0 and 1.
+    // Their canonical codes are 0 for 285, 10 for 0 and 11 for 256, and 0
+    // for distance 1. The lengths are themselves coded with the code-length
+    // alphabet, where 18 (a run of 11 to 138 zero lengths) is 0, 1 is 10 and
+    // 2 is 11.
+    const LENGTH_1: (u32, u32) = (0b10, 2);
+    const LENGTH_2: (u32, u32) = (0b11, 2);
+    const ZERO_RUN: (u32, u32) = (0b0, 1);
+    let mut bits = Bits {
+        out: vec![0x78, 0x01],
+        used: 16,
+    };
+    // A final block with dynamic codes: 286 literal/length codes, 2 distance
+    // codes and 18 code-length codes.
+    bits.field(1, 1);
+    bits.field(0b10, 2);
+    bits.field(286 - 257, 5);
+    bits.field(2 - 1, 5);
+    bits.field(18 - 4, 4);
+    // Code-length code lengths, in the order deflate fixes: 16, 17, 18, 0,
+    // 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14 and 1.
+    for length in [0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 2] {
+        bits.field(length, 3);
+    }
+    let zero_run = |bits: &mut Bits, run: u32| {
+        bits.code(ZERO_RUN.0, ZERO_RUN.1);
+        bits.field(run - 11, 7);
+    };
+    // Symbol 0, the 255 unused literals, 256, the 28 unused lengths, 285,
+    // then both distance codes.
+    bits.code(LENGTH_2.0, LENGTH_2.1);
+    zero_run(&mut bits, 138);
+    zero_run(&mut bits, 117);
+    bits.code(LENGTH_2.0, LENGTH_2.1);
+    zero_run(&mut bits, 28);
+    for _ in 0..3 {
+        bits.code(LENGTH_1.0, LENGTH_1.1);
+    }
+    // The data: a literal zero, the copies of it, the end of the block.
+    bits.code(0b10, 2);
+    for _ in 0..copies {
+        bits.code(0b0, 1);
+        bits.code(0b0, 1);
+    }
+    bits.code(0b11, 2);
+    // Adler-32 of `len` zero bytes: its low sum stays 1 and its high sum
+    // gains 1 a byte.
+    let len = 1 + 258 * copies;
+    let adler = (u32::try_from(len % 65_521).unwrap() << 16) | 1;
+    let mut out = bits.out;
+    out.extend_from_slice(&adler.to_be_bytes());
+    out
+}
+
+/// The PNG chunk CRC (ISO 3309), bit by bit: even the largest fixture chunk
+/// is under 1 MiB.
 fn crc32(data: &[u8]) -> u32 {
     let mut crc = u32::MAX;
     for &byte in data {

@@ -8,8 +8,10 @@
 //! allocates only its output.
 //! Rotation, alpha inspection and encoding then run on the small copy, never
 //! on the source, because rotating or filtering a full-size source would
-//! allocate another full-size (or `f32`) buffer. Re-encoding writes no
-//! metadata, so EXIF (GPS included), XMP and ICC never leave the gateway.
+//! allocate another full-size (or `f32`) buffer. A PNG's ICC profile, the
+//! one piece of metadata a decoder inflates, is removed before even the
+//! header is read. Re-encoding writes no metadata, so EXIF (GPS included),
+//! XMP and ICC never leave the gateway.
 //!
 //! Every bound below is a test-enforced invariant: `tests/media_image_peak.rs`
 //! decodes worst-case fixtures of every supported format under a counting
@@ -27,6 +29,11 @@
 //! [`MAX_PIXELS`] was lowered from 24,000,000 for the CMYK JPEG, which there
 //! peaked at 252 MiB plus its input, 277 MiB at the ceiling; at 20,000,000
 //! the padded one still peaked at 258.9 MiB.
+//!
+//! A 512x512 PNG whose ICC profile would inflate to 511 MiB peaked at
+//! 529.5 MiB before profiles were removed, and now at 2.8 MiB. Removing one
+//! copies the input: beside the 6000x3000 RGBA8 PNG fixture, a 68.7 MiB input
+//! well over the 25 MiB ceiling, the copy raises its peak to 145.6 MiB.
 use super::{cache::Weighted, sniff::sniff};
 use crate::telemetry::names;
 use ::image::{
@@ -40,6 +47,7 @@ use ::image::{
 };
 use bytes::Bytes;
 use std::{
+    borrow::Cow,
     fmt,
     io::Cursor,
     sync::Arc,
@@ -90,6 +98,12 @@ const STEP_DOWN: [(u32, u32, u8); 2] = [(3, 4, 75), (1, 2, 70)];
 const JPEG_QUALITY: u8 = 85;
 /// Enough for every supported format's signature.
 const SNIFF_HEAD: usize = 64;
+/// The PNG signature that precedes its first chunk.
+const PNG_SIGNATURE_LEN: usize = 8;
+/// A PNG chunk's length and type fields, which precede its data.
+const PNG_CHUNK_HEAD: usize = 8;
+/// A PNG chunk's length, type and checksum fields together.
+const PNG_CHUNK_FRAMING: usize = 12;
 
 /// A re-encoded image without metadata, within its budget.
 pub struct NormalizedImage {
@@ -207,6 +221,12 @@ pub fn normalize_blocking(
 ) -> Result<NormalizedImage, ImageError> {
     let head = &input[..input.len().min(SNIFF_HEAD)];
     let format = supported(sniff(head).mime).ok_or(ImageError::UnsupportedFormat)?;
+    let input = if format == ImageFormat::Png {
+        without_icc_profiles(input)
+    } else {
+        Cow::Borrowed(input)
+    };
+    let input = input.as_ref();
     // The header alone decides whether the pixels may be decoded at all.
     let mut header = limited(input, format).into_decoder().map_err(classify)?;
     let (width, height) = header.dimensions();
@@ -237,20 +257,74 @@ fn pixels(input: &[u8], format: ImageFormat) -> Result<DynamicImage, ImageError>
         return limited(input, format).decode().map_err(classify);
     }
     // PNG, JPEG and WebP decoders allocate their output, which the header
-    // checks bounded, and otherwise either metadata the limited header read
-    // already bounded (PNG) or buffers `image` does not charge to the limits
-    // at all, so the limits would add nothing here. Their pixels are decoded
-    // through `image`'s non-generic, non-inlined entry point instead, so the
-    // decoders are monomorphized where the codecs are compiled with
-    // optimizations rather than in this crate. Instantiated here they run
-    // unoptimized in test builds, where a 16-bit PNG took 4 s and a lossless
-    // WebP three times as long, and the test-enforced wall time would measure
-    // the build profile rather than the decoder. That entry point guesses the
-    // format itself, so the guess must agree with the sniff.
+    // checks bounded, and otherwise copies of metadata the input holds or
+    // buffers `image` does not charge to the limits at all, so the limits
+    // would add nothing here. The one piece of metadata a decoder inflates,
+    // a PNG's ICC profile, was removed before the header was read. Their
+    // pixels are decoded through `image`'s non-generic, non-inlined entry
+    // point instead, so the decoders are monomorphized where the codecs are
+    // compiled with optimizations rather than in this crate. Instantiated
+    // here they run unoptimized in test builds, where a 16-bit PNG took 4 s
+    // and a lossless WebP three times as long, and the test-enforced wall
+    // time would measure the build profile rather than the decoder. That
+    // entry point guesses the format itself, so the guess must agree with
+    // the sniff.
     if ::image::guess_format(input).ok() != Some(format) {
         return Err(ImageError::UnsupportedFormat);
     }
     ::image::load_from_memory(input).map_err(classify)
+}
+
+/// `input`, a PNG, without its ICC profile chunks.
+///
+/// A PNG decoder inflates the profile while it reads the header, bounded only
+/// by its allocation limit, and silently drops a profile over that limit
+/// instead of refusing the image. A profile of a few hundred KiB therefore
+/// inflates to whatever limit applies: 128 MiB for the header read and
+/// 512 MiB through `load_from_memory`, twice [`DECODE_PEAK_BUDGET`]. Decoding
+/// never applies the profile and re-encoding discards it, so its chunk is
+/// removed before either read. Every chunk carries its own length and
+/// checksum, so what remains is still a valid PNG. A decoder refuses a
+/// profile after the image data without inflating it, so the walk ends at
+/// the first image data chunk. A chunk whose length runs past the input ends
+/// it too, and the decoder reports the truncation.
+///
+/// A copy is made only when a profile is present, and it is never larger
+/// than the input.
+fn without_icc_profiles(input: &[u8]) -> Cow<'_, [u8]> {
+    let mut kept: Option<Vec<u8>> = None;
+    let mut removed = 0_usize;
+    // Everything before `copied` is already in `kept` or was removed.
+    let mut copied = 0;
+    let mut offset = PNG_SIGNATURE_LEN;
+    while let Some(head) = input.get(offset..offset.saturating_add(PNG_CHUNK_HEAD)) {
+        let (length, kind) = head.split_at(4);
+        let length = u32::from_be_bytes([length[0], length[1], length[2], length[3]]);
+        let end = usize::try_from(length)
+            .unwrap_or(usize::MAX)
+            .saturating_add(PNG_CHUNK_FRAMING)
+            .saturating_add(offset)
+            .min(input.len());
+        match kind {
+            b"IDAT" => break,
+            b"iCCP" => {
+                let out = kept.get_or_insert_with(|| Vec::with_capacity(input.len()));
+                out.extend_from_slice(&input[copied..offset]);
+                copied = end;
+                removed += 1;
+            }
+            _ => {}
+        }
+        offset = end;
+    }
+    match kept {
+        None => Cow::Borrowed(input),
+        Some(mut out) => {
+            out.extend_from_slice(&input[copied..]);
+            tracing::debug!(removed, "removed embedded icc profiles before decoding");
+            Cow::Owned(out)
+        }
+    }
 }
 
 fn supported(mime: &str) -> Option<ImageFormat> {
