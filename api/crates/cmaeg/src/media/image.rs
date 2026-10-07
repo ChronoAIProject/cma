@@ -10,8 +10,10 @@
 //! on the source, because rotating or filtering a full-size source would
 //! allocate another full-size (or `f32`) buffer. A PNG's ICC profile, the
 //! one piece of metadata a decoder inflates, is removed before even the
-//! header is read. Re-encoding writes no metadata, so EXIF (GPS included),
-//! XMP and ICC never leave the gateway.
+//! header is read, and a WebP that needs the lossless decoder, which has no
+//! memory bound at all, is refused there (`webp` says which). Re-encoding
+//! writes no metadata, so EXIF (GPS included), XMP and ICC never leave the
+//! gateway.
 //!
 //! Every bound below is a test-enforced invariant: `tests/media_image_peak.rs`
 //! decodes worst-case fixtures of every supported format under a counting
@@ -24,14 +26,14 @@
 //! ICC segments to the 25 MiB `CMAEG_MEDIA_MAX_BYTES` ceiling, it peaks at
 //! 237.8 MiB; with a 23.5 MiB noisy input, at 212.7 MiB. The other fixtures
 //! peak at 62.3 MiB (baseline JPEG), 165.2 MiB (progressive RGB JPEG),
-//! 76.7 MiB (RGBA8 PNG and lossless WebP), 154.1 MiB (16-bit PNG),
-//! 85.8 MiB (two-frame GIF) and 137.3 MiB (lossy WebP animation), and every
-//! fixture finishes within 1.0 s. `image` cannot write lossy WebP, so the one
-//! at the limit is a small checked-in frame on a full-size canvas, where WebP
-//! allocates the most: the canvas and the output beside it. A still lossy
-//! WebP at the limit, written by cwebp and measured by hand, peaked at
-//! 107.7 MiB in 1.7 s with random noise, the slowest decode, and at
-//! 111.6 MiB with an uncompressed alpha plane filling the input ceiling.
+//! 76.7 MiB (RGBA8 PNG), 154.1 MiB (16-bit PNG), 85.8 MiB (two-frame GIF)
+//! and 137.3 MiB (lossy WebP animation), and every fixture finishes within
+//! 1.0 s. `image` cannot write lossy WebP, so the one at the limit is a small
+//! checked-in frame on a full-size canvas, where WebP allocates the most: the
+//! canvas and the output beside it. A still lossy WebP at the limit, written
+//! by cwebp and measured by hand, peaked at 107.7 MiB in 1.7 s with random
+//! noise, the slowest decode, and at 111.6 MiB with an uncompressed alpha
+//! plane filling the input ceiling.
 //! [`MAX_PIXELS`] was lowered from 24,000,000 for the CMYK JPEG, which there
 //! peaked at 252 MiB plus its input, 277 MiB at the ceiling; at 20,000,000
 //! the padded one still peaked at 258.9 MiB.
@@ -40,6 +42,8 @@
 //! 529.5 MiB before profiles were removed, and now at 2.8 MiB. Removing one
 //! copies the input: beside the 6000x3000 RGBA8 PNG fixture, a 68.7 MiB input
 //! well over the 25 MiB ceiling, the copy raises its peak to 145.6 MiB.
+mod webp;
+
 use super::{cache::Weighted, sniff::sniff};
 use crate::telemetry::names;
 use ::image::{
@@ -227,11 +231,7 @@ pub fn normalize_blocking(
 ) -> Result<NormalizedImage, ImageError> {
     let head = &input[..input.len().min(SNIFF_HEAD)];
     let format = supported(sniff(head).mime).ok_or(ImageError::UnsupportedFormat)?;
-    let input = if format == ImageFormat::Png {
-        without_icc_profiles(input)
-    } else {
-        Cow::Borrowed(input)
-    };
+    let input = decodable(input, format)?;
     let input = input.as_ref();
     // The header alone decides whether the pixels may be decoded at all.
     let mut header = limited(input, format).into_decoder().map_err(classify)?;
@@ -262,23 +262,44 @@ fn pixels(input: &[u8], format: ImageFormat) -> Result<DynamicImage, ImageError>
         // left, and is refused as a limit otherwise.
         return limited(input, format).decode().map_err(classify);
     }
-    // PNG, JPEG and WebP decoders allocate their output, which the header
-    // checks bounded, and otherwise copies of metadata the input holds or
+    // PNG, JPEG and lossy WebP decoders allocate what the header checks
+    // bounded: their output, and planes or an animation canvas of the same
+    // dimensions. Otherwise they copy metadata the input holds or allocate
     // buffers `image` does not charge to the limits at all, so the limits
-    // would add nothing here. The one piece of metadata a decoder inflates,
-    // a PNG's ICC profile, was removed before the header was read. Their
-    // pixels are decoded through `image`'s non-generic, non-inlined entry
-    // point instead, so the decoders are monomorphized where the codecs are
-    // compiled with optimizations rather than in this crate. Instantiated
-    // here they run unoptimized in test builds, where a 16-bit PNG took 4 s
-    // and a lossless WebP three times as long, and the test-enforced wall
-    // time would measure the build profile rather than the decoder. That
-    // entry point guesses the format itself, so the guess must agree with
-    // the sniff.
+    // would add nothing here. What would get around the header checks never
+    // gets here: a PNG's ICC profile, the one piece of metadata a decoder
+    // inflates, was removed before the header was read, and a WebP that needs
+    // the lossless decoder, whose bitstream sizes its own allocations, was
+    // refused there. Their pixels are decoded through `image`'s non-generic,
+    // non-inlined entry point instead, so the decoders are monomorphized
+    // where the codecs are compiled with optimizations rather than in this
+    // crate. Instantiated here they run unoptimized in test builds, where a
+    // 16-bit PNG took 4 s, and the test-enforced wall time would measure the
+    // build profile rather than the decoder. That entry point guesses the
+    // format itself, so the guess must agree with the sniff.
     if ::image::guess_format(input).ok() != Some(format) {
         return Err(ImageError::UnsupportedFormat);
     }
     ::image::load_from_memory(input).map_err(classify)
+}
+
+/// `input` as its decoders may read it: a PNG without its ICC profiles, and a
+/// WebP only when no part of it needs the unbounded lossless decoder.
+fn decodable(input: &[u8], format: ImageFormat) -> Result<Cow<'_, [u8]>, ImageError> {
+    match format {
+        ImageFormat::Png => Ok(without_icc_profiles(input)),
+        ImageFormat::WebP => match webp::lossless_chunk(input) {
+            None => Ok(Cow::Borrowed(input)),
+            Some(chunk) => {
+                tracing::debug!(
+                    chunk = chunk.as_str(),
+                    "refused a webp that only the lossless decoder reads"
+                );
+                Err(ImageError::UnsupportedFormat)
+            }
+        },
+        _ => Ok(Cow::Borrowed(input)),
+    }
 }
 
 /// `input`, a PNG, without its ICC profile chunks.

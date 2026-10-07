@@ -1385,6 +1385,14 @@ types are never trusted.
 | file whose bytes are an image, audio or video | as that row | as that row | as that row | as that row |
 | other binary file | metadata only, `ready`, notice `binary file: only metadata is available to this agent` | `unsupported_format` | `unsupported_format` | `unsupported_format` |
 
+An image is normalized from PNG, JPEG, GIF or lossy WebP; an animation shows
+its first frame. Any other image format is `unsupported_format`, and so is a
+WebP whose pixels, or whose transparency, are compressed losslessly, in a still
+image or in any frame: the gateway's decoder for that compression has no memory
+bound. That includes most transparent lossy WebP, such as Telegram stickers,
+because libwebp compresses transparency losslessly by default. A lossy WebP
+that is opaque or carries uncompressed transparency is normalized.
+
 `download` answers with a single-use link to the original, never with
 content; see [Media downloads](#media-downloads). Frames are the platform's own thumbnail where one exists (native
 Telegram) and video keyframes where the gateway extracts them. A video with
@@ -1417,7 +1425,7 @@ still says how many pages exist. The reasons are:
 | `not_found` | unavailable | The source answered not found, or the page is past the last page. |
 | `too_large` | unavailable | The item exceeds `CMAEG_MEDIA_MAX_BYTES`. |
 | `too_large_pixels` | unavailable | The image exceeds 18 megapixels or 12 000 px on a side. |
-| `unsupported_format` | unavailable | The sniffed format is not supported for this view. |
+| `unsupported_format` | unavailable | The sniffed format is not supported for this view, or is a WebP compressed losslessly. |
 | `decode_failed` | unavailable | The bytes could not be decoded. |
 | `timed_out` | unavailable | The background job hit its 90-second cap or a deadline. |
 | `source_unavailable` | unavailable | NyxID, Telegram or the custom origin failed transiently, refused the credential, or was busy. |

@@ -486,6 +486,16 @@ stream deadline; bodies cut early with few bytes point at the source (compare
 reading. No state needs repair: every slot and budget share was released when
 the body ended.
 
+Image normalization refuses lossless WebP, and lossy WebP whose transparency is
+compressed losslessly (libwebp's default, so most transparent WebP, Telegram
+stickers included), as `unsupported_format` before any decoder reads it. The
+decoder for that compression has no memory bound, so one such image could
+exceed the 256 MiB decode budget and the 1536Mi of container memory that media
+requires. These refusals appear as
+`cmaeg_media_derive_seconds_count{op="image",outcome="unsupported_format"}` and
+as `refused a webp that only the lossless decoder reads` debug logs naming the
+chunk. They are expected, not a fault, and need no repair.
+
 #### Media download links
 
 A media link is redeemed in a per-replica set before the download is checked

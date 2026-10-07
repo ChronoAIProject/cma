@@ -1,6 +1,6 @@
 //! Image normalization: budgets, orientation, metadata stripping, format
 //! handling and refusals.
-use super::image_fixtures as fixtures;
+use super::{image_fixtures as fixtures, webp_fixtures as webp};
 use bytes::Bytes;
 use cmaeg::media::image::{
     normalize, normalize_blocking, ImageError, NormalizedImage, FULL, MAX_PIXELS, PREVIEW,
@@ -201,12 +201,215 @@ fn formats_other_than_png_jpeg_gif_and_webp_are_unsupported() {
     }
 }
 
+/// Whether `image` itself decodes `input`: a WebP it decodes and
+/// normalization refuses is kept from its decoder by the refusal alone.
+fn image_decodes(input: &[u8]) -> bool {
+    image::load_from_memory(input).is_ok()
+}
+
+fn assert_unsupported(input: &[u8]) {
+    assert_eq!(
+        normalize_blocking(input, FULL).unwrap_err(),
+        ImageError::UnsupportedFormat
+    );
+}
+
+/// [`webp::LOSSY`]'s image in a lossless WebP of its own.
+fn lossless_webp() -> Vec<u8> {
+    fixtures::webp_lossless(&fixtures::rgba(webp::WIDTH, webp::HEIGHT, 0, false))
+}
+
+#[test]
+fn a_lossy_webp_normalizes() {
+    let output = normalize_blocking(webp::LOSSY, FULL).unwrap();
+    assert_eq!((output.width, output.height), (webp::WIDTH, webp::HEIGHT));
+    assert_eq!(output.mime, "image/jpeg");
+    assert_within(&output, FULL);
+    // The gradient survived: red rises from left to right.
+    let rgb = decoded(&output).to_rgb8();
+    let [left, ..] = rgb.get_pixel(2, 24).0;
+    let [right, ..] = rgb.get_pixel(61, 24).0;
+    assert!(left < 40 && right > 200, "{left} {right}");
+}
+
+#[test]
+fn a_lossless_webp_is_refused_before_it_is_decoded() {
+    let input = lossless_webp();
+    assert!(image_decodes(&input));
+    assert_unsupported(&input);
+}
+
+#[test]
+fn an_animation_with_any_lossless_frame_is_refused() {
+    let lossless = webp::lossless_frame(&lossless_webp(), webp::WIDTH, webp::HEIGHT);
+    // `image` decodes only the first frame, but every frame is checked.
+    for frames in [vec![lossless.clone()], vec![webp::lossy_frame(), lossless]] {
+        let input = webp::animation(0, webp::WIDTH, webp::HEIGHT, &frames);
+        assert!(image_decodes(&input));
+        assert_unsupported(&input);
+    }
+    // Lossy frames alone are decoded, and the first is shown.
+    let lossy = webp::animation(
+        0,
+        webp::WIDTH,
+        webp::HEIGHT,
+        &[webp::lossy_frame(), webp::lossy_frame()],
+    );
+    let output = normalize_blocking(&lossy, FULL).unwrap();
+    assert_eq!((output.width, output.height), (webp::WIDTH, webp::HEIGHT));
+}
+
+#[test]
+fn lossy_webp_with_lossless_alpha_is_refused() {
+    // libwebp compresses a lossy image's alpha losslessly by default, and the
+    // lossless decoder reads that alpha, in a still image and in a frame.
+    let animated = webp::animation(
+        webp::ALPHA,
+        webp::WIDTH,
+        webp::HEIGHT,
+        &[webp::lossy_alpha_frame()],
+    );
+    for input in [webp::LOSSY_ALPHA, &animated] {
+        assert!(image_decodes(input));
+        assert_unsupported(input);
+    }
+}
+
+#[test]
+fn lossy_webp_with_raw_alpha_keeps_its_transparency() {
+    let (width, height) = (webp::WIDTH, webp::HEIGHT);
+    // Transparent on the left half, opaque on the right.
+    let alpha: Vec<u8> = (0..width * height)
+        .map(|index| {
+            if index % width < width / 2 {
+                0
+            } else {
+                u8::MAX
+            }
+        })
+        .collect();
+    let lossy = webp::find_chunk(webp::LOSSY, b"VP8 ");
+    let still = webp::riff(&[
+        webp::extended(webp::ALPHA, width, height),
+        webp::raw_alpha(&alpha),
+        lossy.clone(),
+    ]);
+    let animated = webp::animation(
+        webp::ALPHA,
+        width,
+        height,
+        &[webp::frame(
+            width,
+            height,
+            &[webp::raw_alpha(&alpha), lossy],
+        )],
+    );
+    for input in [still, animated] {
+        let output = normalize_blocking(&input, FULL).unwrap();
+        assert_eq!(output.mime, "image/png");
+        let rgba = decoded(&output).to_rgba8();
+        assert_eq!(rgba.get_pixel(2, 24).0[3], 0);
+        assert_eq!(rgba.get_pixel(61, 24).0[3], u8::MAX);
+    }
+}
+
+#[test]
+fn a_lossless_chunk_is_found_wherever_the_decoder_reads_it() {
+    let lossless = webp::find_chunk(&lossless_webp(), b"VP8L");
+    let header = webp::extended(0, webp::WIDTH, webp::HEIGHT);
+    // After a chunk of odd length, past its padding byte.
+    let padded = webp::riff(&[
+        header.clone(),
+        webp::chunk(b"XTRA", &[1, 2, 3]),
+        lossless.clone(),
+    ]);
+    // Past the end the RIFF size declares, which the decoder reads beyond.
+    let mut overread = webp::riff(&[header]);
+    overread.extend_from_slice(&lossless);
+    // Lossless alpha in a frame of a still image, whose first chunks the
+    // decoder takes as the image's own: only the alpha's header lies inside
+    // the frame, and the decoder reads its data from past the frame's end.
+    let alpha = webp::find_chunk(webp::LOSSY_ALPHA, b"ALPH");
+    let (alpha_header, alpha_data) = alpha.split_at(8);
+    let outside = webp::riff(&[
+        webp::extended(webp::ALPHA, webp::WIDTH, webp::HEIGHT),
+        webp::find_chunk(webp::LOSSY, b"VP8 "),
+        webp::frame(webp::WIDTH, webp::HEIGHT, &[alpha_header.to_vec()]),
+        alpha_data.to_vec(),
+    ]);
+    for input in [padded, overread, outside] {
+        assert!(image_decodes(&input));
+        assert_unsupported(&input);
+    }
+}
+
+#[test]
+fn truncated_or_garbage_webp_never_panics() {
+    let animated = webp::animation(
+        webp::ALPHA,
+        webp::WIDTH,
+        webp::HEIGHT,
+        &[webp::lossy_frame(), webp::lossy_alpha_frame()],
+    );
+    // Every cut of every sample returns, with an error or, when only the end
+    // of a lossy bitstream is missing, which its decoder tolerates, with the
+    // whole image.
+    for sample in [webp::LOSSY, webp::LOSSY_ALPHA, &animated, &lossless_webp()] {
+        for end in 0..sample.len() {
+            if let Ok(output) = normalize_blocking(&sample[..end], FULL) {
+                let size = (output.width, output.height);
+                assert_eq!(size, (webp::WIDTH, webp::HEIGHT), "cut at {end}");
+            }
+        }
+    }
+    // Lossless alpha is refused from its first byte on, before its chunk is
+    // complete. Cut before that byte, the image fails to decode.
+    let alpha = webp::LOSSY_ALPHA
+        .windows(4)
+        .position(|window| window == b"ALPH")
+        .unwrap()
+        + 8;
+    assert_unsupported(&webp::LOSSY_ALPHA[..=alpha]);
+    assert_eq!(
+        normalize_blocking(&webp::LOSSY_ALPHA[..alpha], FULL).unwrap_err(),
+        ImageError::DecodeFailed
+    );
+    // Chunk lengths of 4 GiB, odd, with almost nothing after them: the one
+    // naming the lossless decoder is refused, the others fail to decode.
+    let huge = |before: &[Vec<u8>], kind: &[u8; 4], data: &[u8]| {
+        let mut out = b"RIFF\xFF\xFF\xFF\xFFWEBP".to_vec();
+        out.extend_from_slice(&before.concat());
+        out.extend_from_slice(kind);
+        out.extend_from_slice(&u32::MAX.to_le_bytes());
+        out.extend_from_slice(data);
+        out
+    };
+    assert_unsupported(&huge(&[], b"VP8L", &[0x2F, 0, 0, 0]));
+    let animation = webp::extended(webp::ANIMATION, webp::WIDTH, webp::HEIGHT);
+    for input in [
+        huge(&[], b"VP8X", &[0; 10]),
+        huge(&[], b"ALPH", &[]),
+        huge(&[animation], b"ANMF", &[0; 20]),
+    ] {
+        assert_eq!(
+            normalize_blocking(&input, FULL).unwrap_err(),
+            ImageError::DecodeFailed
+        );
+    }
+    // Noise after a valid signature.
+    let mut random = fixtures::Noise::new(11);
+    let mut noise = b"RIFF\x00\x10\x00\x00WEBP".to_vec();
+    noise.extend((0..4096).map(|_| random.byte()));
+    assert!(normalize_blocking(&noise, FULL).is_err());
+}
+
 #[test]
 fn previews_fit_their_budget() {
     let inputs = [
         fixtures::jpeg(&fixtures::rgb(3000, 2000, 40), 95),
         fixtures::png_rgba8(&fixtures::rgba(1600, 1600, 64, true)),
-        fixtures::webp_lossless(&fixtures::rgba(1200, 900, 32, false)),
+        // A lossy frame on a canvas larger than the preview.
+        webp::animation(0, 1200, 900, &[webp::lossy_frame()]),
     ];
     for input in inputs {
         let output = normalize_blocking(&input, PREVIEW).unwrap();
