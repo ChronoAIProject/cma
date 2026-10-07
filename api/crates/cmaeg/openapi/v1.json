@@ -1492,6 +1492,24 @@
         ],
         "type": "object"
       },
+      "CustomAttachments": {
+        "additionalProperties": false,
+        "description": "Where a custom event lists its attachments and which origins they may name.",
+        "properties": {
+          "origins": {
+            "description": "Exact HTTPS origins (`https://host[:port]`) an item URL may name. Empty\nadmits only inline `data:` items.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "pointer": {
+            "description": "RFC 6901 pointer, relative to the event's `data`, at an array of items.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
       "CustomAuth": {
         "oneOf": [
           {
@@ -2971,6 +2989,16 @@
           },
           {
             "properties": {
+              "attachments": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/CustomAttachments"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "auth": {
                 "$ref": "#/components/schemas/CustomAuth"
               },
@@ -3142,6 +3170,16 @@
           },
           {
             "properties": {
+              "attachments": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/CustomAttachments"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "auth": {
                 "$ref": "#/components/schemas/CustomAuth"
               },

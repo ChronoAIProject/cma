@@ -1,6 +1,6 @@
 //! Management request shapes, separate from construction and validation.
 use cmaeg_core::{
-    channel::{AdmissionPolicy, CustomAuth, ReplyPolicy, Secret},
+    channel::{AdmissionPolicy, CustomAttachments, CustomAuth, ReplyPolicy, Secret},
     ids::{ProviderSlug, RecordId},
     profile::EventWorkerProfile,
 };
@@ -89,6 +89,9 @@ pub enum SourceRequest {
         prompt_template: Option<String>,
         #[serde(default)]
         schema: Option<Value>,
+        // Omitted when absent so retained creation fingerprints stay stable.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        attachments: Option<CustomAttachments>,
     },
 }
 

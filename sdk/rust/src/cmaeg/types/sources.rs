@@ -2,6 +2,17 @@
 use super::{AdmissionPolicy, CustomAuth, Platform};
 use serde::{Deserialize, Serialize};
 
+/// CMAEG `CustomAttachments` wire shape.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct CustomAttachments {
+    /// Wire field `origins`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origins: Option<Vec<String>>,
+    /// Wire field `pointer`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pointer: Option<String>,
+}
+
 /// CMAEG `Source` wire shape.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -53,6 +64,9 @@ pub enum Source {
         /// Wire field `schema`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         schema: Option<serde_json::Value>,
+        /// Wire field `attachments`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        attachments: Option<CustomAttachments>,
     },
 }
 
@@ -105,5 +119,8 @@ pub enum SourceRequest {
         /// Wire field `schema`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         schema: Option<serde_json::Value>,
+        /// Wire field `attachments`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        attachments: Option<CustomAttachments>,
     },
 }

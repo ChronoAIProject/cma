@@ -174,3 +174,6 @@ mod reconciliation;
 
 #[path = "management/targets.rs"]
 mod targets;
+
+#[path = "management/custom_attachments.rs"]
+mod custom_attachments;

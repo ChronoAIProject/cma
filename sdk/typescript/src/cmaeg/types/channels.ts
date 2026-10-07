@@ -105,6 +105,12 @@ export const CustomAuthSchema = tagged(
 );
 export type CustomAuth = Output<typeof CustomAuthSchema>;
 
+export const CustomAttachmentsSchema = object({
+  origins: optional(array(text)),
+  pointer: optional(text),
+});
+export type CustomAttachments = Output<typeof CustomAttachmentsSchema>;
+
 export const SourceRequestSchema = tagged(
   {
     telegram: object({
@@ -125,6 +131,7 @@ export const SourceRequestSchema = tagged(
       type: enumeration('nyxid_relay'),
     }),
     custom: object({
+      attachments: optional(nullable(CustomAttachmentsSchema)),
       auth: CustomAuthSchema,
       prompt_template: optional(nullable(text)),
       schema: optional(anything),
@@ -189,6 +196,7 @@ export const SourceSchema = tagged(
       type: enumeration('nyxid_relay'),
     }),
     custom: object({
+      attachments: optional(nullable(CustomAttachmentsSchema)),
       auth: CustomAuthSchema,
       prompt_template: optional(nullable(text)),
       schema: optional(anything),

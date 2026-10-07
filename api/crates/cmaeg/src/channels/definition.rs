@@ -255,10 +255,12 @@ fn build_sources(sources: &[SourceRequest]) -> Result<Vec<Source>, ValidationErr
                 auth,
                 prompt_template,
                 schema,
+                attachments,
             } => Source::Custom {
                 auth: auth.clone(),
                 prompt_template: prompt_template.clone(),
                 schema: schema.clone(),
+                attachments: attachments.clone(),
             },
         });
         if result.len() > 4 {

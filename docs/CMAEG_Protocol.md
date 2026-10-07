@@ -488,6 +488,16 @@ HMAC IDs contain 1–512 bytes and secrets 1–4096 bytes. Public replies never 
 these credentials. A provider slug MUST be in the operator's allowlist and match
 `profile.metadata.provider`; callers cannot supply a provider URL.
 
+A custom source request may also carry an optional `attachments` setting,
+`{pointer?, origins?}`, that opts the channel in to attachment items listed in
+event data (see [Custom CloudEvents](#custom-cloudevents)). While the operator's
+inbound media switch, `CMAEG_MEDIA_ENABLED`, is off, a create or update that
+supplies it is refused with 400 `invalid_request` and the detail
+`/sources/<i>/attachments: custom_attachments_disabled`, so the setting is
+stored only once every replica can read it. An update that omits it removes it
+and is always accepted. A request without the setting keeps exactly the shape,
+and the retained creation fingerprint, it had before the setting existed.
+
 Profile fields not illustrated above: optional `environment` is provider-specific
 JSON; metadata `description` defaults to empty. Identity `kind` is `human`,
 `service_account`, `agent_key` or `organization`. The owner subject must equal
@@ -942,7 +952,7 @@ subscribed to or interpreted as creation consent in this version.
 
 ### Custom CloudEvents
 
-Configure `{type:"custom",auth,schema?,prompt_template?}`. Auth is
+Configure `{type:"custom",auth,schema?,prompt_template?,attachments?}`. Auth is
 `{type:"hmac",key_id}` referencing a retained HMAC secret, or
 `{type:"nyxid_key",key_hashes:["sha256:<lowercase-hex>"]}`. The latter accepts a
 single `Authorization: Bearer <agent-key>`, locally hashes it and compares in
@@ -957,6 +967,22 @@ optional `subject,time,datacontenttype,dataschema,data`, and CloudEvents extensi
 body and single-valued `ce-specversion`, `ce-id`, `ce-source`, `ce-type` headers,
 with optional `ce-subject`, `ce-time`, `ce-dataschema` and extension headers.
 Only JSON data is supported. The `schema` field MUST be omitted or null in v1; non-null values are rejected.
+
+The optional `attachments` setting, `{pointer, origins}`, opts the channel in to
+attachment items carried in event data. Both fields are optional:
+
+| Field | Default | Rules |
+| --- | --- | --- |
+| `pointer` | `/attachments` | An RFC 6901 JSON pointer into the event's `data`: 1–240 bytes, starting with `/`, every `~` followed by `0` or `1`, no control characters. An item's inline locator, `<pointer>/<i>/url`, then always fits the 256-byte locator bound. |
+| `origins` | `[]` | At most 16 unique exact HTTPS origins, each written as a URL's serialized origin: `https://host` or `https://host:port`, lowercase host of at most 253 bytes, no userinfo, path, query, fragment, trailing slash or default port `:443`. A wildcard such as `https://*.example` is refused. An empty list admits only inline `data:` items. |
+
+A malformed setting is 400 `invalid_request` at `/sources/<i>/attachments/pointer`
+or `/sources/<i>/attachments/origins/<j>`. An origin whose host is an IP literal
+must be a public address, otherwise the detail is
+`/sources/<i>/attachments/origins/<j>: attachment_origin_not_public`; a DNS name
+is checked against public addresses whenever the gateway fetches from it. While
+`CMAEG_MEDIA_ENABLED` is off the setting is refused with
+`custom_attachments_disabled`, as described in §5.
 
 HMAC uses the Standard Webhooks header/envelope format with CMAEG's explicit key
 convention: the configured base64 secret string's UTF-8 bytes are the HMAC key;

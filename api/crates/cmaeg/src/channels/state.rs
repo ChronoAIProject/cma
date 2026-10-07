@@ -25,6 +25,9 @@ pub struct ManagementState {
     pub tools_nyxid_slug: String,
     pub cma_service_token: cmaeg_core::channel::Secret,
     pub telegram: Option<Arc<crate::telegram::TelegramClient>>,
+    /// Inbound media switch. Off, a custom source's attachments setting is
+    /// refused, so it is stored only once every replica can parse it.
+    pub media_enabled: bool,
     mutations: Arc<[Mutex<()>; 64]>,
     pub(crate) idempotency: Arc<Mutex<BTreeMap<(String, String), CachedResponse>>>,
 }
@@ -61,6 +64,7 @@ impl ManagementState {
             tools_nyxid_slug: config.tools_nyxid_slug,
             cma_service_token: config.cma_service_token,
             telegram: None,
+            media_enabled: false,
             idempotency: Arc::new(Mutex::new(BTreeMap::new())),
             mutations: Arc::new(std::array::from_fn(|_| Mutex::new(()))),
         }

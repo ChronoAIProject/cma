@@ -1,7 +1,7 @@
 //! Management operations over sealed definitions and CMA records.
 use super::definition::{
     build_definition, build_update, channel_pointer, validate_create_request,
-    validate_update_request, ChannelCreateRequest, ChannelUpdateRequest,
+    validate_update_request, ChannelCreateRequest, ChannelUpdateRequest, SourceRequest,
 };
 pub use super::state::{CreatedChannel, LoadedChannel, ManagementError, ManagementState};
 pub use super::test_turn::{test_turn, TestResult};
@@ -24,6 +24,7 @@ pub async fn create(
     creator: &Creator,
     mut request: ChannelCreateRequest,
 ) -> Result<CreatedChannel, ManagementError> {
+    custom_attachments_allowed(state, &request.sources)?;
     crate::connections::binding::expand_create(state, creator, &mut request).await?;
     validate_create_request(&request).map_err(ManagementError::Invalid)?;
     if request.profile.metadata.owner.subject != creator.subject {
@@ -105,6 +106,58 @@ pub async fn create(
     })
 }
 
+/// Refuse a custom source's attachments setting while inbound media is off.
+///
+/// An image older than this setting cannot parse a stored definition that
+/// carries it, so it is accepted only once the operator has enabled media on
+/// every replica. Removing the setting is always allowed. Origins that are IP
+/// literals must be public; a DNS name is checked against public addresses on
+/// every later fetch, so only the obviously private case is refused here.
+pub(super) fn custom_attachments_allowed(
+    state: &ManagementState,
+    sources: &[SourceRequest],
+) -> Result<(), ManagementError> {
+    for (index, source) in sources.iter().enumerate() {
+        let SourceRequest::Custom {
+            attachments: Some(config),
+            ..
+        } = source
+        else {
+            continue;
+        };
+        let pointer = format!("/sources/{index}/attachments");
+        if !state.media_enabled {
+            tracing::info!(
+                source = index,
+                "custom attachments refused while media is disabled"
+            );
+            return Err(ManagementError::Invalid(ValidationError::new(
+                pointer,
+                "custom_attachments_disabled",
+            )));
+        }
+        for (position, origin) in config.origins.iter().enumerate() {
+            // A malformed origin is left to the structural validation of the
+            // complete definition, which reports its own exact pointer.
+            let address = match url::Url::parse(origin)
+                .ok()
+                .and_then(|url| url.host().map(|host| host.to_owned()))
+            {
+                Some(url::Host::Ipv4(address)) => Some(std::net::IpAddr::V4(address)),
+                Some(url::Host::Ipv6(address)) => Some(std::net::IpAddr::V6(address)),
+                _ => None,
+            };
+            if address.is_some_and(|address| !crate::net::policy::public_ip(address)) {
+                return Err(ManagementError::Invalid(ValidationError::new(
+                    format!("{pointer}/origins/{position}"),
+                    "attachment_origin_not_public",
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
 pub async fn load(
     state: &ManagementState,
     creator: &Creator,
@@ -135,6 +188,7 @@ pub async fn update(
     )
     .await?;
     validate_update_request(&request).map_err(ManagementError::Invalid)?;
+    custom_attachments_allowed(state, &request.sources)?;
     if current
         .definition
         .creation

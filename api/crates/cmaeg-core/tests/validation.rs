@@ -77,6 +77,7 @@ fn rejects_duplicate_source_and_partition_mismatch() {
         auth: CustomAuth::Hmac { key_id: "k".into() },
         prompt_template: None,
         schema: None,
+        attachments: None,
     };
     let mut value =
         serde_json::from_str::<ChannelDefinition>(include_str!("fixtures/channel.json"))

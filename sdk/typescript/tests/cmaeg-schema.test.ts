@@ -4,7 +4,13 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
-import { AttachmentSchema, AttachmentSourceSchema } from '../src/cmaeg/types.js';
+import {
+  AttachmentSchema,
+  AttachmentSourceSchema,
+  CustomAttachmentsSchema,
+  SourceRequestSchema,
+  SourceSchema,
+} from '../src/cmaeg/types.js';
 
 interface Schema {
   readonly $ref?: string;
@@ -135,5 +141,42 @@ describe('CMAEG attachment locators', () => {
     expect(() =>
       AttachmentSchema({ reference: 'fixture', kind: 'file', variant: 'hologram' }),
     ).toThrow('variant');
+  });
+});
+
+describe('CMAEG custom source attachments', () => {
+  const examples = JSON.parse(
+    readFileSync(
+      new URL('../../../api/crates/cmaeg/tests/fixtures/sdk-contract.json', import.meta.url),
+      'utf8',
+    ),
+  ) as Record<string, readonly unknown[]>;
+  const custom = (name: string) =>
+    (examples[name] ?? []).filter((value) => (value as { type: string }).type === 'custom');
+
+  it('round-trips the setting alone and on both custom source shapes', () => {
+    for (const example of examples.CustomAttachments ?? [])
+      expect(CustomAttachmentsSchema(example)).toEqual(example);
+    expect(custom('Source')).toHaveLength(1);
+    expect(custom('SourceRequest')).toHaveLength(1);
+    for (const example of custom('Source')) expect(SourceSchema(example)).toEqual(example);
+    for (const example of custom('SourceRequest'))
+      expect(SourceRequestSchema(example)).toEqual(example);
+  });
+
+  it('accepts an absent or null setting and refuses a malformed one', () => {
+    const base = { type: 'custom', auth: { type: 'hmac', key_id: 'fixture' } };
+    expect(SourceRequestSchema(base)).toEqual(base);
+    expect(SourceRequestSchema({ ...base, attachments: null })).toEqual({
+      ...base,
+      attachments: null,
+    });
+    expect(CustomAttachmentsSchema({})).toEqual({});
+    expect(() =>
+      SourceRequestSchema({ ...base, attachments: { origins: 'https://fixture.example' } }),
+    ).toThrow('attachments: origins');
+    expect(() => SourceSchema({ ...base, attachments: { pointer: 7 } })).toThrow(
+      'attachments: pointer',
+    );
   });
 });
