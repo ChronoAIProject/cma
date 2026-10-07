@@ -313,10 +313,33 @@
       },
       "Attachment": {
         "additionalProperties": false,
+        "description": "One attachment of an activity.\n\nEvery fact is what the source declared. Content derived from the bytes\n(transcripts, pixels, extracted text) never enters the Activity: the sealed\nactivity digest covers only what the source reported, and derived content is\nproduced on demand from the locator.",
         "properties": {
+          "duration_seconds": {
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "emoji": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "filename": {
             "type": [
               "string",
+              "null"
+            ]
+          },
+          "height": {
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
               "null"
             ]
           },
@@ -330,10 +353,51 @@
             ]
           },
           "reference": {
+            "description": "Stable, non-secret identifier such as `telegram:<file_unique_id>`,\n`lark:<key>`, `<platform>:item-<i>` or an owner-supplied value.",
             "type": "string"
           },
           "size_bytes": {
             "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "source": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AttachmentSource",
+                "description": "Where the bytes can be fetched; absent means the attachment is not\nretrievable and only its facts are known."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "thumbnail": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AttachmentSource",
+                "description": "A preview image; only a Telegram locator on a native Telegram activity."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "variant": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MediaVariant"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "width": {
+            "format": "int32",
             "minimum": 0,
             "type": [
               "integer",
@@ -356,6 +420,93 @@
           "other"
         ],
         "type": "string"
+      },
+      "AttachmentSource": {
+        "description": "Where an attachment's bytes can be fetched.\n\nLocators are non-secret and bound into the activity digest, but they never\ncarry retrieval authority: the NyxID message ID stays inside the sealed reply\naddress, and every fetch is authorized by the event_ref that sealed the\nactivity. Each type is valid only with its matching activity source.",
+        "oneOf": [
+          {
+            "description": "Position of the attachment in the NyxID relay callback.",
+            "properties": {
+              "index": {
+                "format": "int32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "type": {
+                "enum": [
+                  "nyxid_relay"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "index",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Telegram Bot API file identifiers of a natively received message.",
+            "properties": {
+              "file_id": {
+                "type": "string"
+              },
+              "file_unique_id": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "telegram"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "file_id",
+              "file_unique_id",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "An absolute HTTPS URL supplied by a custom event source.",
+            "properties": {
+              "type": {
+                "enum": [
+                  "url"
+                ],
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "url",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "An RFC 6901 JSON pointer to bytes carried inside the custom event itself.",
+            "properties": {
+              "pointer": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "inline"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "pointer",
+              "type"
+            ],
+            "type": "object"
+          }
+        ]
       },
       "BindingId": {
         "type": "string"
@@ -1872,6 +2023,24 @@
           "auth"
         ],
         "type": "object"
+      },
+      "MediaVariant": {
+        "description": "The platform's own name for the media, finer than `AttachmentKind`.",
+        "enum": [
+          "photo",
+          "document",
+          "audio",
+          "voice",
+          "video",
+          "video_note",
+          "animation",
+          "sticker",
+          "image",
+          "file",
+          "media",
+          "embedded"
+        ],
+        "type": "string"
       },
       "MessageRef": {
         "type": "string"

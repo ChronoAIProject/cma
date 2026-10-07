@@ -14,7 +14,13 @@ use crate::{
 };
 
 mod attachment;
-pub use attachment::{Attachment, AttachmentKind, MAX_ATTACHMENTS};
+pub use attachment::{
+    forbidden_text_char, mime_restricted_name, telegram_ids_valid, validate_attachments,
+    Attachment, AttachmentKind, AttachmentSource, MediaVariant, MAX_ALBUM_ID_BYTES,
+    MAX_ATTACHMENTS, MAX_ATTACHMENT_URL_BYTES, MAX_DIMENSION, MAX_DURATION_SECONDS,
+    MAX_EMOJI_BYTES, MAX_FILENAME_BYTES, MAX_FILE_ID_BYTES, MAX_FILE_UNIQUE_ID_BYTES,
+    MAX_INLINE_POINTER_BYTES, MAX_MIME_PART_BYTES, MAX_NYXID_INDEX, MAX_REFERENCE_BYTES,
+};
 
 pub const ACTIVITY_SCHEMA_VERSION: u16 = 1;
 
@@ -149,7 +155,7 @@ impl Activity {
                 text, attachments, ..
             } => {
                 require_string(text, "/kind/text", 0, 32 * 1_024)?;
-                attachment::validate_message_attachments(attachments)?;
+                validate_attachments(attachments, &self.source, "/kind/attachments")?;
             }
             ActivityKind::Interaction(result) => {
                 require_string(&result.block_id, "/kind/block_id", 1, 512)?;

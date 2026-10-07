@@ -22,11 +22,26 @@
       "kind": {
         "attachments": [
           {
+            "duration_seconds": 1,
+            "emoji": "fixture",
             "filename": "fixture",
+            "height": 1,
             "kind": "image",
             "mime_type": "fixture",
             "reference": "fixture",
-            "size_bytes": 1
+            "size_bytes": 1,
+            "source": {
+              "file_id": "fixture",
+              "file_unique_id": "fixture",
+              "type": "telegram"
+            },
+            "thumbnail": {
+              "file_id": "fixture",
+              "file_unique_id": "fixture",
+              "type": "telegram"
+            },
+            "variant": "photo",
+            "width": 1
           }
         ],
         "mentions_bot": true,
@@ -54,11 +69,26 @@
     {
       "attachments": [
         {
+          "duration_seconds": 1,
+          "emoji": "fixture",
           "filename": "fixture",
+          "height": 1,
           "kind": "image",
           "mime_type": "fixture",
           "reference": "fixture",
-          "size_bytes": 1
+          "size_bytes": 1,
+          "source": {
+            "file_id": "fixture",
+            "file_unique_id": "fixture",
+            "type": "telegram"
+          },
+          "thumbnail": {
+            "file_id": "fixture",
+            "file_unique_id": "fixture",
+            "type": "telegram"
+          },
+          "variant": "photo",
+          "width": 1
         }
       ],
       "mentions_bot": true,
@@ -181,11 +211,26 @@
   ],
   "Attachment": [
     {
+      "duration_seconds": 1,
+      "emoji": "fixture",
       "filename": "fixture",
+      "height": 1,
       "kind": "image",
       "mime_type": "fixture",
       "reference": "fixture",
-      "size_bytes": 1
+      "size_bytes": 1,
+      "source": {
+        "file_id": "fixture",
+        "file_unique_id": "fixture",
+        "type": "telegram"
+      },
+      "thumbnail": {
+        "file_id": "fixture",
+        "file_unique_id": "fixture",
+        "type": "telegram"
+      },
+      "variant": "photo",
+      "width": 1
     }
   ],
   "AttachmentKind": [
@@ -194,6 +239,25 @@
     "audio",
     "video",
     "other"
+  ],
+  "AttachmentSource": [
+    {
+      "index": 0,
+      "type": "nyxid_relay"
+    },
+    {
+      "file_id": "fixture",
+      "file_unique_id": "fixture",
+      "type": "telegram"
+    },
+    {
+      "type": "url",
+      "url": "https://fixture.example/attachment"
+    },
+    {
+      "pointer": "/fixture",
+      "type": "inline"
+    }
   ],
   "BindingId": [
     "fixture"
@@ -772,11 +836,26 @@
         "kind": {
           "attachments": [
             {
+              "duration_seconds": 1,
+              "emoji": "fixture",
               "filename": "fixture",
+              "height": 1,
               "kind": "image",
               "mime_type": "fixture",
               "reference": "fixture",
-              "size_bytes": 1
+              "size_bytes": 1,
+              "source": {
+                "file_id": "fixture",
+                "file_unique_id": "fixture",
+                "type": "telegram"
+              },
+              "thumbnail": {
+                "file_id": "fixture",
+                "file_unique_id": "fixture",
+                "type": "telegram"
+              },
+              "variant": "photo",
+              "width": 1
             }
           ],
           "mentions_bot": true,
@@ -907,11 +986,26 @@
         "kind": {
           "attachments": [
             {
+              "duration_seconds": 1,
+              "emoji": "fixture",
               "filename": "fixture",
+              "height": 1,
               "kind": "image",
               "mime_type": "fixture",
               "reference": "fixture",
-              "size_bytes": 1
+              "size_bytes": 1,
+              "source": {
+                "file_id": "fixture",
+                "file_unique_id": "fixture",
+                "type": "telegram"
+              },
+              "thumbnail": {
+                "file_id": "fixture",
+                "file_unique_id": "fixture",
+                "type": "telegram"
+              },
+              "variant": "photo",
+              "width": 1
             }
           ],
           "mentions_bot": true,
@@ -1055,6 +1149,20 @@
       },
       "url": "fixture"
     }
+  ],
+  "MediaVariant": [
+    "photo",
+    "document",
+    "audio",
+    "voice",
+    "video",
+    "video_note",
+    "animation",
+    "sticker",
+    "image",
+    "file",
+    "media",
+    "embedded"
   ],
   "MessageRef": [
     "fixture"
@@ -1240,11 +1348,26 @@
       "kind": {
         "attachments": [
           {
+            "duration_seconds": 1,
+            "emoji": "fixture",
             "filename": "fixture",
+            "height": 1,
             "kind": "image",
             "mime_type": "fixture",
             "reference": "fixture",
-            "size_bytes": 1
+            "size_bytes": 1,
+            "source": {
+              "file_id": "fixture",
+              "file_unique_id": "fixture",
+              "type": "telegram"
+            },
+            "thumbnail": {
+              "file_id": "fixture",
+              "file_unique_id": "fixture",
+              "type": "telegram"
+            },
+            "variant": "photo",
+            "width": 1
           }
         ],
         "mentions_bot": true,
