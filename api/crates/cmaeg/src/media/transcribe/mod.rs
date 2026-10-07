@@ -2,7 +2,10 @@
 //!
 //! Callers depend on [`Transcriber`] only. [`DisabledTranscriber`] is the
 //! baseline: with no speech-to-text configured, a transcript is refused as
-//! `transcriber_disabled` before anything is fetched.
+//! `transcriber_disabled` before anything is fetched. [`meter`] decides what
+//! a transcription costs and whether a channel may still spend.
+pub mod meter;
+
 use bytes::Bytes;
 use futures_util::future::BoxFuture;
 use std::fmt;

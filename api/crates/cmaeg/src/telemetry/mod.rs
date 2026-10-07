@@ -68,6 +68,12 @@ fn describe_media() {
         "CMAEG media bytes fetched by source"
     );
     metrics::counter!(names::MEDIA_FETCH_BYTES).absolute(0);
+    metrics::describe_counter!(
+        names::STT_AUDIO_SECONDS,
+        metrics::Unit::Seconds,
+        "CMAEG metered speech-to-text audio seconds, reconciled with reported usage"
+    );
+    metrics::counter!(names::STT_AUDIO_SECONDS).absolute(0);
     for (name, unit, description) in [
         (
             names::MEDIA_INFLIGHT_BYTES,
@@ -88,6 +94,11 @@ fn describe_media() {
             names::MEDIA_CACHE_BYTES,
             metrics::Unit::Bytes,
             "CMAEG weighted bytes held by the derived-media cache",
+        ),
+        (
+            names::STT_CHANNELS_AT_BUDGET,
+            metrics::Unit::Count,
+            "CMAEG channels refused by their own speech-to-text budget in the last hour",
         ),
     ] {
         metrics::describe_gauge!(name, unit, description);
