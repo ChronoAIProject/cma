@@ -40,6 +40,26 @@ pub enum SourceCredential {
     ChannelKey,
 }
 
+/// Whether `channel`'s current definition still configures the source that
+/// delivered `locator` in `activity`: the relay route, the native bot and its
+/// token, or the custom origin. A download link re-checks this on every
+/// request, so removing any of them revokes it. Inline bytes travel inside
+/// the verified activity and need no source.
+pub fn configured(
+    channel: &ResolvedChannel,
+    activity: &Activity,
+    locator: Option<&AttachmentSource>,
+) -> bool {
+    match locator {
+        Some(AttachmentSource::NyxidRelay { .. }) => nyxid::configured(channel, &activity.source),
+        Some(AttachmentSource::Telegram { .. }) => {
+            telegram::configured_token(channel, &activity.source).is_some()
+        }
+        Some(AttachmentSource::Url { url }) => url::configured(channel, url),
+        Some(AttachmentSource::Inline { .. }) | None => true,
+    }
+}
+
 /// One retrieval: the attachment's locator with the authority to resolve it.
 #[derive(Clone, Copy)]
 pub struct FetchRequest<'a> {

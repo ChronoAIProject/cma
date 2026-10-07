@@ -148,6 +148,7 @@ impl App {
             tracker: tracker.clone(),
             public_origin: "https://gateway.example".into(),
             media: None,
+            downloads: Default::default(),
         };
         let router = http::callbacks::router(ingress).merge(http::tools::router(tools));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

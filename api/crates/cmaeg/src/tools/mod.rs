@@ -3,6 +3,8 @@ mod attachment_compose;
 mod attachment_view;
 mod attachments;
 mod context;
+mod download_access;
+mod media_links;
 mod reply_targets;
 mod state;
 pub use attachment_view::{
@@ -15,5 +17,10 @@ pub use attachments::{
     MAX_RESULT_IMAGE_BYTES, REST_VIEW_WEIGHT, TOOL_WAIT,
 };
 pub use context::{Capabilities, ContextResponse, PublicActivity};
+pub(crate) use download_access::{Authorized, Refusal};
+pub(crate) use media_links::safe_name;
+pub use media_links::{
+    MediaDownloads, DOWNLOAD_RESPONSE_WEIGHT, DOWNLOAD_STREAMS_GLOBAL, DOWNLOAD_STREAMS_PER_CHANNEL,
+};
 pub use reply_targets::ReplyTargetResponse;
 pub use state::ToolsState;

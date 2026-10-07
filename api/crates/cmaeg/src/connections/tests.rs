@@ -136,6 +136,7 @@ impl Fixture {
             tracker: TurnTracker::new(Readiness::initialized()),
             public_origin: management.public_url.clone(),
             media: None,
+            downloads: Default::default(),
         };
         ConnectionService::new(management, tools)
     }

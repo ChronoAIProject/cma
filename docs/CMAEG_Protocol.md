@@ -399,6 +399,14 @@ clients SHOULD omit absent request values rather than invent empty strings.
 Limits are byte lengths unless another unit is stated. Deployment-specific
 bounds and deadlines are listed in [operations](CMAEG_Operations.md).
 
+Every operation names its bearer scheme in the OpenAPI document:
+`creatorBearer` is a NyxID creator token for management, `serviceBearer` the
+CMA service token for rekey only, and `agentBearer` the channel's NyxID agent
+key for the tools. `mediaBearer` is a single-use media link; it is accepted
+only in the `Authorization` header of `GET /v1/media/content`
+([§8 Media downloads](#media-downloads)), never in a path or query, and that
+operation accepts no other bearer.
+
 Relay JWKS, result-webhook, card-image and link URLs MUST be absolute HTTPS
 URLs. Local testing also permits HTTP on `localhost`, `127.0.0.1` and the IPv6
 loopback host `[::1]`, with an optional port. Whitespace, missing hosts and
@@ -418,7 +426,7 @@ branch on `code` and HTTP status, never on diagnostic prose. The full code set i
 | --- | --- |
 | `invalid_request` | Invalid JSON, field, mode or bounds; 400, body timeout 408 |
 | `not_authenticated` | Missing or invalid creator/service/agent authentication; 401 |
-| `forbidden` | Valid caller lacks the referenced channel/event authority; 403 |
+| `forbidden` | Valid caller lacks the referenced channel/event authority, or a media link's authority was revoked; 403 |
 | `channel_not_found` | Record absent or deliberately hidden from another owner; 404 |
 | `channel_restore_unavailable` | Cold restore cannot complete; 503 |
 | `channel_invalid` | Restored record is corrupt or fails validation; 503 |
@@ -436,7 +444,7 @@ branch on `code` and HTTP status, never on diagnostic prose. The full code set i
 | `unsupported_media_type` | Unsupported ingress content type; 415 |
 | `internal` | Internal processing failure; 500 |
 | `attachment_not_found` | The event has no attachment at the requested index; 404 |
-| `media_unavailable` | Inbound media is disabled, or a media read's `event_ref` sealed no activity digest; 503 |
+| `media_unavailable` | Inbound media is disabled, a media read's `event_ref` sealed no activity digest, or a media download is spent, expired or temporarily unavailable; 503, or 410 for a spent or expired link |
 
 ## 4. Opaque references
 
@@ -1464,6 +1472,99 @@ agent's runtime while they are delivered. CMA's durable conversation log keeps
 tool-call identifiers, titles, kinds and statuses, never tool results, so
 attachment bytes and text are not stored by CMA.
 
+### Media downloads
+
+`GET /v1/media/content` streams the original bytes of one attachment to the
+holder of a media link, so an agent can save a PDF, an archive or a
+full-resolution image into its own workspace. It is not an agent tool: it never
+accepts the agent key, and the SDKs have no method for it, because the link is
+meant for `curl` in an agent's sandbox. Links are not minted yet in this
+release step: `readEventAttachment` with view `download` still answers
+`link_unavailable` and `inbound_media.downloads` is `false`, so this operation
+only serves links the gateway itself sealed. The route is always mounted;
+while `CMAEG_MEDIA_ENABLED` is `false` it answers `503 media_unavailable` with
+detail `media_disabled`.
+
+**Authorization.** The link travels only as the request's single
+`Authorization: Bearer <link>` header; the scheme is case-insensitive. The
+path, the query and every other header are never read, because they reach
+load-balancer and access logs, so a link in a query string is ignored and the
+request is refused like one without a link. The request body must be empty.
+
+**Single use.** A link is redeemed on the replica that serves it before any
+other check, so a refused request spends it too. A second request with the
+same link on that replica is refused. The redemption set is per replica and is
+kept for the link's whole life, but it is not shared: during a rollout surge,
+or after a restart, a link can be redeemed once more on another replica within
+its short lifetime. Single use is therefore exact per replica and best effort
+across replicas.
+
+**Re-validation.** Every request checks, in this order, that the link is
+authentic and unexpired; that the channel still exists with the same record;
+that its binding, provider and agent key are the ones the link was minted for
+(rotating the agent key revokes every outstanding link); that the binding may
+still download (it is autonomous, and its provider is still in
+`CMAEG_MEDIA_TOOL_PROVIDERS`); that the provider's persisted activity still
+verifies against the sealed activity digest; that the attachment exists; and
+that its source is still configured: the relay source of the platform still
+routes the activity's route, the native Telegram bot is still configured with
+its token, or a custom URL's origin is still in the source's allowlist. Relay
+originals are fetched with the channel key, never the event's reply token,
+which a link does not carry.
+
+**Quotas.** A replica streams at most 16 downloads at once and at most 2 per
+channel. Each stream also holds 256 KiB of the media response budget
+(`CMAEG_MEDIA_RESPONSE_BYTES`), waiting at most two seconds for it. When any of
+these is exhausted the request is refused with `503 media_unavailable`,
+`download_busy` and `Retry-After: 2`. Each channel may download at most
+`CMAEG_MEDIA_DOWNLOAD_BYTES_PER_HOUR` bytes per hour, counted in whole KiB and
+charged before the first byte is sent, at the declared size (or the
+attachment's `size_bytes`, or `CMAEG_MEDIA_MAX_BYTES` when neither is known);
+a refusal is `429 rate_limited`, detail `download_quota`, with
+`Retry-After: 60`. An original larger than `CMAEG_MEDIA_MAX_BYTES` is refused
+before any header when its size is declared.
+
+**Deadline.** One stream lasts at most 300 seconds. At that deadline, when the
+reader goes away, or when an undeclared stream grows past
+`CMAEG_MEDIA_MAX_BYTES`, every slot and budget share is released and the body
+ends with an error, so a short body is never mistaken for a complete one. A
+reader that never reads cannot hold capacity until the load balancer's
+660-second timeout.
+
+A served original carries exactly these headers, plus the protocol version
+header every response carries:
+
+| Header | Value |
+| --- | --- |
+| `Content-Type` | `application/octet-stream` |
+| `Content-Disposition` | `attachment; filename="<name>"`, where `<name>` keeps only `A–Z`, `a–z`, `0–9`, `.`, `_` and `-` of the sender's file name, at most 64 of them, is prefixed with `attachment-` when it starts with `.` or `-`, and is `attachment.bin` when nothing is left |
+| `X-Content-Type-Options` | `nosniff` |
+| `Content-Security-Policy` | `default-src 'none'; sandbox` |
+| `Cache-Control` | `no-store` |
+| `Referrer-Policy` | `no-referrer` |
+| `Content-Length` | Only when the source declared the size |
+
+Refusals are problems, sent before any body byte:
+
+| Status | `code` | `detail` | Meaning |
+| --- | --- | --- | --- |
+| 503 | `media_unavailable` | `media_disabled` | Inbound media is disabled. |
+| 400 | `invalid_request` | `media_link_invalid` | Not exactly one `Authorization: Bearer` header, or a malformed, tampered or foreign link. |
+| 410 | `media_unavailable` | `media_link_expired` | The link's lifetime has passed. |
+| 410 | `media_unavailable` | `media_link_used` | The link was already redeemed on this replica. |
+| 403 | `forbidden` | `media_link_revoked` | The channel was deleted, or its record, binding, agent key, download permission or attachment source changed. |
+| 503 | `media_unavailable` | `event_context_unverified` | The provider's activity cannot be read or no longer matches the sealed digest. |
+| 404 | `attachment_not_found` | `attachment_not_found` | The event has no attachment at the link's index, or the source no longer has it. |
+| 503 | `media_unavailable` | `download_busy` | No stream slot or response budget is free; `Retry-After: 2`. |
+| 413 | `payload_too_large` | `attachment_too_large` | The original exceeds `CMAEG_MEDIA_MAX_BYTES` or the source's own limit. |
+| 429 | `rate_limited` | `source_rate_limited` | The source refused the request for its own rate limit. |
+| 503 | `media_unavailable` | `source_unavailable` | The source failed, refused the credential, timed out or was busy. |
+| 429 | `rate_limited` | `download_quota` | The channel's hourly download bytes are spent; `Retry-After: 60`. |
+
+A channel that cannot be restored right now answers as other channel reads do:
+`503 channel_restore_unavailable`, `503 channel_invalid`, or `429 rate_limited`
+for the restore rate.
+
 ### Interactive Telegram flow
 
 Use the existing four tools. Send one message containing a `card` and `buttons`
@@ -1843,6 +1944,7 @@ Generated from the reviewed OpenAPI snapshot; effective paths include its server
 | `POST /v1/channels/{channel_id}/test` | `testChannel` |
 | `GET /v1/events/{event_ref}/context` | `readEventContext` |
 | `GET /v1/events/{event_ref}/attachments/{index}` | `readEventAttachment` |
+| `GET /v1/media/content` | `downloadMedia` |
 | `POST /v1/events/{event_ref}/context` | `verifyEventContext` |
 | `POST /v1/events/{event_ref}/reply-target` | `createReplyTarget` |
 | `POST /v1/reply-targets/{reply_target_ref}/messages` | `replyToTarget` |

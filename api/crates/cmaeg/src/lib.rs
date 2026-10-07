@@ -185,6 +185,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         tracker: tracker.clone(),
         public_origin: config.management.public_url.clone(),
         media,
+        downloads: std::sync::Arc::new(tools::MediaDownloads::default()),
     };
     let connections = connections::ConnectionService::new(state.clone(), tools_state.clone());
     let ingress = ingress.with_receipt_observer(std::sync::Arc::new(connections.clone()));
@@ -207,6 +208,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             .merge(http::telegram::router(ingress.clone()))
             .merge(http::callbacks::router(ingress))
             .merge(http::tools::router(tools_state.clone()))
+            .merge(http::media::router(tools_state.clone()))
             .merge(mcp::router(tools_state))
             .layer(RequestBodyLimitLayer::new(REQUEST_BODY_LIMIT_BYTES))
             .layer(CatchPanicLayer::custom(http::problems::panic_response))

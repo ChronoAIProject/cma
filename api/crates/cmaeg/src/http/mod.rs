@@ -10,6 +10,7 @@ pub(crate) mod docs;
 pub mod events;
 pub mod management;
 mod management_responses;
+pub mod media;
 pub mod metrics;
 pub mod problems;
 pub mod readiness;

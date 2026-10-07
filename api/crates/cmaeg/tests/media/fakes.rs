@@ -14,11 +14,11 @@ use cmaeg_core::{
     ids::ChannelId,
     seal::{event_ref::activity_digest, ReplyAddress},
 };
-use futures_util::future::BoxFuture;
+use futures_util::{future::BoxFuture, StreamExt};
 use std::{
     collections::HashMap,
     sync::{
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc, Mutex,
     },
     time::Duration,
@@ -33,14 +33,21 @@ pub struct Seen {
 }
 
 /// Serves bodies by locator, after an optional delay, and records every
-/// fetch. An unknown locator is `not_found`.
+/// fetch. An unknown locator is `not_found`. Opened streams come in 64 KiB
+/// chunks, declare their length unless told not to, and end with `too_large`
+/// at the cap like a real capped stream.
 #[derive(Default)]
 pub struct FakeSource {
     bodies: Mutex<HashMap<String, Result<Bytes, FetchError>>>,
     delay: Mutex<Duration>,
     calls: AtomicUsize,
     seen: Mutex<Vec<Seen>>,
+    undeclared: AtomicBool,
+    stalled: AtomicBool,
+    chunks_read: Arc<AtomicUsize>,
 }
+
+const STREAM_CHUNK: usize = 64 * 1024;
 
 /// The identifying string of a locator.
 pub fn locator_key(locator: &AttachmentSource) -> String {
@@ -78,6 +85,37 @@ impl FakeSource {
         self.seen.lock().unwrap().clone()
     }
 
+    /// Open later streams without a declared length.
+    pub fn undeclared(&self) {
+        self.undeclared.store(true, Ordering::SeqCst);
+    }
+
+    /// Keep later streams open, silent, after their last chunk.
+    pub fn stall(&self) {
+        self.stalled.store(true, Ordering::SeqCst);
+    }
+
+    /// Chunks read from opened streams so far.
+    pub fn chunks_read(&self) -> usize {
+        self.chunks_read.load(Ordering::SeqCst)
+    }
+
+    fn record(&self, request: &FetchRequest<'_>) -> Option<Result<Bytes, FetchError>> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        self.seen.lock().unwrap().push(Seen {
+            cap: request.cap,
+            overflow: request.overflow,
+            credential: request.credential,
+        });
+        request.locator.and_then(|locator| {
+            self.bodies
+                .lock()
+                .unwrap()
+                .get(&locator_key(locator))
+                .cloned()
+        })
+    }
+
     /// A registry with this source behind every locator type.
     pub fn registry(self: &Arc<Self>) -> Arc<SourceRegistry> {
         Arc::new(SourceRegistry::new(
@@ -94,20 +132,8 @@ impl MediaSource for FakeSource {
         &'a self,
         request: FetchRequest<'a>,
     ) -> BoxFuture<'a, Result<FetchedBody, FetchError>> {
-        self.calls.fetch_add(1, Ordering::SeqCst);
-        self.seen.lock().unwrap().push(Seen {
-            cap: request.cap,
-            overflow: request.overflow,
-            credential: request.credential,
-        });
+        let body = self.record(&request);
         let delay = *self.delay.lock().unwrap();
-        let body = request.locator.and_then(|locator| {
-            self.bodies
-                .lock()
-                .unwrap()
-                .get(&locator_key(locator))
-                .cloned()
-        });
         Box::pin(async move {
             tokio::time::sleep(delay).await;
             let bytes = body.unwrap_or(Err(FetchError::NotFound))?;
@@ -130,9 +156,44 @@ impl MediaSource for FakeSource {
 
     fn open<'a>(
         &'a self,
-        _request: FetchRequest<'a>,
+        request: FetchRequest<'a>,
     ) -> BoxFuture<'a, Result<SourceStream, FetchError>> {
-        Box::pin(async { Err(FetchError::Rejected) })
+        let body = self.record(&request);
+        let delay = *self.delay.lock().unwrap();
+        let declared = !self.undeclared.load(Ordering::SeqCst);
+        let stalled = self.stalled.load(Ordering::SeqCst);
+        let read = self.chunks_read.clone();
+        Box::pin(async move {
+            tokio::time::sleep(delay).await;
+            let bytes = body.unwrap_or(Err(FetchError::NotFound))?;
+            let length = bytes.len() as u64;
+            if declared && length > request.cap {
+                return Err(FetchError::TooLarge);
+            }
+            let mut chunks = Vec::new();
+            let mut offset = 0;
+            while offset < bytes.len() {
+                let end = bytes.len().min(offset + STREAM_CHUNK);
+                if end as u64 > request.cap {
+                    chunks.push(Err(FetchError::TooLarge));
+                    break;
+                }
+                chunks.push(Ok(bytes.slice(offset..end)));
+                offset = end;
+            }
+            let chunks = futures_util::stream::iter(chunks).inspect(move |_| {
+                read.fetch_add(1, Ordering::SeqCst);
+            });
+            let stream = if stalled {
+                chunks.chain(futures_util::stream::pending()).boxed()
+            } else {
+                chunks.boxed()
+            };
+            Ok(SourceStream {
+                content_length: declared.then_some(length),
+                stream,
+            })
+        })
     }
 }
 

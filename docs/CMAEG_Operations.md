@@ -61,7 +61,7 @@ listener, starts no worker and exits when its report is printed (see
 | `CMAEG_MEDIA_MAX_JOBS` | unsigned decimal | `6` | 1..=64. Pod-wide concurrent media jobs. Each channel runs at most two at once, so one channel cannot hold every job permit. |
 | `CMAEG_MEDIA_CACHE_BYTES` | unsigned decimal, bytes | `33554432` | 0..=268435456. Capacity of the per-pod derived-media cache, weighted by bytes, with a 30-minute lifetime; `0` disables caching. |
 | `CMAEG_MEDIA_RATE_PER_MINUTE` | unsigned decimal | `60` | 1..=6000. Media fetch starts per channel per minute, with a burst of the same size. |
-| `CMAEG_MEDIA_DOWNLOAD_BYTES_PER_HOUR` | unsigned decimal, bytes | `268435456` | 20971520..=4294967296. Download bytes per channel per hour, counted in KiB; enforced once download links exist. |
+| `CMAEG_MEDIA_DOWNLOAD_BYTES_PER_HOUR` | unsigned decimal, bytes | `268435456` | 20971520..=4294967296. Download bytes per channel per hour, counted in KiB and charged by `GET /v1/media/content` before an original's first byte; a spent quota answers `429 rate_limited` with `Retry-After: 60`. |
 | `CMAEG_PROVIDER_CONNECT_TIMEOUT_MS` | positive integer, ms | `2000` | TCP/TLS connection timeout for each provider pool. |
 | `CMAEG_PROVIDER_REQUEST_TIMEOUT_MS` | positive integer, ms | `30000` | Deadline for provider setup and probe requests, and receipt of streaming HTTP response headers. Active streams are owned and bounded by their consumer. |
 | `CMAEG_PROVIDER_MAX_INFLIGHT` | positive integer | `256` | Deployment-wide upper bound applied to each provider's semaphore. Calls wait at most 50 ms for a provider permit before returning a typed busy result. |
@@ -143,6 +143,7 @@ media work spans an 8-second tool budget, a 15-second preparation budget and a
 | `cmaeg_media_cache_bytes` | none | Weighted bytes held by the derived-media cache. |
 | `cmaeg_media_derive_seconds` | `op`, `outcome` | One derivation job of an attachment artifact, from the moment it holds its channel slot and job permit to its result, including the fetch. `op` is `image`, `text`, `excerpt`, `transcript`, `visuals` or `metadata`; `outcome` is `ok` or one of `not_retrievable`, `not_found`, `too_large`, `too_large_pixels`, `unsupported_format`, `decode_failed`, `timed_out`, `transcriber_disabled`, `transcriber_failed`, `too_long`, `rate_limited`, `source_unavailable` or `transform_failed`. A job stopped at its 90-second cap records `timed_out`. Every image normalization also records `op="image"` on its own (waiting for the single decode permit, decoding, downscaling, orienting and re-encoding), including the one inside an `image` derivation and a thumbnail's inside `visuals`, so an `image` derivation that reaches its decode contributes two samples. Refusals answered without a job (an unknown attachment, a disabled transcriber, a spent fetch quota) record nothing here. Uses the media buckets. |
 | `cmaeg_media_tool_reads_total` | `view`, `status` | Attachment reads through `readEventAttachment`. `view` is the requested `auto`, `image`, `text`, `frames` or `download`; `status` is the view's `ready`, `pending` or `unavailable`, or `refused` when the read was answered with a problem (media disabled, unverified context, a missing attachment, or a key or reference failure). The `cmaeg.media.read` span carries the same `view` and `status`, the view's `reason` and the channel's hash, never an event_ref, file name or content. Its duration is also recorded as `cmaeg_tool_call_seconds{tool="readEventAttachment"}`. |
+| `cmaeg_media_downloads_total` | `outcome` | Requests to `GET /v1/media/content`. A served original counts when its body ends: `served` when every byte was handed on, `aborted` when the 300-second deadline, the `CMAEG_MEDIA_MAX_BYTES` cap, an upstream error or a reader that went away cut it short. A refusal counts at once as `invalid`, `expired`, `used`, `revoked`, `not_found`, `busy`, `rate_limited`, `too_large` or `unavailable`. The `cmaeg.media.download` span carries the outcome, the bytes forwarded and the channel's hash, never a link, jti, URL, file name or `Authorization` value. |
 | `cmaeg_turns_inflight` | none | Admitted local consumers; decremented on completion or cancellation. |
 | `cmaeg_channels_cached` | none | Locally retained positive and negative cache entries, including entries awaiting eviction. |
 
@@ -443,6 +444,7 @@ Configure this alert on the private metrics scrape:
 | Severity | Expression | Meaning |
 | --- | --- | --- |
 | Warn | `increase(cmaeg_media_activity_degraded_total[15m]) > 0` | A media activity failed validation after normalization and was degraded to minimal attachments or refused as `attachment_unsupported`. The message was not lost, but its media facts were. |
+| Warn | `rate(cmaeg_media_downloads_total{outcome="aborted"}[30m]) / rate(cmaeg_media_downloads_total[30m]) > 0.2` | More than a fifth of media download requests ended with a cut-short body. |
 
 Runbook: find the `activity failed validation after attachment normalization`
 error in the alert window. Its `pointer=` names the failing field (never its
@@ -456,6 +458,30 @@ declare facts outside the domain, such as a 0×0 video. A rising
 envelope stopped listing the raw Telegram `file_id` as an entry's `url`, or the
 raw Lark `image_key` or `file_key` as the entry's key; compare NyxID's Telegram
 or Lark adapter with protocol §6.
+
+Runbook for aborted downloads: the `cmaeg.media.download` spans with
+`outcome=aborted` carry the bytes forwarded. Bodies cut at about
+`CMAEG_MEDIA_MAX_BYTES` are originals larger than the cap whose source did not
+declare a size; bodies cut after 300 seconds are readers too slow for the
+stream deadline; bodies cut early with few bytes point at the source (compare
+`cmaeg_media_fetch_seconds` by `source` and `outcome`) or at agents that stop
+reading. No state needs repair: every slot and budget share was released when
+the body ended.
+
+#### Media download links
+
+A media link is redeemed in a per-replica set before the download is checked
+any further. The set keeps a redeemed link's jti for ten minutes, the longest
+a link can live, and holds up to 16,384 entries (about 2 MiB). A replica
+mints at most 600 links per minute, so at most 6,000 of its links are live at
+once and the set never evicts one that is still live: a second use on the same
+replica is always refused with `410 media_link_used`. The set is not shared and does not survive a
+restart, so during a rollout surge, or after a restart, a link can be redeemed
+once more on another replica before it expires. That is the accepted bound:
+links expire within minutes and every request re-validates the channel, the
+binding, the agent key and the source, so rotating the agent key, switching
+the binding to guarded, or removing the source revokes every outstanding link
+at once on every replica.
 
 ### Rolling back below inbound media
 

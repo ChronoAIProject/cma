@@ -183,8 +183,10 @@ impl App {
             tracker: TurnTracker::new(http::readiness::Readiness::initialized()),
             public_origin: "https://gateway.example".into(),
             media: media.clone(),
+            downloads: Default::default(),
         };
         let router = http::tools::router(state.clone())
+            .merge(http::media::router(state.clone()))
             .merge(mcp::router(state.clone()))
             .route(
                 "/openapi.json",

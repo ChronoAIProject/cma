@@ -74,6 +74,12 @@ fn describe_media() {
         "CMAEG attachment reads by requested view and resulting status"
     );
     metrics::counter!(names::MEDIA_TOOL_READS).absolute(0);
+    metrics::describe_counter!(
+        names::MEDIA_DOWNLOADS,
+        metrics::Unit::Count,
+        "CMAEG media link downloads by outcome"
+    );
+    metrics::counter!(names::MEDIA_DOWNLOADS).absolute(0);
     for (name, unit, description) in [
         (
             names::MEDIA_INFLIGHT_BYTES,
