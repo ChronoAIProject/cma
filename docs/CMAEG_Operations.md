@@ -141,7 +141,7 @@ media work spans an 8-second tool budget, a 15-second preparation budget and a
 | `cmaeg_media_response_bytes` | none | Weighted bytes reserved against `CMAEG_MEDIA_RESPONSE_BYTES` by response bodies in flight, in whole KiB. |
 | `cmaeg_media_jobs_inflight` | none | Media jobs holding one of the `CMAEG_MEDIA_MAX_JOBS` permits. |
 | `cmaeg_media_cache_bytes` | none | Weighted bytes held by the derived-media cache. |
-| `cmaeg_media_derive_seconds` | `op`, `outcome` | One image normalization (`op="image"`): waiting for the single decode permit, decoding, downscaling, orienting and re-encoding an image within its budget. `outcome` is `ok` or one of `unsupported_format`, `too_large_pixels`, `decode_failed`, `too_large` or `timed_out`. Uses the media buckets. |
+| `cmaeg_media_derive_seconds` | `op`, `outcome` | One derivation job of an attachment artifact, from the moment it holds its channel slot and job permit to its result, including the fetch. `op` is `image`, `text`, `excerpt`, `transcript`, `visuals` or `metadata`; `outcome` is `ok` or one of `not_retrievable`, `not_found`, `too_large`, `too_large_pixels`, `unsupported_format`, `decode_failed`, `timed_out`, `transcriber_disabled`, `transcriber_failed`, `too_long`, `rate_limited`, `source_unavailable` or `transform_failed`. A job stopped at its 90-second cap records `timed_out`. Every image normalization also records `op="image"` on its own (waiting for the single decode permit, decoding, downscaling, orienting and re-encoding), including the one inside an `image` derivation and a thumbnail's inside `visuals`, so an `image` derivation that reaches its decode contributes two samples. Refusals answered without a job (an unknown attachment, a disabled transcriber, a spent fetch quota) record nothing here. Uses the media buckets. |
 | `cmaeg_turns_inflight` | none | Admitted local consumers; decremented on completion or cancellation. |
 | `cmaeg_channels_cached` | none | Locally retained positive and negative cache entries, including entries awaiting eviction. |
 
@@ -163,7 +163,9 @@ provide one, propagates it in the response, and creates one
 in tool URLs do not enter the log. Child restore, verification, turn, and delivery
 spans use a 16-character SHA-256 channel prefix and an event ID when available.
 Turn and delivery tasks retain the originating trace across task and queue
-boundaries. Info logs exclude bearer keys, reply tokens, event references, and
+boundaries. Each media derivation job runs in a `cmaeg.media.derive` span with
+`op`, `outcome`, the channel hash and the attachment `index`; it never carries
+a file name, URL, token or content. Info logs exclude bearer keys, reply tokens, event references, and
 message content. Provider-controlled parsing diagnostics are also excluded.
 
 A request handler that panics is answered with a 500 `internal` problem whose

@@ -22,6 +22,10 @@ mod nyxid_source;
 mod registry;
 #[path = "media/seams.rs"]
 mod seams;
+#[path = "media/service.rs"]
+mod service;
+#[path = "media/service_admission.rs"]
+mod service_admission;
 #[path = "media/sniff.rs"]
 mod sniff;
 #[path = "media/support.rs"]
