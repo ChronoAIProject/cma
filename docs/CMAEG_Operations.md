@@ -110,6 +110,7 @@ and idempotent. All duration histograms use seconds with buckets
 | `cmaeg_provider_errors_total` | `provider`, `kind` | Classified turn failures; provider diagnostic strings are never labels. |
 | `cmaeg_callback_invalid_total` | `source`, `detail` | Relay and native Telegram callbacks answered 401 `callback_invalid`. `source` is `nyxid_relay` or `telegram`; `detail` is the static verification code returned as the problem detail, such as `payload_invalid` or `telegram_webhook_secret`. |
 | `cmaeg_relay_envelope_repairs_total` | `field` | Authenticated NyxID relay envelope facts repaired or dropped instead of rejecting the callback. `field` is one of `attachment_item`, `attachment_overflow`, `attachment_container`, `content_type`, `url`, `platform_message_id`, `file_key`, `image_key`, `filename`, `mime_type`, `size_bytes`, `download_url` or `sender_display_name`. |
+| `cmaeg_delivery_worker_restarts_total` | none | Delivery workers replaced after they stopped, for example by panicking. Dispatch continues for every channel; commands already queued for the stopped worker are lost with it. |
 | `cmaeg_turns_inflight` | none | Admitted local consumers; decremented on completion or cancellation. |
 | `cmaeg_channels_cached` | none | Locally retained positive and negative cache entries, including entries awaiting eviction. |
 
@@ -386,6 +387,31 @@ Non-zero values mean NyxID sent sender facts outside CMAEG's bounds, such as an
 oversized file name or display name, and the gateway repaired or dropped them
 instead of losing the message. A `field` label that keeps rising is a reason to
 compare NyxID's serializer with the protocol, not an outage.
+
+### Delivery worker restart alert
+
+Delivery runs on eight workers, each owning the outbound sends of the events
+routed to it. A worker that stops, for example by panicking, is replaced at its
+index on the next command routed there, and dispatch continues for every
+channel. This applies with all media flags off. Without replacement, one
+panicked worker would stop every reply, typing indicator, update and failure
+notice until the pod restarted, so a restart is a contained fault rather than an
+outage. Configure this alert on the private metrics scrape:
+
+| Severity | Expression | Meaning |
+| --- | --- | --- |
+| Warn | `increase(cmaeg_delivery_worker_restarts_total[15m]) > 0` | A delivery worker panicked; delivery continued. Investigate the logged error. |
+
+The replacement has an accepted loss: commands already queued for the stopped
+worker, at most 64, are lost with it. The gateway logs
+`delivery worker stopped; buffered commands lost` with the worker index when it
+replaces the worker, `delivery worker task ended` with `panicked=true` when it
+collects the panicked task, and `delivery command dropped after worker replacement failed`
+if the replacement stops before taking the command. None of these logs carries
+the panic payload, which can contain message content. Find the error logged
+just before the restart in the alert window to identify the fault. The lost
+commands cannot be recovered from the gateway; their turns' replies, typing
+indicators or updates may be missing on those channels.
 
 ### Recovering channel creation
 
