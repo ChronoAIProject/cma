@@ -2,8 +2,8 @@
 use super::render_media::{render_block, Audience, RenderMedia};
 use crate::ingress::custom::attachments::elided;
 use cmaeg_core::{
-    activity::{Activity, ActivityKind, Attachment, AttachmentSource, SourceKind},
-    channel::{ChannelDefinition, Platform, Source},
+    activity::{Activity, ActivityKind, Attachment, AttachmentSource},
+    channel::{ChannelDefinition, Source},
     profile::canonical_json,
 };
 use serde_json::{json, Value};
@@ -26,7 +26,11 @@ pub fn render(
             album_id,
         } => {
             let text = if *mentions_bot {
-                strip_address(text, &activity.source, definition)
+                cmaeg_core::chat::strip_address(
+                    text,
+                    &activity.source,
+                    first_bot_username(definition),
+                )
             } else {
                 text.clone()
             };
@@ -117,64 +121,15 @@ fn with_block(text: String, block: Option<String>) -> String {
         Some(block) => format!("{}\n\n{block}", text.trim_end()),
     }
 }
-fn strip_address(text: &str, source: &SourceKind, definition: &ChannelDefinition) -> String {
-    if let SourceKind::NyxidRelay {
-        platform: Platform::Lark | Platform::Feishu,
-        ..
-    } = source
-    {
-        return strip_mention_keys(text);
-    }
-    let Some(username) = definition.sources.iter().find_map(|source| match source {
+/// The bot username a chat address names: the first relay or Telegram source
+/// that declares one, as the renderer has always chosen it.
+fn first_bot_username(definition: &ChannelDefinition) -> Option<&str> {
+    definition.sources.iter().find_map(|source| match source {
         Source::NyxidRelay { bot_username, .. } | Source::Telegram { bot_username, .. } => {
             bot_username.as_deref()
         }
         _ => None,
-    }) else {
-        return text.to_owned();
-    };
-    let target = format!("@{username}");
-    let mut output = String::new();
-    let mut cursor = 0;
-    for (index, _) in text.match_indices('@') {
-        let end = index + target.len();
-        if index < cursor
-            || !text
-                .get(index..end)
-                .is_some_and(|part| part.eq_ignore_ascii_case(&target))
-        {
-            continue;
-        }
-        let boundary = |value: char| value.is_alphanumeric() || value == '_' || value == '@';
-        if text[..index].chars().next_back().is_some_and(boundary)
-            || text[end..].chars().next().is_some_and(boundary)
-        {
-            continue;
-        }
-        output.push_str(&text[cursor..index]);
-        cursor = end;
-    }
-    output.push_str(&text[cursor..]);
-    output.trim().to_owned()
-}
-/// Lark and Feishu replace each mention with a placeholder key such as `@_user_1`;
-/// the keys that open the message address it and carry no meaning for the agent.
-fn strip_mention_keys(text: &str) -> String {
-    let mut rest = text.trim_start();
-    while let Some(after) = rest.strip_prefix("@_user_") {
-        let digits = after.bytes().take_while(u8::is_ascii_digit).count();
-        let tail = &after[digits..];
-        if digits == 0
-            || tail
-                .chars()
-                .next()
-                .is_some_and(|next| !next.is_whitespace())
-        {
-            break;
-        }
-        rest = tail.trim_start();
-    }
-    rest.trim_end().to_owned()
+    })
 }
 pub(super) fn bounded(value: &str, max: usize) -> &str {
     let mut end = value.len().min(max);

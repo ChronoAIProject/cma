@@ -14,6 +14,9 @@ pub mod activity;
 /// Neutral messages emitted by an agent turn.
 pub mod message;
 
+/// Chat text conventions, such as bot addresses, shared by routing and rendering.
+pub mod chat;
+
 /// CloudEvents 1.0 envelope types.
 pub mod cloudevent;
 
