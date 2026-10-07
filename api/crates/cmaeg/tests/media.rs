@@ -44,6 +44,12 @@ mod telegram_source;
 mod text;
 #[path = "media/transcribe.rs"]
 mod transcribe;
+#[path = "media/transform.rs"]
+pub mod transform;
+#[path = "media/transform_audio.rs"]
+mod transform_audio;
+#[path = "media/transform_schedule.rs"]
+mod transform_schedule;
 #[path = "media/upload.rs"]
 mod upload;
 #[path = "media/url_source.rs"]
