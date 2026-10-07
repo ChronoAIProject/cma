@@ -1,5 +1,6 @@
 use super::{
     fake_provider::FakeProvider,
+    media_support::MediaSetup,
     relay_support::{Envelope, Fixture},
 };
 use axum::{routing::get, Json, Router};
@@ -10,6 +11,7 @@ use cmaeg::{
     http,
     ingress::launch::LaunchRequest,
     mcp,
+    media::service::MediaService,
     providers::{EventContextSnapshot, ProviderClient, ProviderRegistry, TurnRequest},
     tools::ToolsState,
     turns::TurnTracker,
@@ -42,6 +44,8 @@ pub struct App {
     pub message_ref: MessageRef,
     pub requests: Arc<Mutex<Vec<OutboundMessage>>>,
     pub delay: Arc<AtomicU64>,
+    /// The media service, when the app was built with one.
+    pub media: Option<Arc<MediaService>>,
     tasks: Vec<JoinHandle<()>>,
 }
 impl Drop for App {
@@ -56,20 +60,29 @@ impl App {
         Self::with_text("hello").await
     }
     pub async fn with_text(text: &str) -> Self {
-        Self::build("telegram", text).await
+        Self::build("telegram", text, None).await
     }
     /// A group message on `platform` carrying the envelope's default text.
     pub async fn on(platform: &str) -> Self {
-        Self::build(platform, "hello").await
+        Self::build(platform, "hello", None).await
     }
-    async fn build(platform: &str, text: &str) -> Self {
+    /// A message carrying `setup`'s attachments, with a media service over
+    /// its fakes. `event_ref` is the media event's reference.
+    pub async fn with_media(setup: MediaSetup) -> Self {
+        Self::build("telegram", "hello", Some(setup)).await
+    }
+    async fn build(platform: &str, text: &str, media: Option<MediaSetup>) -> Self {
         let key = format!("nyxid_ag_{}", uuid::Uuid::new_v4().simple());
+        let edit = media.as_ref().map(|setup| setup.edit);
         let fixture = Fixture::on(
             platform,
             |value| {
                 value["secrets"]["agent_key_hash"] =
                     format!("sha256:{:x}", Sha256::digest(key.as_bytes())).into();
                 value["secrets"]["provider_credential"] = key.clone().into();
+                if let Some(edit) = edit {
+                    edit(value);
+                }
             },
             Default::default(),
         )
@@ -81,7 +94,10 @@ impl App {
             envelope.payload["raw_platform_data"]["message"]["text"] = text.into();
         }
         assert_eq!(fixture.send(&envelope).await.status(), 202);
-        let request = fixture.recorder.requests.lock().unwrap().pop().unwrap();
+        let mut request = fixture.recorder.requests.lock().unwrap().pop().unwrap();
+        if let Some(setup) = &media {
+            request = setup.retarget(request, &fixture.state.master_keys);
+        }
         let event_ref = request.event_ref.clone();
         let payload = event_ref
             .open(&fixture.state.master_keys, super::relay_support::now())
@@ -99,7 +115,12 @@ impl App {
         )
         .unwrap();
         let fake = FakeProvider::start(Default::default()).await;
-        let registry=ProviderRegistry::parse(&json!([{"slug":"cma_codex","base_url":fake.base_url(),"kind":"responses_http","paths":{"agent_card":"/.well-known/agent-card.json","binding":"/api/v1/cmaeg/bindings/{binding_id}","conversation":"/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}","responses":"/api/v2/responses"},"max_inflight":1}]).to_string()).unwrap();
+        let entry = |slug: &str| json!({"slug":slug,"base_url":fake.base_url(),"kind":"responses_http","paths":{"agent_card":"/.well-known/agent-card.json","binding":"/api/v1/cmaeg/bindings/{binding_id}","conversation":"/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}","responses":"/api/v2/responses"},"max_inflight":1});
+        // A second slug lets media tests bind a provider that installs no
+        // gateway tools.
+        let registry =
+            ProviderRegistry::parse(&json!([entry("cma_codex"), entry("nyxbot")]).to_string())
+                .unwrap();
         let providers = Arc::new(
             ProviderClient::new(registry, Duration::from_secs(1), Duration::from_secs(1), 1)
                 .unwrap(),
@@ -149,6 +170,7 @@ impl App {
                 }
             }
         });
+        let media = media.map(|setup| Arc::new(setup.service(fixture.state.master_keys.clone())));
         let state = ToolsState {
             resolver: fixture.state.resolver.clone(),
             keys: fixture.state.master_keys.clone(),
@@ -156,6 +178,7 @@ impl App {
             delivery,
             tracker: TurnTracker::new(http::readiness::Readiness::initialized()),
             public_origin: "https://gateway.example".into(),
+            media: media.clone(),
         };
         let router = http::tools::router(state.clone())
             .merge(mcp::router(state.clone()))
@@ -174,6 +197,7 @@ impl App {
             message_ref,
             requests,
             delay,
+            media,
             tasks: vec![engine, server],
         }
     }
@@ -183,6 +207,30 @@ impl App {
             self.base,
             self.event_ref.as_str()
         )
+    }
+    /// GET attachment `index` of the app's event, with `query`.
+    pub async fn attachment(&self, index: &str, query: &str) -> reqwest::Response {
+        self.attachment_under(self.event_ref.as_str(), index, query)
+            .await
+    }
+    /// GET attachment `index` under `reference`, which may be a resealed,
+    /// expired or tampered form of the app's event_ref.
+    pub async fn attachment_under(
+        &self,
+        reference: &str,
+        index: &str,
+        query: &str,
+    ) -> reqwest::Response {
+        self.fixture
+            .client
+            .get(format!(
+                "{}/v1/events/{reference}/attachments/{index}{query}",
+                self.base
+            ))
+            .bearer_auth(&self.key)
+            .send()
+            .await
+            .unwrap()
     }
     pub async fn rpc(&self, request: Value) -> reqwest::Response {
         self.fixture

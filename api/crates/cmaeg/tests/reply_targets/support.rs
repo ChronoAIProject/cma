@@ -106,6 +106,7 @@ impl App {
             delivery,
             tracker: tracker.clone(),
             public_origin: "https://gateway.example".into(),
+            media: None,
         };
         let engine = engine(receiver, &state, &relay);
         let (base, server) = serve(http::tools::router(state.clone())).await;

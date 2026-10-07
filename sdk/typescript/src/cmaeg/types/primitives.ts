@@ -164,6 +164,8 @@ export const ProblemCodeSchema = enumeration(
   'payload_too_large',
   'unsupported_media_type',
   'internal',
+  'attachment_not_found',
+  'media_unavailable',
 );
 export type ProblemCode = Output<typeof ProblemCodeSchema>;
 

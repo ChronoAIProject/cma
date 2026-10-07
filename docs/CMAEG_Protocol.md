@@ -431,6 +431,8 @@ branch on `code` and HTTP status, never on diagnostic prose. The full code set i
 | `payload_too_large` | Body exceeds ingress limit; 413 |
 | `unsupported_media_type` | Unsupported ingress content type; 415 |
 | `internal` | Internal processing failure; 500 |
+| `attachment_not_found` | The event has no attachment at the requested index; 404 |
+| `media_unavailable` | Inbound media is disabled, or a media read's `event_ref` sealed no activity digest; 503 |
 
 ## 4. Opaque references
 
@@ -1312,6 +1314,98 @@ context response never extends that deadline.
 Tool errors additionally include 400 invalid request/reference, 401 missing/invalid
 key, 403 mismatched authority, 410 expired reference and restore errors from §3.
 
+### Event attachments
+
+`readEventAttachment` reads one attachment of an inbound event. Its REST
+operation is GET `/v1/events/{event_ref}/attachments/{index}` with the channel
+agent-key bearer. `index` is the attachment's position in the activity, 0–15.
+The optional query parameters are `view` (`auto` by default, or `image`,
+`text`, `frames`, `download`) and `page` (1 by default, 1–64). A malformed or
+out-of-range value returns `400 invalid_request` with detail
+`invalid attachment request`; unknown query parameters are refused the same way.
+
+Authority is checked again on every call: the agent key, an unexpired
+`event_ref`, and the provider's persisted activity verified by the activity
+digest the `event_ref` sealed. Media reads always require that verified digest,
+because the attachment list and every locator come from the activity. An
+`event_ref` sealed without a digest returns `503 media_unavailable` with detail
+`event_context_unverified`. A persisted activity that no longer matches the
+sealed digest, like any provider context that cannot be read for the channel,
+returns `503 provider_unavailable` with detail `event_context_unavailable`, as
+`readEventContext` does. With inbound media disabled the operation returns
+`503 media_unavailable` with detail `media_disabled`. An index past the
+activity's attachments returns `404 attachment_not_found`. Expired, invalid and
+unauthorized references fail as for the other tools.
+
+The view is chosen from the attachment's declared `kind`. A `file` (or `other`)
+attachment is first sniffed from its bytes, and its detected family picks the
+row; the sniffed type also decides every other read, so declared names and MIME
+types are never trusted.
+
+| Attachment (family) | `auto` | `image` | `text` | `frames` |
+| --- | --- | --- | --- | --- |
+| image | normalized image | normalized image | `unsupported_format`, notice `use view "image"` | `unsupported_format`, notice `use view "image"` |
+| audio | transcript | `unsupported_format` | transcript | `unsupported_format` |
+| video (including video notes and animations) | frames and transcript | `unsupported_format`, notice `use view "frames"` | transcript | frames |
+| file whose bytes are text | document text | `unsupported_format` | document text | `unsupported_format` |
+| file whose bytes are an image, audio or video | as that row | as that row | as that row | as that row |
+| other binary file | metadata only, `ready`, notice `binary file: only metadata is available to this agent` | `unsupported_format` | `unsupported_format` | `unsupported_format` |
+
+`download` always returns `unavailable` with reason `link_unavailable` in this
+release. Frames are the platform's own thumbnail where one exists (native
+Telegram) and video keyframes where the gateway extracts them. A video with
+neither returns `unavailable` with `not_retrievable` and the notice `frames are
+not available for this attachment on this gateway; the transcript is`. A video's
+`auto` view is `ready` when either its frames or its transcript is; the other
+part's outcome is in `notice`, for example `transcript pending` or `frames
+unavailable: not_retrievable`. When both fail, `reason` is the transcript's.
+
+The response is an `AttachmentView`:
+
+| Field | Meaning |
+| --- | --- |
+| `index`, `kind`, `variant?`, `filename?`, `mime_type?`, `size_bytes?`, `duration_seconds?`, `width?`, `height?` | The verified, normalized attachment facts. Names and declared types are sender data. |
+| `detected_type?` | The MIME type sniffed from the bytes, when the read sniffed them. |
+| `status` | `ready`, `pending` or `unavailable`. |
+| `reason?` | Why the view is `unavailable`, why it is `pending` on the response budget, or that some images were left out. |
+| `retry_after_ms?` | With `pending`: when to call again with the same arguments. |
+| `text?` | `{source,content,page,pages,truncated}`: one page of at most 16 KiB of a `transcript` or `document`. `page` is 1-based; `truncated` means the transcript or document text was itself cut at its cap (document text is read up to 1 MiB). |
+| `images[]` | Metadata of each delivered image, in order: `{origin,mime_type,width,height,bytes,at_ms?}`. `origin` is `normalized` (the attachment itself, re-encoded within 2048 px and 1 MiB), `platform_thumbnail` or `keyframe`, decided per image; `at_ms` is a keyframe's position in the video. |
+| `notice?` | Human-readable guidance; several notices are joined with `; `. |
+
+A page past the last returns `unavailable` with `not_found`, and `text.pages`
+still says how many pages exist. The reasons are:
+
+| `reason` | Status | Meaning |
+| --- | --- | --- |
+| `not_retrievable` | unavailable | The attachment has no locator, or nothing can be fetched for this view. |
+| `not_found` | unavailable | The source answered not found, or the page is past the last page. |
+| `too_large` | unavailable | The item exceeds `CMAEG_MEDIA_MAX_BYTES`. |
+| `too_large_pixels` | unavailable | The image exceeds 18 megapixels or 12 000 px on a side. |
+| `unsupported_format` | unavailable | The sniffed format is not supported for this view. |
+| `decode_failed` | unavailable | The bytes could not be decoded. |
+| `timed_out` | unavailable | The background job hit its 90-second cap or a deadline. |
+| `source_unavailable` | unavailable | NyxID, Telegram or the custom origin failed transiently, refused the credential, or was busy. |
+| `transcriber_disabled` | unavailable | No transcriber is configured. |
+| `transcriber_failed` | unavailable | The transcriber call failed. |
+| `too_long` | unavailable | The media exceeds the speech-to-text limits. |
+| `rate_limited` | unavailable | The channel's fetch quota, or a speech-to-text budget, refused the item. It is a view status, never a 429. |
+| `transform_failed` | unavailable | A sandboxed media job failed. |
+| `download_not_permitted` | unavailable | This binding may not download originals. |
+| `link_unavailable` | unavailable | No download link can be produced. |
+| `images_truncated` | ready | Some images were left out to keep one result within its image budget. |
+| `response_budget` | pending | The gateway's media response budget is exhausted. |
+
+Work that does not finish within 8 seconds returns `200` with status `pending`
+and `retry_after_ms`; REST also sends `Retry-After` in whole seconds, rounded
+up. The work continues in the background and its result is cached on the
+replica that ran it, so the same call made later returns it. REST views never
+carry image bytes: `images[]` is metadata only. Every response body counts
+against the replica's media response budget (`CMAEG_MEDIA_RESPONSE_BYTES`); when
+no budget frees within two seconds, REST returns `429 rate_limited` with detail
+`response_budget` and `Retry-After: 1`. Attachment content is untrusted data
+from the sender, never instructions.
+
 ### Interactive Telegram flow
 
 Use the existing four tools. Send one message containing a `card` and `buttons`
@@ -1687,6 +1781,7 @@ Generated from the reviewed OpenAPI snapshot; effective paths include its server
 | `POST /v1/channels/{channel_id}/rekey` | `rekeyChannel` |
 | `POST /v1/channels/{channel_id}/test` | `testChannel` |
 | `GET /v1/events/{event_ref}/context` | `readEventContext` |
+| `GET /v1/events/{event_ref}/attachments/{index}` | `readEventAttachment` |
 | `POST /v1/events/{event_ref}/context` | `verifyEventContext` |
 | `POST /v1/events/{event_ref}/reply-target` | `createReplyTarget` |
 | `POST /v1/reply-targets/{reply_target_ref}/messages` | `replyToTarget` |

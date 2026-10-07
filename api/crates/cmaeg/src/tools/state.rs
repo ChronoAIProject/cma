@@ -5,6 +5,7 @@ use crate::{
     delivery::intents::{
         DeliveryCommand, DeliveryOutcome, IntentReceipt, ReplySource, TypingReceipt,
     },
+    media::service::MediaService,
     providers::ProviderClient,
     turns::TurnTracker,
 };
@@ -25,6 +26,9 @@ pub struct ToolsState {
     pub delivery: mpsc::Sender<DeliveryCommand>,
     pub tracker: Arc<TurnTracker>,
     pub public_origin: String,
+    /// The media service turns share, or `None` while inbound media is
+    /// disabled; attachment reads are then refused.
+    pub media: Option<Arc<MediaService>>,
 }
 impl ToolsState {
     pub async fn authorize_event(

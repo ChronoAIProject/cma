@@ -118,7 +118,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         records,
         creator_auth,
         config.management.clone(),
-        config.channel_cache,
+        config.channel_cache.clone(),
     );
     let telegram = std::sync::Arc::new(telegram::TelegramClient::production(
         config.delivery.reply_timeout,
@@ -149,6 +149,16 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             waiters.clone(),
         ),
     );
+    let tool_providers = std::sync::Arc::new(config.media.tool_providers.clone());
+    // The one media service of the process, or None while media is off.
+    let media = media::service::compose(
+        &config,
+        media::service::ComposeDeps {
+            keys: state.master_keys.clone(),
+            tool_providers: tool_providers.clone(),
+            telegram: telegram.clone(),
+        },
+    )?;
     let runner = std::sync::Arc::new(
         turns::TurnRunner::new(
             providers.clone(),
@@ -156,7 +166,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             delivery.clone(),
             config.turns.clone(),
         )
-        .with_media_tool_providers(std::sync::Arc::new(config.media.tool_providers.clone())),
+        .with_media_tool_providers(tool_providers),
     );
     let ingress = ingress::IngressState::new(
         state.resolver.clone(),
@@ -174,6 +184,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         delivery,
         tracker: tracker.clone(),
         public_origin: config.management.public_url.clone(),
+        media,
     };
     let connections = connections::ConnectionService::new(state.clone(), tools_state.clone());
     let ingress = ingress.with_receipt_observer(std::sync::Arc::new(connections.clone()));

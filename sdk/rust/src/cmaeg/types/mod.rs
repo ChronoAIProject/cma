@@ -15,3 +15,5 @@ mod activities;
 pub use activities::*;
 mod connections;
 pub use connections::*;
+mod media;
+pub use media::*;

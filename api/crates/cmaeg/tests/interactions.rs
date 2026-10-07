@@ -4,6 +4,17 @@ pub mod fake_cma;
 pub mod fake_provider;
 #[path = "relay/support.rs"]
 pub mod relay_support;
+/// The media helpers the shared tools app is built with.
+pub mod media {
+    #[path = "fakes.rs"]
+    pub mod fakes;
+    #[path = "image_fixtures.rs"]
+    pub mod image_fixtures;
+    #[path = "support.rs"]
+    pub mod support;
+}
+#[path = "tools/media_support.rs"]
+pub mod media_support;
 #[path = "relay/signer.rs"]
 pub mod signer;
 #[allow(dead_code)]

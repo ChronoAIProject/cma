@@ -68,6 +68,12 @@ fn describe_media() {
         "CMAEG media bytes fetched by source"
     );
     metrics::counter!(names::MEDIA_FETCH_BYTES).absolute(0);
+    metrics::describe_counter!(
+        names::MEDIA_TOOL_READS,
+        metrics::Unit::Count,
+        "CMAEG attachment reads by requested view and resulting status"
+    );
+    metrics::counter!(names::MEDIA_TOOL_READS).absolute(0);
     for (name, unit, description) in [
         (
             names::MEDIA_INFLIGHT_BYTES,
