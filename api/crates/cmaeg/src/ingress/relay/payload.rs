@@ -69,6 +69,9 @@ pub struct Attachment {
     /// CMAEG_NYXID_BASE_URL and the sealed message ID.
     #[serde(default)]
     pub download_url: Option<String>,
+    // Opaque provider handle (a Telegram file_id or a Lark resource URL). CMAEG
+    // never parses or dereferences it; retrieval uses the sealed message ID and
+    // the attachment index. A plain comment, so the published schema is unchanged.
     pub url: String,
     pub platform_message_id: Option<String>,
     pub file_key: Option<String>,
