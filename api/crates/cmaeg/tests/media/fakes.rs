@@ -11,6 +11,7 @@ use cmaeg::media::{
 use cmaeg_core::{
     activity::{ActivityKind, Attachment, AttachmentKind, AttachmentSource, SourceKind},
     channel::Platform,
+    ids::ChannelId,
     seal::{event_ref::activity_digest, ReplyAddress},
 };
 use futures_util::future::BoxFuture;
@@ -186,10 +187,18 @@ pub fn telegram_source() -> SourceKind {
 /// A verified target on the fixture channel for an activity of `source` and
 /// `kind`, sealed with its digest.
 pub fn target(source: SourceKind, kind: ActivityKind) -> MediaTarget {
+    target_on("media-fixture", source, kind)
+}
+
+/// [`target`] on the channel `cmaeg1.ch.<channel>`.
+pub fn target_on(channel: &str, source: SourceKind, kind: ActivityKind) -> MediaTarget {
     let activity = activity(source, Some(kind));
+    let mut resolved = resolved(|_| {});
+    resolved.id = ChannelId::new(format!("cmaeg1.ch.{channel}")).unwrap();
     let mut payload = event(ReplyAddress::None);
+    payload.channel_id = resolved.id.clone();
     payload.activity_sha256 = Some(activity_digest(&activity));
-    MediaTarget::new(Arc::new(resolved(|_| {})), payload, Arc::new(activity)).unwrap()
+    MediaTarget::new(Arc::new(resolved), payload, Arc::new(activity)).unwrap()
 }
 
 /// A verified custom message carrying `attachments`.

@@ -1,14 +1,28 @@
-//! What can be derived from an attachment, and the one vocabulary of
-//! reasons a derivation fails with.
+//! What can be derived from an attachment, how each artifact is produced,
+//! and the one vocabulary of reasons a derivation fails with.
 //!
 //! The reasons are what agents and operators see, so every lower-level
 //! failure (a fetch, a decode, a transcription, a job) maps into
 //! [`DeriveError`] here and nowhere else.
 use super::{
-    cache::Weighted, image::ImageError, image::NormalizedImage, jobs::JobAbort, sniff::Family,
-    text::TextDocument, text::TextError, transcribe::TranscribeError, FetchError,
+    body::{FetchedBody, Overflow},
+    budget::{InflightBytes, InflightPermit},
+    cache::Weighted,
+    image::{self, ImageError, NormalizedImage, FULL},
+    jobs::JobAbort,
+    sniff::{sniff, Family, Sniffed},
+    source::{FetchRequest, SourceCredential, SourceRegistry},
+    target::MediaTarget,
+    text::{self, TextDocument, TextError},
+    transcribe::{AudioContainer, AudioInput, TranscribeError, Transcriber},
+    visual::{VisualExtractor, VisualKind, VisualRequest, THUMBNAIL_MAX_BYTES},
+    FetchError, MediaLimits,
 };
-use std::fmt;
+use std::{fmt, sync::Arc};
+use tokio::{sync::Semaphore, time::Instant};
+
+/// Bytes read to classify an attachment, and the head every sniff inspects.
+const SNIFF_BYTES: usize = 4096;
 
 /// Weight of a [`Derived::Metadata`] entry: a few words of memory, counted
 /// so that the cache never holds an unbounded number of free entries.
@@ -207,5 +221,182 @@ impl From<TranscribeError> for DeriveError {
             TranscribeError::RateLimited => Self::RateLimited,
             TranscribeError::Failed => Self::TranscriberFailed,
         }
+    }
+}
+
+/// Everything a derivation job needs, shared by every job of the pod.
+///
+/// The sniffed type of the fetched bytes always decides: a declared image
+/// whose bytes are text fails as an image and succeeds as text.
+pub struct Pipeline {
+    pub sources: Arc<SourceRegistry>,
+    pub transcriber: Arc<dyn Transcriber>,
+    pub visuals: Arc<dyn VisualExtractor>,
+    pub limits: MediaLimits,
+    /// The single decode permit, shared with the visual extractor.
+    pub decode: Arc<Semaphore>,
+    pub inflight: InflightBytes,
+}
+
+impl Pipeline {
+    /// Produce `artifact` for attachment `index` before `deadline`.
+    pub async fn run(
+        &self,
+        target: &MediaTarget,
+        index: usize,
+        artifact: Artifact,
+        deadline: Instant,
+    ) -> Result<Derived, DeriveError> {
+        match artifact {
+            Artifact::Image => {
+                let (body, _held) = self
+                    .fetch(
+                        target,
+                        index,
+                        self.limits.max_bytes,
+                        Overflow::Reject,
+                        deadline,
+                    )
+                    .await?;
+                expect(&body, &[Family::Image])?;
+                let normalized = image::normalize(body.bytes, FULL, &self.decode, deadline).await?;
+                Ok(Derived::Image(normalized))
+            }
+            Artifact::Text => {
+                let (body, _held) = self
+                    .fetch(
+                        target,
+                        index,
+                        text::TEXT_READ_LIMIT,
+                        Overflow::Truncate,
+                        deadline,
+                    )
+                    .await?;
+                expect(&body, &[Family::Text])?;
+                Ok(Derived::Text(text::decode(&body)?))
+            }
+            Artifact::Excerpt => {
+                let (body, _held) = self
+                    .fetch(
+                        target,
+                        index,
+                        text::EXCERPT_READ_LIMIT,
+                        Overflow::Truncate,
+                        deadline,
+                    )
+                    .await?;
+                expect(&body, &[Family::Text])?;
+                let (text, truncated) = text::excerpt(&text::decode(&body)?, text::EXCERPT_BYTES);
+                Ok(Derived::Excerpt { text, truncated })
+            }
+            Artifact::Transcript => self.transcript(target, index, deadline).await,
+            Artifact::Visuals => {
+                // The extractor fetches for itself; its largest fetch is held
+                // against the pod-wide budget for as long as it runs.
+                let bound = match self.visuals.kind() {
+                    VisualKind::Thumbnail => THUMBNAIL_MAX_BYTES,
+                    VisualKind::Keyframes => self.limits.max_bytes,
+                };
+                let _held = self.reserve(bound, deadline).await?;
+                let frames = self
+                    .visuals
+                    .extract(VisualRequest {
+                        target,
+                        index,
+                        deadline,
+                    })
+                    .await?;
+                Ok(Derived::Visuals(frames))
+            }
+            Artifact::Metadata => {
+                let cap = SNIFF_BYTES as u64;
+                let (body, _held) = self
+                    .fetch(target, index, cap, Overflow::Truncate, deadline)
+                    .await?;
+                let Sniffed { mime, family } = sniff_body(&body);
+                Ok(Derived::Metadata { mime, family })
+            }
+        }
+    }
+
+    async fn transcript(
+        &self,
+        target: &MediaTarget,
+        index: usize,
+        deadline: Instant,
+    ) -> Result<Derived, DeriveError> {
+        let (body, _held) = self
+            .fetch(
+                target,
+                index,
+                self.limits.max_bytes,
+                Overflow::Reject,
+                deadline,
+            )
+            .await?;
+        let sniffed = expect(&body, &[Family::Audio, Family::Video])?;
+        let container = AudioContainer::from_sniffed(sniffed.mime)
+            .filter(|container| self.transcriber.accepts(*container))
+            .ok_or(DeriveError::UnsupportedFormat)?;
+        let input = AudioInput {
+            bytes: body.bytes,
+            container,
+        };
+        let transcript = self.transcriber.transcribe(input, deadline).await?;
+        Ok(Derived::Transcript {
+            document: TextDocument::from_normalized(&text::normalize(&transcript.text), false),
+            usage_seconds: transcript.usage_seconds,
+        })
+    }
+
+    /// Fetch the attachment's bytes under `cap`, holding a pod-wide
+    /// reservation for them that the caller keeps until its transform ends.
+    async fn fetch(
+        &self,
+        target: &MediaTarget,
+        index: usize,
+        cap: u64,
+        overflow: Overflow,
+        deadline: Instant,
+    ) -> Result<(FetchedBody, InflightPermit), DeriveError> {
+        let attachment = target.attachment(index).ok_or(DeriveError::NotFound)?;
+        let declared = attachment.size_bytes.unwrap_or(cap).min(cap);
+        let held = self.reserve(declared, deadline).await?;
+        let body = self
+            .sources
+            .fetch(FetchRequest {
+                channel: &target.channel,
+                event: &target.event,
+                activity: &target.activity,
+                locator: attachment.source.as_ref(),
+                declared_size: attachment.size_bytes,
+                credential: SourceCredential::ReplyToken,
+                cap,
+                overflow,
+                deadline,
+            })
+            .await?;
+        Ok((body, held))
+    }
+
+    async fn reserve(&self, bytes: u64, deadline: Instant) -> Result<InflightPermit, DeriveError> {
+        self.inflight
+            .acquire(bytes, deadline)
+            .await
+            .ok_or(DeriveError::TimedOut)
+    }
+}
+
+fn sniff_body(body: &FetchedBody) -> Sniffed {
+    sniff(&body.bytes[..body.bytes.len().min(SNIFF_BYTES)])
+}
+
+/// The body's sniffed type, when its family is one of `families`.
+fn expect(body: &FetchedBody, families: &[Family]) -> Result<Sniffed, DeriveError> {
+    let sniffed = sniff_body(body);
+    if families.contains(&sniffed.family) {
+        Ok(sniffed)
+    } else {
+        Err(DeriveError::UnsupportedFormat)
     }
 }
