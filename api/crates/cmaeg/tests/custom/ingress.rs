@@ -1,8 +1,16 @@
-use super::{fake_provider::FakeProviderConfig, support::App};
+use super::{
+    fake_provider::FakeProviderConfig,
+    relay_support::probed_body,
+    support::{App, Recorded},
+};
+use axum::extract::{Path, State};
 use cmaeg::TurnConfig;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::time::{Duration, Instant};
+use std::{
+    sync::atomic::Ordering,
+    time::{Duration, Instant},
+};
 #[tokio::test]
 async fn structured_and_binary_events_admit_normalized_provider_turns_with_templates() {
     let mut app = App::new(
@@ -276,4 +284,20 @@ async fn long_source_and_subject_survive_in_activity_with_compact_reference_and_
     assert_eq!(context["activity"]["conversation"]["id"], subject);
     assert_eq!(context["capabilities"]["buttons"], "json");
     app.drain().await;
+}
+#[tokio::test]
+async fn custom_event_releases_request_body_before_launch() {
+    let app = Recorded::new().await;
+    let signed = json!({"specversion":"1.0","id":"released","type":"order.created","source":"https://orders.example","data":{"a":1}}).to_string().into_bytes();
+    let (body, dropped) = probed_body(signed.clone());
+    app.fixture.recorder.expect_released(dropped.clone());
+    let response = cmaeg::http::events::receive_event(
+        State(app.state.clone()),
+        Path(app.fixture.id.to_string()),
+        app.request(&signed, body),
+    )
+    .await;
+    assert_eq!(response.status(), 202);
+    assert_eq!(app.fixture.recorder.probed.load(Ordering::SeqCst), 1);
+    assert!(dropped.load(Ordering::SeqCst));
 }

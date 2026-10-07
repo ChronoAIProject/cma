@@ -228,3 +228,21 @@ async fn accepts_managed_telegram_new_platform_alias() {
     let response = fixture.client.execute(request).await.unwrap();
     assert_eq!(response.status(), reqwest::StatusCode::ACCEPTED);
 }
+
+#[tokio::test]
+async fn relay_callback_releases_request_body_before_launch() {
+    use axum::extract::{Path, State};
+    let fixture = Fixture::new(|_| {}, Default::default()).await;
+    let (bytes, token) = Envelope::new().signed();
+    let (body, dropped) = probed_body(bytes);
+    fixture.recorder.expect_released(dropped.clone());
+    let response = cmaeg::http::callbacks::callback(
+        State(fixture.state.clone()),
+        Path(fixture.id.to_string()),
+        fixture.local_request(body, &token),
+    )
+    .await;
+    assert_eq!(response.status(), 202);
+    assert_eq!(fixture.recorder.probed.load(Ordering::SeqCst), 1);
+    assert!(dropped.load(Ordering::SeqCst));
+}
