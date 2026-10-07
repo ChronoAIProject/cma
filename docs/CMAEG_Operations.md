@@ -62,11 +62,13 @@ listener, starts no worker and exits when its report is printed (see
 | `CMAEG_MEDIA_CACHE_BYTES` | unsigned decimal, bytes | `33554432` | 0..=268435456. Capacity of the per-pod derived-media cache, weighted by bytes, with a 30-minute lifetime; `0` disables caching. |
 | `CMAEG_MEDIA_RATE_PER_MINUTE` | unsigned decimal | `60` | 1..=6000. Media fetch starts per channel per minute, with a burst of the same size. |
 | `CMAEG_MEDIA_DOWNLOAD_BYTES_PER_HOUR` | unsigned decimal, bytes | `268435456` | 20971520..=4294967296. Download bytes per channel per hour, counted in KiB; enforced once download links exist. |
+| `CMAEG_MEDIA_PREPARE_BUDGET_MS` | unsigned decimal, ms | `15000` | 1000..=60000, and below `CMAEG_TURN_TIMEOUT_MS`; startup fails naming both keys otherwise. How long a media turn waits for its eager items (inline transcripts and text excerpts) before its provider turn starts without them. Items not ready by then render `transcript is still being prepared` and keep running in the background. See [Media turn preparation](#media-turn-preparation). |
 | `CMAEG_STT_MAX_SECONDS` | unsigned decimal, seconds | `600` | 1..=1500. Most metered seconds one transcription call may cost. With `CMAEG_STT_MAX_BYTES` it sets the direct-upload cap, `min(CMAEG_STT_MAX_BYTES, CMAEG_STT_MAX_SECONDS × 4000)` bytes. Like every speech-to-text key, validated at startup even while speech-to-text is disabled; an out-of-bounds or non-decimal value fails startup naming the key. See [Speech-to-text spend](#speech-to-text-spend). |
 | `CMAEG_STT_MAX_BYTES` | unsigned decimal, bytes | `20971520` | 1048576..=24000000, below the speech-to-text API's 25 MB upload limit. Most bytes one upload may carry. |
 | `CMAEG_STT_RATE_PER_MINUTE` | unsigned decimal | `20` | 1..=600. Transcription calls per channel per minute, with a burst of the same size. |
 | `CMAEG_STT_CHANNEL_SECONDS_PER_HOUR` | unsigned decimal, seconds | `3600` | 600..=86400. Metered seconds per channel per hour, checked before the global budget. Startup fails naming all three keys unless `CMAEG_STT_MAX_SECONDS` ≤ `CMAEG_STT_CHANNEL_SECONDS_PER_HOUR` ≤ `CMAEG_STT_SECONDS_PER_HOUR`. |
 | `CMAEG_STT_SECONDS_PER_HOUR` | unsigned decimal, seconds | `36000` | 600..=360000. Metered seconds per hour across every channel: the cost backstop, at most about $2.70 per hour at $0.0045 per minute. |
+| `CMAEG_STT_EAGER_MAX_SECONDS` | unsigned decimal, seconds | `300` | 0..=600. Audio whose *declared* duration exceeds this is not transcribed before its turn starts; undeclared audio is. `0` disables eager audio transcripts. Declared durations decide eligibility only and are never charged: the spend limits above still meter every upload. |
 | `CMAEG_STT_URL` | URL | `""` | Speech-to-text endpoint, speaking the OpenAI transcription protocol. Empty disables speech-to-text: transcripts are refused as `transcriber_disabled` without fetching, and `CMAEG_STT_API_KEY` is ignored. Otherwise an absolute `https` URL with a host and no userinfo, query or fragment; `http` only with a loopback host, for local tests. Startup errors never print the URL. See [Speech-to-text endpoint](#speech-to-text-endpoint). |
 | `CMAEG_STT_MODEL` | string | `gpt-transcribe` | 1..=128 printable ASCII characters without whitespace; sent as the multipart `model` field. |
 | `CMAEG_STT_FORMATS` | comma-separated formats | `mp3,mp4,mpeg,mpga,m4a,wav,webm` | 1..=9 distinct values from `mp3`, `mp4`, `mpeg`, `mpga`, `m4a`, `wav`, `webm`, `ogg` and `flac`, without spaces or empty entries. `mpeg` and `mpga` also admit the MP3 container. `ogg` covers Telegram `.oga` and Lark `.opus` voice; add it only after probe P3 passes. A container not listed is refused as `unsupported_format` without a request. |
@@ -152,7 +154,8 @@ media work spans an 8-second tool budget, a 15-second preparation budget and a
 | `cmaeg_media_jobs_inflight` | none | Media jobs holding one of the `CMAEG_MEDIA_MAX_JOBS` permits. |
 | `cmaeg_media_cache_bytes` | none | Weighted bytes held by the derived-media cache. |
 | `cmaeg_media_derive_seconds` | `op`, `outcome` | One derivation job of an attachment artifact, from the moment it holds its channel slot and job permit to its result, including the fetch. `op` is `image`, `text`, `excerpt`, `transcript`, `visuals` or `metadata`; `outcome` is `ok` or one of `not_retrievable`, `not_found`, `too_large`, `too_large_pixels`, `unsupported_format`, `decode_failed`, `timed_out`, `transcriber_disabled`, `transcriber_failed`, `too_long`, `rate_limited`, `source_unavailable` or `transform_failed`. A job stopped at its 90-second cap records `timed_out`. Every image normalization also records `op="image"` on its own (waiting for the single decode permit, decoding, downscaling, orienting and re-encoding), including the one inside an `image` derivation and a thumbnail's inside `visuals`, so an `image` derivation that reaches its decode contributes two samples. Refusals answered without a job (an unknown attachment, a disabled transcriber, a spent fetch quota) record nothing here. Uses the media buckets. |
-| `cmaeg_media_fence_wait_seconds` | none | Time a turn waited for an earlier turn of its conversation to return from its provider start, recorded only for a turn that had such a predecessor. A turn waits at most the busy-retry bound plus five seconds and then proceeds out of order with a `conversation order fence timed out` warning. Uses the media buckets. |
+| `cmaeg_media_prepare_seconds` | `outcome` | Time a media turn spent on its eager items (transcripts and excerpts), recorded only when at least one ran. `outcome` is `ready` when every eager item was ready, otherwise `pending` when any was still being prepared at the budget, otherwise `unavailable`. The `cmaeg.media.prepare` span carries `items`, `eager`, `outcome` and the channel's hash, never a file name, transcript or excerpt. Uses the media buckets. |
+| `cmaeg_media_fence_wait_seconds` | none | Time a turn waited for an earlier turn of its conversation to return from its provider start, recorded only for a turn that had such a predecessor. A turn waits at most the busy-retry bound plus the preparation budget (`CMAEG_MEDIA_PREPARE_BUDGET_MS`) plus five seconds and then proceeds out of order with a `conversation order fence timed out` warning. Uses the media buckets. |
 | `cmaeg_stt_audio_seconds_total` | none | Speech-to-text audio seconds counted for finished calls: the metered seconds, or the provider's reported usage when it is larger. |
 | `cmaeg_stt_channels_at_budget` | none | Distinct channels refused by their own `CMAEG_STT_CHANNEL_SECONDS_PER_HOUR` budget within the last hour. It is refreshed on each such refusal and at least every 256 charges. |
 | `cmaeg_turns_inflight` | none | Admitted local consumers; decremented on completion or cancellation. |
@@ -468,6 +471,45 @@ declare facts outside the domain, such as a 0×0 video. A rising
 envelope stopped listing the raw Telegram `file_id` as an entry's `url`, or the
 raw Lark `image_key` or `file_key` as the entry's key; compare NyxID's Telegram
 or Lark adapter with protocol §6.
+
+### Media turn preparation
+
+With `CMAEG_MEDIA_ENABLED=true`, a turn whose activity carries attachments
+prepares them after admission and before its provider turn starts, so every
+binding class, including existing-agent bindings and providers without the
+gateway's tools such as `nyxbot`, receives audio transcripts and small text
+excerpts in its single input. Audio is eligible when its declared duration is at
+most `CMAEG_STT_EAGER_MAX_SECONDS` or undeclared, video when it is not an
+animation or sticker and declares at most 60 seconds, and video notes always;
+text-like files of at most 256 KiB, or of unknown size, give an excerpt of at
+most 4 KiB. The eager items run concurrently within
+`CMAEG_MEDIA_PREPARE_BUDGET_MS`; images, and video visuals when a thumbnail or
+keyframes exist, are only warmed in the background, never awaited, and only for
+tool-bearing bindings. A media turn releases its ingress permit right after it
+is spawned, so a burst of voice notes cannot exhaust `CMAEG_INGRESS_INFLIGHT`
+for text, and every transport answers exactly as before. Within one
+conversation on one replica, turns reach the provider in the order they reached
+launch: a turn that follows a media turn waits, at most for the busy-retry
+bound plus the preparation budget plus five seconds, until the media turn's
+provider start has returned.
+
+Service-level queries on the private metrics scrape:
+
+```promql
+# Text and attachment-free turns keep the warm p99 <= 1000 ms (protocol §11).
+histogram_quantile(0.99, sum by (le) (rate(cmaeg_ingress_to_provider_seconds_bucket{media="none",cold="false"}[5m])))
+# Eager preparation, target p95 <= 8 s for voice notes of up to 60 s.
+histogram_quantile(0.95, sum by (le) (rate(cmaeg_media_prepare_seconds_bucket[30m])))
+# Time turns waited behind an earlier media turn of their conversation.
+histogram_quantile(0.95, sum by (le) (rate(cmaeg_media_fence_wait_seconds_bucket[30m])))
+```
+
+A rising share of `cmaeg_media_prepare_seconds_count{outcome="pending"}` means
+transcripts routinely miss the budget: check the speech-to-text latency and the
+`cmaeg_media_jobs_inflight` saturation before raising
+`CMAEG_MEDIA_PREPARE_BUDGET_MS`, which delays every media turn and every turn
+queued behind one. `conversation order fence timed out` warnings name only the
+channel hash; a turn that logs one reached the provider out of order.
 
 ### Speech-to-text spend
 

@@ -38,11 +38,12 @@ pub use config::{
     CMAEG_INGRESS_INFLIGHT, CMAEG_INGRESS_MAX_BODY, CMAEG_JWKS_TTL_MS, CMAEG_LISTEN,
     CMAEG_MASTER_KEYS_FILE, CMAEG_MEDIA_CACHE_BYTES, CMAEG_MEDIA_DOWNLOAD_BYTES_PER_HOUR,
     CMAEG_MEDIA_ENABLED, CMAEG_MEDIA_INFLIGHT_BYTES, CMAEG_MEDIA_MAX_BYTES, CMAEG_MEDIA_MAX_JOBS,
-    CMAEG_MEDIA_RATE_PER_MINUTE, CMAEG_MEDIA_RESPONSE_BYTES, CMAEG_MEDIA_TOOL_PROVIDERS,
-    CMAEG_METRICS_LISTEN, CMAEG_NYXID_BASE_URL, CMAEG_NYXID_REPLY_TIMEOUT_MS, CMAEG_PROVIDERS,
-    CMAEG_PROVIDER_CONNECT_TIMEOUT_MS, CMAEG_PROVIDER_MAX_INFLIGHT,
-    CMAEG_PROVIDER_REQUEST_TIMEOUT_MS, CMAEG_PUBLIC_URL, CMAEG_RESTORE_RATE_PER_MINUTE,
-    CMAEG_RESTORE_TIMEOUT_MS, CMAEG_TOOLS_NYXID_SLUG, CMAEG_TURN_TIMEOUT_MS,
+    CMAEG_MEDIA_PREPARE_BUDGET_MS, CMAEG_MEDIA_RATE_PER_MINUTE, CMAEG_MEDIA_RESPONSE_BYTES,
+    CMAEG_MEDIA_TOOL_PROVIDERS, CMAEG_METRICS_LISTEN, CMAEG_NYXID_BASE_URL,
+    CMAEG_NYXID_REPLY_TIMEOUT_MS, CMAEG_PROVIDERS, CMAEG_PROVIDER_CONNECT_TIMEOUT_MS,
+    CMAEG_PROVIDER_MAX_INFLIGHT, CMAEG_PROVIDER_REQUEST_TIMEOUT_MS, CMAEG_PUBLIC_URL,
+    CMAEG_RESTORE_RATE_PER_MINUTE, CMAEG_RESTORE_TIMEOUT_MS, CMAEG_TOOLS_NYXID_SLUG,
+    CMAEG_TURN_TIMEOUT_MS,
 };
 
 const REQUEST_BODY_LIMIT_BYTES: usize = 1024 * 1024;
@@ -118,7 +119,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         records,
         creator_auth,
         config.management.clone(),
-        config.channel_cache,
+        config.channel_cache.clone(),
     );
     let telegram = std::sync::Arc::new(telegram::TelegramClient::production(
         config.delivery.reply_timeout,
@@ -149,6 +150,16 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             waiters.clone(),
         ),
     );
+    let tool_providers = std::sync::Arc::new(config.media.tool_providers.clone());
+    // `None` while CMAEG_MEDIA_ENABLED=false, so nothing is allocated.
+    let media = media::service::compose(
+        &config,
+        media::service::ComposeDeps {
+            keys: state.master_keys.clone(),
+            tool_providers: tool_providers.clone(),
+            telegram: telegram.clone(),
+        },
+    )?;
     let runner = std::sync::Arc::new(
         turns::TurnRunner::new(
             providers.clone(),
@@ -156,7 +167,14 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             delivery.clone(),
             config.turns.clone(),
         )
-        .with_media_tool_providers(std::sync::Arc::new(config.media.tool_providers.clone())),
+        .with_media_tool_providers(tool_providers)
+        .with_media(
+            media,
+            media::prepare::PrepareConfig {
+                budget: config.media.prepare_budget,
+                eager_audio_max_seconds: config.stt.eager_max_seconds,
+            },
+        ),
     );
     let ingress = ingress::IngressState::new(
         state.resolver.clone(),

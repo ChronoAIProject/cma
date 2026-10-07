@@ -20,7 +20,8 @@ pub use ingress::*;
 pub use media::{
     MediaConfig, MediaToolProviders, CMAEG_MEDIA_CACHE_BYTES, CMAEG_MEDIA_DOWNLOAD_BYTES_PER_HOUR,
     CMAEG_MEDIA_ENABLED, CMAEG_MEDIA_INFLIGHT_BYTES, CMAEG_MEDIA_MAX_BYTES, CMAEG_MEDIA_MAX_JOBS,
-    CMAEG_MEDIA_RATE_PER_MINUTE, CMAEG_MEDIA_RESPONSE_BYTES, CMAEG_MEDIA_TOOL_PROVIDERS,
+    CMAEG_MEDIA_PREPARE_BUDGET_MS, CMAEG_MEDIA_RATE_PER_MINUTE, CMAEG_MEDIA_RESPONSE_BYTES,
+    CMAEG_MEDIA_TOOL_PROVIDERS,
 };
 pub use service_account::*;
 pub use stt::*;
@@ -165,6 +166,8 @@ impl Config {
                 value: env::var(CMAEG_PROVIDER_MAX_INFLIGHT).unwrap_or_else(|_| "256".to_owned()),
             })?;
         let management = ManagementConfig::from_env()?;
+        let turns = TurnConfig::from_env()?;
+        media.check_turn_timeout(turns.turn_timeout)?;
         Ok(Self {
             listen,
             metrics_listen,
@@ -176,7 +179,7 @@ impl Config {
             cma_service_account: ServiceAccountConfig::from_env()?,
             channel_cache: ChannelCacheConfig::from_env()?,
             ingress: IngressConfig::from_env()?,
-            turns: TurnConfig::from_env()?,
+            turns,
             delivery: DeliveryConfig::from_env()?,
             media,
             stt,

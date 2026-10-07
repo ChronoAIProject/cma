@@ -25,6 +25,7 @@ pub const CMAEG_STT_MAX_BYTES: &str = "CMAEG_STT_MAX_BYTES";
 pub const CMAEG_STT_RATE_PER_MINUTE: &str = "CMAEG_STT_RATE_PER_MINUTE";
 pub const CMAEG_STT_CHANNEL_SECONDS_PER_HOUR: &str = "CMAEG_STT_CHANNEL_SECONDS_PER_HOUR";
 pub const CMAEG_STT_SECONDS_PER_HOUR: &str = "CMAEG_STT_SECONDS_PER_HOUR";
+pub const CMAEG_STT_EAGER_MAX_SECONDS: &str = "CMAEG_STT_EAGER_MAX_SECONDS";
 
 /// Every format a speech-to-text endpoint may be configured to accept.
 /// `mpeg` and `mpga` are the API's aliases for MP3; `ogg` and `flac` are
@@ -39,6 +40,8 @@ const MAX_BYTES_RANGE: (u64, u64) = (1_048_576, 24_000_000);
 const RATE_PER_MINUTE_RANGE: (u64, u64) = (1, 600);
 const CHANNEL_SECONDS_PER_HOUR_RANGE: (u64, u64) = (600, 86_400);
 const SECONDS_PER_HOUR_RANGE: (u64, u64) = (600, 360_000);
+/// Zero turns eager audio transcripts off.
+const EAGER_MAX_SECONDS_RANGE: (u64, u64) = (0, 600);
 
 /// Speech-to-text settings, loaded once at startup.
 #[derive(Clone, PartialEq, Eq)]
@@ -60,6 +63,10 @@ pub struct SttConfig {
     pub channel_seconds_per_hour: u32,
     /// Metered seconds per hour across every channel: the cost backstop.
     pub seconds_per_hour: u32,
+    /// Audio whose declared duration exceeds this is not transcribed before
+    /// its turn starts; 0 disables eager audio transcripts. Declared
+    /// durations decide eligibility only and are never charged.
+    pub eager_max_seconds: u32,
 }
 
 impl Default for SttConfig {
@@ -74,6 +81,7 @@ impl Default for SttConfig {
             rate_per_minute: 20,
             channel_seconds_per_hour: 3_600,
             seconds_per_hour: 36_000,
+            eager_max_seconds: 300,
         }
     }
 }
@@ -92,6 +100,7 @@ impl fmt::Debug for SttConfig {
             .field("rate_per_minute", &self.rate_per_minute)
             .field("channel_seconds_per_hour", &self.channel_seconds_per_hour)
             .field("seconds_per_hour", &self.seconds_per_hour)
+            .field("eager_max_seconds", &self.eager_max_seconds)
             .finish()
     }
 }
@@ -132,6 +141,11 @@ impl SttConfig {
                 u64::from(defaults.seconds_per_hour),
                 SECONDS_PER_HOUR_RANGE,
             )?),
+            eager_max_seconds: narrow(read(
+                CMAEG_STT_EAGER_MAX_SECONDS,
+                u64::from(defaults.eager_max_seconds),
+                EAGER_MAX_SECONDS_RANGE,
+            )?),
             ..defaults
         };
         if config.max_seconds > config.channel_seconds_per_hour
@@ -160,6 +174,7 @@ impl SttConfig {
             rate_per_minute = config.rate_per_minute,
             channel_seconds_per_hour = config.channel_seconds_per_hour,
             seconds_per_hour = config.seconds_per_hour,
+            eager_max_seconds = config.eager_max_seconds,
             "speech-to-text settings"
         );
         Ok(config)
