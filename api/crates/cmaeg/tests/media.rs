@@ -4,6 +4,8 @@ mod body;
 mod budget;
 #[path = "fake_nyxid.rs"]
 pub mod fake_nyxid;
+#[path = "media/fakes.rs"]
+pub mod fakes;
 #[path = "media/forward.rs"]
 mod forward;
 #[path = "media/image.rs"]
@@ -18,6 +20,8 @@ mod jobs;
 mod nyxid_source;
 #[path = "media/registry.rs"]
 mod registry;
+#[path = "media/seams.rs"]
+mod seams;
 #[path = "media/sniff.rs"]
 mod sniff;
 #[path = "media/support.rs"]

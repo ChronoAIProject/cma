@@ -10,12 +10,16 @@
 pub mod body;
 pub mod budget;
 pub mod cache;
+pub mod derive;
 pub mod forward;
 pub mod image;
 pub mod jobs;
 pub mod sniff;
 pub mod source;
+pub mod target;
 pub mod text;
+pub mod transcribe;
+pub mod visual;
 
 use crate::MediaConfig;
 use std::fmt;
