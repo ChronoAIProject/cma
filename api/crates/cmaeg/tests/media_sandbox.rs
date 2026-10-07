@@ -7,6 +7,8 @@
 mod filters;
 #[path = "media_sandbox/lifecycle.rs"]
 mod lifecycle;
+#[path = "media_sandbox/setup.rs"]
+mod setup;
 #[path = "media_sandbox/support.rs"]
 mod support;
 #[path = "media_sandbox/watchdog.rs"]

@@ -50,6 +50,10 @@ pub mod transform;
 mod transform_audio;
 #[path = "media/transform_schedule.rs"]
 mod transform_schedule;
+#[path = "media/transformer_service.rs"]
+mod transformer_service;
+#[path = "media/transformer_transcript.rs"]
+mod transformer_transcript;
 #[path = "media/upload.rs"]
 mod upload;
 #[path = "media/url_source.rs"]

@@ -8,6 +8,7 @@ use cmaeg::{
     ingress::launch::{LaunchOutcome, LaunchRequest, TurnLauncher},
     media::{
         body::{FetchedBody, Overflow},
+        budget::InflightBytes,
         derive::DeriveError,
         prepare::PrepareConfig,
         service::{MediaDeps, MediaService},
@@ -18,6 +19,10 @@ use cmaeg::{
             upload::{AudioTranscoder, NoTranscoder, PlannedUpload},
             AudioContainer, AudioInput, DisabledTranscriber, TranscribeError, Transcriber,
             Transcript,
+        },
+        transform::{
+            adapters::TransformerTranscoder, AudioRequest, KeyframeRequest, Keyframes,
+            MediaTransformer, Pcm, TransformError,
         },
         visual::PlatformThumbnail,
         FetchError, MediaLimits,
@@ -172,11 +177,37 @@ impl AudioTranscoder for FirstMinute {
     }
 }
 
+/// A transformer whose every transcode reaches its cap: ten minutes of PCM
+/// at the default speech-to-text limits.
+pub struct TenMinutes;
+
+impl MediaTransformer for TenMinutes {
+    fn keyframes(
+        &self,
+        _request: KeyframeRequest,
+    ) -> BoxFuture<'_, Result<Keyframes, TransformError>> {
+        Box::pin(async { Err(TransformError::Unavailable) })
+    }
+
+    fn audio(&self, request: AudioRequest) -> BoxFuture<'_, Result<Pcm, TransformError>> {
+        let data_len = usize::from(request.seconds) * 32_000;
+        Box::pin(async move {
+            Ok(Pcm {
+                wav: Bytes::from_static(&[0; 44]),
+                data_len,
+                truncated: true,
+            })
+        })
+    }
+}
+
 /// The speech-to-text side of a media service.
 pub enum Speech {
     Words,
     Disabled,
     FirstMinute,
+    /// Every input transcoded by the transformer, and truncated.
+    Transformer,
 }
 
 pub struct Media {
@@ -209,6 +240,15 @@ impl Media {
                     )
                 }
                 Speech::FirstMinute => (words.clone(), Arc::new(FirstMinute)),
+                Speech::Transformer => (
+                    words.clone(),
+                    Arc::new(TransformerTranscoder::new(
+                        Arc::new(TenMinutes),
+                        &stt,
+                        words.clone(),
+                        MediaConfig::default().max_bytes,
+                    )),
+                ),
             };
         let registry = Arc::new(SourceRegistry::new(
             source.clone(),
@@ -233,6 +273,7 @@ impl Media {
             ),
             tool_providers: tools.clone(),
             decode,
+            inflight: InflightBytes::new(&MediaLimits::from_config(&MediaConfig::default())),
         }));
         let runner = fixture
             .runner

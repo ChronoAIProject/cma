@@ -94,6 +94,14 @@ pub trait JobLauncher: Send + Sync + 'static {
     fn run(&self, spec: JobSpec) -> BoxFuture<'_, JobResult>;
 }
 
+/// Composition holds the platform's launcher without naming its type, which
+/// exists on Linux x86_64 only.
+impl JobLauncher for Box<dyn JobLauncher> {
+    fn run(&self, spec: JobSpec) -> BoxFuture<'_, JobResult> {
+        (**self).run(spec)
+    }
+}
+
 /// Count and time one finished job under its final outcome, inside the
 /// `cmaeg.media.transform` span. Nothing the job wrote is logged.
 pub fn observe(op: &JobOp, result: &JobResult) {
