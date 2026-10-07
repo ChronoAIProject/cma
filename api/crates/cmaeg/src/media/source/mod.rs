@@ -7,6 +7,7 @@
 //! No source puts a URL, token, file identifier, file name or message ID in an
 //! error, a log line or a span.
 pub mod nyxid;
+pub mod telegram;
 
 pub use crate::media::body::SourceStream;
 
