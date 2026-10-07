@@ -24,7 +24,7 @@ use std::{future::IntoFuture, net::SocketAddr, time::Instant};
 use axum::{routing::get, Json, Router};
 use serde::Serialize;
 use tokio::sync::oneshot;
-use tower_http::limit::RequestBodyLimitLayer;
+use tower_http::{catch_panic::CatchPanicLayer, limit::RequestBodyLimitLayer};
 use utoipa::OpenApi;
 
 pub use config::{
@@ -64,6 +64,8 @@ pub fn router() -> Router {
             .layer(RequestBodyLimitLayer::new(REQUEST_BODY_LIMIT_BYTES))
             .layer(axum::middleware::from_fn(http::problems::protocol_headers)),
     )
+    // Outermost backstop: a panic in any middleware is answered too.
+    .layer(CatchPanicLayer::custom(http::problems::panic_response))
 }
 
 /// Build the complete stateful router used by the running service.
@@ -81,6 +83,8 @@ pub fn router_with_state(state: http::ManagementState) -> Router {
             .layer(RequestBodyLimitLayer::new(REQUEST_BODY_LIMIT_BYTES))
             .layer(axum::middleware::from_fn(http::problems::protocol_headers)),
     )
+    // Outermost backstop: a panic in any middleware is answered too.
+    .layer(CatchPanicLayer::custom(http::problems::panic_response))
 }
 
 async fn healthz() -> Json<StatusResponse> {
@@ -190,6 +194,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             .merge(http::tools::router(tools_state.clone()))
             .merge(mcp::router(tools_state))
             .layer(RequestBodyLimitLayer::new(REQUEST_BODY_LIMIT_BYTES))
+            .layer(CatchPanicLayer::custom(http::problems::panic_response))
             .into_make_service_with_connect_info::<SocketAddr>(),
     )
     .with_graceful_shutdown(async move {
@@ -245,6 +250,20 @@ async fn wait_for_shutdown_signal() {
     {
         let _ = tokio::signal::ctrl_c().await;
     }
+}
+
+/// Replace Rust's default panic hook, which prints the panic payload to
+/// stderr. A payload can carry request data, so only the location is logged.
+pub fn install_panic_hook() {
+    std::panic::set_hook(Box::new(|info| {
+        let location = info
+            .location()
+            .map(|location| format!("{}:{}", location.file(), location.line()));
+        tracing::error!(
+            location = %location.as_deref().unwrap_or("unknown"),
+            "panic"
+        );
+    }));
 }
 
 /// Initialize the container logger with the service's stable default filter.
