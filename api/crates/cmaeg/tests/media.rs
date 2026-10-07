@@ -14,3 +14,5 @@ mod registry;
 mod sniff;
 #[path = "media/support.rs"]
 pub mod support;
+#[path = "media/telegram_source.rs"]
+mod telegram_source;

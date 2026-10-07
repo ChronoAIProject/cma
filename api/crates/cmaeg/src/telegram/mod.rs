@@ -1,5 +1,7 @@
 //! Telegram platform transport. Errors and tracing never contain token-bearing URLs.
+mod files;
 mod management;
+pub use files::{FileError, TelegramFile};
 #[cfg(test)]
 mod tests;
 use cmaeg_core::channel::Secret;
@@ -56,15 +58,7 @@ impl TelegramClient {
         body: &Value,
     ) -> Result<(reqwest::StatusCode, Value), Error> {
         let value = token.as_str();
-        let valid = value.split_once(':').is_some_and(|(id, key)| {
-            id.parse::<i64>().is_ok_and(|id| id > 0)
-                && !key.is_empty()
-                && key.len() <= 256
-                && key
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
-        });
-        if !valid {
+        if !valid_token(value) {
             return Err(Error::Rejected);
         }
         let endpoint = self
@@ -195,6 +189,18 @@ impl TelegramClient {
         }
         Ok(())
     }
+}
+/// `<positive bot ID>:<key>` with a key of URL-safe characters, so a token
+/// can never change the path it is embedded in.
+fn valid_token(value: &str) -> bool {
+    value.split_once(':').is_some_and(|(id, key)| {
+        id.parse::<i64>().is_ok_and(|id| id > 0)
+            && !key.is_empty()
+            && key.len() <= 256
+            && key
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+    })
 }
 fn positive(value: &Value) -> Result<String, Error> {
     value
