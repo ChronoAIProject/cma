@@ -62,6 +62,11 @@ listener, starts no worker and exits when its report is printed (see
 | `CMAEG_MEDIA_CACHE_BYTES` | unsigned decimal, bytes | `33554432` | 0..=268435456. Capacity of the per-pod derived-media cache, weighted by bytes, with a 30-minute lifetime; `0` disables caching. |
 | `CMAEG_MEDIA_RATE_PER_MINUTE` | unsigned decimal | `60` | 1..=6000. Media fetch starts per channel per minute, with a burst of the same size. |
 | `CMAEG_MEDIA_DOWNLOAD_BYTES_PER_HOUR` | unsigned decimal, bytes | `268435456` | 20971520..=4294967296. Download bytes per channel per hour, counted in KiB; enforced once download links exist. |
+| `CMAEG_STT_MAX_SECONDS` | unsigned decimal, seconds | `600` | 1..=1500. Most metered seconds one transcription call may cost. With `CMAEG_STT_MAX_BYTES` it sets the direct-upload cap, `min(CMAEG_STT_MAX_BYTES, CMAEG_STT_MAX_SECONDS × 4000)` bytes. Like every speech-to-text key, validated at startup even while speech-to-text is disabled; an out-of-bounds or non-decimal value fails startup naming the key. See [Speech-to-text spend](#speech-to-text-spend). |
+| `CMAEG_STT_MAX_BYTES` | unsigned decimal, bytes | `20971520` | 1048576..=24000000, below the speech-to-text API's 25 MB upload limit. Most bytes one upload may carry. |
+| `CMAEG_STT_RATE_PER_MINUTE` | unsigned decimal | `20` | 1..=600. Transcription calls per channel per minute, with a burst of the same size. |
+| `CMAEG_STT_CHANNEL_SECONDS_PER_HOUR` | unsigned decimal, seconds | `3600` | 600..=86400. Metered seconds per channel per hour, checked before the global budget. Startup fails naming all three keys unless `CMAEG_STT_MAX_SECONDS` ≤ `CMAEG_STT_CHANNEL_SECONDS_PER_HOUR` ≤ `CMAEG_STT_SECONDS_PER_HOUR`. |
+| `CMAEG_STT_SECONDS_PER_HOUR` | unsigned decimal, seconds | `36000` | 600..=360000. Metered seconds per hour across every channel: the cost backstop, at most about $2.70 per hour at $0.0045 per minute. |
 | `CMAEG_PROVIDER_CONNECT_TIMEOUT_MS` | positive integer, ms | `2000` | TCP/TLS connection timeout for each provider pool. |
 | `CMAEG_PROVIDER_REQUEST_TIMEOUT_MS` | positive integer, ms | `30000` | Deadline for provider setup and probe requests, and receipt of streaming HTTP response headers. Active streams are owned and bounded by their consumer. |
 | `CMAEG_PROVIDER_MAX_INFLIGHT` | positive integer | `256` | Deployment-wide upper bound applied to each provider's semaphore. Calls wait at most 50 ms for a provider permit before returning a typed busy result. |
@@ -142,6 +147,8 @@ media work spans an 8-second tool budget, a 15-second preparation budget and a
 | `cmaeg_media_jobs_inflight` | none | Media jobs holding one of the `CMAEG_MEDIA_MAX_JOBS` permits. |
 | `cmaeg_media_cache_bytes` | none | Weighted bytes held by the derived-media cache. |
 | `cmaeg_media_derive_seconds` | `op`, `outcome` | One derivation job of an attachment artifact, from the moment it holds its channel slot and job permit to its result, including the fetch. `op` is `image`, `text`, `excerpt`, `transcript`, `visuals` or `metadata`; `outcome` is `ok` or one of `not_retrievable`, `not_found`, `too_large`, `too_large_pixels`, `unsupported_format`, `decode_failed`, `timed_out`, `transcriber_disabled`, `transcriber_failed`, `too_long`, `rate_limited`, `source_unavailable` or `transform_failed`. A job stopped at its 90-second cap records `timed_out`. Every image normalization also records `op="image"` on its own (waiting for the single decode permit, decoding, downscaling, orienting and re-encoding), including the one inside an `image` derivation and a thumbnail's inside `visuals`, so an `image` derivation that reaches its decode contributes two samples. Refusals answered without a job (an unknown attachment, a disabled transcriber, a spent fetch quota) record nothing here. Uses the media buckets. |
+| `cmaeg_stt_audio_seconds_total` | none | Speech-to-text audio seconds counted for finished calls: the metered seconds, or the provider's reported usage when it is larger. |
+| `cmaeg_stt_channels_at_budget` | none | Distinct channels refused by their own `CMAEG_STT_CHANNEL_SECONDS_PER_HOUR` budget within the last hour. It is refreshed on each such refusal and at least every 256 charges. |
 | `cmaeg_turns_inflight` | none | Admitted local consumers; decremented on completion or cancellation. |
 | `cmaeg_channels_cached` | none | Locally retained positive and negative cache entries, including entries awaiting eviction. |
 
@@ -455,6 +462,73 @@ declare facts outside the domain, such as a 0×0 video. A rising
 envelope stopped listing the raw Telegram `file_id` as an entry's `url`, or the
 raw Lark `image_key` or `file_key` as the entry's key; compare NyxID's Telegram
 or Lark adapter with protocol §6.
+
+### Speech-to-text spend
+
+Speech-to-text costs money per second of audio, so every call is metered
+before it is sent and charged against three limits.
+
+**Metering.** A direct upload is charged `ceil(bytes / 4000)` seconds, at
+least one: 4000 bytes per second is a 32 kbps floor, below Telegram and Lark
+voice bitrates, so the charge bounds the real duration from above. Only
+originals up to the direct cap, `min(CMAEG_STT_MAX_BYTES,
+CMAEG_STT_MAX_SECONDS × 4000)` bytes (2.4 MB at the defaults, about ten
+minutes at 32 kbps), are sent; a larger one is `too_long`. Declared durations
+are never charged: senders define them, and documents carry none. When the
+provider's response reports `usage` of type `duration` above the metered
+seconds, the excess is charged to both hourly budgets on a best-effort basis
+(a refusal is ignored, since the call already happened) and the larger value is
+counted in `cmaeg_stt_audio_seconds_total`. A call that fails after it was
+charged is not refunded.
+
+**Order and scope.** Each call first takes one of its channel's
+`CMAEG_STT_RATE_PER_MINUTE` calls, then charges its metered seconds to its
+channel's `CMAEG_STT_CHANNEL_SECONDS_PER_HOUR` budget and only then to the
+pod's `CMAEG_STT_SECONDS_PER_HOUR` backstop. The channel goes first so that
+one channel's senders exhaust that channel and never the budget every channel
+shares; a global refusal after a successful channel charge leaves the channel
+charged, which only errs towards spending less. Every refusal reaches the
+agent as `transcript unavailable: rate_limited` and counts in
+`cmaeg_media_items_total` with outcome `stt_rate_limited`,
+`stt_channel_budget_exhausted` or `stt_budget_exhausted`. The budgets are per
+pod, as is every media budget.
+
+**Known limit.** The floor assumes at least 32 kbps. Opus voice at 6-24 kbps
+can run up to 5.3 times longer than it is metered unless the endpoint reports
+usage. Probe P3 records real bitrates and whether usage is returned: if it is,
+reconciliation corrects the counter and the budgets; if it is not, enable the
+audio transformer, which meters decoded audio exactly, before raising any
+budget.
+
+**Trade-off.** High-bitrate audio over 2.4 MB is `too_long` until the audio
+transformer truncates it and meters its decoded audio exactly. Autonomous
+agents can still download the original.
+
+**Cost.** At $0.0045 per minute, the global default of 36000 seconds per hour
+spends at most about $2.70 per hour, and the per-channel default of 3600
+seconds per hour at most about $0.27 per hour for one channel.
+
+**Alerts.** Configure these on the private metrics scrape, substituting the
+configured `CMAEG_STT_SECONDS_PER_HOUR`:
+
+| Severity | Expression | Meaning |
+| --- | --- | --- |
+| Warn, for 15 m | `increase(cmaeg_stt_audio_seconds_total[1h]) > 0.8 * 36000` | Spend is near the global backstop. |
+| Page, for 15 m | `sum(rate(cmaeg_media_items_total{outcome="stt_budget_exhausted"}[5m])) > 0` | The global backstop is refusing transcripts for every channel. |
+| Warn | `increase(cmaeg_media_items_total{outcome="stt_channel_budget_exhausted"}[15m]) > 0` | A channel spent its hourly budget. The `speech-to-text channel budget exhausted` log line carries its `channel` hash for triage. |
+| Warn, for 15 m | `cmaeg_stt_channels_at_budget >= 3` | Several channels are at their budget: a sender may be spreading load across bots before the global backstop trips. |
+
+**Log query.** Metered seconds per channel hash per day, from the
+`speech-to-text call finished` line inside each `cmaeg.media.stt` span (one
+per call; its fields are `channel`, `metered_seconds`, `bytes`, `container`,
+`outcome` and `ms`, never a URL, key or transcript):
+
+```sh
+kubectl logs -n chrono-bot deploy/cmaeg --since=24h \
+  | grep 'speech-to-text call finished' \
+  | sed -nE 's/.*cmaeg\.media\.stt\{channel=([0-9a-f]+) metered_seconds=([0-9]+).*/\1 \2/p' \
+  | awk '{ seconds[$1] += $2 } END { for (channel in seconds) print channel, seconds[channel] }'
+```
 
 ### Rolling back below inbound media
 

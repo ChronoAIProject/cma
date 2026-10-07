@@ -12,6 +12,7 @@ mod ingress;
 mod media;
 mod secrets;
 mod service_account;
+mod stt;
 mod turns;
 pub use cache::*;
 pub use delivery::*;
@@ -22,6 +23,7 @@ pub use media::{
     CMAEG_MEDIA_RATE_PER_MINUTE, CMAEG_MEDIA_RESPONSE_BYTES, CMAEG_MEDIA_TOOL_PROVIDERS,
 };
 pub use service_account::*;
+pub use stt::*;
 pub use turns::*;
 
 /// The listener address used by CMAEG.
@@ -117,6 +119,7 @@ pub struct Config {
     pub turns: TurnConfig,
     pub delivery: DeliveryConfig,
     pub media: MediaConfig,
+    pub stt: SttConfig,
 }
 
 /// Secrets and origins used by the channel management plane.
@@ -149,6 +152,7 @@ impl Config {
         let providers = ProviderRegistry::parse(&providers_json)?;
         // Validated against the registry, so it can only follow it.
         let media = media::config_from_env(&providers)?;
+        let stt = stt::config_from_env()?;
         let provider_connect_timeout = positive_duration(CMAEG_PROVIDER_CONNECT_TIMEOUT_MS, 2_000)?;
         let provider_request_timeout =
             positive_duration(CMAEG_PROVIDER_REQUEST_TIMEOUT_MS, 30_000)?;
@@ -175,6 +179,7 @@ impl Config {
             turns: TurnConfig::from_env()?,
             delivery: DeliveryConfig::from_env()?,
             media,
+            stt,
         })
     }
 }

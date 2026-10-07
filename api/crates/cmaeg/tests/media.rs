@@ -28,6 +28,8 @@ mod service;
 mod service_admission;
 #[path = "media/sniff.rs"]
 mod sniff;
+#[path = "media/stt_meter.rs"]
+mod stt_meter;
 #[path = "media/support.rs"]
 pub mod support;
 #[path = "media/telegram_source.rs"]

@@ -322,6 +322,6 @@ impl ChannelLimiter {
 
 /// Configuration bounds every rate at one or more; a hand-built zero would
 /// otherwise make a quota that can never admit anything.
-fn at_least_one(value: u32) -> NonZeroU32 {
+pub(in crate::media) fn at_least_one(value: u32) -> NonZeroU32 {
     NonZeroU32::new(value).unwrap_or(NonZeroU32::MIN)
 }

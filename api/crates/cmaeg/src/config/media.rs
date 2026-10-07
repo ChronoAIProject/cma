@@ -14,6 +14,7 @@ use cmaeg_core::ids::ProviderSlug;
 use std::{collections::BTreeSet, env};
 
 mod budgets;
+pub(super) use budgets::bounded;
 
 pub const CMAEG_MEDIA_TOOL_PROVIDERS: &str = "CMAEG_MEDIA_TOOL_PROVIDERS";
 pub const CMAEG_MEDIA_ENABLED: &str = "CMAEG_MEDIA_ENABLED";
@@ -81,18 +82,23 @@ impl Default for MediaConfig {
 pub(super) fn config_from_env(registry: &ProviderRegistry) -> Result<MediaConfig, ConfigError> {
     let tool_providers = from_env(registry)?;
     let enabled = enabled_from_env()?;
-    budgets::budgets(|key| match env::var(key) {
+    budgets::budgets(read_env).map(|config| MediaConfig {
+        tool_providers,
+        enabled,
+        ..config
+    })
+}
+
+/// One media key from the process environment: unset is `None`, and a value
+/// that is not UTF-8 fails startup naming the key.
+pub(super) fn read_env(key: &'static str) -> Result<Option<String>, ConfigError> {
+    match env::var(key) {
         Ok(value) => Ok(Some(value)),
         Err(env::VarError::NotPresent) => Ok(None),
         Err(env::VarError::NotUnicode(_)) => Err(ConfigError::InvalidMedia {
             detail: format!("{key} must be valid UTF-8"),
         }),
-    })
-    .map(|config| MediaConfig {
-        tool_providers,
-        enabled,
-        ..config
-    })
+    }
 }
 
 /// Providers whose profile bindings install the gateway's MCP tools. Only
