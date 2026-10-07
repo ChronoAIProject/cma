@@ -1,5 +1,6 @@
-//! Inbound media settings: the master switch and which providers install the
-//! gateway's MCP tools.
+//! Inbound media settings: the master switch, which providers install the
+//! gateway's MCP tools, and the byte, job and rate budgets every media fetch
+//! runs under.
 //!
 //! Neither the agent card's conformance level nor the binding request proves
 //! that a provider installed the gateway MCP server, so whether an agent may be
@@ -12,9 +13,19 @@ use crate::providers::ProviderRegistry;
 use cmaeg_core::ids::ProviderSlug;
 use std::{collections::BTreeSet, env};
 
+mod budgets;
+
 pub const CMAEG_MEDIA_TOOL_PROVIDERS: &str = "CMAEG_MEDIA_TOOL_PROVIDERS";
 pub const CMAEG_MEDIA_ENABLED: &str = "CMAEG_MEDIA_ENABLED";
+pub const CMAEG_MEDIA_MAX_BYTES: &str = "CMAEG_MEDIA_MAX_BYTES";
+pub const CMAEG_MEDIA_INFLIGHT_BYTES: &str = "CMAEG_MEDIA_INFLIGHT_BYTES";
+pub const CMAEG_MEDIA_RESPONSE_BYTES: &str = "CMAEG_MEDIA_RESPONSE_BYTES";
+pub const CMAEG_MEDIA_MAX_JOBS: &str = "CMAEG_MEDIA_MAX_JOBS";
+pub const CMAEG_MEDIA_CACHE_BYTES: &str = "CMAEG_MEDIA_CACHE_BYTES";
+pub const CMAEG_MEDIA_RATE_PER_MINUTE: &str = "CMAEG_MEDIA_RATE_PER_MINUTE";
+pub const CMAEG_MEDIA_DOWNLOAD_BYTES_PER_HOUR: &str = "CMAEG_MEDIA_DOWNLOAD_BYTES_PER_HOUR";
 
+const MIB: u64 = 1024 * 1024;
 /// The one provider whose binding contract promises to install the gateway MCP
 /// server.
 const DEFAULT_TOOL_PROVIDER: &str = "cma_codex";
@@ -24,12 +35,64 @@ const MAX_TOOL_PROVIDERS: usize = 8;
 
 /// Inbound media settings loaded after, and validated against, the provider
 /// registry.
-#[derive(Debug, Clone, Default)]
+///
+/// The budgets are validated at startup even while media is off, so turning
+/// the switch on can never be the first moment a bad value is noticed.
+#[derive(Debug, Clone)]
 pub struct MediaConfig {
     pub tool_providers: MediaToolProviders,
     /// Master switch for inbound media. Off, every media message is refused
     /// as `attachment_unsupported` exactly as before media existed.
     pub enabled: bool,
+    /// Bytes fetched for one attachment.
+    pub max_bytes: u64,
+    /// Pod-wide bytes held by fetched originals and transform outputs.
+    pub inflight_bytes: u64,
+    /// Pod-wide weighted bytes of media response bodies in flight.
+    pub response_bytes: u64,
+    /// Pod-wide concurrent media jobs.
+    pub max_jobs: u32,
+    /// Derived-media cache capacity; zero disables caching.
+    pub cache_bytes: u64,
+    /// Fetch starts per channel per minute.
+    pub rate_per_minute: u32,
+    /// Download bytes per channel per hour.
+    pub download_bytes_per_hour: u64,
+}
+
+impl Default for MediaConfig {
+    fn default() -> Self {
+        Self {
+            tool_providers: MediaToolProviders::default(),
+            enabled: false,
+            max_bytes: 20 * MIB,
+            inflight_bytes: 64 * MIB,
+            response_bytes: 24 * MIB,
+            max_jobs: 6,
+            cache_bytes: 32 * MIB,
+            rate_per_minute: 60,
+            download_bytes_per_hour: 256 * MIB,
+        }
+    }
+}
+
+/// Read every media setting; the tool-provider set is checked against the
+/// registry, so this can only run after the registry is loaded.
+pub(super) fn config_from_env(registry: &ProviderRegistry) -> Result<MediaConfig, ConfigError> {
+    let tool_providers = from_env(registry)?;
+    let enabled = enabled_from_env()?;
+    budgets::budgets(|key| match env::var(key) {
+        Ok(value) => Ok(Some(value)),
+        Err(env::VarError::NotPresent) => Ok(None),
+        Err(env::VarError::NotUnicode(_)) => Err(ConfigError::InvalidMedia {
+            detail: format!("{key} must be valid UTF-8"),
+        }),
+    })
+    .map(|config| MediaConfig {
+        tool_providers,
+        enabled,
+        ..config
+    })
 }
 
 /// Providers whose profile bindings install the gateway's MCP tools. Only
@@ -54,7 +117,7 @@ impl FromIterator<ProviderSlug> for MediaToolProviders {
 /// Unset selects the default only when the registry configures it, so a
 /// gateway without that provider still starts. A set value, including the
 /// empty string, is strict: every slug must name a configured provider.
-pub(super) fn from_env(registry: &ProviderRegistry) -> Result<MediaToolProviders, ConfigError> {
+fn from_env(registry: &ProviderRegistry) -> Result<MediaToolProviders, ConfigError> {
     match env::var(CMAEG_MEDIA_TOOL_PROVIDERS) {
         Ok(value) => parse(&value, registry),
         Err(env::VarError::NotPresent) => Ok(default_set(registry)),
@@ -67,7 +130,7 @@ pub(super) fn from_env(registry: &ProviderRegistry) -> Result<MediaToolProviders
 /// Read the master switch. Unset is off; a set value must be exactly `true` or
 /// `false`, so a typo such as `True` or `1` fails startup instead of silently
 /// leaving media off.
-pub(super) fn enabled_from_env() -> Result<bool, ConfigError> {
+fn enabled_from_env() -> Result<bool, ConfigError> {
     match env::var(CMAEG_MEDIA_ENABLED) {
         Ok(value) => parse_enabled(Some(&value)),
         Err(env::VarError::NotPresent) => parse_enabled(None),

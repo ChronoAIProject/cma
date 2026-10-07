@@ -3,7 +3,7 @@ pub mod http;
 pub mod names;
 pub mod operations;
 pub mod timing;
-use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
+use metrics_exporter_prometheus::{Matcher, PrometheusBuilder, PrometheusHandle};
 use std::sync::OnceLock;
 static REGISTRY: OnceLock<Result<PrometheusHandle, String>> = OnceLock::new();
 pub fn channel_hash(id: &str) -> String {
@@ -16,6 +16,11 @@ pub fn install() -> Result<PrometheusHandle, String> {
         .get_or_init(|| {
             let recorder = PrometheusBuilder::new()
                 .set_buckets(&names::BUCKETS)
+                .map_err(|error| error.to_string())?
+                .set_buckets_for_metric(
+                    Matcher::Prefix("cmaeg_media_".into()),
+                    &names::MEDIA_BUCKETS,
+                )
                 .map_err(|error| error.to_string())?
                 .build_recorder();
             let handle = recorder.handle();
@@ -37,7 +42,49 @@ pub fn install() -> Result<PrometheusHandle, String> {
                 metrics::describe_gauge!(name, "CMAEG current local object count");
                 metrics::gauge!(name).set(0);
             }
+            describe_media();
             Ok(handle)
         })
         .clone()
+}
+
+/// Media metrics are registered at zero like the rest, with their own units.
+fn describe_media() {
+    metrics::describe_histogram!(
+        names::MEDIA_FETCH_SECONDS,
+        metrics::Unit::Seconds,
+        "CMAEG media fetch duration in seconds by source and outcome"
+    );
+    let _ = metrics::histogram!(names::MEDIA_FETCH_SECONDS);
+    metrics::describe_counter!(
+        names::MEDIA_FETCH_BYTES,
+        metrics::Unit::Bytes,
+        "CMAEG media bytes fetched by source"
+    );
+    metrics::counter!(names::MEDIA_FETCH_BYTES).absolute(0);
+    for (name, unit, description) in [
+        (
+            names::MEDIA_INFLIGHT_BYTES,
+            metrics::Unit::Bytes,
+            "CMAEG bytes reserved by fetched media originals and transform outputs",
+        ),
+        (
+            names::MEDIA_RESPONSE_BYTES,
+            metrics::Unit::Bytes,
+            "CMAEG weighted bytes reserved by media response bodies in flight",
+        ),
+        (
+            names::MEDIA_JOBS_INFLIGHT,
+            metrics::Unit::Count,
+            "CMAEG media jobs holding a pod-wide job permit",
+        ),
+        (
+            names::MEDIA_CACHE_BYTES,
+            metrics::Unit::Bytes,
+            "CMAEG weighted bytes held by the derived-media cache",
+        ),
+    ] {
+        metrics::describe_gauge!(name, unit, description);
+        metrics::gauge!(name).set(0);
+    }
 }

@@ -48,6 +48,10 @@ futures-util = "0.3"
 flate2 = "1"
 governor = { version = "0.10", default-features = false, features = ["std", "dashmap"] }
 httpdate = "1"
+# Magic-byte content sniffing for fetched media: the sniffed type always wins
+# over a sender's declared MIME type or file name, and a maintained matcher
+# table is preferred over a hand-rolled one.
+infer = "0.19"
 ipnet = "2.12"
 k8s-openapi = { version = "0.28", features = ["earliest"] }
 kube = { version = "4.2", default-features = false, features = [
@@ -61,6 +65,9 @@ libc = "0.2"
 # private Axum listener, so the exporter's extra servers and push client stay off.
 metrics = "0.24.6"
 metrics-exporter-prometheus = { version = "0.18.3", default-features = false }
+# Byte-weighted, time-bounded cache for derived media; only the synchronous
+# cache is needed, so the async runtime integration stays off.
+moka = { version = "0.12", default-features = false, features = ["sync"] }
 mongodb = { version = "3", default-features = false, features = [
     "bson-3",
     "compat-3-3-0",

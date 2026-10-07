@@ -55,6 +55,13 @@ listener, starts no worker and exits when its report is printed (see
 | `CMAEG_PROVIDERS` | JSON array | `[]` | Strict JSON provider allowlist described above. |
 | `CMAEG_MEDIA_TOOL_PROVIDERS` | comma-separated provider slugs | `cma_codex` when that provider is configured, otherwise empty | 0..=8 distinct slugs, each naming a `CMAEG_PROVIDERS` entry; startup fails otherwise. Profile bindings of these providers install the gateway MCP tools, so only their agents are told how to open an attachment through a gateway tool. Set it to the empty string to render no tool hints. A separate key because provider entries refuse unknown fields. |
 | `CMAEG_MEDIA_ENABLED` | `true` or `false` | `false` | Master switch for inbound media. Exactly `true` or `false`; any other value, including `True` or `1`, fails startup. Off, every media message is refused with 202 `attachment_unsupported`, and every Lark or Feishu rich-text post with `content_unsupported`, exactly as before media existed. On, authenticated Telegram media from the NyxID relay and the native webhook, and Lark and Feishu image, file, audio and media messages from the relay, are admitted as activity attachments, and Lark and Feishu posts as text the observer flattens from the raw event (protocol §6); Lark stickers stay refused. It also governs custom sources: off, management refuses a custom `attachments` setting with `custom_attachments_disabled` and ingress ignores a stored one; on, the setting can be stored and the items it names in custom events are admitted as attachments. Enabling it requires the `cmaeg` container's memory request to equal its limit at 1536Mi or more; `tests/infra_manifests.rs` enforces this. |
+| `CMAEG_MEDIA_MAX_BYTES` | unsigned decimal, bytes | `20971520` | 1..=26214400. Most bytes fetched for one attachment; Telegram and NyxID serve at most 20 MiB themselves. Validated at startup even while `CMAEG_MEDIA_ENABLED` is `false`, like every media budget below; an out-of-bounds or non-decimal value fails startup naming the key. |
+| `CMAEG_MEDIA_INFLIGHT_BYTES` | unsigned decimal, bytes | `67108864` | `CMAEG_MEDIA_MAX_BYTES`..=1073741824. Pod-wide bytes held at once by fetched originals and transform outputs; a reservation larger than the budget takes all of it, so one maximum-size original can always proceed. |
+| `CMAEG_MEDIA_RESPONSE_BYTES` | unsigned decimal, bytes | `25165824` | 4194304..=134217728. Pod-wide weighted bytes of media response bodies in flight. Each body releases its share at a hard deadline even when its reader never polls, so a stalled client cannot hold it until the load balancer's 660-second timeout. |
+| `CMAEG_MEDIA_MAX_JOBS` | unsigned decimal | `6` | 1..=64. Pod-wide concurrent media jobs. Each channel runs at most two at once, so one channel cannot hold every job permit. |
+| `CMAEG_MEDIA_CACHE_BYTES` | unsigned decimal, bytes | `33554432` | 0..=268435456. Capacity of the per-pod derived-media cache, weighted by bytes, with a 30-minute lifetime; `0` disables caching. |
+| `CMAEG_MEDIA_RATE_PER_MINUTE` | unsigned decimal | `60` | 1..=6000. Media fetch starts per channel per minute, with a burst of the same size. |
+| `CMAEG_MEDIA_DOWNLOAD_BYTES_PER_HOUR` | unsigned decimal, bytes | `268435456` | 20971520..=4294967296. Download bytes per channel per hour, counted in KiB; enforced once download links exist. |
 | `CMAEG_PROVIDER_CONNECT_TIMEOUT_MS` | positive integer, ms | `2000` | TCP/TLS connection timeout for each provider pool. |
 | `CMAEG_PROVIDER_REQUEST_TIMEOUT_MS` | positive integer, ms | `30000` | Deadline for provider setup and probe requests, and receipt of streaming HTTP response headers. Active streams are owned and bounded by their consumer. |
 | `CMAEG_PROVIDER_MAX_INFLIGHT` | positive integer | `256` | Deployment-wide upper bound applied to each provider's semaphore. Calls wait at most 50 ms for a provider permit before returning a typed busy result. |
@@ -100,7 +107,10 @@ CMAEG serves Prometheus text at `/metrics` on `CMAEG_METRICS_LISTEN`
 (`0.0.0.0:9091` by default). The public listener does not expose that path.
 Keep the scrape listener private to the cluster. Registration is process-wide
 and idempotent. All duration histograms use seconds with buckets
-`0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10`.
+`0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10`, except those named
+`cmaeg_media_*`, which use `0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 4, 8, 15, 30, 60, 90`:
+media work spans an 8-second tool budget, a 15-second preparation budget and a
+90-second background budget, all beyond the default top bucket.
 
 | Metric | Labels | Measurement |
 | --- | --- | --- |
@@ -120,6 +130,12 @@ and idempotent. All duration histograms use seconds with buckets
 | `cmaeg_media_facts_repaired_total` | `source`, `field` | Sender-declared Telegram, Lark and Feishu media facts normalized into the attachment domain instead of refusing the message. `source` is `nyxid_relay` or `telegram`; `field` is one of `filename`, `mime_type`, `dimensions`, `duration_seconds` or `emoji`. |
 | `cmaeg_media_items_total` | `source`, `kind`, `outcome` | Telegram, Lark and Feishu media items turned into attachments. `kind` is `image`, `file`, `audio`, `video` or `other`; `outcome` is `extracted` for every attachment, and additionally `invalid_locator` for a native Telegram item whose file identifiers are invalid or a relayed Lark item whose resource key is invalid, which is delivered without a locator. |
 | `cmaeg_media_relay_correlation_total` | `outcome` | Relayed media items matched (`matched`) or not (`unmatched`) to a NyxID envelope entry: a Telegram item by its `file_id` as the entry's `url`, a Lark item with a valid resource key by the entry's `image_key` or `file_key`. An unmatched item is delivered without a locator and cannot be fetched. |
+| `cmaeg_media_fetch_seconds` | `source`, `outcome` | One attachment fetch, from its start to its last body byte or its error. `source` is `nyxid`, `telegram`, `url` or `inline`; `outcome` is `ok` or one of `not_retrievable`, `too_large`, `unauthorized`, `not_found`, `timed_out`, `upstream`, `rejected`, `busy` or `rate_limited`. Never labelled with a URL, token or identifier. |
+| `cmaeg_media_fetch_bytes_total` | `source` | Attachment bytes fetched, by the same `source` values. |
+| `cmaeg_media_inflight_bytes` | none | Bytes reserved against `CMAEG_MEDIA_INFLIGHT_BYTES`, in whole KiB. |
+| `cmaeg_media_response_bytes` | none | Weighted bytes reserved against `CMAEG_MEDIA_RESPONSE_BYTES` by response bodies in flight, in whole KiB. |
+| `cmaeg_media_jobs_inflight` | none | Media jobs holding one of the `CMAEG_MEDIA_MAX_JOBS` permits. |
+| `cmaeg_media_cache_bytes` | none | Weighted bytes held by the derived-media cache. |
 | `cmaeg_turns_inflight` | none | Admitted local consumers; decremented on completion or cancellation. |
 | `cmaeg_channels_cached` | none | Locally retained positive and negative cache entries, including entries awaiting eviction. |
 

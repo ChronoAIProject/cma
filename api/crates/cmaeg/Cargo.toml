@@ -11,6 +11,8 @@ h2 = { workspace = true }
 http-body-util = { workspace = true }
 hyper = { workspace = true }
 hyper-util = { workspace = true }
+infer = { workspace = true }
+moka = { workspace = true }
 rustls = { workspace = true }
 tokio-rustls = { workspace = true }
 webpki-roots = { workspace = true }
@@ -36,6 +38,10 @@ utoipa = { workspace = true }
 url = { workspace = true }
 uuid = { workspace = true }
 pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
+
+[dev-dependencies]
+# Paused time drives the media deadline and job tests deterministically.
+tokio = { workspace = true, features = ["test-util"] }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 libc = { workspace = true }
