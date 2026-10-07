@@ -80,7 +80,7 @@ pub fn observe(
         "unknown"
     };
     let route = crate::telegram::route(bot_id, &chat_id);
-    let payload: CallbackPayload = serde_json::from_value(json!({
+    let mut payload: CallbackPayload = serde_json::from_value(json!({
         "message_id":format!("telegram:{bot_id}:{update_id}"),"correlation_id":update_id.to_string(),"platform":"telegram",
         "reply_token":null,"agent":{"api_key_id":bot_id,"name":""},
         "conversation":{"id":route,"platform_id":chat_id,"type":message["chat"]["type"]},
@@ -88,6 +88,9 @@ pub fn observe(
         "content":{"type":content_type,"text":if callback.is_none() {message.get("text")} else {None}},
         "reply_to_platform_message_id":callback.map(|_|message_id.clone()),"timestamp":timestamp,"raw_platform_data":raw,
     })).map_err(|_| invalid())?;
+    // A control character in a sender's name must not refuse the update, or
+    // Telegram would redeliver it; validate() keeps its bound as an invariant.
+    payload.sender.repair_display_name();
     payload.validate()?;
     match super::relay::telegram::observe(&payload, bot_username)? {
         Observation::Refused(reason) => Ok(Outcome::Refused(reason)),
