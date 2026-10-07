@@ -151,12 +151,15 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             waiters.clone(),
         ),
     );
-    let runner = std::sync::Arc::new(turns::TurnRunner::new(
-        providers.clone(),
-        tracker.clone(),
-        delivery.clone(),
-        config.turns.clone(),
-    ));
+    let runner = std::sync::Arc::new(
+        turns::TurnRunner::new(
+            providers.clone(),
+            tracker.clone(),
+            delivery.clone(),
+            config.turns.clone(),
+        )
+        .with_media_tool_providers(std::sync::Arc::new(config.media.tool_providers.clone())),
+    );
     let ingress = ingress::IngressState::new(
         state.resolver.clone(),
         state.master_keys.clone(),

@@ -4,6 +4,7 @@ mod metadata;
 pub mod outcomes;
 mod projection;
 pub mod render_input;
+pub mod render_media;
 pub mod runner;
 pub mod tracker;
 pub use runner::TurnRunner;

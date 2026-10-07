@@ -3,12 +3,13 @@ use super::{
     consume, metadata,
     outcomes::{DeliveryCommand, TurnOutcome},
     render_input,
+    render_media::{self, Audience, RenderMedia},
     tracker::TurnTracker,
 };
 use crate::{
     ingress::launch::{LaunchOutcome, LaunchRequest, TurnLauncher},
     providers::{ProviderClient, ProviderError, TurnRequest, TurnStream},
-    TurnConfig,
+    MediaToolProviders, TurnConfig,
 };
 use cmaeg_core::problem::{Problem, ProblemCode};
 use futures_util::future::BoxFuture;
@@ -25,6 +26,9 @@ pub struct TurnRunner {
     tracker: Arc<TurnTracker>,
     delivery: mpsc::Sender<DeliveryCommand>,
     config: TurnConfig,
+    /// Providers whose profile bindings install the gateway MCP tools; only
+    /// their agents are told how to open an attachment through a tool.
+    media_tool_providers: Arc<MediaToolProviders>,
 }
 impl TurnRunner {
     pub fn new(
@@ -38,7 +42,12 @@ impl TurnRunner {
             tracker,
             delivery,
             config,
+            media_tool_providers: Arc::default(),
         }
+    }
+    pub fn with_media_tool_providers(mut self, providers: Arc<MediaToolProviders>) -> Self {
+        self.media_tool_providers = providers;
+        self
     }
     async fn execute(&self, turn: Arc<LaunchRequest>, sender: oneshot::Sender<LaunchOutcome>) {
         use crate::telemetry::{
@@ -99,10 +108,18 @@ impl TurnRunner {
             .ok_or_else(|| {
                 ProviderError::InvalidRequest("channel has no provider credential".into())
             })?;
+        // One nonce per turn: busy retries resend this exact input under the
+        // same idempotency key. Text-only turns make no RNG call.
+        let media = if render_media::attachments(&turn.activity).is_empty() {
+            RenderMedia::empty(None)
+        } else {
+            RenderMedia::empty(render_media::nonce())
+        };
+        let audience = Audience::of(definition, &self.media_tool_providers);
         let request = TurnRequest {
             timing: turn.timing.clone(),
             conversation_id: turn.conversation_id.clone(),
-            input: render_input::render(&turn.activity, definition),
+            input: render_input::render(&turn.activity, definition, &media, audience),
             idempotency_key: turn.idempotency_key.clone(),
             metadata: metadata::render(turn),
             agent_key: credential.clone(),

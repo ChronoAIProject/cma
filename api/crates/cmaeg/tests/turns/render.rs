@@ -1,9 +1,35 @@
-use cmaeg::turns::render_input::render;
+use cmaeg::turns::{
+    render_input::{self, ResponsesInputItem},
+    render_media::{Audience, RenderMedia},
+};
 use cmaeg_core::{
     activity::{Activity, ActivityKind, InteractionResult, SourceKind},
     channel::{ChannelDefinition, Platform},
 };
 use serde_json::json;
+/// Without attachments neither the audience nor a nonce may change a byte.
+fn render(activity: &Activity, definition: &ChannelDefinition) -> Vec<ResponsesInputItem> {
+    let plain = render_input::render(
+        activity,
+        definition,
+        &RenderMedia::empty(None),
+        Audience {
+            tools: false,
+            downloads: false,
+        },
+    );
+    let fenced = render_input::render(
+        activity,
+        definition,
+        &RenderMedia::empty(Some("0123456789ab".into())),
+        Audience {
+            tools: true,
+            downloads: true,
+        },
+    );
+    assert_eq!(plain, fenced);
+    plain
+}
 fn fixtures() -> (Activity, ChannelDefinition) {
     let activity = serde_json::from_str(include_str!(
         "../../../cmaeg-core/tests/fixtures/activity.json"

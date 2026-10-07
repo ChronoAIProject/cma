@@ -10,5 +10,9 @@ mod neutral_dispatch;
 mod projection;
 #[path = "turns/render.rs"]
 mod render;
+#[path = "turns/render_fences.rs"]
+mod render_fences;
+#[path = "turns/render_media.rs"]
+mod render_media;
 #[path = "turns/support.rs"]
 mod support;
