@@ -1,17 +1,13 @@
 //! Bounded, signed delivery with DNS validation and address pinning on each attempt.
 use super::intents::DeliveryOutcome;
 use crate::auth::webhook;
+pub use crate::net::policy::public_ip;
+use crate::net::{policy, resolve};
 use cmaeg_core::channel::Secret;
 use futures_util::future::BoxFuture;
 use reqwest::{header::HeaderMap, Url};
 use serde_json::Value;
-use std::{
-    net::{IpAddr, SocketAddr},
-    sync::Arc,
-    time::Duration,
-};
-mod policy;
-pub use policy::public_ip;
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 #[derive(Debug)]
 pub enum TransportError {
@@ -32,18 +28,9 @@ pub struct HttpTransport;
 impl WebhookTransport for HttpTransport {
     fn resolve(&self, url: Url) -> BoxFuture<'_, Result<Vec<SocketAddr>, TransportError>> {
         Box::pin(async move {
-            let port = url
-                .port_or_known_default()
-                .ok_or(TransportError::Unavailable)?;
-            match url.host().ok_or(TransportError::Unavailable)? {
-                url::Host::Ipv4(ip) => Ok(vec![SocketAddr::new(IpAddr::V4(ip), port)]),
-                url::Host::Ipv6(ip) => Ok(vec![SocketAddr::new(IpAddr::V6(ip), port)]),
-                url::Host::Domain(host) => Ok(tokio::net::lookup_host((host, port))
-                    .await
-                    .map_err(|_| TransportError::Unavailable)?
-                    .take(33)
-                    .collect()),
-            }
+            resolve::resolve(&url).await.map_err(|error| match error {
+                resolve::ResolveError::Unavailable => TransportError::Unavailable,
+            })
         })
     }
     fn post(
@@ -54,17 +41,13 @@ impl WebhookTransport for HttpTransport {
         body: Arc<Vec<u8>>,
     ) -> BoxFuture<'_, Result<u16, TransportError>> {
         Box::pin(async move {
-            let client = reqwest::Client::builder()
-                .no_proxy()
-                .redirect(reqwest::redirect::Policy::none())
-                .resolve_to_addrs(
-                    url.host_str().ok_or(TransportError::Unavailable)?,
-                    &addresses,
-                )
-                .connect_timeout(Duration::from_secs(3))
-                .timeout(Duration::from_secs(5))
-                .build()
-                .map_err(|_| TransportError::Unavailable)?;
+            let client = resolve::pinned_client(
+                url.host_str().ok_or(TransportError::Unavailable)?,
+                &addresses,
+                Duration::from_secs(3),
+                Duration::from_secs(5),
+            )
+            .map_err(|_| TransportError::Unavailable)?;
             let response = client
                 .post(url)
                 .headers(headers)
@@ -117,10 +100,7 @@ impl WebhookClient {
                     .resolve(url.clone())
                     .await
                     .map_err(|_| "webhook_unavailable")?;
-                if addresses.is_empty()
-                    || addresses.len() > 32
-                    || addresses.iter().any(|address| !public_ip(address.ip()))
-                {
+                if !resolve::all_public(&addresses) {
                     return Err("webhook_target_invalid");
                 }
                 let timestamp = time::OffsetDateTime::now_utc().unix_timestamp().to_string();
