@@ -257,3 +257,16 @@ async fn forged_mixed_forwarded_group_and_bot_creation_updates_never_launch() {
     );
     assert!(app.fixture.recorder.requests.lock().unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn a_control_character_in_the_sender_name_is_stripped_not_refused() {
+    let app = Native::new(None).await;
+    let mut raw = message();
+    raw["message"]["from"]["first_name"] = "Al\u{7}ice".into();
+    app.accepted(&raw).await;
+    let requests = app.fixture.recorder.requests.lock().unwrap();
+    assert_eq!(
+        requests[0].activity.actor.display_name.as_deref(),
+        Some("Alice")
+    );
+}
