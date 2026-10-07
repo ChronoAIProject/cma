@@ -1,5 +1,8 @@
-use super::ToolsState;
-use crate::channels::resolver::ResolvedChannel;
+use super::{
+    attachment_view::{InboundMediaCapabilities, VisualSupport},
+    ToolsState,
+};
+use crate::{channels::resolver::ResolvedChannel, media::visual::VisualKind};
 use cmaeg_core::{
     activity::{Activity, ActivityConversation, ActivityKind, Actor, SourceKind},
     channel::Platform,
@@ -36,6 +39,10 @@ pub struct Capabilities {
     pub cards: String,
     pub attachments: String,
     pub max_text_chars: u32,
+    /// What this binding can do with inbound attachments; absent while
+    /// inbound media is disabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inbound_media: Option<InboundMediaCapabilities>,
 }
 impl Capabilities {
     pub fn custom() -> Self {
@@ -46,6 +53,7 @@ impl Capabilities {
             cards: "json".into(),
             attachments: "reference".into(),
             max_text_chars: 32768,
+            inbound_media: None,
         }
     }
     pub fn native_telegram() -> Self {
@@ -62,6 +70,7 @@ impl Capabilities {
             cards: "text".into(),
             attachments: "link_text".into(),
             max_text_chars: 4000,
+            inbound_media: None,
         }
     }
     /// Text-only delivery through NyxID's generic relay reply: no native
@@ -74,6 +83,7 @@ impl Capabilities {
             cards: "text".into(),
             attachments: "link_text".into(),
             max_text_chars: 4000,
+            inbound_media: None,
         }
     }
     /// Interactive controls and updates are proven only for Telegram.
@@ -90,7 +100,39 @@ pub(super) async fn read(
     event: &EventRefPayload,
 ) -> Result<ContextResponse, Problem> {
     let (activity, activity_verified) = read_activity(state, channel, event).await?;
-    Ok(project(channel, event, activity, activity_verified))
+    let inbound_media = inbound_media(state, channel, &activity.source);
+    Ok(project(
+        channel,
+        event,
+        activity,
+        activity_verified,
+        inbound_media,
+    ))
+}
+
+/// The inbound media capabilities of `channel`'s binding for an activity
+/// from `source`, or `None` while media is disabled, so that the context
+/// output is unchanged with the flag off.
+pub(super) fn inbound_media(
+    state: &ToolsState,
+    channel: &ResolvedChannel,
+    source: &SourceKind,
+) -> Option<InboundMediaCapabilities> {
+    let media = state.media.as_ref()?;
+    let capabilities = media.capabilities();
+    let visuals = match (capabilities.visuals, source) {
+        (VisualKind::Keyframes, _) => VisualSupport::Keyframes,
+        (VisualKind::Thumbnail, SourceKind::Telegram { .. }) => VisualSupport::PlatformThumbnail,
+        (VisualKind::Thumbnail, _) => VisualSupport::None,
+    };
+    Some(InboundMediaCapabilities {
+        read_tool: media.audience(&channel.definition).tools,
+        transcripts: capabilities.transcriber_enabled,
+        visuals,
+        // Set from Audience::downloads by media-download-links once links
+        // exist; never advertise an unimplemented ability.
+        downloads: false,
+    })
 }
 
 /// The provider's persisted activity for `event` and whether the event_ref's
@@ -135,11 +177,15 @@ pub(super) fn project(
     event: &EventRefPayload,
     activity: Activity,
     activity_verified: bool,
+    inbound_media: Option<InboundMediaCapabilities>,
 ) -> ContextResponse {
-    let capabilities = match activity.source {
-        SourceKind::Telegram { .. } => Capabilities::native_telegram(),
-        SourceKind::Custom => Capabilities::custom(),
-        SourceKind::NyxidRelay { platform, .. } => Capabilities::relay(platform),
+    let capabilities = Capabilities {
+        inbound_media,
+        ..match activity.source {
+            SourceKind::Telegram { .. } => Capabilities::native_telegram(),
+            SourceKind::Custom => Capabilities::custom(),
+            SourceKind::NyxidRelay { platform, .. } => Capabilities::relay(platform),
+        }
     };
     ContextResponse {
         event_id: event.event_id.clone(),

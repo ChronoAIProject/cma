@@ -537,6 +537,12 @@
       "buttons": "fixture",
       "cards": "fixture",
       "edit": true,
+      "inbound_media": {
+        "downloads": true,
+        "read_tool": true,
+        "transcripts": true,
+        "visuals": "keyframes"
+      },
       "max_text_chars": 1,
       "typing": true
     }
@@ -991,6 +997,12 @@
         "buttons": "fixture",
         "cards": "fixture",
         "edit": true,
+        "inbound_media": {
+          "downloads": true,
+          "read_tool": true,
+          "transcripts": true,
+          "visuals": "keyframes"
+        },
         "max_text_chars": 1,
         "typing": true
       },
@@ -1231,6 +1243,14 @@
         "fixture"
       ],
       "type": "allowlist"
+    }
+  ],
+  "InboundMediaCapabilities": [
+    {
+      "downloads": true,
+      "read_tool": true,
+      "transcripts": true,
+      "visuals": "keyframes"
     }
   ],
   "IntentReceipt": [
@@ -2068,5 +2088,10 @@
     "ready",
     "cancelled",
     "expired"
+  ],
+  "VisualSupport": [
+    "none",
+    "platform_thumbnail",
+    "keyframes"
   ]
 }

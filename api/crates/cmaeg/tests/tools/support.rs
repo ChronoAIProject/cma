@@ -17,6 +17,7 @@ use cmaeg::{
     turns::TurnTracker,
 };
 use cmaeg_core::{
+    activity::Activity,
     ids::MessageRef,
     message::{OutboundMessage, RenderingOutcome, RenderingReport},
     seal::{EventRef, MessageRefPayload},
@@ -41,6 +42,8 @@ pub struct App {
     pub base: String,
     pub key: String,
     pub event_ref: EventRef,
+    /// The activity the provider stores for `event_ref`.
+    pub activity: Activity,
     pub message_ref: MessageRef,
     pub requests: Arc<Mutex<Vec<OutboundMessage>>>,
     pub delay: Arc<AtomicU64>,
@@ -99,6 +102,7 @@ impl App {
             request = setup.retarget(request, &fixture.state.master_keys);
         }
         let event_ref = request.event_ref.clone();
+        let activity = request.activity.clone();
         let payload = event_ref
             .open(&fixture.state.master_keys, super::relay_support::now())
             .unwrap()
@@ -194,6 +198,7 @@ impl App {
             base,
             key,
             event_ref,
+            activity,
             message_ref,
             requests,
             delay,

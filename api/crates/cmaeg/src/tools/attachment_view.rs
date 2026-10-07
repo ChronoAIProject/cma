@@ -179,3 +179,26 @@ pub struct AttachmentView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notice: Option<String>,
 }
+
+/// The still images a gateway can show for a video.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum VisualSupport {
+    None,
+    /// The platform's own preview image, where the source provides one.
+    PlatformThumbnail,
+    Keyframes,
+}
+
+/// What the calling binding can do with an event's inbound attachments.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct InboundMediaCapabilities {
+    /// The binding has `readEventAttachment`.
+    pub read_tool: bool,
+    /// Audio and video can be transcribed.
+    pub transcripts: bool,
+    pub visuals: VisualSupport,
+    /// The binding may save originals into its workspace.
+    pub downloads: bool,
+}

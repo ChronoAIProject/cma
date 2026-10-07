@@ -7,7 +7,8 @@ mod reply_targets;
 mod state;
 pub use attachment_view::{
     AttachmentImage, AttachmentImageOrigin, AttachmentStatus, AttachmentText, AttachmentTextSource,
-    AttachmentUnavailableReason, AttachmentView, AttachmentViewKind,
+    AttachmentUnavailableReason, AttachmentView, AttachmentViewKind, InboundMediaCapabilities,
+    VisualSupport,
 };
 pub use attachments::{
     valid_request, AttachmentRead, BUDGET_ACQUIRE_MAX, BUDGET_RETRY_MS, MAX_INDEX, MAX_PAGE,
