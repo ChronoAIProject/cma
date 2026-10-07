@@ -1,5 +1,6 @@
 //! Custom CloudEvents authentication and neutral normalization.
 pub mod activity;
+pub mod attachments;
 pub mod template;
 use crate::auth::webhook;
 use axum::http::HeaderMap;

@@ -49,6 +49,27 @@ impl App {
         turn_config: TurnConfig,
         failures: usize,
     ) -> Self {
+        Self::build(edit, provider_config, turn_config, failures, false).await
+    }
+    /// [`App::standard`] with an edited channel, served with the inbound media
+    /// switch on or off.
+    pub async fn media(edit: impl FnOnce(&mut Value), media_enabled: bool) -> Self {
+        Self::build(
+            edit,
+            Default::default(),
+            Default::default(),
+            0,
+            media_enabled,
+        )
+        .await
+    }
+    async fn build(
+        edit: impl FnOnce(&mut Value),
+        provider_config: FakeProviderConfig,
+        turn_config: TurnConfig,
+        failures: usize,
+        media_enabled: bool,
+    ) -> Self {
         let receiver = Receiver::new(failures).await;
         let secret = Secret::new(uuid::Uuid::new_v4().to_string());
         let key = format!("nyx_{}", uuid::Uuid::new_v4().simple());
@@ -94,7 +115,8 @@ impl App {
             Default::default(),
             runner,
         )
-        .unwrap();
+        .unwrap()
+        .with_media_enabled(media_enabled);
         let tools = ToolsState {
             resolver: fixture.state.resolver.clone(),
             keys: fixture.state.master_keys.clone(),

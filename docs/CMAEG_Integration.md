@@ -198,6 +198,68 @@ are CloudEvents `cmaeg.response.message`, `cmaeg.response.completed` or
 The gateway makes four delivery attempts with stable IDs/body and fresh timestamps.
 The endpoint must use HTTPS, resolve to public addresses and respond without redirects.
 
+## Sending media in custom events
+
+A custom event can list attachments in its `data` so the agent sees them as
+media instead of an opaque string. The channel owner opts in per channel by
+adding an `attachments` setting to the custom source:
+
+```json
+{"type": "custom", "auth": {"type": "hmac", "key_id": "builds"},
+ "attachments": {"pointer": "/attachments", "origins": ["https://files.example"]}}
+```
+
+`pointer` is an RFC 6901 JSON pointer into `data`, `/attachments` by default and
+at most 240 bytes. `origins` lists at most 16 exact HTTPS origins, written as
+`https://host` or `https://host:port` with a lowercase host and no path or
+trailing slash; an IP literal must be a public address. Leave `origins` empty to
+send only inline items. The setting is accepted only while the operator has
+enabled inbound media; otherwise create and update answer 400
+`custom_attachments_disabled`. While media is off, an already stored setting is
+ignored and events are admitted without attachments.
+
+The pointer's target is an array of at most 16 items. Each item is an object
+with only these keys:
+
+| Key | Required | Value |
+| --- | --- | --- |
+| `url` | Yes | A `data:` URI, exactly `data:<type>/<subtype>[;<param>]*;base64,<payload>` with padded standard base64 of at most 192 KiB decoded, or an HTTPS URL of at most 2048 bytes, without userinfo or fragment, on one of the configured origins. |
+| `kind` | No | `image`, `audio`, `video`, `file` or `other`. Defaults from the MIME type: `image/`, `audio/` and `video/` map to their kind, anything else is `file`. |
+| `mime_type` | No | A lowercase `type/subtype` without parameters. Defaults to the `data:` URI's type. |
+| `filename` | No | 1–255 bytes without control or bidirectional formatting characters. |
+| `size_bytes` | No | A non-negative integer. For a `data:` URI it defaults to, and must equal, the decoded length. |
+| `duration_seconds` | No | An integer from 0 to 86400. |
+| `width`, `height` | No | Integers from 1 to 100000, given together. |
+
+```json
+{"specversion": "1.0", "id": "receipt-17", "source": "https://shop.example",
+ "type": "receipt.uploaded", "subject": "order-9",
+ "data": {"order": 9, "attachments": [
+   {"url": "data:image/png;base64,<base64-payload>", "filename": "receipt.png"},
+   {"url": "https://files.example/invoices/9.pdf", "mime_type": "application/pdf"}]}}
+```
+
+Validation is strict and synchronous: the first invalid value is answered with
+400 `invalid_request` and the detail `attachment_invalid <pointer>`, such as
+`attachment_invalid /attachments/0/filename`, and no turn starts. Values are
+never repaired or truncated, and an optional key is omitted rather than sent as
+`null`. An absent or `null` target admits the event without attachments. The
+whole event is still bounded by the 256 KiB body limit, which an inline payload
+shares with the rest of the event, so the practical inline size is somewhat
+below 192 KiB.
+
+The prompt never contains the items themselves. The pointer's target is replaced
+by `[N attachments, listed below]` in both the template's `{{data}}` and the
+default event summary, and the agent receives one descriptor line per item in
+an `[Attachments]` block instead (see
+[Read the attachment block](#read-the-attachment-block)).
+
+Ingress fetches nothing. The gateway retrieves a URL only later, when preparing
+the turn or when the agent asks for the attachment, and every fetch checks the
+current origin allowlist again and requires public addresses. Retrieval is
+authorized by the event's `event_ref`, so the authority to fetch an attachment
+lasts at most 30 minutes after the event.
+
 ## Agent tools and native MCP
 
 Configure the native MCP URL above with the channel's agent-key bearer. Use

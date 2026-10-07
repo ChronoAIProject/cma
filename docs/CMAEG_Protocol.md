@@ -984,6 +984,44 @@ is checked against public addresses whenever the gateway fetches from it. While
 `CMAEG_MEDIA_ENABLED` is off the setting is refused with
 `custom_attachments_disabled`, as described in §5.
 
+While the switch is on and a source carries the setting, ingress reads the
+array at the pointer, relative to `data`. An absent `data` or an absent or
+`null` target lists nothing. Any other non-array target, or more than 16 items,
+is refused at the pointer itself. Each item is an object whose keys come only
+from `url`, `kind`, `mime_type`, `filename`, `size_bytes`, `duration_seconds`,
+`width` and `height`; an unknown key, or a known key of the wrong JSON type
+(`null` included), is refused at `<pointer>/<i>/<key>`:
+
+- `url` is required. A `data:` URI must be exactly
+  `data:<type>/<subtype>[;<param>]*;base64,<payload>`: the type is lowercased and
+  must be an RFC 6838 restricted name, parameters are `attribute=value`, and the
+  payload is padded standard base64 whose exact decoded length is at most
+  196608 bytes (192 KiB). It becomes an `inline` locator whose pointer is
+  `<pointer>/<i>/url`; `mime_type` defaults to its type and `size_bytes` to its
+  decoded length, which a supplied `size_bytes` must equal. Any other value
+  must be an `https` URL of at most 2048 bytes with a host and no userinfo,
+  fragment, whitespace or controls, whose serialized origin is exactly one of
+  `origins`; it becomes a `url` locator. Anything else is refused at
+  `<pointer>/<i>/url`.
+- `kind` is one of `image`, `audio`, `video`, `file` or `other`; it defaults
+  from the MIME type (`image/`, `audio/` and `video/` map to their kind, anything
+  else is `file`).
+- The facts are copied verbatim, never normalized; `reference` is `custom:<i>`.
+
+The built list is checked with the same rules as a stored activity's
+attachments (§7), and the first failure is answered at its pointer, such as
+`<pointer>/0/filename`. Every refusal is 400 `invalid_request` with the detail
+`attachment_invalid <pointer>`, at most 256 bytes. Ingress performs no network
+I/O; a URL is fetched only when the turn is prepared or the agent asks, and
+every fetch re-checks the current allowlist and requires public addresses.
+`data_base64` events remain unsupported. With the switch off, a stored setting
+is ignored and the event is admitted exactly as before.
+
+When attachments are admitted, the pointer's target is replaced by
+`[N attachments, listed below]` in both the `{{data}}` substitution and the
+default summary, so neither inline base64 nor item URLs reach the prompt; the
+items are described by the attachment block of §9 instead.
+
 HMAC uses the Standard Webhooks header/envelope format with CMAEG's explicit key
 convention: the configured base64 secret string's UTF-8 bytes are the HMAC key;
 DO NOT decode it or strip a prefix. Sign exactly

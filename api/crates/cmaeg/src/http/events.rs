@@ -29,6 +29,7 @@ use cmaeg_core::{
 };
 use serde::{Deserialize, Serialize};
 use std::{sync::Arc, time::Duration};
+const MAX_ATTACHMENT_DETAIL_BYTES: usize = 256;
 #[derive(Clone)]
 pub struct CustomIngressState {
     pub ingress: IngressState,
@@ -201,7 +202,11 @@ async fn prepare_event(
     let verify_time = timing.verify();
     let verify_span = tracing::info_span!("cmaeg.verify", channel = %crate::telemetry::channel_hash(channel_id), event_id = tracing::field::Empty);
     let verify_guard = verify_span.enter();
-    let Some(Source::Custom { auth, .. }) = channel
+    let Some(Source::Custom {
+        auth,
+        attachments: config,
+        ..
+    }) = channel
         .definition
         .sources
         .iter()
@@ -247,6 +252,23 @@ async fn prepare_event(
         Err(_) => return Err(invalid("invalid CloudEvent")),
     };
     verify_span.record("event_id", event.id.as_str());
+    // Extraction only reads the verified body; no locator is fetched here.
+    let attachments = match config {
+        Some(config) if state.ingress.media_enabled => {
+            match custom::attachments::extract(&event, config) {
+                Ok(attachments) => attachments,
+                Err(error) => {
+                    tracing::info!("custom event attachment refused");
+                    return Err(invalid(&attachment_invalid(&error.pointer)));
+                }
+            }
+        }
+        Some(_) => {
+            tracing::debug!("custom attachments ignored while media is disabled");
+            Vec::new()
+        }
+        None => Vec::new(),
+    };
     let mut waiter = None;
     let reply = if stream {
         if !channel.definition.reply.sinks.contains(&Sink::Sync {}) {
@@ -267,6 +289,7 @@ async fn prepare_event(
     let mut turn = match custom::activity::launch_request(
         channel,
         event,
+        attachments,
         reply,
         &state.ingress.master_keys,
         received_at,
@@ -291,4 +314,14 @@ async fn prepare_event(
 }
 fn invalid(detail: &str) -> Response {
     problem(StatusCode::BAD_REQUEST, ProblemCode::InvalidRequest, detail)
+}
+/// The pointer is sender-chosen and may be long, so the detail is bounded.
+fn attachment_invalid(pointer: &str) -> String {
+    let mut detail = format!("attachment_invalid {pointer}");
+    let mut end = detail.len().min(MAX_ATTACHMENT_DETAIL_BYTES);
+    while !detail.is_char_boundary(end) {
+        end -= 1;
+    }
+    detail.truncate(end);
+    detail
 }
