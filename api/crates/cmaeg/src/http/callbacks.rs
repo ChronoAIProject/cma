@@ -207,7 +207,7 @@ async fn admit_callback(
         Ok(verified) => verified,
         Err(error) => return Err(invalid(SOURCE, error)),
     };
-    let facts = match observe(source, &verified.payload) {
+    let facts = match observe(source, &verified.payload, state.media_enabled) {
         Ok(Observation::Message(facts)) => facts,
         Ok(Observation::Refused(reason)) => return Err(refused(reason)),
         Err(error) => return Err(invalid(SOURCE, error)),

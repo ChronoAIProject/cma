@@ -1,8 +1,11 @@
 //! Platform-neutral facts observed from an authenticated relay callback.
-use super::{generic, lark, payload::CallbackPayload, telegram, VerificationError};
+use super::{
+    generic, lark, payload::CallbackPayload, telegram, telegram_media::MediaIngress,
+    VerificationError,
+};
 use crate::ingress::admission::Refusal;
 use cmaeg_core::{
-    activity::{ActorKind, ConversationKind},
+    activity::{ActorKind, Attachment, ConversationKind},
     channel::{AdmissionPolicy, GroupAdmission, Platform, Source},
     cloudevent::CloudEvent,
 };
@@ -23,6 +26,10 @@ pub struct RelayFacts {
     pub mentioned: Option<bool>,
     pub replied_to_bot: Option<bool>,
     pub actor: ActorKind,
+    /// Media the observer extracted, already normalized; empty for text.
+    pub attachments: Vec<Attachment>,
+    /// The platform media group (a Telegram album) the message belongs to.
+    pub album_id: Option<String>,
 }
 impl RelayFacts {
     pub fn addressed(&self, policy: &AdmissionPolicy) -> Option<bool> {
@@ -47,10 +54,12 @@ pub enum Observation {
     Message(RelayFacts),
     Refused(Refusal),
 }
-/// Dispatch to the observer for the relay source's platform.
+/// Dispatch to the observer for the relay source's platform. `media_enabled` is
+/// the operator's inbound media switch; only Telegram media is admitted by it.
 pub fn observe(
     source: &Source,
     payload: &CallbackPayload,
+    media_enabled: bool,
 ) -> Result<Observation, VerificationError> {
     let Source::NyxidRelay {
         platform,
@@ -63,7 +72,11 @@ pub fn observe(
         return Err(VerificationError("relay_source_missing"));
     };
     match platform {
-        Platform::Telegram => telegram::observe(payload, bot_username.as_deref()),
+        Platform::Telegram => telegram::observe(
+            payload,
+            bot_username.as_deref(),
+            MediaIngress::relay(media_enabled),
+        ),
         Platform::Lark | Platform::Feishu => lark::observe(payload, bot_id.as_deref()),
         Platform::Discord | Platform::Slack | Platform::Whatsapp if *trust_normalized => {
             generic::observe(payload)

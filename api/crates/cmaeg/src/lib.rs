@@ -35,7 +35,7 @@ pub use config::{
     CMAEG_CHANNEL_NEGATIVE_TTL_MS, CMAEG_CMA_BASE_URL, CMAEG_CMA_SERVICE_TOKEN_FILE,
     CMAEG_DRAIN_SECONDS, CMAEG_FAILURE_TEXT, CMAEG_HEARTBEAT_MS, CMAEG_INGRESS_INFLIGHT,
     CMAEG_INGRESS_MAX_BODY, CMAEG_JWKS_TTL_MS, CMAEG_LISTEN, CMAEG_MASTER_KEYS_FILE,
-    CMAEG_MEDIA_TOOL_PROVIDERS, CMAEG_METRICS_LISTEN, CMAEG_NYXID_BASE_URL,
+    CMAEG_MEDIA_ENABLED, CMAEG_MEDIA_TOOL_PROVIDERS, CMAEG_METRICS_LISTEN, CMAEG_NYXID_BASE_URL,
     CMAEG_NYXID_REPLY_TIMEOUT_MS, CMAEG_PROVIDERS, CMAEG_PROVIDER_CONNECT_TIMEOUT_MS,
     CMAEG_PROVIDER_MAX_INFLIGHT, CMAEG_PROVIDER_REQUEST_TIMEOUT_MS, CMAEG_PUBLIC_URL,
     CMAEG_RESTORE_RATE_PER_MINUTE, CMAEG_RESTORE_TIMEOUT_MS, CMAEG_TOOLS_NYXID_SLUG,
@@ -167,7 +167,8 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         runner.clone(),
     )?
     .with_telegram(telegram)
-    .with_interactions(interactions);
+    .with_interactions(interactions)
+    .with_media_enabled(config.media.enabled);
     let tools_state = tools::ToolsState {
         resolver: state.resolver.clone(),
         keys: state.master_keys.clone(),

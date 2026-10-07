@@ -102,6 +102,8 @@ pub fn observe(
         mentioned: Some(false),
         replied_to_bot: Some(false),
         actor: ActorKind::Human,
+        attachments: Vec::new(),
+        album_id: None,
     }))
 }
 

@@ -10,6 +10,7 @@ mod lark;
 pub mod payload;
 pub(crate) mod telegram;
 mod telegram_managed;
+pub(crate) mod telegram_media;
 pub mod verify;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

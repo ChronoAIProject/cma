@@ -31,7 +31,12 @@ pub fn attachment(index: usize, content_type: &str, url: &str, facts: Value) -> 
 }
 
 /// A Telegram update whose message carries the raw `media` fields instead of text.
-fn telegram(media: Value, kind: &str, caption: Option<&str>, attachments: Vec<Value>) -> Envelope {
+pub fn telegram(
+    media: Value,
+    kind: &str,
+    caption: Option<&str>,
+    attachments: Vec<Value>,
+) -> Envelope {
     let mut envelope = Envelope::new();
     envelope.payload["sender"]["display_name"] = "Mira Fixture".into();
     let message = envelope.payload["raw_platform_data"]["message"]
@@ -50,7 +55,7 @@ fn telegram(media: Value, kind: &str, caption: Option<&str>, attachments: Vec<Va
     }
     envelope
 }
-fn file(extra: Value) -> Value {
+pub fn file(extra: Value) -> Value {
     let mut value = json!({"file_id": TELEGRAM_FILE_ID, "file_unique_id": "AgADfixture"});
     value
         .as_object_mut()
@@ -84,7 +89,7 @@ pub fn telegram_document() -> Envelope {
         vec![attachment(0, "file", TELEGRAM_FILE_ID, facts)],
     )
 }
-fn telegram_shapes() -> Vec<(&'static str, Envelope)> {
+pub fn telegram_shapes() -> Vec<(&'static str, Envelope)> {
     let clip = json!({"file_name": "fun.gif.mp4", "mime_type": "video/mp4", "size_bytes": 51200});
     vec![
         ("photo with caption", telegram_photo()),
@@ -250,7 +255,7 @@ pub fn counter(rendered: &str, series: &str) -> u64 {
         .find_map(|line| line.strip_prefix(series)?.strip_prefix(' '))
         .map_or(0, |value| value.trim().parse().unwrap())
 }
-async fn refused_media(fixture: &Fixture, envelope: &Envelope, shape: &str) {
+pub async fn refused_media(fixture: &Fixture, envelope: &Envelope, shape: &str) {
     let metrics = cmaeg::telemetry::install().unwrap();
     let before = counter(&metrics.render(), REFUSED);
     let response = fixture.send(envelope).await;

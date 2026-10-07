@@ -5,6 +5,7 @@ use super::{
     relay::{
         facts::{Observation, RelayFacts},
         payload::CallbackPayload,
+        telegram_media::MediaIngress,
         VerificationError,
     },
 };
@@ -93,7 +94,8 @@ pub fn observe(
     // Telegram would redeliver it; validate() keeps its bound as an invariant.
     payload.sender.repair_display_name();
     payload.validate()?;
-    match super::relay::telegram::observe(&payload, bot_username)? {
+    // Native updates keep refusing media until the webhook passes its switch.
+    match super::relay::telegram::observe(&payload, bot_username, MediaIngress::native(false))? {
         Observation::Refused(reason) => Ok(Outcome::Refused(reason)),
         Observation::Message(mut facts) => {
             if let Some(ce) = &mut facts.event {

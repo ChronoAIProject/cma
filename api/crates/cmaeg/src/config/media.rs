@@ -1,4 +1,5 @@
-//! Inbound media settings: which providers install the gateway's MCP tools.
+//! Inbound media settings: the master switch and which providers install the
+//! gateway's MCP tools.
 //!
 //! Neither the agent card's conformance level nor the binding request proves
 //! that a provider installed the gateway MCP server, so whether an agent may be
@@ -12,6 +13,7 @@ use cmaeg_core::ids::ProviderSlug;
 use std::{collections::BTreeSet, env};
 
 pub const CMAEG_MEDIA_TOOL_PROVIDERS: &str = "CMAEG_MEDIA_TOOL_PROVIDERS";
+pub const CMAEG_MEDIA_ENABLED: &str = "CMAEG_MEDIA_ENABLED";
 
 /// The one provider whose binding contract promises to install the gateway MCP
 /// server.
@@ -25,6 +27,9 @@ const MAX_TOOL_PROVIDERS: usize = 8;
 #[derive(Debug, Clone, Default)]
 pub struct MediaConfig {
     pub tool_providers: MediaToolProviders,
+    /// Master switch for inbound media. Off, every media message is refused
+    /// as `attachment_unsupported` exactly as before media existed.
+    pub enabled: bool,
 }
 
 /// Providers whose profile bindings install the gateway's MCP tools. Only
@@ -56,6 +61,33 @@ pub(super) fn from_env(registry: &ProviderRegistry) -> Result<MediaToolProviders
         Err(env::VarError::NotUnicode(_)) => Err(ConfigError::InvalidMedia {
             detail: format!("{CMAEG_MEDIA_TOOL_PROVIDERS} must be valid UTF-8"),
         }),
+    }
+}
+
+/// Read the master switch. Unset is off; a set value must be exactly `true` or
+/// `false`, so a typo such as `True` or `1` fails startup instead of silently
+/// leaving media off.
+pub(super) fn enabled_from_env() -> Result<bool, ConfigError> {
+    match env::var(CMAEG_MEDIA_ENABLED) {
+        Ok(value) => parse_enabled(Some(&value)),
+        Err(env::VarError::NotPresent) => parse_enabled(None),
+        Err(env::VarError::NotUnicode(_)) => Err(invalid_switch()),
+    }
+}
+
+fn parse_enabled(value: Option<&str>) -> Result<bool, ConfigError> {
+    let enabled = match value {
+        None | Some("false") => false,
+        Some("true") => true,
+        Some(_) => return Err(invalid_switch()),
+    };
+    tracing::info!(key = CMAEG_MEDIA_ENABLED, enabled, "inbound media switch");
+    Ok(enabled)
+}
+
+fn invalid_switch() -> ConfigError {
+    ConfigError::InvalidMedia {
+        detail: format!("{CMAEG_MEDIA_ENABLED} must be true or false"),
     }
 }
 
@@ -136,6 +168,20 @@ mod tests {
         match error {
             ConfigError::InvalidMedia { detail } => detail,
             other => panic!("expected an invalid media configuration, got {other}"),
+        }
+    }
+
+    #[test]
+    fn the_media_switch_is_off_unless_exactly_true() {
+        assert!(!parse_enabled(None).unwrap());
+        assert!(!parse_enabled(Some("false")).unwrap());
+        assert!(parse_enabled(Some("true")).unwrap());
+        for value in ["", "True", "TRUE", "1", "yes", " true", "true ", "on"] {
+            assert_eq!(
+                detail(parse_enabled(Some(value)).unwrap_err()),
+                "CMAEG_MEDIA_ENABLED must be true or false",
+                "{value:?}"
+            );
         }
     }
 
