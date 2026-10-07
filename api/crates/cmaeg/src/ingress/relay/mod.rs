@@ -7,7 +7,10 @@ mod generic;
 pub mod jwks;
 mod jwt;
 mod lark;
+mod lark_media;
 pub mod payload;
+#[cfg(test)]
+mod seeded_rng;
 pub(crate) mod telegram;
 mod telegram_managed;
 pub(crate) mod telegram_media;

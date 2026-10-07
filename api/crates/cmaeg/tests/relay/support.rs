@@ -140,6 +140,14 @@ impl Fixture {
     pub async fn on(platform: &str, edit: impl FnOnce(&mut Value), config: IngressConfig) -> Self {
         Self::build(platform, edit, config, false).await
     }
+    /// [`Fixture::on`] served with `CMAEG_MEDIA_ENABLED=true`.
+    pub async fn on_with_media(
+        platform: &str,
+        edit: impl FnOnce(&mut Value),
+        config: IngressConfig,
+    ) -> Self {
+        Self::build(platform, edit, config, true).await
+    }
     async fn build(
         platform: &str,
         edit: impl FnOnce(&mut Value),

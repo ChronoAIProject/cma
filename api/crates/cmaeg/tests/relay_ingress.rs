@@ -1,5 +1,7 @@
 #[path = "relay/keys.rs"]
 mod keys;
+#[path = "relay/lark_media.rs"]
+mod lark_media;
 #[path = "relay/normalization.rs"]
 mod normalization;
 #[path = "relay/nyxid_shapes.rs"]

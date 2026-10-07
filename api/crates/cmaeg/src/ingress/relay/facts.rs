@@ -55,7 +55,7 @@ pub enum Observation {
     Refused(Refusal),
 }
 /// Dispatch to the observer for the relay source's platform. `media_enabled` is
-/// the operator's inbound media switch; only Telegram media is admitted by it.
+/// the operator's inbound media switch; it admits Telegram and Lark/Feishu media.
 pub fn observe(
     source: &Source,
     payload: &CallbackPayload,
@@ -77,7 +77,9 @@ pub fn observe(
             bot_username.as_deref(),
             MediaIngress::relay(media_enabled),
         ),
-        Platform::Lark | Platform::Feishu => lark::observe(payload, bot_id.as_deref()),
+        Platform::Lark | Platform::Feishu => {
+            lark::observe(payload, bot_id.as_deref(), media_enabled)
+        }
         Platform::Discord | Platform::Slack | Platform::Whatsapp if *trust_normalized => {
             generic::observe(payload)
         }
