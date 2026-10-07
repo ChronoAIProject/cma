@@ -20,6 +20,7 @@
       },
       "event_id": "fixture",
       "kind": {
+        "album_id": "fixture",
         "attachments": [
           {
             "duration_seconds": 1,
@@ -67,6 +68,7 @@
   ],
   "ActivityKind": [
     {
+      "album_id": "fixture",
       "attachments": [
         {
           "duration_seconds": 1,
@@ -834,6 +836,7 @@
           "thread_id": "fixture"
         },
         "kind": {
+          "album_id": "fixture",
           "attachments": [
             {
               "duration_seconds": 1,
@@ -984,6 +987,7 @@
         },
         "event_id": "fixture",
         "kind": {
+          "album_id": "fixture",
           "attachments": [
             {
               "duration_seconds": 1,
@@ -1346,6 +1350,7 @@
         "thread_id": "fixture"
       },
       "kind": {
+        "album_id": "fixture",
         "attachments": [
           {
             "duration_seconds": 1,

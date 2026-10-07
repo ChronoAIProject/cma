@@ -24,6 +24,7 @@ fn renders_neutral_text_and_strips_only_bot_address_tokens() {
         attachments: vec![],
         mentions_bot: true,
         reply_to: Some("earlier".parse().unwrap()),
+        album_id: None,
     };
     let rendered = render(&activity, &definition);
     assert_eq!(
@@ -96,6 +97,7 @@ fn lark_and_feishu_strip_only_leading_mention_keys() {
                 attachments: vec![],
                 mentions_bot,
                 reply_to: None,
+                album_id: None,
             };
             assert_eq!(
                 render(&activity, &definition)[0]["content"][0]["text"],

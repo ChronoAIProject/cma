@@ -78,6 +78,13 @@
         "oneOf": [
           {
             "properties": {
+              "album_id": {
+                "description": "Shared by every message of one platform media group (a Telegram\nalbum). Each item of the group is still its own activity.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "attachments": {
                 "items": {
                   "$ref": "#/components/schemas/Attachment"

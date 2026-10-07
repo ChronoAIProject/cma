@@ -52,6 +52,9 @@ pub enum ActivityKind {
     /// Wire variant `message`.
     #[serde(rename = "message")]
     Message {
+        /// Shared by every message of one platform media group.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        album_id: Option<String>,
         /// Wire field `attachments`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         attachments: Option<Vec<Attachment>>,

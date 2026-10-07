@@ -105,6 +105,7 @@ export type CloudEvent = Output<typeof CloudEventSchema>;
 export const ActivityKindSchema = tagged(
   {
     message: object({
+      album_id: optional(nullable(text)),
       attachments: optional(array(AttachmentSchema)),
       mentions_bot: boolean,
       reply_to: optional(nullable(MessageRefSchema)),
