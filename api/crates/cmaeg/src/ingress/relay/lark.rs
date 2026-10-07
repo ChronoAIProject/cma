@@ -2,7 +2,7 @@
 //! event and correlated to the normalized envelope.
 use super::{
     facts::{Observation, RelayFacts},
-    lark_media,
+    lark_media, lark_post,
     payload::CallbackPayload,
     VerificationError,
 };
@@ -20,7 +20,8 @@ const INVALID: VerificationError = VerificationError("lark_event_invalid");
 /// delivers a group message to a bot only when it @mentions that bot, unless the
 /// app holds the permission to read all group messages. Pin `bot_id` for exact
 /// mention evidence when that permission is granted. Lark media messages cannot
-/// carry a mention, so a group under `mention` admission refuses them.
+/// carry a mention, so a group under `mention` admission refuses them; a post
+/// that @mentions the bot is addressed like a text message.
 pub fn observe(
     payload: &CallbackPayload,
     bot_id: Option<&str>,
@@ -55,8 +56,16 @@ pub fn observe(
     if open_id.is_none() {
         return Err(VerificationError("lark_identity_mismatch"));
     }
-    let attachments = match content(payload, message, media_enabled) {
-        Ok(attachments) => attachments,
+    // A post resolves its mentions while it is flattened, but a malformed list
+    // is still answered only after the content and chat type, as before posts.
+    let mentions = match message.get("mentions") {
+        None | Some(Value::Null) => Ok(&[][..]),
+        Some(Value::Array(mentions)) => Ok(mentions.as_slice()),
+        Some(_) => Err(INVALID),
+    };
+    let listed = mentions.unwrap_or_default();
+    let content = match content(payload, message, listed, bot_id, media_enabled) {
+        Ok(content) => content,
         Err(refusal) => return Ok(Observation::Refused(refusal)),
     };
     let conversation = match message.get("chat_type").and_then(Value::as_str) {
@@ -64,11 +73,7 @@ pub fn observe(
         Some("group") => ConversationKind::Group,
         _ => return Ok(Observation::Refused(Refusal::SystemEvent)),
     };
-    let mentions = match message.get("mentions") {
-        None | Some(Value::Null) => &[][..],
-        Some(Value::Array(mentions)) => mentions.as_slice(),
-        Some(_) => return Err(INVALID),
-    };
+    let mentions = mentions?;
     let mentioned = match bot_id {
         Some(bot_id) => mentions
             .iter()
@@ -88,23 +93,39 @@ pub fn observe(
         mentioned: Some(mentioned),
         replied_to_bot,
         actor: ActorKind::Human,
-        attachments,
+        text: content.text,
+        attachments: content.attachments,
         album_id: None,
     }))
 }
 
-/// The attachments a message's content contributes, or the refusal it earns.
-/// With media off, this is exactly the text-only rule that predates media.
+/// What a message's content contributes beyond NyxID's envelope.
+#[derive(Default)]
+struct Content {
+    /// Text the observer derived from the raw event, overriding `content.text`.
+    text: Option<String>,
+    attachments: Vec<Attachment>,
+}
+
+/// The content of a message, or the refusal it earns. With media off, this is
+/// exactly the text-only rule that predates media.
 fn content(
     payload: &CallbackPayload,
     message: &Value,
+    mentions: &[Value],
+    bot_id: Option<&str>,
     media_enabled: bool,
-) -> Result<Vec<Attachment>, Refusal> {
+) -> Result<Content, Refusal> {
     match message.get("message_type").and_then(Value::as_str) {
-        Some("text") => text(payload, message).map(|()| Vec::new()),
+        Some("text") => text(payload, message).map(|()| Content::default()),
         Some(message_type @ ("image" | "file" | "audio" | "media")) if media_enabled => {
-            media(payload, message, message_type)
+            let attachments = media(payload, message, message_type)?;
+            Ok(Content {
+                text: None,
+                attachments,
+            })
         }
+        Some("post") if media_enabled => post(payload, message, mentions, bot_id),
         // NyxID offers no download for a sticker, so it stays refused with media on.
         Some("image" | "file" | "audio" | "media" | "sticker") => {
             Err(Refusal::AttachmentUnsupported)
@@ -160,6 +181,36 @@ fn media(
         "lark media extracted"
     );
     Ok(vec![media.attachment])
+}
+
+/// A rich-text post. NyxID relays it as `content.type:"unknown"` without text
+/// or attachments, so its text is flattened from the raw event, which the
+/// callback JWT binds through `body_sha256`.
+fn post(
+    payload: &CallbackPayload,
+    message: &Value,
+    mentions: &[Value],
+    bot_id: Option<&str>,
+) -> Result<Content, Refusal> {
+    if payload.content.kind != "unknown"
+        || payload.content.text.is_some()
+        || payload.received_attachments() > 0
+    {
+        return Err(Refusal::ContentUnsupported);
+    }
+    let post = raw_content(message)
+        .and_then(|content| lark_post::flatten(&content, mentions, bot_id))
+        .ok_or(Refusal::ContentUnsupported)?;
+    // Sizes only: the text and keys are sender data.
+    tracing::debug!(
+        bytes = post.text.len(),
+        placeholders = post.placeholders.len(),
+        "lark post flattened"
+    );
+    Ok(Content {
+        text: Some(post.text),
+        attachments: post.placeholders,
+    })
 }
 
 /// `event.message.content`: Lark sends it as a string holding JSON.

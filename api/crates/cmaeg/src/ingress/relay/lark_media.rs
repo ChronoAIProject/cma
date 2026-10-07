@@ -163,7 +163,7 @@ fn count_locator(keyed: bool, matched: bool, label: &'static str) {
 /// A Lark resource key: a JSON string of 1..=1024 bytes, every byte ASCII
 /// graphic. Whitespace, controls and non-ASCII never occur in a real key, and
 /// the key is rendered into the stable `lark:<key>` reference.
-fn lark_key(value: Option<&Value>) -> Option<&str> {
+pub(super) fn lark_key(value: Option<&Value>) -> Option<&str> {
     value.and_then(Value::as_str).filter(|key| {
         (1..=MAX_KEY_BYTES).contains(&key.len()) && key.bytes().all(|byte| byte.is_ascii_graphic())
     })

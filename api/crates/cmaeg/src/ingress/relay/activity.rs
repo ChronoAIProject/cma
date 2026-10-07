@@ -47,8 +47,11 @@ pub(crate) fn launch_request(
             ce: *ce,
             attachments: Vec::new(),
         },
+        // NyxID derives `content.text` only from a content JSON's top-level
+        // `text` key (nyxid `lark.rs:392-395`), so a Lark post's text exists
+        // only in the raw event, from which the observer derived it.
         None => ActivityKind::Message {
-            text: payload.content.text.unwrap_or_default(),
+            text: facts.text.or(payload.content.text).unwrap_or_default(),
             attachments: facts.attachments,
             mentions_bot: facts.mentioned == Some(true),
             reply_to: payload

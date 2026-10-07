@@ -139,3 +139,40 @@ fn lark_and_feishu_strip_only_leading_mention_keys() {
         }
     }
 }
+#[test]
+fn lark_post_placeholders_name_their_embedded_kind() {
+    let (mut activity, definition) = fixtures();
+    activity.source = SourceKind::NyxidRelay {
+        platform: Platform::Lark,
+        route_id: "route".into(),
+    };
+    let embedded = |reference: &str, kind: &str| {
+        serde_json::from_value(json!({"reference": reference, "kind": kind, "variant": "embedded"}))
+            .unwrap()
+    };
+    activity.kind = ActivityKind::Message {
+        text: "Weekly update\nsee the chart".into(),
+        attachments: vec![
+            embedded("lark:img_v3_chart", "image"),
+            embedded("lark:file_v3_demo", "video"),
+        ],
+        mentions_bot: false,
+        reply_to: None,
+        album_id: None,
+    };
+    let input = render_input::render(
+        &activity,
+        &definition,
+        &RenderMedia::empty(None),
+        Audience {
+            tools: true,
+            downloads: false,
+        },
+    );
+    assert_eq!(
+        input[0]["content"][0]["text"],
+        "Weekly update\nsee the chart\n\n[Attachments: 2.]\n\
+         [0] image embedded in the post · not retrievable through this channel\n\
+         [1] video embedded in the post · not retrievable through this channel"
+    );
+}
