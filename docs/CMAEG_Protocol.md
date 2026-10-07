@@ -624,8 +624,9 @@ required `content_type,url` and optional `download_url,image_key,file_key,
 platform_message_id,filename,mime_type,size_bytes`. `download_url` is NyxID's
 own download endpoint for the entry; the gateway never dereferences
 `download_url` or `url`. Messages carrying attachments are refused with 202
-`attachment_unsupported`, except Telegram media while the operator enables
-inbound media (see [Telegram media](#telegram-media) below).
+`attachment_unsupported`, except Telegram, Lark and Feishu media while the
+operator enables inbound media (see [Telegram media](#telegram-media) and
+[Lark and Feishu media](#lark-and-feishu-media) below).
 
 NyxID copies sender-controlled facts into attachment entries and adds entry
 fields over time, so the gateway parses the attachment list leniently while the
@@ -701,7 +702,7 @@ differs is whether the gateway can corroborate the platform's own event.
 | Platform | Facts |
 | --- | --- |
 | Telegram | Raw Telegram update in `raw_platform_data`; chat and sender IDs must match the envelope. Human text messages, media messages while the operator enables inbound media, and original private `managed_bot_created` receipts (see §7); `private` or `group`/`supergroup` chats; forum topic IDs when `is_topic_message`; mention entities against `bot_username`, read from `caption_entities` against the caption of a media message; reply evidence from the parent's `is_bot`. Media variants, captions, locators and the normalization of sender-declared facts are described under [Telegram media](#telegram-media); no attachment fact makes a callback answer 400. |
-| Lark, Feishu | Raw `im.message.receive_v1` event in `raw_platform_data`; any other `header.event_type` is refused as `system_event`. `event.message.chat_id` must equal `conversation.platform_id` and `event.sender.sender_id.open_id` must equal `sender.platform_id` (a mismatch or a human sender without `open_id` is 401). `sender_type` `user` is a human; `app` is refused as `bot_sender`, anything else as `unknown_sender`. `chat_type` `p2p` is private, `group` is group and any other value is `system_event`. Only `message_type:"text"` whose content JSON `text` equals `content.text` is admitted; image, file, audio, media and sticker messages are `attachment_unsupported`, other types `content_unsupported`. `message.thread_id` is the topic thread. A message is mentioned when any `mentions[].id.open_id` equals the pinned `bot_id`; without a pinned `bot_id`, any mention counts, because Lark only delivers group messages that @mention the bot unless the app may read all group messages. Pin `bot_id` when the app holds that permission. A message with `parent_id` has no reply evidence, because the parent's author is absent. |
+| Lark, Feishu | Raw `im.message.receive_v1` event in `raw_platform_data`; any other `header.event_type` is refused as `system_event`. `event.message.chat_id` must equal `conversation.platform_id` and `event.sender.sender_id.open_id` must equal `sender.platform_id` (a mismatch or a human sender without `open_id` is 401). `sender_type` `user` is a human; `app` is refused as `bot_sender`, anything else as `unknown_sender`. `chat_type` `p2p` is private, `group` is group and any other value is `system_event`. By default only `message_type:"text"` whose content JSON `text` equals `content.text` is admitted; image, file, audio, media and sticker messages are `attachment_unsupported`, other types `content_unsupported`, and a text message whose envelope lists attachments is `attachment_unsupported`. When `CMAEG_MEDIA_ENABLED` is true, image, file, audio and media (as video) messages are admitted with a `nyxid_relay` locator at NyxID's original index; their sender facts are normalized and never cause a refusal, an invalid resource key degrades the attachment to not retrievable, and stickers stay refused. Media messages cannot carry a mention, so a group under `mention` admission refuses them. See [Lark and Feishu media](#lark-and-feishu-media). `message.thread_id` is the topic thread. A message is mentioned when any `mentions[].id.open_id` equals the pinned `bot_id`; without a pinned `bot_id`, any mention counts, because Lark only delivers group messages that @mention the bot unless the app may read all group messages. Pin `bot_id` when the app holds that permission. A message with `parent_id` has no reply evidence, because the parent's author is absent. |
 | Discord, Slack, WhatsApp | No raw-event verifier, so the source must set `trust_normalized:true` and the normalized envelope is trusted as-is. A definition stored without it (management refuses to create one) has every callback refused as `platform_verifier_unavailable`. `conversation.type` `private`, `group` or `channel` maps to the same conversation kind and any other value is `system_event`. The actor is `sender.platform_id` with kind `unknown`, because bot senders cannot be recognized. Text only. There is no mention, reply or thread evidence, so group `mention`/`reply_to_bot` admission yields `addressing_evidence_unavailable` and thread partitions yield `thread_evidence_unavailable`. |
 
 Opting into `trust_normalized` accepts that the gateway cannot refuse bot
@@ -715,14 +716,14 @@ supports a platform before any source for it is enabled.
 
 | Capability | Telegram | Lark, Feishu | Discord, Slack, WhatsApp |
 | --- | --- | --- | --- |
-| Input | Human text, private managed-bot creation receipts and authenticated callbacks from gateway-issued inline controls; media messages with their captions while the operator enables inbound media; other edits, system input, and attachment input while media is off, refused | Human text messages; bot, system and attachment input refused | Text from the trusted normalized envelope; actor kind `unknown` |
+| Input | Human text, private managed-bot creation receipts and authenticated callbacks from gateway-issued inline controls; media messages with their captions while the operator enables inbound media; other edits, system input, and attachment input while media is off, refused | Human text messages; image, file, audio and media (as video) messages with `nyxid_relay` locators at NyxID's original index while the operator enables inbound media, with sender facts normalized rather than refused and an invalid key degraded to not retrievable; media messages carry no mention, so `mention` group admission refuses them; stickers, bot and system input, and attachment input while media is off, refused | Text from the trusted normalized envelope; actor kind `unknown` |
 | Group addressing | Pinned bot username and UTF-16 mention entities; bot reply evidence from raw Telegram payload | Mention `open_id` against the pinned `bot_id`, or any mention without one; no reply evidence | None |
 | Topics | Verified forum topic evidence required for thread partitioning | Raw `thread_id` | None |
 | Output | Escaped text; rich blocks degrade as §8 specifies | Plain text; buttons and choices degrade to numbered text | Plain text; buttons and choices degrade to numbered text |
 | Edit | Confirmed gateway interactive cards can be updated using their opaque message reference | Unsupported | Unsupported |
 | Typing | Unsupported; never reported as performed | Unsupported | Unsupported |
 | Interactive callbacks | Native buttons and single/multi choices; exact actor, chat, message and current revision required | Unsupported | Unsupported |
-| Attachments | Inbound media admitted as activity attachments with relay or Bot API locators while the operator enables it; replies: safe link text only, no file transfer | Safe link text only | Safe link text only |
+| Attachments | Inbound media admitted as activity attachments with relay or Bot API locators while the operator enables it; replies: safe link text only, no file transfer | Inbound image, file, audio and media admitted as activity attachments with relay locators while the operator enables it; replies: safe link text only, no file transfer | Safe link text only |
 
 Replies on every platform go through NyxID's generic
 `/api/v1/channel-relay/reply`; NyxID performs the platform send. Only Telegram
@@ -736,7 +737,8 @@ attachment is refused with 202 `attachment_unsupported`, exactly as before media
 existed. While it is on, an authenticated Telegram media message becomes a
 `message` activity whose `attachments` describe its media (§7). Ingress does no
 network I/O: it records typed locators, and bytes are fetched later through
-them. Lark, Feishu and the trusted platforms still refuse attachments.
+them. Lark and Feishu media are described [below](#lark-and-feishu-media); the
+trusted platforms still refuse attachments.
 
 - **Variants.** `photo`, `document`, `audio`, `video`, `voice`, `sticker`,
   `video_note` and `animation` become attachments in that order, which is
@@ -787,6 +789,48 @@ them. Lark, Feishu and the trusted platforms still refuse attachments.
   `cmaeg_media_activity_degraded_total{source}`.
 - A message whose envelope lists attachments while its raw message has no media
   field, or whose media fields yield no usable attachment, is refused as
+  `attachment_unsupported`.
+
+#### Lark and Feishu media
+
+The same switch, `CMAEG_MEDIA_ENABLED`, governs Lark and Feishu media. While it
+is off, image, file, audio, media and sticker messages are refused with 202
+`attachment_unsupported` and other non-text types with `content_unsupported`,
+exactly as before media existed. While it is on, an authenticated `image`,
+`file`, `audio` or `media` message becomes a `message` activity with empty text
+and one attachment. Ingress does no network I/O.
+
+- **Variants.** `image` is kind `image`, variant `image`; `file` is kind
+  `file`, variant `file`; `audio` is kind `audio`, variant `audio`; `media` is
+  kind `video`, variant `media`. The raw `event.message.content` must be a
+  string holding a JSON object, NyxID's `content.type` must be `image`, `file`,
+  `audio` or `video` respectively and `content.text` must be absent or null;
+  otherwise the message is refused as `content_unsupported`. The envelope entry
+  NyxID lists for the resource does not make the message
+  `attachment_unsupported`.
+- **Locators.** The resource key is the raw `image_key` of an image and the raw
+  `file_key` of the other types; a media message's cover `image_key` is ignored
+  because NyxID cannot serve it. A valid key is a string of 1 to 1024 printable
+  ASCII bytes (`0x21`–`0x7E`) and gives `reference` `lark:<key>`. The
+  attachment's `source` is `{type:"nyxid_relay",index}`, the original position
+  of the first envelope entry whose `image_key` (for an image) or `file_key`
+  equals the key, and that entry's `mime_type` and `size_bytes` are copied.
+  Without such an entry the attachment has no `source` and is not retrievable;
+  `cmaeg_media_relay_correlation_total{outcome}` counts both outcomes. An
+  invalid or missing key gives `reference` `lark:item-0` and no `source` and
+  counts `cmaeg_media_items_total{outcome="invalid_locator"}`; the message is
+  still admitted.
+- **Sender-declared facts.** A file's or media message's `file_name`, or the
+  matched entry's `filename` when the raw content has none, and an audio or
+  media message's `duration` in milliseconds, rounded up to whole seconds, are
+  normalized as for Telegram: a name over 255 bytes is shortened keeping its
+  extension, and a duration that is not a non-negative integer or exceeds
+  86400 seconds is omitted. No fact makes a callback answer 400 or 401.
+- **Stickers** stay refused as `attachment_unsupported`: NyxID offers no
+  download for them.
+- **Addressing.** Lark media messages cannot carry an @mention, so a group under
+  `mention` admission refuses them as `group_not_addressed`.
+- A text message whose envelope lists attachments is still refused as
   `attachment_unsupported`.
 
 ### Native Telegram source
@@ -1384,9 +1428,10 @@ its own level and field refusals for that channel.
 ### Attachment block in turn input
 
 This subsection is informative: it describes text the gateway writes into
-`input`, not a wire field. No source emits attachments yet, and
-`readEventAttachment` is not in the native tool list yet; until both arrive,
-every turn renders as it did before attachments existed.
+`input`, not a wire field. Sources emit attachments only while the operator
+enables inbound media (§6), and `readEventAttachment` is not in the native tool
+list yet; a turn without attachments renders as it did before attachments
+existed.
 
 A turn's `input` is always one user message with one `input_text` part. When
 the activity carries attachments, the gateway appends one `[Attachments]` block

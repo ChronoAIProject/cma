@@ -51,7 +51,7 @@ applies with all media flags off.
 | `CMAEG_METRICS_LISTEN` | socket address | `0.0.0.0:9091` | Separate Prometheus scrape listener; `/metrics` is absent from the public router. |
 | `CMAEG_PROVIDERS` | JSON array | `[]` | Strict JSON provider allowlist described above. |
 | `CMAEG_MEDIA_TOOL_PROVIDERS` | comma-separated provider slugs | `cma_codex` when that provider is configured, otherwise empty | 0..=8 distinct slugs, each naming a `CMAEG_PROVIDERS` entry; startup fails otherwise. Profile bindings of these providers install the gateway MCP tools, so only their agents are told how to open an attachment through a gateway tool. Set it to the empty string to render no tool hints. A separate key because provider entries refuse unknown fields. |
-| `CMAEG_MEDIA_ENABLED` | `true` or `false` | `false` | Master switch for inbound media. Exactly `true` or `false`; any other value, including `True` or `1`, fails startup. Off, every media message is refused with 202 `attachment_unsupported` exactly as before media existed. On, authenticated Telegram media from the NyxID relay and the native webhook is admitted as activity attachments (protocol §6). Enabling it requires the `cmaeg` container's memory request to equal its limit at 1536Mi or more; `tests/infra_manifests.rs` enforces this. |
+| `CMAEG_MEDIA_ENABLED` | `true` or `false` | `false` | Master switch for inbound media. Exactly `true` or `false`; any other value, including `True` or `1`, fails startup. Off, every media message is refused with 202 `attachment_unsupported` exactly as before media existed. On, authenticated Telegram media from the NyxID relay and the native webhook, and Lark and Feishu image, file, audio and media messages from the relay, are admitted as activity attachments (protocol §6); Lark stickers stay refused. Enabling it requires the `cmaeg` container's memory request to equal its limit at 1536Mi or more; `tests/infra_manifests.rs` enforces this. |
 | `CMAEG_PROVIDER_CONNECT_TIMEOUT_MS` | positive integer, ms | `2000` | TCP/TLS connection timeout for each provider pool. |
 | `CMAEG_PROVIDER_REQUEST_TIMEOUT_MS` | positive integer, ms | `30000` | Deadline for provider setup and probe requests, and receipt of streaming HTTP response headers. Active streams are owned and bounded by their consumer. |
 | `CMAEG_PROVIDER_MAX_INFLIGHT` | positive integer | `256` | Deployment-wide upper bound applied to each provider's semaphore. Calls wait at most 50 ms for a provider permit before returning a typed busy result. |
@@ -114,9 +114,9 @@ and idempotent. All duration histograms use seconds with buckets
 | `cmaeg_relay_envelope_repairs_total` | `field` | Authenticated NyxID relay envelope facts repaired or dropped instead of rejecting the callback. `field` is one of `attachment_item`, `attachment_overflow`, `attachment_container`, `content_type`, `url`, `platform_message_id`, `file_key`, `image_key`, `filename`, `mime_type`, `size_bytes`, `download_url` or `sender_display_name`. |
 | `cmaeg_delivery_worker_restarts_total` | none | Delivery workers replaced after they stopped, for example by panicking. Dispatch continues for every channel; commands already queued for the stopped worker are lost with it. |
 | `cmaeg_media_activity_degraded_total` | `source` | Relay (`nyxid_relay`) and native Telegram (`telegram`) activities that still failed validation after attachment fact normalization. Their attachments were reduced to reference, kind and locator, or the message was refused with 202 `attachment_unsupported` if it was still invalid, instead of answering 400 or 401 and losing the message. Only the failing field's JSON pointer is logged. |
-| `cmaeg_media_facts_repaired_total` | `source`, `field` | Sender-declared Telegram media facts normalized into the attachment domain instead of refusing the message. `source` is `nyxid_relay` or `telegram`; `field` is one of `filename`, `mime_type`, `dimensions`, `duration_seconds` or `emoji`. |
-| `cmaeg_media_items_total` | `source`, `kind`, `outcome` | Telegram media items turned into attachments. `kind` is `image`, `file`, `audio`, `video` or `other`; `outcome` is `extracted` for every attachment, and additionally `invalid_locator` for a native item whose file identifiers are invalid, which is delivered without a locator. |
-| `cmaeg_media_relay_correlation_total` | `outcome` | Relayed Telegram media items matched (`matched`) or not (`unmatched`) to a NyxID envelope entry by `file_id`. An unmatched item is delivered without a locator and cannot be fetched. |
+| `cmaeg_media_facts_repaired_total` | `source`, `field` | Sender-declared Telegram, Lark and Feishu media facts normalized into the attachment domain instead of refusing the message. `source` is `nyxid_relay` or `telegram`; `field` is one of `filename`, `mime_type`, `dimensions`, `duration_seconds` or `emoji`. |
+| `cmaeg_media_items_total` | `source`, `kind`, `outcome` | Telegram, Lark and Feishu media items turned into attachments. `kind` is `image`, `file`, `audio`, `video` or `other`; `outcome` is `extracted` for every attachment, and additionally `invalid_locator` for a native Telegram item whose file identifiers are invalid or a relayed Lark item whose resource key is invalid, which is delivered without a locator. |
+| `cmaeg_media_relay_correlation_total` | `outcome` | Relayed media items matched (`matched`) or not (`unmatched`) to a NyxID envelope entry: a Telegram item by its `file_id` as the entry's `url`, a Lark item with a valid resource key by the entry's `image_key` or `file_key`. An unmatched item is delivered without a locator and cannot be fetched. |
 | `cmaeg_turns_inflight` | none | Admitted local consumers; decremented on completion or cancellation. |
 | `cmaeg_channels_cached` | none | Locally retained positive and negative cache entries, including entries awaiting eviction. |
 
@@ -406,9 +406,10 @@ compare NyxID's serializer with the protocol, not an outage.
 
 ### Inbound media alerts
 
-`CMAEG_MEDIA_ENABLED` turns on Telegram media ingress. Every sender-declared
-attachment fact is normalized into the validated domain before an activity is
-built, so a degraded activity means the normalizer missed a validator rule.
+`CMAEG_MEDIA_ENABLED` turns on Telegram, Lark and Feishu media ingress. Every
+sender-declared attachment fact is normalized into the validated domain before
+an activity is built, so a degraded activity means the normalizer missed a
+validator rule.
 Configure this alert on the private metrics scrape:
 
 | Severity | Expression | Meaning |
@@ -417,15 +418,16 @@ Configure this alert on the private metrics scrape:
 
 Runbook: find the `activity failed validation after attachment normalization`
 error in the alert window. Its `pointer=` names the failing field (never its
-value). Fix the normalizer (`Attachment::normalize_facts` or the Telegram
-extractor) so that field is mapped into the validated domain, and add the case
-to the normalization tests. No data repair is possible or needed.
+value). Fix the normalizer (`Attachment::normalize_facts` or the Telegram or
+Lark extractor) so that field is mapped into the validated domain, and add the
+case to the normalization tests. No data repair is possible or needed.
 
 `cmaeg_media_facts_repaired_total` is informational: it rises whenever senders
 declare facts outside the domain, such as a 0×0 video. A rising
 `cmaeg_media_relay_correlation_total{outcome="unmatched"}` means NyxID's
-envelope stopped listing the raw `file_id` as an entry's `url`; compare NyxID's
-Telegram adapter with protocol §6.
+envelope stopped listing the raw Telegram `file_id` as an entry's `url`, or the
+raw Lark `image_key` or `file_key` as the entry's key; compare NyxID's Telegram
+or Lark adapter with protocol §6.
 
 ### Delivery worker restart alert
 
