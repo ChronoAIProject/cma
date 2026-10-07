@@ -135,6 +135,16 @@ Turn and delivery tasks retain the originating trace across task and queue
 boundaries. Info logs exclude bearer keys, reply tokens, event references, and
 message content. Provider-controlled parsing diagnostics are also excluded.
 
+A request handler that panics is answered with a 500 `internal` problem whose
+detail is `internal_error`, with the usual protocol headers and `x-request-id`;
+the gateway keeps serving every other request. The error log line is
+`request handler panicked`, emitted inside that request's `cmaeg.request` span,
+so the request ID and route template identify it. A panic in middleware outside
+that span is answered the same way. The process panic hook replaces Rust's
+default one and logs `panic` with only the source `location`. Panic payloads
+are never logged, because they can carry request data. This applies with all
+media flags off.
+
 Ingress responses include `Server-Timing` fields `restore`, `verify`, `launch`,
 and `total`, in milliseconds. `total` includes body reading and waiting for the
 acceptance response; it is at least every measured part. `launch` is an elapsed
