@@ -84,7 +84,7 @@ fn the_log_filter_falls_back_to_the_default_and_still_honours_lower_levels() {
 async fn metrics_register_once_and_curl_scrapes_the_private_listener() {
     let first = telemetry::install().unwrap();
     let second = telemetry::install().unwrap();
-    metrics::histogram!(names::INGRESS_TO_PROVIDER, names::SOURCE => "custom", names::COLD => "false").record(0.012);
+    metrics::histogram!(names::INGRESS_TO_PROVIDER, names::SOURCE => "custom", names::COLD => "false", names::MEDIA => "none").record(0.012);
     metrics::histogram!(names::MEDIA_FETCH_SECONDS, names::SOURCE => "nyxid", names::OUTCOME => "ok").record(0.2);
     let server = MetricsServer::start("127.0.0.1:0".parse().unwrap(), first)
         .await
@@ -126,8 +126,11 @@ async fn metrics_register_once_and_curl_scrapes_the_private_listener() {
     assert!(!text.contains(
         "cmaeg_media_fetch_seconds_bucket{source=\"nyxid\",outcome=\"ok\",le=\"0.005\"}"
     ));
+    assert!(text.contains(
+        "cmaeg_ingress_to_provider_seconds_bucket{source=\"custom\",cold=\"false\",media=\"none\",le=\"10\"} 1"
+    ));
     assert!(!text.contains(
-        "cmaeg_ingress_to_provider_seconds_bucket{source=\"custom\",cold=\"false\",le=\"90\"}"
+        "cmaeg_ingress_to_provider_seconds_bucket{source=\"custom\",cold=\"false\",media=\"none\",le=\"90\"}"
     ));
     for gauge in names::MEDIA_GAUGES {
         assert!(
