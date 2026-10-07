@@ -14,6 +14,19 @@
 //! Every bound below is a test-enforced invariant: `tests/media_image_peak.rs`
 //! decodes worst-case fixtures of every supported format under a counting
 //! allocator and fails when the peak, the output or the wall time is exceeded.
+//!
+//! Measured on an Apple M-series test build at these bounds, the costliest
+//! input is a progressive 4:4:4 CMYK JPEG. Its decoder holds four planes of
+//! 16-bit coefficients beside the RGB output, about 11 bytes a pixel, plus a
+//! copy of the input and a copy of every metadata segment in it. Padded with
+//! ICC segments to the 25 MiB `CMAEG_MEDIA_MAX_BYTES` ceiling, it peaks at
+//! 237.8 MiB; with a 23.5 MiB noisy input, at 212.7 MiB. The other fixtures
+//! peak at 62.3 MiB (baseline JPEG), 165.2 MiB (progressive RGB JPEG),
+//! 76.7 MiB (RGBA8 PNG and lossless WebP), 154.1 MiB (16-bit PNG) and
+//! 85.8 MiB (two-frame GIF), and every fixture finishes within 1.0 s.
+//! [`MAX_PIXELS`] was lowered from 24,000,000 for the CMYK JPEG, which there
+//! peaked at 252 MiB plus its input, 277 MiB at the ceiling; at 20,000,000
+//! the padded one still peaked at 258.9 MiB.
 use super::{cache::Weighted, sniff::sniff};
 use crate::telemetry::names;
 use ::image::{
@@ -39,7 +52,9 @@ use tokio::{
 
 /// Largest decoded image, in pixels. Test-enforced: every supported format at
 /// this size decodes within [`DECODE_PEAK_BUDGET`] and [`DECODE_WALL_BUDGET`].
-pub const MAX_PIXELS: u64 = 24_000_000;
+/// It admits an 18-megapixel camera's 5184x3456 but not 20 or 24 megapixels,
+/// which as a progressive CMYK JPEG exceed the peak budget.
+pub const MAX_PIXELS: u64 = 18_000_000;
 /// Longest accepted side, in pixels. Test-enforced with [`MAX_PIXELS`].
 pub const MAX_SIDE: u32 = 12_000;
 /// The decoder allocation limit. `image` treats it as a hint some decoders
