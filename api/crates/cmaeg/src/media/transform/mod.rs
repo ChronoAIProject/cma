@@ -7,6 +7,9 @@
 //! ffprobe once with a fixed argv. The sandbox exists on Linux x86_64 only;
 //! elsewhere both job modes exit 125 without executing anything.
 pub mod argv;
+pub mod jobdir;
+pub mod launcher;
+pub mod outcome;
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub mod sandbox;
 
