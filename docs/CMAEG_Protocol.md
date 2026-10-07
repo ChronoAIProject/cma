@@ -634,9 +634,11 @@ makes a callback fail parsing or bounds:
   512 for `filename` and 4096 for `download_url`; `size_bytes` must be a
   non-negative integer below 2^63.
 - An invalid or missing `content_type` (bounded to 256 bytes) becomes
-  `unknown`. A `url` that is longer than 4096 bytes, contains a control
-  character, or is neither empty nor an `http(s)` URL with a host and no user
-  information becomes empty, meaning not retrievable.
+  `unknown`.
+- `url` is an opaque provider handle, such as a Telegram `file_id` or a Lark
+  resource URL, kept verbatim and never parsed. A missing `url`, one that is
+  not a string, is longer than 4096 bytes or contains a control character
+  becomes empty, meaning not retrievable; the callback still returns 202.
 - Unknown entry fields are ignored; for a repeated field the first value wins.
 - A non-object entry is dropped and the remaining entries keep their original
   index, which is the index in NyxID's attachment download route.

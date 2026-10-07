@@ -240,6 +240,9 @@ fn lark_shapes() -> Vec<(&'static str, Envelope)> {
     ]
 }
 
+pub fn repairs(field: &str) -> String {
+    format!("cmaeg_relay_envelope_repairs_total{{field=\"{field}\"}}")
+}
 /// A counter sample from a Prometheus render; an unrecorded series is zero.
 pub fn counter(rendered: &str, series: &str) -> u64 {
     rendered
@@ -273,9 +276,17 @@ fn on_text(shape: &Envelope) -> Envelope {
 
 #[tokio::test]
 async fn nyxid_telegram_media_is_refused_as_unsupported_not_rejected() {
+    let metrics = cmaeg::telemetry::install().unwrap();
     let fixture = Fixture::new(|_| {}, Default::default()).await;
     for (shape, envelope) in telegram_shapes() {
+        let before = counter(&metrics.render(), &repairs("url"));
         refused_media(&fixture, &envelope, shape).await;
+        // A bare file_id is an opaque handle, not a malformed URL.
+        assert_eq!(
+            counter(&metrics.render(), &repairs("url")),
+            before,
+            "{shape}"
+        );
     }
 }
 
@@ -333,6 +344,10 @@ async fn sender_controlled_attachment_facts_never_reject_the_callback() {
         ),
         ("object container", edit(&|list| *list = json!({}))),
         ("number container", edit(&|list| *list = json!(7))),
+        (
+            "url with U+0007",
+            edit(&|list| list[0]["url"] = "AgACAgIA\u{7}".into()),
+        ),
     ];
     for (shape, envelope) in &shapes {
         refused_media(&fixture, envelope, shape).await;
@@ -364,14 +379,13 @@ async fn repaired_attachment_facts_are_counted_by_field() {
     let mut envelope = telegram_document();
     envelope.payload["content"]["attachments"][0]["filename"] = "文".repeat(200).into();
     envelope.payload["content"]["attachments"][0]["size_bytes"] = "20480".into();
-    let series = |field: &str| format!("cmaeg_relay_envelope_repairs_total{{field=\"{field}\"}}");
     let before = metrics.render();
     refused_media(&fixture, &envelope, "repaired").await;
     let after = metrics.render();
-    for field in ["filename", "size_bytes"] {
+    for (field, increase) in [("filename", 1), ("size_bytes", 1), ("url", 0)] {
         assert_eq!(
-            counter(&after, &series(field)),
-            counter(&before, &series(field)) + 1,
+            counter(&after, &repairs(field)),
+            counter(&before, &repairs(field)) + increase,
             "{field}"
         );
     }
