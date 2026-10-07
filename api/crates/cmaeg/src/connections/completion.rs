@@ -170,6 +170,7 @@ impl ConnectionService {
                     data: Some(serde_json::json!({"connection_ref":record.id,"status":"ready"})),
                     extensions: Default::default(),
                 },
+                attachments: Vec::new(),
             },
         };
         activity.validate().map_err(|_| Error::Unavailable)?;

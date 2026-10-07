@@ -24,7 +24,7 @@ async fn signed_creation_receipt_becomes_stable_event_with_original_identity_and
     assert_eq!(request.activity, requests[1].activity);
     assert_eq!(request.activity.actor.id, "7");
     assert_eq!(request.activity.conversation.id, "7");
-    let ActivityKind::Event { ce } = &request.activity.kind else {
+    let ActivityKind::Event { ce, .. } = &request.activity.kind else {
         panic!("expected creation event")
     };
     assert_eq!(ce.source, "nyxid:route:route-1");
@@ -41,7 +41,7 @@ async fn signed_creation_receipt_becomes_stable_event_with_original_identity_and
         matches!(&opened.reply,ReplyAddress::NyxidRelay{route_id,message_id,..}if route_id=="route-1"&&message_id=="message-1")
     );
     let mut tampered = request.activity.clone();
-    let ActivityKind::Event { ce } = &mut tampered.kind else {
+    let ActivityKind::Event { ce, .. } = &mut tampered.kind else {
         unreachable!()
     };
     ce.data.as_mut().unwrap()["bot"]["id"] = "99".into();

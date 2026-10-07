@@ -166,6 +166,13 @@
           },
           {
             "properties": {
+              "attachments": {
+                "description": "Media the custom source extracted from the event; omitted when empty\nso events stored without attachments keep their exact bytes.",
+                "items": {
+                  "$ref": "#/components/schemas/Attachment"
+                },
+                "type": "array"
+              },
               "ce": {
                 "$ref": "#/components/schemas/CloudEvent"
               },

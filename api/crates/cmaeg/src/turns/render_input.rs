@@ -34,7 +34,7 @@ pub fn render(activity: &Activity, definition: &ChannelDefinition) -> Vec<Respon
             format!("The user chose \"{label}\" (block {}).", result.block_id)
         }
         ActivityKind::Command { name, args } => format!("/{name} {args}").trim_end().to_owned(),
-        ActivityKind::Event { ce } => {
+        ActivityKind::Event { ce, .. } => {
             if let Some(template) = definition.sources.iter().find_map(|source| match source {
                 Source::Custom {
                     prompt_template, ..

@@ -119,7 +119,11 @@ export const ActivityKindSchema = tagged(
       type: enumeration('interaction'),
     }),
     command: object({ args: text, name: text, type: enumeration('command') }),
-    event: object({ ce: CloudEventSchema, type: enumeration('event') }),
+    event: object({
+      attachments: optional(array(AttachmentSchema)),
+      ce: CloudEventSchema,
+      type: enumeration('event'),
+    }),
   },
   'type',
 );

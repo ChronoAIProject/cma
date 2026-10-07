@@ -871,14 +871,15 @@ Activity kind is one of:
 | `message` | `text,mentions_bot,reply_to?,album_id?,attachments` (default `[]`) |
 | `interaction` | `block_id,action_id,values` (default `{}`) |
 | `command` | `name,args` |
-| `event` | `ce`, the complete CloudEvent |
+| `event` | `ce`, the complete CloudEvent, and `attachments` (omitted when empty) |
 
 Messages of one platform media group, such as a Telegram album, share
 `album_id` (1..=128 bytes, with the `filename` character rule below). Each item
 of the group is still its own activity with its own attachments; a consumer that
 wants the whole album groups activities by `album_id`.
 
-Attachment fields are
+Message and event activities carry attachments with the same fields, bounds
+(at most 16 per activity) and locator rules. Attachment fields are
 `reference,kind,filename?,mime_type?,size_bytes?,source?,variant?,duration_seconds?,width?,height?,thumbnail?,emoji?`,
 with kind `image|file|audio|video|other`. `reference` is a stable, non-secret
 identifier such as `telegram:<file_unique_id>`, `lark:<key>`,

@@ -88,6 +88,9 @@ pub enum ActivityKind {
     /// Wire variant `event`.
     #[serde(rename = "event")]
     Event {
+        /// Wire field `attachments`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        attachments: Option<Vec<Attachment>>,
         /// Wire field `ce`.
         ce: CloudEvent,
     },
