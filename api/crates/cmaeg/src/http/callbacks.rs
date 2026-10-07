@@ -75,7 +75,7 @@ pub async fn callback(
         .get::<IngressTiming>()
         .cloned()
         .unwrap_or_else(|| IngressTiming::new(SOURCE));
-    let Ok(_permit) = state.inflight.clone().try_acquire_owned() else {
+    let Ok(permit) = state.inflight.clone().try_acquire_owned() else {
         let mut response = problem(
             StatusCode::TOO_MANY_REQUESTS,
             ProblemCode::RateLimited,
@@ -86,10 +86,10 @@ pub async fn callback(
             .insert(header::RETRY_AFTER, HeaderValue::from_static("1"));
         return response;
     };
-    // The permit stays held across dispatch; the request itself is consumed by
-    // admission so its body is released before the acceptance wait.
+    // The request is consumed by admission so its body is released before
+    // the acceptance wait; the launcher decides how long the permit is held.
     match admit_callback(&state, &channel_id, request, &timing).await {
-        Ok(admitted) => super::chat_dispatch::dispatch(state, admitted, timing).await,
+        Ok(admitted) => super::chat_dispatch::dispatch(state, admitted, timing, permit).await,
         Err(response) => response,
     }
 }
