@@ -29,6 +29,8 @@ use sha2::{Digest, Sha256};
 use std::time::Duration;
 use subtle::ConstantTimeEq;
 
+const SOURCE: &str = "telegram";
+
 pub fn router(state: IngressState) -> Router {
     crate::telemetry::http::instrument(
         Router::new()
@@ -50,7 +52,7 @@ pub async fn callback(
         .extensions()
         .get::<IngressTiming>()
         .cloned()
-        .unwrap_or_else(|| IngressTiming::new("telegram"));
+        .unwrap_or_else(|| IngressTiming::new(SOURCE));
     let Ok(_permit) = state.inflight.clone().try_acquire_owned() else {
         return problem(
             StatusCode::TOO_MANY_REQUESTS,
@@ -76,7 +78,7 @@ pub async fn callback(
     }
     let secret = match verify::single(&parts.headers, "x-telegram-bot-api-secret-token", true) {
         Ok(Some(secret)) if secret.len() <= 256 => secret,
-        _ => return invalid(VerificationError("telegram_webhook_secret")),
+        _ => return invalid(SOURCE, VerificationError("telegram_webhook_secret")),
     };
     let channel = match state.resolver.resolve_current(&channel_id).await {
         Ok(channel) => channel,
@@ -103,15 +105,15 @@ pub async fn callback(
                 _ => None,
             })
     else {
-        return invalid(VerificationError("telegram_source_missing"));
+        return invalid(SOURCE, VerificationError("telegram_source_missing"));
     };
     let Some(expected) = channel.definition.secrets.telegram_webhook_secret.as_ref() else {
-        return invalid(VerificationError("telegram_webhook_secret"));
+        return invalid(SOURCE, VerificationError("telegram_webhook_secret"));
     };
     if !bool::from(
         Sha256::digest(secret.as_bytes()).ct_eq(&Sha256::digest(expected.as_str().as_bytes())),
     ) {
-        return invalid(VerificationError("telegram_webhook_secret"));
+        return invalid(SOURCE, VerificationError("telegram_webhook_secret"));
     }
     if parts
         .headers
@@ -140,12 +142,12 @@ pub async fn callback(
     };
     let raw = match serde_json::from_slice(&body) {
         Ok(raw) => raw,
-        Err(_) => return invalid(VerificationError("telegram_update_invalid")),
+        Err(_) => return invalid(SOURCE, VerificationError("telegram_update_invalid")),
     };
     let observed = match telegram::observe(raw, &bot_id, bot_username.as_deref()) {
         Ok(Outcome::Admitted(observed)) => *observed,
         Ok(Outcome::Refused(reason)) => return refused(reason),
-        Err(error) => return invalid(error),
+        Err(error) => return invalid(SOURCE, error),
     };
     if let Err(reason) = admit(
         admission,
@@ -190,7 +192,7 @@ pub async fn callback(
         now,
     ) {
         Ok(request) => request,
-        Err(error) => return invalid(error),
+        Err(error) => return invalid(SOURCE, error),
     };
     super::chat_dispatch::dispatch(state, request, callback, route, timing, now).await
 }

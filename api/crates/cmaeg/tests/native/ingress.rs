@@ -257,3 +257,40 @@ async fn forged_mixed_forwarded_group_and_bot_creation_updates_never_launch() {
     );
     assert!(app.fixture.recorder.requests.lock().unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn a_control_character_in_the_sender_name_is_stripped_not_refused() {
+    let app = Native::new(None).await;
+    let mut raw = message();
+    raw["message"]["from"]["first_name"] = "Al\u{7}ice".into();
+    app.accepted(&raw).await;
+    let requests = app.fixture.recorder.requests.lock().unwrap();
+    assert_eq!(
+        requests[0].activity.actor.display_name.as_deref(),
+        Some("Alice")
+    );
+}
+
+#[tokio::test]
+async fn a_wrong_webhook_secret_is_counted_by_source_and_detail() {
+    let metrics = cmaeg::telemetry::install().unwrap();
+    let series =
+        "cmaeg_callback_invalid_total{source=\"telegram\",detail=\"telegram_webhook_secret\"}";
+    let count = || {
+        metrics
+            .render()
+            .lines()
+            .find_map(|line| {
+                line.strip_prefix(series)?
+                    .strip_prefix(' ')?
+                    .parse::<u64>()
+                    .ok()
+            })
+            .unwrap_or(0)
+    };
+    let before = count();
+    let app = Native::new(None).await;
+    assert_eq!(app.send(&message(), "wrong-fixture").await.status(), 401);
+    assert_eq!(count(), before + 1);
+    assert!(app.fixture.recorder.requests.lock().unwrap().is_empty());
+}

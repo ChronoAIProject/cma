@@ -12,6 +12,7 @@ use crate::ingress::{
 };
 use crate::telemetry::{
     http::{EventOutcome, RefusalReason},
+    names,
     timing::IngressTiming,
 };
 use axum::{
@@ -31,6 +32,8 @@ use serde::Serialize;
 use std::time::Duration;
 use tracing::Instrument;
 use utoipa::ToSchema;
+
+const SOURCE: &str = "nyxid_relay";
 
 pub fn router(state: IngressState) -> Router {
     crate::telemetry::http::instrument(
@@ -67,7 +70,7 @@ pub async fn callback(
         .extensions()
         .get::<IngressTiming>()
         .cloned()
-        .unwrap_or_else(|| IngressTiming::new("nyxid_relay"));
+        .unwrap_or_else(|| IngressTiming::new(SOURCE));
     let Ok(_permit) = state.inflight.clone().try_acquire_owned() else {
         let mut response = problem(
             StatusCode::TOO_MANY_REQUESTS,
@@ -138,8 +141,8 @@ pub async fn callback(
     let verify_span = tracing::info_span!("cmaeg.verify", channel = %crate::telemetry::channel_hash(&channel_id), event_id = tracing::field::Empty);
     let wire_platform = match verify::single(&parts.headers, "x-nyxid-platform", true) {
         Ok(Some(platform)) => platform,
-        Err(error) => return invalid(error),
-        _ => return invalid(VerificationError("header_missing")),
+        Err(error) => return invalid(SOURCE, error),
+        _ => return invalid(SOURCE, VerificationError("header_missing")),
     };
     let Some((index, source, admission, platform)) = channel
         .definition
@@ -165,7 +168,7 @@ pub async fn callback(
     };
     let headers = match CallbackHeaders::read(&parts.headers) {
         Ok(headers) => headers,
-        Err(error) => return invalid(error),
+        Err(error) => return invalid(SOURCE, error),
     };
     let verified = match verify::verify(
         &channel,
@@ -179,12 +182,12 @@ pub async fn callback(
     .await
     {
         Ok(verified) => verified,
-        Err(error) => return invalid(error),
+        Err(error) => return invalid(SOURCE, error),
     };
     let facts = match observe(source, &verified.payload) {
         Ok(Observation::Message(facts)) => facts,
         Ok(Observation::Refused(reason)) => return refused(reason),
-        Err(error) => return invalid(error),
+        Err(error) => return invalid(SOURCE, error),
     };
     if let Err(reason) = admit(
         admission,
@@ -204,7 +207,7 @@ pub async fn callback(
     }
     let now = time::OffsetDateTime::now_utc().unix_timestamp();
     if verified.reply_expires_at <= now || verified.callback_deadline <= now {
-        return invalid(VerificationError("token_time"));
+        return invalid(SOURCE, VerificationError("token_time"));
     }
     let callback = facts.callback.clone();
     let route = verified.payload.conversation.id.clone();
@@ -242,7 +245,11 @@ pub(crate) fn refused(reason: Refusal) -> Response {
     response.extensions_mut().insert(RefusalReason(label));
     response
 }
-pub(crate) fn invalid(error: VerificationError) -> Response {
+/// A rejected callback, counted by its bounded source and verification detail so
+/// envelope drift is visible: NyxID never retries a rejected relay callback.
+pub(crate) fn invalid(source: &'static str, error: VerificationError) -> Response {
+    metrics::counter!(names::CALLBACK_INVALID, names::SOURCE => source, names::DETAIL => error.0)
+        .increment(1);
     problem(
         StatusCode::UNAUTHORIZED,
         ProblemCode::CallbackInvalid,
