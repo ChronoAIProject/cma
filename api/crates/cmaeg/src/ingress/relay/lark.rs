@@ -58,7 +58,7 @@ pub fn observe(
         }
         _ => return Ok(Observation::Refused(Refusal::ContentUnsupported)),
     }
-    if !payload.content.attachments.is_empty() {
+    if payload.received_attachments() > 0 {
         return Ok(Observation::Refused(Refusal::AttachmentUnsupported));
     }
     let text = message

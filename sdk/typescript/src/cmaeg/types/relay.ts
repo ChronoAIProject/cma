@@ -17,6 +17,7 @@ export type RelayAgent = Output<typeof RelayAgentSchema>;
 
 export const RelayAttachmentSchema = object({
   content_type: text,
+  download_url: optional(nullable(text)),
   file_key: optional(nullable(text)),
   filename: optional(nullable(text)),
   image_key: optional(nullable(text)),
@@ -44,6 +45,7 @@ export const RelaySenderSchema = object({
 export type RelaySender = Output<typeof RelaySenderSchema>;
 
 export const CallbackPayloadSchema = object({
+  activity: optional(anything),
   agent: RelayAgentSchema,
   content: RelayContentSchema,
   conversation: RelayConversationSchema,
@@ -55,6 +57,7 @@ export const CallbackPayloadSchema = object({
   reply_to_platform_message_id: optional(nullable(text)),
   reply_token: SecretSchema,
   sender: RelaySenderSchema,
+  thread_context: optional(anything),
   thread_id: optional(nullable(SecretSchema)),
   timestamp: text,
 });
