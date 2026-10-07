@@ -142,6 +142,7 @@ pub const ALLOW: &[Entry] = &[
     always(libc::SYS_ppoll, "waiting on stdio"),
     always(libc::SYS_uname, "libc feature probes"),
     always(libc::SYS_getrlimit, "own limits"),
+    always(libc::SYS_getrusage, "FFmpeg's CLI reads its own CPU time"),
     always(libc::SYS_exit, "a thread ends"),
     always(libc::SYS_exit_group, "the job ends"),
     always(libc::SYS_execve, "the wrapper executes the program once"),
