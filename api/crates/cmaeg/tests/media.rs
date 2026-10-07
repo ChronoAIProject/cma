@@ -6,6 +6,8 @@ mod budget;
 pub mod fake_nyxid;
 #[path = "media/forward.rs"]
 mod forward;
+#[path = "media/inline_source.rs"]
+mod inline_source;
 #[path = "media/nyxid_source.rs"]
 mod nyxid_source;
 #[path = "media/registry.rs"]

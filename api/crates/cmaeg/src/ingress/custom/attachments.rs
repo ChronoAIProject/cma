@@ -227,8 +227,9 @@ fn parameter(part: &str) -> bool {
 }
 
 /// The exact decoded size of padded standard base64, computed before decoding
-/// so an oversized payload is refused without allocating for it.
-fn decoded_length(payload: &str) -> Option<usize> {
+/// so an oversized payload is refused without allocating for it. Retrieval
+/// applies the same rule when it decodes an admitted item.
+pub(crate) fn decoded_length(payload: &str) -> Option<usize> {
     let bytes = payload.as_bytes();
     if !bytes.len().is_multiple_of(4) {
         return None;
