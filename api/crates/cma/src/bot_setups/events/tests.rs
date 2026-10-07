@@ -193,6 +193,7 @@ fn gateway(backend: &str, keys: Arc<MasterKeyRing>) -> ToolsState {
         delivery: tokio::sync::mpsc::channel(1).0,
         tracker: TurnTracker::new(Readiness::initialized()),
         public_origin: "https://gateway.example".into(),
+        media: None,
     }
 }
 fn advance_router(
