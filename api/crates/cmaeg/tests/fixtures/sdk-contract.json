@@ -339,6 +339,12 @@
   "AttachmentView": [
     {
       "detected_type": "fixture",
+      "download": {
+        "curl": "fixture",
+        "expires_at": 1,
+        "method": "GET",
+        "url": "fixture"
+      },
       "duration_seconds": 1,
       "filename": "fixture",
       "height": 1,
@@ -1296,6 +1302,14 @@
       "auth": {
         "type": "none"
       },
+      "url": "fixture"
+    }
+  ],
+  "MediaDownload": [
+    {
+      "curl": "fixture",
+      "expires_at": 1,
+      "method": "GET",
       "url": "fixture"
     }
   ],

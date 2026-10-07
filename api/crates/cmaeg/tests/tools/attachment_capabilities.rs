@@ -45,7 +45,7 @@ async fn a_guarded_cma_codex_binding_has_the_read_tool_but_no_downloads() {
 }
 
 #[tokio::test]
-async fn an_autonomous_binding_is_still_not_offered_downloads() {
+async fn an_autonomous_binding_is_offered_downloads() {
     let app = App::with_media(image().edit(|value| {
         value["profile"]["permission"]["action_mode"] = "autonomous".into();
     }))
@@ -56,7 +56,7 @@ async fn an_autonomous_binding_is_still_not_offered_downloads() {
             inbound["read_tool"].as_bool(),
             inbound["downloads"].as_bool()
         ),
-        (Some(true), Some(false))
+        (Some(true), Some(true))
     );
 }
 

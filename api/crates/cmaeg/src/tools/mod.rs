@@ -10,7 +10,7 @@ mod state;
 pub use attachment_view::{
     AttachmentImage, AttachmentImageOrigin, AttachmentStatus, AttachmentText, AttachmentTextSource,
     AttachmentUnavailableReason, AttachmentView, AttachmentViewKind, InboundMediaCapabilities,
-    VisualSupport,
+    MediaDownload, VisualSupport,
 };
 pub use attachments::{
     valid_request, AttachmentRead, BUDGET_ACQUIRE_MAX, BUDGET_RETRY_MS, MAX_INDEX, MAX_PAGE,
@@ -20,7 +20,8 @@ pub use context::{Capabilities, ContextResponse, PublicActivity};
 pub(crate) use download_access::{Authorized, Refusal};
 pub(crate) use media_links::safe_name;
 pub use media_links::{
-    MediaDownloads, DOWNLOAD_RESPONSE_WEIGHT, DOWNLOAD_STREAMS_GLOBAL, DOWNLOAD_STREAMS_PER_CHANNEL,
+    LinkRefusal, MediaDownloads, DOWNLOAD_RESPONSE_WEIGHT, DOWNLOAD_STREAMS_GLOBAL,
+    DOWNLOAD_STREAMS_PER_CHANNEL,
 };
 pub use reply_targets::ReplyTargetResponse;
 pub use state::ToolsState;

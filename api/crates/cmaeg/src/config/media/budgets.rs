@@ -1,8 +1,8 @@
 //! The media byte, job and rate budgets: bounds, defaults and parsing.
 use super::{
     ConfigError, MediaConfig, CMAEG_MEDIA_CACHE_BYTES, CMAEG_MEDIA_DOWNLOAD_BYTES_PER_HOUR,
-    CMAEG_MEDIA_INFLIGHT_BYTES, CMAEG_MEDIA_MAX_BYTES, CMAEG_MEDIA_MAX_JOBS,
-    CMAEG_MEDIA_RATE_PER_MINUTE, CMAEG_MEDIA_RESPONSE_BYTES, MIB,
+    CMAEG_MEDIA_INFLIGHT_BYTES, CMAEG_MEDIA_LINK_TTL_SECONDS, CMAEG_MEDIA_MAX_BYTES,
+    CMAEG_MEDIA_MAX_JOBS, CMAEG_MEDIA_RATE_PER_MINUTE, CMAEG_MEDIA_RESPONSE_BYTES, MIB,
 };
 
 /// Above Telegram's and NyxID's 20 MiB source limits, with headroom for a
@@ -15,6 +15,8 @@ const CACHE_BYTES_CEILING: u64 = 256 * MIB;
 const RATE_PER_MINUTE_RANGE: (u64, u64) = (1, 6_000);
 /// At least one maximum-size original per hour, at most 4 GiB.
 const DOWNLOAD_BYTES_PER_HOUR_RANGE: (u64, u64) = (20 * MIB, 4_096 * MIB);
+/// Long enough to run the command, never past the sealed maximum.
+const LINK_TTL_SECONDS_RANGE: (u64, u64) = (30, 600);
 
 /// The budget keys, read through `lookup` so tests need not mutate the
 /// process environment. The in-flight floor depends on the per-attachment
@@ -63,6 +65,11 @@ pub(super) fn budgets(
             defaults.download_bytes_per_hour,
             DOWNLOAD_BYTES_PER_HOUR_RANGE,
         )?,
+        link_ttl_seconds: read(
+            CMAEG_MEDIA_LINK_TTL_SECONDS,
+            defaults.link_ttl_seconds,
+            LINK_TTL_SECONDS_RANGE,
+        )?,
         ..defaults
     };
     tracing::info!(
@@ -73,6 +80,7 @@ pub(super) fn budgets(
         cache_bytes = config.cache_bytes,
         rate_per_minute = config.rate_per_minute,
         download_bytes_per_hour = config.download_bytes_per_hour,
+        link_ttl_seconds = config.link_ttl_seconds,
         "inbound media budgets"
     );
     Ok(config)
@@ -140,6 +148,7 @@ mod tests {
         assert_eq!(config.cache_bytes, 33_554_432);
         assert_eq!(config.rate_per_minute, 60);
         assert_eq!(config.download_bytes_per_hour, 268_435_456);
+        assert_eq!(config.link_ttl_seconds, 120);
         assert!(!config.enabled);
     }
 
@@ -153,6 +162,7 @@ mod tests {
             (CMAEG_MEDIA_CACHE_BYTES, "0"),
             (CMAEG_MEDIA_RATE_PER_MINUTE, "6000"),
             (CMAEG_MEDIA_DOWNLOAD_BYTES_PER_HOUR, "4294967296"),
+            (CMAEG_MEDIA_LINK_TTL_SECONDS, "600"),
         ])
         .unwrap();
         assert_eq!(config.max_bytes, 26_214_400);
@@ -162,6 +172,7 @@ mod tests {
         assert_eq!(config.cache_bytes, 0);
         assert_eq!(config.rate_per_minute, 6_000);
         assert_eq!(config.download_bytes_per_hour, 4_294_967_296);
+        assert_eq!(config.link_ttl_seconds, 600);
         let config = budgets_with(&[
             (CMAEG_MEDIA_MAX_BYTES, "1"),
             (CMAEG_MEDIA_INFLIGHT_BYTES, "1073741824"),
@@ -170,9 +181,11 @@ mod tests {
             (CMAEG_MEDIA_CACHE_BYTES, "268435456"),
             (CMAEG_MEDIA_RATE_PER_MINUTE, "1"),
             (CMAEG_MEDIA_DOWNLOAD_BYTES_PER_HOUR, "20971520"),
+            (CMAEG_MEDIA_LINK_TTL_SECONDS, "30"),
         ])
         .unwrap();
         assert_eq!(config.max_bytes, 1);
+        assert_eq!(config.link_ttl_seconds, 30);
         assert_eq!(config.inflight_bytes, 1_073_741_824);
         assert_eq!(config.cache_bytes, 268_435_456);
     }
@@ -207,6 +220,8 @@ mod tests {
                 "4294967297",
                 "from 20971520 to 4294967296",
             ),
+            (CMAEG_MEDIA_LINK_TTL_SECONDS, "29", "from 30 to 600"),
+            (CMAEG_MEDIA_LINK_TTL_SECONDS, "601", "from 30 to 600"),
         ] {
             assert_eq!(
                 detail(budgets_with(&[(key, value)]).unwrap_err()),

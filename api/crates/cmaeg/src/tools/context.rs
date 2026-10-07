@@ -129,9 +129,7 @@ pub(super) fn inbound_media(
         read_tool: media.audience(&channel.definition).tools,
         transcripts: capabilities.transcriber_enabled,
         visuals,
-        // Set from Audience::downloads by media-download-links once links
-        // exist; never advertise an unimplemented ability.
-        downloads: false,
+        downloads: media.audience(&channel.definition).downloads,
     })
 }
 

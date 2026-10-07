@@ -80,6 +80,12 @@ fn describe_media() {
         "CMAEG media link downloads by outcome"
     );
     metrics::counter!(names::MEDIA_DOWNLOADS).absolute(0);
+    metrics::describe_counter!(
+        names::MEDIA_LINKS,
+        metrics::Unit::Count,
+        "CMAEG media download link mints by outcome"
+    );
+    metrics::counter!(names::MEDIA_LINKS).absolute(0);
     for (name, unit, description) in [
         (
             names::MEDIA_INFLIGHT_BYTES,
