@@ -410,7 +410,7 @@ impl RawItem {
             }
         };
         let url = match self.url {
-            Some(Lenient::Str(value)) if retrievable_url(&value) => value,
+            Some(Lenient::Str(value)) if opaque_handle(&value) => value,
             _ => {
                 repairs.record(RepairField::Url);
                 String::new()
@@ -464,18 +464,11 @@ fn bounded(value: &str, max: usize) -> bool {
     !value.is_empty() && value.len() <= max && !value.chars().any(char::is_control)
 }
 
-/// Empty (not retrievable), or an http(s) URL with a host and no user information.
-fn retrievable_url(value: &str) -> bool {
-    if value.len() > MAX_URL || value.chars().any(char::is_control) {
-        return false;
-    }
-    value.is_empty()
-        || reqwest::Url::parse(value).is_ok_and(|url| {
-            matches!(url.scheme(), "https" | "http")
-                && url.host_str().is_some()
-                && url.username().is_empty()
-                && url.password().is_none()
-        })
+/// A provider handle is kept verbatim and never parsed: Telegram sends a bare
+/// `file_id` and Lark a resource URL, and the gateway dereferences neither. It may
+/// be empty, which means not retrievable.
+fn opaque_handle(value: &str) -> bool {
+    value.len() <= MAX_URL && !value.chars().any(char::is_control)
 }
 
 #[cfg(test)]
