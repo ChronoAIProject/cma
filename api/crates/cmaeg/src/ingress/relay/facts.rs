@@ -26,6 +26,10 @@ pub struct RelayFacts {
     pub mentioned: Option<bool>,
     pub replied_to_bot: Option<bool>,
     pub actor: ActorKind,
+    /// Authenticated text derived by the platform observer from the raw event,
+    /// which the callback JWT binds through `body_sha256`. `None` keeps the
+    /// envelope's `content.text`.
+    pub text: Option<String>,
     /// Media the observer extracted, already normalized; empty for text.
     pub attachments: Vec<Attachment>,
     /// The platform media group (a Telegram album) the message belongs to.

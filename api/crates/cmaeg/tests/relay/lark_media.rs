@@ -1,7 +1,8 @@
 //! Lark media through the NyxID relay, sent as NyxID serializes it: the raw
 //! content is a JSON string and the envelope lists the message's one resource.
 //! With `CMAEG_MEDIA_ENABLED=true` no attachment fact may turn a callback into
-//! a 400; with it off every media type is refused exactly as before.
+//! a 400; with it off every media type is refused exactly as before. The
+//! helpers here also build the rich-text posts of `lark_post.rs`.
 use super::{
     nyxid_shapes::{attachment, counter},
     support::*,
@@ -13,12 +14,12 @@ use cmaeg::turns::{
 use cmaeg_core::activity::{ActivityKind, Attachment, AttachmentKind, MediaVariant};
 use serde_json::{json, Value};
 
-const IMAGE_KEY: &str = "img_v3_02ab_fixture";
+pub const IMAGE_KEY: &str = "img_v3_02ab_fixture";
 const FILE_KEY: &str = "file_v3_00ab_fixture";
 const RESOURCES: &str = "https://open.larksuite.com/open-apis/im/v1/messages/om_message/resources";
 
 /// NyxID's envelope entry for the resource `key` at original position `index`.
-fn resource(index: usize, field: &str, key: &str, facts: Value) -> Value {
+pub fn resource(index: usize, field: &str, key: &str, facts: Value) -> Value {
     let kind = if field == "image_key" {
         "image"
     } else {
@@ -37,7 +38,7 @@ fn resource(index: usize, field: &str, key: &str, facts: Value) -> Value {
 
 /// A Lark message of `message_type` whose raw content is `content`, with NyxID's
 /// `content.type`, a null `content.text` and the envelope `items`.
-fn lark(message_type: &str, content: Value, nyxid_type: &str, items: Vec<Value>) -> Envelope {
+pub fn lark(message_type: &str, content: Value, nyxid_type: &str, items: Vec<Value>) -> Envelope {
     let mut envelope = Envelope::on("lark");
     envelope.lark_message()["message_type"] = message_type.into();
     envelope.lark_message()["content"] = content.to_string().into();
@@ -81,27 +82,27 @@ fn sticker() -> Envelope {
     )
 }
 
-fn post() -> Envelope {
+pub fn post() -> Envelope {
     let content = json!({"title": "", "content": [[{"tag": "text", "text": "hello"}]]});
     lark("post", content, "unknown", Vec::new())
 }
 
-fn scoped_mention(value: &mut Value) {
+pub fn scoped_mention(value: &mut Value) {
     value["sources"][0]["admission"] = json!({"type":"scoped","senders":{"type":"open"},"chats":{"type":"open"},"groups":"mention"});
 }
 
-async fn media_fixture() -> Fixture {
+pub async fn media_fixture() -> Fixture {
     Fixture::on_with_media("lark", |_| {}, Default::default()).await
 }
 
-async fn accept(fixture: &Fixture, envelope: &Envelope, case: &str) {
+pub async fn accept(fixture: &Fixture, envelope: &Envelope, case: &str) {
     let response = fixture.send(envelope).await;
     assert_eq!(response.status(), 202, "{case}");
     let body: Value = response.json().await.unwrap();
     assert_eq!(body["status"], "accepted", "{case}: {body}");
 }
 
-async fn refusal(fixture: &Fixture, envelope: &Envelope, reason: &str) {
+pub async fn refusal(fixture: &Fixture, envelope: &Envelope, reason: &str) {
     let response = fixture.send(envelope).await;
     assert_eq!(response.status(), 202, "{reason}");
     assert_eq!(
@@ -111,7 +112,7 @@ async fn refusal(fixture: &Fixture, envelope: &Envelope, reason: &str) {
 }
 
 /// The text and attachments of the last launched message.
-fn last(fixture: &Fixture) -> (String, Vec<Attachment>) {
+pub fn last(fixture: &Fixture) -> (String, Vec<Attachment>) {
     let requests = fixture.recorder.requests.lock().unwrap();
     match &requests.last().unwrap().activity.kind {
         ActivityKind::Message {
@@ -122,7 +123,7 @@ fn last(fixture: &Fixture) -> (String, Vec<Attachment>) {
 }
 
 /// The provider input the last launched turn renders.
-fn rendered(fixture: &Fixture) -> String {
+pub fn rendered(fixture: &Fixture) -> String {
     let requests = fixture.recorder.requests.lock().unwrap();
     let request = requests.last().unwrap();
     let audience = Audience {

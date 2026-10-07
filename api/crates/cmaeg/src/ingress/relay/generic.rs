@@ -39,6 +39,7 @@ pub fn observe(payload: &CallbackPayload) -> Result<Observation, VerificationErr
         mentioned: None,
         replied_to_bot: None,
         actor: ActorKind::Unknown,
+        text: None,
         attachments: Vec::new(),
         album_id: None,
     }))

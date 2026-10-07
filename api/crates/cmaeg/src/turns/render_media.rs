@@ -341,7 +341,11 @@ fn label(attachment: &Attachment) -> String {
         Some(MediaVariant::VideoNote) => "round video message",
         Some(MediaVariant::Animation) => "animation",
         Some(MediaVariant::Image) => "image",
-        Some(MediaVariant::Embedded) => "image embedded in the post",
+        // Media embedded in rich text, such as a post, is an image or a video.
+        Some(MediaVariant::Embedded) => match attachment.kind {
+            AttachmentKind::Video => "video embedded in the post",
+            _ => "image embedded in the post",
+        },
         Some(MediaVariant::Sticker) => {
             return match attachment.emoji.as_deref().map(single_line) {
                 Some(emoji) if !emoji.is_empty() => format!("sticker {emoji}"),

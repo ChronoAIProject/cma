@@ -168,6 +168,7 @@ pub fn observe(
         mentioned,
         replied_to_bot,
         actor: ActorKind::Human,
+        text: None,
         attachments,
         album_id,
     }))
@@ -311,6 +312,7 @@ fn observe_callback(
         mentioned: Some(true),
         replied_to_bot: Some(true),
         actor: ActorKind::Human,
+        text: None,
         attachments: Vec::new(),
         album_id: None,
     }))
