@@ -8,7 +8,9 @@
 #[path = "media/image_fixtures.rs"]
 pub mod image_fixtures;
 
-use cmaeg::media::image::{normalize_blocking, DECODE_PEAK_BUDGET, DECODE_WALL_BUDGET, FULL};
+use cmaeg::media::image::{
+    normalize_blocking, ImageError, NormalizedImage, DECODE_PEAK_BUDGET, DECODE_WALL_BUDGET, FULL,
+};
 use image_fixtures as fixtures;
 use std::{
     alloc::{GlobalAlloc, Layout, System},
@@ -78,38 +80,57 @@ static ALLOCATOR: Counting = Counting;
 
 const MIB: f64 = 1024.0 * 1024.0;
 
-/// Normalize `input` to FULL and assert every bound; returns the measured
-/// peak above the baseline and the wall time.
-fn measure(name: &str, input: &[u8]) {
+/// Normalize `input` to FULL and assert the peak above the baseline and the
+/// wall time, whatever the outcome: a refusal is bounded like a success.
+fn bounded(name: &str, input: &[u8]) -> Result<NormalizedImage, ImageError> {
     let baseline = CURRENT.load(Ordering::SeqCst);
     PEAK.store(baseline, Ordering::SeqCst);
     let started = Instant::now();
-    let output = normalize_blocking(input, FULL)
-        .unwrap_or_else(|error| panic!("{name}: normalization failed: {error}"));
+    let result = normalize_blocking(input, FULL);
     let elapsed = started.elapsed();
     let peak = PEAK.load(Ordering::SeqCst) - baseline;
+    let outcome = match &result {
+        Ok(output) => format!(
+            "output {}x{} {} {:.1} KiB",
+            output.width,
+            output.height,
+            output.mime,
+            output.bytes.len() as f64 / 1024.0
+        ),
+        Err(error) => format!("refused {error}"),
+    };
     println!(
-        "{name}: input {:.1} MiB, peak {:.1} MiB, {:?}, output {}x{} {} {:.1} KiB",
+        "{name}: input {:.1} MiB, peak {:.1} MiB, {elapsed:?}, {outcome}",
         input.len() as f64 / MIB,
         peak as f64 / MIB,
-        elapsed,
-        output.width,
-        output.height,
-        output.mime,
-        output.bytes.len() as f64 / 1024.0,
     );
     assert!(
         peak <= DECODE_PEAK_BUDGET,
         "{name}: peak {peak} exceeds {DECODE_PEAK_BUDGET}"
     );
     assert!(
-        output.bytes.len() <= FULL.max_bytes,
-        "{name}: output too large"
-    );
-    assert!(
         elapsed <= DECODE_WALL_BUDGET,
         "{name}: {elapsed:?} exceeds {DECODE_WALL_BUDGET:?}"
     );
+    result
+}
+
+/// [`bounded`] for a fixture that must normalize within the output budget.
+fn measure(name: &str, input: &[u8]) {
+    let output = bounded(name, input)
+        .unwrap_or_else(|error| panic!("{name}: normalization failed: {error}"));
+    assert!(
+        output.bytes.len() <= FULL.max_bytes,
+        "{name}: output too large"
+    );
+}
+
+/// [`bounded`] for a fixture that must be refused with `expected`.
+fn refused(name: &str, input: &[u8], expected: ImageError) {
+    match bounded(name, input) {
+        Err(error) => assert_eq!(error, expected, "{name}"),
+        Ok(output) => panic!("{name}: normalized to {output:?}"),
+    }
 }
 
 #[test]
@@ -138,4 +159,14 @@ fn image_decode_bounds() {
 
     let gif = fixtures::gif(4800, 4800, &[[200, 40, 40], [40, 40, 200]], true);
     measure("two-frame gif 4800x4800", &gif);
+    drop(gif);
+
+    // Its header passes every check; decoded without the limits, the frame
+    // alone took a 529 MB buffer.
+    let frame_bomb = fixtures::gif_with_frame(16, 11_500);
+    refused(
+        "gif 16x16 screen with an 11500x11500 frame",
+        &frame_bomb,
+        ImageError::TooLargePixels,
+    );
 }

@@ -175,6 +175,30 @@ pub fn gif(width: u32, height: u32, frames: &[[u8; 3]], noisy: bool) -> Vec<u8> 
     out
 }
 
+/// A GIF whose logical screen is `screen` pixels square and whose only frame
+/// claims `frame` pixels square, built by hand because an encoder always
+/// fits the screen to its frames. The frame carries no pixels, only a clear
+/// code and an end code, so a decoder that admits it allocates the frame's
+/// buffer and then finds the image truncated.
+pub fn gif_with_frame(screen: u16, frame: u16) -> Vec<u8> {
+    let mut out = b"GIF89a".to_vec();
+    out.extend_from_slice(&screen.to_le_bytes());
+    out.extend_from_slice(&screen.to_le_bytes());
+    // A two-entry global colour table, black and white.
+    out.extend_from_slice(&[0x80, 0, 0, 0, 0, 0, 0xFF, 0xFF, 0xFF]);
+    // The image descriptor: at the origin, no local table, not interlaced.
+    out.push(0x2C);
+    out.extend_from_slice(&[0, 0, 0, 0]);
+    out.extend_from_slice(&frame.to_le_bytes());
+    out.extend_from_slice(&frame.to_le_bytes());
+    out.push(0);
+    // LZW minimum code size 2, so 3-bit codes: clear (4) then end (5), packed
+    // least significant bit first into one byte, in a one-byte sub-block.
+    out.extend_from_slice(&[2, 1, 0b0010_1100, 0]);
+    out.push(0x3B);
+    out
+}
+
 pub fn webp_lossless(image: &RgbaImage) -> Vec<u8> {
     let mut out = Vec::new();
     WebPEncoder::new_lossless(&mut out)
