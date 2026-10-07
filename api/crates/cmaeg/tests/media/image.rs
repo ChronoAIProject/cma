@@ -111,6 +111,24 @@ fn a_pixel_bomb_is_refused_from_its_header_before_any_decode() {
 }
 
 #[test]
+fn a_gif_frame_larger_than_its_screen_is_refused_before_it_is_allocated() {
+    // The header declares 16x16, which passes every header check; the frame
+    // alone would need a 529 MB buffer.
+    let input = fixtures::gif_with_frame(16, 11_500);
+    assert!(input.len() < 100 * 1024);
+    assert_eq!(
+        normalize_blocking(&input, FULL).unwrap_err(),
+        ImageError::TooLargePixels
+    );
+    // The same truncated frame within its screen is decoded, and fails only
+    // for the missing pixels.
+    assert_eq!(
+        normalize_blocking(&fixtures::gif_with_frame(16, 16), FULL).unwrap_err(),
+        ImageError::DecodeFailed
+    );
+}
+
+#[test]
 fn a_truncated_jpeg_fails_to_decode() {
     let input = fixtures::jpeg(&fixtures::rgb(64, 64, 8), 90);
     // Cut inside the quantization tables, before any frame header.

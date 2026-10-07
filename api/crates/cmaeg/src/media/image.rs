@@ -3,8 +3,9 @@
 //!
 //! The pinned agent stack accepts only small inline images, so every image is
 //! downscaled to a budget and re-encoded. The order of the pipeline is what
-//! bounds memory: a full-size source is decoded once, under explicit limits,
-//! and immediately reduced with a sampler that allocates only its output.
+//! bounds memory: a header read under explicit limits admits a full-size
+//! source, which is decoded once and immediately reduced with a sampler that
+//! allocates only its output.
 //! Rotation, alpha inspection and encoding then run on the small copy, never
 //! on the source, because rotating or filtering a full-size source would
 //! allocate another full-size (or `f32`) buffer. Re-encoding writes no
@@ -192,7 +193,7 @@ pub fn normalize_blocking(
     let head = &input[..input.len().min(SNIFF_HEAD)];
     let format = supported(sniff(head).mime).ok_or(ImageError::UnsupportedFormat)?;
     // The header alone decides whether the pixels may be decoded at all.
-    let mut header = header(input, format)?;
+    let mut header = limited(input, format).into_decoder().map_err(classify)?;
     let (width, height) = header.dimensions();
     if u64::from(width) * u64::from(height) > MAX_PIXELS
         || width.max(height) > MAX_SIDE
@@ -202,22 +203,39 @@ pub fn normalize_blocking(
     }
     let orientation = header.orientation().unwrap_or(Orientation::NoTransforms);
     drop(header);
-    // The pixels are decoded through `image`'s own non-generic, non-inlined
-    // entry point, so the decoders are monomorphized where the codecs are
-    // compiled instead of in this crate. Generic decoder code instantiated
-    // here would run unoptimized in test builds, and the test-enforced wall
-    // time would measure the build profile rather than the decoder. That entry
-    // point guesses the format itself, so the guess must agree with the sniff;
-    // its default limits sit on top of the stricter checks above. GIF and
-    // WebP yield their first frame.
-    if ::image::guess_format(input).ok() != Some(format) {
-        return Err(ImageError::UnsupportedFormat);
-    }
-    let source = ::image::load_from_memory(input).map_err(classify)?;
+    let source = pixels(input, format)?;
     // Moving the source in drops it as soon as the small copy exists.
     let mut image = shrink(source, budget.max_side);
     image.apply_orientation(orientation);
     encode_within(image, budget)
+}
+
+/// The pixels of `input`, whose header the checks above admitted. GIF and
+/// WebP yield their first frame.
+fn pixels(input: &[u8], format: ImageFormat) -> Result<DynamicImage, ImageError> {
+    if format == ImageFormat::Gif {
+        // A GIF's header describes only its logical screen. Its first frame
+        // may be far larger, and unless it spans the screen's width from the
+        // left edge it is decoded into a buffer of its own. `decode` charges
+        // the screen to `MAX_ALLOC` first, so that buffer must fit in what is
+        // left, and is refused as a limit otherwise.
+        return limited(input, format).decode().map_err(classify);
+    }
+    // PNG, JPEG and WebP decoders allocate their output, which the header
+    // checks bounded, and otherwise either metadata the limited header read
+    // already bounded (PNG) or buffers `image` does not charge to the limits
+    // at all, so the limits would add nothing here. Their pixels are decoded
+    // through `image`'s non-generic, non-inlined entry point instead, so the
+    // decoders are monomorphized where the codecs are compiled with
+    // optimizations rather than in this crate. Instantiated here they run
+    // unoptimized in test builds, where a 16-bit PNG took 4 s and a lossless
+    // WebP three times as long, and the test-enforced wall time would measure
+    // the build profile rather than the decoder. That entry point guesses the
+    // format itself, so the guess must agree with the sniff.
+    if ::image::guess_format(input).ok() != Some(format) {
+        return Err(ImageError::UnsupportedFormat);
+    }
+    ::image::load_from_memory(input).map_err(classify)
 }
 
 fn supported(mime: &str) -> Option<ImageFormat> {
@@ -230,9 +248,9 @@ fn supported(mime: &str) -> Option<ImageFormat> {
     }
 }
 
-/// A decoder of `input` that has read only its headers, under the decode
-/// limits, so an oversized side is refused before anything else is parsed.
-fn header(input: &[u8], format: ImageFormat) -> Result<impl ImageDecoder + '_, ImageError> {
+/// A reader of `input` under the decode limits, so an oversized side is
+/// refused while the header is read, before anything else is parsed.
+fn limited(input: &[u8], format: ImageFormat) -> ImageReader<Cursor<&[u8]>> {
     let mut reader = ImageReader::with_format(Cursor::new(input), format);
     // `Limits` is non-exhaustive, so it cannot be built as a literal.
     let mut limits = Limits::default();
@@ -240,7 +258,7 @@ fn header(input: &[u8], format: ImageFormat) -> Result<impl ImageDecoder + '_, I
     limits.max_image_height = Some(MAX_SIDE);
     limits.max_alloc = Some(MAX_ALLOC);
     reader.limits(limits);
-    reader.into_decoder().map_err(classify)
+    reader
 }
 
 fn classify(error: ::image::ImageError) -> ImageError {
