@@ -140,6 +140,8 @@ pub async fn verify(
     }
     let mut payload: CallbackPayload =
         serde_json::from_slice(body).map_err(|_| VerificationError("payload_invalid"))?;
+    // The body digest is verified, so these repairs describe authenticated NyxID output.
+    payload.content.attachments.repairs.record_metrics();
     payload.validate()?;
     if payload.message_id != claims.message_id
         || !platform.matches_wire(&payload.platform)
