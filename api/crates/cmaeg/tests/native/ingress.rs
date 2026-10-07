@@ -28,6 +28,13 @@ impl Drop for Native {
 }
 impl Native {
     pub async fn new(observer: Option<Arc<dyn PlatformReceiptObserver>>) -> Self {
+        Self::build(observer, false).await
+    }
+    /// A native channel served with `CMAEG_MEDIA_ENABLED=true`.
+    pub async fn with_media() -> Self {
+        Self::build(None, true).await
+    }
+    async fn build(observer: Option<Arc<dyn PlatformReceiptObserver>>, media: bool) -> Self {
         let fixture=Fixture::new(|value|{
             value["sources"]=json!([{"type":"telegram","bot_id":"77","bot_username":"fixture_bot","admission":{"type":"all"}}]);
             value["secrets"]["telegram_bot_token"]="77:fixture".into();
@@ -36,6 +43,7 @@ impl Native {
         },Default::default()).await;
         let mut state = fixture.state.clone();
         state.receipt_observer = observer;
+        state.media_enabled = media;
         let (base, task) = serve(state).await;
         Self {
             fixture,

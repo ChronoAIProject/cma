@@ -84,12 +84,7 @@ pub(crate) fn extract(
     transport: Transport<'_>,
     source: &'static str,
 ) -> Option<TelegramMedia> {
-    if !MEDIA_FIELDS
-        .iter()
-        .any(|field| message.get(field).is_some())
-    {
-        return None;
-    }
+    let nyxid_type = media_content_type(message)?;
     // An animation message also lists its file as a document with the same file_id.
     let animation_id = message
         .get("animation")
@@ -143,7 +138,7 @@ pub(crate) fn extract(
             .get("caption")
             .and_then(Value::as_str)
             .map(str::to_owned),
-        nyxid_type: nyxid_type(message),
+        nyxid_type,
     })
 }
 
@@ -381,22 +376,24 @@ fn album(message: &Value) -> Option<String> {
         .map(str::to_owned)
 }
 
-/// NyxID's `content.type` precedence for a media message.
-fn nyxid_type(message: &Value) -> &'static str {
+/// NyxID's `content.type` precedence for a media message, or `None` when the
+/// message has no media field. Native ingress builds the same envelope type.
+pub(crate) fn media_content_type(message: &Value) -> Option<&'static str> {
     let has = |field| message.get(field).is_some();
     if has("photo") {
-        "image"
+        Some("image")
     } else if has("document") {
-        "file"
+        Some("file")
     } else if has("audio") {
-        "audio"
+        Some("audio")
     } else if has("video") || has("video_note") || has("animation") {
-        "video"
+        Some("video")
     } else if has("voice") {
-        "audio"
+        Some("audio")
+    } else if has("sticker") {
+        Some("image")
     } else {
-        // Only a sticker remains among the media fields.
-        "image"
+        None
     }
 }
 

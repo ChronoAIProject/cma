@@ -5,7 +5,7 @@ use super::{
     relay::{
         facts::{Observation, RelayFacts},
         payload::CallbackPayload,
-        telegram_media::MediaIngress,
+        telegram_media::{media_content_type, MediaIngress},
         VerificationError,
     },
 };
@@ -29,10 +29,13 @@ pub enum Outcome {
     Admitted(Box<Observed>),
     Refused(super::admission::Refusal),
 }
+/// Normalize one authenticated update. `media_enabled` is the operator's inbound
+/// media switch; off, media updates are refused exactly as before.
 pub fn observe(
     raw: Value,
     bot_id: &str,
     bot_username: Option<&str>,
+    media_enabled: bool,
 ) -> Result<Outcome, VerificationError> {
     let invalid = || VerificationError("telegram_update_invalid");
     let update_id = raw["update_id"]
@@ -74,12 +77,22 @@ pub fn observe(
         .map_err(|_| invalid())?
         .format(&Rfc3339)
         .map_err(|_| invalid())?;
+    // The synthetic envelope matches what NyxID would relay for the same
+    // message, so one observer checks both transports: a media message has
+    // NyxID's media type and its caption as text.
+    let media_type = media_content_type(message);
     let content_type = if callback.is_some() {
         "interaction"
     } else if message.get("text").is_some() {
         "text"
     } else {
-        "unknown"
+        media_type.unwrap_or("unknown")
+    };
+    let text = match callback {
+        Some(_) => None,
+        None => message.get("text").or_else(|| {
+            media_type.and(message.get("caption").filter(|caption| caption.is_string()))
+        }),
     };
     let route = crate::telegram::route(bot_id, &chat_id);
     let mut payload: CallbackPayload = serde_json::from_value(json!({
@@ -87,15 +100,18 @@ pub fn observe(
         "reply_token":null,"agent":{"api_key_id":bot_id,"name":""},
         "conversation":{"id":route,"platform_id":chat_id,"type":message["chat"]["type"]},
         "sender":{"platform_id":sender_id,"display_name":from.get("first_name")},
-        "content":{"type":content_type,"text":if callback.is_none() {message.get("text")} else {None}},
+        "content":{"type":content_type,"text":text},
         "reply_to_platform_message_id":callback.map(|_|message_id.clone()),"timestamp":timestamp,"raw_platform_data":raw,
     })).map_err(|_| invalid())?;
     // A control character in a sender's name must not refuse the update, or
     // Telegram would redeliver it; validate() keeps its bound as an invariant.
     payload.sender.repair_display_name();
     payload.validate()?;
-    // Native updates keep refusing media until the webhook passes its switch.
-    match super::relay::telegram::observe(&payload, bot_username, MediaIngress::native(false))? {
+    match super::relay::telegram::observe(
+        &payload,
+        bot_username,
+        MediaIngress::native(media_enabled),
+    )? {
         Observation::Refused(reason) => Ok(Outcome::Refused(reason)),
         Observation::Message(mut facts) => {
             if let Some(ce) = &mut facts.event {
@@ -139,10 +155,10 @@ pub(crate) fn launch(
             },
             None => ActivityKind::Message {
                 text: payload.content.text.unwrap_or_default(),
-                attachments: vec![],
+                attachments: facts.attachments,
                 mentions_bot: facts.mentioned == Some(true),
                 reply_to: None,
-                album_id: None,
+                album_id: facts.album_id,
             },
         },
         actor: Actor {
