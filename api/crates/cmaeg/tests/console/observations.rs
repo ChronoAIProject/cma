@@ -196,7 +196,7 @@ async fn an_authenticated_telegram_update_is_admitted() {
 }
 
 /// A custom channel authenticated by HMAC key `ingress`.
-async fn custom(secret: &Secret) -> Fixture {
+pub(crate) async fn custom(secret: &Secret) -> Fixture {
     Fixture::new(
         |value| {
             value["sources"] = json!([{"type":"custom","auth":{"type":"hmac","key_id":"ingress"}}]);
@@ -209,7 +209,7 @@ async fn custom(secret: &Secret) -> Fixture {
     .await
 }
 
-fn cloud_event(
+pub(crate) fn cloud_event(
     fixture: &Fixture,
     secret: Option<&Secret>,
     event: &Value,
@@ -228,7 +228,7 @@ fn cloud_event(
     request.body(Body::from(body)).unwrap()
 }
 
-async fn send_custom(
+pub(crate) async fn send_custom(
     fixture: &Fixture,
     state: IngressState,
     request: axum::extract::Request,

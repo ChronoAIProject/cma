@@ -9,8 +9,12 @@ use std::{
 };
 
 use cmaeg_core::{
-    channel::{ChannelCreation, ChannelDefinition},
-    ids::{ChannelId, RecordId},
+    activity::{
+        Activity, ActivityConversation, ActivityKind, Actor, ActorKind, ConversationKind,
+        SourceKind,
+    },
+    channel::{ChannelCreation, ChannelDefinition, Platform},
+    ids::{ChannelId, EventId, RecordId},
 };
 use futures_util::future::BoxFuture;
 
@@ -105,15 +109,15 @@ impl RecordHeads for FakeHeads {
     }
 }
 
-/// The fixture channel at `record`, owned by `owner`, named `name`, with a
+/// The fixture channel at `record`, owned by `subject`, named `name`, with a
 /// retained creation channel id.
-pub(crate) fn definition(record: &RecordId, owner: &str, name: &str) -> ChannelDefinition {
+pub(crate) fn definition(record: &RecordId, subject: &str, name: &str) -> ChannelDefinition {
     let mut definition: ChannelDefinition = serde_json::from_str(include_str!(
         "../../../cmaeg-core/tests/fixtures/channel.json"
     ))
     .unwrap();
     definition.record_id = record.clone();
-    definition.owner.subject = owner.to_owned();
+    definition.owner.subject = subject.to_owned();
     definition.name = name.to_owned();
     definition.secrets.channel_key = Some(cmaeg_core::channel::Secret::new("fixture-channel-key"));
     definition.creation = Some(ChannelCreation {
@@ -194,5 +198,36 @@ impl ChannelReader for FakeReader {
             return Err(LinkError::Mismatch);
         }
         Ok(())
+    }
+}
+
+/// A relayed Telegram message carrying text, an actor, a chat and a caption
+/// that must never reach the console.
+pub(crate) fn activity(event_id: &str) -> Activity {
+    Activity {
+        schema_version: 1,
+        event_id: EventId::new(event_id).unwrap(),
+        kind: ActivityKind::Message {
+            text: "fixture message text".into(),
+            attachments: Vec::new(),
+            mentions_bot: true,
+            reply_to: None,
+            album_id: None,
+        },
+        actor: Actor {
+            id: "123456789".into(),
+            display_name: Some("Fixture Person".into()),
+            kind: ActorKind::Human,
+        },
+        conversation: ActivityConversation {
+            id: "-1001234567890".into(),
+            kind: ConversationKind::Group,
+            thread_id: None,
+        },
+        occurred_at: "2026-10-08T00:00:00Z".into(),
+        source: SourceKind::NyxidRelay {
+            platform: Platform::Telegram,
+            route_id: "route-1".into(),
+        },
     }
 }

@@ -1,45 +1,10 @@
 use std::time::{Duration, Instant};
 
-use cmaeg_core::{
-    activity::{ActivityConversation, Actor, ActorKind, ConversationKind},
-    channel::Platform,
-};
-
 use super::*;
+use crate::console::test_support::{self, activity};
 
-pub(crate) fn record() -> RecordId {
-    RecordId::new("0b6f3c4e-8a59-4f3b-9d55-2f1c8f2e7a10").unwrap()
-}
-
-/// A relayed Telegram message carrying text, an actor, a chat and a caption
-/// that must never reach the console.
-pub(crate) fn activity(event_id: &str) -> Activity {
-    Activity {
-        schema_version: 1,
-        event_id: EventId::new(event_id).unwrap(),
-        kind: ActivityKind::Message {
-            text: "fixture message text".into(),
-            attachments: Vec::new(),
-            mentions_bot: true,
-            reply_to: None,
-            album_id: None,
-        },
-        actor: Actor {
-            id: "123456789".into(),
-            display_name: Some("Fixture Person".into()),
-            kind: ActorKind::Human,
-        },
-        conversation: ActivityConversation {
-            id: "-1001234567890".into(),
-            kind: ConversationKind::Group,
-            thread_id: None,
-        },
-        occurred_at: "2026-10-08T00:00:00Z".into(),
-        source: SourceKind::NyxidRelay {
-            platform: Platform::Telegram,
-            route_id: "route-1".into(),
-        },
-    }
+fn record() -> RecordId {
+    test_support::record(1)
 }
 
 #[test]

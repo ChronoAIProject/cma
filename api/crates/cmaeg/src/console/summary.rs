@@ -115,11 +115,11 @@ impl ChannelSummary {
         }
     }
 
-    /// A record whose head names `owner` but whose definition cannot be
-    /// read: shown by status only.
-    pub fn without_definition(owner: &str, status: SummaryStatus) -> Self {
+    /// A record whose head names `holder` as its owner but whose definition
+    /// cannot be read: shown by status only.
+    pub fn without_definition(holder: &str, status: SummaryStatus) -> Self {
         Self {
-            owner: owner.to_owned(),
+            owner: holder.to_owned(),
             owner_kind: None,
             name: String::new(),
             created_at: String::new(),

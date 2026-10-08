@@ -8,6 +8,10 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use cmaeg::{
     auth::CreatorAuthenticator,
     channels::management::ManagementState,
+    console::{
+        memory::{ConsoleMemory, Schedule, Sources},
+        observer::{ConsoleObserver, Observers},
+    },
     delivery::{engine::DeliveryEngine, relay_client::RelayClient},
     http,
     ingress::IngressState,
@@ -15,7 +19,7 @@ use cmaeg::{
     records::RecordClient,
     tools::ToolsState,
     turns::{TurnRunner, TurnTracker},
-    ChannelCacheConfig, ManagementConfig,
+    ChannelCacheConfig, ConsoleMemoryConfig, ManagementConfig,
 };
 use cmaeg_core::{channel::Secret, seal::MasterKeyRing};
 use serde_json::{json, Value};
@@ -26,7 +30,14 @@ use std::{
 };
 
 pub const LANES: usize = 16;
+/// The console's observer and memory, when the run has the console on.
+pub struct ConsoleOn {
+    pub observer: ConsoleObserver,
+    pub memory: Arc<ConsoleMemory>,
+}
+
 pub struct App {
+    pub console: Option<ConsoleOn>,
     pub cma: FakeCma,
     pub identity: Identity,
     pub provider: FakeProvider,
@@ -47,6 +58,14 @@ impl Drop for App {
 }
 impl App {
     pub async fn new() -> Self {
+        Self::build(false).await
+    }
+    /// The same gateway with `CMAEG_CONSOLE_ENABLED=true`: every observer
+    /// composed as `serve.rs` composes it, and a warm owner index.
+    pub async fn with_console() -> Self {
+        Self::build(true).await
+    }
+    async fn build(console: bool) -> Self {
         let restore_delay = std::env::var("CMAEG_LATENCY_RESTORE_DELAY_MS")
             .map(|value| value.parse::<u64>().unwrap())
             .unwrap_or(50);
@@ -68,7 +87,8 @@ impl App {
         );
         let keys =
             Arc::new(MasterKeyRing::parse(&format!("1:{}", STANDARD.encode([1; 32]))).unwrap());
-        let state = ManagementState::new(
+        let mut observers = Observers::new(console);
+        let state = ManagementState::observed(
             providers.clone(),
             Arc::new(RecordClient::new(&cma.base_url, "cma-service").unwrap()),
             Arc::new(CreatorAuthenticator::new(&identity.base).unwrap()),
@@ -84,17 +104,19 @@ impl App {
                 restores_per_minute: NonZeroU32::new(60_000).unwrap(),
                 ..Default::default()
             },
+            observers.index.clone(),
         );
         let tracker = TurnTracker::new(state.readiness.clone());
         let (delivery, outcomes) = tokio::sync::mpsc::channel(256);
         let waiters = Arc::default();
-        let engine = DeliveryEngine::start(
+        let engine = DeliveryEngine::start_observed(
             outcomes,
             keys.clone(),
             RelayClient::new(&identity.base, Duration::from_secs(5)).unwrap(),
             Default::default(),
             tracker.clone(),
             cmaeg::delivery::custom::CustomDelivery::new("http://127.0.0.1:8090".into(), waiters),
+            observers.activity.clone(),
         );
         let delivery = Arc::new(cmaeg::delivery::router::ShardedScheduler::new(delivery));
         let runner = Arc::new(TurnRunner::new(
@@ -107,9 +129,23 @@ impl App {
             state.resolver.clone(),
             keys.clone(),
             Default::default(),
-            runner,
+            observers.launcher(runner),
         )
-        .unwrap();
+        .unwrap()
+        .with_activity_observer(observers.activity.clone());
+        let console = observers.queue.take().map(|queue| {
+            let memory = Arc::new(ConsoleMemory::new(
+                &ConsoleMemoryConfig::default(),
+                Sources {
+                    heads: state.records.clone(),
+                    reader: Arc::new(state.clone()),
+                },
+                Schedule::from_config(&ConsoleMemoryConfig::default()),
+            ));
+            // The drainer only: the warm index is listed below.
+            memory.spawn(queue, cmaeg::http::readiness::Readiness::initialized());
+            memory
+        });
         let tools = ToolsState {
             resolver: state.resolver.clone(),
             keys,
@@ -168,7 +204,19 @@ impl App {
             .put(&pointer.record_id, "alice", &blob, Some(record.version))
             .await
             .unwrap();
+        let console = match console {
+            Some(memory) => {
+                memory.list_all().await;
+                assert_eq!(memory.index_status().records, 1, "the index is warm");
+                Some(ConsoleOn {
+                    observer: observers.console.take().expect("composed with the console"),
+                    memory,
+                })
+            }
+            None => None,
+        };
         Self {
+            console,
             cma,
             identity,
             provider,

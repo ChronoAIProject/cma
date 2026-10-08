@@ -211,4 +211,10 @@ pub(crate) fn describe_console() {
         "1 while the console's owner index is at its bound and may miss channels"
     );
     metrics::gauge!(names::CONSOLE_INDEX_PARTIAL).set(0);
+    metrics::describe_gauge!(
+        names::CONSOLE_ACTIVITY_BYTES,
+        metrics::Unit::Bytes,
+        "Bytes counted by the console's activity entries and producer entries"
+    );
+    metrics::gauge!(names::CONSOLE_ACTIVITY_BYTES).set(0);
 }

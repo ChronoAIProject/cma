@@ -11,16 +11,20 @@ use cmaeg_core::ids::{ChannelId, RecordId};
 use futures_util::{future::BoxFuture, FutureExt};
 
 use super::{
+    activity::{ActivityEntry, ActivityFilter, RingTotals},
     authority::Authorized,
     channel_ids::LinkError,
     directory::{ChannelDirectory, ChannelPage, ChannelRow},
     memory::ConsoleMemory,
+    producers::ProducerView,
     summary::{created_channel_id, ChannelSummary, SummaryStatus},
 };
 use crate::channels::management::ManagementError;
 
 /// Channels on one page of the console's list.
 pub const PAGE_ROWS: usize = 50;
+/// Activity entries one read returns.
+pub const ACTIVITY_ROWS: usize = 50;
 /// How long a page waits for its owner's re-listing and its summaries
 /// before it renders what memory holds.
 const PAGE_WAIT: Duration = Duration::from_secs(3);
@@ -40,6 +44,43 @@ impl ConsoleMemory {
             Some(summary) => owned(summary, auth),
             None => self.fill(auth, record).await,
         }
+    }
+
+    /// The newest [`ACTIVITY_ROWS`] activity entries of `record` matching
+    /// `filter`, newest first, when `auth` owns it.
+    pub fn activity(
+        &self,
+        auth: &Authorized,
+        record: &RecordId,
+        filter: ActivityFilter,
+    ) -> Option<Vec<ActivityEntry>> {
+        self.index.version_for(auth, record)?;
+        Some(self.rings.entries(record, &filter, ACTIVITY_ROWS))
+    }
+
+    /// The activity entry of `record`'s event `event_key`, when `auth` owns
+    /// the record and the entry is still held.
+    pub fn event(
+        &self,
+        auth: &Authorized,
+        record: &RecordId,
+        event_key: &str,
+    ) -> Option<ActivityEntry> {
+        self.index.version_for(auth, record)?;
+        self.rings.event(record, event_key)
+    }
+
+    /// `record`'s custom producers, most recently seen first, when `auth`
+    /// owns it.
+    pub fn producers(&self, auth: &Authorized, record: &RecordId) -> Option<Vec<ProducerView>> {
+        self.index.version_for(auth, record)?;
+        Some(self.rings.producers(record))
+    }
+
+    /// Totals across every channel's activity, which name no channel or
+    /// owner: for the operator's gauges and tests.
+    pub fn activity_totals(&self) -> RingTotals {
+        self.rings.totals()
     }
 
     /// The channel id to display for `record`, when `auth` owns it and the

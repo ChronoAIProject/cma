@@ -243,3 +243,47 @@ async fn summaries_hold_no_profile_or_secret() {
     }
     assert!(dump.contains("sha256:…"), "{dump}");
 }
+
+#[tokio::test]
+async fn activity_events_and_producers_are_the_owners_only() {
+    use crate::console::{
+        observer::{ConsoleObserver, Observation},
+        test_support::activity,
+    };
+    use crate::turns::observer::{ActivityObserver, LaunchClass, ProducerFacts};
+    let reader = Arc::new(FakeReader::default());
+    let memory = memory(reader);
+    let (observer, mut queue) = ConsoleObserver::new();
+    observer.admitted(&record(1), &activity("evt-1"));
+    observer.produced(
+        &record(1),
+        ProducerFacts {
+            source: "https://orders.example/a",
+            hint: "hmac:ingress",
+            ce_type: "order.created",
+            outcome: LaunchClass::Accepted,
+        },
+    );
+    while let Some(observation) = queue.try_next() {
+        memory.apply(observation);
+    }
+    let key = crate::console::mask::event_key("evt-1");
+    let alice = authorized("alice");
+    let bob = authorized("bob");
+    let filter = crate::console::activity::ActivityFilter::default();
+    assert_eq!(
+        memory
+            .activity(&alice, &record(1), filter.clone())
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(memory.event(&alice, &record(1), &key).is_some());
+    assert_eq!(memory.producers(&alice, &record(1)).unwrap().len(), 1);
+    assert!(memory.activity(&bob, &record(1), filter).is_none());
+    assert!(memory.event(&bob, &record(1), &key).is_none());
+    assert!(memory.producers(&bob, &record(1)).is_none());
+    // An unindexed record has no readable activity at all.
+    memory.apply(Observation::IndexRemoved { record: record(1) });
+    assert!(memory.event(&alice, &record(1), &key).is_none());
+}

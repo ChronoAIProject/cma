@@ -101,3 +101,6 @@ async fn a_bounded_index_reports_itself_partial() {
     assert!(text.contains("cmaeg_console_index_partial 1"), "{text}");
     cma.close().await;
 }
+
+#[path = "memory_rings.rs"]
+mod rings;

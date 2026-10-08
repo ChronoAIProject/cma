@@ -8,11 +8,13 @@ use std::{sync::Arc, time::Duration};
 use moka::sync::Cache;
 
 use super::{
+    activity::{ActivityRings, Update},
     authority::Authorized,
     channel_ids::ChannelIds,
     cma_budget::{page_all, CmaBudget, Pacing, RecordHeads},
     index::{entry, IndexStatus, OwnerIndex},
     observer::{Observation, ObservationQueue},
+    producers::Seen,
     reader::ChannelReader,
     summary::Summaries,
 };
@@ -65,6 +67,7 @@ pub struct ConsoleMemory {
     pub(super) budget: CmaBudget,
     pub(super) summaries: Summaries,
     pub(super) channel_ids: ChannelIds,
+    pub(super) rings: ActivityRings,
     pub(super) reader: Arc<dyn ChannelReader>,
     heads: Arc<dyn RecordHeads>,
     schedule: Schedule,
@@ -82,6 +85,11 @@ impl ConsoleMemory {
             budget: CmaBudget::default(),
             summaries: Summaries::new(config.summary_cache_max),
             channel_ids: ChannelIds::new(config.channel_ids_max),
+            rings: ActivityRings::new(
+                config.activity_per_channel,
+                config.activity_max_bytes,
+                config.producers_per_channel,
+            ),
             reader: sources.reader,
             heads: sources.heads,
             schedule,
@@ -106,13 +114,63 @@ impl ConsoleMemory {
             } => self.index.upsert(record, owner, version),
             Observation::IndexRemoved { record } => self.index.remove(&record),
             Observation::ChannelId { record, id } => self.channel_ids.learn(record, id),
-            // Kept by the activity rings added alongside the index.
-            Observation::Routed { .. }
-            | Observation::Refused { .. }
-            | Observation::Launch { .. }
-            | Observation::Delivery { .. }
-            | Observation::Published { .. }
-            | Observation::Producer { .. } => {}
+            Observation::Routed { record, entry_seed } => self.rings.admitted(record, entry_seed),
+            Observation::Refused { record, seed } => self.rings.refused(record, seed),
+            Observation::Launch {
+                record,
+                event_key,
+                consumer,
+                outcome,
+                accepted_ms,
+            } => self.rings.update(
+                &record,
+                &event_key,
+                Update::Launch {
+                    consumer,
+                    outcome,
+                    accepted_ms,
+                },
+            ),
+            Observation::Delivery {
+                record,
+                event_key,
+                consumer,
+                step,
+                outcome,
+                destination,
+            } => self.rings.update(
+                &record,
+                &event_key,
+                Update::Delivery {
+                    consumer,
+                    step,
+                    outcome,
+                    destination,
+                },
+            ),
+            Observation::Published {
+                record,
+                event_key,
+                causation,
+            } => self
+                .rings
+                .update(&record, &event_key, Update::Published(causation)),
+            Observation::Producer {
+                record,
+                source_uri,
+                hint,
+                ce_type,
+                outcome,
+            } => self.rings.produced(
+                record,
+                Seen {
+                    source_uri,
+                    hint,
+                    ce_type,
+                    outcome,
+                    at: time::OffsetDateTime::now_utc(),
+                },
+            ),
         }
     }
 

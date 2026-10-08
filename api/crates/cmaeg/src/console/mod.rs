@@ -6,6 +6,7 @@
 //! readiness: until its OAuth client is configured and NyxID's discovery
 //! document has passed validation, every `/console*` request gets a generic
 //! 503 page while ingress keeps serving.
+pub mod activity;
 pub mod authority;
 pub mod channel_ids;
 pub mod clock;
@@ -25,6 +26,7 @@ pub mod observer;
 mod oidc;
 mod orgs;
 pub(crate) mod pages;
+pub mod producers;
 pub mod reader;
 pub mod reads;
 mod redirect;

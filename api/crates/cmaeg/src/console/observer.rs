@@ -15,11 +15,11 @@ use cmaeg_core::{
     activity::{Activity, ActivityKind, AttachmentKind, SourceKind},
     ids::{ChannelId, ConsumerId, EventId, RecordId},
 };
-use serde::{Serialize, Serializer};
+use serde::Serialize;
 use time::OffsetDateTime;
 use tokio::sync::mpsc::{self, error::TrySendError};
 
-use super::mask;
+use super::{activity::rfc3339, mask};
 use crate::{
     channels::observer::ChannelIndexObserver,
     delivery::intents::DeliveryOutcome,
@@ -320,10 +320,10 @@ impl ActivityObserver for ConsoleObserver {
 }
 
 impl ChannelIndexObserver for ConsoleObserver {
-    fn changed(&self, record: &RecordId, owner: &str, version: u64) {
+    fn changed(&self, record: &RecordId, holder: &str, version: u64) {
         self.send(Observation::IndexChanged {
             record: record.clone(),
-            owner: owner.to_owned(),
+            owner: holder.to_owned(),
             version,
         });
     }
@@ -351,7 +351,9 @@ pub struct Observers {
     /// The console's queue, for its drainer to take; `None` while the
     /// console is off.
     pub queue: Option<ObservationQueue>,
-    observed: bool,
+    /// The console's observer itself, for its drop count; `None` while the
+    /// console is off.
+    pub console: Option<ConsoleObserver>,
 }
 
 impl Observers {
@@ -361,22 +363,22 @@ impl Observers {
                 activity: Arc::new(NoopObserver),
                 index: Arc::new(NoopObserver),
                 queue: None,
-                observed: false,
+                console: None,
             };
         }
         let (observer, queue) = ConsoleObserver::new();
         Self {
             activity: Arc::new(observer.clone()),
-            index: Arc::new(observer),
+            index: Arc::new(observer.clone()),
             queue: Some(queue),
-            observed: true,
+            console: Some(observer),
         }
     }
 
     /// `inner`, reporting each launch while the console is on; `inner`
     /// itself otherwise, so launches take exactly the path they took before.
     pub fn launcher(&self, inner: Arc<dyn TurnLauncher>) -> Arc<dyn TurnLauncher> {
-        if !self.observed {
+        if self.console.is_none() {
             return inner;
         }
         Arc::new(ObservedLauncher::new(inner, self.activity.clone()))
@@ -405,13 +407,6 @@ fn counts(attachments: &[cmaeg_core::activity::Attachment]) -> [u8; 4] {
         counts[slot] = counts[slot].saturating_add(1);
     }
     counts
-}
-
-fn rfc3339<S: Serializer>(at: &OffsetDateTime, serializer: S) -> Result<S::Ok, S::Error> {
-    let text = at
-        .format(&time::format_description::well_known::Rfc3339)
-        .map_err(serde::ser::Error::custom)?;
-    serializer.serialize_str(&text)
 }
 
 #[cfg(test)]
