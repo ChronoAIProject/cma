@@ -58,8 +58,9 @@ pub(crate) fn check(
         carries_through(current, next, Extension::Sources)
             || removes_inert_key_on_exit(current, next)
     });
-    let carried_routing =
-        current.is_some_and(|current| carries_through(current, next, Extension::Routing));
+    let carried_routing = current.is_some_and(|current| {
+        carries_through(current, next, Extension::Routing) || removes_one_consumer(current, next)
+    });
     let sources = !extensions.sources || flags.dynamic_sources || carried_sources;
     let routing = !extensions.routing || flags.multi_consumer || carried_routing;
     if sources && routing {
@@ -120,6 +121,48 @@ fn removes_inert_key_on_exit(current: &ChannelDefinition, next: &ChannelDefiniti
     let mut before = SourceExtension::of(current);
     before.partition = &partition;
     before == SourceExtension::of(next)
+}
+
+/// The switch-off exit removes exactly one additional consumer and its key.
+/// Compare the complete projection so this cannot carry unrelated policy,
+/// credentials or source edits through the routing exemption.
+fn removes_one_consumer(current: &ChannelDefinition, next: &ChannelDefinition) -> bool {
+    let (Some(before), Some(after)) = (&current.routing, &next.routing) else {
+        return false;
+    };
+    if before.consumers.len() != after.consumers.len() + 1 {
+        return false;
+    }
+    let removed: Vec<_> = before
+        .consumers
+        .iter()
+        .filter(|consumer| !after.consumers.iter().any(|kept| kept.id == consumer.id))
+        .collect();
+    let [removed] = removed.as_slice() else {
+        return false;
+    };
+    if current
+        .secrets
+        .consumer_keys
+        .iter()
+        .filter(|(id, _)| id == &removed.id)
+        .count()
+        != 1
+    {
+        return false;
+    }
+    let mut projected = current.clone();
+    projected
+        .routing
+        .as_mut()
+        .unwrap()
+        .consumers
+        .retain(|consumer| consumer.id != removed.id);
+    projected
+        .secrets
+        .consumer_keys
+        .retain(|(id, _)| id != &removed.id);
+    &projected == next
 }
 
 /// Whether `current` uses `extension` and `next` keeps it intact.

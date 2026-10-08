@@ -27,23 +27,14 @@ pub async fn delete(
         Some(current.channel_id.as_str()),
         InvalidationPath::Delete,
     );
-    let credential = current
+    for consumer in current.definition.consumers().skip(1) {
+        super::consumer_binding::unbind(state, &current.definition, consumer).await?;
+    }
+    let default = current
         .definition
-        .secrets
-        .provider_credential
-        .as_ref()
-        .ok_or_else(|| {
-            ManagementError::Internal("channel provider credential is unavailable".into())
-        })?;
-    state
-        .providers
-        .unbind(
-            &current.definition.provider.slug,
-            &current.definition.provider.binding_id,
-            credential,
-        )
-        .await
-        .map_err(ManagementError::Provider)?;
+        .consumer(None)
+        .expect("default consumer exists");
+    super::consumer_binding::unbind(state, &current.definition, default).await?;
     match state
         .records
         .delete(&current.definition.record_id, expected_version)
@@ -56,6 +47,7 @@ pub async fn delete(
                 Some(current.channel_id.as_str()),
                 InvalidationPath::Delete,
             );
+            state.index.removed(&pointer.record_id);
             crate::connections::binding::release(state, &current.definition).await?;
             Ok(())
         }

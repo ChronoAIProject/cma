@@ -14,6 +14,7 @@ use utoipa::OpenApi;
         crate::providers::EventContextSnapshot,
         cmaeg_core::channel::ProviderTarget,
         crate::tools::AttachmentViewKind,
+        cmaeg_core::ids::ConsumerId,
     )),
     paths(
         http::connections::capabilities,
@@ -30,6 +31,9 @@ use utoipa::OpenApi;
         http::management::rekey_channel,
         http::routing::put,
         http::routing::remove,
+        http::consumers::add,
+        http::consumers::update,
+        http::consumers::remove,
         http::callbacks::callback,
         http::telegram::callback,
         http::events::receive_event,

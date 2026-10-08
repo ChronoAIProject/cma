@@ -8,7 +8,7 @@ pub use super::state::{
     CreatedChannel, InvalidationPath, LoadedChannel, ManagementError, ManagementState,
 };
 use super::target::{loaded_id, open_target, ChannelTarget};
-pub use super::test_turn::{test_turn, TestResult};
+pub use super::test_turn::{test_consumer_turn, test_turn, TestResult};
 use crate::{
     auth::Creator,
     providers::{BindingRequest, ToolsAdvertisement},

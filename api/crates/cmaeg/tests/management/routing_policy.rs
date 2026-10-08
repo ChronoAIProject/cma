@@ -17,8 +17,7 @@ use std::sync::Mutex;
 
 #[path = "routing_exits.rs"]
 mod exits;
-#[path = "../../../cmaeg-core/tests/routing_policy/fixture.rs"]
-mod fixture;
+use super::routing_fixture as fixture;
 #[path = "../golden/previous_schema.rs"]
 mod previous_schema;
 

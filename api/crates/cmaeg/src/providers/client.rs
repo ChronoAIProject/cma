@@ -104,6 +104,11 @@ impl ProviderClient {
         self.providers.len()
     }
 
+    /// Check the allowlist before management persists a pending binding.
+    pub fn validate_provider(&self, provider: &ProviderSlug) -> Result<(), ProviderError> {
+        self.handle(provider).map(|_| ())
+    }
+
     pub async fn bind(
         &self,
         provider: &ProviderSlug,

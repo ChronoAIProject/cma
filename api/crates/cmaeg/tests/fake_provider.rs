@@ -82,6 +82,8 @@ pub struct ReceivedRequest {
 
 struct StateData {
     config: FakeProviderConfig,
+    reject_binding_once: AtomicBool,
+    bind_gate: Mutex<Option<(oneshot::Sender<()>, oneshot::Receiver<()>)>>,
     /// Every request in arrival order, event-context reads included.
     requests: Mutex<Vec<ReceivedRequest>>,
     busy_once: AtomicBool,
@@ -96,6 +98,26 @@ pub struct FakeProvider {
 }
 
 impl FakeProvider {
+    /// Hold one binding after recording it, to exercise cross-process CAS races.
+    #[allow(dead_code)] // Shared fixture; only management exercises binding races.
+    pub fn pause_next_bind(&self) -> (oneshot::Receiver<()>, oneshot::Sender<()>) {
+        let (captured, snapshot) = oneshot::channel();
+        let (release, paused) = oneshot::channel();
+        assert!(self
+            .state
+            .bind_gate
+            .lock()
+            .unwrap()
+            .replace((captured, paused))
+            .is_none());
+        (snapshot, release)
+    }
+
+    #[allow(dead_code)] // Shared fixture; other suites reject every bind via config.
+    pub fn reject_next_bind(&self) {
+        self.state.reject_binding_once.store(true, Ordering::SeqCst);
+    }
+
     pub async fn start(config: FakeProviderConfig) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
@@ -104,6 +126,8 @@ impl FakeProvider {
         let missing_turn_once = config.missing_turn_once;
         let state = Arc::new(StateData {
             config,
+            reject_binding_once: AtomicBool::new(false),
+            bind_gate: Mutex::new(None),
             requests: Mutex::new(Vec::new()),
             busy_once: AtomicBool::new(busy_once),
             conversation_missing_once: AtomicBool::new(missing_once),
@@ -183,7 +207,12 @@ async fn bind(
         headers,
         body,
     );
-    if state.config.reject_binding {
+    let gate = state.bind_gate.lock().unwrap().take();
+    if let Some((captured, release)) = gate {
+        captured.send(()).expect("binding waiter remains alive");
+        release.await.expect("binding gate is released");
+    }
+    if state.config.reject_binding || state.reject_binding_once.swap(false, Ordering::SeqCst) {
         return (
             StatusCode::UNPROCESSABLE_ENTITY,
             Json(json!({"code":"profile_refused"})),

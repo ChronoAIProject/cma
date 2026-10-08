@@ -40,6 +40,14 @@ pub fn management_router(state: ManagementState) -> Router {
             "/v1/channels/{channel_id}/routing",
             axum::routing::put(super::routing::put).delete(super::routing::remove),
         )
+        .route(
+            "/v1/channels/{channel_id}/consumers",
+            post(super::consumers::add),
+        )
+        .route(
+            "/v1/channels/{channel_id}/consumers/{consumer_id}",
+            axum::routing::put(super::consumers::update).delete(super::consumers::remove),
+        )
         .with_state(state)
         .layer(axum::middleware::from_fn(protocol_headers))
 }
@@ -327,25 +335,46 @@ pub async fn delete_channel(
     }
 }
 
+#[derive(Debug, Clone, Default, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct TestQuery {
+    pub consumer: Option<cmaeg_core::ids::ConsumerId>,
+}
+
 #[utoipa::path(
     post,
     path = "/v1/channels/{channel_id}/test",
     operation_id = "testChannel",
     tag = "channels",
     security(("creatorBearer" = [])),
-    params(("X-CMAEG-Owner" = Option<String>, Header, description = "Organization owner UUID; caller must be an authorized NyxID organization administrator"), ("channel_id" = String, Path)),
+    params(("X-CMAEG-Owner" = Option<String>, Header, description = "Organization owner UUID; caller must be an authorized NyxID organization administrator"), ("channel_id" = String, Path), TestQuery),
     responses((status = 200, body = TestChannelResponse), (status = "default", body = cmaeg_core::problem::Problem, content_type = "application/problem+json"))
 )]
 pub async fn test_channel(
     State(state): State<ManagementState>,
     creator: Creator,
     Path(raw_id): Path<String>,
+    query: Result<Query<TestQuery>, axum::extract::rejection::QueryRejection>,
 ) -> Response {
     let channel_id = match parse_channel_id(&raw_id) {
         Ok(channel_id) => channel_id,
         Err(error) => return management_error(error),
     };
-    match management::test_turn(&state, &creator, &ChannelTarget::Id(channel_id)).await {
+    let Ok(Query(query)) = query else {
+        return no_store(problem(
+            StatusCode::BAD_REQUEST,
+            ProblemCode::InvalidRequest,
+            "query parameters are invalid",
+        ));
+    };
+    match management::test_consumer_turn(
+        &state,
+        &creator,
+        &ChannelTarget::Id(channel_id),
+        query.consumer.as_ref(),
+    )
+    .await
+    {
         Ok(result) => no_store(
             Json(TestChannelResponse {
                 accepted_after_ms: result.accepted_after_ms,

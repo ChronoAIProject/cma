@@ -200,3 +200,18 @@ mod routing;
 
 #[path = "management/routing_policy.rs"]
 mod routing_policy;
+
+#[path = "management/consumer_exits.rs"]
+mod consumer_exits;
+#[path = "management/consumer_races.rs"]
+mod consumer_races;
+#[path = "management/consumer_support.rs"]
+mod consumer_support;
+#[path = "management/consumers.rs"]
+mod consumers;
+
+#[path = "management/consumer_rotation.rs"]
+mod consumer_rotation;
+
+#[path = "../../cmaeg-core/tests/routing_policy/fixture.rs"]
+mod routing_fixture;

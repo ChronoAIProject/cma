@@ -350,3 +350,35 @@ fn routing_exit_cannot_remove_a_custom_key_used_by_a_custom_source() {
     next.partition.custom_key = None;
     assert!(check(Some(&current), &next, WriteFlags::default()).is_err());
 }
+
+#[test]
+fn flag_off_consumer_removal_accepts_only_the_exact_projection() {
+    for pending in [false, true] {
+        let mut current = routed();
+        current.routing.as_mut().unwrap().consumers[0].pending = pending;
+        let id = current.routing.as_ref().unwrap().consumers[0].id.clone();
+        let mut next = current.clone();
+        next.routing.as_mut().unwrap().consumers.remove(0);
+        next.secrets
+            .consumer_keys
+            .retain(|(consumer, _)| consumer != &id);
+        check(Some(&current), &next, WriteFlags::default()).unwrap();
+        let mut policy = next.clone();
+        policy.routing.as_mut().unwrap().max_targets = 2;
+        let mut key = next.clone();
+        key.secrets.consumer_keys[0].1 = Secret::new("fixture-changed-key");
+        let mut source = next.clone();
+        source.sources.reverse();
+        let mut name = next.clone();
+        name.name = "unrelated edit".into();
+        for changed in [policy, key, source, name] {
+            assert!(check(Some(&current), &changed, WriteFlags::default()).is_err());
+        }
+        let mut missing_key = current.clone();
+        missing_key
+            .secrets
+            .consumer_keys
+            .retain(|(consumer, _)| consumer != &id);
+        assert!(check(Some(&missing_key), &next, WriteFlags::default()).is_err());
+    }
+}
