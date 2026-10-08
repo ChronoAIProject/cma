@@ -23,6 +23,8 @@ mod policy;
 pub mod relay_support;
 #[path = "routing_harness/requests.rs"]
 mod requests;
+#[path = "routing_harness/sdk.rs"]
+mod sdk;
 #[path = "relay/signer.rs"]
 pub mod signer;
 #[path = "routing_harness/smoke.rs"]
