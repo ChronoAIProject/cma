@@ -7,6 +7,7 @@ mod pacing;
 pub mod relay_client;
 pub mod render;
 mod send;
+mod step;
 pub mod sync;
 mod telegram;
 pub mod webhook_client;
