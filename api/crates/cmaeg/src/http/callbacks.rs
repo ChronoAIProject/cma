@@ -256,7 +256,10 @@ async fn admit_callback(
             ))
         }
     };
-    verify_span.record("event_id", request.activity.event_id.as_str());
+    verify_span.record(
+        "event_id",
+        crate::telemetry::channel_hash(request.activity.event_id.as_str()),
+    );
     drop(verify_time);
     Ok(AdmittedChat {
         request,

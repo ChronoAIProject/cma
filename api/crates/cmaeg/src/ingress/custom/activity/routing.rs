@@ -7,7 +7,7 @@ use crate::{
 use cmaeg_core::{
     activity::{Activity, Attachment},
     cloudevent::CloudEvent,
-    routing::{resolve, Resolution, RouteError, RouteInput},
+    routing::{Resolution, RouteError, RouteInput},
 };
 
 #[derive(Debug)]
@@ -33,11 +33,8 @@ pub(crate) fn routed_activity(
         non_human_providers: &state.routing.non_human_providers,
         attributes_signed,
     };
-    match resolve(
-        &channel.definition,
-        &input,
-        state.routing.multi_consumer_enabled,
-    ) {
+    match crate::telemetry::routing::resolve(channel, &input, state.routing.multi_consumer_enabled)
+    {
         Ok(Resolution::Legacy) => {}
         Ok(Resolution::Routed(decision)) => {
             activity.routing = Some(decision.routing);

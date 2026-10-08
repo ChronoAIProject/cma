@@ -56,9 +56,6 @@ pub(crate) async fn dispatch(
         let activity = request.activity.clone();
         let routing = state.routing.clone();
         let admit = move |consumer: Option<&cmaeg_core::ids::ConsumerId>| {
-            if consumer.is_some() && channel.definition.routing.is_none() {
-                return false;
-            }
             let input = cmaeg_core::routing::RouteInput {
                 activity: &activity,
                 chat_source: channel.definition.source_of(&activity.source),
@@ -67,19 +64,20 @@ pub(crate) async fn dispatch(
                 non_human_providers: &routing.non_human_providers,
                 attributes_signed: true,
             };
-            match cmaeg_core::routing::resolve(
-                &channel.definition,
-                &input,
-                routing.multi_consumer_enabled,
-            ) {
-                Ok(resolution) => {
-                    *captured.lock().unwrap() = Some(resolution);
-                    true
-                }
-                Err(_) => false,
-            }
+            let result = if consumer.is_some() && channel.definition.routing.is_none() {
+                Err(cmaeg_core::routing::RouteError::InteractionDenied)
+            } else {
+                cmaeg_core::routing::resolve(
+                    &channel.definition,
+                    &input,
+                    routing.multi_consumer_enabled,
+                )
+            };
+            let admitted = result.is_ok();
+            *captured.lock().unwrap() = Some((consumer.cloned(), result));
+            admitted
         };
-        let interaction = match store
+        let interaction = store
             .consume(
                 &request.channel,
                 &request.activity,
@@ -89,8 +87,36 @@ pub(crate) async fn dispatch(
                 &callback.message_id,
                 &admit,
             )
-            .await
-        {
+            .await;
+        let decision = decision.lock().unwrap().take();
+        if let Some((consumer, result)) = &decision {
+            // A store failure after an admitted gate is not a routing success.
+            // A rejecting gate returns Denied immediately, with no later CAS.
+            if interaction.is_ok()
+                || matches!(
+                    (&interaction, result),
+                    (Err(crate::interactions::Error::Denied), Err(_))
+                )
+            {
+                crate::telemetry::routing::record(
+                    &request.channel,
+                    &cmaeg_core::routing::RouteInput {
+                        activity: &request.activity,
+                        chat_source: request
+                            .channel
+                            .definition
+                            .source_of(&request.activity.source),
+                        card_consumer: Some(consumer.as_ref()),
+                        published: None,
+                        non_human_providers: &state.routing.non_human_providers,
+                        attributes_signed: true,
+                    },
+                    state.routing.multi_consumer_enabled,
+                    result,
+                );
+            }
+        }
+        let interaction = match interaction {
             Ok(value) => value,
             Err(crate::interactions::Error::Denied) => {
                 return refused(Refusal::InteractionExpiredOrInvalid)
@@ -105,7 +131,7 @@ pub(crate) async fn dispatch(
         };
         request.activity.kind = cmaeg_core::activity::ActivityKind::Interaction(interaction.0);
         request.activity.occurred_at = interaction.1;
-        let Some(decision) = decision.lock().unwrap().take() else {
+        let Some((_, Ok(decision))) = decision else {
             tracing::error!("consumed interaction has no admitted routing decision");
             return problem(
                 StatusCode::INTERNAL_SERVER_ERROR,

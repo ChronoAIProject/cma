@@ -212,6 +212,7 @@ fn kill_switch(
 }
 
 fn record_shadow(trace: &mut Trace, resolution: RouteResolution, legacy: bool) {
+    trace.select(resolution);
     let outcome = if legacy { "legacy" } else { "closed" };
     trace.push(TraceStep::Shadow {
         resolution,

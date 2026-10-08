@@ -44,11 +44,11 @@ impl ToolReceipt {
             metrics::counter!(names::TOOL_SENDS_LATE, names::OP => late.op, names::OUTCOME => outcome)
                 .increment(1);
             if matches!(result.delivery, DeliveryOutcome::Confirmed { .. }) {
-                tracing::info!(channel = %late.channel, event_id = %late.event_id,
+                tracing::info!(channel = %late.channel, event_id = %crate::telemetry::channel_hash(late.event_id.as_str()),
                     consumer = %late.consumer, outcome,
                     "routed tool send finished after its caller was answered");
             } else {
-                tracing::warn!(channel = %late.channel, event_id = %late.event_id,
+                tracing::warn!(channel = %late.channel, event_id = %crate::telemetry::channel_hash(late.event_id.as_str()),
                     consumer = %late.consumer, outcome,
                     "routed tool send finished after its caller was answered");
             }

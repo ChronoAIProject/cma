@@ -161,7 +161,7 @@ impl CustomDelivery {
         self.post_terminal(channel, event, outcome, true).await
     }
     #[tracing::instrument(name="cmaeg.deliver", skip_all, fields(
-        channel = %crate::telemetry::channel_hash(channel.id.as_str()), event_id = %event.event_id,
+        channel = %crate::telemetry::channel_hash(channel.id.as_str()), event_id = %crate::telemetry::channel_hash(event.event_id.as_str()),
         consumer = event.consumer.as_ref().map_or("default", |id| id.as_str())))]
     async fn post_terminal(
         &self,

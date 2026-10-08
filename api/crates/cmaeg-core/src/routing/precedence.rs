@@ -54,6 +54,7 @@ pub(super) fn route(
     let source_id = input.activity.source.source_id();
     // 1. A click reaches only its card's consumer; nothing below may pre-empt it.
     if let Some(card) = input.card_consumer {
+        trace.select(RouteResolution::Interaction);
         trace.push(TraceStep::Precedence("interaction"));
         let target = interaction(roster, card)?;
         let selection = Selection::of(RouteResolution::Interaction, vec![target]);
@@ -61,6 +62,7 @@ pub(super) fn route(
     }
     // 2. A hand-off reaches the consumers its publisher named.
     if let Some((tokens, causation)) = &input.published {
+        trace.select(RouteResolution::AgentEvent);
         trace.push(TraceStep::Precedence("agent_event"));
         let ids = event_field::published(roster, tokens)?;
         let targets = explicit(roster, input, &ids)?;
@@ -101,11 +103,13 @@ pub(super) fn select(
 ) -> Result<Selection, Refusal> {
     // Clicks are resolved only from their card, which the caller supplies.
     if matches!(input.activity.kind, ActivityKind::Interaction(_)) {
+        trace.select(RouteResolution::Interaction);
         return Err(at(RouteResolution::Interaction)(
             RouteError::InteractionDenied,
         ));
     }
     if let Some(form) = addressing::recognize(roster, input) {
+        trace.select(form.resolution());
         let refused = at(form.resolution());
         if let Some(addressed) = form.resolve(roster).map_err(&refused)? {
             let resolution = addressed.resolution;
@@ -120,6 +124,7 @@ pub(super) fn select(
         }
     }
     let resolution = RouteResolution::EventField;
+    trace.select(resolution);
     if let Some(ids) = event_field::targets(roster, input).map_err(at(resolution))? {
         let targets =
             addressed_targets(roster, input, &ids, resolution, trace).map_err(at(resolution))?;
@@ -128,6 +133,7 @@ pub(super) fn select(
     if let Some(rule) = rules::first_match(def, input.activity, trace) {
         trace.push(TraceStep::Precedence("rules"));
         let resolution = RouteResolution::Rule;
+        trace.select(resolution);
         let targets = implicit(roster, input, &rule.targets, trace).map_err(at(resolution))?;
         return Ok(Selection {
             rule_id: Some(rule.id.clone()),
@@ -136,6 +142,7 @@ pub(super) fn select(
     }
     trace.push(TraceStep::Precedence("default"));
     let resolution = RouteResolution::Default;
+    trace.select(resolution);
     let targets =
         implicit(roster, input, &roster.policy.default_targets, trace).map_err(at(resolution))?;
     Ok(Selection::of(resolution, targets))

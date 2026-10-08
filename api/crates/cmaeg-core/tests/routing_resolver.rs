@@ -14,3 +14,6 @@ mod policy;
 mod precedence;
 #[path = "routing_resolver/rules.rs"]
 mod rules;
+
+#[path = "routing_resolver/classification.rs"]
+mod classification;

@@ -319,7 +319,7 @@ async fn tool_reply(
 }
 
 #[tracing::instrument(name="cmaeg.deliver", skip_all, fields(
-    channel = %crate::telemetry::channel_hash(channel.id.as_str()), event_id = %event.event_id,
+    channel = %crate::telemetry::channel_hash(channel.id.as_str()), event_id = %crate::telemetry::channel_hash(event.event_id.as_str()),
     consumer = event.consumer.as_ref().map_or("default", |id| id.as_str())))]
 async fn complete_sync_reply(
     sender: &Sender,

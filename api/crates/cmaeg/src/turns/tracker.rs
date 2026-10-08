@@ -105,7 +105,7 @@ impl TurnTracker {
             }
             .instrument(tracing::info_span!("cmaeg.turn",
                 channel = %crate::telemetry::channel_hash(request.channel.id.as_str()),
-                event_id = %request.activity.event_id,
+                event_id = %crate::telemetry::channel_hash(request.activity.event_id.as_str()),
                 consumer))
             .with_current_subscriber(),
         );

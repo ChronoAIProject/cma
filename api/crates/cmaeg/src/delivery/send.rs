@@ -44,7 +44,7 @@ pub(super) struct Sender {
 }
 impl Sender {
     #[tracing::instrument(name="cmaeg.deliver", parent = ctx.trace, skip_all, fields(
-        channel = %crate::telemetry::channel_hash(ctx.channel.id.as_str()), event_id = %event.event_id,
+        channel = %crate::telemetry::channel_hash(ctx.channel.id.as_str()), event_id = %crate::telemetry::channel_hash(event.event_id.as_str()),
         consumer = event.consumer.as_ref().map_or("default", |id| id.as_str())))]
     pub async fn reply(
         &self,

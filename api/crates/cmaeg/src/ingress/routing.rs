@@ -8,7 +8,7 @@ use crate::{
 };
 use cmaeg_core::{
     activity::Activity,
-    routing::{resolve, Resolution, RouteError, RouteInput},
+    routing::{Resolution, RouteError, RouteInput},
     seal::ReplyAddress,
 };
 use std::sync::Arc;
@@ -27,11 +27,8 @@ pub(super) fn chat(
         non_human_providers: &state.routing.non_human_providers,
         attributes_signed: true,
     };
-    match resolve(
-        &channel.definition,
-        &input,
-        state.routing.multi_consumer_enabled,
-    ) {
+    match crate::telemetry::routing::resolve(channel, &input, state.routing.multi_consumer_enabled)
+    {
         Ok(Resolution::Legacy) => Ok(()),
         Ok(Resolution::Routed(decision)) => {
             activity.routing = Some(decision.routing);

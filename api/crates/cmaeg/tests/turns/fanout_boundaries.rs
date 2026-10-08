@@ -131,3 +131,29 @@ async fn invalid_base_and_invalid_targets_never_launch_or_hold_capacity() {
         assert!(h.base.tracker.is_empty());
     }
 }
+
+#[test]
+fn fanout_width_counts_each_routed_launch_once_and_excludes_legacy_or_invalid_targets() {
+    let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+    let handle = recorder.handle();
+    metrics::with_local_recorder(&recorder, || {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let h = Harness::new().await;
+                h.launcher()
+                    .launch_routed(h.request(&["default", REVIEWER]), None)
+                    .await;
+                let mut legacy = h.request(&["default"]);
+                legacy.activity.routing = None;
+                h.launcher().launch_routed(legacy, None).await;
+                let invalid = h.request(&[]);
+                h.launcher().launch_routed(invalid, None).await;
+                let text = handle.render();
+                assert!(text.contains("cmaeg_fanout_width_count 1"), "{text}");
+                assert!(text.contains("cmaeg_fanout_width_sum 2"), "{text}");
+            });
+    });
+}

@@ -60,18 +60,29 @@ async fn only_leased_consumer_tasks_gain_the_consumer_span_field() {
         .filter(|line| line.contains("cmaeg.turn"))
         .collect::<Vec<_>>();
     assert_eq!(lines.len(), 4, "{logs}");
+    for event in [
+        "legacy-case",
+        "finalizer-case",
+        "default-case",
+        "reviewer-case",
+    ] {
+        assert!(!logs.contains(event), "raw event identifier leaked: {logs}");
+    }
     for event in ["legacy-case", "finalizer-case"] {
-        let line = lines.iter().find(|line| line.contains(event)).unwrap();
+        let line = lines
+            .iter()
+            .find(|line| line.contains(&cmaeg::telemetry::channel_hash(event)))
+            .unwrap();
         assert!(!line.contains("consumer="), "{line}");
     }
     assert!(lines
         .iter()
-        .find(|line| line.contains("default-case"))
+        .find(|line| line.contains(&cmaeg::telemetry::channel_hash("default-case")))
         .unwrap()
         .contains("consumer=\"default\""));
     assert!(lines
         .iter()
-        .find(|line| line.contains("reviewer-case"))
+        .find(|line| line.contains(&cmaeg::telemetry::channel_hash("reviewer-case")))
         .unwrap()
         .contains(&format!("consumer=\"{REVIEWER}\"")));
 }

@@ -81,7 +81,7 @@ impl DeliveryCommand {
             } => tracing::info_span!(
                 "cmaeg.deliver",
                 channel = %crate::telemetry::channel_hash(channel.id.as_str()),
-                event_id = %payload.event_id,
+                event_id = %crate::telemetry::channel_hash(payload.event_id.as_str()),
                 consumer = %consumer
             ),
         }

@@ -2,6 +2,7 @@
 pub mod http;
 pub mod names;
 pub mod operations;
+pub mod routing;
 pub mod timing;
 use metrics_exporter_prometheus::{Matcher, PrometheusBuilder, PrometheusHandle};
 use std::sync::OnceLock;
@@ -20,6 +21,11 @@ pub fn install() -> Result<PrometheusHandle, String> {
                 .set_buckets_for_metric(
                     Matcher::Prefix("cmaeg_media_".into()),
                     &names::MEDIA_BUCKETS,
+                )
+                .map_err(|error| error.to_string())?
+                .set_buckets_for_metric(
+                    Matcher::Full(names::FANOUT_WIDTH.into()),
+                    &names::FANOUT_BUCKETS,
                 )
                 .map_err(|error| error.to_string())?
                 .build_recorder();
@@ -42,6 +48,12 @@ pub fn install() -> Result<PrometheusHandle, String> {
                 metrics::describe_gauge!(name, "CMAEG current local object count");
                 metrics::gauge!(name).set(0);
             }
+            metrics::describe_histogram!(
+                names::FANOUT_WIDTH,
+                metrics::Unit::Count,
+                "Consumers targeted by one routed event"
+            );
+            let _ = metrics::histogram!(names::FANOUT_WIDTH);
             describe_media();
             Ok(handle)
         })

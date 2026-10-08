@@ -118,10 +118,13 @@ impl Cards {
         }
     }
     async fn click(&self, enabled: bool) -> Value {
+        self.click_at(enabled, 42, 202).await
+    }
+    async fn click_at(&self, enabled: bool, message_id: i64, status: u16) -> Value {
         let data = self.card.markup["inline_keyboard"][0][0]["callback_data"]
             .as_str()
             .unwrap();
-        let query = json!({"id":"click-1","data":data,"from":{"id":7,"is_bot":false},"message":{"message_id":42,"date":super::relay_support::now()-1,"chat":{"id":42,"type":"private"},"text":"Choose"}});
+        let query = json!({"id":"click-1","data":data,"from":{"id":7,"is_bot":false},"message":{"message_id":message_id,"date":super::relay_support::now()-1,"chat":{"id":42,"type":"private"},"text":"Choose"}});
         let mut state = self.app.state.clone().with_interactions(self.store.clone());
         state.routing.multi_consumer_enabled = enabled;
         let response = if self.relay {
@@ -149,7 +152,7 @@ impl Cards {
                 .unwrap();
             http::telegram::callback(State(state), Path(self.app.id.clone()), request).await
         };
-        assert_eq!(response.status(), 202);
+        assert_eq!(response.status(), status);
         serde_json::from_slice(&to_bytes(response.into_body(), 16384).await.unwrap()).unwrap()
     }
     fn replace(&self, edit: impl FnOnce(&mut Value)) {
@@ -295,4 +298,46 @@ async fn default_cards_override_rules_and_take_the_legacy_path_when_disabled() {
             assert!(cards.app.observer.routed.lock().unwrap().is_empty());
         }
     }
+}
+
+#[test]
+fn click_metrics_count_final_routing_outcomes_once_not_cas_attempts() {
+    let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+    let handle = recorder.handle();
+    metrics::with_local_recorder(&recorder, || {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let cards = Cards::new("reviewer", false).await;
+                assert_eq!(cards.click_at(true, 43, 202).await["status"], "refused");
+                assert!(!handle.render().contains("resolution=\"interaction\""));
+                cards.backend.fail_put.store(true, Ordering::SeqCst);
+                assert_eq!(
+                    cards.click_at(true, 42, 503).await["detail"],
+                    "interaction_store_unavailable"
+                );
+                assert!(!handle.render().contains("resolution=\"interaction\""));
+                cards.backend.fail_put.store(false, Ordering::SeqCst);
+                cards.backend.put_conflicts.store(2, Ordering::SeqCst);
+                assert_eq!(cards.click(true).await["status"], "refused");
+                assert!(!handle.render().contains("resolution=\"interaction\""));
+                assert_eq!(cards.click(false).await["status"], "refused");
+                cards.backend.put_conflicts.store(1, Ordering::SeqCst);
+                assert_eq!(cards.click(true).await["status"], "accepted");
+                let text = handle.render();
+                for (resolution, outcome) in [("interaction", "routed"), ("kill_switch", "refused")]
+                {
+                    assert!(
+                        text.lines().any(|line| line
+                            .starts_with(cmaeg::telemetry::names::ROUTING_DECISIONS)
+                            && line.contains(&format!("resolution=\"{resolution}\""))
+                            && line.contains(&format!("outcome=\"{outcome}\""))
+                            && line.ends_with(" 1")),
+                        "{text}"
+                    );
+                }
+            });
+    });
 }

@@ -14,6 +14,7 @@ pub const MAX_TRACE_STEPS: usize = 16;
 pub struct Trace {
     steps: Vec<TraceStep>,
     truncated: bool,
+    selected_resolution: Option<RouteResolution>,
 }
 
 /// One step of a routing decision.
@@ -54,6 +55,16 @@ impl Trace {
         } else {
             self.truncated = true;
         }
+    }
+
+    /// The deciding stage, including a refusal or kill-switch shadow. Kept
+    /// separately so truncating diagnostic steps cannot lose classification.
+    pub fn selected_resolution(&self) -> Option<RouteResolution> {
+        self.selected_resolution
+    }
+
+    pub(crate) fn select(&mut self, resolution: RouteResolution) {
+        self.selected_resolution = Some(resolution);
     }
 
     pub fn steps(&self) -> &[TraceStep] {

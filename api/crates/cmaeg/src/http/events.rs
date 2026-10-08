@@ -268,7 +268,10 @@ async fn prepare_event(
         Ok(event) => event,
         Err(_) => return Err(invalid("invalid CloudEvent")),
     };
-    verify_span.record("event_id", event.id.as_str());
+    verify_span.record(
+        "event_id",
+        crate::telemetry::channel_hash(event.id.as_str()),
+    );
     // Extraction only reads the verified body; no locator is fetched here.
     let attachments = match config {
         Some(config) if state.ingress.media_enabled => {
@@ -349,6 +352,21 @@ async fn prepare_event(
         Ok(turn) => turn,
         Err(reason) => return Err(invalid(reason)),
     };
+    if turn.channel.definition.routing.is_none() {
+        crate::telemetry::routing::record(
+            &turn.channel,
+            &cmaeg_core::routing::RouteInput {
+                activity: &turn.activity,
+                chat_source: None,
+                card_consumer: None,
+                published: None,
+                non_human_providers: &state.ingress.routing.non_human_providers,
+                attributes_signed: true,
+            },
+            state.ingress.routing.multi_consumer_enabled,
+            &Ok(cmaeg_core::routing::Resolution::Legacy),
+        );
+    }
     drop(verify_guard);
     drop(verify_time);
     turn.timing = Some(timing);

@@ -28,7 +28,7 @@ impl ToolsState {
         let deadline = start.0 + TOOL_DEADLINE;
         let (channel, event_id) = command.event_key();
         let consumer = command.consumer().map_or("default", ConsumerId::as_str);
-        let span = tracing::info_span!("cmaeg.deliver", channel = %crate::telemetry::channel_hash(channel.as_str()), event_id = %event_id, consumer);
+        let span = tracing::info_span!("cmaeg.deliver", channel = %crate::telemetry::channel_hash(channel.as_str()), event_id = %crate::telemetry::channel_hash(event_id.as_str()), consumer);
         async {
             if Instant::now() >= deadline {
                 return Err(timeout());

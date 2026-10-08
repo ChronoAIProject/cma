@@ -25,3 +25,6 @@ mod custom_stream;
 mod cards;
 #[path = "fake_provider.rs"]
 pub mod fake_provider;
+
+#[path = "routing/privacy.rs"]
+mod privacy;

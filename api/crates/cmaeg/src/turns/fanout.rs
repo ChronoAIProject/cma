@@ -20,6 +20,7 @@ use cmaeg_core::{
 use futures_util::future::{join_all, BoxFuture};
 use std::{sync::Arc, time::Duration};
 use tokio::sync::{oneshot, OwnedSemaphorePermit};
+use tracing::Instrument;
 
 pub struct FanoutLauncher {
     inner: Arc<dyn TurnLauncher>,
@@ -79,6 +80,8 @@ impl FanoutLauncher {
                 refusal(ProblemCode::InvalidRequest, 400, "invalid_targets"),
             );
         }
+        metrics::histogram!(crate::telemetry::names::FANOUT_WIDTH)
+            .record(routing.targets.len() as f64);
         let now = time::OffsetDateTime::now_utc().unix_timestamp();
         let payload = match request.event_ref.open(&self.keys, now) {
             Ok(opened) => opened.payload,
@@ -262,7 +265,16 @@ impl TurnLauncher for FanoutLauncher {
         request: LaunchRequest,
         hold: Option<OwnedSemaphorePermit>,
     ) -> BoxFuture<'_, FanoutOutcome> {
-        Box::pin(self.routed(request, hold))
+        let targets = request
+            .activity
+            .routing
+            .iter()
+            .flat_map(|routing| &routing.targets)
+            .take(usize::from(MAX_TARGETS))
+            .map(|target| target.id.as_str())
+            .collect::<Vec<_>>();
+        let span = tracing::info_span!("cmaeg.fanout", targets = ?targets);
+        Box::pin(self.routed(request, hold).instrument(span))
     }
 }
 

@@ -62,11 +62,15 @@ pub const HISTOGRAMS: [&str; 6] = [
     TOOL_DURATION,
 ];
 pub const FANOUT_FAILED_DROPPED: &str = "cmaeg_fanout_consumer_failed_dropped_total";
+pub const ROUTING_DECISIONS: &str = "cmaeg_routing_decisions_total";
+pub const FANOUT_WIDTH: &str = "cmaeg_fanout_width";
+pub const FANOUT_BUCKETS: [f64; 8] = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
 pub const FANOUT_TURNS: &str = "cmaeg_fanout_turns_total";
-pub const COUNTERS: [&str; 16] = [
+pub const COUNTERS: [&str; 17] = [
     TOOL_SENDS_LATE,
     FANOUT_FAILED_DROPPED,
     FANOUT_TURNS,
+    ROUTING_DECISIONS,
     EVENTS,
     REFUSALS,
     PROVIDER_ERRORS,

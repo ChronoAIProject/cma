@@ -93,6 +93,7 @@ async fn metrics_register_once_and_curl_scrapes_the_private_listener() {
     let second = telemetry::install().unwrap();
     metrics::histogram!(names::INGRESS_TO_PROVIDER, names::SOURCE => "custom", names::COLD => "false", names::MEDIA => "none").record(0.012);
     metrics::histogram!(names::MEDIA_FETCH_SECONDS, names::SOURCE => "nyxid", names::OUTCOME => "ok").record(0.2);
+    metrics::histogram!(names::FANOUT_WIDTH).record(3.0);
     let server = MetricsServer::start("127.0.0.1:0".parse().unwrap(), first)
         .await
         .unwrap();
@@ -117,6 +118,7 @@ async fn metrics_register_once_and_curl_scrapes_the_private_listener() {
         .chain(names::MEDIA_HISTOGRAMS)
         .chain(names::MEDIA_COUNTERS)
         .chain(names::MEDIA_GAUGES)
+        .chain([names::FANOUT_WIDTH])
     {
         assert_eq!(
             text.matches(&format!("# TYPE {name} ")).count(),
@@ -127,7 +129,7 @@ async fn metrics_register_once_and_curl_scrapes_the_private_listener() {
     assert!(text.contains("le=\"0.005\""));
     assert!(text.contains("le=\"10\""));
     // Media histograms use their own bucket set, reaching the 90 s budget;
-    // every other histogram keeps the default set.
+    // duration histograms outside media keep the default set.
     assert!(text
         .contains("cmaeg_media_fetch_seconds_bucket{source=\"nyxid\",outcome=\"ok\",le=\"90\"} 1"));
     assert!(!text.contains(
@@ -139,6 +141,13 @@ async fn metrics_register_once_and_curl_scrapes_the_private_listener() {
     assert!(!text.contains(
         "cmaeg_ingress_to_provider_seconds_bucket{source=\"custom\",cold=\"false\",media=\"none\",le=\"90\"}"
     ));
+    for bucket in 1..=8 {
+        let count = u8::from(bucket >= 3);
+        assert!(text.contains(&format!(
+            "cmaeg_fanout_width_bucket{{le=\"{bucket}\"}} {count}"
+        )));
+    }
+    assert!(!text.contains("cmaeg_fanout_width_bucket{le=\"0.005\"}"));
     for gauge in names::MEDIA_GAUGES {
         assert!(
             text.lines().any(|line| line == format!("{gauge} 0")),
@@ -226,3 +235,10 @@ async fn multi_consumer_delivery_metrics_exist_with_bounded_labels_only() {
         }
     }
 }
+
+#[path = "../../cmaeg-core/tests/routing_policy/fixture.rs"]
+mod policy;
+#[path = "telemetry/routing.rs"]
+mod routing;
+#[path = "../../cmaeg-core/tests/routing_resolver/fixture.rs"]
+mod routing_fixture;
