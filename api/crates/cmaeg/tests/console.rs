@@ -7,6 +7,10 @@ pub mod fake_nyxid;
 mod authority;
 #[path = "console/enablement.rs"]
 mod enablement;
+#[path = "console/hygiene.rs"]
+mod hygiene;
+#[path = "console/owner.rs"]
+mod owner;
 #[path = "console/protection.rs"]
 mod protection;
 #[path = "console/sessions.rs"]

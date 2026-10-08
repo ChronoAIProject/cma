@@ -245,6 +245,15 @@ impl ConsoleAuthority {
         match self.check(subject, auth, &OwnerSelection::Personal).await {
             Check::Ok(creator) if creator.subject == subject => {
                 if matches!(need, Need::Select(_)) {
+                    // The fresh refusal replaces any verdict for that owner,
+                    // so the next read checks again instead of reusing it.
+                    if auth
+                        .verdict
+                        .as_ref()
+                        .is_some_and(|verdict| verdict.owner == *selected)
+                    {
+                        auth.verdict = None;
+                    }
                     cell.meta().flash = Some(Flash::OwnerRefused);
                     tracing::info!(subject_hash_prefix = %subject_hash_prefix(subject), outcome = "refused", owner_kind = "organization", "console owner selection");
                     return Err(Denied::Refused);

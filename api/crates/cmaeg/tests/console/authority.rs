@@ -372,7 +372,10 @@ async fn every_route_but_sign_in_plumbing_derives_authority() {
     );
     let harness = Harness::enabled().await;
     let (sid, _) = signed_in(&harness, "alice").await;
+    // The forms' CSRF values, read while NyxID still answers.
+    let home = harness.get_as("/console", &sid).await.text().await.unwrap();
     harness.nyxid.oauth.down.store(true, Ordering::SeqCst);
+    harness.clock.advance(std::time::Duration::from_secs(61));
     for route in ROUTES.iter().filter(|route| route.access != Access::Public) {
         let (anonymous, authorized) = match route.method {
             "GET" => (
@@ -380,13 +383,7 @@ async fn every_route_but_sign_in_plumbing_derives_authority() {
                 harness.get_as(route.path, &sid).await,
             ),
             _ => {
-                let page = harness
-                    .get_as("/console", &sid)
-                    .await
-                    .text()
-                    .await
-                    .unwrap_or_default();
-                let csrf = super::support::csrf_for(&page, route.path);
+                let csrf = super::support::csrf_for(&home, route.path);
                 (
                     harness.post(route.path, None, None, &[]).await,
                     harness

@@ -10,12 +10,14 @@ pub mod authority;
 pub mod clock;
 mod cookies;
 mod csrf;
+pub mod directory;
 mod extract;
 mod guard;
 mod headers;
 mod login;
 mod login_limit;
 mod oidc;
+mod orgs;
 pub(crate) mod pages;
 mod redirect;
 mod revoke;
@@ -46,7 +48,9 @@ use oidc::DiscoverySink as _;
 use crate::{auth::CreatorAuthenticator, telemetry::names, ConsoleConfig};
 use authority::ConsoleAuthority;
 use clock::Clock;
+use directory::ChannelDirectory;
 use login_limit::LoginLimiter;
+use session::{OrgChoice, SessionCell};
 use session::{SessionLimits, SessionStore};
 use token::TokenClient;
 
@@ -71,6 +75,8 @@ pub struct ConsoleDeps {
     /// The identity and organization-admin rule REST uses; the console calls
     /// only its uncached form.
     pub creator_auth: Arc<CreatorAuthenticator>,
+    /// The owner's channels for the signed-in layout.
+    pub directory: Arc<dyn ChannelDirectory>,
 }
 
 /// The console's shared state. Built only while `CMAEG_CONSOLE_ENABLED` is
@@ -95,6 +101,7 @@ struct Inner {
     endpoints: Arc<EndpointCell>,
     sessions: Arc<SessionStore>,
     authority: ConsoleAuthority,
+    directory: Arc<dyn ChannelDirectory>,
 }
 
 impl Console {
@@ -145,6 +152,7 @@ impl Console {
                 endpoints,
                 sessions,
                 authority,
+                directory: deps.directory,
             }),
         })
     }
@@ -207,6 +215,32 @@ impl Console {
 
     pub fn authority(&self) -> &ConsoleAuthority {
         &self.inner.authority
+    }
+
+    pub(crate) fn directory(&self) -> &dyn ChannelDirectory {
+        self.inner.directory.as_ref()
+    }
+
+    /// The switcher's organizations, refetched with the session's own
+    /// access token at most once a minute. The auth lock is held only to
+    /// copy the token; NyxID is called without it.
+    pub(crate) async fn org_choices(&self, cell: &SessionCell) -> Vec<OrgChoice> {
+        let now = self.inner.sessions.now();
+        let cached = cell.meta().orgs.clone();
+        if let Some((orgs, at)) = &cached {
+            if now.duration_since(*at) < orgs::REFETCH_AFTER {
+                return orgs.clone();
+            }
+        }
+        let access = cell.lock_auth().await.access().clone();
+        match orgs::fetch(&self.inner.http, &self.inner.nyxid_base_url, &access).await {
+            Some(orgs) => {
+                cell.meta().orgs = Some((orgs.clone(), now));
+                orgs
+            }
+            // Keep showing the last list; selecting is verified anyway.
+            None => cached.map(|(orgs, _)| orgs).unwrap_or_default(),
+        }
     }
 
     /// Sweep idle and expired sessions every minute.
@@ -306,6 +340,7 @@ pub(crate) fn compose(
         clock: Arc::new(clock::SystemClock),
         keys,
         creator_auth,
+        directory: Arc::new(directory::NoChannels),
     })?;
     // Detached: discovery and the sweeper run for the life of the process.
     drop(console.spawn_discovery());

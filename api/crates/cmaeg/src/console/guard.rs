@@ -14,7 +14,15 @@ use axum::{
     RequestPartsExt,
 };
 
-use super::{cookies, csrf, redirect, session::SessionCell, Console};
+use super::{
+    cookies, csrf,
+    extract::RequestedOwner,
+    orgs,
+    pages::layout::PERSONAL,
+    redirect,
+    session::{OwnerSelection, SessionCell},
+    Console,
+};
 
 /// Console forms are a few short fields.
 const MAX_FORM_BYTES: usize = 16 * 1024;
@@ -79,5 +87,24 @@ async fn verified_form(request: Request, cell: &SessionCell) -> Result<Request, 
     if action.is_empty() || !csrf::matches(&key, &action, &record, &token) {
         return Err(csrf::reject("csrf"));
     }
+    if action == redirect::OWNER {
+        // The owner switch's extractor verifies the requested owner afresh.
+        if let Some(requested) = requested_owner(&bytes) {
+            parts.extensions.insert(RequestedOwner(requested));
+        }
+    }
     Ok(Request::from_parts(parts, Body::from(bytes)))
+}
+
+/// The one `owner` field of the switch form: `personal` or an organization
+/// id of the shape `X-CMAEG-Owner` accepts.
+fn requested_owner(form: &[u8]) -> Option<OwnerSelection> {
+    let mut values = url::form_urlencoded::parse(form)
+        .filter(|(name, _)| name == "owner")
+        .map(|(_, value)| value.into_owned());
+    match (values.next(), values.next()) {
+        (Some(value), None) if value == PERSONAL => Some(OwnerSelection::Personal),
+        (Some(value), None) if orgs::valid_id(&value) => Some(OwnerSelection::Organization(value)),
+        _ => None,
+    }
 }

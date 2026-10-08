@@ -11,6 +11,7 @@ pub(crate) const LOGIN: &str = "/console/login";
 pub(crate) const CALLBACK: &str = "/console/callback";
 pub(crate) const SIGNED_OUT: &str = "/console/signed-out";
 pub(crate) const LOGOUT: &str = "/console/logout";
+pub(crate) const OWNER: &str = "/console/owner";
 const MAX_RETURN_TO: usize = 512;
 
 /// A same-origin console path to come back to after sign-in, or `/console`.

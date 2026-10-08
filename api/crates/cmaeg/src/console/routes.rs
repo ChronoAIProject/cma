@@ -1,52 +1,112 @@
-//! The console's own pages: home, signed-out and logout.
+//! The console's own pages: home, the owner switch, signed-out and logout.
 use axum::{
-    extract::{Query, State},
-    http::{header, StatusCode},
-    response::{Html, IntoResponse, Response},
+    extract::{rejection::QueryRejection, Query, State},
+    http::header,
+    response::Response,
     Extension,
 };
 use serde::Deserialize;
 
 use super::{
-    authority::Authorized,
+    authority::{Authorized, OwnerScope},
     cookies, csrf,
+    extract::{Fresh, RequestedOwner},
     guard::CurrentSession,
-    pages::{self, signin},
-    redirect,
-    session::EndReason,
-    Console,
+    pages::{layout, signin},
+    redirect::{self, HOME},
+    session::{EndReason, Flash, OwnerSelection},
+    subject_hash_prefix, Console,
 };
-use crate::http::html::escape;
 
-/// `GET /console`. Without a session the extractor renders the sign-in
-/// page, never a redirect to NyxID.
+#[derive(Deserialize)]
+pub(crate) struct HomeQuery {
+    page: Option<usize>,
+    q: Option<String>,
+}
+
+/// `GET /console`: the signed-in layout. Without a session the extractor
+/// renders the sign-in page, never a redirect to NyxID.
 pub(crate) async fn home(
+    State(console): State<Console>,
     Extension(session): Extension<CurrentSession>,
-    _authorized: Authorized,
+    authorized: Authorized,
+    query: Result<Query<HomeQuery>, QueryRejection>,
 ) -> Response {
     let Some(cell) = session.0 else {
-        return signin::sign_in(StatusCode::OK, redirect::HOME, None);
+        return redirect::see_other(HOME);
     };
-    let (subject, key) = {
-        let meta = cell.meta();
-        (meta.subject.clone(), meta.csrf_key)
+    let orgs = console.org_choices(&cell).await;
+    let (subject, selected, key, flash) = {
+        let mut meta = cell.meta();
+        (
+            meta.subject.clone(),
+            meta.selected.clone(),
+            meta.csrf_key,
+            meta.flash.take(),
+        )
     };
-    let logout = pages::post_button(
-        redirect::LOGOUT,
-        &csrf::token(&key, redirect::LOGOUT, ""),
-        "Sign out",
-        "secondary",
+    let (page, filter) = query.map_or((0, None), |Query(query)| (query.page.unwrap_or(0), query.q));
+    let channels = console
+        .directory()
+        .channels_for(&authorized, page, filter.as_deref());
+    layout::render(&layout::LayoutView {
+        subject: &mask(&subject),
+        selected: &selected,
+        orgs: &orgs,
+        owner_csrf: &csrf::token(&key, redirect::OWNER, ""),
+        logout_csrf: &csrf::token(&key, redirect::LOGOUT, ""),
+        flash: flash.as_ref(),
+        channels: &channels,
+    })
+}
+
+/// `POST /console/owner`: a mutation. Its extractor verified the requested
+/// owner afresh, exactly as `X-CMAEG-Owner` is verified, so only now is the
+/// selection stored. A refused choice leaves it unchanged with a notice.
+pub(crate) async fn switch_owner(
+    Extension(session): Extension<CurrentSession>,
+    requested: Option<Extension<RequestedOwner>>,
+    Fresh(authorized): Fresh<Authorized>,
+) -> Response {
+    let Some(cell) = session.0 else {
+        return redirect::signed_out(true);
+    };
+    let verified = match (requested, authorized.scope()) {
+        (Some(Extension(RequestedOwner(OwnerSelection::Personal))), OwnerScope::Personal) => {
+            Some(OwnerSelection::Personal)
+        }
+        (
+            Some(Extension(RequestedOwner(OwnerSelection::Organization(id)))),
+            OwnerScope::Organization,
+        ) if id == authorized.owner() => Some(OwnerSelection::Organization(id)),
+        _ => None,
+    };
+    let subject_hash = subject_hash_prefix(&cell.meta().subject);
+    let mut meta = cell.meta();
+    let (outcome, owner_kind) = match verified {
+        Some(selection) => {
+            let kind = match selection {
+                OwnerSelection::Personal => "personal",
+                OwnerSelection::Organization(_) => "organization",
+            };
+            meta.selected = selection;
+            ("ok", kind)
+        }
+        None => {
+            meta.flash = Some(Flash::OwnerRefused);
+            ("refused", "unknown")
+        }
+    };
+    drop(meta);
+    tracing::info!(
+        action = "owner",
+        record_hash = "-",
+        outcome,
+        subject_hash_prefix = %subject_hash,
+        owner_kind,
+        "console_action"
     );
-    let account = format!(
-        "<div class=\"account\"><span>Signed in as {}</span>{logout}</div>",
-        escape(&mask(&subject))
-    );
-    let body = "<h1>Console</h1><p class=\"lead\">You are signed in.</p>";
-    (
-        StatusCode::OK,
-        Html(pages::document("Console", &account, body)),
-    )
-        .into_response()
+    redirect::see_other(HOME)
 }
 
 #[derive(Deserialize)]

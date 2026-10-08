@@ -6,7 +6,7 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use sha2::{Digest, Sha256};
 use std::sync::atomic::Ordering;
 
-const POST_ROUTES: [&str; 1] = ["/console/logout"];
+const POST_ROUTES: [&str; 2] = ["/console/logout", "/console/owner"];
 const CSS: &str = include_str!("../../src/console/console.css");
 
 fn assert_secure(headers: &reqwest::header::HeaderMap, page: &str) {
@@ -158,7 +158,7 @@ async fn no_post_redirect_leaves_the_public_origin() {
     for path in POST_ROUTES {
         let sid = harness.session("alice");
         let page = harness.get_as("/console", &sid).await.text().await.unwrap();
-        let csrf = csrf_for(&page, "/console/logout");
+        let csrf = csrf_for(&page, path);
         for response in [
             harness.post(path, None, None, &[]).await,
             harness.post(path, Some("expired-session"), None, &[]).await,

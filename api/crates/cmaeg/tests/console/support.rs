@@ -96,6 +96,7 @@ impl Harness {
             clock: clock.clone(),
             keys: keys.clone(),
             creator_auth: creator_auth.clone(),
+            directory: Arc::new(cmaeg::console::directory::NoChannels),
         })
         .unwrap();
         let router = Router::new()

@@ -3,6 +3,7 @@
 //! stylesheet the CSP admits by hash. Every owner- or NyxID-controlled string
 //! goes through `escape`; error pages are generic and never echo upstream
 //! bodies.
+pub(crate) mod layout;
 pub(crate) mod signin;
 
 use axum::{

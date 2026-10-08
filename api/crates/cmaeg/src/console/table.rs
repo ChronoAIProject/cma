@@ -49,6 +49,11 @@ pub const ROUTES: &[ConsoleRoute] = &[
         path: redirect::LOGOUT,
         access: Access::Public,
     },
+    ConsoleRoute {
+        method: "POST",
+        path: redirect::OWNER,
+        access: Access::Mutation,
+    },
 ];
 
 /// The handler of `route`. A table entry without a handler fails the first
@@ -60,6 +65,7 @@ pub(crate) fn handler(route: &ConsoleRoute) -> MethodRouter<Console> {
         ("GET", redirect::CALLBACK) => get(login::callback),
         ("GET", redirect::SIGNED_OUT) => get(routes::signed_out),
         ("POST", redirect::LOGOUT) => post(routes::logout),
+        ("POST", redirect::OWNER) => post(routes::switch_owner),
         (method, path) => unreachable!("console route {method} {path} has no handler"),
     }
 }
