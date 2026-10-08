@@ -17,6 +17,10 @@ mod memory;
 mod observations;
 #[path = "console/owner.rs"]
 mod owner;
+#[path = "console/pages.rs"]
+mod pages;
+#[path = "console/pages_support.rs"]
+pub mod pages_support;
 #[path = "console/protection.rs"]
 mod protection;
 #[path = "console/sessions.rs"]

@@ -87,6 +87,20 @@ impl ActivityEntry {
             + self.consumers.len() * CONSUMER_BYTES
     }
 
+    /// True for a refusal, a refused launch, a failure notice or a rejected
+    /// delivery.
+    pub fn failed(&self) -> bool {
+        self.refusal.is_some()
+            || self.consumers.iter().any(|progress| {
+                progress.launch == Some(LaunchClass::Refused)
+                    || matches!(
+                        progress.delivery,
+                        Some((DeliveryStep::Failure, _))
+                            | Some((_, DeliveryClass::Rejected { .. }))
+                    )
+            })
+    }
+
     fn consumer(&mut self, id: &ConsumerId) -> &mut ConsumerProgress {
         let position = match self
             .consumers
@@ -101,6 +115,17 @@ impl ActivityEntry {
         };
         &mut self.consumers[position]
     }
+}
+
+/// A channel's recent traffic, as the channel list shows it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RecentActivity {
+    /// When the newest entry the ring holds was recorded.
+    pub last_event: Option<OffsetDateTime>,
+    /// Entries recorded since the cut-off.
+    pub events: usize,
+    /// Of those, the ones that failed.
+    pub failures: usize,
 }
 
 /// Which entries an activity read returns.
@@ -319,6 +344,27 @@ impl ActivityRings {
                 .find(|(entry, _)| entry.event_key.as_deref() == Some(event_key))
                 .map(|(entry, _)| entry.clone())
         })
+    }
+
+    /// `record`'s newest entry time, and its entries and failures since
+    /// `since`.
+    pub fn recent(&self, record: &RecordId, since: OffsetDateTime) -> RecentActivity {
+        let state = self.lock();
+        let Some(channel) = state.channels.get(record) else {
+            return RecentActivity::default();
+        };
+        let mut recent = RecentActivity {
+            last_event: channel.entries.back().map(|(entry, _)| entry.at),
+            ..RecentActivity::default()
+        };
+        for (entry, _) in channel.entries.iter().rev() {
+            if entry.at < since {
+                break;
+            }
+            recent.events += 1;
+            recent.failures += usize::from(entry.failed());
+        }
+        recent
     }
 
     /// `record`'s producers, most recently seen first.

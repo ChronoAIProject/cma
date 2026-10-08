@@ -3,6 +3,8 @@
 //! stylesheet the CSP admits by hash. Every owner- or NyxID-controlled string
 //! goes through `escape`; error pages are generic and never echo upstream
 //! bodies.
+pub(crate) mod banners;
+pub(crate) mod channels;
 pub(crate) mod layout;
 pub(crate) mod signin;
 
@@ -14,17 +16,17 @@ use axum::{
 use super::headers::STYLE;
 use crate::http::html::escape;
 
-/// One complete page. `account` (the header's right side) and `body` are
-/// markup the caller built from escaped values.
-pub(crate) fn document(title: &str, account: &str, body: &str) -> String {
+/// One complete page. `head` (extra head elements), `account` (the header's
+/// right side) and `body` are markup the caller built from escaped values.
+pub(crate) fn document(title: &str, head: &str, account: &str, body: &str) -> String {
     format!(
-        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><meta name=\"robots\" content=\"noindex\"><title>{} · CMA Event Gateway</title><style>{STYLE}</style></head><body><header><span class=\"brand\">CMA Event Gateway console</span>{account}</header><main>{body}</main></body></html>",
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><meta name=\"robots\" content=\"noindex\">{head}<title>{} · CMA Event Gateway</title><style>{STYLE}</style></head><body><header><span class=\"brand\">CMA Event Gateway console</span>{account}</header><main>{body}</main></body></html>",
         escape(title)
     )
 }
 
 pub(crate) fn page(status: StatusCode, title: &str, body: &str) -> Response {
-    (status, Html(document(title, "", body))).into_response()
+    (status, Html(document(title, "", "", body))).into_response()
 }
 
 /// The generic page for a console that cannot serve now. It names no cause
@@ -54,6 +56,15 @@ pub(crate) fn forbidden() -> Response {
         "Request refused",
         "<h1>Request refused</h1><p class=\"lead\">This request could not be verified. Go back to the console and try again.</p><p><a class=\"button secondary\" href=\"/console\">Go to the console</a></p>",
     )
+}
+
+/// A moment as the console shows it: RFC 3339 in UTC, to the second.
+pub(crate) fn when(at: time::OffsetDateTime) -> String {
+    at.to_offset(time::UtcOffset::UTC)
+        .replace_nanosecond(0)
+        .unwrap_or(at)
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap_or_else(|_| "—".to_owned())
 }
 
 /// A hidden CSRF field and a submit button posting to a same-origin path.

@@ -60,7 +60,7 @@ pub struct ChannelSummary {
     pub owner_kind: Option<NyxIdIdentityKind>,
     pub name: String,
     pub created_at: String,
-    /// The channel's sources: `telegram`, `nyxid_relay:<platform>` or
+    /// The channel's source ids: `telegram`, `relay_<platform>` or
     /// `custom`.
     pub sources: Vec<String>,
     pub consumers: Vec<ConsumerChip>,
@@ -94,7 +94,7 @@ impl ChannelSummary {
             owner_kind: Some(definition.owner.kind),
             name: definition.name.clone(),
             created_at: definition.created_at.clone(),
-            sources: definition.sources.iter().map(source_label).collect(),
+            sources: definition.sources.iter().map(source_id).collect(),
             consumers: definition
                 .consumers()
                 .map(|consumer| ConsumerChip {
@@ -166,10 +166,13 @@ impl Summaries {
     }
 }
 
-fn source_label(source: &Source) -> String {
+/// A source's stable id: `telegram`, `relay_<platform>` or `custom`. It is
+/// derived from the source's kind, never stored, and names the source in
+/// the console's chips and source routes.
+pub fn source_id(source: &Source) -> String {
     match source {
         Source::Telegram { .. } => "telegram".to_owned(),
-        Source::NyxidRelay { platform, .. } => format!("nyxid_relay:{}", platform.as_str()),
+        Source::NyxidRelay { platform, .. } => format!("relay_{}", platform.as_str()),
         Source::Custom { .. } => "custom".to_owned(),
     }
 }

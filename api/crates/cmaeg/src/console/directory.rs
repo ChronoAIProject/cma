@@ -4,9 +4,11 @@
 //! console composed without memory, such as the sign-in tests'. Every read
 //! takes an [`Authorized`], so no implementation can list channels for a
 //! bare owner string.
+use std::sync::Arc;
+
 use futures_util::future::BoxFuture;
 
-use super::authority::Authorized;
+use super::{activity::RecentActivity, authority::Authorized, summary::ChannelSummary};
 
 /// One page of the owner's channels, as the layout shows them.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -23,7 +25,14 @@ pub struct ChannelPage {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChannelRow {
     pub record_id: String,
+    /// Empty until the channel's summary has been read.
     pub name: String,
+    /// The version the owner index holds.
+    pub version: u64,
+    /// The summary memory holds for that version, if any.
+    pub summary: Option<Arc<ChannelSummary>>,
+    /// The last hour of the channel's activity ring.
+    pub activity: RecentActivity,
 }
 
 pub trait ChannelDirectory: Send + Sync {

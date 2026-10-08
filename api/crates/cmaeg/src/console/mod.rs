@@ -15,6 +15,7 @@ mod cookies;
 mod csrf;
 pub mod directory;
 mod extract;
+mod frame;
 mod guard;
 mod headers;
 pub mod index;
@@ -33,6 +34,7 @@ mod redirect;
 mod revoke;
 mod routes;
 pub mod session;
+pub mod source_changes;
 pub mod summary;
 pub mod table;
 #[cfg(test)]
@@ -64,6 +66,7 @@ use directory::ChannelDirectory;
 use login_limit::LoginLimiter;
 use session::{OrgChoice, SessionCell};
 use session::{SessionLimits, SessionStore};
+use source_changes::SourceChanges;
 use token::TokenClient;
 
 /// How often idle and expired sessions are swept, so their refresh tokens
@@ -87,8 +90,14 @@ pub struct ConsoleDeps {
     /// REST's identity and organization-admin rule and its per-token cache,
     /// shared with REST: the console's only authority cache.
     pub creator_auth: Arc<CreatorAuthenticator>,
-    /// The owner's channels for the signed-in layout.
+    /// The owner's channels for the signed-in pages.
     pub directory: Arc<dyn ChannelDirectory>,
+    /// How the console attaches and detaches sources, if it may.
+    pub source_changes: Arc<dyn SourceChanges>,
+    /// Whether the operator has multi-consumer routing on. No routing policy
+    /// exists in this image yet, so the gateway composes `false`; the pages
+    /// already explain what a routed channel does while it is off.
+    pub multi_consumer: bool,
 }
 
 /// The console's shared state. Built only while `CMAEG_CONSOLE_ENABLED` is
@@ -114,6 +123,8 @@ struct Inner {
     sessions: Arc<SessionStore>,
     authority: ConsoleAuthority,
     directory: Arc<dyn ChannelDirectory>,
+    source_changes: Arc<dyn SourceChanges>,
+    multi_consumer: bool,
 }
 
 impl Console {
@@ -164,6 +175,8 @@ impl Console {
                 sessions,
                 authority,
                 directory: deps.directory,
+                source_changes: deps.source_changes,
+                multi_consumer: deps.multi_consumer,
             }),
         })
     }
@@ -230,6 +243,14 @@ impl Console {
 
     pub(crate) fn directory(&self) -> &dyn ChannelDirectory {
         self.inner.directory.as_ref()
+    }
+
+    pub(crate) fn source_changes(&self) -> &dyn SourceChanges {
+        self.inner.source_changes.as_ref()
+    }
+
+    pub(crate) fn multi_consumer(&self) -> bool {
+        self.inner.multi_consumer
     }
 
     /// The switcher's organizations, refetched with the session's own
@@ -362,6 +383,9 @@ pub(crate) fn compose(
         keys: state.master_keys.clone(),
         creator_auth: state.creator_auth.clone(),
         directory: memory.clone(),
+        // Record-keyed source mutations arrive with #999.
+        source_changes: Arc::new(source_changes::PendingSourceChanges),
+        multi_consumer: false,
     })?;
     if let Some(queue) = observations {
         memory.spawn(queue, state.readiness.clone());

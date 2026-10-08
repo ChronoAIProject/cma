@@ -9,6 +9,7 @@ use std::{sync::Arc, time::Duration};
 
 use cmaeg_core::ids::{ChannelId, RecordId};
 use futures_util::{future::BoxFuture, FutureExt};
+use time::OffsetDateTime;
 
 use super::{
     activity::{ActivityEntry, ActivityFilter, RingTotals},
@@ -149,30 +150,42 @@ impl ConsoleMemory {
         if tokio::time::timeout(PAGE_WAIT, fills).await.is_err() {
             tracing::debug!("console summaries outlasted the page wait; names may be missing");
         }
-        let named: Vec<ChannelRow> = records
+        let named: Vec<(&RecordId, u64, Option<Arc<ChannelSummary>>)> = records
             .iter()
-            .map(|(record, version)| ChannelRow {
-                record_id: record.to_string(),
-                name: self
+            .map(|(record, version)| {
+                let summary = self
                     .summaries
                     .get(record, *version)
-                    .and_then(|summary| owned(summary, auth))
-                    .map(|summary| summary.name.clone())
-                    .unwrap_or_default(),
+                    .and_then(|summary| owned(summary, auth));
+                (record, *version, summary)
             })
-            .filter(|row| {
-                needle
-                    .as_deref()
-                    .is_none_or(|needle| row.name.to_lowercase().contains(needle))
+            .filter(|(_, _, summary)| {
+                needle.as_deref().is_none_or(|needle| {
+                    summary
+                        .as_ref()
+                        .is_some_and(|summary| summary.name.to_lowercase().contains(needle))
+                })
             })
             .collect();
         let status = self.index_status();
+        let hour_ago = OffsetDateTime::now_utc() - time::Duration::HOUR;
         ChannelPage {
             total: named.len(),
+            // Activity is counted only for the rows shown.
             rows: named
                 .into_iter()
                 .skip(page.saturating_mul(PAGE_ROWS))
                 .take(PAGE_ROWS)
+                .map(|(record, version, summary)| ChannelRow {
+                    record_id: record.to_string(),
+                    name: summary
+                        .as_ref()
+                        .map(|summary| summary.name.clone())
+                        .unwrap_or_default(),
+                    version,
+                    activity: self.rings.recent(record, hour_ago),
+                    summary,
+                })
                 .collect(),
             loading: status.loading,
             partial: status.partial,

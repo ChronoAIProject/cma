@@ -5,7 +5,13 @@ use axum::{routing::get, Json, Router};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use cmaeg::{
     auth::CreatorAuthenticator,
-    console::{clock::Clock, token::TokenSet, Console, ConsoleDeps},
+    console::{
+        clock::Clock,
+        directory::{ChannelDirectory, NoChannels},
+        source_changes::{PendingSourceChanges, SourceChanges},
+        token::TokenSet,
+        Console, ConsoleDeps,
+    },
     http::readiness::{readyz, Readiness},
     ConsoleConfig,
 };
@@ -74,9 +80,39 @@ pub fn config() -> ConsoleConfig {
     }
 }
 
+/// What the console reads channels from and changes sources through.
+pub struct Composition {
+    pub directory: Arc<dyn ChannelDirectory>,
+    pub source_changes: Arc<dyn SourceChanges>,
+}
+
+impl Default for Composition {
+    /// No channel memory, and no source changes: the sign-in tests' console.
+    fn default() -> Self {
+        Self {
+            directory: Arc::new(NoChannels),
+            source_changes: Arc::new(PendingSourceChanges),
+        }
+    }
+}
+
 impl Harness {
     /// Serve a console built from `config`, without discovering yet.
     pub async fn start(config: ConsoleConfig) -> Self {
+        Self::compose(config, Composition::default()).await
+    }
+
+    /// Serve an enabled console over `composition`.
+    pub async fn enabled_with(composition: Composition) -> Self {
+        let harness = Self::compose(config(), composition).await;
+        harness.console.discover_once().await.unwrap();
+        assert!(harness.console.is_enabled());
+        harness
+    }
+
+    /// Serve a console built from `config` over `composition`, without
+    /// discovering yet.
+    pub async fn compose(config: ConsoleConfig, composition: Composition) -> Self {
         // Before the console exists, so every console metric is recorded.
         cmaeg::telemetry::install().unwrap();
         let nyxid = FakeNyxid::start().await;
@@ -96,7 +132,9 @@ impl Harness {
             clock: clock.clone(),
             keys: keys.clone(),
             creator_auth: creator_auth.clone(),
-            directory: Arc::new(cmaeg::console::directory::NoChannels),
+            directory: composition.directory,
+            source_changes: composition.source_changes,
+            multi_consumer: false,
         })
         .unwrap();
         let router = Router::new()

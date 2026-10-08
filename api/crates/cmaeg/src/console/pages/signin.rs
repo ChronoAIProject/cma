@@ -22,7 +22,7 @@ pub(crate) fn sign_in(status: StatusCode, return_to: &str, notice: Option<&str>)
         "<section class=\"panel\"><h1>Sign in to the console</h1><p class=\"lead\">See and manage the channels your NyxID account owns, and those of organizations you administer.</p>{notice}<p><a class=\"button\" href=\"{}\">Sign in with NyxID</a></p></section>",
         escape(&sign_in_href(return_to))
     );
-    (status, Html(document("Sign in", "", &body))).into_response()
+    (status, Html(document("Sign in", "", "", &body))).into_response()
 }
 
 /// The page after logout, or after a session ended by itself.
@@ -36,5 +36,5 @@ pub(crate) fn signed_out(expired: bool) -> Response {
         "<section class=\"panel\"><h1>Signed out</h1><p class=\"lead\">{lead}</p><p>Your NyxID session itself is unchanged; on a shared computer, sign out of NyxID as well.</p><p><a class=\"button\" href=\"{}\">Sign in</a></p></section>",
         escape(&sign_in_href(crate::console::redirect::HOME))
     );
-    (StatusCode::OK, Html(document("Signed out", "", &body))).into_response()
+    (StatusCode::OK, Html(document("Signed out", "", "", &body))).into_response()
 }

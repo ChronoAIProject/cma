@@ -1,7 +1,7 @@
 //! The console's own pages: home, the owner switch, signed-out and logout.
 use axum::{
     extract::{rejection::QueryRejection, Query, State},
-    http::header,
+    http::{header, StatusCode},
     response::Response,
     Extension,
 };
@@ -9,10 +9,14 @@ use serde::Deserialize;
 
 use super::{
     authority::{Authorized, Denied},
-    cookies, csrf,
+    cookies,
     extract::{denied_response, RequestedOwner},
+    frame::SignedIn,
     guard::CurrentSession,
-    pages::{layout, signin},
+    pages::{
+        channels::{self, ListView, MAX_QUERY_CHARS},
+        signin,
+    },
     redirect::{self, HOME},
     session::{EndReason, Flash, OwnerSelection},
     subject_hash_prefix, Console,
@@ -24,8 +28,8 @@ pub(crate) struct HomeQuery {
     q: Option<String>,
 }
 
-/// `GET /console`: the signed-in layout. Without a session the extractor
-/// renders the sign-in page, never a redirect to NyxID.
+/// `GET /console`: the authorized owner's channel list. Without a session
+/// the extractor renders the sign-in page, never a redirect to NyxID.
 pub(crate) async fn home(
     State(console): State<Console>,
     Extension(session): Extension<CurrentSession>,
@@ -35,30 +39,26 @@ pub(crate) async fn home(
     let Some(cell) = session.0 else {
         return redirect::see_other(HOME);
     };
-    let orgs = console.org_choices(&cell).await;
-    let (subject, selected, key, flash) = {
-        let mut meta = cell.meta();
-        (
-            meta.subject.clone(),
-            meta.selected.clone(),
-            meta.csrf_key,
-            meta.flash.take(),
-        )
-    };
-    let (page, filter) = query.map_or((0, None), |Query(query)| (query.page.unwrap_or(0), query.q));
+    let signed_in = SignedIn::load(&console, &cell).await;
+    let (page_no, filter) =
+        query.map_or((0, None), |Query(query)| (query.page.unwrap_or(0), query.q));
+    let filter: Option<String> = filter
+        .map(|value| value.trim().chars().take(MAX_QUERY_CHARS).collect())
+        .filter(|value: &String| !value.is_empty());
     let channels = console
         .directory()
-        .channels_for(&authorized, page, filter.as_deref())
+        .channels_for(&authorized, page_no, filter.as_deref())
         .await;
-    layout::render(&layout::LayoutView {
-        subject: &mask(&subject),
-        selected: &selected,
-        orgs: &orgs,
-        owner_csrf: &csrf::token(&key, redirect::OWNER, ""),
-        logout_csrf: &csrf::token(&key, redirect::LOGOUT, ""),
-        flash: flash.as_ref(),
-        channels: &channels,
-    })
+    let owner = signed_in.owner_label();
+    let body = channels::body(&ListView {
+        owner: &owner,
+        page: &channels,
+        page_no,
+        query: filter.as_deref(),
+        sources: console.source_changes().availability(),
+        multi_consumer: console.multi_consumer(),
+    });
+    signed_in.render(StatusCode::OK, "Console", "", &body)
 }
 
 /// `POST /console/owner`: the switch takes the same `Authorized` extractor as
