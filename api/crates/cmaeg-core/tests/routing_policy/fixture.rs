@@ -1,6 +1,6 @@
 //! A routed channel every routing test edits.
 #![allow(dead_code)] // Each test binary that includes this uses a subset.
-use cmaeg_core::{channel::ChannelDefinition, profile::EventWorkerProfile};
+use cmaeg_core::{channel::ChannelDefinition, profile::EventWorkerProfile, ValidationError};
 use ring::digest::{digest, SHA256};
 use serde_json::{json, Value};
 
@@ -97,4 +97,23 @@ pub fn routed() -> Value {
 
 pub fn definition(value: Value) -> ChannelDefinition {
     serde_json::from_value(value).unwrap()
+}
+
+/// The routed fixture with `edit` applied must be refused exactly so.
+pub fn expect(edit: impl FnOnce(&mut Value), pointer: &str, message: &str) {
+    let mut value = routed();
+    edit(&mut value);
+    let shown = value["routing"].to_string();
+    assert_eq!(
+        definition(value).validate(),
+        Err(ValidationError::new(pointer, message)),
+        "{shown}"
+    );
+}
+
+/// The routed fixture with `edit` applied must be accepted.
+pub fn accept(edit: impl FnOnce(&mut Value)) {
+    let mut value = routed();
+    edit(&mut value);
+    definition(value).validate().unwrap();
 }

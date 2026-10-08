@@ -242,6 +242,8 @@ fn validate_definition(
             "must match the profile provider",
         ));
     }
+    validate_consumer_owners(definition)?;
+    validate_consumer_keys(definition)?;
     let credentials = CredentialsRequest {
         agent_key: definition
             .secrets
@@ -298,6 +300,51 @@ fn validate_definition(
     Ok(())
 }
 
+/// Every additional consumer acts for the channel owner, as `default` does.
+fn validate_consumer_owners(definition: &ChannelDefinition) -> Result<(), ValidationError> {
+    let consumers = definition
+        .routing
+        .iter()
+        .flat_map(|routing| &routing.consumers);
+    for (index, consumer) in consumers.enumerate() {
+        if consumer.profile.metadata.owner.subject != definition.owner.subject {
+            return Err(ValidationError::new(
+                format!("/routing/consumers/{index}/profile/metadata/owner/subject"),
+                "must match the authenticated channel owner",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Each additional consumer's sealed key must hash to its public
+/// `agent_key_hash`. Tool calls authenticate a consumer by that hash while
+/// the provider is handed the key, so a mismatched pair would admit one key
+/// and bind another. Readers refuse such a definition as well as writers.
+pub(crate) fn validate_consumer_keys(
+    definition: &ChannelDefinition,
+) -> Result<(), ValidationError> {
+    let consumers = definition
+        .routing
+        .iter()
+        .flat_map(|routing| &routing.consumers);
+    for (index, consumer) in consumers.enumerate() {
+        let matches = definition
+            .secrets
+            .consumer_keys
+            .iter()
+            .find(|(id, _)| id == &consumer.id)
+            .is_some_and(|(_, key)| hash_secret(key.as_str()) == consumer.agent_key_hash);
+        if !matches {
+            return Err(ValidationError::new(
+                format!("/routing/consumers/{index}/agent_key_hash"),
+                "does not match the consumer's agent key",
+            ));
+        }
+    }
+    Ok(())
+}
+
 impl ChannelCreateRequest {
     pub(crate) fn fingerprint(&self) -> String {
         let mut value = serde_json::json!({
@@ -325,3 +372,7 @@ impl ChannelCreateRequest {
         hash_secret(&cmaeg_core::profile::canonical_json(value))
     }
 }
+
+#[cfg(test)]
+#[path = "definition_tests.rs"]
+mod tests;

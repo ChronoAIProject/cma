@@ -1,3 +1,7 @@
+#[path = "restore/routed.rs"]
+mod routed;
+#[path = "../../cmaeg-core/tests/routing_policy/fixture.rs"]
+mod routing_fixture;
 #[path = "restore/support.rs"]
 mod support;
 use cmaeg::{channels::resolver::ResolveError, http::readiness::Readiness, ChannelCacheConfig};

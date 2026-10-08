@@ -1,5 +1,8 @@
 //! One bounded CMA restore shared by concurrent callers on each cold channel.
-use super::cache::{CacheEntry, ChannelCache, Lookup};
+use super::{
+    cache::{CacheEntry, ChannelCache, Lookup},
+    definition::validate_consumer_keys,
+};
 use crate::{
     records::{RecordClient, RecordError},
     ChannelCacheConfig,
@@ -333,6 +336,7 @@ impl ChannelResolver {
         {
             return Err(ResolveError::InvalidDefinition);
         }
+        validate_consumers(&definition)?;
         if definition
             .creation
             .as_ref()
@@ -358,6 +362,25 @@ impl ChannelResolver {
             version: record.version,
         }))
     }
+}
+
+/// The restore checks of additional consumers that mirror the default's:
+/// a stored profile matches its digest, and a sealed key its public hash.
+fn validate_consumers(definition: &ChannelDefinition) -> Result<(), ResolveError> {
+    let consumers = definition
+        .routing
+        .iter()
+        .flat_map(|routing| &routing.consumers);
+    for consumer in consumers {
+        if consumer.profile_digest != consumer.profile.digest() {
+            tracing::warn!(consumer = %consumer.id, "restored consumer profile does not match its digest");
+            return Err(ResolveError::InvalidDefinition);
+        }
+    }
+    validate_consumer_keys(definition).map_err(|error| {
+        tracing::warn!(pointer = %error.pointer, "restored consumer key does not match its hash");
+        ResolveError::InvalidDefinition
+    })
 }
 
 fn negative_error(problem: &Problem) -> ResolveError {

@@ -19,6 +19,7 @@ mod lookup;
 mod partition;
 mod platform;
 mod routing;
+mod routing_validation;
 mod secrets;
 mod source_id;
 mod telegram;
@@ -32,8 +33,8 @@ pub use custom_attachments::{
 };
 pub use extensions::Extensions;
 pub use routing::{
-    ActivityKindName, Addressing, AgentEventPolicy, DefaultReply, Pattern, ReplyLabel,
-    RoutingPolicy, RoutingRule, RuleMatch, MAX_ADDITIONAL_CONSUMERS, MAX_MATCH_ENTRIES,
+    default_receives_all, ActivityKindName, Addressing, AgentEventPolicy, DefaultReply, Pattern,
+    ReplyLabel, RoutingPolicy, RoutingRule, RuleMatch, MAX_ADDITIONAL_CONSUMERS, MAX_MATCH_ENTRIES,
     MAX_MATCH_ENTRY_BYTES, MAX_RULES, MAX_TARGETS, ROUTING_POLICY_VERSION,
 };
 pub use secrets::{ChannelSecrets, Secret};
@@ -266,9 +267,11 @@ pub struct ChannelCreation {
 impl ChannelDefinition {
     /// The reader: the rules every definition this image accepts must meet,
     /// whether restored from storage or admitted by management. It accepts
-    /// every legacy definition, and the extended source and partition shapes
-    /// only where the legacy rules refuse them or `custom_key` is present.
-    /// Writes of those shapes are refused separately, by the write gate.
+    /// every legacy definition, the extended source and partition shapes
+    /// only where the legacy rules refuse them or `custom_key` is present,
+    /// and a routing policy only when it meets its own rules against the
+    /// rest of the definition. Writes of those shapes are refused
+    /// separately, by the write gate.
     pub fn validate(&self) -> Result<(), ValidationError> {
         self.validate_head()?;
         if self.validate_legacy_sources_and_partition().is_err() {
@@ -277,10 +280,12 @@ impl ChannelDefinition {
         } else if self.partition.custom_key.is_some() {
             self.partition.validate_extended(&self.sources)?;
         }
-        self.validate_tail()
+        self.validate_tail()?;
+        self.validate_routing()
     }
 
-    /// Today's complete validation, kept verbatim. The write gate answers a
+    /// Today's complete validation, kept verbatim; it ignores `routing`,
+    /// which older images cannot read at all. The write gate answers a
     /// write that older images could not read with this error while its flag
     /// is off, so the caller sees the pointer and message it always has.
     pub fn validate_legacy(&self) -> Result<(), ValidationError> {

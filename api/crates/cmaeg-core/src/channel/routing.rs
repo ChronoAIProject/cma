@@ -1,10 +1,10 @@
 //! A channel's multi-consumer routing policy: which consumers exist beside
 //! `default`, and how an admitted event selects the ones it reaches.
 use serde::{Deserialize, Serialize};
-use std::fmt;
+use std::{collections::BTreeSet, fmt};
 use utoipa::ToSchema;
 
-use super::{Consumer, DefaultConsumer, SourceId};
+use super::{ChannelDefinition, Consumer, DefaultConsumer, Source, SourceId};
 use crate::{
     ids::{ConsumerId, RuleId},
     ValidationError,
@@ -55,6 +55,74 @@ pub struct RoutingPolicy {
 
 fn default_max_targets() -> u8 {
     DEFAULT_MAX_TARGETS
+}
+
+impl RoutingPolicy {
+    /// The rules that can match: those listing an attached source, or no
+    /// source at all. A rule naming only detached sources is kept but inert.
+    pub fn active_rules<'a>(
+        &'a self,
+        def: &'a ChannelDefinition,
+    ) -> impl Iterator<Item = &'a RoutingRule> {
+        self.rules.iter().filter(move |rule| {
+            rule.when.sources.is_empty()
+                || rule
+                    .when
+                    .sources
+                    .iter()
+                    .any(|id| def.sources.iter().any(|source| &source.source_id() == id))
+        })
+    }
+}
+
+/// True when every event the policy can admit resolves to a target set that
+/// contains `default`:
+/// 1. `default` is in `default_targets`;
+/// 2. every active rule targets `default`;
+/// 3. no explicit addressing can exclude `default`: with a chat source
+///    attached and `mentions` or `command` on, no other non-pending consumer
+///    is mentionable; with a custom source attached and `event_field` on,
+///    there is no other non-pending consumer;
+/// 4. with a custom source attached, `default` answers non-human actors.
+///
+/// A channel without routing sends every event to `default`. Used by the
+/// routing audit and the console; never by the kill switch, which decides
+/// per event.
+pub fn default_receives_all(
+    def: &ChannelDefinition,
+    non_human_providers: &BTreeSet<String>,
+) -> bool {
+    let Some(routing) = &def.routing else {
+        return true;
+    };
+    let includes_default = |targets: &[ConsumerId]| targets.iter().any(ConsumerId::is_default);
+    let chat = def
+        .sources
+        .iter()
+        .any(|source| matches!(source, Source::Telegram { .. } | Source::NyxidRelay { .. }));
+    let custom = def
+        .sources
+        .iter()
+        .any(|source| matches!(source, Source::Custom { .. }));
+    let mut others = routing
+        .consumers
+        .iter()
+        .filter(|consumer| !consumer.pending);
+    let addressing = &routing.addressing;
+    let addressable = chat
+        && (addressing.mentions || addressing.command)
+        && others.clone().any(|consumer| consumer.mentionable);
+    let targetable = custom && addressing.event_field && others.next().is_some();
+    let default_is_non_human = def
+        .consumer(None)
+        .is_some_and(|view| view.non_human_effective(non_human_providers));
+    includes_default(&routing.default_targets)
+        && routing
+            .active_rules(def)
+            .all(|rule| includes_default(&rule.targets))
+        && !addressable
+        && !targetable
+        && (!custom || default_is_non_human)
 }
 
 /// A rule: events matching `when` target `targets`.
