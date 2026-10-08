@@ -187,3 +187,6 @@ mod audit;
 
 #[path = "management/write_gate.rs"]
 mod write_gate;
+
+#[path = "management/routing.rs"]
+mod routing;

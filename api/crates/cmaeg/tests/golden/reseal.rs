@@ -1,7 +1,9 @@
 //! I1: a legacy channel definition keeps its stored bytes. For every legacy
 //! shape the sealed plaintext is byte-identical to the blob recorded before
-//! the multi-consumer changes, an older image can still parse it, and
-//! re-sealing what this image reads back reproduces the same plaintext.
+//! the multi-consumer changes, carries neither `routing` nor
+//! `consumer_keys`, an older image can still parse it, and re-sealing what
+//! this image reads back reproduces the same plaintext. A routed blob
+//! round-trips with its consumer keys, which its public view never shows.
 //!
 //! Each fixture is built here rather than through management so the blob
 //! depends only on the definition types; the management-written records are
@@ -14,6 +16,7 @@ use cmaeg_core::{
     seal::{open_blob, seal_blob, MasterKeyRing},
 };
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 
 const ISSUER: &str = "https://nyx.example";
 
@@ -172,12 +175,20 @@ fn definition(name: &str, value: Value) -> ChannelDefinition {
     definition
 }
 
+fn keys() -> MasterKeyRing {
+    MasterKeyRing::parse(&format!("1:{}", STANDARD.encode([5; 32]))).unwrap()
+}
+
 #[test]
 fn legacy_blobs_keep_their_bytes_and_parse_with_the_previous_schema() {
-    let keys = MasterKeyRing::parse(&format!("1:{}", STANDARD.encode([5; 32]))).unwrap();
+    let keys = keys();
     for (name, value) in fixtures() {
         let definition = definition(&name, value);
-        let plaintext = canonical_json(definition.to_blob_json());
+        let blob = definition.to_blob_json();
+        // Neither multi-consumer shape appears on a legacy channel.
+        assert!(blob.get("routing").is_none(), "{name}");
+        assert!(blob["secrets"].get("consumer_keys").is_none(), "{name}");
+        let plaintext = canonical_json(blob);
         assert_golden(&format!("blobs/{name}.json"), &plaintext);
 
         // An older image reads, and would write back, exactly these bytes.
@@ -212,4 +223,75 @@ fn the_previous_schema_cannot_read_a_custom_key() {
     let plaintext = canonical_json(definition.to_blob_json());
     let error = serde_json::from_str::<previous_schema::ChannelDefinition>(&plaintext).unwrap_err();
     assert!(error.to_string().contains("custom_key"), "{error}");
+}
+
+const CONSUMER: &str = "csm_0000000000a1";
+
+/// The low-entropy agent key of the routed fixture's additional consumer.
+fn consumer_key() -> String {
+    format!("nyx_{}", "consumer".repeat(3))
+}
+
+/// The custom channel with a routing policy and one additional consumer, as
+/// a writer behind the multi-consumer flag would store it.
+fn routed() -> ChannelDefinition {
+    let mut value = base();
+    let mut consumer_profile = value["profile"].clone();
+    consumer_profile["metadata"]["name"] = "Reviewer".into();
+    let hash = format!("sha256:{:x}", Sha256::digest(consumer_key().as_bytes()));
+    value["routing"] = json!({"version": 1, "default_consumer": {"name": "lead"},
+        "consumers": [{"id": CONSUMER, "name": "reviewer", "profile": consumer_profile,
+            "profile_digest": "", "provider": {"slug": "cma_codex", "binding_id": "bnd_reviewer", "level": "l1"},
+            "agent_key_hash": hash, "created_at": "2026-10-01T00:00:00Z"}],
+        "default_targets": ["default", CONSUMER]});
+    value["secrets"]["consumer_keys"] = json!([[CONSUMER, consumer_key()]]);
+    let mut definition: ChannelDefinition = serde_json::from_value(value).unwrap();
+    definition.profile_digest = definition.profile.digest();
+    let consumer = &mut definition.routing.as_mut().unwrap().consumers[0];
+    consumer.profile_digest = consumer.profile.digest();
+    definition.validate().unwrap();
+    definition
+}
+
+#[test]
+fn a_routed_blob_round_trips_with_its_consumer_keys() {
+    let keys = keys();
+    let routed = routed();
+    let plaintext = canonical_json(routed.to_blob_json());
+    let sealed = seal_blob(&keys, plaintext.as_bytes()).unwrap();
+    let opened = open_blob(&keys, &sealed).unwrap().payload;
+    let restored: ChannelDefinition = serde_json::from_slice(&opened).unwrap();
+    assert_eq!(restored, routed);
+    assert_eq!(restored.secrets.consumer_keys, routed.secrets.consumer_keys);
+    assert_eq!(
+        restored.secrets.consumer_keys[0].1.as_str(),
+        consumer_key().as_str()
+    );
+    assert_eq!(canonical_json(restored.to_blob_json()), plaintext);
+}
+
+#[test]
+fn the_public_view_of_a_routed_channel_holds_no_key() {
+    let routed = routed();
+    let public = routed.to_public_json().to_string();
+    assert!(public.contains("\"routing\""));
+    for key in [consumer_key(), format!("nyx_{}", "golden".repeat(4))] {
+        assert!(!public.contains(&key), "{public}");
+    }
+    assert!(!public.contains("consumer_keys"));
+}
+
+#[test]
+fn the_previous_schema_cannot_read_routing_or_consumer_keys() {
+    // Why routing writes stay behind the multi-consumer flag: an older image
+    // refuses the whole definition, whichever of the two it carries.
+    let routed = routed();
+    let plaintext = canonical_json(routed.to_blob_json());
+    let error = serde_json::from_str::<previous_schema::ChannelDefinition>(&plaintext).unwrap_err();
+    assert!(error.to_string().contains("routing"), "{error}");
+    let mut keys_only = routed.clone();
+    keys_only.routing = None;
+    let plaintext = canonical_json(keys_only.to_blob_json());
+    let error = serde_json::from_str::<previous_schema::ChannelDefinition>(&plaintext).unwrap_err();
+    assert!(error.to_string().contains("consumer_keys"), "{error}");
 }

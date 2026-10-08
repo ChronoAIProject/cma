@@ -21,5 +21,7 @@ mod provider_normalize;
 pub mod relay_support;
 #[path = "golden/reseal.rs"]
 mod reseal;
+#[path = "golden/responses.rs"]
+mod responses;
 #[path = "relay/signer.rs"]
 pub mod signer;

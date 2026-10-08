@@ -14,7 +14,7 @@ use serde_json::Value;
 const DUPLICATED: &str = "/sources/1: source variant is duplicated";
 const CUSTOM_KEY_DISABLED: &str = "/partition/custom_key: dynamic_sources_disabled";
 
-fn relay_request(platform: &str, route: &str) -> Value {
+pub(super) fn relay_request(platform: &str, route: &str) -> Value {
     let mut source = json!({"type":"nyxid_relay","issuer":"https://nyx.example","key_id":"route-key",
         "route_ids":[route],"platform":platform,"admission":{"type":"all"}});
     if matches!(platform, "discord" | "slack" | "whatsapp") {
@@ -41,18 +41,18 @@ async fn refused(response: reqwest::Response, detail: &str) {
     assert_eq!(problem["detail"], detail, "{problem}");
 }
 
-struct Gateway {
+pub(super) struct Gateway {
     provider: FakeProvider,
-    cma: FakeCma,
+    pub(super) cma: FakeCma,
     nyxid: FakeNyxid,
-    base: String,
+    pub(super) base: String,
     stop: oneshot::Sender<()>,
     task: tokio::task::JoinHandle<()>,
-    client: Client,
+    pub(super) client: Client,
 }
 
 impl Gateway {
-    async fn start() -> Self {
+    pub(super) async fn start() -> Self {
         let provider = FakeProvider::start(FakeProviderConfig::default()).await;
         let cma = FakeCma::start(false).await;
         let nyxid = FakeNyxid::start().await;
@@ -78,7 +78,7 @@ impl Gateway {
             .unwrap()
     }
 
-    async fn update(&self, channel_id: &str, body: &Value) -> reqwest::Response {
+    pub(super) async fn update(&self, channel_id: &str, body: &Value) -> reqwest::Response {
         self.client
             .put(format!("{}/v1/channels/{channel_id}", self.base))
             .bearer_auth("token-alice")
@@ -88,7 +88,7 @@ impl Gateway {
             .unwrap()
     }
 
-    async fn close(self) {
+    pub(super) async fn close(self) {
         self.stop.send(()).unwrap();
         self.task.await.unwrap();
         self.provider.close().await;
