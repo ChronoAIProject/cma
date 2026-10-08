@@ -1,15 +1,99 @@
 //! Successful terminal Sync frames and real buffer-full emission failures.
 use super::{
     default_fixtures::{
-        completed, custom_event, default_channel, recording, run, telegram_default,
+        completed, custom_event, default_channel, recording, run, sinks_default, telegram_default,
         telegram_messages, tool, with_sinks,
     },
     fake_http::FakeHttp,
-    group_fixtures::reviewer,
+    group_fixtures::{reviewer, routed_custom_activity},
 };
 use cmaeg::delivery::intents::{DeliveryCommand, DeliveryOutcome};
 use cmaeg_core::{ids::ConsumerId, seal::ReplyAddress};
 use serde_json::json;
+
+#[tokio::test(start_paused = true)]
+async fn a_late_consumer_reply_never_claims_sync_delivery_while_siblings_are_active() {
+    use axum::response::{sse::Sse, IntoResponse};
+    use cmaeg::tools::ConsumerSummary;
+    use cmaeg_core::ids::ConsumerName;
+
+    for fallback in [false, true] {
+        let channel = default_channel(sinks_default(), |value| {
+            if fallback {
+                with_sinks(value);
+            } else {
+                value["routing"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("default_reply");
+                value["reply"]["sinks"] = json!([]);
+            }
+        });
+        let mut recording = recording(FakeHttp::platforms(), true);
+        let (id, waiter) = recording
+            .waiters
+            .register_fanout(
+                2,
+                ConsumerSummary {
+                    id: ConsumerId::default_consumer(),
+                    name: ConsumerName::parse("lead").unwrap(),
+                    label: "lead".into(),
+                },
+            )
+            .unwrap();
+        assert!(recording
+            .waiters
+            .set_fanout_targets(&id, &routed_custom_activity().routing.unwrap().targets,));
+        let reviewer = custom_event(
+            &channel,
+            Some(reviewer()),
+            ReplyAddress::Sync { waiter: id.clone() },
+        );
+        let lead = custom_event(&channel, None, ReplyAddress::Sync { waiter: id.clone() });
+        run(&recording, &channel, &reviewer, [completed("Review done.")]).await;
+        let receipt = tool(
+            &mut recording,
+            &channel,
+            &reviewer,
+            json!({"text":"Late answer."}),
+        )
+        .await;
+        assert!(
+            recording.waiters.registered(&id),
+            "the sibling still needs its terminal"
+        );
+        if fallback {
+            assert!(matches!(
+                receipt.delivery,
+                DeliveryOutcome::Confirmed { .. }
+            ));
+        } else {
+            assert!(matches!(receipt.delivery, DeliveryOutcome::Unsupported));
+        }
+        run(&recording, &channel, &lead, [completed("Main done.")]).await;
+        let result = recording.finish().await;
+        let body =
+            axum::body::to_bytes(Sse::new(waiter.stream()).into_response().into_body(), 16384)
+                .await
+                .unwrap();
+        let wire = String::from_utf8(body.to_vec()).unwrap();
+        assert!(!wire.contains("Late answer."));
+        assert!(!wire.contains("cmaeg.consumer.message"));
+        assert_eq!(wire.matches("event: cmaeg.consumer.completed").count(), 2);
+        assert_eq!(wire.matches("event: cmaeg.fanout.completed").count(), 1);
+        let replies: Vec<_> = result["calls"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|call| call["body"]["type"] == "cmaeg.response.message")
+            .collect();
+        assert_eq!(replies.len(), usize::from(fallback));
+        if fallback {
+            assert_eq!(replies[0]["body"]["data"]["destination"], "default");
+            assert_eq!(replies[0]["body"]["data"]["text"], "Late answer.");
+        }
+    }
+}
 
 #[tokio::test(start_paused = true)]
 async fn successful_sync_terminals_do_not_fall_back_after_removing_the_waiter() {
