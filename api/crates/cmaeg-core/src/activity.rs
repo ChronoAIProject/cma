@@ -192,9 +192,11 @@ impl Activity {
         Ok(())
     }
 
-    /// Compute the stable serialized partition key selected by a channel.
+    /// Compute the stable serialized partition key selected by a channel for
+    /// this activity's source: `custom_key` for a custom event when the rule
+    /// carries one, and `key` otherwise.
     pub fn partition_key(&self, rule: &PartitionRule) -> String {
-        match rule.key {
+        match rule.key_for(&self.source) {
             PartitionKey::ConversationAndSender => {
                 format!("{}\u{1f}{}", self.conversation.id, self.actor.id)
             }

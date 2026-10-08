@@ -22,7 +22,9 @@ pub fn launch_request(
     received_at: Instant,
     now: i64,
 ) -> Result<LaunchRequest, &'static str> {
-    let conversation = match channel.definition.partition.key {
+    // A chat-keyed channel partitions custom events by its `custom_key`. A
+    // chat key can only remain on a definition no writer could store.
+    let conversation = match channel.definition.partition.key_for(&SourceKind::Custom) {
         PartitionKey::EventSubject => ce.subject.clone().unwrap_or_else(|| ce.source.clone()),
         PartitionKey::PerEvent => ce.id.clone(),
         PartitionKey::Fixed => "fixed".into(),

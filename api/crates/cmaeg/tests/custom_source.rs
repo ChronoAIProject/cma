@@ -4,6 +4,8 @@ mod attachments;
 pub mod fake_provider;
 #[path = "custom/ingress.rs"]
 mod ingress;
+#[path = "custom/partition_keys.rs"]
+mod partition_keys;
 #[path = "custom/receiver.rs"]
 mod receiver;
 #[path = "relay/support.rs"]

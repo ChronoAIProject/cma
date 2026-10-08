@@ -181,3 +181,33 @@ fn album_identity_round_trips_only_on_messages() {
     value["kind"] = json!({"type":"command","name":"run","args":"","album_id":"1"});
     assert!(serde_json::from_value::<Activity>(value).is_err());
 }
+
+#[test]
+fn a_custom_key_partitions_only_custom_events() {
+    let rule = PartitionRule {
+        version: 1,
+        key: PartitionKey::Conversation,
+        custom_key: Some(PartitionKey::EventSubject),
+    };
+    let chat: Activity = serde_json::from_value(activity()).unwrap();
+    assert_eq!(chat.partition_key(&rule), "chat-1");
+    let mut value = activity();
+    let ce: Value = serde_json::from_str(include_str!("fixtures/cloudevent.json")).unwrap();
+    value["source"] = json!({"type":"custom"});
+    value["kind"] = json!({"type":"event","ce":ce});
+    let event: Activity = serde_json::from_value(value).unwrap();
+    let legacy = PartitionRule {
+        version: 1,
+        key: PartitionKey::EventSubject,
+        custom_key: None,
+    };
+    // The custom event keys exactly as on a legacy event_subject channel.
+    assert_eq!(event.partition_key(&rule), event.partition_key(&legacy));
+    assert_eq!(event.partition_key(&rule), "urn:test:source");
+    // Without a custom key, the chat key applies to custom events too.
+    let chat_only = PartitionRule {
+        custom_key: None,
+        ..rule
+    };
+    assert_eq!(event.partition_key(&chat_only), event.conversation.id);
+}
