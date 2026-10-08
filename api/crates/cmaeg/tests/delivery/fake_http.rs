@@ -76,11 +76,17 @@ pub struct FakeHttp {
 impl FakeHttp {
     /// A fake answering like NyxID's relay: a fresh receipt for each reply.
     pub fn relay() -> Self {
-        Self::new(|_, count| {
-            Answer::json(
-                200,
-                json!({"message_id":format!("reply-{count}"),"platform_message_id":format!("platform-{count}")}),
-            )
+        Self::new(|_, count| relay_answer(count))
+    }
+    /// A fake answering relay requests like NyxID and every other request
+    /// like the Bot API, so one ordered log covers both platforms.
+    pub fn platforms() -> Self {
+        Self::new(|sent, count| {
+            if sent.url.path().starts_with("/api/v1/channel-relay/") {
+                relay_answer(count)
+            } else {
+                telegram_answer(sent, count)
+            }
         })
     }
     pub fn new(responder: impl Fn(&Sent, usize) -> Answer + Send + Sync + 'static) -> Self {
@@ -126,6 +132,30 @@ impl FakeHttp {
         .await
         .unwrap_or(Err(TransportError::Unavailable))
     }
+}
+fn relay_answer(count: usize) -> Answer {
+    Answer::json(
+        200,
+        json!({"message_id":format!("reply-{count}"),"platform_message_id":format!("platform-{count}")}),
+    )
+}
+/// Each `sendMessage` gets the next message id in the requested chat, an edit
+/// keeps its message id, and every other method succeeds.
+fn telegram_answer(sent: &Sent, count: usize) -> Answer {
+    let body = sent.json();
+    let result = if sent.url.path().ends_with("/sendMessage")
+        || sent.url.path().ends_with("/editMessageText")
+    {
+        let id = body["message_id"]
+            .as_str()
+            .and_then(|id| id.parse::<i64>().ok())
+            .unwrap_or(100 + count as i64);
+        let chat = body["chat_id"].as_str().unwrap().parse::<i64>().unwrap();
+        json!({"message_id":id,"chat":{"id":chat}})
+    } else {
+        json!(true)
+    };
+    Answer::json(200, json!({"ok":true,"result":result}))
 }
 impl RelayTransport for FakeHttp {
     fn post(
