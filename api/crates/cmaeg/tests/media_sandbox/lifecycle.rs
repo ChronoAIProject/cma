@@ -105,6 +105,9 @@ async fn sleep_is_killed_at_deadline() {
     assert!(group_members(pid).is_empty());
 }
 
+/// Nextest runs this alone (`api/.config/nextest.toml`): the SCHED_IDLE spin
+/// spends its CPU limit before the equal wall clock runs out only while no
+/// other test competes for the CPUs.
 #[tokio::test]
 async fn spin_yields_cpu_limit() {
     let fixture = Fixture::new();
