@@ -200,10 +200,10 @@ impl ToolsState {
             "readEventContext",
         );
         let result = async {
-            let (channel, event, _) = self
+            let (channel, event, matched) = self
                 .authorize_event(caller, reference, "readEventContext")
                 .await?;
-            super::context::read(self, &channel, &event).await
+            super::context::read(self, &channel, &matched, &event).await
         }
         .await;
         observation.finish(if result.is_ok() { "success" } else { "error" });
@@ -220,13 +220,13 @@ impl ToolsState {
         activity
             .validate()
             .map_err(|_| invalid("invalid activity"))?;
-        let (channel, event, _) = self
+        let (channel, event, matched) = self
             .authorize_event(caller, reference, "verifyEventContext")
             .await?;
         if !event.verifies_activity(&activity) {
             return Err(invalid("activity does not match the sealed event"));
         }
-        let consumer = super::context::default_consumer(&channel)?;
+        let consumer = super::context::consumer_view(&channel, &matched)?;
         let inbound_media = super::context::inbound_media(self, &consumer, &activity.source);
         Ok(super::context::project(
             &channel,

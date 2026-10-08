@@ -36,7 +36,7 @@ impl ToolsState {
         caller: AgentCaller,
         reference: &EventRef,
     ) -> Result<ReplyTargetResponse, Problem> {
-        let (_, mut event, _) = self.authorize_event(caller, reference, CREATE).await?;
+        let (_, mut event, matched) = self.authorize_event(caller, reference, CREATE).await?;
         let channel = self
             .resolver
             .resolve_current(event.channel_id.as_str())
@@ -46,7 +46,7 @@ impl ToolsState {
         // rotated key no longer authorizes a new target.
         owner(caller, &channel, event.consumer.as_ref(), CREATE)?;
         destination(&channel, &event.reply)?;
-        if !context::read(self, &channel, &event)
+        if !context::read(self, &channel, &matched, &event)
             .await?
             .activity_verified
         {

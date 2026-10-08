@@ -165,14 +165,14 @@ impl ToolsState {
                 "invalid attachment request",
             ));
         }
-        let (channel, event, _) = self
+        let (channel, event, matched) = self
             .authorize_event(caller, reference, "readEventAttachment")
             .await?;
         tracing::Span::current().record(
             "channel_hash",
             telemetry::channel_hash(channel.id.as_str()).as_str(),
         );
-        let consumer = context::default_consumer(&channel)?;
+        let consumer = context::consumer_view(&channel, &matched)?;
         let (activity, verified) =
             context::read_activity(self, &channel, &consumer, &event).await?;
         // Media always needs a verified digest, even for an event_ref sealed

@@ -1834,6 +1834,27 @@
         },
         "type": "object"
       },
+      "ConsumerSummary": {
+        "description": "Which of a routed channel's consumers a context response was read for.",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/ConsumerId"
+          },
+          "label": {
+            "description": "The consumer's reply label, else its name.",
+            "type": "string"
+          },
+          "name": {
+            "$ref": "#/components/schemas/ConsumerName"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "label"
+        ],
+        "type": "object"
+      },
       "ConsumerTarget": {
         "additionalProperties": false,
         "description": "One consumer an event reaches.",
@@ -1885,6 +1906,17 @@
           },
           "channel_id": {
             "$ref": "#/components/schemas/ChannelId"
+          },
+          "consumer": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ConsumerSummary",
+                "description": "The consumer the calling agent key belongs to; present only on a\nchannel with routing, so an unrouted response keeps its bytes."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "conversation_id": {
             "$ref": "#/components/schemas/ConversationId"
