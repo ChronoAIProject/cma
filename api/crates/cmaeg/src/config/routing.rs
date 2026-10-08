@@ -17,6 +17,7 @@ pub const CMAEG_ROUTING_UNKNOWN_TARGET_TEXT: &str = "CMAEG_ROUTING_UNKNOWN_TARGE
 const DEFAULT_UNKNOWN_TARGET_TEXT: &str = "No agent is named {name}. Available: {names}.";
 
 pub const CMAEG_MULTI_CONSUMER_ENABLED: &str = "CMAEG_MULTI_CONSUMER_ENABLED";
+pub const CMAEG_DYNAMIC_SOURCES_ENABLED: &str = "CMAEG_DYNAMIC_SOURCES_ENABLED";
 
 /// The one provider whose agents are known to answer custom events and
 /// hand-offs.
@@ -32,6 +33,9 @@ pub struct RoutingConfig {
     /// The multi-consumer master switch. One process-wide value, which
     /// delivery copies, so every send of a process is classified alike.
     pub multi_consumer_enabled: bool,
+    /// Allows source attach/detach and writes of extended source shapes.
+    /// Readers remain unconditional when this switch is off.
+    pub dynamic_sources_enabled: bool,
     /// Provider slugs whose agents answer non-human actors (custom events,
     /// hand-offs) by default. A consumer's `non_human` field overrides this
     /// per consumer.
@@ -44,6 +48,7 @@ impl Default for RoutingConfig {
     fn default() -> Self {
         Self {
             multi_consumer_enabled: false,
+            dynamic_sources_enabled: false,
             non_human_providers: BTreeSet::new(),
             unknown_target_text: DEFAULT_UNKNOWN_TARGET_TEXT.into(),
         }
@@ -97,7 +102,8 @@ pub(super) fn config_from_env(providers: &ProviderRegistry) -> Result<RoutingCon
         }
     };
     Ok(RoutingConfig {
-        multi_consumer_enabled: enabled_from_env()?,
+        multi_consumer_enabled: enabled_from_env(CMAEG_MULTI_CONSUMER_ENABLED)?,
+        dynamic_sources_enabled: enabled_from_env(CMAEG_DYNAMIC_SOURCES_ENABLED)?,
         non_human_providers: non_human_providers(value.as_deref(), providers)?,
         unknown_target_text: notice_from_env()?,
     })
@@ -106,32 +112,27 @@ pub(super) fn config_from_env(providers: &ProviderRegistry) -> Result<RoutingCon
 /// Read the master switch with the rules of `CMAEG_MEDIA_ENABLED`: unset is
 /// off, and a set value must be exactly `true` or `false`, so a typo such as
 /// `True` fails startup instead of silently leaving routing off.
-fn enabled_from_env() -> Result<bool, ConfigError> {
-    match env::var(CMAEG_MULTI_CONSUMER_ENABLED) {
-        Ok(value) => parse_enabled(Some(&value)),
-        Err(env::VarError::NotPresent) => parse_enabled(None),
-        Err(env::VarError::NotUnicode(_)) => Err(invalid_switch()),
+fn enabled_from_env(key: &str) -> Result<bool, ConfigError> {
+    match env::var(key) {
+        Ok(value) => parse_enabled(key, Some(&value)),
+        Err(env::VarError::NotPresent) => parse_enabled(key, None),
+        Err(env::VarError::NotUnicode(_)) => Err(invalid_switch(key)),
     }
 }
 
-fn parse_enabled(value: Option<&str>) -> Result<bool, ConfigError> {
+fn parse_enabled(key: &str, value: Option<&str>) -> Result<bool, ConfigError> {
     let enabled = match value {
         None | Some("false") => false,
         Some("true") => true,
-        Some(_) => return Err(invalid_switch()),
+        Some(_) => return Err(invalid_switch(key)),
     };
-    tracing::info!(
-        key = CMAEG_MULTI_CONSUMER_ENABLED,
-        enabled,
-        "multi-consumer switch"
-    );
+    tracing::info!(key, enabled, "routing write switch");
     Ok(enabled)
 }
 
-fn invalid_switch() -> ConfigError {
-    ConfigError::Routing(format!(
-        "{CMAEG_MULTI_CONSUMER_ENABLED} must be true or false"
-    ))
+fn invalid_switch(key: &str) -> ConfigError {
+    tracing::error!(key, "invalid routing write switch");
+    ConfigError::Routing(format!("{key} must be true or false"))
 }
 
 /// Read the non-human provider set.
@@ -230,18 +231,21 @@ mod tests {
     }
 
     #[test]
-    fn the_multi_consumer_switch_is_off_unless_exactly_true() {
-        assert!(!parse_enabled(None).unwrap());
-        assert!(!parse_enabled(Some("false")).unwrap());
-        assert!(parse_enabled(Some("true")).unwrap());
-        for value in ["", "True", "TRUE", "1", "yes", " true", "true ", "on"] {
-            assert_eq!(
-                parse_enabled(Some(value)).unwrap_err().to_string(),
-                "routing configuration is invalid: CMAEG_MULTI_CONSUMER_ENABLED must be true or false",
-                "{value:?}"
-            );
+    fn routing_write_switches_are_off_unless_exactly_true() {
+        for key in [CMAEG_MULTI_CONSUMER_ENABLED, CMAEG_DYNAMIC_SOURCES_ENABLED] {
+            assert!(!parse_enabled(key, None).unwrap());
+            assert!(!parse_enabled(key, Some("false")).unwrap());
+            assert!(parse_enabled(key, Some("true")).unwrap());
+            for value in ["", "True", "TRUE", "1", "yes", " true", "true ", "on"] {
+                assert_eq!(
+                    parse_enabled(key, Some(value)).unwrap_err().to_string(),
+                    format!("routing configuration is invalid: {key} must be true or false"),
+                    "{value:?}"
+                );
+            }
         }
         assert!(!RoutingConfig::default().multi_consumer_enabled);
+        assert!(!RoutingConfig::default().dynamic_sources_enabled);
     }
 
     #[test]

@@ -1,7 +1,8 @@
 //! Management operations over sealed definitions and CMA records.
 use super::definition::{
-    build_definition, build_update, channel_pointer, validate_create_request,
-    validate_update_request, ChannelCreateRequest, ChannelUpdateRequest, SourceRequest,
+    build_definition, build_update, channel_pointer, source_limit,
+    validate_create_request_with_source_limit, validate_update_request_with_source_limit,
+    ChannelCreateRequest, ChannelUpdateRequest, SourceRequest,
 };
 pub use super::lifecycle::{delete, rekey};
 pub use super::state::{
@@ -30,7 +31,8 @@ pub async fn create(
 ) -> Result<CreatedChannel, ManagementError> {
     custom_attachments_allowed(state, &request.sources)?;
     crate::connections::binding::expand_create(state, creator, &mut request).await?;
-    validate_create_request(&request).map_err(ManagementError::Invalid)?;
+    validate_create_request_with_source_limit(&request, source_limit(state.write_flags(), None))
+        .map_err(ManagementError::Invalid)?;
     if request.profile.metadata.owner.subject != creator.subject {
         return Err(ManagementError::Invalid(ValidationError::new(
             "/profile/metadata/owner/subject",
@@ -192,7 +194,11 @@ pub async fn update(
         &mut request,
     )
     .await?;
-    validate_update_request(&request).map_err(ManagementError::Invalid)?;
+    validate_update_request_with_source_limit(
+        &request,
+        source_limit(state.write_flags(), Some(&current.definition)),
+    )
+    .map_err(ManagementError::Invalid)?;
     custom_attachments_allowed(state, &request.sources)?;
     if current
         .definition

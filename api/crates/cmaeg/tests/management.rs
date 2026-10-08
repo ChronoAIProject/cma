@@ -218,3 +218,6 @@ mod routing_fixture;
 
 #[path = "management/warnings.rs"]
 mod warnings;
+
+#[path = "management/dynamic_updates.rs"]
+mod dynamic_updates;

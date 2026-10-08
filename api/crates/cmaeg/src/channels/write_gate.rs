@@ -27,7 +27,7 @@ pub const MULTI_CONSUMER_DISABLED: &str = "multi_consumer_disabled";
 pub struct WriteFlags {
     /// Admits routing to several consumers.
     pub multi_consumer: bool,
-    /// Admits extended source and partition shapes; wired by #999.
+    /// Admits extended source and partition shapes.
     pub dynamic_sources: bool,
 }
 

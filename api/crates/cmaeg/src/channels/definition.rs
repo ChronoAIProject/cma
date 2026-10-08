@@ -50,7 +50,7 @@ pub fn build_definition(
             binding_id,
             level,
         },
-        sources: build_sources(&request.sources)?,
+        sources: build_sources(&request.sources, source_limit(flags, None))?,
         connection_ref: request.connection_ref.clone(),
         partition: request.partition.clone(),
         reply: request.reply.clone(),
@@ -66,6 +66,13 @@ pub fn build_definition(
 }
 
 pub fn validate_create_request(request: &ChannelCreateRequest) -> Result<(), ValidationError> {
+    validate_create_request_with_source_limit(request, 4)
+}
+
+pub(super) fn validate_create_request_with_source_limit(
+    request: &ChannelCreateRequest,
+    source_limit: usize,
+) -> Result<(), ValidationError> {
     request.provider.target.validate()?;
     if request.schema_version != cmaeg_core::channel::CHANNEL_SCHEMA_VERSION {
         return Err(ValidationError::new(
@@ -79,11 +86,18 @@ pub fn validate_create_request(request: &ChannelCreateRequest) -> Result<(), Val
     request.profile.validate().map_err(|error| {
         ValidationError::new(format!("/profile{}", error.pointer), error.message)
     })?;
-    build_sources(&request.sources)?;
+    build_sources(&request.sources, source_limit)?;
     validate_credentials(&request.credentials)
 }
 
 pub fn validate_update_request(request: &ChannelUpdateRequest) -> Result<(), ValidationError> {
+    validate_update_request_with_source_limit(request, 4)
+}
+
+pub(super) fn validate_update_request_with_source_limit(
+    request: &ChannelUpdateRequest,
+    source_limit: usize,
+) -> Result<(), ValidationError> {
     request.provider.target.validate()?;
     if request.schema_version != cmaeg_core::channel::CHANNEL_SCHEMA_VERSION {
         return Err(ValidationError::new(
@@ -97,7 +111,7 @@ pub fn validate_update_request(request: &ChannelUpdateRequest) -> Result<(), Val
     request.profile.validate().map_err(|error| {
         ValidationError::new(format!("/profile{}", error.pointer), error.message)
     })?;
-    build_sources(&request.sources)?;
+    build_sources(&request.sources, source_limit)?;
     if let Some(credentials) = &request.credentials {
         if let Some(agent_key) = &credentials.agent_key {
             if agent_key.as_str().is_empty() {
@@ -166,6 +180,13 @@ pub fn build_update(
                 .collect();
         }
     }
+    let mut partition = request.partition.clone();
+    if partition.custom_key.is_none()
+        && partition.version == current.partition.version
+        && partition.key == current.partition.key
+    {
+        partition.custom_key = current.partition.custom_key;
+    }
     let definition = ChannelDefinition {
         schema_version: request.schema_version,
         name: request.name.clone(),
@@ -175,9 +196,9 @@ pub fn build_update(
         profile: request.profile.clone(),
         profile_digest: request.profile.digest(),
         provider: current.provider.clone(),
-        sources: build_sources(&request.sources)?,
+        sources: build_sources(&request.sources, source_limit(flags, Some(current)))?,
         connection_ref: request.connection_ref.clone(),
-        partition: request.partition.clone(),
+        partition,
         reply: request.reply.clone(),
         // No request carries routing yet, so a full update keeps the stored
         // policy, exactly as it keeps the consumer keys in the secrets.
@@ -188,6 +209,16 @@ pub fn build_update(
     };
     validate_definition(Some(current), &definition, flags)?;
     Ok(definition)
+}
+
+/// Existing large source lists must reach the write gate even after rollback.
+/// The gate still refuses edits to those lists while their switch is off.
+pub(super) fn source_limit(flags: WriteFlags, current: Option<&ChannelDefinition>) -> usize {
+    if flags.dynamic_sources || current.is_some_and(|value| value.sources.len() > 4) {
+        8
+    } else {
+        4
+    }
 }
 
 pub fn hash_secret(secret: &str) -> String {

@@ -118,7 +118,7 @@ impl ManagementState {
     pub(crate) fn write_flags(&self) -> super::write_gate::WriteFlags {
         super::write_gate::WriteFlags {
             multi_consumer: self.routing.multi_consumer_enabled,
-            dynamic_sources: false,
+            dynamic_sources: self.routing.dynamic_sources_enabled,
         }
     }
 

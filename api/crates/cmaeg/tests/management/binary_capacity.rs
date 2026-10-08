@@ -1,4 +1,4 @@
-//! Startup validates routed limits and notices even while routing is disabled.
+//! Startup validates routing write switches, limits and notices before serving.
 use super::{
     binary_support::{assert_no_secrets, MountedSecrets},
     *,
@@ -8,13 +8,22 @@ use std::{ffi::OsString, time::Duration};
 type Environment = Vec<(&'static str, OsString)>;
 
 #[tokio::test]
-async fn capacity_and_notice_environment_is_validated_without_echoing_values() {
+async fn routing_environment_is_validated_without_echoing_values() {
     let provider = FakeProvider::start(Default::default()).await;
     let cma = FakeCma::start(false).await;
     let nyxid = FakeNyxid::start().await;
     let files = MountedSecrets::new();
     let mut cases: Vec<(Environment, Option<&str>)> = vec![
         (vec![], None),
+        (vec![("CMAEG_DYNAMIC_SOURCES_ENABLED", "true".into())], None),
+        (
+            vec![("CMAEG_DYNAMIC_SOURCES_ENABLED", "false".into())],
+            None,
+        ),
+        (
+            vec![("CMAEG_DYNAMIC_SOURCES_ENABLED", "True".into())],
+            Some("CMAEG_DYNAMIC_SOURCES_ENABLED"),
+        ),
         (
             vec![
                 ("CMAEG_ROUTED_CHANNEL_MAX_TURNS", "256".into()),
@@ -50,6 +59,7 @@ async fn capacity_and_notice_environment_is_validated_without_echoing_values() {
     {
         use std::os::unix::ffi::OsStringExt;
         for key in [
+            "CMAEG_DYNAMIC_SOURCES_ENABLED",
             "CMAEG_ROUTED_CHANNEL_MAX_TURNS",
             "CMAEG_ROUTED_OWNER_MAX_TURNS",
             "CMAEG_ROUTING_UNKNOWN_TARGET_TEXT",

@@ -10,7 +10,10 @@ use cmaeg_core::{
 use super::definition::hash_secret;
 use super::requests::{CredentialsRequest, SourceRequest};
 
-pub(super) fn build_sources(sources: &[SourceRequest]) -> Result<Vec<Source>, ValidationError> {
+pub(super) fn build_sources(
+    sources: &[SourceRequest],
+    limit: usize,
+) -> Result<Vec<Source>, ValidationError> {
     let mut result = Vec::with_capacity(sources.len());
     for (index, source) in sources.iter().enumerate() {
         let pointer = format!("/sources/{index}");
@@ -89,7 +92,7 @@ pub(super) fn build_sources(sources: &[SourceRequest]) -> Result<Vec<Source>, Va
                 attachments: attachments.clone(),
             },
         });
-        if result.len() > 4 {
+        if result.len() > limit {
             return Err(ValidationError::new(pointer, "too many sources"));
         }
     }

@@ -75,7 +75,7 @@ fn extended_oversize_refusal_reports_the_checked_plaintext_bytes() {
 }
 
 #[test]
-fn management_routing_config_controls_only_the_routing_write_switch() {
+fn management_routing_config_controls_each_write_switch() {
     let providers = Arc::new(
         crate::providers::ProviderClient::new(
             crate::providers::ProviderRegistry::default(),
@@ -107,6 +107,10 @@ fn management_routing_config_controls_only_the_routing_write_switch() {
         let flags = state.write_flags();
         assert_eq!(flags.multi_consumer, enabled);
         assert!(!flags.dynamic_sources);
+        state.routing.dynamic_sources_enabled = true;
+        assert!(state.write_flags().dynamic_sources);
+        assert_eq!(state.write_flags().multi_consumer, enabled);
+        state.routing.dynamic_sources_enabled = false;
         let result = write_gate::check(None, &next, flags);
         if enabled {
             result.unwrap();

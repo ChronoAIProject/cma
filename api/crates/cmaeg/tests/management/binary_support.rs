@@ -41,6 +41,7 @@ impl MountedSecrets {
             .env_remove("CMAEG_ROUTED_CHANNEL_MAX_TURNS")
             .env_remove("CMAEG_ROUTED_OWNER_MAX_TURNS")
             .env_remove("CMAEG_ROUTING_UNKNOWN_TARGET_TEXT")
+            .env_remove("CMAEG_DYNAMIC_SOURCES_ENABLED")
             .env_remove("CMAEG_MASTER_KEYS")
             .env_remove("CMAEG_CMA_SERVICE_TOKEN")
             .env_remove("CMAEG_CMA_CLIENT_ID")
