@@ -118,7 +118,7 @@ impl ChannelSummary {
                     target: target_label(&consumer.provider.target),
                     binding_id: consumer.provider.binding_id.to_string(),
                     level: level_label(consumer.provider.level),
-                    auto_final: consumer.auto_final,
+                    auto_final: consumer.reply.auto_final,
                 })
                 .collect(),
             // Legacy channels only until routing policies exist.
