@@ -64,14 +64,7 @@ impl RoutingPolicy {
         &'a self,
         def: &'a ChannelDefinition,
     ) -> impl Iterator<Item = &'a RoutingRule> {
-        self.rules.iter().filter(move |rule| {
-            rule.when.sources.is_empty()
-                || rule
-                    .when
-                    .sources
-                    .iter()
-                    .any(|id| def.sources.iter().any(|source| &source.source_id() == id))
-        })
+        self.rules.iter().filter(move |rule| rule.is_active(def))
     }
 }
 
@@ -134,6 +127,19 @@ pub struct RoutingRule {
     pub when: RuleMatch,
     /// 1..=max_targets consumers.
     pub targets: Vec<ConsumerId>,
+}
+
+impl RoutingRule {
+    /// Whether the rule can match on `def`: it lists an attached source, or
+    /// no source at all.
+    pub fn is_active(&self, def: &ChannelDefinition) -> bool {
+        self.when.sources.is_empty()
+            || self
+                .when
+                .sources
+                .iter()
+                .any(|id| def.sources.iter().any(|source| &source.source_id() == id))
+    }
 }
 
 /// What a rule matches: AND across non-empty fields, OR within a list. An
@@ -199,6 +205,15 @@ impl Pattern {
 
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+
+    /// Whether `value` equals the pattern, or starts with its prefix when the
+    /// pattern ends in `*`.
+    pub fn matches(&self, value: &str) -> bool {
+        match self.0.strip_suffix('*') {
+            Some(prefix) => value.starts_with(prefix),
+            None => self.0 == value,
+        }
     }
 }
 
