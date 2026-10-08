@@ -11,6 +11,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// When a fresh 900 s access token is first refreshed: 30 s before expiry.
+const DUE: Duration = Duration::from_secs(870);
+
 async fn harness_with(config: ConsoleConfig) -> Harness {
     let harness = Harness::start(config).await;
     harness.console.discover_once().await.unwrap();
@@ -50,7 +53,7 @@ async fn concurrent_requests_make_one_refresh_and_rotate_the_token() {
     let harness = harness_with(config()).await;
     let (_, cell) = create(&harness, "alice");
     let original = cell.lock_auth().await.access().clone();
-    harness.clock.advance(Duration::from_secs(300));
+    harness.clock.advance(DUE);
     harness
         .nyxid
         .oauth
@@ -63,31 +66,22 @@ async fn concurrent_requests_make_one_refresh_and_rotate_the_token() {
     assert_eq!(harness.nyxid.oauth.refresh_calls(), 1);
     assert_ne!(cell.lock_auth().await.access(), &original);
     // The rotated refresh token is the one used next; the old one is gone.
-    harness.clock.advance(Duration::from_secs(300));
+    harness.clock.advance(DUE);
     assert_eq!(refresh(&harness, &cell).await, Refresh::Rotated);
     assert_eq!(harness.nyxid.oauth.refresh_calls(), 2);
     harness.close().await;
 }
 
 #[tokio::test]
-async fn a_refresh_is_due_at_refresh_after_even_while_the_token_is_valid() {
+async fn no_refresh_happens_until_the_token_expires_within_30_seconds() {
     let harness = harness_with(config()).await;
     let (_, cell) = create(&harness, "alice");
-    harness.clock.advance(Duration::from_secs(299));
+    harness.clock.advance(DUE - Duration::from_secs(1));
     assert_eq!(refresh(&harness, &cell).await, Refresh::NotDue);
+    assert_eq!(harness.nyxid.oauth.refresh_calls(), 0);
     harness.clock.advance(Duration::from_secs(1));
     assert_eq!(refresh(&harness, &cell).await, Refresh::Rotated);
-    // Within 30 s of expiry a refresh is due whatever refresh_after says.
-    let late = ConsoleConfig {
-        refresh_after: Duration::from_secs(900),
-        ..config()
-    };
-    let harness = harness_with(late).await;
-    let (_, cell) = create(&harness, "bob");
-    harness.clock.advance(Duration::from_secs(869));
-    assert_eq!(refresh(&harness, &cell).await, Refresh::NotDue);
-    harness.clock.advance(Duration::from_secs(2));
-    assert_eq!(refresh(&harness, &cell).await, Refresh::Rotated);
+    assert_eq!(harness.nyxid.oauth.refresh_calls(), 1);
     harness.close().await;
 }
 
@@ -102,7 +96,7 @@ async fn invalid_grant_or_401_ends_the_session_and_revokes() {
             .sessions()
             .create("alice".into(), tokens)
             .unwrap();
-        harness.clock.advance(Duration::from_secs(300));
+        harness.clock.advance(DUE);
         let oauth = &harness.nyxid.oauth;
         oauth.token_status.store(status, Ordering::SeqCst);
         *oauth.token_error.lock().unwrap() = error.into();
@@ -120,7 +114,7 @@ async fn transient_refresh_failures_keep_the_session_and_retry_after_ten_seconds
     for failure in ["503", "429", "malformed"] {
         let harness = harness_with(config()).await;
         let (sid, cell) = create(&harness, "alice");
-        harness.clock.advance(Duration::from_secs(300));
+        harness.clock.advance(DUE);
         let oauth = &harness.nyxid.oauth;
         match failure {
             "malformed" => oauth.token_malformed.store(true, Ordering::SeqCst),
@@ -130,7 +124,7 @@ async fn transient_refresh_failures_keep_the_session_and_retry_after_ten_seconds
         }
         assert_eq!(
             refresh(&harness, &cell).await,
-            Refresh::Transient { usable: true },
+            Refresh::Transient { usable: false },
             "{failure}"
         );
         assert!(harness.console.sessions().find(sid.as_str()).is_some());
@@ -138,7 +132,7 @@ async fn transient_refresh_failures_keep_the_session_and_retry_after_ten_seconds
         harness.clock.advance(Duration::from_secs(9));
         assert_eq!(
             refresh(&harness, &cell).await,
-            Refresh::Transient { usable: true }
+            Refresh::Transient { usable: false }
         );
         assert_eq!(oauth.refresh_calls(), 1, "{failure}");
         oauth.token_status.store(200, Ordering::SeqCst);
@@ -172,7 +166,7 @@ async fn a_hanging_refresh_never_blocks_other_sessions() {
     let harness = Arc::new(harness_with(config()).await);
     let (_, stuck) = create(&harness, "alice");
     let (bob_sid, _) = create(&harness, "bob");
-    harness.clock.advance(Duration::from_secs(300));
+    harness.clock.advance(DUE);
     harness
         .nyxid
         .oauth

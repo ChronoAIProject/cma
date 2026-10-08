@@ -39,7 +39,6 @@ pub struct SessionLimits {
     pub idle: Duration,
     pub max: usize,
     pub per_subject: usize,
-    pub refresh_after: Duration,
 }
 
 impl From<&ConsoleConfig> for SessionLimits {
@@ -49,7 +48,6 @@ impl From<&ConsoleConfig> for SessionLimits {
             idle: config.session_idle,
             max: config.sessions_max,
             per_subject: config.sessions_per_subject,
-            refresh_after: config.refresh_after,
         }
     }
 }
@@ -93,7 +91,6 @@ pub struct SessionMeta {
 pub struct SessionAuth {
     access: Secret,
     refresh: Secret,
-    access_issued_at: Instant,
     access_expires_at: Instant,
     refresh_retry_at: Option<Instant>,
     pub(crate) verdict: Option<Verdict>,
@@ -116,7 +113,6 @@ impl SessionAuth {
     fn rotate(&mut self, tokens: TokenSet, issued_at: Instant) {
         self.access = tokens.access;
         self.refresh = tokens.refresh;
-        self.access_issued_at = issued_at;
         self.access_expires_at = issued_at + tokens.expires_in;
         self.refresh_retry_at = None;
         // A verdict belongs to the token it was derived from.
@@ -263,7 +259,6 @@ impl SessionStore {
             auth: tokio::sync::Mutex::new(SessionAuth {
                 access: tokens.access,
                 refresh: tokens.refresh,
-                access_issued_at: now,
                 access_expires_at: now + tokens.expires_in,
                 refresh_retry_at: None,
                 verdict: None,
@@ -345,10 +340,10 @@ impl SessionStore {
         }
     }
 
-    /// Refresh the access token when it expires within 30 s, is older than
-    /// `refresh_after`, or `force` is set; the caller holds the `auth` lock,
-    /// so concurrent requests of one session make one refresh. The rotated
-    /// refresh token replaces the old one before the lock is released.
+    /// Refresh the access token when it expires within 30 s, or when `force`
+    /// is set; the caller holds the `auth` lock, so concurrent requests of
+    /// one session make one refresh. The rotated refresh token replaces the
+    /// old one before the lock is released.
     pub async fn refresh(
         &self,
         cell: &Arc<SessionCell>,
@@ -356,9 +351,7 @@ impl SessionStore {
         force: bool,
     ) -> Refresh {
         let now = self.clock.now();
-        let due = force
-            || !auth.access_usable(now)
-            || now.duration_since(auth.access_issued_at) >= self.limits.refresh_after;
+        let due = force || !auth.access_usable(now);
         if !due {
             return Refresh::NotDue;
         }

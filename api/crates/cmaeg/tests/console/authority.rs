@@ -132,12 +132,14 @@ async fn refresh_failures_are_classified_on_every_request() {
     let harness = Harness::enabled().await;
     let oauth = &harness.nyxid.oauth;
     let (sid, _) = signed_in(&harness, "alice").await;
-    // A token-endpoint 503 with a still-valid access token keeps serving.
+    // A token-endpoint 503 is never noticed while the token has more than
+    // 30 s left: no refresh is due.
     harness.clock.advance(Duration::from_secs(300));
     oauth.token_status.store(503, Ordering::SeqCst);
     assert_eq!(harness.get_as("/console", &sid).await.status(), 200);
+    assert_eq!(oauth.refresh_calls(), 0);
     // Within 30 s of expiry it shows the 503 page and keeps the session.
-    harness.clock.advance(Duration::from_secs(580));
+    harness.clock.advance(Duration::from_secs(570));
     let page = harness.get_as("/console", &sid).await;
     assert_eq!(page.status(), 503);
     assert!(page.text().await.unwrap().contains("Console unavailable"));
@@ -146,8 +148,8 @@ async fn refresh_failures_are_classified_on_every_request() {
     oauth.token_status.store(200, Ordering::SeqCst);
     harness.clock.advance(Duration::from_secs(11));
     assert_eq!(harness.get_as("/console", &sid).await.status(), 200);
-    // invalid_grant ends the session.
-    harness.clock.advance(Duration::from_secs(300));
+    // invalid_grant ends the session once the rotated token is due.
+    harness.clock.advance(Duration::from_secs(870));
     oauth.token_status.store(400, Ordering::SeqCst);
     let page = harness.get_as("/console", &sid).await;
     assert_eq!(page.status(), 200);
@@ -161,7 +163,7 @@ async fn refresh_failures_are_classified_on_every_request() {
     assert!(
         sample(
             &rendered,
-            "cmaeg_console_authorizations_total{outcome=\"refresh_transient\"}"
+            "cmaeg_console_authorizations_total{outcome=\"unavailable\"}"
         ) >= 1.0
     );
     assert!(
@@ -195,7 +197,7 @@ async fn a_hanging_check_never_blocks_other_sessions_and_one_session_refreshes_o
     assert!(started.elapsed() < Duration::from_secs(1));
     // NyxID's silence fails closed after the 3 s check timeout.
     assert_eq!(hanging.await.unwrap(), 503);
-    harness.clock.advance(Duration::from_secs(300));
+    harness.clock.advance(Duration::from_secs(870));
     harness
         .nyxid
         .oauth

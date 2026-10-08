@@ -95,7 +95,8 @@ async fn no_secret_reaches_a_page_a_location_or_a_log() {
             .await,
     )
     .await;
-    harness.clock.advance(Duration::from_secs(301));
+    // Within 30 s of the access token's expiry, so the page refreshes it.
+    harness.clock.advance(Duration::from_secs(871));
     let page = seen.record(harness.get_as("/console", &sid).await).await;
     seen.record(
         harness

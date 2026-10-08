@@ -28,10 +28,9 @@ fn unset_keys_take_their_documented_defaults_and_leave_the_console_off() {
     assert!(config.client_secret.is_none());
     assert_eq!(config.login_rate_per_minute, 60);
     assert_eq!(config.session_ttl, Duration::from_millis(28_800_000));
-    assert_eq!(config.session_idle, Duration::from_millis(3_600_000));
+    assert_eq!(config.session_idle, Duration::from_millis(1_800_000));
     assert_eq!(config.sessions_max, 1_000);
     assert_eq!(config.sessions_per_subject, 5);
-    assert_eq!(config.refresh_after, Duration::from_millis(300_000));
     assert_eq!(config.missing_client_key(), Some(CMAEG_CONSOLE_CLIENT_ID));
     let defaults = ConsoleConfig::default();
     assert_eq!(defaults.session_idle, config.session_idle);
@@ -67,7 +66,6 @@ fn bounds_are_inclusive_and_out_of_range_values_name_their_key() {
         (CMAEG_CONSOLE_SESSION_IDLE_MS, "60000"),
         (CMAEG_CONSOLE_SESSIONS_MAX, "10"),
         (CMAEG_CONSOLE_SESSIONS_PER_SUBJECT, "1"),
-        (CMAEG_CONSOLE_REFRESH_AFTER_MS, "60000"),
     ])
     .unwrap();
     assert_eq!(low.login_rate_per_minute, 1);
@@ -75,14 +73,12 @@ fn bounds_are_inclusive_and_out_of_range_values_name_their_key() {
     assert_eq!(low.session_idle, Duration::from_secs(60));
     assert_eq!(low.sessions_max, 10);
     assert_eq!(low.sessions_per_subject, 1);
-    assert_eq!(low.refresh_after, Duration::from_secs(60));
     let high = config_with(&[
         (CMAEG_CONSOLE_LOGIN_RATE_PER_MINUTE, "6000"),
         (CMAEG_CONSOLE_SESSION_TTL_MS, "86400000"),
         (CMAEG_CONSOLE_SESSION_IDLE_MS, "86400000"),
         (CMAEG_CONSOLE_SESSIONS_MAX, "100000"),
         (CMAEG_CONSOLE_SESSIONS_PER_SUBJECT, "50"),
-        (CMAEG_CONSOLE_REFRESH_AFTER_MS, "900000"),
     ])
     .unwrap();
     assert_eq!(high.session_idle, high.session_ttl);
@@ -101,12 +97,6 @@ fn bounds_are_inclusive_and_out_of_range_values_name_their_key() {
         ),
         (CMAEG_CONSOLE_SESSIONS_MAX, "9", "from 10 to 100000"),
         (CMAEG_CONSOLE_SESSIONS_PER_SUBJECT, "51", "from 1 to 50"),
-        (
-            CMAEG_CONSOLE_REFRESH_AFTER_MS,
-            "59999",
-            "from 60000 to 900000",
-        ),
-        (CMAEG_CONSOLE_REFRESH_AFTER_MS, "5m", "from 60000 to 900000"),
     ] {
         assert_eq!(
             detail(config_with(&[(key, value)]).unwrap_err()),

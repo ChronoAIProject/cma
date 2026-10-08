@@ -18,17 +18,15 @@ pub const CMAEG_CONSOLE_SESSION_TTL_MS: &str = "CMAEG_CONSOLE_SESSION_TTL_MS";
 pub const CMAEG_CONSOLE_SESSION_IDLE_MS: &str = "CMAEG_CONSOLE_SESSION_IDLE_MS";
 pub const CMAEG_CONSOLE_SESSIONS_MAX: &str = "CMAEG_CONSOLE_SESSIONS_MAX";
 pub const CMAEG_CONSOLE_SESSIONS_PER_SUBJECT: &str = "CMAEG_CONSOLE_SESSIONS_PER_SUBJECT";
-pub const CMAEG_CONSOLE_REFRESH_AFTER_MS: &str = "CMAEG_CONSOLE_REFRESH_AFTER_MS";
 
 /// `(default, min, max)` of each bounded key.
 const LOGIN_RATE: (u64, u64, u64) = (60, 1, 6_000);
 const SESSION_TTL_MS: (u64, u64, u64) = (28_800_000, 600_000, 86_400_000);
 /// The idle maximum is the configured absolute TTL, checked separately.
-const SESSION_IDLE_MS: (u64, u64) = (3_600_000, 60_000);
+/// Thirty minutes by default (Amendment R6 §R6.4).
+const SESSION_IDLE_MS: (u64, u64) = (1_800_000, 60_000);
 const SESSIONS_MAX: (u64, u64, u64) = (1_000, 10, 100_000);
 const SESSIONS_PER_SUBJECT: (u64, u64, u64) = (5, 1, 50);
-/// NyxID access tokens live 900 s, so a refresh is never due later than that.
-const REFRESH_AFTER_MS: (u64, u64, u64) = (300_000, 60_000, 900_000);
 /// A NyxID client id is a short opaque identifier; anything longer is a
 /// pasted value, not an id.
 const MAX_CLIENT_ID: usize = 256;
@@ -53,9 +51,6 @@ pub struct ConsoleConfig {
     pub session_idle: Duration,
     pub sessions_max: usize,
     pub sessions_per_subject: usize,
-    /// Refresh the access token once it is this old, even while it is valid,
-    /// so a revoked grant stops the console within a bounded time.
-    pub refresh_after: Duration,
 }
 
 impl Default for ConsoleConfig {
@@ -69,7 +64,6 @@ impl Default for ConsoleConfig {
             session_idle: Duration::from_millis(SESSION_IDLE_MS.0),
             sessions_max: usize::try_from(SESSIONS_MAX.0).unwrap_or(usize::MAX),
             sessions_per_subject: usize::try_from(SESSIONS_PER_SUBJECT.0).unwrap_or(usize::MAX),
-            refresh_after: Duration::from_millis(REFRESH_AFTER_MS.0),
         }
     }
 }
@@ -101,7 +95,6 @@ impl ConsoleConfig {
             sessions_per_subject: sessions_per_subject(
                 lookup(CMAEG_CONSOLE_SESSIONS_PER_SUBJECT)?.as_deref(),
             )?,
-            refresh_after: refresh_after(lookup(CMAEG_CONSOLE_REFRESH_AFTER_MS)?.as_deref())?,
         };
         tracing::info!(
             enabled = config.enabled,
@@ -111,7 +104,6 @@ impl ConsoleConfig {
             session_idle_ms = config.session_idle.as_millis() as u64,
             sessions_max = config.sessions_max,
             sessions_per_subject = config.sessions_per_subject,
-            refresh_after_ms = config.refresh_after.as_millis() as u64,
             "console settings"
         );
         Ok(config)
@@ -219,10 +211,6 @@ fn sessions_per_subject(value: Option<&str>) -> Result<usize, ConfigError> {
         SESSIONS_PER_SUBJECT,
     )
     .map(widen)
-}
-
-fn refresh_after(value: Option<&str>) -> Result<Duration, ConfigError> {
-    read_bounded(CMAEG_CONSOLE_REFRESH_AFTER_MS, value, REFRESH_AFTER_MS).map(Duration::from_millis)
 }
 
 /// The u32 key's bound is far below `u32::MAX`.
