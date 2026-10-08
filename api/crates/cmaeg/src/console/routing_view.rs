@@ -179,3 +179,47 @@ fn kind_label(kind: ActivityKindName) -> &'static str {
         ActivityKindName::Event => "event",
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rule(id: &str, active: bool, sources: &[&str]) -> RuleView {
+        RuleView {
+            id: id.to_owned(),
+            active,
+            sources: sources
+                .iter()
+                .map(|source| SourceId::parse(source).unwrap())
+                .collect(),
+            matches: Vec::new(),
+            targets: vec![ConsumerId::default_consumer()],
+        }
+    }
+
+    #[test]
+    fn only_active_rules_left_without_an_attached_source_become_inert() {
+        let view = RoutingView {
+            default_targets: vec![ConsumerId::default_consumer()],
+            rules: vec![
+                rule("lark-only", true, &["relay_lark"]),
+                rule("lark-or-telegram", true, &["relay_lark", "telegram"]),
+                rule("lark-or-slack", true, &["relay_lark", "relay_slack"]),
+                rule("slack-only", false, &["relay_slack"]),
+                rule("any-source", true, &[]),
+            ],
+            addressing: Addressing::default(),
+            max_targets: 4,
+            reply_label: ReplyLabel::Auto,
+            default_reply: None,
+            agent_events: AgentEventPolicy::default(),
+        };
+        let lark = SourceId::parse("relay_lark").unwrap();
+        let attached = [lark.clone(), SourceId::parse("telegram").unwrap()];
+        let inert: Vec<&str> = view
+            .inert_after_detach(&lark, &attached)
+            .map(|rule| rule.id.as_str())
+            .collect();
+        assert_eq!(inert, ["lark-only", "lark-or-slack"]);
+    }
+}

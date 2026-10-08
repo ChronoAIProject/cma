@@ -162,3 +162,37 @@ async fn the_overview_shows_the_partition_and_custom_keys() {
     assert!(page.contains("<dt>Custom event key</dt><dd>event_subject</dd>"));
     world.close().await;
 }
+
+#[tokio::test]
+async fn a_detach_confirmation_names_blocking_references_and_rules_left_inactive() {
+    let world =
+        World::with_sources(cmaeg::console::source_changes::SourceAvailability::Available).await;
+    let routed = routed_support::add(&world, 1, "alice", "alice-routed");
+    let (sid, _) = world.harness.sign_in("alice", "/console").await;
+    let confirm = |source: &str| format!("/console/channels/{routed}/sources/{source}/detach");
+    let page = |path: String| {
+        let world = &world;
+        let sid = sid.clone();
+        async move {
+            let response = world.harness.get_as(&path, &sid).await;
+            assert_eq!(response.status(), 200, "{path}");
+            response.text().await.unwrap()
+        }
+    };
+    let lark = page(confirm("relay_lark")).await;
+    assert!(lark.contains(
+        "<li>The default reply destination, route …8e9f of relay_lark, replies through this source. The detach is refused with 409"
+    ));
+    // ops-chat names only the Lark relay; slack-only is inactive already.
+    assert!(lark.contains("<ul><li><code>ops-chat</code></li></ul>"));
+    assert!(!lark.contains("<code>slack-only</code>"));
+    for other in ["telegram", "custom"] {
+        let body = page(confirm(other)).await;
+        assert!(
+            body.contains("<h3>Blocking references</h3><p>None.</p><h3>Rules that become inactive</h3><p>None.</p>"),
+            "{other}"
+        );
+    }
+    assert_no_secret(&lark, "detach");
+    world.close().await;
+}

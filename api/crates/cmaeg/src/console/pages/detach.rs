@@ -50,19 +50,52 @@ pub(crate) fn render(detach: &DetachView<'_>) -> String {
         consequences.push("<li>The channel will have no sources and will admit no events until one is attached.</li>".to_owned());
     }
     format!(
-        "<h2>Detach <code>{}</code>?</h2>{error}{}<h3>Blocking references</h3><p>None: this channel has no routing policy, so no default reply source names this source.</p><h3>Rules that become inactive</h3><p>None.</p><h3>What happens</h3><ul>{}</ul><form class=\"inline\" method=\"post\" action=\"{}\"><input type=\"hidden\" name=\"csrf\" value=\"{}\"><input type=\"hidden\" name=\"expected_version\" value=\"{}\"><button type=\"submit\">Detach</button></form> <a class=\"button secondary\" href=\"{}\">Cancel</a>",
+        "<h2>Detach <code>{}</code>?</h2>{error}{}{}<h3>What happens</h3><ul>{}</ul><form class=\"inline\" method=\"post\" action=\"{}\"><input type=\"hidden\" name=\"csrf\" value=\"{}\"><input type=\"hidden\" name=\"expected_version\" value=\"{}\"><button type=\"submit\">Detach</button></form> <a class=\"button secondary\" href=\"{}\">Cancel</a>",
         escape(source.id.as_str()),
         facts(&[
             ("Type", escape(source.kind)),
             ("Platform", super::or_dash(source.platform)),
             ("Version", view.version.to_string()),
         ]),
+        references(view, source),
         consequences.concat(),
         escape(&detach_href(&view.record, &source.id)),
         escape(detach.csrf),
         view.version,
         escape(&href(&view.record, Tab::Sources)),
     )
+}
+
+/// What in the routing policy names `source`: a default reply destination
+/// that blocks the detach, and the rules that only it keeps active.
+fn references(view: &ChannelView, source: &SourceView) -> String {
+    let Some(detail) = view.summary.detail.as_ref() else {
+        return String::new();
+    };
+    let Some(routing) = detail.routing.as_ref() else {
+        return "<h3>Blocking references</h3><p>None: this channel has no routing policy, so no default reply source names this source.</p><h3>Rules that become inactive</h3><p>None.</p>".to_owned();
+    };
+    let blocking = match &routing.default_reply {
+        Some(reply) if reply.source.as_ref() == Some(&source.id) => format!(
+            "<ul><li>The default reply destination, {}, replies through this source. The detach is refused with 409 until the routing policy names another destination.</li></ul>",
+            escape(&reply.description)
+        ),
+        _ => "<p>None.</p>".to_owned(),
+    };
+    let attached: Vec<SourceId> = detail.sources.iter().map(|item| item.id.clone()).collect();
+    let inert: Vec<String> = routing
+        .inert_after_detach(&source.id, &attached)
+        .map(|rule| format!("<li><code>{}</code></li>", escape(&rule.id)))
+        .collect();
+    let inert = if inert.is_empty() {
+        "<p>None.</p>".to_owned()
+    } else {
+        format!(
+            "<p>These rules name no other attached source, so they stop matching until such a source is attached again:</p><ul>{}</ul>",
+            inert.concat()
+        )
+    };
+    format!("<h3>Blocking references</h3>{blocking}<h3>Rules that become inactive</h3>{inert}")
 }
 
 /// The status and text of a source change this gateway cannot make now.
