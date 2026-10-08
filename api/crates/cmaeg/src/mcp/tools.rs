@@ -104,6 +104,10 @@ const TOOLS: [ToolSpec; 4] = [
         open_world: false,
     },
 ];
+const ROUTED_DESCRIPTIONS: [(&str, &str); 2] = [
+    ("replyToEvent", "Send a message in reply to an event. A routed send queued past the tool deadline returns `unknown` (`delivery_in_progress`) and is still sent, authorized as at the call; do not resend `unknown`."),
+    ("updateMessage", "Update a confirmed message when its transport supports edits. A routed send queued past the tool deadline returns `unknown` (`delivery_in_progress`) and is still sent, authorized as at the call; do not resend `unknown`."),
+];
 /// Listed only while inbound media is enabled.
 const ATTACHMENT_TOOL: ToolSpec = ToolSpec {
     name: "readEventAttachment",
@@ -139,10 +143,18 @@ pub fn list(flags: ToolFlags) -> Value {
     let mut tools: Vec<_> = TOOLS
         .iter()
         .map(|tool| {
-            if flags.multi_consumer && tool.name == "replyToEvent" {
+            if flags.multi_consumer {
                 describe(
                     &ToolSpec {
-                        schema: "RoutedReplyArguments",
+                        schema: if tool.name == "replyToEvent" {
+                            "RoutedReplyArguments"
+                        } else {
+                            tool.schema
+                        },
+                        description: ROUTED_DESCRIPTIONS
+                            .iter()
+                            .find(|(name, _)| *name == tool.name)
+                            .map_or(tool.description, |(_, description)| *description),
                         ..*tool
                     },
                     &base,

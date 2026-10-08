@@ -27,6 +27,24 @@ fn flag_selected_mcp_documents_match_their_byte_goldens() {
     }
     assert!(!legacy.contains("ReplyChoice"));
     assert!(!legacy.contains("RoutedReplyArguments"));
+    let sentence = "A routed send queued past the tool deadline returns `unknown` (`delivery_in_progress`) and is still sent, authorized as at the call; do not resend `unknown`.";
+    assert!(!legacy.contains(sentence));
+    for tool in list(ToolFlags {
+        media: false,
+        multi_consumer: true,
+    })["tools"]
+        .as_array()
+        .unwrap()
+    {
+        let sends = matches!(
+            tool["name"].as_str(),
+            Some("replyToEvent" | "updateMessage")
+        );
+        assert_eq!(
+            tool["description"].as_str().unwrap().contains(sentence),
+            sends
+        );
+    }
 }
 
 #[tokio::test]
