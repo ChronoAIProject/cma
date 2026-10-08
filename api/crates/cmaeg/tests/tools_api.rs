@@ -17,6 +17,14 @@ mod attachment_transformer;
 mod attachments;
 #[path = "tools/attachments_mcp.rs"]
 mod attachments_mcp;
+#[path = "tools/consumer_auth.rs"]
+mod consumer_auth;
+#[path = "tools/consumer_context.rs"]
+mod consumer_context;
+#[path = "tools/consumer_media.rs"]
+mod consumer_media;
+#[path = "tools/consumer_support.rs"]
+pub mod consumer_support;
 #[path = "tools/download_support.rs"]
 pub mod download_support;
 #[path = "tools/link_redemption.rs"]
@@ -31,6 +39,8 @@ pub mod media_support;
 pub mod relay_support;
 #[path = "tools/rest.rs"]
 mod rest;
+#[path = "../../cmaeg-core/tests/routing_policy/fixture.rs"]
+pub mod routing_fixture;
 #[path = "tools/rpc.rs"]
 mod rpc;
 #[path = "relay/signer.rs"]

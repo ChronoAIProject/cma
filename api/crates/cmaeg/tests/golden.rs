@@ -29,3 +29,5 @@ mod reseal;
 mod responses;
 #[path = "relay/signer.rs"]
 pub mod signer;
+#[path = "golden/tool_responses.rs"]
+mod tool_responses;

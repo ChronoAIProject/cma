@@ -1,3 +1,8 @@
+#[path = "tools/consumer_cards.rs"]
+mod consumer_cards;
+#[allow(dead_code)]
+#[path = "tools/consumer_support.rs"]
+mod consumer_support;
 #[path = "fake_cma.rs"]
 pub mod fake_cma;
 #[path = "fake_provider.rs"]
@@ -15,6 +20,8 @@ pub mod media {
 }
 #[path = "tools/media_support.rs"]
 pub mod media_support;
+#[path = "../../cmaeg-core/tests/routing_policy/fixture.rs"]
+pub mod routing_fixture;
 #[path = "relay/signer.rs"]
 pub mod signer;
 #[allow(dead_code)]
@@ -33,6 +40,11 @@ use cmaeg_core::{
 };
 use serde_json::json;
 use std::{sync::Arc, time::Duration};
+
+/// The admission chat dispatch applies while only default cards exist.
+fn default_only(consumer: Option<&cmaeg_core::ids::ConsumerId>) -> bool {
+    consumer.is_none()
+}
 
 #[tokio::test]
 async fn callback_authority_survives_restart_and_fences_actor_chat_message_and_revision() {
@@ -101,26 +113,74 @@ async fn callback_authority_survives_restart_and_fences_actor_chat_message_and_r
     let mut impostor = activity.clone();
     impostor.actor.id = "another-user".into();
     assert!(restarted
-        .consume(&channel, &impostor, "route-1", "query-1", &data, "42")
+        .consume(
+            &channel,
+            &impostor,
+            "route-1",
+            "query-1",
+            &data,
+            "42",
+            &default_only
+        )
         .await
         .is_err());
     impostor = activity.clone();
     impostor.conversation.id = "another-chat".into();
     assert!(restarted
-        .consume(&channel, &impostor, "route-1", "query-1", &data, "42")
+        .consume(
+            &channel,
+            &impostor,
+            "route-1",
+            "query-1",
+            &data,
+            "42",
+            &default_only
+        )
         .await
         .is_err());
     assert!(restarted
-        .consume(&channel, &activity, "route-1", "query-1", &data, "43")
+        .consume(
+            &channel,
+            &activity,
+            "route-1",
+            "query-1",
+            &data,
+            "43",
+            &default_only
+        )
         .await
         .is_err());
     assert!(restarted
-        .consume(&channel, &activity, "another-route", "query-1", &data, "42")
+        .consume(
+            &channel,
+            &activity,
+            "another-route",
+            "query-1",
+            &data,
+            "42",
+            &default_only
+        )
         .await
         .is_err());
     let (a, b) = tokio::join!(
-        restarted.consume(&channel, &activity, "route-1", "query-1", &data, "42"),
-        restarted.consume(&channel, &activity, "route-1", "query-1", &data, "42")
+        restarted.consume(
+            &channel,
+            &activity,
+            "route-1",
+            "query-1",
+            &data,
+            "42",
+            &default_only
+        ),
+        restarted.consume(
+            &channel,
+            &activity,
+            "route-1",
+            "query-1",
+            &data,
+            "42",
+            &default_only
+        )
     );
     let first = a.unwrap();
     assert_eq!(first.0, b.unwrap().0);
@@ -129,7 +189,15 @@ async fn callback_authority_survives_restart_and_fences_actor_chat_message_and_r
     assert_eq!(first.0.block_id, "owner");
     assert_eq!(first.0.action_id, "org");
     assert!(restarted
-        .consume(&channel, &activity, "route-1", "query-2", &data, "42")
+        .consume(
+            &channel,
+            &activity,
+            "route-1",
+            "query-2",
+            &data,
+            "42",
+            &default_only
+        )
         .await
         .is_err());
     let payload = reference.open(&app.state.keys).unwrap().payload;
@@ -139,7 +207,15 @@ async fn callback_authority_survives_restart_and_fences_actor_chat_message_and_r
         .unwrap();
     assert_eq!(next.card.revision, 2);
     assert!(restarted
-        .consume(&channel, &activity, "route-1", "query-1", &data, "42")
+        .consume(
+            &channel,
+            &activity,
+            "route-1",
+            "query-1",
+            &data,
+            "42",
+            &default_only
+        )
         .await
         .is_err());
     // The opaque encrypted record is namespace- and ID-bound, and never stores plain UI/actor values.
