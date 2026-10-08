@@ -10,6 +10,7 @@ use ring::{
 };
 use serde::{de::DeserializeOwned, Serialize};
 
+mod console_login;
 pub mod event_ref;
 mod interaction;
 pub mod media_link;
@@ -17,6 +18,7 @@ pub mod message_ref;
 pub mod pointer;
 pub mod reply_target;
 
+pub use console_login::{open_console_login, seal_console_login, ConsoleLogin, CONSOLE_LOGIN_TTL};
 pub use event_ref::{EventRef, EventRefPayload, ReplyAddress};
 pub use interaction::{
     open_blob, open_connection, open_interaction, seal_blob, seal_connection, seal_interaction,
@@ -44,6 +46,7 @@ pub enum TokenKind {
     Connection,
     ConnectionSetup,
     MediaLink,
+    ConsoleLogin,
 }
 
 impl TokenKind {
@@ -58,6 +61,7 @@ impl TokenKind {
             Self::Connection => "cn",
             Self::ConnectionSetup => "cs",
             Self::MediaLink => "md",
+            Self::ConsoleLogin => "cl",
         }
     }
 }

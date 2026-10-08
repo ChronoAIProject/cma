@@ -2,12 +2,14 @@
 //! wired to a fake NyxID.
 use super::fake_nyxid::{console as oauth, FakeNyxid};
 use axum::{routing::get, Json, Router};
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use cmaeg::{
+    auth::CreatorAuthenticator,
     console::{clock::Clock, token::TokenSet, Console, ConsoleDeps},
     http::readiness::{readyz, Readiness},
     ConsoleConfig,
 };
-use cmaeg_core::channel::Secret;
+use cmaeg_core::{channel::Secret, seal::MasterKeyRing};
 use std::{
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -54,6 +56,10 @@ pub struct Harness {
     pub nyxid: FakeNyxid,
     pub console: Console,
     pub clock: Arc<ManualClock>,
+    pub keys: Arc<MasterKeyRing>,
+    /// The authenticator REST would share; the console must never fill its
+    /// cache.
+    pub creator_auth: Arc<CreatorAuthenticator>,
     pub http: reqwest::Client,
     shutdown: Option<oneshot::Sender<()>>,
 }
@@ -80,11 +86,16 @@ impl Harness {
             base: Instant::now(),
             offset_ms: AtomicU64::new(0),
         });
+        let keys =
+            Arc::new(MasterKeyRing::parse(&format!("1:{}", STANDARD.encode([5; 32]))).unwrap());
+        let creator_auth = Arc::new(CreatorAuthenticator::new(&nyxid.base_url).unwrap());
         let console = Console::new(ConsoleDeps {
             config,
             public_url: base.clone(),
             nyxid_base_url: nyxid.base_url.clone(),
             clock: clock.clone(),
+            keys: keys.clone(),
+            creator_auth: creator_auth.clone(),
         })
         .unwrap();
         let router = Router::new()
@@ -112,6 +123,8 @@ impl Harness {
             nyxid,
             console,
             clock,
+            keys,
+            creator_auth,
             http,
             shutdown: Some(shutdown),
         }
@@ -141,6 +154,48 @@ impl Harness {
             .send()
             .await
             .unwrap()
+    }
+
+    /// The full sign-in as a browser makes it: the explicit link, NyxID's
+    /// approval for `subject`, and the callback. Returns the session cookie
+    /// value and where the callback sent the browser.
+    pub async fn sign_in(&self, subject: &str, return_to: &str) -> (String, String) {
+        *self.nyxid.oauth.login_subject.lock().unwrap() = subject.into();
+        let (authorize, login_cookie) = self.start_login(return_to).await;
+        let callback = self.approve(&authorize).await;
+        let response = self.callback(&callback, Some(&login_cookie)).await;
+        assert_eq!(response.status(), 303, "{subject} sign-in");
+        let location = response.headers()["location"].to_str().unwrap().to_owned();
+        let sid = set_cookie(&response, "__Host-cmaeg-console").expect("a session cookie");
+        (sid, location)
+    }
+
+    /// `GET /console/login`: NyxID's authorization URL and the login cookie.
+    pub async fn start_login(&self, return_to: &str) -> (String, String) {
+        let encoded: String = url::form_urlencoded::byte_serialize(return_to.as_bytes()).collect();
+        let response = self
+            .get(&format!("/console/login?return_to={encoded}"))
+            .await;
+        assert_eq!(response.status(), 302);
+        let authorize = response.headers()["location"].to_str().unwrap().to_owned();
+        let cookie = set_cookie(&response, "__Host-cmaeg-console-login").expect("a login cookie");
+        (authorize, cookie)
+    }
+
+    /// Follow NyxID's authorization URL; returns the callback URL it sends
+    /// the browser to.
+    pub async fn approve(&self, authorize: &str) -> String {
+        let response = self.http.get(authorize).send().await.unwrap();
+        assert_eq!(response.status(), 303);
+        response.headers()["location"].to_str().unwrap().to_owned()
+    }
+
+    pub async fn callback(&self, url: &str, login_cookie: Option<&str>) -> reqwest::Response {
+        let mut request = self.http.get(url);
+        if let Some(cookie) = login_cookie {
+            request = request.header("cookie", format!("__Host-cmaeg-console-login={cookie}"));
+        }
+        request.send().await.unwrap()
     }
 
     /// GET with the session cookie `sid`.
@@ -199,4 +254,16 @@ pub fn csrf_for(page: &str, action: &str) -> String {
         .unwrap_or_else(|| panic!("no {action} form in {page}"))
         + form.len();
     page[start..].split('"').next().unwrap().to_owned()
+}
+
+/// The value a response sets for cookie `name`, if any.
+pub fn set_cookie(response: &reqwest::Response, name: &str) -> Option<String> {
+    response
+        .headers()
+        .get_all("set-cookie")
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .find_map(|value| value.strip_prefix(&format!("{name}=")))
+        .map(|rest| rest.split(';').next().unwrap().to_owned())
+        .filter(|value| !value.is_empty())
 }

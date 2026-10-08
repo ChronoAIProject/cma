@@ -11,6 +11,8 @@ mod cookies;
 mod csrf;
 mod guard;
 mod headers;
+mod login;
+mod login_limit;
 mod oidc;
 pub(crate) mod pages;
 mod redirect;
@@ -28,20 +30,25 @@ use axum::{
     routing::{any, get, post},
     Router,
 };
+use cmaeg_core::seal::MasterKeyRing;
 use reqwest::Client;
+use tokio::sync::SemaphorePermit;
 
 pub use oidc::{DiscoveryError, EndpointCell, OidcEndpoints};
 
 use oidc::DiscoverySink as _;
 
-use crate::{telemetry::names, ConsoleConfig};
+use crate::{auth::CreatorAuthenticator, telemetry::names, ConsoleConfig};
 use clock::Clock;
+use login_limit::LoginLimiter;
 use session::{SessionLimits, SessionStore};
 use token::TokenClient;
 
 /// How often idle and expired sessions are swept, so their refresh tokens
 /// are revoked even when nobody returns.
 const SWEEP_INTERVAL: Duration = Duration::from_secs(60);
+/// Concurrent authorization code exchanges at NyxID.
+const EXCHANGES: usize = 4;
 
 /// What the console is built from.
 pub struct ConsoleDeps {
@@ -53,6 +60,11 @@ pub struct ConsoleDeps {
     pub nyxid_base_url: String,
     /// The time source of session lifetimes and token ages.
     pub clock: Arc<dyn Clock>,
+    /// Seals the sign-in state cookie.
+    pub keys: Arc<MasterKeyRing>,
+    /// The identity and organization-admin rule REST uses; the console calls
+    /// only its uncached form.
+    pub creator_auth: Arc<CreatorAuthenticator>,
 }
 
 /// The console's shared state. Built only while `CMAEG_CONSOLE_ENABLED` is
@@ -65,7 +77,13 @@ pub struct Console {
 struct Inner {
     public_url: String,
     nyxid_base_url: String,
+    client_id: String,
     http: Client,
+    keys: Arc<MasterKeyRing>,
+    creator_auth: Arc<CreatorAuthenticator>,
+    tokens: TokenClient,
+    limiter: LoginLimiter,
+    exchanges: tokio::sync::Semaphore,
     /// The client setting whose absence keeps the console disabled.
     missing_key: Option<&'static str>,
     endpoints: Arc<EndpointCell>,
@@ -100,14 +118,20 @@ impl Console {
         let sessions = Arc::new(SessionStore::new(
             SessionLimits::from(&deps.config),
             deps.clock,
-            tokens,
+            tokens.clone(),
             endpoints.clone(),
         ));
         Ok(Self {
             inner: Arc::new(Inner {
                 public_url: deps.public_url,
                 nyxid_base_url: deps.nyxid_base_url,
+                client_id: deps.config.client_id.clone(),
                 http,
+                keys: deps.keys,
+                creator_auth: deps.creator_auth,
+                tokens,
+                limiter: LoginLimiter::new(deps.config.login_rate_per_minute),
+                exchanges: tokio::sync::Semaphore::new(EXCHANGES),
                 missing_key,
                 endpoints,
                 sessions,
@@ -121,6 +145,8 @@ impl Console {
     pub fn router(&self) -> Router {
         Router::new()
             .route(redirect::HOME, get(routes::home))
+            .route(redirect::LOGIN, get(login::start))
+            .route(redirect::CALLBACK, get(login::callback))
             .route(redirect::SIGNED_OUT, get(routes::signed_out))
             .route(redirect::LOGOUT, post(routes::logout))
             .route("/console/{*rest}", any(not_found))
@@ -132,6 +158,38 @@ impl Console {
 
     pub(crate) fn public_url(&self) -> &str {
         &self.inner.public_url
+    }
+
+    /// Where NyxID sends the browser back: `{CMAEG_PUBLIC_URL}/console/callback`.
+    pub(crate) fn redirect_uri(&self) -> String {
+        format!("{}{}", self.inner.public_url, redirect::CALLBACK)
+    }
+
+    pub(crate) fn client_id(&self) -> &str {
+        &self.inner.client_id
+    }
+
+    pub(crate) fn keys(&self) -> &MasterKeyRing {
+        &self.inner.keys
+    }
+
+    pub(crate) fn creator_auth(&self) -> &CreatorAuthenticator {
+        &self.inner.creator_auth
+    }
+
+    pub(crate) fn tokens(&self) -> &TokenClient {
+        &self.inner.tokens
+    }
+
+    pub(crate) fn limiter(&self) -> &LoginLimiter {
+        &self.inner.limiter
+    }
+
+    /// One of the four code exchange permits.
+    pub(crate) async fn exchange_permit(
+        &self,
+    ) -> Result<SemaphorePermit<'_>, tokio::sync::AcquireError> {
+        self.inner.exchanges.acquire().await
     }
 
     pub fn sessions(&self) -> &Arc<SessionStore> {
@@ -220,7 +278,11 @@ async fn gate(State(console): State<Console>, request: Request, next: Next) -> R
 
 /// Build the console when `CMAEG_CONSOLE_ENABLED` is on and start its
 /// background work; `None` while it is off, so nothing is allocated.
-pub(crate) fn compose(config: &crate::Config) -> Result<Option<Router>, reqwest::Error> {
+pub(crate) fn compose(
+    config: &crate::Config,
+    keys: Arc<MasterKeyRing>,
+    creator_auth: Arc<CreatorAuthenticator>,
+) -> Result<Option<Router>, reqwest::Error> {
     if !config.console.enabled {
         return Ok(None);
     }
@@ -229,6 +291,8 @@ pub(crate) fn compose(config: &crate::Config) -> Result<Option<Router>, reqwest:
         public_url: config.management.public_url.clone(),
         nyxid_base_url: config.management.nyxid_base_url.clone(),
         clock: Arc::new(clock::SystemClock),
+        keys,
+        creator_auth,
     })?;
     // Detached: discovery and the sweeper run for the life of the process.
     drop(console.spawn_discovery());

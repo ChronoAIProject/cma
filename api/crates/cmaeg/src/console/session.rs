@@ -315,6 +315,11 @@ impl SessionStore {
         self.record_size();
     }
 
+    /// Revoke a refresh token that never became a session, best effort.
+    pub(crate) fn revoke_unused(&self, refresh: Secret) {
+        self.revoker.revoke_token(refresh);
+    }
+
     /// End every idle or expired session; the console runs it every minute.
     pub fn sweep(&self) {
         let now = self.clock.now();

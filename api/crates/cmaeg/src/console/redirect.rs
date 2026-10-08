@@ -8,6 +8,7 @@ use axum::{
 
 pub(crate) const HOME: &str = "/console";
 pub(crate) const LOGIN: &str = "/console/login";
+pub(crate) const CALLBACK: &str = "/console/callback";
 pub(crate) const SIGNED_OUT: &str = "/console/signed-out";
 pub(crate) const LOGOUT: &str = "/console/logout";
 const MAX_RETURN_TO: usize = 512;

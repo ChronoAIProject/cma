@@ -9,5 +9,7 @@ mod enablement;
 mod protection;
 #[path = "console/sessions.rs"]
 mod sessions;
+#[path = "console/signin.rs"]
+mod signin;
 #[path = "console/support.rs"]
 pub mod support;

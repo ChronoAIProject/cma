@@ -427,3 +427,65 @@ async fn token_authentication_matches_header_authentication_and_shares_its_cache
     assert_eq!(calls.load(Ordering::Relaxed), fetched);
     task.abort();
 }
+
+#[tokio::test]
+async fn uncached_verification_matches_token_authentication_without_touching_the_cache() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let counted = |body: &'static str| {
+        let calls = calls.clone();
+        get(move |headers: HeaderMap| {
+            let calls = calls.clone();
+            async move {
+                calls.fetch_add(1, Ordering::Relaxed);
+                match headers.get("authorization").unwrap().to_str().unwrap() {
+                    "Bearer human" => (StatusCode::OK, body.to_owned()),
+                    _ => (StatusCode::UNAUTHORIZED, String::new()),
+                }
+            }
+        })
+    };
+    let router = Router::new()
+        .route(
+            "/api/v1/users/me",
+            counted(r#"{"id":"human","user_type":"person"}"#),
+        )
+        .route(
+            "/api/v1/orgs/org-a/authorization",
+            counted(r#"{"id":"org-a","your_role":"admin"}"#),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let auth =
+        CreatorAuthenticator::new(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
+    let task = tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
+    for owner in [None, Some("org-a")] {
+        let before = auth.cache.len();
+        let uncached = auth.verify_uncached("human", owner).await.unwrap();
+        assert_eq!(
+            auth.cache.len(),
+            before,
+            "verify_uncached inserted an entry"
+        );
+        assert_eq!(
+            auth.authenticate_token("human", owner).await.unwrap(),
+            uncached
+        );
+    }
+    assert_eq!(auth.cache.len(), 2);
+    // A cached entry is never read: every uncached check reaches NyxID.
+    let before = calls.load(Ordering::Relaxed);
+    auth.verify_uncached("human", None).await.unwrap();
+    assert_eq!(calls.load(Ordering::Relaxed), before + 1);
+    assert_eq!(
+        auth.verify_uncached("stranger", None).await,
+        Err(CreatorAuthError::NotAuthenticated)
+    );
+    assert_eq!(auth.cache.len(), 2);
+    task.abort();
+    task.await.unwrap_err();
+    assert_eq!(
+        auth.verify_uncached("human", None).await,
+        Err(CreatorAuthError::ProviderUnavailable)
+    );
+}

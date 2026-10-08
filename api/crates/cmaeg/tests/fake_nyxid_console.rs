@@ -56,6 +56,9 @@ pub struct OAuthState {
     pub token_delay_ms: AtomicU64,
     pub expires_in: AtomicU64,
     pub token_calls: Mutex<Vec<TokenCall>>,
+    /// Token requests in flight, and the most seen at once.
+    pub token_inflight: AtomicUsize,
+    pub token_peak: AtomicUsize,
     pub revoked: Mutex<Vec<String>>,
     pub revoke_delay_ms: AtomicU64,
     /// `users/me`, organization reads and authorization answer 503.
@@ -87,6 +90,8 @@ impl Default for OAuthState {
             token_delay_ms: AtomicU64::new(0),
             expires_in: AtomicU64::new(900),
             token_calls: Mutex::new(Vec::new()),
+            token_inflight: AtomicUsize::new(0),
+            token_peak: AtomicUsize::new(0),
             revoked: Mutex::new(Vec::new()),
             revoke_delay_ms: AtomicU64::new(0),
             down: AtomicBool::new(false),
@@ -143,6 +148,17 @@ impl OAuthState {
             .iter()
             .filter(|call| call.grant_type == "refresh_token")
             .count()
+    }
+
+    /// The access tokens issued to `subject`.
+    pub fn access_tokens_of(&self, subject: &str) -> Vec<String> {
+        self.access
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, owner)| owner.as_str() == subject)
+            .map(|(token, _)| token.clone())
+            .collect()
     }
 
     pub fn subject_of(&self, access: &str) -> Option<String> {
@@ -252,10 +268,13 @@ pub async fn token(
         client_authenticated: client_authenticated(&headers),
     };
     state.token_calls.lock().unwrap().push(call.clone());
+    let inflight = state.token_inflight.fetch_add(1, Ordering::SeqCst) + 1;
+    state.token_peak.fetch_max(inflight, Ordering::SeqCst);
     let delay = state.token_delay_ms.load(Ordering::SeqCst);
     if delay > 0 {
         tokio::time::sleep(Duration::from_millis(delay)).await;
     }
+    state.token_inflight.fetch_sub(1, Ordering::SeqCst);
     let status = StatusCode::from_u16(state.token_status.load(Ordering::SeqCst)).unwrap();
     if status != StatusCode::OK {
         let error = state.token_error.lock().unwrap().clone();

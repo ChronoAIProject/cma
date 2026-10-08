@@ -182,4 +182,6 @@ pub(crate) fn describe_console() {
         "Console form posts refused for a foreign origin or a bad CSRF token, by reason"
     );
     metrics::counter!(names::CONSOLE_REJECTIONS).absolute(0);
+    metrics::describe_counter!(names::CONSOLE_LOGINS, "Console sign-in steps, by outcome");
+    metrics::counter!(names::CONSOLE_LOGINS).absolute(0);
 }

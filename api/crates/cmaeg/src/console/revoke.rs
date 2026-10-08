@@ -1,8 +1,9 @@
 //! Best-effort revocation of an ended session's refresh token. At most four
 //! revocations run at once; beyond that one is dropped and counted, and the
 //! token then simply expires at NyxID. Ending a session never waits for it.
-use std::sync::Arc;
+use std::{future::Future, sync::Arc};
 
+use cmaeg_core::channel::Secret;
 use tokio::sync::Semaphore;
 
 use super::{oidc::EndpointCell, session::SessionCell, token::TokenClient};
@@ -30,6 +31,15 @@ impl Revoker {
     /// token under the session's `auth` lock, so a refresh in flight finishes
     /// first and its rotated token is the one revoked.
     pub(crate) fn revoke(&self, cell: Arc<SessionCell>) {
+        self.spawn(async move { cell.lock_auth().await.refresh().clone() });
+    }
+
+    /// Revoke a refresh token held outside any session.
+    pub(crate) fn revoke_token(&self, refresh: Secret) {
+        self.spawn(async move { refresh });
+    }
+
+    fn spawn(&self, refresh: impl Future<Output = Secret> + Send + 'static) {
         let (Ok(permit), Ok(runtime)) = (
             self.permits.clone().try_acquire_owned(),
             tokio::runtime::Handle::try_current(),
@@ -44,7 +54,7 @@ impl Revoker {
         let tokens = self.tokens.clone();
         runtime.spawn(async move {
             let _permit = permit;
-            let refresh = cell.lock_auth().await.refresh().clone();
+            let refresh = refresh.await;
             let revoked = tokens.revoke(&endpoints.revocation, &refresh).await;
             count(if revoked { "ok" } else { "failed" });
         });

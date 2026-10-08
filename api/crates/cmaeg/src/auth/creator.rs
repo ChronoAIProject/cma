@@ -176,6 +176,19 @@ impl CreatorAuthenticator {
         result
     }
 
+    /// The console's check: exactly `authenticate_token`'s identity and
+    /// organization-admin rule under the same timeout, but it neither reads
+    /// nor writes the shared REST cache. The console bounds its own reuse per
+    /// session, and a mutation must never be answered by a cached verdict
+    /// (Amendment R3 §R3.2); REST authentication and its cache are unchanged.
+    pub async fn verify_uncached(
+        &self,
+        token: &str,
+        owner: Option<&str>,
+    ) -> Result<Creator, CreatorAuthError> {
+        self.fetch_verified(token, owner).await
+    }
+
     // The one identity and organization-admin rule. Keeping the timeout and the
     // Creator construction here, outside the cache, lets an uncached caller share
     // it so the rule cannot drift between callers (Amendment R3 §R3.2).
