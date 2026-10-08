@@ -4,6 +4,8 @@ mod addresses;
 mod boundaries;
 #[path = "delivery/consumer_refs.rs"]
 mod consumer_refs;
+#[path = "delivery/default_relay.rs"]
+pub mod default_relay;
 #[path = "delivery/engine.rs"]
 mod engine;
 #[path = "delivery/failures.rs"]

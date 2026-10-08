@@ -10,8 +10,19 @@ use reqwest::{
 use serde::Deserialize;
 use std::{sync::Arc, time::Duration};
 
-/// The largest relay receipt the client reads.
+/// The largest relay receipt or conflict body the client reads.
 const RECEIPT_MAX_BYTES: usize = 4096;
+/// NyxID refused a proactive send: the channel key is not the conversation's
+/// agent key, the conversation does not allow agent-initiated messages, or
+/// the request was malformed.
+pub const DEFAULT_REPLY_REFUSED: &str = "default_reply_refused";
+/// The conversation's platform has no initiated send.
+pub const DEFAULT_REPLY_UNSUPPORTED: &str = "default_reply_unsupported";
+/// An idempotency key was presented for a different message; nothing was sent.
+pub const IDEMPOTENCY_CONFLICT: &str = "idempotency_conflict";
+/// NyxID holds the key for a send in progress or of uncertain outcome; the
+/// message may have been accepted, so it is never retried automatically.
+pub const DELIVERY_IN_PROGRESS_OR_UNCERTAIN: &str = "delivery_in_progress_or_uncertain";
 
 pub enum Credential<'a> {
     ReplyToken(&'a Secret),
@@ -65,9 +76,10 @@ impl RelayTransport for HttpTransport {
                 .map_err(|_| TransportError::Unavailable)?;
             let status = response.status();
             let headers = response.headers().clone();
-            // Only a 200 answer carries a receipt. Every other answer is mapped
-            // from its status alone, so its body is never read.
-            let body = if status == StatusCode::OK {
+            // Only a 200 answer carries a receipt, and only a 409's message
+            // tells a reused key from a send in progress. Every other answer
+            // is mapped from its status alone, so its body is never read.
+            let body = if status == StatusCode::OK || status == StatusCode::CONFLICT {
                 crate::net::exchange::read_bounded(response, RECEIPT_MAX_BYTES).await
             } else {
                 Ok(Vec::new())
@@ -84,6 +96,8 @@ impl RelayTransport for HttpTransport {
 pub struct RelayClient {
     transport: Arc<dyn RelayTransport>,
     endpoint: Url,
+    /// NyxID's proactive send, `/api/v1/channel-relay/send`.
+    send_endpoint: Url,
     timeout: Duration,
     pub telegram: crate::telegram::TelegramClient,
     pub interactions: Option<std::sync::Arc<crate::interactions::InteractionStore>>,
@@ -112,15 +126,17 @@ impl RelayClient {
     }
     pub fn new(base_url: &str, timeout: Duration) -> Result<Self, crate::ConfigError> {
         let origin = crate::config::validate_origin(crate::CMAEG_NYXID_BASE_URL, base_url)?;
-        let endpoint =
-            Url::parse(&format!("{origin}/api/v1/channel-relay/reply")).map_err(|_| {
+        let url = |path: &str| {
+            Url::parse(&format!("{origin}/api/v1/channel-relay/{path}")).map_err(|_| {
                 crate::ConfigError::InvalidManagement {
                     detail: "invalid relay origin".into(),
                 }
-            })?;
+            })
+        };
         Ok(Self {
             transport: Arc::new(HttpTransport::new(timeout)?),
-            endpoint,
+            endpoint: url("reply")?,
+            send_endpoint: url("send")?,
             timeout,
             interactions: None,
             telegram: crate::telegram::TelegramClient::production(timeout)?,
@@ -145,7 +161,7 @@ impl RelayClient {
             return (DeliveryOutcome::Unsupported, None);
         };
         let (Credential::ReplyToken(secret) | Credential::ChannelKey(secret)) = credential;
-        if secret.as_str().is_empty() || !secret.as_str().bytes().all(|b| (33..=126).contains(&b)) {
+        if !presentable(secret) {
             return (
                 DeliveryOutcome::Rejected {
                     reason: "no_credential".into(),
@@ -225,21 +241,12 @@ impl RelayClient {
         if reply.status != StatusCode::OK {
             return (unknown("provider_failure"), None);
         }
-        let bytes = match reply.body {
-            Ok(bytes) => bytes,
-            Err(BodyError::Oversized) => return (unknown("receipt_invalid"), None),
-            Err(BodyError::Lost) => return (unknown("response_lost"), None),
+        let receipt = match receipt(reply.body) {
+            Ok(receipt) => receipt,
+            Err(outcome) => return (outcome, None),
         };
-        let Ok(receipt) = serde_json::from_slice::<ReplyResponse>(&bytes) else {
-            return (unknown("receipt_invalid"), None);
-        };
-        if !valid_id(&receipt.message_id)
-            || receipt.message_id == message_id
-            || receipt
-                .platform_message_id
-                .as_deref()
-                .is_some_and(|id| !valid_id(id))
-        {
+        // A reply's receipt names a new message, never the one it answers.
+        if receipt.message_id == message_id {
             return (unknown("receipt_invalid"), None);
         }
         (
@@ -249,6 +256,140 @@ impl RelayClient {
             Some(receipt.message_id),
         )
     }
+    /// Send `text` to the relay conversation `route_id` without an inbound
+    /// message, through NyxID's proactive send: `POST
+    /// {CMAEG_NYXID_BASE_URL}/api/v1/channel-relay/send` with
+    /// `{"conversation_id":route_id,"message":{"text":…},"idempotency_key":k}`,
+    /// authorized by the channel key. NyxID requires that key to be the
+    /// conversation's assigned agent key and the conversation to allow
+    /// agent-initiated messages.
+    ///
+    /// A 429 is returned as `rate_limited` for the caller's single cooldown
+    /// retry with the same key. A 409 is never retried here: unless NyxID says
+    /// the key was used for a different message, the message may have been
+    /// accepted.
+    pub async fn send_initiated(
+        &self,
+        route_id: &str,
+        channel_key: &Secret,
+        text: &str,
+        idempotency_key: &str,
+    ) -> DeliveryOutcome {
+        if !presentable(channel_key) {
+            return DeliveryOutcome::Rejected {
+                reason: "no_credential".into(),
+            };
+        }
+        tokio::time::timeout(
+            self.timeout,
+            self.post_initiated(route_id, channel_key, text, idempotency_key),
+        )
+        .await
+        .unwrap_or_else(|_| unknown("response_lost"))
+    }
+    async fn post_initiated(
+        &self,
+        route_id: &str,
+        channel_key: &Secret,
+        text: &str,
+        idempotency_key: &str,
+    ) -> DeliveryOutcome {
+        let Some(headers) = headers(channel_key) else {
+            return unknown("response_lost");
+        };
+        let Ok(body) = serde_json::to_vec(&serde_json::json!({
+            "conversation_id": route_id,
+            "message": {"text": text},
+            "idempotency_key": idempotency_key,
+        })) else {
+            return unknown("response_lost");
+        };
+        let reply = match self
+            .transport
+            .post(self.send_endpoint.clone(), headers, body, self.timeout)
+            .await
+        {
+            Ok(reply) => reply,
+            Err(_) => return unknown("response_lost"),
+        };
+        let rejected = |reason: &str| DeliveryOutcome::Rejected {
+            reason: reason.into(),
+        };
+        match reply.status {
+            StatusCode::OK => match receipt(reply.body) {
+                Ok(receipt) => DeliveryOutcome::Confirmed {
+                    platform_message_id: receipt.platform_message_id,
+                },
+                Err(outcome) => outcome,
+            },
+            StatusCode::TOO_MANY_REQUESTS => DeliveryOutcome::RateLimited {
+                retry_after: retry_after(&reply.headers),
+            },
+            StatusCode::FORBIDDEN => {
+                tracing::warn!(status = 403, "initiated relay send refused");
+                rejected(DEFAULT_REPLY_REFUSED)
+            }
+            // The route id is validated as a UUID when it is configured, so
+            // NyxID's 400 means the gateway built a request NyxID rejects.
+            StatusCode::BAD_REQUEST => {
+                tracing::error!(status = 400, "initiated relay send malformed");
+                rejected(DEFAULT_REPLY_REFUSED)
+            }
+            StatusCode::CONFLICT if different_message(&reply.body) => {
+                // Unreachable by construction: no key is reused for other text.
+                tracing::error!(
+                    status = 409,
+                    "initiated relay key reused for another message"
+                );
+                rejected(IDEMPOTENCY_CONFLICT)
+            }
+            StatusCode::CONFLICT => {
+                tracing::warn!(
+                    status = 409,
+                    "initiated relay send in progress or uncertain"
+                );
+                unknown(DELIVERY_IN_PROGRESS_OR_UNCERTAIN)
+            }
+            StatusCode::NOT_IMPLEMENTED => {
+                tracing::warn!(status = 501, "initiated relay send unsupported");
+                rejected(DEFAULT_REPLY_UNSUPPORTED)
+            }
+            _ => unknown("provider_failure"),
+        }
+    }
+}
+/// A relay receipt: a valid new message id and an optional platform id.
+fn receipt(body: Result<Vec<u8>, BodyError>) -> Result<ReplyResponse, DeliveryOutcome> {
+    let bytes = match body {
+        Ok(bytes) => bytes,
+        Err(BodyError::Oversized) => return Err(unknown("receipt_invalid")),
+        Err(BodyError::Lost) => return Err(unknown("response_lost")),
+    };
+    let Ok(receipt) = serde_json::from_slice::<ReplyResponse>(&bytes) else {
+        return Err(unknown("receipt_invalid"));
+    };
+    if !valid_id(&receipt.message_id)
+        || receipt
+            .platform_message_id
+            .as_deref()
+            .is_some_and(|id| !valid_id(id))
+    {
+        return Err(unknown("receipt_invalid"));
+    }
+    Ok(receipt)
+}
+/// Whether a 409's body says its key was used for a different message,
+/// which NyxID answers without sending anything.
+fn different_message(body: &Result<Vec<u8>, BodyError>) -> bool {
+    body.as_ref().is_ok_and(|bytes| {
+        String::from_utf8_lossy(bytes)
+            .to_ascii_lowercase()
+            .contains("different message")
+    })
+}
+/// Whether `secret` can be presented as a bearer credential.
+fn presentable(secret: &Secret) -> bool {
+    !secret.as_str().is_empty() && secret.as_str().bytes().all(|b| (33..=126).contains(&b))
 }
 /// The bearer and JSON headers reqwest's `bearer_auth` and `json` set, with the
 /// credential marked sensitive. `None` when the credential is not a header value.

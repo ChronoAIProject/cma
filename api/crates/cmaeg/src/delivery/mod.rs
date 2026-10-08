@@ -10,6 +10,7 @@ pub mod intents;
 mod label;
 pub mod notice;
 mod pacing;
+pub mod part_keys;
 pub mod relay_client;
 pub mod render;
 pub mod router;

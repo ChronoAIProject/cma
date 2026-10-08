@@ -1,6 +1,6 @@
 use axum::{
     extract::State,
-    http::{HeaderMap, StatusCode},
+    http::{HeaderMap, StatusCode, Uri},
     response::{IntoResponse, Response},
     routing::post,
     Json, Router,
@@ -13,6 +13,7 @@ use std::{
 };
 use tokio::task::JoinHandle;
 pub struct Recorded {
+    pub path: String,
     pub authorization: String,
     pub body: Value,
     pub at: Instant,
@@ -60,6 +61,8 @@ impl FakeReply {
         let base = format!("http://{}", listener.local_addr().unwrap());
         let router = Router::new()
             .route("/api/v1/channel-relay/reply", post(reply))
+            // Proactive sends are answered and recorded like replies.
+            .route("/api/v1/channel-relay/send", post(reply))
             .with_state(data);
         let task = tokio::spawn(async move {
             axum::serve(listener, router).await.unwrap();
@@ -88,10 +91,16 @@ impl FakeReply {
             .collect()
     }
 }
-async fn reply(State(data): State<Data>, headers: HeaderMap, Json(body): Json<Value>) -> Response {
+async fn reply(
+    State(data): State<Data>,
+    uri: Uri,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Response {
     let count = {
         let mut requests = data.requests.lock().unwrap();
         requests.push(Recorded {
+            path: uri.path().into(),
             authorization: headers
                 .get("authorization")
                 .unwrap()
