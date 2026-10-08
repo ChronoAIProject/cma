@@ -177,4 +177,9 @@ pub(crate) fn describe_console() {
         "Best-effort refresh token revocations of ended console sessions, by outcome"
     );
     metrics::counter!(names::CONSOLE_REVOCATIONS).absolute(0);
+    metrics::describe_counter!(
+        names::CONSOLE_REJECTIONS,
+        "Console form posts refused for a foreign origin or a bad CSRF token, by reason"
+    );
+    metrics::counter!(names::CONSOLE_REJECTIONS).absolute(0);
 }

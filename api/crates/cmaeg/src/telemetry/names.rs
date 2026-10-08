@@ -38,6 +38,7 @@ pub const CONSOLE_ENABLED: &str = "cmaeg_console_enabled";
 pub const CONSOLE_SESSIONS: &str = "cmaeg_console_sessions";
 pub const CONSOLE_SESSION_EVICTIONS: &str = "cmaeg_console_session_evictions_total";
 pub const CONSOLE_REVOCATIONS: &str = "cmaeg_console_revocations_total";
+pub const CONSOLE_REJECTIONS: &str = "cmaeg_console_rejections_total";
 pub const SOURCE: &str = "source";
 pub const COLD: &str = "cold";
 pub const OUTCOME: &str = "outcome";

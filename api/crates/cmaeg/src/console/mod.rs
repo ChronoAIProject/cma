@@ -7,9 +7,15 @@
 //! document has passed validation, every `/console*` request gets a generic
 //! 503 page while ingress keeps serving.
 pub mod clock;
+mod cookies;
+mod csrf;
+mod guard;
+mod headers;
 mod oidc;
 pub(crate) mod pages;
+mod redirect;
 mod revoke;
+mod routes;
 pub mod session;
 pub mod token;
 
@@ -17,9 +23,9 @@ use std::{sync::Arc, time::Duration};
 
 use axum::{
     extract::{Request, State},
-    middleware::{from_fn_with_state, Next},
+    middleware::{from_fn_with_state, map_response, Next},
     response::Response,
-    routing::any,
+    routing::{any, get, post},
     Router,
 };
 use reqwest::Client;
@@ -57,6 +63,7 @@ pub struct Console {
 }
 
 struct Inner {
+    public_url: String,
     nyxid_base_url: String,
     http: Client,
     /// The client setting whose absence keeps the console disabled.
@@ -98,6 +105,7 @@ impl Console {
         ));
         Ok(Self {
             inner: Arc::new(Inner {
+                public_url: deps.public_url,
                 nyxid_base_url: deps.nyxid_base_url,
                 http,
                 missing_key,
@@ -107,12 +115,23 @@ impl Console {
         })
     }
 
-    /// The `/console*` routes, every one behind the enablement gate.
+    /// The `/console*` routes. Every response carries the security headers;
+    /// every request passes the enablement gate, then the session guard that
+    /// checks Origin and CSRF on every POST.
     pub fn router(&self) -> Router {
         Router::new()
-            .route("/console", any(not_found))
+            .route(redirect::HOME, get(routes::home))
+            .route(redirect::SIGNED_OUT, get(routes::signed_out))
+            .route(redirect::LOGOUT, post(routes::logout))
             .route("/console/{*rest}", any(not_found))
+            .layer(from_fn_with_state(self.clone(), guard::session_guard))
             .layer(from_fn_with_state(self.clone(), gate))
+            .layer(map_response(headers::secure))
+            .with_state(self.clone())
+    }
+
+    pub(crate) fn public_url(&self) -> &str {
+        &self.inner.public_url
     }
 
     pub fn sessions(&self) -> &Arc<SessionStore> {

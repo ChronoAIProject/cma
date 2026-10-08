@@ -5,6 +5,8 @@ pub mod fake_nyxid;
 
 #[path = "console/enablement.rs"]
 mod enablement;
+#[path = "console/protection.rs"]
+mod protection;
 #[path = "console/sessions.rs"]
 mod sessions;
 #[path = "console/support.rs"]

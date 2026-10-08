@@ -143,10 +143,60 @@ impl Harness {
             .unwrap()
     }
 
+    /// GET with the session cookie `sid`.
+    pub async fn get_as(&self, path: &str, sid: &str) -> reqwest::Response {
+        self.http
+            .get(format!("{}{path}", self.base))
+            .header("cookie", format!("__Host-cmaeg-console={sid}"))
+            .send()
+            .await
+            .unwrap()
+    }
+
+    /// POST a form from `origin` (the console's own when `None`), with the
+    /// session cookie when `sid` is given.
+    pub async fn post(
+        &self,
+        path: &str,
+        sid: Option<&str>,
+        origin: Option<&str>,
+        fields: &[(&str, &str)],
+    ) -> reqwest::Response {
+        let mut request = self
+            .http
+            .post(format!("{}{path}", self.base))
+            .header("origin", origin.unwrap_or(&self.base))
+            .form(fields);
+        if let Some(sid) = sid {
+            request = request.header("cookie", format!("__Host-cmaeg-console={sid}"));
+        }
+        request.send().await.unwrap()
+    }
+
+    /// A session for `subject` created directly in the store; its cookie value.
+    pub fn session(&self, subject: &str) -> String {
+        let (sid, _) = self
+            .console
+            .sessions()
+            .create(subject.into(), self.tokens(subject))
+            .unwrap();
+        sid.as_str().to_owned()
+    }
+
     pub async fn close(mut self) {
         if let Some(shutdown) = self.shutdown.take() {
             let _ = shutdown.send(());
         }
         self.nyxid.close().await;
     }
+}
+
+/// The CSRF value of the form posting to `action` in `page`.
+pub fn csrf_for(page: &str, action: &str) -> String {
+    let form = format!("action=\"{action}\"><input type=\"hidden\" name=\"csrf\" value=\"");
+    let start = page
+        .find(&form)
+        .unwrap_or_else(|| panic!("no {action} form in {page}"))
+        + form.len();
+    page[start..].split('"').next().unwrap().to_owned()
 }
