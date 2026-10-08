@@ -24,6 +24,10 @@ pub struct ActivityEntry {
     /// 16 hex of SHA-256(event id); absent for a refusal that came before
     /// the event was identified.
     pub event_key: Option<String>,
+    /// The source slot an admitted event arrived on (`telegram`,
+    /// `relay_<platform>` or `custom`). A refusal may come before its slot
+    /// is known, so it names the transport instead: `telegram`,
+    /// `nyxid_relay` or `custom`.
     pub source: String,
     pub kind: &'static str,
     pub actor_masked: String,

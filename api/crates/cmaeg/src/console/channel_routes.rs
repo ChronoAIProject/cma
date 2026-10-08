@@ -200,7 +200,7 @@ pub(crate) fn sources_tab(
                     authorized,
                     &view.record,
                     ActivityFilter {
-                        source: Some(source.activity_label.clone()),
+                        source: Some(source.id.as_str().to_owned()),
                         ..ActivityFilter::default()
                     },
                 )

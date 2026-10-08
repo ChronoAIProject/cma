@@ -12,7 +12,7 @@ use std::sync::{
 };
 
 use cmaeg_core::{
-    activity::{Activity, ActivityKind, AttachmentKind, SourceKind},
+    activity::{Activity, ActivityKind, AttachmentKind},
     ids::{ChannelId, ConsumerId, EventId, RecordId},
 };
 use serde::Serialize;
@@ -98,8 +98,8 @@ pub struct ActivitySeed {
     #[serde(serialize_with = "rfc3339")]
     pub at: OffsetDateTime,
     pub event_key: String,
-    /// The source kind, with the relayed platform: `telegram`,
-    /// `nyxid_relay:lark` or `custom`.
+    /// The source slot it arrived on, by the id REST and routing use:
+    /// `telegram`, `relay_<platform>` or `custom`.
     pub source: String,
     pub kind: &'static str,
     pub actor_masked: String,
@@ -119,7 +119,7 @@ impl ActivitySeed {
         Self {
             at: OffsetDateTime::now_utc(),
             event_key: mask::event_key(activity.event_id.as_str()),
-            source: source_label(&activity.source),
+            source: activity.source.source_id().into(),
             kind,
             actor_masked: mask::actor(&activity.actor.id),
             chat_masked: mask::chat(&activity.conversation.id),
@@ -382,15 +382,6 @@ impl Observers {
             return inner;
         }
         Arc::new(ObservedLauncher::new(inner, self.activity.clone()))
-    }
-}
-
-/// `telegram`, `nyxid_relay:<platform>` or `custom`.
-fn source_label(source: &SourceKind) -> String {
-    match source {
-        SourceKind::Telegram { .. } => "telegram".to_owned(),
-        SourceKind::NyxidRelay { platform, .. } => format!("nyxid_relay:{}", platform.as_str()),
-        SourceKind::Custom => "custom".to_owned(),
     }
 }
 

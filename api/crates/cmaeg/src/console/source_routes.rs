@@ -14,6 +14,7 @@ use axum::{
     response::Response,
     Extension,
 };
+use cmaeg_core::channel::SourceId;
 
 use super::{
     attach_form::{self, Submitted},
@@ -91,7 +92,7 @@ pub(crate) async fn attach(
             };
         }
     };
-    log.outcome(Some(&view.record), "ok", Some(&attached.source_id));
+    log.outcome(Some(&view.record), "ok", Some(attached.source_id.as_str()));
     let Some(generated) = generated else {
         return redirect::see_other(&href(&view.record, Tab::Sources));
     };
@@ -205,13 +206,15 @@ pub(crate) async fn detach(
     }
 }
 
-/// The owner's channel and one of its sources, from the path.
+/// The owner's channel and one of its sources, from the path. A source id
+/// outside the slot grammar names no source of any channel.
 async fn target(
     console: &Console,
     authorized: &Authorized,
     params: Result<Path<(String, String)>, PathRejection>,
-) -> Option<(ChannelView, String)> {
+) -> Option<(ChannelView, SourceId)> {
     let Path((record, source_id)) = params.ok()?;
+    let source_id = SourceId::parse(&source_id).ok()?;
     let view = owned_channel(console, authorized, Ok(Path(record))).await?;
     let known = view
         .summary
@@ -316,7 +319,7 @@ async fn render_detach(
     console: &Console,
     cell: &std::sync::Arc<SessionCell>,
     view: &ChannelView,
-    source_id: &str,
+    source_id: &SourceId,
     status: StatusCode,
     error: Option<&str>,
 ) -> Response {
@@ -325,7 +328,7 @@ async fn render_detach(
         .detail
         .iter()
         .flat_map(|detail| detail.sources.iter())
-        .find(|source| source.id == source_id)
+        .find(|source| source.id == *source_id)
     else {
         return pages::not_found();
     };

@@ -326,7 +326,7 @@ impl World {
         let seed = |key: &str| ActivitySeed {
             at: OffsetDateTime::now_utc(),
             event_key: key.into(),
-            source: "nyxid_relay:lark".into(),
+            source: "relay_lark".into(),
             kind: "message",
             actor_masked: "…5678".into(),
             chat_masked: "…7890".into(),

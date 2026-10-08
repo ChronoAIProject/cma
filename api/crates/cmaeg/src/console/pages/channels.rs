@@ -82,7 +82,11 @@ fn table_row(row: &ChannelRow) -> String {
     );
     let status = summary.map_or("loading", |summary| status_label(summary));
     let sources = summary.map_or_else(String::new, |summary| {
-        summary.sources.iter().map(|id| chip(id, "")).collect()
+        summary
+            .sources
+            .iter()
+            .map(|id| chip(id.as_str(), ""))
+            .collect()
     });
     let consumers = summary.map_or_else(String::new, |summary| {
         summary
@@ -195,7 +199,10 @@ mod tests {
             owner_kind: None,
             name: name.into(),
             created_at: String::new(),
-            sources: vec!["telegram".into(), "relay_lark".into()],
+            sources: ["telegram", "relay_lark"]
+                .into_iter()
+                .map(|id| cmaeg_core::channel::SourceId::parse(id).unwrap())
+                .collect(),
             consumers: vec![ConsumerChip {
                 id: cmaeg_core::ids::ConsumerId::default_consumer(),
                 name: "default".into(),

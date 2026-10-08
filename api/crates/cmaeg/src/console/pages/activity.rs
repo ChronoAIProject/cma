@@ -47,7 +47,7 @@ pub(crate) fn filter(
                     && value.len() <= MAX_SOURCE_BYTES
                     && value
                         .bytes()
-                        .all(|byte| byte.is_ascii_lowercase() || b"_:".contains(&byte))
+                        .all(|byte| byte.is_ascii_lowercase() || byte == b'_')
             })
             .map(str::to_owned),
     }
@@ -119,7 +119,7 @@ fn form(activity: &ActivityView<'_>) -> String {
         .detail
         .iter()
         .flat_map(|detail| detail.sources.iter())
-        .map(|source| (source.activity_label.clone(), source.id.clone()))
+        .map(|source| (source.id.as_str().to_owned(), source.id.as_str().to_owned()))
         .collect();
     let refresh: Vec<(String, String)> = REFRESH_SECONDS
         .into_iter()
@@ -292,13 +292,20 @@ mod tests {
 
     #[test]
     fn invalid_filter_values_filter_nothing() {
-        let kept = filter(Some("default"), Some("refused"), Some("nyxid_relay:lark"));
+        let kept = filter(Some("default"), Some("refused"), Some("relay_lark"));
         assert_eq!(kept.consumer, Some(ConsumerId::default_consumer()));
         assert_eq!(kept.outcome, Some(LaunchClass::Refused));
-        assert_eq!(kept.source.as_deref(), Some("nyxid_relay:lark"));
+        assert_eq!(kept.source.as_deref(), Some("relay_lark"));
+        assert_eq!(
+            filter(None, None, Some("nyxid_relay")).source.as_deref(),
+            Some("nyxid_relay")
+        );
         let dropped = filter(Some("<script>"), Some("maybe"), Some("\"><img src=x>"));
         assert!(dropped.consumer.is_none() && dropped.outcome.is_none());
         assert!(dropped.source.is_none());
+        assert!(filter(None, None, Some("nyxid_relay:lark"))
+            .source
+            .is_none());
     }
 
     #[test]

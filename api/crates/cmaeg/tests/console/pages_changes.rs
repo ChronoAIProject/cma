@@ -17,7 +17,7 @@ use cmaeg::{
     },
 };
 use cmaeg_core::{
-    channel::{ChannelDefinition, Source},
+    channel::{ChannelDefinition, Source, SourceId},
     ids::RecordId,
 };
 use futures_util::future::BoxFuture;
@@ -34,7 +34,7 @@ pub struct RecordingSources {
     memory: Arc<ConsoleMemory>,
     pub calls: AtomicUsize,
     /// `(record, source id, expected version)` of every completed detach.
-    pub detached: Mutex<Vec<(RecordId, String, u64)>>,
+    pub detached: Mutex<Vec<(RecordId, SourceId, u64)>>,
     pub secrets: Mutex<Vec<String>>,
     /// A source id detach refuses as the default reply source.
     pub default_reply: Mutex<Option<String>>,
@@ -114,7 +114,7 @@ impl SourceChanges for RecordingSources {
                     .iter()
                     .map(|secret| secret.secret.as_str().to_owned()),
             );
-            let (source, id) = match request.source {
+            let source = match request.source {
                 SourceRequest::Telegram { bot_id, .. } if bot_id == "refuse" => {
                     return Err(SourceChangeError::Invalid {
                         pointer: "/source/bot_id".into(),
@@ -125,14 +125,11 @@ impl SourceChanges for RecordingSources {
                     bot_id,
                     bot_username,
                     admission,
-                } => (
-                    Source::Telegram {
-                        bot_id,
-                        bot_username,
-                        admission,
-                    },
-                    "telegram".to_owned(),
-                ),
+                } => Source::Telegram {
+                    bot_id,
+                    bot_username,
+                    admission,
+                },
                 SourceRequest::NyxidRelay {
                     issuer,
                     key_id,
@@ -142,35 +139,30 @@ impl SourceChanges for RecordingSources {
                     bot_id,
                     trust_normalized,
                     admission,
-                } => (
-                    Source::NyxidRelay {
-                        jwks_url: format!("{issuer}/jwks"),
-                        issuer,
-                        key_id,
-                        route_ids,
-                        platform,
-                        bot_username,
-                        bot_id,
-                        trust_normalized,
-                        admission,
-                    },
-                    format!("relay_{}", platform.as_str()),
-                ),
+                } => Source::NyxidRelay {
+                    jwks_url: format!("{issuer}/jwks"),
+                    issuer,
+                    key_id,
+                    route_ids,
+                    platform,
+                    bot_username,
+                    bot_id,
+                    trust_normalized,
+                    admission,
+                },
                 SourceRequest::Custom {
                     auth,
                     prompt_template,
                     schema,
                     attachments,
-                } => (
-                    Source::Custom {
-                        auth,
-                        prompt_template,
-                        schema,
-                        attachments,
-                    },
-                    "custom".to_owned(),
-                ),
+                } => Source::Custom {
+                    auth,
+                    prompt_template,
+                    schema,
+                    attachments,
+                },
             };
+            let id = source.source_id();
             definition.sources.push(source);
             self.write(definition, version + 1);
             Ok(Attached {
@@ -184,31 +176,26 @@ impl SourceChanges for RecordingSources {
         &'a self,
         creator: &'a Creator,
         record: &'a RecordId,
-        source_id: &'a str,
+        source_id: &'a SourceId,
         expected_version: u64,
     ) -> BoxFuture<'a, Result<u64, SourceChangeError>> {
         Box::pin(async move {
             self.calls.fetch_add(1, Ordering::SeqCst);
             let (mut definition, version) = self.current(creator, record, expected_version)?;
-            if self.default_reply.lock().unwrap().as_deref() == Some(source_id) {
+            if self.default_reply.lock().unwrap().as_deref() == Some(source_id.as_str()) {
                 return Err(SourceChangeError::DefaultReplyInUse);
             }
             let before = definition.sources.len();
-            definition.sources.retain(|source| {
-                let id = match source {
-                    Source::Telegram { .. } => "telegram".to_owned(),
-                    Source::NyxidRelay { platform, .. } => format!("relay_{}", platform.as_str()),
-                    Source::Custom { .. } => "custom".to_owned(),
-                };
-                id != source_id
-            });
+            definition
+                .sources
+                .retain(|source| source.source_id() != *source_id);
             if definition.sources.len() == before {
                 return Err(SourceChangeError::NotFound);
             }
             self.write(definition, version + 1);
             self.detached.lock().unwrap().push((
                 record.clone(),
-                source_id.to_owned(),
+                source_id.clone(),
                 expected_version,
             ));
             Ok(version + 1)

@@ -8,11 +8,11 @@
 //! reference.
 use cmaeg_core::channel::{
     AdmissionPolicy, ChannelDefinition, ConformanceLevel, CustomAuth, GroupAdmission,
-    IdentityAdmission, PartitionKey, ProviderTarget, Sink, Source,
+    IdentityAdmission, PartitionKey, ProviderTarget, Sink, Source, SourceId,
 };
 use serde::Serialize;
 
-use super::{mask, summary::source_id};
+use super::mask;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ChannelDetail {
@@ -35,8 +35,8 @@ pub struct ReplyView {
 /// One source, as the Sources tab shows it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SourceView {
-    /// `telegram`, `relay_<platform>` or `custom`.
-    pub id: String,
+    /// The source's slot, which its activity entries also carry.
+    pub id: SourceId,
     /// `telegram`, `nyxid_relay` or `custom`.
     pub kind: &'static str,
     pub platform: Option<&'static str>,
@@ -49,8 +49,6 @@ pub struct SourceView {
     pub key_ids: Vec<String>,
     /// Further settings, such as attachments or a prompt template.
     pub settings: Vec<String>,
-    /// The `source` its activity entries carry.
-    pub activity_label: String,
 }
 
 /// Whether each secret is set; never a value.
@@ -135,7 +133,7 @@ fn sink_label(sink: &Sink) -> String {
 }
 
 fn source_view(source: &Source) -> SourceView {
-    let id = source_id(source);
+    let id = source.source_id();
     match source {
         Source::Telegram {
             bot_id,
@@ -152,7 +150,6 @@ fn source_view(source: &Source) -> SourceView {
             auth: "Telegram webhook secret".to_owned(),
             key_ids: Vec::new(),
             settings: Vec::new(),
-            activity_label: "telegram".to_owned(),
         },
         Source::NyxidRelay {
             issuer,
@@ -178,7 +175,6 @@ fn source_view(source: &Source) -> SourceView {
                 .then(|| "trusts normalized events".to_owned())
                 .into_iter()
                 .collect(),
-            activity_label: format!("nyxid_relay:{}", platform.as_str()),
         },
         Source::Custom {
             auth,
@@ -218,7 +214,6 @@ fn source_view(source: &Source) -> SourceView {
                 auth,
                 key_ids,
                 settings,
-                activity_label: "custom".to_owned(),
             }
         }
     }

@@ -321,7 +321,11 @@ async fn a_detach_is_confirmed_then_made_by_record_without_a_channel_id() {
     );
     assert_eq!(
         world.changes().detached.lock().unwrap().as_slice(),
-        [(orders.clone(), "custom".to_owned(), 1)]
+        [(
+            orders.clone(),
+            cmaeg_core::channel::SourceId::parse("custom").unwrap(),
+            1
+        )]
     );
     let after = sources_page(&world, &orders, &sid).await;
     assert!(!after.contains("<code>custom</code>"));
@@ -377,6 +381,31 @@ async fn another_owners_channel_is_404_for_every_source_change() {
     ] {
         assert_eq!(response.status(), 404);
         assert!(!response.text().await.unwrap().contains("bob-billing"));
+    }
+    assert_eq!(world.changes().calls.load(Ordering::SeqCst), 0);
+    world.close().await;
+}
+
+#[tokio::test]
+async fn only_attached_source_slots_can_be_detached() {
+    let world = World::with_sources(SourceAvailability::Available).await;
+    let orders = relay_only(&world);
+    let (sid, _) = world.harness.sign_in("alice", "/console").await;
+    let sources = sources_page(&world, &orders, &sid).await;
+    assert!(sources.contains(&format!(
+        "href=\"/console/channels/{orders}/sources/relay_lark/detach\">Detach</a>"
+    )));
+    let attached = format!("/console/channels/{orders}/sources/relay_lark/detach");
+    assert_eq!(world.harness.get_as(&attached, &sid).await.status(), 200);
+    // A transport name, a spelling outside the slot grammar and a slot the
+    // channel does not hold name no source of it.
+    for missing in ["nyxid_relay", "relay_LARK", "relay_slack", "telegram"] {
+        let path = format!("/console/channels/{orders}/sources/{missing}/detach");
+        assert_eq!(
+            world.harness.get_as(&path, &sid).await.status(),
+            404,
+            "{path}"
+        );
     }
     assert_eq!(world.changes().calls.load(Ordering::SeqCst), 0);
     world.close().await;

@@ -55,7 +55,7 @@ fn admitted_events_are_masked_before_they_are_queued() {
     assert_eq!(entry_seed.event_key, mask::event_key("telegram:777:42"));
     assert_eq!(entry_seed.actor_masked, "…6789");
     assert_eq!(entry_seed.chat_masked, "…7890");
-    assert_eq!(entry_seed.source, "nyxid_relay:telegram");
+    assert_eq!(entry_seed.source, "relay_telegram");
     assert_eq!(entry_seed.kind, "message");
     let dump = serde_json::to_string(&Observation::Routed {
         record: kept,

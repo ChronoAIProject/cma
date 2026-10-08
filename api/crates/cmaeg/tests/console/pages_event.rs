@@ -24,7 +24,7 @@ async fn an_event_page_shows_the_timeline_and_links_its_parent() {
     let first = first.text().await.unwrap();
     for fact in [
         "Event <code>0123456789abcdef</code>",
-        "<dd>nyxid_relay:lark</dd>",
+        "<dd>relay_lark</dd>",
         "<dd>…5678</dd>",
         "<dd>…7890</dd>",
         "no routing policy, so the event went to the default consumer",

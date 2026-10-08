@@ -10,7 +10,7 @@
 use std::sync::Arc;
 
 use cmaeg_core::{
-    channel::{ChannelDefinition, Source},
+    channel::{ChannelDefinition, Source, SourceId},
     ids::{ChannelId, ConsumerId, RecordId},
     profile::NyxIdIdentityKind,
 };
@@ -69,9 +69,8 @@ pub struct ChannelSummary {
     pub owner_kind: Option<NyxIdIdentityKind>,
     pub name: String,
     pub created_at: String,
-    /// The channel's source ids: `telegram`, `relay_<platform>` or
-    /// `custom`.
-    pub sources: Vec<String>,
+    /// The channel's source slots, by the same id REST and routing use.
+    pub sources: Vec<SourceId>,
     pub consumers: Vec<ConsumerChip>,
     pub routed: bool,
     pub default_receives_all: Option<bool>,
@@ -105,7 +104,7 @@ impl ChannelSummary {
             owner_kind: Some(definition.owner.kind),
             name: definition.name.clone(),
             created_at: definition.created_at.clone(),
-            sources: definition.sources.iter().map(source_id).collect(),
+            sources: definition.sources.iter().map(Source::source_id).collect(),
             consumers: definition
                 .consumers()
                 .map(|consumer| ConsumerChip {
@@ -180,16 +179,5 @@ impl Summaries {
 
     pub fn insert(&self, record: RecordId, version: u64, summary: Arc<ChannelSummary>) {
         self.cache.insert((record, version), summary);
-    }
-}
-
-/// A source's stable id: `telegram`, `relay_<platform>` or `custom`. It is
-/// derived from the source's kind, never stored, and names the source in
-/// the console's chips and source routes.
-pub fn source_id(source: &Source) -> String {
-    match source {
-        Source::Telegram { .. } => "telegram".to_owned(),
-        Source::NyxidRelay { platform, .. } => format!("relay_{}", platform.as_str()),
-        Source::Custom { .. } => "custom".to_owned(),
     }
 }

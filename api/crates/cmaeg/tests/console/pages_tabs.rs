@@ -93,6 +93,11 @@ async fn every_tab_renders_the_owners_channel_from_memory() {
     assert!(!only_refusals.contains("0123456789abcdef"));
     let only_custom = tab(&world, &record, "activity&source=custom", &sid).await;
     assert!(!only_custom.contains("answer delivered"));
+    // Admitted events carry the slot id the Sources tab and REST use.
+    assert!(activity.contains("<option value=\"relay_lark\">relay_lark</option>"));
+    let only_lark = tab(&world, &record, "activity&source=relay_lark", &sid).await;
+    assert!(only_lark.contains("answer delivered"));
+    assert!(!only_lark.contains("schema_mismatch"));
 
     let producers = tab(&world, &record, "producers", &sid).await;
     for fact in [

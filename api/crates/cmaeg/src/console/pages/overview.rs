@@ -112,12 +112,12 @@ fn endpoints(overview: &OverviewView<'_>, id: &str) -> String {
             ),
         ),
     ];
-    let telegram = overview
-        .view
-        .summary
-        .detail
-        .as_ref()
-        .is_some_and(|detail| detail.sources.iter().any(|source| source.id == "telegram"));
+    let telegram = overview.view.summary.detail.as_ref().is_some_and(|detail| {
+        detail
+            .sources
+            .iter()
+            .any(|source| source.kind == "telegram")
+    });
     if telegram {
         items.push((
             "Telegram webhook",

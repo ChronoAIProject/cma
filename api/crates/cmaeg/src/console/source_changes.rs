@@ -7,7 +7,7 @@
 //! [`PendingSourceChanges`], so the pages say plainly that source changes
 //! are not available yet, and a direct post is refused without any write.
 use cmaeg_core::{
-    channel::{PartitionKey, Secret},
+    channel::{PartitionKey, Secret, SourceId},
     ids::RecordId,
 };
 use futures_util::future::BoxFuture;
@@ -52,8 +52,8 @@ pub struct AttachCredentials {
 /// A completed attach.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Attached {
-    /// The attached source's id.
-    pub source_id: String,
+    /// The attached source's slot.
+    pub source_id: SourceId,
     /// The channel's version after the write.
     pub version: u64,
 }
@@ -96,7 +96,7 @@ pub trait SourceChanges: Send + Sync {
         &'a self,
         creator: &'a Creator,
         record: &'a RecordId,
-        source_id: &'a str,
+        source_id: &'a SourceId,
         expected_version: u64,
     ) -> BoxFuture<'a, Result<u64, SourceChangeError>>;
 }
@@ -123,7 +123,7 @@ impl SourceChanges for PendingSourceChanges {
         &'a self,
         _creator: &'a Creator,
         _record: &'a RecordId,
-        _source_id: &'a str,
+        _source_id: &'a SourceId,
         _expected_version: u64,
     ) -> BoxFuture<'a, Result<u64, SourceChangeError>> {
         Box::pin(std::future::ready(Err(SourceChangeError::NotYetAvailable)))

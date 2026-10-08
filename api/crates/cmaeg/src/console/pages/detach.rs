@@ -1,7 +1,7 @@
 //! The confirmation page before a source is detached, and the page that
 //! says a source change cannot be made in this gateway now.
 use axum::http::StatusCode;
-use cmaeg_core::ids::RecordId;
+use cmaeg_core::{channel::SourceId, ids::RecordId};
 
 use super::{
     channel::{href, path, Tab},
@@ -15,8 +15,8 @@ use crate::console::{
 pub(crate) const DETACH_PATH: &str = "/console/channels/{record_id}/sources/{source_id}/detach";
 
 /// The same-origin address of `source`'s detach confirmation.
-pub(crate) fn detach_href(record: &RecordId, source: &str) -> String {
-    format!("{}/sources/{source}/detach", path(record))
+pub(crate) fn detach_href(record: &RecordId, source: &SourceId) -> String {
+    format!("{}/sources/{}/detach", path(record), source.as_str())
 }
 
 pub(crate) struct DetachView<'a> {
@@ -51,7 +51,7 @@ pub(crate) fn render(detach: &DetachView<'_>) -> String {
     }
     format!(
         "<h2>Detach <code>{}</code>?</h2>{error}{}<h3>Blocking references</h3><p>None: this channel has no routing policy, so no default reply source names this source.</p><h3>Rules that become inactive</h3><p>None.</p><h3>What happens</h3><ul>{}</ul><form class=\"inline\" method=\"post\" action=\"{}\"><input type=\"hidden\" name=\"csrf\" value=\"{}\"><input type=\"hidden\" name=\"expected_version\" value=\"{}\"><button type=\"submit\">Detach</button></form> <a class=\"button secondary\" href=\"{}\">Cancel</a>",
-        escape(&source.id),
+        escape(source.id.as_str()),
         facts(&[
             ("Type", escape(source.kind)),
             ("Platform", super::or_dash(source.platform)),

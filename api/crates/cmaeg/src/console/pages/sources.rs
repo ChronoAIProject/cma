@@ -101,7 +101,7 @@ fn row(source: &SourceView, last: Option<OffsetDateTime>) -> String {
     };
     format!(
         "<td><code>{}</code></td><td>{}</td><td>{}</td><td>{}</td><td>{bot}</td><td>{}</td><td>{}{keys}</td><td>{}</td><td>{}</td>",
-        escape(&source.id),
+        escape(source.id.as_str()),
         escape(source.kind),
         or_dash(source.platform),
         source
