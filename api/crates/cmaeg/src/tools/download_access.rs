@@ -12,6 +12,7 @@ use crate::{
 };
 use cmaeg_core::{
     activity::{Activity, Attachment},
+    channel::ConsumerView,
     problem::{Problem, ProblemCode},
     seal::{media_link, EventRefPayload, MediaLinkPayload, MediaLinkRef, OpenError},
 };
@@ -109,7 +110,12 @@ impl ToolsState {
                 })
             }
         };
-        if !still_permitted(media, &channel, &link) {
+        // A link names no consumer yet, so it is the default consumer's.
+        let Some(consumer) = channel.consumer(None) else {
+            tracing::error!("channel has no default consumer; media link revoked");
+            return Err(Refusal::revoked());
+        };
+        if !still_permitted(media, &channel, &consumer, &link) {
             return Err(Refusal::revoked());
         }
         let unverified = || {
@@ -120,7 +126,7 @@ impl ToolsState {
                 "event_context_unverified",
             )
         };
-        let (activity, verified) = context::read_activity(self, &channel, &link.event)
+        let (activity, verified) = context::read_activity(self, &channel, &consumer, &link.event)
             .await
             .map_err(|_| unverified())?;
         if !verified {
@@ -149,24 +155,27 @@ impl ToolsState {
     }
 }
 
-/// The link's record, binding and agent key are still the channel's, and the
-/// binding may still download: it is autonomous and its provider still
+/// The link's record, binding and agent key are still the consumer's, and
+/// the binding may still download: it is autonomous and its provider still
 /// installs the gateway tools. Rotating the agent key changes its hash.
 fn still_permitted(
     media: &MediaService,
     channel: &ResolvedChannel,
+    consumer: &ConsumerView<'_>,
     link: &MediaLinkPayload,
 ) -> bool {
-    let provider = &channel.definition.provider;
-    let key_matches = hex_bytes::<32>(&link.agent_key_hash)
-        .is_some_and(|hash| bool::from(channel.agent_key_hash.ct_eq(&hash)));
+    let key_matches = match (
+        hex_bytes::<32>(&link.agent_key_hash),
+        channel.consumer_key_hash(Some(consumer.id)),
+    ) {
+        (Some(hash), Some(current)) => bool::from(current.ct_eq(&hash)),
+        _ => false,
+    };
     channel.pointer.record_id == link.event.record_id
-        && provider.slug == link.provider
-        && provider.binding_id == link.binding_id
+        && consumer.provider.slug == link.provider
+        && consumer.provider.binding_id == link.binding_id
         && key_matches
-        && channel
-            .consumer(None)
-            .is_some_and(|consumer| media.audience(&consumer).downloads)
+        && media.audience(consumer).downloads
 }
 
 fn now() -> i64 {

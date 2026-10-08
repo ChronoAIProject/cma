@@ -170,7 +170,9 @@ impl ToolsState {
             "channel_hash",
             telemetry::channel_hash(channel.id.as_str()).as_str(),
         );
-        let (activity, verified) = context::read_activity(self, &channel, &event).await?;
+        let consumer = context::default_consumer(&channel)?;
+        let (activity, verified) =
+            context::read_activity(self, &channel, &consumer, &event).await?;
         // Media always needs a verified digest, even for an event_ref sealed
         // without one: the locators must be the ones the source delivered.
         if !verified {

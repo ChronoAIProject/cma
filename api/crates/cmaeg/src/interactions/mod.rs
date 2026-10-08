@@ -81,17 +81,14 @@ impl InteractionStore {
         event: &EventRefPayload,
         message: &OutboundMessage,
     ) -> Result<PreparedCard, Error> {
-        let credential = channel
-            .definition
-            .secrets
-            .provider_credential
-            .as_ref()
-            .ok_or(Error::Unavailable)?;
+        // Cards are the default consumer's until a card names its consumer.
+        let consumer = channel.consumer(None).ok_or(Error::Unavailable)?;
+        let credential = consumer.credential.ok_or(Error::Unavailable)?;
         let context = self
             .providers
             .event_context(
-                &channel.definition.provider.slug,
-                &channel.definition.provider.binding_id,
+                &consumer.provider.slug,
+                &consumer.provider.binding_id,
                 &event.conversation_id,
                 &event.event_id,
                 credential,

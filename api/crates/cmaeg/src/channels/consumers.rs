@@ -47,7 +47,7 @@ mod tests {
         for id in [None, Some(&default)] {
             let view = channel.consumer(id).unwrap();
             assert!(view.id.is_default());
-            assert!(std::ptr::eq(view.provider, &channel.definition.provider));
+            assert_eq!(view.provider.binding_id.as_str(), "binding-1");
             assert_eq!(channel.consumer_key_hash(id), Some(&[7; 32]));
         }
     }

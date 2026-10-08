@@ -5,7 +5,7 @@ use super::{
 use crate::{channels::resolver::ResolvedChannel, media::visual::VisualKind};
 use cmaeg_core::{
     activity::{Activity, ActivityConversation, ActivityKind, Actor, SourceKind},
-    channel::Platform,
+    channel::{ConsumerView, Platform},
     ids::{ConversationId, EventId},
     problem::{Problem, ProblemCode},
     seal::EventRefPayload,
@@ -94,15 +94,19 @@ impl Capabilities {
         }
     }
 }
+/// The event's context as `channel`'s default consumer sees it. References
+/// do not name a consumer yet, so every tool read is the default's.
 pub(super) async fn read(
     state: &ToolsState,
     channel: &ResolvedChannel,
     event: &EventRefPayload,
 ) -> Result<ContextResponse, Problem> {
-    let (activity, activity_verified) = read_activity(state, channel, event).await?;
-    let inbound_media = inbound_media(state, channel, &activity.source);
+    let consumer = default_consumer(channel)?;
+    let (activity, activity_verified) = read_activity(state, channel, &consumer, event).await?;
+    let inbound_media = inbound_media(state, &consumer, &activity.source);
     Ok(project(
         channel,
+        &consumer,
         event,
         activity,
         activity_verified,
@@ -110,12 +114,21 @@ pub(super) async fn read(
     ))
 }
 
-/// The inbound media capabilities of `channel`'s binding for an activity
+/// The consumer a tool call is served as: the default one, the only
+/// consumer an issued reference can name today.
+pub(super) fn default_consumer(channel: &ResolvedChannel) -> Result<ConsumerView<'_>, Problem> {
+    channel.consumer(None).ok_or_else(|| {
+        tracing::error!("channel has no default consumer");
+        unavailable()
+    })
+}
+
+/// The inbound media capabilities of `consumer`'s binding for an activity
 /// from `source`, or `None` while media is disabled, so that the context
 /// output is unchanged with the flag off.
 pub(super) fn inbound_media(
     state: &ToolsState,
-    channel: &ResolvedChannel,
+    consumer: &ConsumerView<'_>,
     source: &SourceKind,
 ) -> Option<InboundMediaCapabilities> {
     let media = state.media.as_ref()?;
@@ -125,11 +138,7 @@ pub(super) fn inbound_media(
         (VisualKind::Thumbnail, SourceKind::Telegram { .. }) => VisualSupport::PlatformThumbnail,
         (VisualKind::Thumbnail, _) => VisualSupport::None,
     };
-    let Some(consumer) = channel.consumer(None) else {
-        tracing::error!("channel has no default consumer; inbound media capabilities withheld");
-        return None;
-    };
-    let audience = media.audience(&consumer);
+    let audience = media.audience(consumer);
     Some(InboundMediaCapabilities {
         read_tool: audience.tools,
         transcripts: capabilities.transcriber_enabled,
@@ -146,19 +155,15 @@ pub(super) fn inbound_media(
 pub(super) async fn read_activity(
     state: &ToolsState,
     channel: &ResolvedChannel,
+    consumer: &ConsumerView<'_>,
     event: &EventRefPayload,
 ) -> Result<(Activity, bool), Problem> {
-    let credential = channel
-        .definition
-        .secrets
-        .provider_credential
-        .as_ref()
-        .ok_or_else(unavailable)?;
+    let credential = consumer.credential.ok_or_else(unavailable)?;
     let snapshot = state
         .providers
         .event_context(
-            &channel.definition.provider.slug,
-            &channel.definition.provider.binding_id,
+            &consumer.provider.slug,
+            &consumer.provider.binding_id,
             &event.conversation_id,
             &event.event_id,
             credential,
@@ -177,6 +182,7 @@ pub(super) async fn read_activity(
 
 pub(super) fn project(
     channel: &ResolvedChannel,
+    consumer: &ConsumerView<'_>,
     event: &EventRefPayload,
     activity: Activity,
     activity_verified: bool,
@@ -193,7 +199,7 @@ pub(super) fn project(
     ContextResponse {
         event_id: event.event_id.clone(),
         channel_id: channel.id.clone(),
-        provider_binding_id: channel.definition.provider.binding_id.clone(),
+        provider_binding_id: consumer.provider.binding_id.clone(),
         source: activity.source.clone(),
         activity_verified,
         expires_at: event.expires_at,
@@ -207,7 +213,7 @@ pub(super) fn project(
         capabilities,
     }
 }
-fn unavailable() -> Problem {
+pub(super) fn unavailable() -> Problem {
     Problem::new(
         ProblemCode::ProviderUnavailable,
         503,

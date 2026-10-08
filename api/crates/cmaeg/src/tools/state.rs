@@ -213,9 +213,11 @@ impl ToolsState {
         if !event.verifies_activity(&activity) {
             return Err(invalid("activity does not match the sealed event"));
         }
-        let inbound_media = super::context::inbound_media(self, &channel, &activity.source);
+        let consumer = super::context::default_consumer(&channel)?;
+        let inbound_media = super::context::inbound_media(self, &consumer, &activity.source);
         Ok(super::context::project(
             &channel,
+            &consumer,
             &event,
             activity,
             true,

@@ -31,8 +31,12 @@ impl AgentCaller {
             key_hash: Sha256::digest(key.as_bytes()).into(),
         })
     }
+    /// The caller holds the agent key of `channel`'s default consumer, the
+    /// only consumer a tool call can be made as today.
     pub fn authorize(&self, channel: &ResolvedChannel) -> Result<(), AgentAuthError> {
-        self.matches(&channel.agent_key_hash)
+        channel
+            .consumer_key_hash(None)
+            .is_some_and(|expected| self.matches(expected))
             .then_some(())
             .ok_or(AgentAuthError::Forbidden)
     }

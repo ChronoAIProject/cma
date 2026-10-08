@@ -62,11 +62,19 @@ impl ToolsState {
                 "event_ref_expired",
             ));
         }
+        // A reference names no consumer yet, so the target is sealed for the
+        // default consumer's binding and key.
+        let (Some(consumer), Some(agent_key_hash)) =
+            (channel.consumer(None), channel.consumer_key_hash(None))
+        else {
+            tracing::error!("channel has no default consumer; reply target refused");
+            return Err(unavailable());
+        };
         let payload = ReplyTargetPayload {
             v: 1,
-            provider: channel.definition.provider.slug.clone(),
-            binding_id: channel.definition.provider.binding_id.clone(),
-            agent_key_hash: channel.agent_key_hash,
+            provider: consumer.provider.slug.clone(),
+            binding_id: consumer.provider.binding_id.clone(),
+            agent_key_hash: *agent_key_hash,
             issued_at,
             expires_at: issued_at + REPLY_TARGET_TTL,
             event,
@@ -155,10 +163,14 @@ impl ToolsState {
             .await
             .map_err(|e| e.problem())?;
         caller.authorize(&channel).map_err(|e| e.problem())?;
+        // The target is the default consumer's until references name one.
+        let binding_matches = channel.consumer(None).is_some_and(|consumer| {
+            consumer.provider.binding_id == target.binding_id
+                && consumer.provider.slug == target.provider
+        });
         if !caller.matches(&target.agent_key_hash)
             || channel.pointer.record_id != target.event.record_id
-            || channel.definition.provider.binding_id != target.binding_id
-            || channel.definition.provider.slug != target.provider
+            || !binding_matches
         {
             return Err(Problem::new(
                 ProblemCode::Forbidden,

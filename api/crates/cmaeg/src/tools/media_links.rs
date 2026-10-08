@@ -207,10 +207,14 @@ impl ToolsState {
         // Only an autonomous binding whose provider installs the gateway
         // tools may save originals; media off permits nothing.
         let media = self.media.as_deref().ok_or(LinkRefusal::NotPermitted)?;
-        let downloads = channel
-            .consumer(None)
-            .is_some_and(|consumer| media.audience(&consumer).downloads);
-        if !downloads {
+        // A link names no consumer yet, so it is minted for the default one.
+        let (Some(consumer), Some(agent_key_hash)) =
+            (channel.consumer(None), channel.consumer_key_hash(None))
+        else {
+            tracing::error!("channel has no default consumer; media link refused");
+            return Err(LinkRefusal::NotPermitted);
+        };
+        if !media.audience(&consumer).downloads {
             return Err(LinkRefusal::NotPermitted);
         }
         let channel_hash = telemetry::channel_hash(channel.id.as_str());
@@ -222,11 +226,10 @@ impl ToolsState {
             tracing::warn!(channel = %channel_hash, "media link refused: pod mint quota spent");
             return Err(LinkRefusal::RateLimited);
         }
-        let provider = &channel.definition.provider;
         let payload = MediaLinkPayload::new(
-            provider.slug.clone(),
-            provider.binding_id.clone(),
-            &channel.agent_key_hash,
+            consumer.provider.slug.clone(),
+            consumer.provider.binding_id.clone(),
+            agent_key_hash,
             event.clone(),
             index,
             time::OffsetDateTime::now_utc().unix_timestamp(),
