@@ -38,6 +38,9 @@ impl MountedSecrets {
     ) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_cmaeg"));
         command.kill_on_drop(true)
+            .env_remove("CMAEG_ROUTED_CHANNEL_MAX_TURNS")
+            .env_remove("CMAEG_ROUTED_OWNER_MAX_TURNS")
+            .env_remove("CMAEG_ROUTING_UNKNOWN_TARGET_TEXT")
             .env_remove("CMAEG_MASTER_KEYS")
             .env_remove("CMAEG_CMA_SERVICE_TOKEN")
             .env_remove("CMAEG_CMA_CLIENT_ID")

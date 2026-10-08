@@ -13,6 +13,9 @@ use cmaeg_core::ids::ProviderSlug;
 use std::{collections::BTreeSet, env};
 
 pub const CMAEG_NON_HUMAN_PROVIDERS: &str = "CMAEG_NON_HUMAN_PROVIDERS";
+pub const CMAEG_ROUTING_UNKNOWN_TARGET_TEXT: &str = "CMAEG_ROUTING_UNKNOWN_TARGET_TEXT";
+const DEFAULT_UNKNOWN_TARGET_TEXT: &str = "No agent is named {name}. Available: {names}.";
+
 pub const CMAEG_MULTI_CONSUMER_ENABLED: &str = "CMAEG_MULTI_CONSUMER_ENABLED";
 
 /// The one provider whose agents are known to answer custom events and
@@ -24,7 +27,7 @@ const MAX_NON_HUMAN_PROVIDERS: usize = 8;
 
 /// Routing settings loaded after, and validated against, the provider
 /// registry.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RoutingConfig {
     /// The multi-consumer master switch. One process-wide value, which
     /// delivery copies, so every send of a process is classified alike.
@@ -33,6 +36,52 @@ pub struct RoutingConfig {
     /// hand-offs) by default. A consumer's `non_human` field overrides this
     /// per consumer.
     pub non_human_providers: BTreeSet<String>,
+    /// Escaped for the origin transport after bounded placeholder expansion.
+    pub unknown_target_text: String,
+}
+
+impl Default for RoutingConfig {
+    fn default() -> Self {
+        Self {
+            multi_consumer_enabled: false,
+            non_human_providers: BTreeSet::new(),
+            unknown_target_text: DEFAULT_UNKNOWN_TARGET_TEXT.into(),
+        }
+    }
+}
+
+fn notice_from_env() -> Result<String, ConfigError> {
+    match env::var(CMAEG_ROUTING_UNKNOWN_TARGET_TEXT) {
+        Ok(value) => notice_template(&value),
+        Err(env::VarError::NotPresent) => Ok(DEFAULT_UNKNOWN_TARGET_TEXT.into()),
+        Err(env::VarError::NotUnicode(_)) => Err(invalid_template()),
+    }
+}
+fn invalid_template() -> ConfigError {
+    tracing::error!(
+        key = CMAEG_ROUTING_UNKNOWN_TARGET_TEXT,
+        "invalid routing notice template"
+    );
+    ConfigError::Routing(format!(
+        "{CMAEG_ROUTING_UNKNOWN_TARGET_TEXT} must be 1..=512 UTF-8 bytes, contain {{name}}, and use only {{name}} or {{names}} placeholders"
+    ))
+}
+fn notice_template(value: &str) -> Result<String, ConfigError> {
+    if value.is_empty() || value.len() > 512 || !value.contains("{name}") {
+        return Err(invalid_template());
+    }
+    // After removing the recognized tokens, braces can only be malformed
+    // placeholders. Never echo operator-provided text in startup diagnostics.
+    let literal = value.replace("{name}", "").replace("{names}", "");
+    if literal.contains(['{', '}']) {
+        return Err(invalid_template());
+    }
+    tracing::info!(
+        key = CMAEG_ROUTING_UNKNOWN_TARGET_TEXT,
+        bytes = value.len(),
+        "routing notice configured"
+    );
+    Ok(value.into())
 }
 
 /// Read every routing setting; the non-human set is checked against the
@@ -50,6 +99,7 @@ pub(super) fn config_from_env(providers: &ProviderRegistry) -> Result<RoutingCon
     Ok(RoutingConfig {
         multi_consumer_enabled: enabled_from_env()?,
         non_human_providers: non_human_providers(value.as_deref(), providers)?,
+        unknown_target_text: notice_from_env()?,
     })
 }
 
@@ -192,6 +242,42 @@ mod tests {
             );
         }
         assert!(!RoutingConfig::default().multi_consumer_enabled);
+    }
+
+    #[test]
+    fn notice_defaults_and_valid_templates() {
+        assert_eq!(
+            RoutingConfig::default().unknown_target_text,
+            DEFAULT_UNKNOWN_TARGET_TEXT
+        );
+        for text in [
+            DEFAULT_UNKNOWN_TARGET_TEXT,
+            "{name}",
+            "{names}: {name} {name}",
+        ] {
+            assert_eq!(notice_template(text).unwrap(), text);
+        }
+        let boundary = format!("{}{{name}}", "é".repeat(253));
+        assert_eq!(boundary.len(), 512);
+        assert_eq!(notice_template(&boundary).unwrap(), boundary);
+        assert!(notice_template(&format!("{boundary}x")).is_err());
+    }
+    #[test]
+    fn invalid_templates_never_echo_their_contents() {
+        for text in [
+            "",
+            "{names}",
+            "secret-template-sentinel",
+            "{name} {other}",
+            "{{name}}",
+            "{name}{",
+            "{name}}",
+            "{name} {names",
+        ] {
+            let error = notice_template(text).unwrap_err().to_string();
+            assert_eq!(error, invalid_template().to_string());
+            assert!(!error.contains("secret-template-sentinel"));
+        }
     }
 
     #[test]

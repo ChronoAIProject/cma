@@ -251,6 +251,7 @@ fn config(media: MediaConfig) -> Config {
         delivery: DeliveryConfig::default(),
         media,
         routing: RoutingConfig::default(),
+        routed_capacity: Default::default(),
         stt: SttConfig::default(),
         transformer: TransformerConfig::default(),
     }

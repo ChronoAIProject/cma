@@ -7,6 +7,7 @@ use cmaeg_core::{channel::Secret, seal::MasterKeyRing};
 use reqwest::Url;
 
 mod cache;
+mod capacity;
 mod delivery;
 mod ingress;
 mod media;
@@ -17,6 +18,7 @@ mod stt;
 pub mod transformer;
 mod turns;
 pub use cache::*;
+pub use capacity::*;
 pub use delivery::*;
 pub use ingress::*;
 pub use media::{
@@ -25,7 +27,10 @@ pub use media::{
     CMAEG_MEDIA_MAX_BYTES, CMAEG_MEDIA_MAX_JOBS, CMAEG_MEDIA_PREPARE_BUDGET_MS,
     CMAEG_MEDIA_RATE_PER_MINUTE, CMAEG_MEDIA_RESPONSE_BYTES, CMAEG_MEDIA_TOOL_PROVIDERS,
 };
-pub use routing::{RoutingConfig, CMAEG_MULTI_CONSUMER_ENABLED, CMAEG_NON_HUMAN_PROVIDERS};
+pub use routing::{
+    RoutingConfig, CMAEG_MULTI_CONSUMER_ENABLED, CMAEG_NON_HUMAN_PROVIDERS,
+    CMAEG_ROUTING_UNKNOWN_TARGET_TEXT,
+};
 pub use service_account::*;
 pub use stt::*;
 pub use transformer::{TransformerConfig, CMAEG_MEDIA_FFMPEG_DIR, CMAEG_MEDIA_VIDEO_FRAMES};
@@ -135,6 +140,7 @@ pub struct Config {
     pub delivery: DeliveryConfig,
     pub media: MediaConfig,
     pub routing: RoutingConfig,
+    pub routed_capacity: RoutedCapacityConfig,
     pub stt: SttConfig,
     pub transformer: TransformerConfig,
 }
@@ -170,6 +176,7 @@ impl Config {
         // Validated against the registry, so it can only follow it.
         let media = media::config_from_env(&providers)?;
         let routing = routing::config_from_env(&providers)?;
+        let routed_capacity = RoutedCapacityConfig::from_env()?;
         let stt = stt::config_from_env()?;
         let transformer = transformer::config_from_env()?;
         transformer.check(&media, &stt)?;
@@ -206,6 +213,7 @@ impl Config {
             delivery,
             media,
             routing,
+            routed_capacity,
             stt,
             transformer,
         })

@@ -175,6 +175,29 @@ fn the_multi_consumer_switch_ships_off() {
 }
 
 #[test]
+fn routed_capacity_and_notice_defaults_match_code() {
+    let capacity = cmaeg::RoutedCapacityConfig::default();
+    assert_eq!(
+        configmap_value(CONFIGMAP, "CMAEG_ROUTED_CHANNEL_MAX_TURNS")
+            .unwrap()
+            .parse::<u32>()
+            .unwrap(),
+        capacity.per_channel
+    );
+    assert_eq!(
+        configmap_value(CONFIGMAP, "CMAEG_ROUTED_OWNER_MAX_TURNS")
+            .unwrap()
+            .parse::<u32>()
+            .unwrap(),
+        capacity.per_owner
+    );
+    assert_eq!(
+        configmap_value(CONFIGMAP, "CMAEG_ROUTING_UNKNOWN_TARGET_TEXT"),
+        Some(cmaeg::RoutingConfig::default().unknown_target_text.as_str())
+    );
+}
+
+#[test]
 fn media_enabled_requires_request_equal_limit_of_at_least_1536mi() {
     assert_eq!(
         configmap_value(CONFIGMAP, "CMAEG_MEDIA_ENABLED"),
