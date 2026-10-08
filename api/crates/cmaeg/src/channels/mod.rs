@@ -1,6 +1,7 @@
 //! Channel-definition construction and management orchestration.
 
 pub mod audit;
+mod audit_pages;
 pub mod cache;
 mod consumers;
 pub mod creation;

@@ -7,18 +7,15 @@
 //! cannot open could still carry the field, so the audit fails closed on it.
 //!
 //! Nothing here prints or logs a definition, secret, blob or owner subject.
-use super::management::seal_definition;
-use crate::records::{RecordClient, RecordError, RecordHead, RecordValue};
+use super::audit_pages::{for_each_definition, rewrite, Listed, Rewritten, Step};
+use crate::records::{RecordClient, RecordError, RecordHead};
 use cmaeg_core::{
     channel::{ChannelDefinition, Source},
     ids::RecordId,
-    seal::{open_blob, MasterKeyRing},
+    seal::MasterKeyRing,
 };
 use serde::Serialize;
 use std::fmt;
-
-/// Records requested per listing page; a shorter page is the last one.
-const PAGE: usize = 100;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuditFinding {
@@ -37,23 +34,39 @@ pub enum AuditAction {
     Conflict,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct AuditReport {
+/// An audit's result: the shared record counters and its own findings.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuditReport<F = AuditFinding> {
     pub scanned: u64,
     pub channels: u64,
     pub unreadable: u64,
-    pub findings: Vec<AuditFinding>,
+    pub findings: Vec<F>,
     pub cleared: u64,
     pub remaining: u64,
 }
 
-impl AuditReport {
-    /// Whether a rollback below the setting is safe: nothing remains and
-    /// every record could be read.
+impl<F> Default for AuditReport<F> {
+    fn default() -> Self {
+        Self {
+            scanned: 0,
+            channels: 0,
+            unreadable: 0,
+            findings: Vec::new(),
+            cleared: 0,
+            remaining: 0,
+        }
+    }
+}
+
+impl<F> AuditReport<F> {
+    /// Whether a rollback below what the audit looks for is safe: nothing
+    /// remains and every record could be read.
     pub fn complete(&self) -> bool {
         self.remaining == 0 && self.unreadable == 0
     }
+}
 
+impl AuditReport {
     /// The operator output: one JSON line per finding, then the summary.
     pub fn lines(&self) -> Vec<String> {
         #[derive(Serialize)]
@@ -144,18 +157,10 @@ pub async fn audit_custom_attachments(
     clear: bool,
 ) -> Result<AuditReport, AuditError> {
     let mut report = AuditReport::default();
-    let mut after: Option<String> = None;
-    loop {
-        let page = records.list(None, after.as_deref(), PAGE).await?;
-        for head in &page {
-            report.scanned += 1;
-            audit_record(records, keys, head, clear, &mut report).await?;
-        }
-        if page.len() < PAGE {
-            break;
-        }
-        after = page.last().map(|head| head.record_id.clone());
-    }
+    for_each_definition(records, keys, &mut report, async |report, listed| {
+        audit_record(records, keys, listed, clear, report).await
+    })
+    .await?;
     tracing::info!(
         scanned = report.scanned,
         found = report.findings.len(),
@@ -170,20 +175,16 @@ pub async fn audit_custom_attachments(
 async fn audit_record(
     records: &RecordClient,
     keys: &MasterKeyRing,
-    head: &RecordHead,
+    listed: Listed<'_>,
     clear: bool,
     report: &mut AuditReport,
 ) -> Result<(), AuditError> {
-    let Ok(record_id) = RecordId::new(head.record_id.clone()) else {
-        report.unreadable += 1;
-        tracing::warn!("channel record with an invalid identifier cannot be audited");
-        return Ok(());
-    };
-    let Read::Definition(definition, version) = read(records, keys, &record_id, report).await?
-    else {
-        return Ok(());
-    };
-    report.channels += 1;
+    let Listed {
+        head,
+        record_id,
+        definition,
+        version,
+    } = listed;
     if !carries_attachments(&definition) {
         return Ok(());
     }
@@ -205,7 +206,7 @@ async fn audit_record(
         tracing::warn!(record_id = %record_id, "channel record owner does not match its definition; not cleared");
         report.remaining += 1;
     } else {
-        finding.action = clear_record(records, keys, head, *definition, version, report).await?;
+        finding.action = clear_record(records, keys, head, definition, version, report).await?;
         if finding.action == AuditAction::Cleared {
             report.cleared += 1;
             tracing::info!(record_id = %record_id, channel_hash = ?finding.channel_hash, "custom attachments cleared");
@@ -218,44 +219,6 @@ async fn audit_record(
     Ok(())
 }
 
-enum Read {
-    Definition(Box<ChannelDefinition>, u64),
-    /// Deleted since it was listed, so it stores nothing.
-    Deleted,
-    /// Counted in the report; it may still carry the setting.
-    Unreadable,
-}
-
-/// Read and open one channel record.
-async fn read(
-    records: &RecordClient,
-    keys: &MasterKeyRing,
-    record_id: &RecordId,
-    report: &mut AuditReport,
-) -> Result<Read, AuditError> {
-    let Ok(url) = records.record_url(record_id.as_str()) else {
-        report.unreadable += 1;
-        tracing::warn!(record_id = %record_id, "channel record has no valid record URL");
-        return Ok(Read::Unreadable);
-    };
-    let RecordValue { blob, version } = match records.get(url.as_str()).await {
-        Ok(record) => record,
-        Err(RecordError::NotFound) => return Ok(Read::Deleted),
-        Err(error) => return Err(error.into()),
-    };
-    let definition = open_blob(keys, &blob)
-        .ok()
-        .and_then(|opened| serde_json::from_slice::<ChannelDefinition>(&opened.payload).ok());
-    match definition {
-        Some(definition) => Ok(Read::Definition(Box::new(definition), version)),
-        None => {
-            report.unreadable += 1;
-            tracing::warn!(record_id = %record_id, "channel record cannot be opened as a channel definition");
-            Ok(Read::Unreadable)
-        }
-    }
-}
-
 /// Rewrite the definition without the setting under compare-and-swap,
 /// re-reading once after a conflict. Attachments do not affect the provider
 /// binding, so no rebinding is needed.
@@ -263,39 +226,31 @@ async fn clear_record(
     records: &RecordClient,
     keys: &MasterKeyRing,
     head: &RecordHead,
-    mut definition: ChannelDefinition,
-    mut version: u64,
+    definition: ChannelDefinition,
+    version: u64,
     report: &mut AuditReport,
 ) -> Result<AuditAction, AuditError> {
-    for attempt in 0..2 {
-        if !carries_attachments(&definition) {
-            // A concurrent update already removed it.
-            return Ok(AuditAction::Cleared);
-        }
-        remove_attachments(&mut definition);
-        definition.version = version;
-        let blob = seal_definition(keys, &definition).map_err(|_| AuditError::Seal)?;
-        match records
-            .put(&definition.record_id, &head.owner, &blob, Some(version))
-            .await
-        {
-            Ok(_) => return Ok(AuditAction::Cleared),
-            Err(RecordError::Conflict { .. }) if attempt == 0 => {
-                let record_id = definition.record_id.clone();
-                match read(records, keys, &record_id, report).await? {
-                    Read::Definition(current, current_version) => {
-                        definition = *current;
-                        version = current_version;
-                    }
-                    Read::Deleted => return Ok(AuditAction::Cleared),
-                    Read::Unreadable => return Ok(AuditAction::Conflict),
-                }
+    let rewritten = rewrite(
+        records,
+        keys,
+        head,
+        definition,
+        version,
+        report,
+        async |mut definition| {
+            if !carries_attachments(&definition) {
+                // A concurrent update already removed it.
+                return Ok(Step::Done);
             }
-            Err(RecordError::Conflict { .. }) => return Ok(AuditAction::Conflict),
-            Err(error) => return Err(error.into()),
-        }
-    }
-    Ok(AuditAction::Conflict)
+            remove_attachments(&mut definition);
+            Ok(Step::Write(Box::new(definition)))
+        },
+    )
+    .await?;
+    Ok(match rewritten {
+        Rewritten::Cleared => AuditAction::Cleared,
+        Rewritten::Conflict => AuditAction::Conflict,
+    })
 }
 
 fn carries_attachments(definition: &ChannelDefinition) -> bool {
