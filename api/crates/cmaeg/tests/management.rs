@@ -221,3 +221,16 @@ mod warnings;
 
 #[path = "management/dynamic_updates.rs"]
 mod dynamic_updates;
+
+#[path = "golden/previous_schema.rs"]
+mod previous_schema;
+#[path = "management/source_credentials.rs"]
+mod source_credentials;
+#[path = "management/source_policy.rs"]
+mod source_policy;
+#[path = "management/source_privacy.rs"]
+mod source_privacy;
+#[path = "management/source_support.rs"]
+mod source_support;
+#[path = "management/sources.rs"]
+mod sources;

@@ -134,6 +134,11 @@ pub(super) fn management_error(error: ManagementError) -> Response {
             ProblemCode::ChannelNotFound,
             "The channel does not exist.".into(),
         ),
+        ManagementError::SourceNotFound => (
+            StatusCode::NOT_FOUND,
+            ProblemCode::ChannelNotFound,
+            "source_not_found".into(),
+        ),
         ManagementError::Record(error) => (
             StatusCode::SERVICE_UNAVAILABLE,
             ProblemCode::ProviderUnavailable,

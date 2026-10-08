@@ -26,6 +26,8 @@ pub mod resolver;
 #[path = "../../../cmaeg-core/tests/routing_policy/fixture.rs"]
 pub(crate) mod routing_fixture;
 pub mod routing_policy;
+mod source_secrets;
+pub mod sources;
 pub(crate) mod state;
 pub mod target;
 mod test_turn;

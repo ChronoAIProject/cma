@@ -1,7 +1,7 @@
 //! Build validated protocol definitions from management requests.
 
 use cmaeg_core::{
-    channel::{ChannelDefinition, CustomAuth, ProviderBinding, Secret, Source},
+    channel::{ChannelDefinition, ProviderBinding, Secret},
     ids::{BindingId, RecordId},
     profile::{NyxIdIdentity, NyxIdIdentityKind},
     seal::ChannelPointer,
@@ -10,7 +10,9 @@ use cmaeg_core::{
 use ring::digest::{digest, SHA256};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
-use super::definition_sources::{build_secrets, build_sources, validate_credentials};
+use super::definition_sources::{
+    build_secrets, build_sources, validate_credentials, validate_source_requirements,
+};
 pub use super::requests::*;
 use super::write_gate::{self, WriteFlags};
 
@@ -308,39 +310,7 @@ pub(super) fn validate_definition(
             .collect(),
     };
     validate_credentials(&credentials)?;
-    if definition
-        .sources
-        .iter()
-        .any(|source| matches!(source, Source::NyxidRelay { .. }))
-        && credentials
-            .channel_key
-            .as_ref()
-            .is_none_or(|key| key.as_str().is_empty())
-    {
-        return Err(ValidationError::new(
-            "/credentials/channel_key",
-            "is required for a relay source",
-        ));
-    }
-    for (index, source) in definition.sources.iter().enumerate() {
-        if let Source::Custom {
-            auth: CustomAuth::Hmac { key_id },
-            ..
-        } = source
-        {
-            if !definition
-                .secrets
-                .hmac_secrets
-                .iter()
-                .any(|(id, _)| id == key_id)
-            {
-                return Err(ValidationError::new(
-                    format!("/sources/{index}/auth/key_id"),
-                    "must reference a supplied HMAC secret",
-                ));
-            }
-        }
-    }
+    validate_source_requirements(&definition.sources, &definition.secrets)?;
     Ok(())
 }
 

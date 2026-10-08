@@ -145,6 +145,7 @@ pub enum ManagementError {
     Provider(ProviderError),
     Record(RecordError),
     NotFound,
+    SourceNotFound,
     Conflict {
         expected: u64,
         actual: Option<u64>,
@@ -165,6 +166,7 @@ impl fmt::Display for ManagementError {
             Self::Provider(error) => write!(formatter, "{error}"),
             Self::Record(error) => write!(formatter, "{error}"),
             Self::NotFound => formatter.write_str("channel was not found"),
+            Self::SourceNotFound => formatter.write_str("source_not_found"),
             Self::Conflict { expected, actual } => {
                 write!(
                     formatter,

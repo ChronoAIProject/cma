@@ -3,12 +3,12 @@
 use std::collections::BTreeSet;
 
 use cmaeg_core::{
-    channel::{ChannelSecrets, Source},
+    channel::{ChannelSecrets, CustomAuth, Secret, Source},
     ValidationError,
 };
 
 use super::definition::hash_secret;
-use super::requests::{CredentialsRequest, SourceRequest};
+use super::requests::{CredentialsRequest, HmacSecretRequest, SourceRequest};
 
 pub(super) fn build_sources(
     sources: &[SourceRequest],
@@ -118,27 +118,36 @@ pub(super) fn build_secrets(credentials: &CredentialsRequest) -> ChannelSecrets 
 pub(super) fn validate_credentials(
     credentials: &CredentialsRequest,
 ) -> Result<(), ValidationError> {
-    for (pointer, value) in [
-        ("/credentials/agent_key", Some(&credentials.agent_key)),
-        ("/credentials/channel_key", credentials.channel_key.as_ref()),
-    ] {
-        if let Some(value) = value {
-            if value.as_str().is_empty()
-                || value.as_str().len() > 16_384
-                || !value
-                    .as_str()
-                    .bytes()
-                    .all(|byte| (33..=126).contains(&byte))
-            {
-                return Err(ValidationError::new(
-                    pointer,
-                    "must contain 1..=16384 printable bearer bytes",
-                ));
-            }
+    validate_bearer("/credentials/agent_key", Some(&credentials.agent_key))?;
+    validate_source_credentials(credentials.channel_key.as_ref(), &credentials.hmac_secrets)
+}
+
+fn validate_bearer(pointer: &str, value: Option<&Secret>) -> Result<(), ValidationError> {
+    if let Some(value) = value {
+        if value.as_str().is_empty()
+            || value.as_str().len() > 16_384
+            || !value
+                .as_str()
+                .bytes()
+                .all(|byte| (33..=126).contains(&byte))
+        {
+            return Err(ValidationError::new(
+                pointer,
+                "must contain 1..=16384 printable bearer bytes",
+            ));
         }
     }
+    Ok(())
+}
+
+/// Source-only edits do not require an unrelated provider credential.
+pub(super) fn validate_source_credentials(
+    channel_key: Option<&Secret>,
+    hmac_secrets: &[HmacSecretRequest],
+) -> Result<(), ValidationError> {
+    validate_bearer("/credentials/channel_key", channel_key)?;
     let mut keys = BTreeSet::new();
-    for (index, secret) in credentials.hmac_secrets.iter().enumerate() {
+    for (index, secret) in hmac_secrets.iter().enumerate() {
         if secret.key_id.is_empty() || secret.key_id.len() > 512 {
             return Err(ValidationError::new(
                 format!("/credentials/hmac_secrets/{index}/key_id"),
@@ -166,6 +175,41 @@ pub(super) fn validate_credentials(
                 "/credentials/hmac_secrets",
                 "key ids must be unique",
             ));
+        }
+    }
+    Ok(())
+}
+
+/// Writer requirements beyond the unconditional stored-shape reader rules.
+pub(super) fn validate_source_requirements(
+    sources: &[Source],
+    secrets: &ChannelSecrets,
+) -> Result<(), ValidationError> {
+    if sources
+        .iter()
+        .any(|source| matches!(source, Source::NyxidRelay { .. }))
+        && secrets
+            .channel_key
+            .as_ref()
+            .is_none_or(|key| key.as_str().is_empty())
+    {
+        return Err(ValidationError::new(
+            "/credentials/channel_key",
+            "is required for a relay source",
+        ));
+    }
+    for (index, source) in sources.iter().enumerate() {
+        if let Source::Custom {
+            auth: CustomAuth::Hmac { key_id },
+            ..
+        } = source
+        {
+            if !secrets.hmac_secrets.iter().any(|(id, _)| id == key_id) {
+                return Err(ValidationError::new(
+                    format!("/sources/{index}/auth/key_id"),
+                    "must reference a supplied HMAC secret",
+                ));
+            }
         }
     }
     Ok(())

@@ -12,6 +12,7 @@ pub const PROVIDER_ERRORS: &str = "cmaeg_provider_errors_total";
 pub const TURNS_INFLIGHT: &str = "cmaeg_turns_inflight";
 pub const CHANNELS_CACHED: &str = "cmaeg_channels_cached";
 pub const CHANNEL_INVALIDATIONS: &str = "cmaeg_channel_invalidations_total";
+pub const SOURCE_MUTATIONS: &str = "cmaeg_source_mutations_total";
 pub const CONSUMER_MUTATIONS: &str = "cmaeg_consumer_mutations_total";
 pub const RELAY_ENVELOPE_REPAIRS: &str = "cmaeg_relay_envelope_repairs_total";
 pub const CALLBACK_INVALID: &str = "cmaeg_callback_invalid_total";
@@ -69,8 +70,9 @@ pub const ROUTING_DECISIONS: &str = "cmaeg_routing_decisions_total";
 pub const FANOUT_WIDTH: &str = "cmaeg_fanout_width";
 pub const FANOUT_BUCKETS: [f64; 8] = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
 pub const FANOUT_TURNS: &str = "cmaeg_fanout_turns_total";
-pub const COUNTERS: [&str; 19] = [
+pub const COUNTERS: [&str; 20] = [
     CONSUMER_MUTATIONS,
+    SOURCE_MUTATIONS,
     CHANNEL_INVALIDATIONS,
     TOOL_SENDS_LATE,
     FANOUT_FAILED_DROPPED,

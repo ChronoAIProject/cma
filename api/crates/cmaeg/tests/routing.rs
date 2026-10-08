@@ -35,3 +35,5 @@ pub mod fake_nyxid;
 mod management_support;
 #[path = "routing/management_walkthrough.rs"]
 mod management_walkthrough;
+#[path = "routing/source_mutations.rs"]
+mod source_mutations;

@@ -18,8 +18,6 @@ use std::sync::Mutex;
 #[path = "routing_exits.rs"]
 mod exits;
 use super::routing_fixture as fixture;
-#[path = "../golden/previous_schema.rs"]
-mod previous_schema;
 
 #[derive(Default)]
 struct Index(Mutex<Vec<(String, String, u64)>>);
