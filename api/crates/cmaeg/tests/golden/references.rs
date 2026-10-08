@@ -83,6 +83,8 @@ fn event(reply: ReplyAddress) -> EventRefPayload {
         conversation_id: ConversationId::new(format!("conv_{}", "0".repeat(32))).unwrap(),
         expires_at: 4_102_444_800,
         reply,
+        consumer: None,
+        lineage: None,
     }
 }
 
@@ -141,6 +143,7 @@ fn default_message_refs_keep_their_canonical_plaintext() {
         platform_message_id: "42".into(),
         route_id: "route-1".into(),
         interaction_record_id: None,
+        consumer: None,
     };
     let interaction = MessageRefPayload {
         interaction_record_id: Some("6f1e2d3c-4b5a-4978-8a69-5b4c3d2e1f00".into()),

@@ -12,6 +12,7 @@ use serde::{de::DeserializeOwned, Serialize};
 
 pub mod event_ref;
 mod interaction;
+pub mod lineage;
 pub mod media_link;
 pub mod message_ref;
 pub mod pointer;
@@ -21,6 +22,7 @@ pub use event_ref::{EventRef, EventRefPayload, ReplyAddress};
 pub use interaction::{
     open_blob, open_connection, open_interaction, seal_blob, seal_connection, seal_interaction,
 };
+pub use lineage::{Lineage, RootId};
 pub use media_link::{MediaLinkPayload, MediaLinkRef, MAX_MEDIA_LINK_TTL};
 pub use message_ref::MessageRefPayload;
 pub use pointer::ChannelPointer;

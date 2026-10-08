@@ -112,6 +112,8 @@ pub(crate) fn launch_request(
                 reply_token: verified.reply_token,
                 reply_token_expires_at: verified.reply_expires_at,
             },
+            consumer: None,
+            lineage: None,
         },
         keys,
     )

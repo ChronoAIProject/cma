@@ -99,6 +99,8 @@ pub fn event(reply: ReplyAddress) -> EventRefPayload {
         conversation_id: "conversation-1".parse().unwrap(),
         expires_at: unix_now() + 1_800,
         reply,
+        consumer: None,
+        lineage: None,
     }
 }
 

@@ -25,6 +25,7 @@ pub use attachment::{
 mod attachment_facts;
 pub use attachment_facts::FactRepairs;
 mod routing;
+pub(crate) use routing::is_root_id;
 pub use routing::{ActivityRouting, Causation, ConsumerTarget, RouteResolution, MAX_HOPS};
 
 pub const ACTIVITY_SCHEMA_VERSION: u16 = 1;

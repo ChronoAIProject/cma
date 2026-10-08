@@ -206,6 +206,7 @@ impl Sender {
                             platform_message_id: id.clone(),
                             route_id: route_id.clone(),
                             interaction_record_id: None,
+                            consumer: None,
                         },
                         &self.keys,
                     )

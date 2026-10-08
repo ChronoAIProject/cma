@@ -73,6 +73,8 @@ pub fn launch_request(
             conversation_id: conversation_id.clone(),
             expires_at: now.saturating_add(1800),
             reply,
+            consumer: None,
+            lineage: None,
         },
         keys,
     )

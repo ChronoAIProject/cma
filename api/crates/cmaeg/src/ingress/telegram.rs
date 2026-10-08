@@ -206,6 +206,8 @@ pub(crate) fn launch(
                 message_id,
                 thread_id: facts.thread_id,
             },
+            consumer: None,
+            lineage: None,
         },
         keys,
     )

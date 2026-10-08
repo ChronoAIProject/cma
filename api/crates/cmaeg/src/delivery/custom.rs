@@ -253,6 +253,8 @@ mod tests {
             conversation_id: "conversation-1".parse().unwrap(),
             expires_at: i64::MAX,
             reply,
+            consumer: None,
+            lineage: None,
         }
     }
 

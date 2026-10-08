@@ -127,6 +127,7 @@ impl App {
                 platform_message_id: "platform-1".into(),
                 route_id: "route-1".into(),
                 interaction_record_id: None,
+                consumer: None,
             },
             &fixture.state.master_keys,
         )

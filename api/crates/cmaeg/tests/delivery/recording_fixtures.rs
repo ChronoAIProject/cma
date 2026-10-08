@@ -128,6 +128,8 @@ pub fn event(
         conversation_id: format!("conv_{conversation:032x}").parse().unwrap(),
         expires_at: FAR,
         reply,
+        consumer: None,
+        lineage: None,
     }
 }
 

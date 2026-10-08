@@ -59,6 +59,8 @@ fn event_reference_expires_and_redacts_debug() {
             reply_token: Secret::new("do-not-print"),
             reply_token_expires_at: 200,
         },
+        consumer: None,
+        lineage: None,
     };
     assert!(!format!("{:?}", payload.reply).contains("do-not-print"));
     let event_ref = EventRef::seal(&payload, &ring()).expect("event ref");
@@ -282,6 +284,8 @@ fn event_reference_retains_every_relay_platform_and_its_activity_binding() {
                 reply_token: Secret::new("reply-token"),
                 reply_token_expires_at: 200,
             },
+            consumer: None,
+            lineage: None,
         };
         let opened = EventRef::seal(&payload, &ring())
             .expect("event ref")

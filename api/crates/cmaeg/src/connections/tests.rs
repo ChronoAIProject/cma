@@ -207,6 +207,8 @@ pub(super) fn connection(subject: &str, organization: bool) -> Connection {
                     reply_token: Secret::new(REPLY_TOKEN),
                     reply_token_expires_at: timestamp + SETUP_TTL,
                 },
+                consumer: None,
+                lineage: None,
             },
             actor: "fixture-human".into(),
             conversation: ActivityConversation {

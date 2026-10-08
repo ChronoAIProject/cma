@@ -192,6 +192,8 @@ impl App {
                     reply_token_expires_at: now() + 600,
                 }
             },
+            consumer: None,
+            lineage: None,
         };
         let event_ref = EventRef::seal(&event, &self.state.keys).unwrap();
         let mut stream = self

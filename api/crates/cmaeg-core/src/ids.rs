@@ -240,7 +240,8 @@ impl IdempotencyKey {
     }
 }
 
-fn hex(bytes: &[u8]) -> String {
+/// Lowercase hex of `bytes`, the encoding of every derived identifier.
+pub(crate) fn hex(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     bytes
         .iter()

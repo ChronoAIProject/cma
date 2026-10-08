@@ -112,6 +112,8 @@ impl Fixture {
                 conversation_id: conversation_id.clone(),
                 expires_at: time::OffsetDateTime::now_utc().unix_timestamp() + 1800,
                 reply: ReplyAddress::None,
+                consumer: None,
+                lineage: None,
             },
             &self.keys,
         )

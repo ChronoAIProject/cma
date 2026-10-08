@@ -47,6 +47,8 @@ fn event(keys: &MasterKeyRing) -> EventRefPayload {
             reply_token: Secret::new(format!("reply-{}", "r".repeat(24))),
             reply_token_expires_at: NOW + 600,
         },
+        consumer: None,
+        lineage: None,
     }
 }
 

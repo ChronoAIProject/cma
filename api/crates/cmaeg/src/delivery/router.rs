@@ -137,6 +137,8 @@ mod tests {
             conversation_id: "conversation-1".parse().unwrap(),
             expires_at: i64::MAX,
             reply: ReplyAddress::None,
+            consumer: None,
+            lineage: None,
         };
         let (receipt, received) = oneshot::channel();
         let command = DeliveryCommand::Reply {
