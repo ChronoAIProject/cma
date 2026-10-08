@@ -164,6 +164,16 @@ fn with_memory(deployment: &str, request: &str, limit: &str) -> String {
     edited
 }
 
+/// Multi-consumer routing ships off: no routed event exists until an
+/// operator flips the switch deliberately.
+#[test]
+fn the_multi_consumer_switch_ships_off() {
+    assert_eq!(
+        configmap_value(CONFIGMAP, "CMAEG_MULTI_CONSUMER_ENABLED"),
+        Some("false")
+    );
+}
+
 #[test]
 fn media_enabled_requires_request_equal_limit_of_at_least_1536mi() {
     assert_eq!(

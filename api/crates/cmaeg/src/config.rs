@@ -25,7 +25,7 @@ pub use media::{
     CMAEG_MEDIA_MAX_BYTES, CMAEG_MEDIA_MAX_JOBS, CMAEG_MEDIA_PREPARE_BUDGET_MS,
     CMAEG_MEDIA_RATE_PER_MINUTE, CMAEG_MEDIA_RESPONSE_BYTES, CMAEG_MEDIA_TOOL_PROVIDERS,
 };
-pub use routing::{RoutingConfig, CMAEG_NON_HUMAN_PROVIDERS};
+pub use routing::{RoutingConfig, CMAEG_MULTI_CONSUMER_ENABLED, CMAEG_NON_HUMAN_PROVIDERS};
 pub use service_account::*;
 pub use stt::*;
 pub use transformer::{TransformerConfig, CMAEG_MEDIA_FFMPEG_DIR, CMAEG_MEDIA_VIDEO_FRAMES};
@@ -187,6 +187,10 @@ impl Config {
         let management = ManagementConfig::from_env()?;
         let turns = TurnConfig::from_env()?;
         media.check_turn_timeout(turns.turn_timeout)?;
+        let delivery = DeliveryConfig {
+            multi_consumer_enabled: routing.multi_consumer_enabled,
+            ..DeliveryConfig::from_env()?
+        };
         Ok(Self {
             listen,
             metrics_listen,
@@ -199,7 +203,7 @@ impl Config {
             channel_cache: ChannelCacheConfig::from_env()?,
             ingress: IngressConfig::from_env()?,
             turns,
-            delivery: DeliveryConfig::from_env()?,
+            delivery,
             media,
             routing,
             stt,

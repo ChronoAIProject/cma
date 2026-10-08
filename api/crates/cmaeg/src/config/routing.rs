@@ -1,5 +1,6 @@
-//! Multi-consumer routing settings: which providers' agents answer non-human
-//! actors (custom events and hand-offs) unless a consumer says otherwise.
+//! Multi-consumer routing settings: the master switch, and which providers'
+//! agents answer non-human actors (custom events and hand-offs) unless a
+//! consumer says otherwise.
 //!
 //! The actor-kind capability is per-consumer data with a slug default, and
 //! the gateway never reads provider-specific profile fields to decide it. The
@@ -12,6 +13,7 @@ use cmaeg_core::ids::ProviderSlug;
 use std::{collections::BTreeSet, env};
 
 pub const CMAEG_NON_HUMAN_PROVIDERS: &str = "CMAEG_NON_HUMAN_PROVIDERS";
+pub const CMAEG_MULTI_CONSUMER_ENABLED: &str = "CMAEG_MULTI_CONSUMER_ENABLED";
 
 /// The one provider whose agents are known to answer custom events and
 /// hand-offs.
@@ -24,6 +26,9 @@ const MAX_NON_HUMAN_PROVIDERS: usize = 8;
 /// registry.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RoutingConfig {
+    /// The multi-consumer master switch. One process-wide value, which
+    /// delivery copies, so every send of a process is classified alike.
+    pub multi_consumer_enabled: bool,
     /// Provider slugs whose agents answer non-human actors (custom events,
     /// hand-offs) by default. A consumer's `non_human` field overrides this
     /// per consumer.
@@ -43,8 +48,40 @@ pub(super) fn config_from_env(providers: &ProviderRegistry) -> Result<RoutingCon
         }
     };
     Ok(RoutingConfig {
+        multi_consumer_enabled: enabled_from_env()?,
         non_human_providers: non_human_providers(value.as_deref(), providers)?,
     })
+}
+
+/// Read the master switch with the rules of `CMAEG_MEDIA_ENABLED`: unset is
+/// off, and a set value must be exactly `true` or `false`, so a typo such as
+/// `True` fails startup instead of silently leaving routing off.
+fn enabled_from_env() -> Result<bool, ConfigError> {
+    match env::var(CMAEG_MULTI_CONSUMER_ENABLED) {
+        Ok(value) => parse_enabled(Some(&value)),
+        Err(env::VarError::NotPresent) => parse_enabled(None),
+        Err(env::VarError::NotUnicode(_)) => Err(invalid_switch()),
+    }
+}
+
+fn parse_enabled(value: Option<&str>) -> Result<bool, ConfigError> {
+    let enabled = match value {
+        None | Some("false") => false,
+        Some("true") => true,
+        Some(_) => return Err(invalid_switch()),
+    };
+    tracing::info!(
+        key = CMAEG_MULTI_CONSUMER_ENABLED,
+        enabled,
+        "multi-consumer switch"
+    );
+    Ok(enabled)
+}
+
+fn invalid_switch() -> ConfigError {
+    ConfigError::Routing(format!(
+        "{CMAEG_MULTI_CONSUMER_ENABLED} must be true or false"
+    ))
 }
 
 /// Read the non-human provider set.
@@ -140,6 +177,21 @@ mod tests {
             ConfigError::Routing(detail) => detail,
             other => panic!("expected an invalid routing configuration, got {other}"),
         }
+    }
+
+    #[test]
+    fn the_multi_consumer_switch_is_off_unless_exactly_true() {
+        assert!(!parse_enabled(None).unwrap());
+        assert!(!parse_enabled(Some("false")).unwrap());
+        assert!(parse_enabled(Some("true")).unwrap());
+        for value in ["", "True", "TRUE", "1", "yes", " true", "true ", "on"] {
+            assert_eq!(
+                parse_enabled(Some(value)).unwrap_err().to_string(),
+                "routing configuration is invalid: CMAEG_MULTI_CONSUMER_ENABLED must be true or false",
+                "{value:?}"
+            );
+        }
+        assert!(!RoutingConfig::default().multi_consumer_enabled);
     }
 
     #[test]

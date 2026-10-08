@@ -10,6 +10,9 @@ pub struct DeliveryConfig {
     pub ack_text: String,
     pub heartbeat: Duration,
     pub failure_text: String,
+    /// `CMAEG_MULTI_CONSUMER_ENABLED`, copied from the routing settings so
+    /// delivery classifies sends with the same process-wide value as tools.
+    pub multi_consumer_enabled: bool,
 }
 impl Default for DeliveryConfig {
     fn default() -> Self {
@@ -18,6 +21,7 @@ impl Default for DeliveryConfig {
             ack_text: "Working on it…".into(),
             heartbeat: Duration::from_secs(60),
             failure_text: "Sorry, I couldn’t finish that request. Please try again.".into(),
+            multi_consumer_enabled: false,
         }
     }
 }
@@ -29,6 +33,7 @@ impl DeliveryConfig {
             heartbeat: positive_duration(CMAEG_HEARTBEAT_MS, 60000)?,
             ack_text: text(CMAEG_ACK_TEXT, defaults.ack_text)?,
             failure_text: text(CMAEG_FAILURE_TEXT, defaults.failure_text)?,
+            multi_consumer_enabled: defaults.multi_consumer_enabled,
         })
     }
 }
