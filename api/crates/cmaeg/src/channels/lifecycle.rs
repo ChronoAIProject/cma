@@ -1,29 +1,30 @@
 //! Channel delete and master-key rekey over sealed CMA records.
 
-use super::management::{load, load_unowned, open_pointer, seal_definition};
+use super::management::{load, load_unowned, seal_definition};
 use super::state::{InvalidationPath, ManagementError, ManagementState};
+use super::target::{open_target, ChannelTarget};
 use crate::{auth::Creator, records::RecordError};
-use cmaeg_core::ids::ChannelId;
 
 pub async fn delete(
     state: &ManagementState,
     creator: &Creator,
-    channel_id: &ChannelId,
+    target: &ChannelTarget,
     expected_version: u64,
 ) -> Result<(), ManagementError> {
-    let pointer = open_pointer(state, channel_id)?;
+    let pointer = open_target(state, target)?;
     let _guard = state.mutation_guard(pointer.record_id.as_str()).await;
-    let current = load(state, creator, channel_id).await?;
+    let current = load(state, creator, target).await?;
     if current.record.version != expected_version {
         return Err(ManagementError::Conflict {
             expected: expected_version,
             actual: Some(current.record.version),
         });
     }
-    crate::connections::binding::disconnect(state, &current.definition, channel_id).await?;
+    crate::connections::binding::disconnect(state, &current.definition, &current.channel_id)
+        .await?;
     state.invalidate_record(
         &pointer.record_id,
-        Some(channel_id.as_str()),
+        Some(current.channel_id.as_str()),
         InvalidationPath::Delete,
     );
     let credential = current
@@ -52,7 +53,7 @@ pub async fn delete(
             // Revocation must survive a failure while retiring the connection.
             state.invalidate_record(
                 &pointer.record_id,
-                Some(channel_id.as_str()),
+                Some(current.channel_id.as_str()),
                 InvalidationPath::Delete,
             );
             crate::connections::binding::release(state, &current.definition).await?;
@@ -65,13 +66,13 @@ pub async fn delete(
     }
 }
 
-pub async fn rekey(state: &ManagementState, channel_id: &ChannelId) -> Result<u8, ManagementError> {
-    let pointer = open_pointer(state, channel_id)?;
+pub async fn rekey(state: &ManagementState, target: &ChannelTarget) -> Result<u8, ManagementError> {
+    let pointer = open_target(state, target)?;
     let _guard = state.mutation_guard(pointer.record_id.as_str()).await;
-    let loaded = load_unowned(state, channel_id).await?;
+    let loaded = load_unowned(state, target).await?;
     state.invalidate_record(
         &pointer.record_id,
-        Some(channel_id.as_str()),
+        Some(loaded.channel_id.as_str()),
         InvalidationPath::Rekey,
     );
     let mut definition = loaded.definition;
@@ -94,7 +95,7 @@ pub async fn rekey(state: &ManagementState, channel_id: &ChannelId) -> Result<u8
         })?;
     state.invalidate_record(
         &pointer.record_id,
-        Some(channel_id.as_str()),
+        Some(loaded.channel_id.as_str()),
         InvalidationPath::Rekey,
     );
     Ok(state.master_keys.current_kid())

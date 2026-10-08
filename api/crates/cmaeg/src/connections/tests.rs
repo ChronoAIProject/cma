@@ -85,7 +85,10 @@ impl Fixture {
                 "/api/v1/gateway/connection-records/{id}",
                 put(save).get(load).delete(delete),
             )
-            .route("/api/v1/gateway/channel-records/{id}", get(load_channel))
+            .route(
+                "/api/v1/gateway/channel-records/{id}",
+                get(load_channel).delete(channel_records::delete),
+            )
             .with_state(peer.clone());
         let server = tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
@@ -466,6 +469,7 @@ impl crate::ingress::launch::TurnLauncher for RecordingLauncher {
 }
 
 mod browser;
+mod channel_records;
 mod claims;
 mod completion;
 mod contracts;

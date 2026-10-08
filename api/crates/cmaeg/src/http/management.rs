@@ -16,6 +16,7 @@ use crate::{
     channels::{
         definition::{ChannelCreateRequest, ChannelUpdateRequest},
         management::{self, ManagementError, ManagementState},
+        ChannelTarget,
     },
 };
 
@@ -201,10 +202,11 @@ pub async fn get_channel(
         Ok(channel_id) => channel_id,
         Err(error) => return management_error(error),
     };
-    let loaded = match management::load(&state, &creator, &channel_id).await {
-        Ok(loaded) => loaded,
-        Err(error) => return management_error(error),
-    };
+    let loaded =
+        match management::load(&state, &creator, &ChannelTarget::Id(channel_id.clone())).await {
+            Ok(loaded) => loaded,
+            Err(error) => return management_error(error),
+        };
     let response = channel_response(
         &state,
         &channel_id,
@@ -248,7 +250,14 @@ pub async fn update_channel(
             ))
         }
     };
-    let loaded = match management::update(&state, &creator, &channel_id, body).await {
+    let loaded = match management::update(
+        &state,
+        &creator,
+        &ChannelTarget::Id(channel_id.clone()),
+        body,
+    )
+    .await
+    {
         Ok(loaded) => loaded,
         Err(error) => return management_error(error),
     };
@@ -301,7 +310,14 @@ pub async fn delete_channel(
             "expected_version is required",
         ));
     };
-    match management::delete(&state, &creator, &channel_id, expected_version).await {
+    match management::delete(
+        &state,
+        &creator,
+        &ChannelTarget::Id(channel_id),
+        expected_version,
+    )
+    .await
+    {
         Ok(()) => no_store(StatusCode::NO_CONTENT.into_response()),
         Err(error) => management_error(error),
     }
@@ -325,7 +341,7 @@ pub async fn test_channel(
         Ok(channel_id) => channel_id,
         Err(error) => return management_error(error),
     };
-    match management::test_turn(&state, &creator, &channel_id).await {
+    match management::test_turn(&state, &creator, &ChannelTarget::Id(channel_id)).await {
         Ok(result) => no_store(
             Json(TestChannelResponse {
                 accepted_after_ms: result.accepted_after_ms,
@@ -363,7 +379,7 @@ pub async fn rekey_channel(
         Ok(channel_id) => channel_id,
         Err(error) => return management_error(error),
     };
-    match management::rekey(&state, &channel_id).await {
+    match management::rekey(&state, &ChannelTarget::Id(channel_id)).await {
         Ok(kid) => no_store(Json(RekeyResponse { kid }).into_response()),
         Err(error) => management_error(error),
     }

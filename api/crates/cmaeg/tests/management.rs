@@ -183,6 +183,9 @@ mod reconciliation;
 #[path = "management/targets.rs"]
 mod targets;
 
+#[path = "management/record_addressing.rs"]
+mod record_addressing;
+
 #[path = "management/custom_attachments.rs"]
 mod custom_attachments;
 

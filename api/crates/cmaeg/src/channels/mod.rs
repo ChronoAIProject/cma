@@ -18,6 +18,7 @@ pub mod resolver;
 #[path = "../../../cmaeg-core/tests/routing_policy/fixture.rs"]
 pub(crate) mod routing_fixture;
 pub(crate) mod state;
+pub mod target;
 mod test_turn;
 pub mod write_gate;
 
@@ -25,3 +26,4 @@ pub use definition::{
     ChannelCreateRequest, ChannelUpdateRequest, CredentialPatch, CredentialsRequest,
     HmacSecretRequest, ProviderRequest, SourceRequest,
 };
+pub use target::ChannelTarget;

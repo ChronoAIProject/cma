@@ -7,6 +7,7 @@ pub use super::lifecycle::{delete, rekey};
 pub use super::state::{
     CreatedChannel, InvalidationPath, LoadedChannel, ManagementError, ManagementState,
 };
+use super::target::{loaded_id, open_target, ChannelTarget};
 pub use super::test_turn::{test_turn, TestResult};
 use super::write_gate::WriteFlags;
 use crate::{
@@ -166,9 +167,9 @@ pub(super) fn custom_attachments_allowed(
 pub async fn load(
     state: &ManagementState,
     creator: &Creator,
-    channel_id: &ChannelId,
+    target: &ChannelTarget,
 ) -> Result<LoadedChannel, ManagementError> {
-    let loaded = load_unowned(state, channel_id).await?;
+    let loaded = load_target(state, target, Some(creator)).await?;
     if loaded.definition.owner.subject != creator.subject {
         return Err(ManagementError::NotFound);
     }
@@ -178,12 +179,12 @@ pub async fn load(
 pub async fn update(
     state: &ManagementState,
     creator: &Creator,
-    channel_id: &ChannelId,
+    target: &ChannelTarget,
     mut request: ChannelUpdateRequest,
 ) -> Result<LoadedChannel, ManagementError> {
-    let pointer = open_pointer(state, channel_id)?;
+    let pointer = open_target(state, target)?;
     let _guard = state.mutation_guard(pointer.record_id.as_str()).await;
-    let current = load(state, creator, channel_id).await?;
+    let current = load(state, creator, target).await?;
     crate::connections::binding::expand_update(
         state,
         creator,
@@ -220,7 +221,7 @@ pub async fn update(
     }
     state.invalidate_record(
         &pointer.record_id,
-        Some(channel_id.as_str()),
+        Some(current.channel_id.as_str()),
         InvalidationPath::Rest,
     );
     // The write gate runs inside the build, before the provider sees anything.
@@ -257,11 +258,11 @@ pub async fn update(
         .map_err(ManagementError::Record)?;
     state.invalidate_record(
         &pointer.record_id,
-        Some(channel_id.as_str()),
+        Some(current.channel_id.as_str()),
         InvalidationPath::Rest,
     );
     Ok(LoadedChannel {
-        channel_id: channel_id.clone(),
+        channel_id: current.channel_id,
         pointer: current.pointer,
         definition,
         record: RecordValue { blob, version },
@@ -294,9 +295,17 @@ pub(super) fn open_pointer(
 
 pub(super) async fn load_unowned(
     state: &ManagementState,
-    channel_id: &ChannelId,
+    target: &ChannelTarget,
 ) -> Result<LoadedChannel, ManagementError> {
-    let pointer = open_pointer(state, channel_id)?;
+    load_target(state, target, None).await
+}
+
+async fn load_target(
+    state: &ManagementState,
+    target: &ChannelTarget,
+    creator: Option<&Creator>,
+) -> Result<LoadedChannel, ManagementError> {
+    let pointer = open_target(state, target)?;
     let record = state
         .records
         .get(&pointer.record_url)
@@ -315,11 +324,19 @@ pub(super) async fn load_unowned(
     if definition.record_id != pointer.record_id {
         return Err(ManagementError::NotFound);
     }
+    // Record ids are enumerable authority lookups. Verify their owner before
+    // interpreting a private retained identity; keep public Id errors intact.
+    if matches!(target, ChannelTarget::Record(_))
+        && creator.is_some_and(|creator| definition.owner.subject != creator.subject)
+    {
+        return Err(ManagementError::NotFound);
+    }
     definition
         .validate()
         .map_err(|_| ManagementError::Internal("retained channel is invalid".into()))?;
+    let channel_id = loaded_id(state, target, &pointer, &definition)?;
     Ok(LoadedChannel {
-        channel_id: channel_id.clone(),
+        channel_id,
         pointer,
         definition,
         record,

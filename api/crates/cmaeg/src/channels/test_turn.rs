@@ -1,12 +1,13 @@
 //! Bounded synthetic turn used to verify a channel's provider binding.
 use super::management::{load, ManagementError, ManagementState};
+use super::target::ChannelTarget;
 use crate::{
     auth::Creator,
     providers::{ProviderError, ResponsesEvent, TurnRequest},
 };
 use cmaeg_core::{
     channel::ConformanceLevel,
-    ids::{ChannelId, ConversationId, IdempotencyKey},
+    ids::{ConversationId, IdempotencyKey},
 };
 use std::{collections::BTreeMap, time::Duration};
 
@@ -20,9 +21,9 @@ pub struct TestResult {
 pub async fn test_turn(
     state: &ManagementState,
     creator: &Creator,
-    channel_id: &ChannelId,
+    target: &ChannelTarget,
 ) -> Result<TestResult, ManagementError> {
-    tokio::time::timeout(Duration::from_secs(30), run(state, creator, channel_id))
+    tokio::time::timeout(Duration::from_secs(30), run(state, creator, target))
         .await
         .map_err(|_| unavailable("test turn timed out"))?
 }
@@ -30,9 +31,9 @@ pub async fn test_turn(
 async fn run(
     state: &ManagementState,
     creator: &Creator,
-    channel_id: &ChannelId,
+    target: &ChannelTarget,
 ) -> Result<TestResult, ManagementError> {
-    let current = load(state, creator, channel_id).await?;
+    let current = load(state, creator, target).await?;
     let definition = current.definition;
     // The test turn verifies the binding management created: the default
     // consumer's.
@@ -45,7 +46,7 @@ async fn run(
         .ok_or_else(|| unavailable("channel provider credential is unavailable"))?;
     let conversation_id = ConversationId::derive(
         &state.master_keys,
-        channel_id,
+        &current.channel_id,
         definition.partition.version,
         "test",
     );
