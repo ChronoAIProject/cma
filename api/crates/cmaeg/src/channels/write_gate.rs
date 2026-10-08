@@ -63,7 +63,10 @@ pub(crate) fn check(
     }
     let error = match next.validate_legacy() {
         Err(error) => error,
-        Ok(()) if !sources => ValidationError::new("/sources", DYNAMIC_SOURCES_DISABLED),
+        // Only `custom_key` makes a legacy-valid definition extended.
+        Ok(()) if !sources => {
+            ValidationError::new("/partition/custom_key", DYNAMIC_SOURCES_DISABLED)
+        }
         Ok(()) => ValidationError::new("/", MULTI_CONSUMER_DISABLED),
     };
     tracing::info!(

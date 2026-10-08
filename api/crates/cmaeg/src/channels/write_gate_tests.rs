@@ -126,3 +126,48 @@ fn the_dynamic_sources_flag_admits_the_introduction() {
     };
     assert_eq!(check(None, &extended(), routing_only), Err(duplicated(1)));
 }
+
+fn with_custom_key(mut definition: ChannelDefinition) -> ChannelDefinition {
+    definition.partition.custom_key = Some(cmaeg_core::channel::PartitionKey::EventSubject);
+    definition
+}
+
+#[test]
+fn a_legacy_valid_custom_key_is_refused_as_disabled() {
+    let next = with_custom_key(legacy());
+    next.validate_legacy().unwrap();
+    next.validate().unwrap();
+    let disabled = Err(ValidationError::new(
+        "/partition/custom_key",
+        "dynamic_sources_disabled",
+    ));
+    assert_eq!(check(None, &next, WriteFlags::default()), disabled);
+    assert_eq!(
+        check(Some(&legacy()), &next, WriteFlags::default()),
+        disabled
+    );
+    let flags = WriteFlags {
+        dynamic_sources: true,
+        ..WriteFlags::default()
+    };
+    check(Some(&legacy()), &next, flags).unwrap();
+}
+
+#[test]
+fn a_stored_custom_key_is_carried_through_or_removed() {
+    let current = with_custom_key(legacy());
+    let mut renamed = with_custom_key(legacy());
+    renamed.name = "renamed".into();
+    check(Some(&current), &renamed, WriteFlags::default()).unwrap();
+    check(Some(&current), &legacy(), WriteFlags::default()).unwrap();
+    // Changing the custom key itself modifies the extension.
+    let mut changed = with_custom_key(legacy());
+    changed.partition.custom_key = Some(cmaeg_core::channel::PartitionKey::Fixed);
+    assert_eq!(
+        check(Some(&current), &changed, WriteFlags::default()),
+        Err(ValidationError::new(
+            "/partition/custom_key",
+            "dynamic_sources_disabled"
+        ))
+    );
+}

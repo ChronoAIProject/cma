@@ -198,3 +198,18 @@ fn legacy_blobs_keep_their_bytes_and_parse_with_the_previous_schema() {
         assert_eq!(canonical_json(restored.to_blob_json()), plaintext, "{name}");
     }
 }
+
+#[test]
+fn the_previous_schema_cannot_read_a_custom_key() {
+    // Why custom_key writes stay behind the dynamic-sources flag: an older
+    // image refuses the whole definition, not just the new field.
+    let mut definition = definition(
+        "relay_telegram",
+        channel(chat(json!([relay("telegram")]), "conversation")),
+    );
+    definition.partition.custom_key = Some(cmaeg_core::channel::PartitionKey::EventSubject);
+    definition.validate().unwrap();
+    let plaintext = canonical_json(definition.to_blob_json());
+    let error = serde_json::from_str::<previous_schema::ChannelDefinition>(&plaintext).unwrap_err();
+    assert!(error.to_string().contains("custom_key"), "{error}");
+}

@@ -121,6 +121,7 @@ fn event_partition_uses_subject_then_source_and_preserves_thread_identity() {
     let rule = PartitionRule {
         version: 1,
         key: PartitionKey::EventSubject,
+        custom_key: None,
     };
     let parsed: Activity = serde_json::from_value(value.clone()).unwrap();
     parsed.validate().unwrap();
@@ -136,7 +137,8 @@ fn event_partition_uses_subject_then_source_and_preserves_thread_identity() {
     assert_eq!(
         parsed.partition_key(&PartitionRule {
             version: 1,
-            key: PartitionKey::Thread
+            key: PartitionKey::Thread,
+            custom_key: None,
         }),
         "chat-1\u{1f}thread-1"
     );

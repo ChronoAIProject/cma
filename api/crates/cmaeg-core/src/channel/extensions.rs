@@ -17,11 +17,13 @@ pub struct Extensions {
 impl Extensions {
     /// routing: false until the routing field exists (#988 extends it to
     /// `def.routing.is_some() || !def.secrets.consumer_keys.is_empty()`).
-    /// sources: the legacy source and partition rules refuse the definition.
+    /// sources: the legacy source and partition rules refuse the definition,
+    /// or its partition carries `custom_key`, which an older image cannot parse.
     pub fn of(def: &ChannelDefinition) -> Self {
         Self {
             routing: false,
-            sources: def.validate_legacy_sources_and_partition().is_err(),
+            sources: def.validate_legacy_sources_and_partition().is_err()
+                || def.partition.custom_key.is_some(),
         }
     }
 

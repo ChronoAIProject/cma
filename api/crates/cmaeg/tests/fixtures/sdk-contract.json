@@ -569,6 +569,7 @@
       },
       "name": "fixture",
       "partition": {
+        "custom_key": "event_subject",
         "key": "conversation_and_sender",
         "version": 1
       },
@@ -683,6 +684,7 @@
           "subject": "fixture"
         },
         "partition": {
+          "custom_key": "event_subject",
           "key": "conversation_and_sender",
           "version": 1
         },
@@ -815,6 +817,7 @@
       "expected_version": 1,
       "name": "fixture",
       "partition": {
+        "custom_key": "event_subject",
         "key": "conversation_and_sender",
         "version": 1
       },
@@ -1381,6 +1384,7 @@
   ],
   "PartitionRule": [
     {
+      "custom_key": "event_subject",
       "key": "conversation_and_sender",
       "version": 1
     }
@@ -1558,6 +1562,7 @@
         "subject": "fixture"
       },
       "partition": {
+        "custom_key": "event_subject",
         "key": "conversation_and_sender",
         "version": 1
       },

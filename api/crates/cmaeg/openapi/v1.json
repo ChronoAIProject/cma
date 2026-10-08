@@ -2529,6 +2529,17 @@
       "PartitionRule": {
         "additionalProperties": false,
         "properties": {
+          "custom_key": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PartitionKey",
+                "description": "The key for custom events on a chat-keyed channel; absent means `key`."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "key": {
             "$ref": "#/components/schemas/PartitionKey"
           },
