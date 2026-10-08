@@ -49,6 +49,8 @@ pub mod routed_support;
 mod sessions;
 #[path = "console/signin.rs"]
 mod signin;
+#[path = "console/summary_bounds.rs"]
+mod summary_bounds;
 #[path = "console/support.rs"]
 pub mod support;
 

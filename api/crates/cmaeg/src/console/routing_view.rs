@@ -1,11 +1,16 @@
 //! What the Routing tab and the detach confirmation show of a channel's
 //! routing policy, projected when its summary is built and cached with it.
 //!
-//! Rules keep their sources, kinds, `ce.type` patterns and stripped
-//! `ce.source` patterns, but chat and sender lists only by count, and the
-//! default reply destination keeps only its source and a masked chat or
-//! route: a policy may name people's chats, and the console masks those
-//! everywhere.
+//! Rules keep their distinct sources and kinds, and their `ce.type` and
+//! stripped `ce.source` patterns up to [`PATTERN_TEXT_BYTES`] per list with
+//! the rest counted, but chat and sender lists only by count. The default
+//! reply destination keeps only its source and a masked chat or route: a
+//! policy may name people's chats, and the console masks those everywhere.
+//!
+//! The projection is cached with the channel's summary, so it must stay
+//! small however much the owner writes: a stored policy may hold 32 rules of
+//! 64 patterns of 512 bytes each, which shown whole would be most of a
+//! 64 KiB record per cached summary.
 use cmaeg_core::{
     channel::{
         ActivityKindName, Addressing, AgentEventPolicy, ChannelDefinition, DefaultReply,
@@ -16,6 +21,10 @@ use cmaeg_core::{
 use serde::Serialize;
 
 use super::mask;
+
+/// Bytes of one rule's pattern list the projection keeps as text; enough for
+/// a few typical patterns, whatever a stored list holds.
+pub const PATTERN_TEXT_BYTES: usize = 128;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RoutingView {
@@ -36,9 +45,11 @@ pub struct RuleView {
     /// False when the rule names only sources the channel does not hold, so
     /// it can never match.
     pub active: bool,
-    /// The source slots it names; empty matches every source.
+    /// The distinct source slots it names, in policy order; empty matches
+    /// every source.
     pub sources: Vec<SourceId>,
-    /// Its other match lists, described without chat or sender ids.
+    /// Its other match lists, described without chat or sender ids and with
+    /// each pattern list bounded by [`PATTERN_TEXT_BYTES`].
     pub matches: Vec<String>,
     pub targets: Vec<ConsumerId>,
 }
@@ -93,7 +104,10 @@ impl RuleView {
         let when = &rule.when;
         let mut matches = Vec::new();
         if !when.kinds.is_empty() {
-            let kinds: Vec<&str> = when.kinds.iter().map(|kind| kind_label(*kind)).collect();
+            let kinds: Vec<&str> = distinct(&when.kinds)
+                .into_iter()
+                .map(|kind| kind_label(*kind))
+                .collect();
             matches.push(format!("kinds {}", kinds.join(", ")));
         }
         if !when.chats.is_empty() {
@@ -103,28 +117,67 @@ impl RuleView {
             matches.push(format!("{} sender(s)", when.senders.len()));
         }
         if !when.event_types.is_empty() {
-            let types: Vec<&str> = when
-                .event_types
-                .iter()
-                .map(|value| value.as_str())
-                .collect();
-            matches.push(format!("event types {}", types.join(", ")));
+            matches.push(pattern_list(
+                "event type",
+                when.event_types
+                    .iter()
+                    .map(|value| value.as_str().to_owned()),
+            ));
         }
         if !when.event_sources.is_empty() {
-            let sources: Vec<String> = when
-                .event_sources
-                .iter()
-                .map(|value| mask::source_uri(value.as_str()))
-                .collect();
-            matches.push(format!("event sources {}", sources.join(", ")));
+            matches.push(pattern_list(
+                "event source",
+                when.event_sources
+                    .iter()
+                    .map(|value| mask::source_uri(value.as_str())),
+            ));
         }
         Self {
             id: rule.id.as_str().to_owned(),
             active: rule.is_active(definition),
-            sources: when.sources.clone(),
+            sources: distinct(&when.sources).into_iter().cloned().collect(),
             matches,
             targets: rule.targets.clone(),
         }
+    }
+}
+
+/// The first occurrence of each value, in order. A stored list may repeat a
+/// source or kind up to its 64-entry bound, which says nothing more than
+/// naming it once.
+fn distinct<T: PartialEq>(values: &[T]) -> Vec<&T> {
+    let mut kept: Vec<&T> = Vec::new();
+    for value in values {
+        if !kept.contains(&value) {
+            kept.push(value);
+        }
+    }
+    kept
+}
+
+/// `<noun>s a, b +N more`: whole patterns, in order, while their text fits in
+/// [`PATTERN_TEXT_BYTES`], and the rest counted; `N <noun>(s)` when not even
+/// the first fits. A pattern is never cut, so what is shown is always a
+/// pattern the rule really holds.
+fn pattern_list(noun: &str, values: impl ExactSizeIterator<Item = String>) -> String {
+    let total = values.len();
+    let mut shown: Vec<String> = Vec::new();
+    let mut bytes = 0;
+    for value in values {
+        let separator = if shown.is_empty() { 0 } else { ", ".len() };
+        if bytes + separator + value.len() > PATTERN_TEXT_BYTES {
+            break;
+        }
+        bytes += separator + value.len();
+        shown.push(value);
+    }
+    let rest = total - shown.len();
+    if shown.is_empty() {
+        format!("{total} {noun}(s)")
+    } else if rest == 0 {
+        format!("{noun}s {}", shown.join(", "))
+    } else {
+        format!("{noun}s {} +{rest} more", shown.join(", "))
     }
 }
 
@@ -221,5 +274,58 @@ mod tests {
             .map(|rule| rule.id.as_str())
             .collect();
         assert_eq!(inert, ["lark-only", "lark-or-slack"]);
+    }
+
+    fn patterns(count: usize, bytes: usize) -> impl ExactSizeIterator<Item = String> {
+        (0..count).map(move |index| format!("{index:0>bytes$}"))
+    }
+
+    #[test]
+    fn short_pattern_lists_are_shown_whole() {
+        let shown = pattern_list(
+            "event type",
+            ["com.example.ci.*", "com.example.cd"]
+                .map(str::to_owned)
+                .into_iter(),
+        );
+        assert_eq!(shown, "event types com.example.ci.*, com.example.cd");
+    }
+
+    #[test]
+    fn long_pattern_lists_keep_whole_patterns_within_their_budget() {
+        // Three 40-byte patterns and their separators take 124 bytes; a
+        // fourth would not fit.
+        let shown = pattern_list("event source", patterns(64, 40));
+        assert!(shown.ends_with(" +61 more"), "{shown}");
+        assert_eq!(shown.matches(", ").count(), 2, "{shown}");
+        assert!(shown.len() <= "event sources ".len() + PATTERN_TEXT_BYTES + " +61 more".len());
+        // A list whose first pattern alone exceeds the budget is counted.
+        assert_eq!(
+            pattern_list("event type", patterns(64, 512)),
+            "64 event type(s)"
+        );
+        assert_eq!(
+            pattern_list("event type", patterns(1, PATTERN_TEXT_BYTES + 1)),
+            "1 event type(s)"
+        );
+        assert_eq!(
+            pattern_list("event type", patterns(1, PATTERN_TEXT_BYTES)),
+            format!("event types {:0>PATTERN_TEXT_BYTES$}", 0)
+        );
+    }
+
+    #[test]
+    fn repeated_sources_and_kinds_are_named_once_in_order() {
+        let sources: Vec<SourceId> = ["custom", "relay_lark", "custom", "relay_lark", "telegram"]
+            .iter()
+            .map(|source| SourceId::parse(source).unwrap())
+            .collect();
+        let kept: Vec<&str> = distinct(&sources)
+            .into_iter()
+            .map(SourceId::as_str)
+            .collect();
+        assert_eq!(kept, ["custom", "relay_lark", "telegram"]);
+        let kinds = [ActivityKindName::Event; 64];
+        assert_eq!(distinct(&kinds), [&ActivityKindName::Event]);
     }
 }
