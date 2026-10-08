@@ -1,0 +1,206 @@
+[
+  {
+    "native": {
+      "body": {
+        "reason": "consumer_unavailable",
+        "status": "refused"
+      },
+      "retry_after": null,
+      "status": 202
+    },
+    "relay": {
+      "body": {
+        "reason": "consumer_unavailable",
+        "status": "refused"
+      },
+      "retry_after": null,
+      "status": 202
+    },
+    "text": "@reviewer x"
+  },
+  {
+    "native": {
+      "body": {
+        "reason": "consumer_unavailable",
+        "status": "refused"
+      },
+      "retry_after": null,
+      "status": 202
+    },
+    "relay": {
+      "body": {
+        "reason": "consumer_unavailable",
+        "status": "refused"
+      },
+      "retry_after": null,
+      "status": 202
+    },
+    "text": "/to reviewer x"
+  },
+  {
+    "native": {
+      "body": {
+        "reason": "consumer_unavailable",
+        "status": "refused"
+      },
+      "retry_after": null,
+      "status": 202
+    },
+    "relay": {
+      "body": {
+        "reason": "consumer_unavailable",
+        "status": "refused"
+      },
+      "retry_after": null,
+      "status": 202
+    },
+    "text": "/to ghost x"
+  },
+  {
+    "response": {
+      "body": {
+        "code": "provider_unavailable",
+        "detail": "consumer_unavailable",
+        "status": 503,
+        "title": "provider unavailable",
+        "type": "about:blank"
+      },
+      "retry_after": "300",
+      "status": 503
+    },
+    "stream": false,
+    "targets": "reviewer"
+  },
+  {
+    "response": {
+      "body": {
+        "code": "provider_unavailable",
+        "detail": "consumer_unavailable",
+        "status": 503,
+        "title": "provider unavailable",
+        "type": "about:blank"
+      },
+      "retry_after": "300",
+      "status": 503
+    },
+    "stream": true,
+    "targets": "reviewer"
+  },
+  {
+    "response": {
+      "body": {
+        "code": "provider_unavailable",
+        "detail": "consumer_unavailable",
+        "status": 503,
+        "title": "provider unavailable",
+        "type": "about:blank"
+      },
+      "retry_after": "300",
+      "status": 503
+    },
+    "stream": false,
+    "targets": "ghost"
+  },
+  {
+    "response": {
+      "body": {
+        "code": "provider_unavailable",
+        "detail": "consumer_unavailable",
+        "status": 503,
+        "title": "provider unavailable",
+        "type": "about:blank"
+      },
+      "retry_after": "300",
+      "status": 503
+    },
+    "stream": true,
+    "targets": "ghost"
+  },
+  {
+    "native": {
+      "body": {
+        "conversation_id": "<conversation>",
+        "event_id": "telegram:77:200",
+        "status": "accepted"
+      },
+      "retry_after": null,
+      "status": 202
+    },
+    "relay": {
+      "body": {
+        "conversation_id": "<conversation>",
+        "event_id": "legacy-0",
+        "status": "accepted"
+      },
+      "retry_after": null,
+      "status": 202
+    },
+    "text": "@main x"
+  },
+  {
+    "native": {
+      "body": {
+        "conversation_id": "<conversation>",
+        "event_id": "telegram:77:201",
+        "status": "accepted"
+      },
+      "retry_after": null,
+      "status": 202
+    },
+    "relay": {
+      "body": {
+        "conversation_id": "<conversation>",
+        "event_id": "legacy-1",
+        "status": "accepted"
+      },
+      "retry_after": null,
+      "status": 202
+    },
+    "text": "/to main x"
+  },
+  {
+    "native": {
+      "body": {
+        "conversation_id": "<conversation>",
+        "event_id": "telegram:77:202",
+        "status": "accepted"
+      },
+      "retry_after": null,
+      "status": 202
+    },
+    "relay": {
+      "body": {
+        "conversation_id": "<conversation>",
+        "event_id": "legacy-2",
+        "status": "accepted"
+      },
+      "retry_after": null,
+      "status": 202
+    },
+    "text": "ordinary x"
+  },
+  {
+    "custom": {
+      "body": {
+        "conversation_id": "<conversation>",
+        "event_id": "custom-legacy",
+        "status": "accepted"
+      },
+      "retry_after": null,
+      "status": 202
+    },
+    "targets": "main"
+  },
+  {
+    "custom": {
+      "body": {
+        "conversation_id": "<conversation>",
+        "event_id": "custom-legacy",
+        "status": "accepted"
+      },
+      "retry_after": null,
+      "status": 202
+    },
+    "targets": null
+  }
+]
