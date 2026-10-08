@@ -262,7 +262,11 @@ async fn no_capability_in_logs_prompts_or_context() {
         .resolve(app.fixture.id.as_str())
         .await
         .unwrap();
-    let audience = app.media.as_ref().unwrap().audience(&channel.definition);
+    let audience = app
+        .media
+        .as_ref()
+        .unwrap()
+        .audience(&channel.consumer(None).unwrap());
     assert!(audience.downloads);
     let prompt = render(
         &app.activity,

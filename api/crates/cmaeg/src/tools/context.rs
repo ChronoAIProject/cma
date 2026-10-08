@@ -125,11 +125,16 @@ pub(super) fn inbound_media(
         (VisualKind::Thumbnail, SourceKind::Telegram { .. }) => VisualSupport::PlatformThumbnail,
         (VisualKind::Thumbnail, _) => VisualSupport::None,
     };
+    let Some(consumer) = channel.consumer(None) else {
+        tracing::error!("channel has no default consumer; inbound media capabilities withheld");
+        return None;
+    };
+    let audience = media.audience(&consumer);
     Some(InboundMediaCapabilities {
-        read_tool: media.audience(&channel.definition).tools,
+        read_tool: audience.tools,
         transcripts: capabilities.transcriber_enabled,
         visuals,
-        downloads: media.audience(&channel.definition).downloads,
+        downloads: audience.downloads,
     })
 }
 

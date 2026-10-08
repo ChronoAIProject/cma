@@ -287,7 +287,7 @@ fn composition_is_skipped_while_media_is_off() {
         }
     );
     let definition = resolved(|_| {}).definition;
-    let audience = on.audience(&definition);
+    let audience = on.audience(&definition.consumer(None).unwrap());
     assert!(!audience.tools && !audience.downloads);
     assert_eq!(
         on.responses().available_bytes(),

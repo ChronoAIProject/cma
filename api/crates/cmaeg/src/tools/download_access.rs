@@ -164,7 +164,9 @@ fn still_permitted(
         && provider.slug == link.provider
         && provider.binding_id == link.binding_id
         && key_matches
-        && media.audience(&channel.definition).downloads
+        && channel
+            .consumer(None)
+            .is_some_and(|consumer| media.audience(&consumer).downloads)
 }
 
 fn now() -> i64 {

@@ -167,14 +167,14 @@ fn audience_follows_target_provider_set_and_action_mode() {
     };
     let mut nyxbot = autonomous.clone();
     nyxbot.provider.slug = "nyxbot".parse().unwrap();
-    assert_eq!(Audience::of(&guarded, &providers), GUARDED);
-    assert_eq!(Audience::of(&autonomous, &providers), AUTONOMOUS);
-    assert_eq!(Audience::of(&existing, &providers), NONE);
-    assert_eq!(Audience::of(&nyxbot, &providers), NONE);
-    assert_eq!(
-        Audience::of(&autonomous, &MediaToolProviders::default()),
-        NONE
-    );
+    let audience = |definition: &ChannelDefinition, providers: &MediaToolProviders| {
+        Audience::of(&definition.consumer(None).unwrap(), providers)
+    };
+    assert_eq!(audience(&guarded, &providers), GUARDED);
+    assert_eq!(audience(&autonomous, &providers), AUTONOMOUS);
+    assert_eq!(audience(&existing, &providers), NONE);
+    assert_eq!(audience(&nyxbot, &providers), NONE);
+    assert_eq!(audience(&autonomous, &MediaToolProviders::default()), NONE);
     let photo = [item(json!({"kind":"image","variant":"photo"}))];
     let line = |audience| {
         block(&photo, &fenced(), audience)
@@ -190,7 +190,7 @@ fn audience_follows_target_provider_set_and_action_mode() {
     );
     for definition in [&existing, &nyxbot] {
         assert_eq!(
-            line(Audience::of(definition, &providers)),
+            line(audience(definition, &providers)),
             "[0] photo · this agent cannot view images from this channel"
         );
     }

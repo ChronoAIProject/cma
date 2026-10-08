@@ -43,7 +43,7 @@ use crate::{
     turns::render_media::Audience,
     Config, ConfigError, MediaToolProviders,
 };
-use cmaeg_core::{channel::ChannelDefinition, seal::MasterKeyRing};
+use cmaeg_core::{channel::ConsumerView, seal::MasterKeyRing};
 use futures_util::future::BoxFuture;
 use std::{
     fmt,
@@ -250,9 +250,9 @@ impl MediaService {
         }
     }
 
-    /// What the agent behind `definition` can do with attachments.
-    pub fn audience(&self, definition: &ChannelDefinition) -> Audience {
-        Audience::of(definition, &self.tool_providers)
+    /// What the agent serving as `consumer` can do with attachments.
+    pub fn audience(&self, consumer: &ConsumerView<'_>) -> Audience {
+        Audience::of(consumer, &self.tool_providers)
     }
 
     pub fn capabilities(&self) -> MediaCapabilities {

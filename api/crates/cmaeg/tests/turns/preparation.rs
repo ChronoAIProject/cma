@@ -445,7 +445,7 @@ async fn media_disabled_renders_descriptors_only() {
     let expected = rendered(
         &text,
         &RenderMedia::empty(None),
-        Audience::of(&text.channel.definition, &Default::default()),
+        Audience::of(&text.channel.consumer(None).unwrap(), &Default::default()),
     );
     assert!(matches!(
         fixture.runner.launch(text).await,

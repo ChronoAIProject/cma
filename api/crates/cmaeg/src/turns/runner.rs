@@ -20,6 +20,7 @@ use crate::{
 };
 use cmaeg_core::{
     activity::Activity,
+    ids::ConsumerId,
     problem::{Problem, ProblemCode},
 };
 use futures_util::future::BoxFuture;
@@ -93,10 +94,18 @@ impl TurnRunner {
             names,
             operations::{provider_error, Operation},
         };
-        let provider = turn.channel.definition.provider.slug.to_string();
+        let consumer = match turn
+            .channel
+            .consumer(turn.consumer.as_ref())
+            .ok_or_else(unconfigured)
+        {
+            Ok(consumer) => consumer,
+            Err(error) => return self.unserved(turn, sender, error),
+        };
+        let provider = consumer.provider.slug.to_string();
         let mut observation = Operation::new(names::TURN_DURATION, names::PROVIDER, &provider);
         let deadline = turn.received_at + self.config.turn_timeout;
-        let audience = Audience::of(&turn.channel.definition, &self.media_tool_providers);
+        let audience = Audience::of(&consumer, &self.media_tool_providers);
         // One nonce per turn: busy retries resend this exact input under the
         // same idempotency key. Text-only turns make no RNG call.
         let nonce = if has_attachments(&turn.activity) {
@@ -132,9 +141,15 @@ impl TurnRunner {
                 }
                 _ => (ProblemCode::ProviderUnavailable, "provider_unavailable"),
             })?;
-            consume::consume(stream, turn.clone(), &*self.delivery, &mut admitted)
-                .await
-                .map_err(|reason| (ProblemCode::ProviderUnavailable, reason))
+            consume::consume(
+                stream,
+                turn.clone(),
+                &provider,
+                &*self.delivery,
+                &mut admitted,
+            )
+            .await
+            .map_err(|reason| (ProblemCode::ProviderUnavailable, reason))
         })
         .await;
         let error = match result {
@@ -188,24 +203,46 @@ impl TurnRunner {
             },
         }
     }
+    /// Fail a turn whose consumer its channel does not configure, as any
+    /// other provider refusal fails, before any provider call.
+    fn unserved(
+        &self,
+        turn: Arc<LaunchRequest>,
+        sender: oneshot::Sender<LaunchOutcome>,
+        error: ProviderError,
+    ) {
+        tracing::error!(
+            consumer = turn.consumer.as_ref().map(ConsumerId::as_str),
+            %error,
+            "turn names a consumer its channel does not configure"
+        );
+        let code = "provider_unavailable";
+        consume::refuse(&mut Some(sender), ProblemCode::ProviderUnavailable, code);
+        self.delivery.terminal(
+            turn,
+            TurnOutcome::Failed {
+                code: code.into(),
+                message: failure_message(code).into(),
+            },
+        );
+    }
     async fn start(
         &self,
         turn: &LaunchRequest,
         media: &RenderMedia,
         audience: Audience,
     ) -> Result<TurnStream, ProviderError> {
-        let definition = &turn.channel.definition;
-        let credential = definition
-            .secrets
-            .provider_credential
-            .as_ref()
-            .ok_or_else(|| {
-                ProviderError::InvalidRequest("channel has no provider credential".into())
-            })?;
+        let consumer = turn
+            .channel
+            .consumer(turn.consumer.as_ref())
+            .ok_or_else(unconfigured)?;
+        let credential = consumer.credential.ok_or_else(|| {
+            ProviderError::InvalidRequest("channel has no provider credential".into())
+        })?;
         let request = TurnRequest {
             timing: turn.timing.clone(),
             conversation_id: turn.conversation_id.clone(),
-            input: render_input::render(&turn.activity, definition, media, audience),
+            input: render_input::render(&turn.activity, &turn.channel.definition, media, audience),
             idempotency_key: turn.idempotency_key.clone(),
             metadata: metadata::render(turn),
             agent_key: credential.clone(),
@@ -222,15 +259,15 @@ impl TurnRunner {
         loop {
             match self
                 .providers
-                .start_turn_immediate(&definition.provider.slug, request.clone())
+                .start_turn_immediate(&consumer.provider.slug, request.clone())
                 .await
             {
                 Err(ProviderError::ConversationMissing) if !ensured => {
                     ensured = true;
                     self.providers
                         .ensure_conversation(
-                            &definition.provider.slug,
-                            &definition.provider.binding_id,
+                            &consumer.provider.slug,
+                            &consumer.provider.binding_id,
                             &turn.conversation_id,
                             credential,
                         )
@@ -327,6 +364,10 @@ impl TurnLauncher for TurnRunner {
     ) -> BoxFuture<'_, LaunchOutcome> {
         self.launch_inner(request, Some(hold))
     }
+}
+/// The serving consumer is gone from the channel's definition.
+fn unconfigured() -> ProviderError {
+    ProviderError::InvalidRequest("consumer is not configured".into())
 }
 /// A message or event that carries at least one attachment.
 fn has_attachments(activity: &Activity) -> bool {

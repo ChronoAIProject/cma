@@ -207,7 +207,10 @@ impl ToolsState {
         // Only an autonomous binding whose provider installs the gateway
         // tools may save originals; media off permits nothing.
         let media = self.media.as_deref().ok_or(LinkRefusal::NotPermitted)?;
-        if !media.audience(&channel.definition).downloads {
+        let downloads = channel
+            .consumer(None)
+            .is_some_and(|consumer| media.audience(&consumer).downloads);
+        if !downloads {
             return Err(LinkRefusal::NotPermitted);
         }
         let channel_hash = telemetry::channel_hash(channel.id.as_str());
