@@ -306,6 +306,15 @@ impl ChannelDirectory for ConsoleMemory {
         ConsoleMemory::activity(self, auth, record, filter)
     }
 
+    fn event(
+        &self,
+        auth: &Authorized,
+        record: &RecordId,
+        event_key: &str,
+    ) -> Option<ActivityEntry> {
+        ConsoleMemory::event(self, auth, record, event_key)
+    }
+
     fn producers(&self, auth: &Authorized, record: &RecordId) -> Option<Vec<ProducerView>> {
         ConsoleMemory::producers(self, auth, record)
     }

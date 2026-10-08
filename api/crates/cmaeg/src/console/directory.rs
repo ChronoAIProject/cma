@@ -80,6 +80,11 @@ pub trait ChannelDirectory: Send + Sync {
         filter: ActivityFilter,
     ) -> Option<Vec<ActivityEntry>>;
 
+    /// The activity entry of `record`'s event `event_key`, when `auth` owns
+    /// the record and the ring still holds the entry.
+    fn event(&self, auth: &Authorized, record: &RecordId, event_key: &str)
+        -> Option<ActivityEntry>;
+
     /// `record`'s custom producers, most recently seen first, when `auth`
     /// owns it.
     fn producers(&self, auth: &Authorized, record: &RecordId) -> Option<Vec<ProducerView>>;
@@ -112,6 +117,15 @@ impl ChannelDirectory for NoChannels {
         _record: &RecordId,
         _filter: ActivityFilter,
     ) -> Option<Vec<ActivityEntry>> {
+        None
+    }
+
+    fn event(
+        &self,
+        _auth: &Authorized,
+        _record: &RecordId,
+        _event_key: &str,
+    ) -> Option<ActivityEntry> {
         None
     }
 

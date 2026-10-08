@@ -1,9 +1,9 @@
 //! The Activity tab: the newest 50 entries of the channel's activity ring,
 //! filterable by consumer, outcome and source, with an optional meta
 //! refresh. Entries hold no message text, CloudEvent data or reference.
-use cmaeg_core::ids::ConsumerId;
+use cmaeg_core::ids::{ConsumerId, RecordId};
 
-use super::{channel::path, escape, table, when};
+use super::{channel::path, escape, event::event_href, table, when};
 use crate::{
     console::{
         activity::{ActivityEntry, ActivityFilter, ConsumerProgress},
@@ -66,7 +66,11 @@ pub(crate) fn render(activity: &ActivityView<'_>) -> String {
         html.push_str("<p class=\"empty\">No activity in memory. Activity is kept only in this gateway's memory and starts again after a restart.</p>");
         return html;
     }
-    let rows: Vec<String> = activity.entries.iter().map(row).collect();
+    let rows: Vec<String> = activity
+        .entries
+        .iter()
+        .map(|entry| row(&activity.view.record, entry))
+        .collect();
     html.push_str(&table(
         &[
             "Time",
@@ -131,10 +135,16 @@ fn form(activity: &ActivityView<'_>) -> String {
     )
 }
 
-fn row(entry: &ActivityEntry) -> String {
+fn row(record: &RecordId, entry: &ActivityEntry) -> String {
     let event = entry.event_key.as_deref().map_or_else(
         || "—".to_owned(),
-        |key| format!("<code>{}</code>", escape(key)),
+        |key| {
+            format!(
+                "<a href=\"{}\"><code>{}</code></a>",
+                escape(&event_href(record, key)),
+                escape(key)
+            )
+        },
     );
     let consumers = if let Some(reason) = &entry.refusal {
         format!("refused: {}", escape(reason))

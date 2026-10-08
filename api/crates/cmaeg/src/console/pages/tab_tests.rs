@@ -100,3 +100,60 @@ fn connection_managed_and_sourceless_channels_say_so() {
     assert!(html.contains("This channel has no sources."));
     assert!(!html.contains("connection-reference-value"));
 }
+
+fn entry() -> crate::console::activity::ActivityEntry {
+    crate::console::activity::ActivityEntry {
+        seq: 1,
+        at: time::OffsetDateTime::UNIX_EPOCH,
+        event_key: Some("00000000000000aa".into()),
+        source: "custom".into(),
+        kind: "event",
+        actor_masked: String::new(),
+        chat_masked: String::new(),
+        attachments: [0; 4],
+        consumers: Vec::new(),
+        refusal: None,
+        causation: Some(crate::console::observer::CausationSummary {
+            parent_key: "00000000000000bb".into(),
+            hop: 2,
+            published_by: cmaeg_core::ids::ConsumerId::default_consumer(),
+        }),
+    }
+}
+
+#[test]
+fn an_event_whose_parent_left_the_ring_says_so() {
+    let view = view(readable());
+    let entry = entry();
+    let html = super::event::render(&super::event::EventView {
+        view: &view,
+        entry: &entry,
+        parent_held: false,
+    });
+    assert!(html.contains("<code>00000000000000bb</code> (no longer in memory)"));
+    assert!(!html.contains("events/00000000000000bb"));
+    assert!(html.contains("No consumer has reported progress"));
+    assert!(html.contains("<dt>Actor</dt><dd>—</dd>"));
+}
+
+#[test]
+fn refused_and_routed_events_explain_their_routing() {
+    let mut refused = entry();
+    refused.refusal = Some("sender_denied".into());
+    let legacy = view(readable());
+    let html = super::event::render(&super::event::EventView {
+        view: &legacy,
+        entry: &refused,
+        parent_held: true,
+    });
+    assert!(html.contains("Refused before routing: <code>sender_denied</code>"));
+    let mut summary = readable();
+    summary.routed = true;
+    let routed = view(summary);
+    let html = super::event::render(&super::event::EventView {
+        view: &routed,
+        entry: &entry(),
+        parent_held: true,
+    });
+    assert!(html.contains("keeps no routing trace"));
+}

@@ -41,6 +41,8 @@ dl.facts { display: grid; grid-template-columns: minmax(140px, max-content) 1fr;
 dl.facts dt { color: var(--muted); font-size: 14px; }
 dl.facts dd { margin: 0; overflow-wrap: anywhere; }
 meter { width: min(100%, 280px); vertical-align: middle; }
+h3 { margin: 20px 0 8px; font-size: 16px; }
+ol.timeline { margin: 0 0 16px; padding-left: 22px; }
 @media (prefers-color-scheme: dark) {
   :root { color: #f3eadb; background: #17130d; --line: #4a3f2e; --accent: #e5d3b3; --selected: #2a2318; --surface: #1f1a12; --muted: #bba98a; --error: #f09a8f; }
   .button, button { color: #17130d; }

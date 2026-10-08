@@ -8,6 +8,7 @@ pub(crate) mod banners;
 pub(crate) mod channel;
 pub(crate) mod channels;
 pub(crate) mod consumers;
+pub(crate) mod event;
 pub(crate) mod layout;
 pub(crate) mod overview;
 pub(crate) mod producers;

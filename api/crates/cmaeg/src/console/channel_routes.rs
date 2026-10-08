@@ -22,7 +22,7 @@ use super::{
     pages::{
         self, activity, channel,
         channel::Tab,
-        consumers, overview,
+        consumers, event, overview,
         overview::OverviewView,
         producers, routing,
         sources::{self, SourcesView},
@@ -99,6 +99,48 @@ pub(crate) async fn channel(
         &channel::title(&view),
         &head,
         &channel::body(&view, tab, &content),
+    )
+}
+
+/// `GET /console/channels/{record_id}/events/{event_key}`: one event of
+/// the ring, while it still holds the event.
+pub(crate) async fn event(
+    State(console): State<Console>,
+    Extension(session): Extension<CurrentSession>,
+    authorized: Authorized,
+    params: Result<Path<(String, String)>, PathRejection>,
+) -> Response {
+    let Some(cell) = session.0 else {
+        return redirect::see_other(HOME);
+    };
+    let Ok(Path((record, key))) = params else {
+        return pages::not_found();
+    };
+    if !event::valid_key(&key) {
+        return pages::not_found();
+    }
+    let Some(view) = owned_channel(&console, &authorized, Ok(Path(record))).await else {
+        return pages::not_found();
+    };
+    let directory = console.directory();
+    let Some(entry) = directory.event(&authorized, &view.record, &key) else {
+        return pages::not_found();
+    };
+    let parent_held = entry.causation.as_ref().is_some_and(|causation| {
+        directory
+            .event(&authorized, &view.record, &causation.parent_key)
+            .is_some()
+    });
+    let signed_in = SignedIn::load(&console, &cell).await;
+    signed_in.render(
+        StatusCode::OK,
+        &format!("Event {key}"),
+        "",
+        &event::render(&event::EventView {
+            view: &view,
+            entry: &entry,
+            parent_held,
+        }),
     )
 }
 
