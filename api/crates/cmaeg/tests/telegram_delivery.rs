@@ -1,3 +1,5 @@
+#[path = "delivery/addresses.rs"]
+mod addresses;
 #[path = "delivery/boundaries.rs"]
 mod boundaries;
 #[path = "delivery/consumer_refs.rs"]

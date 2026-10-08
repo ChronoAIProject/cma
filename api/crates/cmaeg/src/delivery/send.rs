@@ -70,6 +70,14 @@ impl Sender {
         event: &EventRefPayload,
         message: &OutboundMessage,
     ) -> (IntentReceipt, SendEffects) {
+        if super::address::handoff_controls(event, message) {
+            let (_, rendering) =
+                RelayText.render_labeled(message, &Capabilities::telegram(), ctx.label);
+            let delivery = DeliveryOutcome::Rejected {
+                reason: super::address::INTERACTIVE_DESTINATION_UNSUPPORTED.into(),
+            };
+            return (refused(rendering, delivery), SendEffects::default());
+        }
         if matches!(event.reply, ReplyAddress::Telegram { .. }) {
             return self.native_reply(ctx, event, message).await;
         }

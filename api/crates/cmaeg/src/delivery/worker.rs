@@ -1,14 +1,17 @@
 //! One delivery worker: it runs its share of events' commands in arrival
 //! order and drives their timers.
 use super::{
-    address::{routing_send, routing_send_for_message, SendKind},
+    address::{
+        routing_send, routing_send_for_message, tool_address, AddressClass, EffectiveAddress,
+        SendKind,
+    },
     event::{key, now},
     gate::Ungated,
     group::{consumer_of, Groups},
     intents::{DeliveryCommand, DeliveryOutcome, ReplySource},
     label::active_label,
     send::{unsupported, SendContext, Sender},
-    step::{outcome_event, reply, timer_step},
+    step::{custom_outcome, outcome_event, output_address, reply, timer_step},
 };
 use crate::{
     channels::resolver::ResolvedChannel,
@@ -143,6 +146,26 @@ async fn tool_reply(
     if receipt.is_closed() {
         return;
     }
+    let routed = routing_send(
+        &channel.definition,
+        &event,
+        config.multi_consumer_enabled,
+        SendKind::Tool,
+    );
+    if let EffectiveAddress::Rejected { reason } = tool_address(&event, routed) {
+        tracing::warn!(
+            channel = %crate::telemetry::channel_hash(channel.id.as_str()),
+            consumer = %consumer_of(&event),
+            reason,
+            "tool reply rejected"
+        );
+        let mut result = unsupported();
+        result.delivery = DeliveryOutcome::Rejected {
+            reason: reason.into(),
+        };
+        let _ = receipt.send(result);
+        return;
+    }
     let id = key(event.channel_id.as_str(), event.event_id.as_str());
     if !groups.reserve(&id, &consumer_of(&event)) {
         let mut result = unsupported();
@@ -152,12 +175,6 @@ async fn tool_reply(
         let _ = receipt.send(result);
         return;
     }
-    let routed = routing_send(
-        &channel.definition,
-        &event,
-        config.multi_consumer_enabled,
-        SendKind::Tool,
-    );
     let label = active_label(&channel.definition, event.consumer.as_ref(), routed);
     let (group, at) = groups.join(id, &channel, &event);
     group.set_channel(channel);
@@ -223,17 +240,20 @@ async fn stream_outcome(
     if delivery.terminal {
         return;
     }
+    let address = output_address(group, at, config.multi_consumer_enabled);
+    // An unrouted activity keeps today's branch on its source verbatim. A
+    // routed one takes its consumer's effective address's branch; a
+    // rejected address keeps its origin's, where its outputs are refused.
+    let custom = if turn.activity.routing.is_some() {
+        let class = address
+            .class()
+            .unwrap_or_else(|| AddressClass::of(&group.consumers[at].event.reply));
+        class == AddressClass::Custom
+    } else {
+        custom
+    };
     if custom {
-        if matches!(outcome, TurnOutcome::Accepted { .. }) {
-            group.terminal_at = None;
-        }
-        sender
-            .custom
-            .outcome(&group.channel, &group.consumers[at].event, &outcome)
-            .await;
-        if outcome.terminal() {
-            group.finish(at);
-        }
+        custom_outcome(group, at, outcome, sender, &address).await;
         return;
     }
     outcome_event(group, at, outcome, sender, config).await;

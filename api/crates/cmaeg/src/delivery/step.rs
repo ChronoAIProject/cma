@@ -1,6 +1,6 @@
 //! Per-event delivery steps over an event's group and one of its consumers.
 use super::{
-    address::{routing_send, SendKind},
+    address::{output_address as resolve_output, routing_send, EffectiveAddress, SendKind},
     gate::Ungated,
     group::EventGroup,
     intents::{DeliveryOutcome, IntentReceipt},
@@ -124,18 +124,80 @@ fn heartbeat(group: &EventGroup, multi_consumer_enabled: bool) -> String {
     }
 }
 
-/// Consumer `at`'s label on its automatic outputs, when one is active.
-fn output_label(group: &EventGroup, at: usize, multi_consumer_enabled: bool) -> Option<String> {
+/// Whether consumer `at`'s automatic outputs are routed sends.
+fn output_routing(group: &EventGroup, at: usize, multi_consumer_enabled: bool) -> bool {
     let delivery = &group.consumers[at];
-    let routed = routing_send(
+    routing_send(
         &group.channel.definition,
         &delivery.event,
         multi_consumer_enabled,
         SendKind::Output {
             routed_turn: delivery.routed_turn,
         },
+    )
+}
+
+/// Consumer `at`'s label on its automatic outputs, when one is active.
+fn output_label(group: &EventGroup, at: usize, multi_consumer_enabled: bool) -> Option<String> {
+    let routed = output_routing(group, at, multi_consumer_enabled);
+    active_label(
+        &group.channel.definition,
+        Some(&group.consumers[at].consumer),
+        routed,
+    )
+}
+
+/// Where consumer `at`'s automatic outputs go.
+pub(super) fn output_address(
+    group: &EventGroup,
+    at: usize,
+    multi_consumer_enabled: bool,
+) -> EffectiveAddress {
+    let delivery = &group.consumers[at];
+    resolve_output(
+        &delivery.event,
+        delivery.policy.destination,
+        output_routing(group, at, multi_consumer_enabled),
+    )
+}
+
+/// Record a rejected automatic output: nothing is sent, and the consumer is
+/// terminal, so the event's other consumers and its expiry carry on.
+fn reject_output(group: &mut EventGroup, at: usize, reason: &'static str) {
+    tracing::warn!(
+        channel = %crate::telemetry::channel_hash(group.channel.id.as_str()),
+        consumer = %group.consumers[at].consumer,
+        reason,
+        "automatic output rejected"
     );
-    active_label(&group.channel.definition, Some(&delivery.consumer), routed)
+    group.finish(at);
+}
+
+/// A custom-class consumer's outcome. Its Sync frame was already emitted;
+/// the terminal outcome goes to the result webhooks.
+pub(super) async fn custom_outcome(
+    group: &mut EventGroup,
+    at: usize,
+    outcome: TurnOutcome,
+    sender: &Sender,
+    address: &EffectiveAddress,
+) {
+    if matches!(outcome, TurnOutcome::Accepted { .. }) {
+        group.terminal_at = None;
+    }
+    if let EffectiveAddress::Rejected { reason } = address {
+        if outcome.terminal() {
+            reject_output(group, at, reason);
+        }
+        return;
+    }
+    sender
+        .custom
+        .outcome(&group.channel, &group.consumers[at].event, &outcome)
+        .await;
+    if outcome.terminal() {
+        group.finish(at);
+    }
 }
 
 /// The event's progress (its ack or a heartbeat), sent once per event,
@@ -144,7 +206,9 @@ async fn send_progress(sender: &Sender, group: &mut EventGroup, text: String) ->
     send_text(sender, group, 0, text, None).await
 }
 
-/// Consumer `at`'s answer or failure text, opened with its label.
+/// Consumer `at`'s answer or failure text, opened with its label, at its
+/// effective address. An output for an unavailable destination is rejected,
+/// never redirected to the origin.
 async fn send_output(
     sender: &Sender,
     group: &mut EventGroup,
@@ -152,7 +216,12 @@ async fn send_output(
     text: String,
     config: &DeliveryConfig,
 ) -> bool {
-    let label = output_label(group, at, config.multi_consumer_enabled);
+    let flag = config.multi_consumer_enabled;
+    if let EffectiveAddress::Rejected { reason } = output_address(group, at, flag) {
+        reject_output(group, at, reason);
+        return false;
+    }
+    let label = output_label(group, at, flag);
     send_text(sender, group, at, text, label.as_deref()).await
 }
 

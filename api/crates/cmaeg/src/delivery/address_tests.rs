@@ -119,3 +119,167 @@ fn routing_send_for_message_truth_table() {
         );
     }
 }
+
+fn rejected(address: &EffectiveAddress) -> Option<&'static str> {
+    match address {
+        EffectiveAddress::Rejected { reason } => Some(reason),
+        EffectiveAddress::Origin(_) => None,
+    }
+}
+
+fn deferred(reply: ReplyChoice) -> EventRefPayload {
+    let mut event = payload(true, true);
+    event.lineage.as_mut().unwrap().reply = reply;
+    event
+}
+
+#[test]
+fn outputs_resolve_the_consumer_destination_then_the_lineage_then_the_origin() {
+    let unavailable = Some(DEFAULT_REPLY_UNAVAILABLE);
+    // Unrouted, every output is today's: the origin.
+    for destination in [ReplyChoice::Origin, ReplyChoice::Default] {
+        assert_eq!(
+            rejected(&output_address(
+                &deferred(ReplyChoice::Default),
+                destination,
+                false
+            )),
+            None
+        );
+    }
+    let plain = payload(true, false);
+    assert_eq!(
+        rejected(&output_address(&plain, ReplyChoice::Origin, true)),
+        None
+    );
+    assert_eq!(
+        rejected(&output_address(&plain, ReplyChoice::Default, true)),
+        unavailable
+    );
+    assert_eq!(
+        rejected(&output_address(
+            &deferred(ReplyChoice::Default),
+            ReplyChoice::Origin,
+            true
+        )),
+        unavailable
+    );
+    assert_eq!(
+        rejected(&output_address(
+            &deferred(ReplyChoice::Origin),
+            ReplyChoice::Default,
+            true
+        )),
+        unavailable,
+        "the consumer's own destination comes first"
+    );
+    assert_eq!(
+        rejected(&output_address(
+            &deferred(ReplyChoice::Origin),
+            ReplyChoice::Origin,
+            true
+        )),
+        None
+    );
+}
+
+#[test]
+fn tool_sends_follow_the_lineage_only() {
+    assert_eq!(rejected(&tool_address(&payload(true, false), true)), None);
+    assert_eq!(
+        rejected(&tool_address(&deferred(ReplyChoice::Origin), true)),
+        None
+    );
+    assert_eq!(
+        rejected(&tool_address(&deferred(ReplyChoice::Default), true)),
+        Some(DEFAULT_REPLY_UNAVAILABLE)
+    );
+    assert_eq!(
+        rejected(&tool_address(&deferred(ReplyChoice::Default), false)),
+        None
+    );
+}
+
+#[test]
+fn chat_addresses_class_as_chat_and_sinks_as_custom() {
+    let relay = ReplyAddress::NyxidRelay {
+        message_id: "1".into(),
+        route_id: "route-1".into(),
+        platform: cmaeg_core::channel::Platform::Lark,
+        reply_token: cmaeg_core::channel::Secret::new("token"),
+        reply_token_expires_at: 1,
+    };
+    let telegram = ReplyAddress::Telegram {
+        bot_id: "77".into(),
+        chat_id: "42".into(),
+        message_id: "5".into(),
+        thread_id: None,
+    };
+    for address in [relay, telegram] {
+        assert_eq!(
+            EffectiveAddress::Origin(address).class(),
+            Some(AddressClass::Chat)
+        );
+    }
+    let sinks = [
+        ReplyAddress::Sync {
+            waiter: "waiter".into(),
+        },
+        ReplyAddress::ResultWebhook {
+            url: "https://receiver.example/events".into(),
+            hmac_key_id: "key-1".into(),
+        },
+        ReplyAddress::None,
+    ];
+    for address in sinks {
+        assert_eq!(
+            EffectiveAddress::Origin(address).class(),
+            Some(AddressClass::Custom)
+        );
+    }
+    let rejected = EffectiveAddress::Rejected {
+        reason: DEFAULT_REPLY_UNAVAILABLE,
+    };
+    assert_eq!(rejected.class(), None);
+}
+
+#[test]
+fn only_telegram_cards_on_a_handoff_are_detected() {
+    let buttons: OutboundMessage = serde_json::from_value(json!({"text":"Choose","blocks":[
+        {"type":"buttons","id":"choice","options":[{"id":"a","label":"A"},{"id":"b","label":"B"}]}]}))
+    .unwrap();
+    let text: OutboundMessage = serde_json::from_value(json!({"text":"Plain"})).unwrap();
+    let telegram = |lineage: bool, platform| {
+        let mut event = payload(true, lineage);
+        event.reply = ReplyAddress::NyxidRelay {
+            message_id: "1".into(),
+            route_id: "route-1".into(),
+            platform,
+            reply_token: cmaeg_core::channel::Secret::new("token"),
+            reply_token_expires_at: 1,
+        };
+        event
+    };
+    use cmaeg_core::channel::Platform;
+    assert!(handoff_controls(
+        &telegram(true, Platform::Telegram),
+        &buttons
+    ));
+    assert!(!handoff_controls(
+        &telegram(true, Platform::Telegram),
+        &text
+    ));
+    assert!(!handoff_controls(
+        &telegram(false, Platform::Telegram),
+        &buttons
+    ));
+    assert!(!handoff_controls(&telegram(true, Platform::Lark), &buttons));
+    let mut native = payload(true, true);
+    native.reply = ReplyAddress::Telegram {
+        bot_id: "77".into(),
+        chat_id: "42".into(),
+        message_id: "5".into(),
+        thread_id: None,
+    };
+    assert!(handoff_controls(&native, &buttons));
+}
