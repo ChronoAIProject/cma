@@ -64,6 +64,17 @@ pub(super) fn targets(
     resolve(roster, &tokens).map(Some)
 }
 
+/// A hand-off's target tokens, resolved as `cmaegtargets` is but without
+/// the signed-attribute rule: the publisher authenticated as a consumer.
+pub(super) fn published(
+    roster: &Roster<'_>,
+    tokens: &[String],
+) -> Result<Vec<ConsumerId>, RouteError> {
+    let tokens: Vec<&str> = tokens.iter().map(|token| token.trim()).collect();
+    check_count(roster, &tokens)?;
+    resolve(roster, &tokens)
+}
+
 /// Every token must be non-empty, and there may be 1..=`max_targets` of
 /// them; checked before any is resolved, so resolution stays bounded.
 fn check_count(roster: &Roster<'_>, tokens: &[&str]) -> Result<(), RouteError> {

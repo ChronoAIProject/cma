@@ -61,6 +61,11 @@ impl SourceId {
         self.0 == AGENT_SOURCE_ID
     }
 
+    /// The reserved hand-off id, recorded on events agents publish.
+    pub fn agent() -> Self {
+        Self(AGENT_SOURCE_ID.to_owned())
+    }
+
     fn telegram() -> Self {
         Self("telegram".to_owned())
     }

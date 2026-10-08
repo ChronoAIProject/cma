@@ -3,9 +3,9 @@
 use std::{collections::BTreeSet, sync::OnceLock};
 
 use cmaeg_core::{
-    activity::Activity,
+    activity::{Activity, ActorKind, Causation, RouteResolution},
     channel::ChannelDefinition,
-    routing::{RouteInput, Trace},
+    routing::{resolve, Resolution, RouteDecision, RouteError, RouteInput, Trace},
 };
 use serde_json::{json, Value};
 
@@ -137,4 +137,46 @@ pub fn input<'a>(def: &'a ChannelDefinition, activity: &'a Activity) -> RouteInp
 
 pub fn trace() -> Trace {
     Trace::default()
+}
+
+/// What a routed outcome names, for compact assertions: the resolution and
+/// the target ids in order.
+pub fn routed_to(
+    outcome: Result<Resolution, RouteError>,
+) -> Result<Option<(RouteResolution, Vec<String>)>, RouteError> {
+    Ok(match outcome? {
+        Resolution::Legacy => None,
+        Resolution::Routed(decision) => Some((
+            decision.routing.resolution,
+            decision
+                .routing
+                .targets
+                .iter()
+                .map(|target| target.id.to_string())
+                .collect(),
+        )),
+    })
+}
+
+/// The routed decision `resolve` returns with routing enabled.
+pub fn decision(def: &ChannelDefinition, input: &RouteInput<'_>) -> RouteDecision {
+    match resolve(def, input, true) {
+        Ok(Resolution::Routed(decision)) => *decision,
+        other => panic!("expected a routed decision, got {other:?}"),
+    }
+}
+
+/// A hand-off's causation, published by `reviewer`.
+pub fn causation() -> Causation {
+    serde_json::from_value(json!({"parent_event_id": "evt-0",
+        "root": "0123456789abcdef0123456789abcdef", "published_by": super::policy::REVIEWER,
+        "hop": 1, "reply": "origin", "origin_source_id": "telegram"}))
+    .unwrap()
+}
+
+/// A hand-off: a `bot` actor's message, as the publishing consumer wrote it.
+pub fn handoff(text: &str) -> Activity {
+    let mut activity = message(telegram(), text);
+    activity.actor.kind = ActorKind::Bot;
+    activity
 }

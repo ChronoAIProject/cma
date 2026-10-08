@@ -3,6 +3,7 @@ use std::iter;
 
 use super::RouteError;
 use crate::{
+    activity::ConsumerTarget,
     channel::{ChannelDefinition, ConsumerView, RoutingPolicy},
     ids::{ConsumerId, ConsumerName},
 };
@@ -19,6 +20,14 @@ pub(super) struct Member<'a> {
 impl Member<'_> {
     pub(super) fn id(&self) -> &ConsumerId {
         self.view.id
+    }
+
+    /// The member as `Activity.routing` names a target.
+    pub(super) fn target(&self) -> ConsumerTarget {
+        ConsumerTarget {
+            id: self.id().clone(),
+            name: self.name.clone(),
+        }
     }
 }
 
@@ -46,6 +55,15 @@ impl<'a> Roster<'a> {
             policy,
             members: iter::once(default).chain(others).collect(),
         })
+    }
+
+    /// `None` gives `default`, as `ChannelDefinition::consumer` does; any
+    /// other id, the consumer stored under it, pending or not.
+    pub(super) fn get(&self, id: Option<&ConsumerId>) -> Option<&Member<'a>> {
+        match id {
+            None => self.members.first(),
+            Some(id) => self.members.iter().find(|member| member.id() == id),
+        }
     }
 
     /// The routable consumer a user token names: by name, case-insensitively,

@@ -36,7 +36,7 @@ pub enum TraceStep {
         reason: &'static str,
     },
     /// Explicit addressing was read: its form (`mention`, `command` or
-    /// `event_field`) and how many target tokens it named.
+    /// `event_field`) and how many consumers it named.
     Addressing { form: &'static str, tokens: u8 },
     /// What the kill switch made of the shadow decision: `legacy` or `closed`.
     Shadow {
