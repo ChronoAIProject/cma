@@ -4,6 +4,8 @@ mod keys;
 mod lark_media;
 #[path = "relay/lark_post.rs"]
 mod lark_post;
+#[path = "relay/multi_relay.rs"]
+mod multi_relay;
 #[path = "relay/normalization.rs"]
 mod normalization;
 #[path = "relay/nyxid_shapes.rs"]

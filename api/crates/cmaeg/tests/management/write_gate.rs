@@ -158,8 +158,13 @@ async fn custom_key_writes_are_refused_while_dynamic_sources_are_off() {
 }
 
 /// Store a Lark plus Feishu channel for alice directly, as a writer behind
-/// the dynamic-sources flag would have, and return its channel id.
+/// the dynamic-sources flag would have, and return its channel and record ids.
 fn seed_two_relays(gateway: &Gateway) -> (String, String) {
+    seed(gateway, |_| {})
+}
+
+/// [`seed_two_relays`] after `edit`.
+fn seed(gateway: &Gateway, edit: impl FnOnce(&mut Value)) -> (String, String) {
     let record_id = uuid::Uuid::new_v4().to_string();
     let mut value: Value = serde_json::from_str(include_str!(
         "../../../cmaeg-core/tests/fixtures/channel.json"
@@ -181,6 +186,7 @@ fn seed_two_relays(gateway: &Gateway) -> (String, String) {
     value["partition"]["key"] = "conversation_and_sender".into();
     value["secrets"] = json!({"agent_key_hash": hash_secret("nyx_agent_secret"),
         "provider_credential": "nyx_agent_secret", "channel_key": "nyx_route_secret"});
+    edit(&mut value);
     let definition: ChannelDefinition = serde_json::from_value(value).unwrap();
     definition.validate().unwrap();
     assert!(definition.validate_legacy().is_err());
@@ -246,5 +252,25 @@ async fn an_old_clients_full_put_carries_an_extended_channel_through() {
     assert_eq!(definition.name, "renamed-bot");
     assert_eq!(definition.sources.len(), 2);
     definition.validate().unwrap();
+    gateway.close().await;
+}
+
+#[tokio::test]
+async fn a_channel_without_sources_is_still_readable() {
+    let gateway = Gateway::start().await;
+    let (channel_id, _) = seed(&gateway, |value| {
+        value["sources"] = json!([]);
+        value["reply"]["sinks"] = json!([{"type":"sync"}]);
+    });
+    let response = gateway
+        .client
+        .get(format!("{}/v1/channels/{channel_id}", gateway.base))
+        .bearer_auth("token-alice")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let read: Value = response.json().await.unwrap();
+    assert_eq!(read["definition"]["sources"], json!([]));
     gateway.close().await;
 }
