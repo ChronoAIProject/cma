@@ -17,6 +17,7 @@ mod custom_attachments;
 mod partition;
 mod platform;
 mod secrets;
+mod source_id;
 mod telegram;
 pub use consumer::ConsumerView;
 pub use custom_attachments::{
@@ -24,6 +25,7 @@ pub use custom_attachments::{
     MAX_CUSTOM_ATTACHMENT_POINTER_BYTES,
 };
 pub use secrets::{ChannelSecrets, Secret};
+pub use source_id::{SourceId, AGENT_SOURCE_ID};
 mod sources;
 mod validation;
 pub use platform::Platform;
