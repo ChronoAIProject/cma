@@ -1,6 +1,6 @@
 //! Console settings: the feature switch, the NyxID OAuth client the console
-//! signs people in with, the sign-in rate and the bounds of its in-memory
-//! sessions.
+//! signs people in with, the sign-in rate, the bounds of its in-memory
+//! sessions and the bounds of its channel memory.
 //!
 //! Each key is read by its own function, as the media keys are, so an image
 //! that predates a key simply ignores it and a newer ConfigMap never stops an
@@ -18,6 +18,13 @@ pub const CMAEG_CONSOLE_SESSION_TTL_MS: &str = "CMAEG_CONSOLE_SESSION_TTL_MS";
 pub const CMAEG_CONSOLE_SESSION_IDLE_MS: &str = "CMAEG_CONSOLE_SESSION_IDLE_MS";
 pub const CMAEG_CONSOLE_SESSIONS_MAX: &str = "CMAEG_CONSOLE_SESSIONS_MAX";
 pub const CMAEG_CONSOLE_SESSIONS_PER_SUBJECT: &str = "CMAEG_CONSOLE_SESSIONS_PER_SUBJECT";
+pub const CMAEG_CONSOLE_INDEX_MAX_RECORDS: &str = "CMAEG_CONSOLE_INDEX_MAX_RECORDS";
+pub const CMAEG_CONSOLE_INDEX_RESYNC_MS: &str = "CMAEG_CONSOLE_INDEX_RESYNC_MS";
+pub const CMAEG_CONSOLE_SUMMARY_CACHE_MAX: &str = "CMAEG_CONSOLE_SUMMARY_CACHE_MAX";
+pub const CMAEG_CONSOLE_CHANNEL_IDS_MAX: &str = "CMAEG_CONSOLE_CHANNEL_IDS_MAX";
+pub const CMAEG_CONSOLE_ACTIVITY_PER_CHANNEL: &str = "CMAEG_CONSOLE_ACTIVITY_PER_CHANNEL";
+pub const CMAEG_CONSOLE_ACTIVITY_MAX_BYTES: &str = "CMAEG_CONSOLE_ACTIVITY_MAX_BYTES";
+pub const CMAEG_CONSOLE_PRODUCERS_PER_CHANNEL: &str = "CMAEG_CONSOLE_PRODUCERS_PER_CHANNEL";
 
 /// `(default, min, max)` of each bounded key.
 const LOGIN_RATE: (u64, u64, u64) = (60, 1, 6_000);
@@ -27,6 +34,13 @@ const SESSION_TTL_MS: (u64, u64, u64) = (28_800_000, 600_000, 86_400_000);
 const SESSION_IDLE_MS: (u64, u64) = (1_800_000, 60_000);
 const SESSIONS_MAX: (u64, u64, u64) = (1_000, 10, 100_000);
 const SESSIONS_PER_SUBJECT: (u64, u64, u64) = (5, 1, 50);
+const INDEX_MAX_RECORDS: (u64, u64, u64) = (100_000, 1_000, 1_000_000);
+const INDEX_RESYNC_MS: (u64, u64, u64) = (600_000, 60_000, 86_400_000);
+const SUMMARY_CACHE_MAX: (u64, u64, u64) = (2_000, 100, 100_000);
+const CHANNEL_IDS_MAX: (u64, u64, u64) = (20_000, 100, 1_000_000);
+const ACTIVITY_PER_CHANNEL: (u64, u64, u64) = (100, 10, 1_000);
+const ACTIVITY_MAX_BYTES: (u64, u64, u64) = (33_554_432, 1_048_576, 268_435_456);
+const PRODUCERS_PER_CHANNEL: (u64, u64, u64) = (32, 1, 256);
 /// A NyxID client id is a short opaque identifier; anything longer is a
 /// pasted value, not an id.
 const MAX_CLIENT_ID: usize = 256;
@@ -51,6 +65,72 @@ pub struct ConsoleConfig {
     pub session_idle: Duration,
     pub sessions_max: usize,
     pub sessions_per_subject: usize,
+    /// The bounds of the console's channel memory.
+    pub memory: ConsoleMemoryConfig,
+}
+
+/// The bounds of the console's in-memory channel model: the owner index, the
+/// summary and channel-id caches, the activity rings and the producer
+/// registry. Every structure is bounded, so the console's memory has a fixed
+/// ceiling that `tests/infra_manifests.rs` checks against the container limit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConsoleMemoryConfig {
+    /// Record heads the owner index holds; beyond it the index is partial.
+    pub index_max_records: usize,
+    /// Interval between full, paced re-listings of the record heads.
+    pub index_resync: Duration,
+    /// Channel summaries cached by `(record_id, version)`.
+    pub summary_cache_max: u64,
+    /// Observed channel ids kept for display.
+    pub channel_ids_max: u64,
+    /// Activity entries kept per channel.
+    pub activity_per_channel: usize,
+    /// Bytes all activity entries and producer entries may hold together.
+    pub activity_max_bytes: usize,
+    /// Distinct `ce.source` producers kept per channel.
+    pub producers_per_channel: usize,
+}
+
+impl Default for ConsoleMemoryConfig {
+    fn default() -> Self {
+        Self {
+            index_max_records: widen(INDEX_MAX_RECORDS.0),
+            index_resync: Duration::from_millis(INDEX_RESYNC_MS.0),
+            summary_cache_max: SUMMARY_CACHE_MAX.0,
+            channel_ids_max: CHANNEL_IDS_MAX.0,
+            activity_per_channel: widen(ACTIVITY_PER_CHANNEL.0),
+            activity_max_bytes: widen(ACTIVITY_MAX_BYTES.0),
+            producers_per_channel: widen(PRODUCERS_PER_CHANNEL.0),
+        }
+    }
+}
+
+impl ConsoleMemoryConfig {
+    fn from_lookup(
+        lookup: &impl Fn(&'static str) -> Result<Option<String>, ConfigError>,
+    ) -> Result<Self, ConfigError> {
+        let read = |key: &'static str, bounds: (u64, u64, u64)| {
+            read_bounded(key, lookup(key)?.as_deref(), bounds)
+        };
+        Ok(Self {
+            index_max_records: widen(read(CMAEG_CONSOLE_INDEX_MAX_RECORDS, INDEX_MAX_RECORDS)?),
+            index_resync: Duration::from_millis(read(
+                CMAEG_CONSOLE_INDEX_RESYNC_MS,
+                INDEX_RESYNC_MS,
+            )?),
+            summary_cache_max: read(CMAEG_CONSOLE_SUMMARY_CACHE_MAX, SUMMARY_CACHE_MAX)?,
+            channel_ids_max: read(CMAEG_CONSOLE_CHANNEL_IDS_MAX, CHANNEL_IDS_MAX)?,
+            activity_per_channel: widen(read(
+                CMAEG_CONSOLE_ACTIVITY_PER_CHANNEL,
+                ACTIVITY_PER_CHANNEL,
+            )?),
+            activity_max_bytes: widen(read(CMAEG_CONSOLE_ACTIVITY_MAX_BYTES, ACTIVITY_MAX_BYTES)?),
+            producers_per_channel: widen(read(
+                CMAEG_CONSOLE_PRODUCERS_PER_CHANNEL,
+                PRODUCERS_PER_CHANNEL,
+            )?),
+        })
+    }
 }
 
 impl Default for ConsoleConfig {
@@ -64,6 +144,7 @@ impl Default for ConsoleConfig {
             session_idle: Duration::from_millis(SESSION_IDLE_MS.0),
             sessions_max: usize::try_from(SESSIONS_MAX.0).unwrap_or(usize::MAX),
             sessions_per_subject: usize::try_from(SESSIONS_PER_SUBJECT.0).unwrap_or(usize::MAX),
+            memory: ConsoleMemoryConfig::default(),
         }
     }
 }
@@ -95,6 +176,7 @@ impl ConsoleConfig {
             sessions_per_subject: sessions_per_subject(
                 lookup(CMAEG_CONSOLE_SESSIONS_PER_SUBJECT)?.as_deref(),
             )?,
+            memory: ConsoleMemoryConfig::from_lookup(&lookup)?,
         };
         tracing::info!(
             enabled = config.enabled,
@@ -104,6 +186,13 @@ impl ConsoleConfig {
             session_idle_ms = config.session_idle.as_millis() as u64,
             sessions_max = config.sessions_max,
             sessions_per_subject = config.sessions_per_subject,
+            index_max_records = config.memory.index_max_records,
+            index_resync_ms = config.memory.index_resync.as_millis() as u64,
+            summary_cache_max = config.memory.summary_cache_max,
+            channel_ids_max = config.memory.channel_ids_max,
+            activity_per_channel = config.memory.activity_per_channel,
+            activity_max_bytes = config.memory.activity_max_bytes,
+            producers_per_channel = config.memory.producers_per_channel,
             "console settings"
         );
         Ok(config)

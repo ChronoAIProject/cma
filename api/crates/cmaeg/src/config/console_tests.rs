@@ -150,3 +150,84 @@ fn client_settings_fail_soft_when_missing_and_strictly_when_malformed() {
     assert!(config_with(&[(CMAEG_CONSOLE_CLIENT_ID, &"c".repeat(257))]).is_err());
     assert!(config_with(&[(CMAEG_CONSOLE_CLIENT_ID, "client id")]).is_err());
 }
+
+#[test]
+fn memory_keys_take_their_documented_defaults() {
+    let memory = config_with(&[]).unwrap().memory;
+    assert_eq!(memory, ConsoleMemoryConfig::default());
+    assert_eq!(memory.index_max_records, 100_000);
+    assert_eq!(memory.index_resync, Duration::from_millis(600_000));
+    assert_eq!(memory.summary_cache_max, 2_000);
+    assert_eq!(memory.channel_ids_max, 20_000);
+    assert_eq!(memory.activity_per_channel, 100);
+    assert_eq!(memory.activity_max_bytes, 33_554_432);
+    assert_eq!(memory.producers_per_channel, 32);
+}
+
+#[test]
+fn memory_bounds_are_inclusive_and_out_of_range_values_name_their_key() {
+    let low = config_with(&[
+        (CMAEG_CONSOLE_INDEX_MAX_RECORDS, "1000"),
+        (CMAEG_CONSOLE_INDEX_RESYNC_MS, "60000"),
+        (CMAEG_CONSOLE_SUMMARY_CACHE_MAX, "100"),
+        (CMAEG_CONSOLE_CHANNEL_IDS_MAX, "100"),
+        (CMAEG_CONSOLE_ACTIVITY_PER_CHANNEL, "10"),
+        (CMAEG_CONSOLE_ACTIVITY_MAX_BYTES, "1048576"),
+        (CMAEG_CONSOLE_PRODUCERS_PER_CHANNEL, "1"),
+    ])
+    .unwrap()
+    .memory;
+    assert_eq!(low.index_max_records, 1_000);
+    assert_eq!(low.index_resync, Duration::from_secs(60));
+    assert_eq!(low.summary_cache_max, 100);
+    assert_eq!(low.channel_ids_max, 100);
+    assert_eq!(low.activity_per_channel, 10);
+    assert_eq!(low.activity_max_bytes, 1_048_576);
+    assert_eq!(low.producers_per_channel, 1);
+    let high = config_with(&[
+        (CMAEG_CONSOLE_INDEX_MAX_RECORDS, "1000000"),
+        (CMAEG_CONSOLE_INDEX_RESYNC_MS, "86400000"),
+        (CMAEG_CONSOLE_SUMMARY_CACHE_MAX, "100000"),
+        (CMAEG_CONSOLE_CHANNEL_IDS_MAX, "1000000"),
+        (CMAEG_CONSOLE_ACTIVITY_PER_CHANNEL, "1000"),
+        (CMAEG_CONSOLE_ACTIVITY_MAX_BYTES, "268435456"),
+        (CMAEG_CONSOLE_PRODUCERS_PER_CHANNEL, "256"),
+    ])
+    .unwrap()
+    .memory;
+    assert_eq!(high.index_max_records, 1_000_000);
+    assert_eq!(high.activity_max_bytes, 268_435_456);
+    assert_eq!(high.producers_per_channel, 256);
+    for (key, value, range) in [
+        (
+            CMAEG_CONSOLE_INDEX_MAX_RECORDS,
+            "999",
+            "from 1000 to 1000000",
+        ),
+        (
+            CMAEG_CONSOLE_INDEX_RESYNC_MS,
+            "86400001",
+            "from 60000 to 86400000",
+        ),
+        (CMAEG_CONSOLE_SUMMARY_CACHE_MAX, "99", "from 100 to 100000"),
+        (
+            CMAEG_CONSOLE_CHANNEL_IDS_MAX,
+            "1000001",
+            "from 100 to 1000000",
+        ),
+        (CMAEG_CONSOLE_ACTIVITY_PER_CHANNEL, "9", "from 10 to 1000"),
+        (
+            CMAEG_CONSOLE_ACTIVITY_MAX_BYTES,
+            "268435457",
+            "from 1048576 to 268435456",
+        ),
+        (CMAEG_CONSOLE_PRODUCERS_PER_CHANNEL, "0", "from 1 to 256"),
+        (CMAEG_CONSOLE_PRODUCERS_PER_CHANNEL, "many", "from 1 to 256"),
+    ] {
+        assert_eq!(
+            detail(config_with(&[(key, value)]).unwrap_err()),
+            format!("{key} must be an unsigned decimal {range}"),
+            "{key}={value}"
+        );
+    }
+}
