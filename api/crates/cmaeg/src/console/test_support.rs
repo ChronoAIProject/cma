@@ -229,5 +229,6 @@ pub(crate) fn activity(event_id: &str) -> Activity {
             platform: Platform::Telegram,
             route_id: "route-1".into(),
         },
+        routing: None,
     }
 }

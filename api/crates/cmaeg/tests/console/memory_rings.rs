@@ -266,6 +266,7 @@ fn activities() -> Vec<Activity> {
             conversation: conversation.clone(),
             occurred_at: "2026-10-08T00:00:00Z".into(),
             source: SourceKind::Custom,
+            routing: None,
         },
         Activity {
             schema_version: 1,
@@ -278,6 +279,7 @@ fn activities() -> Vec<Activity> {
             conversation,
             occurred_at: "2026-10-08T00:00:00Z".into(),
             source: SourceKind::Custom,
+            routing: None,
         },
     ]
 }
