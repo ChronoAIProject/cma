@@ -252,6 +252,31 @@ fn interaction_records_are_bound_to_namespace_id_and_key_ring() {
 }
 
 #[test]
+fn consumer_cards_have_their_own_kind_that_an_interaction_opener_refuses() {
+    use cmaeg_core::seal::{
+        open_consumer_interaction, open_interaction, seal_consumer_interaction, seal_interaction,
+    };
+    let blob = seal_consumer_interaction(&old_ring(), "record-a", b"card").unwrap();
+    assert!(blob.starts_with(b"cmaeg1.ic.1."));
+    let opened = open_consumer_interaction(&ring(), "record-a", &blob).unwrap();
+    assert_eq!(opened.payload, b"card");
+    assert!(opened.needs_rekey);
+    assert!(open_consumer_interaction(&ring(), "record-b", &blob).is_err());
+    // An image that only knows `in` cards refuses a consumer's card, and a
+    // consumer opener refuses a default card.
+    assert!(matches!(
+        open_interaction(&ring(), "record-a", &blob),
+        Err(OpenError::Format)
+    ));
+    let default = seal_interaction(&ring(), "record-a", b"card").unwrap();
+    assert!(default.starts_with(b"cmaeg1.in."));
+    assert!(matches!(
+        open_consumer_interaction(&ring(), "record-a", &default),
+        Err(OpenError::Format)
+    ));
+}
+
+#[test]
 fn event_reference_retains_every_relay_platform_and_its_activity_binding() {
     let mut activity: cmaeg_core::activity::Activity =
         serde_json::from_str(include_str!("fixtures/activity.json")).expect("activity");

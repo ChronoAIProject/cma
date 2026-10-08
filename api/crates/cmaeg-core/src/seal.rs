@@ -20,7 +20,8 @@ pub mod reply_target;
 
 pub use event_ref::{EventRef, EventRefPayload, ReplyAddress};
 pub use interaction::{
-    open_blob, open_connection, open_interaction, seal_blob, seal_connection, seal_interaction,
+    open_blob, open_connection, open_consumer_interaction, open_interaction, seal_blob,
+    seal_connection, seal_consumer_interaction, seal_interaction,
 };
 pub use lineage::{Lineage, RootId};
 pub use media_link::{MediaLinkPayload, MediaLinkRef, MAX_MEDIA_LINK_TTL};
@@ -42,6 +43,8 @@ pub enum TokenKind {
     MessageRef,
     Blob,
     Interaction,
+    /// An interaction card owned by a non-default consumer.
+    ConsumerInteraction,
     ReplyTarget,
     Connection,
     ConnectionSetup,
@@ -56,6 +59,7 @@ impl TokenKind {
             Self::MessageRef => "mr",
             Self::Blob => "bl",
             Self::Interaction => "in",
+            Self::ConsumerInteraction => "ic",
             Self::ReplyTarget => "rt",
             Self::Connection => "cn",
             Self::ConnectionSetup => "cs",
