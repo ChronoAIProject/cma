@@ -9,6 +9,8 @@ pub mod fake_cma;
 pub mod fake_provider;
 #[path = "golden/fixture.rs"]
 mod fixture;
+#[path = "golden/identities.rs"]
+mod identities;
 #[path = "latency/identity.rs"]
 pub mod identity;
 #[path = "golden/previous_schema.rs"]
@@ -17,6 +19,8 @@ mod previous_schema;
 mod provider_capture;
 #[path = "golden/provider_normalize.rs"]
 mod provider_normalize;
+#[path = "golden/references.rs"]
+mod references;
 #[path = "relay/support.rs"]
 pub mod relay_support;
 #[path = "golden/reseal.rs"]
