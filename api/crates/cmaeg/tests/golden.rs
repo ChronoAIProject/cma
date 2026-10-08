@@ -11,11 +11,15 @@ pub mod fake_provider;
 mod fixture;
 #[path = "latency/identity.rs"]
 pub mod identity;
+#[path = "golden/previous_schema.rs"]
+mod previous_schema;
 #[path = "golden/provider_capture.rs"]
 mod provider_capture;
 #[path = "golden/provider_normalize.rs"]
 mod provider_normalize;
 #[path = "relay/support.rs"]
 pub mod relay_support;
+#[path = "golden/reseal.rs"]
+mod reseal;
 #[path = "relay/signer.rs"]
 pub mod signer;
