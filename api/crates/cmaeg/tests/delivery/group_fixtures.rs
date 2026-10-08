@@ -1,9 +1,11 @@
 //! A routed relay channel with two consumers, `lead` (the default consumer)
 //! and `reviewer`, and the turns each runs for one relay event.
-use super::recording_fixtures::{channel, event, relay_activity, relay_reply, CHANNEL_KEY};
+use super::recording_fixtures::{
+    activity, channel, event, relay_activity, relay_reply, CHANNEL_KEY, WEBHOOK_URL,
+};
 use cmaeg::{channels::resolver::ResolvedChannel, ingress::launch::LaunchRequest};
 use cmaeg_core::{
-    activity::{Activity, ActivityRouting, ConsumerTarget, RouteResolution},
+    activity::{Activity, ActivityRouting, ConsumerTarget, RouteResolution, SourceKind},
     channel::{ReplyChoice, SourceId},
     ids::{ConsumerId, ConsumerName, IdempotencyKey},
     seal::{EventRef, EventRefPayload, Lineage, MasterKeyRing},
@@ -34,6 +36,26 @@ pub fn routed_channel(ack_after_ms: u32, edit: impl FnOnce(&mut Value)) -> Arc<R
             "consumers": [reviewer], "default_targets": ["default", REVIEWER]});
         edit(value);
     })
+}
+
+/// The routed channel moved to a custom source answering through one
+/// result webhook.
+pub fn routed_custom_channel() -> Arc<ResolvedChannel> {
+    routed_channel(0, |value| {
+        value["sources"] = json!([{"type":"custom","auth":{"type":"hmac","key_id":"key-1"}}]);
+        value["reply"]["sinks"] =
+            json!([{"type":"result_webhook","url":WEBHOOK_URL,"hmac_key_id":"result"}]);
+        value["secrets"]["hmac_secrets"] = json!([["result", "recording-webhook-key"]]);
+    })
+}
+
+/// A custom event, routed by default to both consumers.
+pub fn routed_custom_activity() -> Activity {
+    let mut custom = activity(SourceKind::Custom, "msg-1");
+    let mut routing = routed_activity().routing.unwrap();
+    routing.source_id = SourceId::parse("custom").unwrap();
+    custom.routing = Some(routing);
+    custom
 }
 
 /// The relay activity, routed by default to both consumers.

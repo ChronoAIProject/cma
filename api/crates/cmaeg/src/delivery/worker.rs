@@ -6,10 +6,12 @@ use super::{
         SendKind,
     },
     event::{key, now},
+    failure::{consumer_failed, ConsumerFailure},
     gate::Ungated,
     group::{consumer_of, Groups},
     intents::{DeliveryCommand, DeliveryOutcome, ReplySource},
     label::active_label,
+    notice::{send_notice, Notice},
     send::{unsupported, SendContext, Sender},
     step::{custom_outcome, outcome_event, output_address, reply, timer_step},
 };
@@ -116,6 +118,38 @@ async fn handle(
         }
         DeliveryCommand::StreamOutcome { turn, outcome } => {
             stream_outcome(groups, sender, config, tracker, turn, outcome).await
+        }
+        DeliveryCommand::ConsumerFailed {
+            channel,
+            payload,
+            consumer,
+            code,
+            provider_code,
+        } => {
+            let failure = ConsumerFailure {
+                channel,
+                payload,
+                consumer,
+                code,
+                provider_code,
+            };
+            consumer_failed(groups, sender, config, failure).await
+        }
+        DeliveryCommand::Notice {
+            trace,
+            channel,
+            address,
+            event_id,
+            text,
+        } => {
+            let notice = Notice {
+                trace,
+                channel,
+                address,
+                event_id,
+                text,
+            };
+            send_notice(sender, notice).await
         }
     }
 }

@@ -242,21 +242,8 @@ impl ToolsState {
         command: DeliveryCommand,
         received: oneshot::Receiver<T>,
     ) -> Result<T, Problem> {
-        let (channel, event_id) = match &command {
-            DeliveryCommand::Reply { channel, event, .. }
-            | DeliveryCommand::Typing { channel, event, .. } => {
-                (channel.id.as_str(), event.event_id.as_str())
-            }
-            DeliveryCommand::Update {
-                channel,
-                message_ref,
-                ..
-            } => (channel.id.as_str(), message_ref.event_id.as_str()),
-            DeliveryCommand::StreamOutcome { turn, .. } => {
-                (turn.channel.id.as_str(), turn.activity.event_id.as_str())
-            }
-        };
-        let span = tracing::info_span!("cmaeg.deliver", channel = %crate::telemetry::channel_hash(channel), event_id);
+        let (channel, event_id) = command.event_key();
+        let span = tracing::info_span!("cmaeg.deliver", channel = %crate::telemetry::channel_hash(channel.as_str()), event_id = %event_id);
         tokio::time::timeout(
             Duration::from_secs(8),
             async {

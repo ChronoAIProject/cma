@@ -6,6 +6,8 @@ mod boundaries;
 mod consumer_refs;
 #[path = "delivery/engine.rs"]
 mod engine;
+#[path = "delivery/failures.rs"]
+mod failures;
 #[path = "fake_cma.rs"]
 pub mod fake_cma;
 #[path = "delivery/fake_http.rs"]

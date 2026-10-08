@@ -76,18 +76,8 @@ async fn run(
         receiver,
         stop,
         WORKERS,
-        |command| {
-            let (channel, event) = match command {
-                DeliveryCommand::Reply { event, .. } | DeliveryCommand::Typing { event, .. } => {
-                    (&event.channel_id, &event.event_id)
-                }
-                DeliveryCommand::Update { message_ref, .. } => {
-                    (&message_ref.channel_id, &message_ref.event_id)
-                }
-                DeliveryCommand::StreamOutcome { turn, .. } => {
-                    (&turn.channel.id, &turn.activity.event_id)
-                }
-            };
+        |command: &DeliveryCommand| {
+            let (channel, event) = command.event_key();
             key(channel.as_str(), event.as_str())[0] as usize % WORKERS
         },
         move |commands| worker::run(commands, sender.clone(), config.clone(), tracker.clone()),

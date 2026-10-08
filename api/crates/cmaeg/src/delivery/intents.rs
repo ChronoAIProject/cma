@@ -3,9 +3,9 @@ use crate::{
     turns::outcomes::TurnOutcome,
 };
 use cmaeg_core::{
-    ids::MessageRef,
+    ids::{ChannelId, ConsumerId, EventId, MessageRef},
     message::{OutboundMessage, RenderingReport},
-    seal::{EventRefPayload, MessageRefPayload},
+    seal::{EventRefPayload, MessageRefPayload, ReplyAddress},
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -43,14 +43,55 @@ pub enum DeliveryCommand {
         turn: Arc<LaunchRequest>,
         outcome: TurnOutcome,
     },
+    /// A fan-out child that failed before launch, or was refused at launch; it has no sealed
+    /// event_ref the worker could open, so it travels unsealed (G47).
+    ConsumerFailed {
+        channel: Arc<ResolvedChannel>,
+        payload: EventRefPayload,
+        consumer: ConsumerId,
+        code: &'static str,
+        provider_code: Option<String>,
+    },
+    /// One best-effort notice to the origin chat, using the inbound reply address and token.
+    Notice {
+        trace: tracing::Span,
+        channel: Arc<ResolvedChannel>,
+        address: ReplyAddress,
+        event_id: EventId,
+        text: String,
+    },
 }
 impl DeliveryCommand {
     pub(crate) fn trace(&self) -> tracing::Span {
         match self {
-            Self::Reply { trace, .. } | Self::Update { trace, .. } | Self::Typing { trace, .. } => {
-                trace.clone()
-            }
+            Self::Reply { trace, .. }
+            | Self::Update { trace, .. }
+            | Self::Typing { trace, .. }
+            | Self::Notice { trace, .. } => trace.clone(),
             Self::StreamOutcome { turn, .. } => turn.trace.clone(),
+            Self::ConsumerFailed {
+                channel, payload, ..
+            } => tracing::info_span!(
+                "cmaeg.deliver",
+                channel = %crate::telemetry::channel_hash(channel.id.as_str()),
+                event_id = %payload.event_id
+            ),
+        }
+    }
+    /// The (channel, event) a command belongs to: the one exhaustive match
+    /// that shards commands, so every command of an event reaches the worker
+    /// holding its group, and that names the `cmaeg.deliver` span of tools.
+    pub fn event_key(&self) -> (&ChannelId, &EventId) {
+        match self {
+            Self::Reply { event, .. } | Self::Typing { event, .. } => {
+                (&event.channel_id, &event.event_id)
+            }
+            Self::Update { message_ref, .. } => (&message_ref.channel_id, &message_ref.event_id),
+            Self::StreamOutcome { turn, .. } => (&turn.channel.id, &turn.activity.event_id),
+            Self::ConsumerFailed { payload, .. } => (&payload.channel_id, &payload.event_id),
+            Self::Notice {
+                channel, event_id, ..
+            } => (&channel.id, event_id),
         }
     }
 }
