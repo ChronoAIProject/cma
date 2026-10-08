@@ -21,7 +21,10 @@ mod platform;
 mod secrets;
 mod source_id;
 mod telegram;
-pub use consumer::ConsumerView;
+pub use consumer::{
+    Consumer, ConsumerReply, ConsumerView, DefaultConsumer, EffectiveReply, PublishPolicy,
+    ReplyChoice,
+};
 pub use custom_attachments::{
     CustomAttachments, DEFAULT_CUSTOM_ATTACHMENT_POINTER, MAX_CUSTOM_ATTACHMENT_ORIGINS,
     MAX_CUSTOM_ATTACHMENT_POINTER_BYTES,
