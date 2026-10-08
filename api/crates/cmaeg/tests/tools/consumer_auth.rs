@@ -105,9 +105,23 @@ async fn each_consumer_key_is_authorized_for_its_own_references() {
     let default = ConsumerId::default_consumer();
     for (consumer, key) in [(default, app.key.clone()), (reviewer(), reviewer_key())] {
         let reference = issue(&app, &consumer, &key, None).await;
-        let path = format!("/v1/events/{}/typing", reference.as_str());
-        let response = call(&app, Method::POST, &path, &key, Some(json!({}))).await;
-        assert_eq!(response.status(), 200, "{consumer}");
+        // This channel has no relay credential, so a reply target is refused
+        // for its destination; reply_targets/consumers.rs creates one per
+        // consumer on a channel that has one.
+        let tools = event_tools(&app, reference.as_str())
+            .into_iter()
+            .filter(|(_, path, _)| !path.ends_with("/reply-target"));
+        for (method, path, body) in tools {
+            let response = call(&app, method.clone(), &path, &key, body).await;
+            let status = response.status();
+            let text = response.text().await.unwrap();
+            assert_eq!(status, 200, "{consumer}: {method} {path}: {text}");
+        }
+        let owned = message_ref(&app, (!consumer.is_default()).then(|| consumer.clone()));
+        let path = format!("/v1/messages/{}/update", owned.as_str());
+        let body = Some(json!({"text": "edited"}));
+        let response = call(&app, Method::POST, &path, &key, body).await;
+        assert_eq!(response.status(), 200, "{consumer}: update");
     }
     let unknown = format!("nyxid_ag_{}", uuid::Uuid::new_v4().simple());
     let path = format!("/v1/events/{}/typing", app.event_ref.as_str());
