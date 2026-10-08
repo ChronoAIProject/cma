@@ -36,6 +36,7 @@ pub(crate) async fn serve(config: Config) -> Result<(), Box<dyn std::error::Erro
     )?);
     state.telegram = Some(telegram.clone());
     state.media_enabled = config.media.enabled;
+    state.media_tool_providers = config.media.tool_providers.clone();
     state.routing = config.routing.clone();
     state.routed_capacity = config.routed_capacity;
     let _reachability_probe = state.readiness.start_probe(state.records.clone());

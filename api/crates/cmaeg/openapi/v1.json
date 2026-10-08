@@ -1543,6 +1543,12 @@
             "format": "int64",
             "minimum": 0,
             "type": "integer"
+          },
+          "warnings": {
+            "items": {
+              "$ref": "#/components/schemas/Warning"
+            },
+            "type": "array"
           }
         },
         "required": [
@@ -4650,6 +4656,32 @@
           "none",
           "platform_thumbnail",
           "keyframes"
+        ],
+        "type": "string"
+      },
+      "Warning": {
+        "properties": {
+          "pointer": {
+            "type": "string"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/WarningReason"
+          }
+        },
+        "required": [
+          "pointer",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "WarningReason": {
+        "enum": [
+          "target_ignores_custom_events",
+          "publish_target_ignores_agent_events",
+          "publish_tools_unavailable",
+          "mentionable_bypasses_rules",
+          "fanout_requires_stream_all",
+          "fanout_outputs_undeliverable"
         ],
         "type": "string"
       }

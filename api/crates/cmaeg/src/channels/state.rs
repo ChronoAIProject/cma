@@ -50,6 +50,8 @@ pub struct ManagementState {
     /// Inbound media switch. Off, a custom source's attachments setting is
     /// refused, so it is stored only once every replica can parse it.
     pub media_enabled: bool,
+    /// Configured tool-capable providers, independent of runtime media switches.
+    pub media_tool_providers: crate::MediaToolProviders,
     /// Shared operator routing policy, including the management write switch.
     pub routing: crate::RoutingConfig,
     pub routed_capacity: crate::RoutedCapacityConfig,
@@ -104,6 +106,7 @@ impl ManagementState {
             cma_service_token: config.cma_service_token,
             telegram: None,
             media_enabled: false,
+            media_tool_providers: Default::default(),
             routing: crate::RoutingConfig::default(),
             routed_capacity: crate::RoutedCapacityConfig::default(),
             index: Arc::new(crate::turns::observer::NoopObserver),

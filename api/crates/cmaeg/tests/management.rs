@@ -215,3 +215,6 @@ mod consumer_rotation;
 
 #[path = "../../cmaeg-core/tests/routing_policy/fixture.rs"]
 mod routing_fixture;
+
+#[path = "management/warnings.rs"]
+mod warnings;

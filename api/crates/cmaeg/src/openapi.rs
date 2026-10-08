@@ -15,6 +15,8 @@ use utoipa::OpenApi;
         cmaeg_core::channel::ProviderTarget,
         crate::tools::AttachmentViewKind,
         cmaeg_core::ids::ConsumerId,
+        crate::channels::warnings::Warning,
+        crate::channels::warnings::WarningReason,
     )),
     paths(
         http::connections::capabilities,

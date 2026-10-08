@@ -60,6 +60,9 @@ pub struct ChannelResponse {
     pub provider: ProviderResponse,
     pub endpoints: EndpointResponse,
     pub definition: super::schema::PublicChannelDefinition,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schema(required = false)]
+    pub warnings: Vec<crate::channels::warnings::Warning>,
 }
 
 #[derive(Debug, Clone, Serialize, ToSchema)]

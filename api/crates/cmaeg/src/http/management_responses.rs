@@ -33,6 +33,11 @@ pub(super) fn channel_response(
             custom_event_url: format!("{}/v1/channels/{}/events", state.public_url, channel_id),
         },
         definition: super::schema::PublicChannelDefinition::new(definition, version),
+        warnings: crate::channels::warnings::for_channel(
+            definition,
+            &state.routing.non_human_providers,
+            &state.media_tool_providers,
+        ),
     })
 }
 

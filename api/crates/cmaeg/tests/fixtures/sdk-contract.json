@@ -1009,7 +1009,17 @@
         "slug": "fixture"
       },
       "record_id": "fixture",
-      "version": 1
+      "version": 1,
+      "warnings": [
+        {
+          "pointer": "/routing/default_consumer/publish/enabled",
+          "reason": "publish_tools_unavailable"
+        },
+        {
+          "pointer": "/routing/consumers/0/publish/enabled",
+          "reason": "publish_tools_unavailable"
+        }
+      ]
     },
     {
       "channel_id": "fixture",
@@ -1282,7 +1292,17 @@
         "slug": "fixture"
       },
       "record_id": "fixture",
-      "version": 1
+      "version": 1,
+      "warnings": [
+        {
+          "pointer": "/routing/default_consumer/publish/enabled",
+          "reason": "publish_tools_unavailable"
+        },
+        {
+          "pointer": "/routing/consumers/0/publish/enabled",
+          "reason": "publish_tools_unavailable"
+        }
+      ]
     }
   ],
   "ChannelUpdateRequest": [
@@ -3387,7 +3407,17 @@
           "slug": "fixture"
         },
         "record_id": "fixture",
-        "version": 1
+        "version": 1,
+        "warnings": [
+          {
+            "pointer": "/routing/default_consumer/publish/enabled",
+            "reason": "publish_tools_unavailable"
+          },
+          {
+            "pointer": "/routing/consumers/0/publish/enabled",
+            "reason": "publish_tools_unavailable"
+          }
+        ]
       },
       "consumer": {
         "agent_key_hash": "fixture",
@@ -4246,5 +4276,39 @@
       },
       "expected_version": 9
     }
+  ],
+  "Warning": [
+    {
+      "pointer": "/routing/default_targets/1",
+      "reason": "target_ignores_custom_events"
+    },
+    {
+      "pointer": "/routing/default_consumer/publish/targets/0",
+      "reason": "publish_target_ignores_agent_events"
+    },
+    {
+      "pointer": "/routing/default_consumer/publish/enabled",
+      "reason": "publish_tools_unavailable"
+    },
+    {
+      "pointer": "/routing/default_consumer/mentionable",
+      "reason": "mentionable_bypasses_rules"
+    },
+    {
+      "pointer": "/routing/default_targets",
+      "reason": "fanout_requires_stream_all"
+    },
+    {
+      "pointer": "/routing/default_targets",
+      "reason": "fanout_outputs_undeliverable"
+    }
+  ],
+  "WarningReason": [
+    "target_ignores_custom_events",
+    "publish_target_ignores_agent_events",
+    "publish_tools_unavailable",
+    "mentionable_bypasses_rules",
+    "fanout_requires_stream_all",
+    "fanout_outputs_undeliverable"
   ]
 }
