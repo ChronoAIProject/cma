@@ -344,6 +344,7 @@ pub fn rebound(
         pointer: channel.pointer.clone(),
         definition,
         agent_key_hash: channel.agent_key_hash,
+        consumer_keys: channel.consumer_keys.clone(),
         loaded_at: channel.loaded_at,
         version: channel.version,
     })

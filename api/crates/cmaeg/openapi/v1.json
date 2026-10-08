@@ -191,6 +191,16 @@
           }
         ]
       },
+      "ActivityKindName": {
+        "description": "An activity's kind, by name.",
+        "enum": [
+          "message",
+          "command",
+          "interaction",
+          "event"
+        ],
+        "type": "string"
+      },
       "Actor": {
         "additionalProperties": false,
         "properties": {
@@ -221,6 +231,29 @@
           "unknown"
         ],
         "type": "string"
+      },
+      "Addressing": {
+        "additionalProperties": false,
+        "description": "Gateway routing directives; each can be switched off per channel. None of\nthem is a reserved product command.",
+        "properties": {
+          "command": {
+            "description": "`/to name[,name]`.",
+            "type": "boolean"
+          },
+          "event_field": {
+            "description": "The `cmaegtargets` CloudEvent extension.",
+            "type": "boolean"
+          },
+          "mentions": {
+            "description": "A leading `@name`.",
+            "type": "boolean"
+          },
+          "unknown_target_notice": {
+            "description": "Answer an unknown target with a notice.",
+            "type": "boolean"
+          }
+        },
+        "type": "object"
       },
       "AdmissionPolicy": {
         "oneOf": [
@@ -286,6 +319,31 @@
             "type": "object"
           }
         ]
+      },
+      "AgentEventPolicy": {
+        "additionalProperties": false,
+        "description": "Limits on events agents publish to other consumers of the channel.",
+        "properties": {
+          "max_hops": {
+            "description": "1..=4.",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "per_channel_per_minute": {
+            "description": "1..=60.",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "per_consumer_per_minute": {
+            "description": "1..=30, at most `per_channel_per_minute`.",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "type": "object"
       },
       "AgentProfileSnapshot": {
         "additionalProperties": false,
@@ -1573,6 +1631,101 @@
         ],
         "type": "object"
       },
+      "Consumer": {
+        "additionalProperties": false,
+        "description": "An additional consumer of a channel, beside the implicit `default`. It\ncarries its own binding, profile and agent key, so it is stored whole;\na channel holds at most seven.\n\nEvery optional field is omitted when absent or at its default, so a\nstored consumer keeps its bytes when read and written back.",
+        "properties": {
+          "agent_key_hash": {
+            "description": "The public hash of the consumer's agent key, `sha256:<64 hex>`.",
+            "type": "string"
+          },
+          "created_at": {
+            "description": "RFC 3339.",
+            "type": "string"
+          },
+          "id": {
+            "$ref": "#/components/schemas/ConsumerId"
+          },
+          "label": {
+            "description": "1..=64 printable characters for reply labels; absent means `name`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "mentionable": {
+            "description": "Whether a leading `@name` or `/to name` may address it.",
+            "type": "boolean"
+          },
+          "name": {
+            "$ref": "#/components/schemas/ConsumerName"
+          },
+          "non_human": {
+            "description": "Whether this consumer answers non-human actors (custom events and\nhand-offs). Absent means its provider slug is configured as non-human.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "pending": {
+            "description": "Stored before its provider binding exists; never routed.",
+            "type": "boolean"
+          },
+          "profile": {
+            "$ref": "#/components/schemas/EventWorkerProfile"
+          },
+          "profile_digest": {
+            "type": "string"
+          },
+          "provider": {
+            "$ref": "#/components/schemas/ProviderBinding"
+          },
+          "publish": {
+            "$ref": "#/components/schemas/PublishPolicy"
+          },
+          "reply": {
+            "$ref": "#/components/schemas/ConsumerReply"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "profile",
+          "profile_digest",
+          "provider",
+          "agent_key_hash",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "ConsumerId": {
+        "description": "A channel consumer's stable identifier: \"default\" or \"csm_\" + 12 lowercase hex.\nAssigned by the gateway and never reused within a channel.\n\nThe grammar admits no `\\x1f`, the separator of the gateway's identity\nderivations, so an identifier can be joined into one unambiguously.",
+        "pattern": "^(default|csm_[0-9a-f]{12})$",
+        "type": "string"
+      },
+      "ConsumerName": {
+        "description": "A consumer's chat name, `^[a-z][a-z0-9_-]{1,31}$`, unique per channel.\nNames are lowercase, so comparing two of them is exact.\n\nReserved: `all`, `everyone`, `here`, `to`, any `csm_` prefix, and\n`default`, which only the default consumer may use. The grammar is a\nproperty of the type; the reserved words are refused by the channel\nreaders, which know whether a name belongs to the default consumer and\ncan point at the offending field.",
+        "pattern": "^[a-z][a-z0-9_-]{1,31}$",
+        "type": "string"
+      },
+      "ConsumerReply": {
+        "additionalProperties": false,
+        "description": "A consumer's own reply policy, overriding the channel's.",
+        "properties": {
+          "auto_final": {
+            "description": "Absent means the channel's `reply.auto_final`.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "destination": {
+            "$ref": "#/components/schemas/ReplyChoice",
+            "description": "Where automatic outputs go."
+          }
+        },
+        "type": "object"
+      },
       "ContextConfig": {
         "additionalProperties": false,
         "properties": {
@@ -1831,6 +1984,115 @@
             },
             "required": [
               "key_hashes",
+              "type"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "DefaultConsumer": {
+        "additionalProperties": false,
+        "description": "The presentation and policy of the `default` consumer. Its binding,\nprofile and agent key stay in the definition's top-level fields, so its\nstorage, conversation ids and tokens never change when routing is added.",
+        "properties": {
+          "label": {
+            "description": "1..=64 printable characters for reply labels; absent means `name`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "mentionable": {
+            "description": "Whether a leading `@name` or `/to name` may address it.",
+            "type": "boolean"
+          },
+          "name": {
+            "$ref": "#/components/schemas/ConsumerName"
+          },
+          "non_human": {
+            "description": "Whether it answers non-human actors; absent means by provider slug.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "publish": {
+            "$ref": "#/components/schemas/PublishPolicy"
+          },
+          "reply": {
+            "$ref": "#/components/schemas/ConsumerReply"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "DefaultReply": {
+        "description": "The channel's default reply destination. Never sealed: replies resolve it\nfrom the current definition when a message is sent.",
+        "oneOf": [
+          {
+            "description": "A chat of the native Telegram source.",
+            "properties": {
+              "chat_id": {
+                "type": "string"
+              },
+              "source_id": {
+                "$ref": "#/components/schemas/SourceId"
+              },
+              "thread_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "type": {
+                "enum": [
+                  "telegram_chat"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "source_id",
+              "chat_id",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A route of a NyxID relay source.",
+            "properties": {
+              "route_id": {
+                "type": "string"
+              },
+              "source_id": {
+                "$ref": "#/components/schemas/SourceId"
+              },
+              "type": {
+                "enum": [
+                  "relay_conversation"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "source_id",
+              "route_id",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "The channel's result webhook sinks.",
+            "properties": {
+              "type": {
+                "enum": [
+                  "sinks"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
               "type"
             ],
             "type": "object"
@@ -2555,6 +2817,13 @@
         ],
         "type": "object"
       },
+      "Pattern": {
+        "description": "A match pattern of 1..=512 bytes: exact, or a prefix when it ends in\n`*`. At most one `*`, and only as the final character.",
+        "maxLength": 512,
+        "minLength": 1,
+        "pattern": "^[^*]*\\*?$",
+        "type": "string"
+      },
       "PermissionConfig": {
         "additionalProperties": false,
         "properties": {
@@ -2878,6 +3147,17 @@
           "reply": {
             "$ref": "#/components/schemas/ReplyPolicy"
           },
+          "routing": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RoutingPolicy",
+                "description": "Multi-consumer routing, read-only here; absent on every channel\nwithout it. It carries consumers' public key hashes, never a key."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "schema_version": {
             "format": "int32",
             "minimum": 0,
@@ -2922,6 +3202,26 @@
         },
         "required": [
           "agent_key_hash"
+        ],
+        "type": "object"
+      },
+      "PublishPolicy": {
+        "additionalProperties": false,
+        "description": "Whether a consumer may publish hand-off events to other consumers.",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "targets": {
+            "description": "The consumers it may target; empty means any routable consumer.",
+            "items": {
+              "$ref": "#/components/schemas/ConsumerId"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "enabled"
         ],
         "type": "object"
       },
@@ -3127,6 +3427,23 @@
         ],
         "type": "object"
       },
+      "ReplyChoice": {
+        "description": "Where a reply goes: back to the event's origin, or to the channel's\ndefault reply destination.",
+        "enum": [
+          "origin",
+          "default"
+        ],
+        "type": "string"
+      },
+      "ReplyLabel": {
+        "description": "When chat replies carry the `[<label>] ` prefix.",
+        "enum": [
+          "auto",
+          "always",
+          "never"
+        ],
+        "type": "string"
+      },
       "ReplyPolicy": {
         "additionalProperties": false,
         "properties": {
@@ -3168,6 +3485,150 @@
           "reply_target_ref",
           "expires_at"
         ],
+        "type": "object"
+      },
+      "RoutingPolicy": {
+        "additionalProperties": false,
+        "description": "Multi-consumer routing. Each admitted event resolves to one target set:\nexplicit addressing when the channel allows it, else the first matching\nrule, else `default_targets`.",
+        "properties": {
+          "addressing": {
+            "$ref": "#/components/schemas/Addressing"
+          },
+          "agent_events": {
+            "$ref": "#/components/schemas/AgentEventPolicy"
+          },
+          "consumers": {
+            "description": "Additional consumers, 0..=7.",
+            "items": {
+              "$ref": "#/components/schemas/Consumer"
+            },
+            "type": "array"
+          },
+          "default_consumer": {
+            "$ref": "#/components/schemas/DefaultConsumer"
+          },
+          "default_reply": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DefaultReply"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "default_targets": {
+            "description": "The targets of an event no directive or rule selects: 1..=max_targets.",
+            "items": {
+              "$ref": "#/components/schemas/ConsumerId"
+            },
+            "type": "array"
+          },
+          "max_targets": {
+            "description": "The most consumers one event may target, 1..=8.",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "reply_label": {
+            "$ref": "#/components/schemas/ReplyLabel"
+          },
+          "rules": {
+            "description": "0..=32 rules; the first match wins.",
+            "items": {
+              "$ref": "#/components/schemas/RoutingRule"
+            },
+            "type": "array"
+          },
+          "version": {
+            "description": "Always 1.",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "default_consumer",
+          "default_targets"
+        ],
+        "type": "object"
+      },
+      "RoutingRule": {
+        "additionalProperties": false,
+        "description": "A rule: events matching `when` target `targets`.",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/RuleId"
+          },
+          "targets": {
+            "description": "1..=max_targets consumers.",
+            "items": {
+              "$ref": "#/components/schemas/ConsumerId"
+            },
+            "type": "array"
+          },
+          "when": {
+            "$ref": "#/components/schemas/RuleMatch"
+          }
+        },
+        "required": [
+          "id",
+          "targets"
+        ],
+        "type": "object"
+      },
+      "RuleId": {
+        "description": "A routing rule's identifier, `^[a-z0-9_-]{1,32}$`, unique per channel.",
+        "pattern": "^[a-z0-9_-]{1,32}$",
+        "type": "string"
+      },
+      "RuleMatch": {
+        "additionalProperties": false,
+        "description": "What a rule matches: AND across non-empty fields, OR within a list. An\nempty match admits every event. Each list holds at most 64 entries of at\nmost 512 bytes.",
+        "properties": {
+          "chats": {
+            "description": "`activity.conversation.id`, exact.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "event_sources": {
+            "description": "CloudEvent `source`: exact, or a prefix ending in one `*`.",
+            "items": {
+              "$ref": "#/components/schemas/Pattern"
+            },
+            "type": "array"
+          },
+          "event_types": {
+            "description": "CloudEvent `type`: exact, or a prefix ending in one `*`.",
+            "items": {
+              "$ref": "#/components/schemas/Pattern"
+            },
+            "type": "array"
+          },
+          "kinds": {
+            "items": {
+              "$ref": "#/components/schemas/ActivityKindName"
+            },
+            "type": "array"
+          },
+          "senders": {
+            "description": "`activity.actor.id`, exact.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "sources": {
+            "description": "Source slots. A rule naming only sources that are not attached is\nvalid and inert.",
+            "items": {
+              "$ref": "#/components/schemas/SourceId"
+            },
+            "type": "array"
+          }
+        },
         "type": "object"
       },
       "Secret": {
@@ -3378,6 +3839,10 @@
             "type": "object"
           }
         ]
+      },
+      "SourceId": {
+        "description": "A source slot's stable id, derived from a configured source and never stored\nwith it, though routing policies refer to slots by it: \"telegram\", \"relay_<platform>\"\n(\"relay_telegram\", \"relay_lark\", \"relay_feishu\", \"relay_discord\", \"relay_slack\",\n\"relay_whatsapp\"), \"custom\", or the reserved \"agent\" (hand-offs only; never configurable).\n\nAn id names a slot rather than a source instance. A channel holds at most\none source per variant and relay platform, so the id is unique within it,\nand a relay that is detached and later re-attached gets the same id back.",
+        "type": "string"
       },
       "SourceKind": {
         "oneOf": [

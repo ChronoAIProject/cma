@@ -47,6 +47,7 @@ fn channel_with(sources: Value) -> Arc<ResolvedChannel> {
         pointer: base.pointer.clone(),
         definition,
         agent_key_hash: base.agent_key_hash,
+        consumer_keys: base.consumer_keys.clone(),
         loaded_at: base.loaded_at,
         version: base.version,
     })

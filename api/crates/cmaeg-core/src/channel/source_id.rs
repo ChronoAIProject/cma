@@ -19,7 +19,8 @@ const PLATFORMS: [Platform; 6] = [
     Platform::Whatsapp,
 ];
 
-/// A source slot's stable id, derived and never stored: "telegram", "relay_<platform>"
+/// A source slot's stable id, derived from a configured source and never stored
+/// with it, though routing policies refer to slots by it: "telegram", "relay_<platform>"
 /// ("relay_telegram", "relay_lark", "relay_feishu", "relay_discord", "relay_slack",
 /// "relay_whatsapp"), "custom", or the reserved "agent" (hand-offs only; never configurable).
 ///

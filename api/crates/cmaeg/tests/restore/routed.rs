@@ -2,7 +2,10 @@
 //! default one is, and a stored definition that fails is never served.
 use super::{routing_fixture, support::Fixture};
 use cmaeg::{channels::resolver::ResolveError, ChannelCacheConfig};
-use cmaeg_core::channel::{ChannelDefinition, Secret};
+use cmaeg_core::{
+    channel::{ChannelDefinition, Secret},
+    ids::ConsumerId,
+};
 
 async fn routed() -> (Fixture, ChannelDefinition) {
     let fixture = Fixture::new(ChannelCacheConfig::default()).await;
@@ -22,9 +25,39 @@ async fn restore(mut fixture: Fixture, definition: ChannelDefinition) -> Result<
 }
 
 #[tokio::test]
-async fn a_consistent_routed_channel_restores() {
-    let (fixture, definition) = routed().await;
-    restore(fixture, definition).await.unwrap();
+async fn a_consistent_routed_channel_restores_with_every_consumer_key_hash() {
+    let (mut fixture, mut definition) = routed().await;
+    definition.version = 2;
+    fixture.definition = definition;
+    fixture.store(2);
+    let channel = fixture.resolver.resolve(fixture.id.as_str()).await.unwrap();
+    fixture.server.stop().await;
+    assert_eq!(channel.definition, fixture.definition);
+    let decoded = |consumer: &str| {
+        let hex = routing_fixture::hash(&routing_fixture::agent_key(consumer));
+        let digits = hex.strip_prefix("sha256:").unwrap();
+        let bytes: Vec<u8> = (0..32)
+            .map(|index| u8::from_str_radix(&digits[index * 2..index * 2 + 2], 16).unwrap())
+            .collect();
+        <[u8; 32]>::try_from(bytes).unwrap()
+    };
+    let expected: Vec<(String, [u8; 32])> =
+        ["default", routing_fixture::REVIEWER, routing_fixture::NYX]
+            .into_iter()
+            .map(|consumer| (consumer.to_owned(), decoded(consumer)))
+            .collect();
+    let actual: Vec<(String, [u8; 32])> = channel
+        .consumer_keys
+        .iter()
+        .map(|(id, hash)| (id.to_string(), *hash))
+        .collect();
+    assert_eq!(actual, expected);
+    assert_eq!(channel.agent_key_hash, decoded("default"));
+    let reviewer = ConsumerId::parse(routing_fixture::REVIEWER).unwrap();
+    assert_eq!(
+        channel.consumer_key_hash(Some(&reviewer)),
+        Some(&decoded(routing_fixture::REVIEWER))
+    );
 }
 
 #[tokio::test]

@@ -12,13 +12,14 @@
 //! sees the write, so a refused write reports exactly the error it got
 //! before readers widened and never touches the provider.
 use cmaeg_core::{
-    channel::{ChannelDefinition, Extensions, PartitionRule, Secret, Source},
+    channel::{ChannelDefinition, Extensions, PartitionRule, RoutingPolicy, Secret, Source},
+    ids::ConsumerId,
     ValidationError,
 };
 
 /// The refusal of a legacy-valid write that still introduces a source extension.
 pub const DYNAMIC_SOURCES_DISABLED: &str = "dynamic_sources_disabled";
-/// The refusal of a legacy-valid write that introduces routing.
+/// The refusal of a write that introduces or modifies routing.
 pub const MULTI_CONSUMER_DISABLED: &str = "multi_consumer_disabled";
 
 /// Flags that admit writes of new stored shapes. All false until the flags exist.
@@ -39,10 +40,11 @@ pub struct WriteFlags {
 ///    reader, identically, because the reader applies the legacy rules to it);
 /// 2. an extension `next` carries through unchanged from an extended
 ///    `current` is allowed, so an older client's full `PUT` keeps working;
-/// 3. any other extension requires its flag. While it is off, a write the
-///    legacy rules refuse gets that legacy error unchanged, and a
-///    legacy-valid write that still carries an extension gets
-///    `dynamic_sources_disabled` (or `multi_consumer_disabled`).
+/// 3. any other extension requires its flag. While it is off, a source
+///    write the legacy rules refuse gets that legacy error unchanged, a
+///    legacy-valid one that still carries `custom_key` gets
+///    `dynamic_sources_disabled`, and a write that introduces or modifies
+///    routing gets `multi_consumer_disabled`.
 pub(crate) fn check(
     current: Option<&ChannelDefinition>,
     next: &ChannelDefinition,
@@ -52,22 +54,32 @@ pub(crate) fn check(
     if extensions.legacy_compatible() {
         return Ok(());
     }
-    let carried = current.is_some_and(|current| carries_sources_through(current, next));
-    let sources = !extensions.sources || flags.dynamic_sources || carried;
-    let routing = !extensions.routing || flags.multi_consumer;
+    let carried_sources =
+        current.is_some_and(|current| carries_through(current, next, Extension::Sources));
+    let carried_routing =
+        current.is_some_and(|current| carries_through(current, next, Extension::Routing));
+    let sources = !extensions.sources || flags.dynamic_sources || carried_sources;
+    let routing = !extensions.routing || flags.multi_consumer || carried_routing;
     if sources && routing {
-        if carried {
-            tracing::debug!("channel write carries its source extension through unchanged");
+        if carried_sources || carried_routing {
+            tracing::debug!(
+                sources = carried_sources,
+                routing = carried_routing,
+                "channel write carries its extensions through unchanged"
+            );
         }
         return Ok(());
     }
-    let error = match next.validate_legacy() {
-        Err(error) => error,
-        // Only `custom_key` makes a legacy-valid definition extended.
-        Ok(()) if !sources => {
-            ValidationError::new("/partition/custom_key", DYNAMIC_SOURCES_DISABLED)
+    let error = if !sources {
+        match next.validate_legacy() {
+            Err(error) => error,
+            // Only `custom_key` makes a legacy-valid definition extended.
+            Ok(()) => ValidationError::new("/partition/custom_key", DYNAMIC_SOURCES_DISABLED),
         }
-        Ok(()) => ValidationError::new("/", MULTI_CONSUMER_DISABLED),
+    } else if next.routing.is_some() {
+        ValidationError::new("/routing", MULTI_CONSUMER_DISABLED)
+    } else {
+        ValidationError::new("/secrets/consumer_keys", MULTI_CONSUMER_DISABLED)
     };
     tracing::info!(
         pointer = %error.pointer,
@@ -79,9 +91,44 @@ pub(crate) fn check(
     Err(error)
 }
 
-/// Whether `current` is extended and `next` keeps its source extension intact.
-fn carries_sources_through(current: &ChannelDefinition, next: &ChannelDefinition) -> bool {
-    Extensions::of(current).sources && SourceExtension::of(current) == SourceExtension::of(next)
+#[derive(Clone, Copy)]
+enum Extension {
+    Sources,
+    Routing,
+}
+
+/// Whether `current` uses `extension` and `next` keeps it intact.
+fn carries_through(
+    current: &ChannelDefinition,
+    next: &ChannelDefinition,
+    extension: Extension,
+) -> bool {
+    let extensions = Extensions::of(current);
+    match extension {
+        Extension::Sources => {
+            extensions.sources && SourceExtension::of(current) == SourceExtension::of(next)
+        }
+        Extension::Routing => {
+            extensions.routing && RoutingExtension::of(current) == RoutingExtension::of(next)
+        }
+    }
+}
+
+/// Everything a routing extension consists of: the policy and the
+/// additional consumers' keys.
+#[derive(PartialEq)]
+struct RoutingExtension<'a> {
+    routing: Option<&'a RoutingPolicy>,
+    consumer_keys: &'a [(ConsumerId, Secret)],
+}
+
+impl<'a> RoutingExtension<'a> {
+    fn of(definition: &'a ChannelDefinition) -> Self {
+        Self {
+            routing: definition.routing.as_ref(),
+            consumer_keys: &definition.secrets.consumer_keys,
+        }
+    }
 }
 
 /// Everything a source extension consists of: the sources, the partition

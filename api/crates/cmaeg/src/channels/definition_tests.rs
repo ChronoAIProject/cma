@@ -6,12 +6,17 @@ use cmaeg_core::{
     ValidationError,
 };
 
-#[path = "../../../cmaeg-core/tests/routing_policy/fixture.rs"]
-mod routing_fixture;
+use crate::channels::routing_fixture;
 use routing_fixture::{agent_key, definition, digest_of, routed, NYX, REVIEWER};
 
+/// Validate as a writer behind the multi-consumer flag would; with the flag
+/// off the write gate refuses every routed write before these checks run.
 fn check(definition: &ChannelDefinition) -> Result<(), ValidationError> {
-    validate_definition(None, definition, WriteFlags::default())
+    let flags = WriteFlags {
+        multi_consumer: true,
+        ..WriteFlags::default()
+    };
+    validate_definition(None, definition, flags)
 }
 
 #[test]

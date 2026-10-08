@@ -171,3 +171,121 @@ fn a_stored_custom_key_is_carried_through_or_removed() {
         ))
     );
 }
+
+use crate::channels::routing_fixture;
+
+/// What a writer behind the multi-consumer flag would have stored.
+fn routed() -> ChannelDefinition {
+    routing_fixture::definition(routing_fixture::routed())
+}
+
+/// The routed channel with neither its policy nor its consumer keys.
+fn unrouted() -> ChannelDefinition {
+    let mut definition = routed();
+    definition.routing = None;
+    definition.secrets.consumer_keys.clear();
+    definition
+}
+
+fn routing_disabled(pointer: &str) -> Result<(), ValidationError> {
+    Err(ValidationError::new(pointer, "multi_consumer_disabled"))
+}
+
+#[test]
+fn introducing_routing_is_refused_until_the_flag_is_on() {
+    let next = routed();
+    next.validate_legacy().unwrap();
+    assert_eq!(
+        check(None, &next, WriteFlags::default()),
+        routing_disabled("/routing")
+    );
+    assert_eq!(
+        check(Some(&unrouted()), &next, WriteFlags::default()),
+        routing_disabled("/routing")
+    );
+    // The sources flag says nothing about routing.
+    let sources_only = WriteFlags {
+        dynamic_sources: true,
+        ..WriteFlags::default()
+    };
+    assert_eq!(
+        check(Some(&unrouted()), &next, sources_only),
+        routing_disabled("/routing")
+    );
+    let flags = WriteFlags {
+        multi_consumer: true,
+        ..WriteFlags::default()
+    };
+    check(None, &next, flags).unwrap();
+    check(Some(&unrouted()), &next, flags).unwrap();
+}
+
+#[test]
+fn consumer_keys_alone_are_a_routing_extension() {
+    let mut next = unrouted();
+    next.secrets.consumer_keys = routed().secrets.consumer_keys;
+    assert_eq!(
+        check(Some(&unrouted()), &next, WriteFlags::default()),
+        routing_disabled("/secrets/consumer_keys")
+    );
+}
+
+#[test]
+fn an_unchanged_routing_policy_is_carried_through_with_the_flag_off() {
+    let current = routed();
+    let mut next = routed();
+    next.name = "renamed".into();
+    next.reply.ack_after_ms = 0;
+    check(Some(&current), &next, WriteFlags::default()).unwrap();
+}
+
+#[test]
+fn modifying_a_carried_routing_policy_is_refused() {
+    let current = routed();
+    let mut retargeted = routed();
+    retargeted.routing.as_mut().unwrap().max_targets = 2;
+    let mut relabelled = routed();
+    relabelled.routing.as_mut().unwrap().consumers[0].label = Some("Reviewer".into());
+    let mut rekeyed = routed();
+    rekeyed.secrets.consumer_keys[0].1 = Secret::new("nyx_fixture_rotated");
+    for next in [retargeted, relabelled, rekeyed] {
+        assert_eq!(
+            check(Some(&current), &next, WriteFlags::default()),
+            routing_disabled("/routing")
+        );
+    }
+    // Dropping the policy but keeping its keys modifies the extension too.
+    let mut keys_only = routed();
+    keys_only.routing = None;
+    assert_eq!(
+        check(Some(&current), &keys_only, WriteFlags::default()),
+        routing_disabled("/secrets/consumer_keys")
+    );
+}
+
+#[test]
+fn removing_routing_and_its_keys_is_always_allowed() {
+    check(Some(&routed()), &unrouted(), WriteFlags::default()).unwrap();
+}
+
+#[test]
+fn a_source_refusal_wins_over_a_routing_refusal() {
+    let mut next = routed();
+    next.sources
+        .push(serde_json::from_value(relay("feishu", "route-feishu")).unwrap());
+    assert_eq!(
+        check(Some(&unrouted()), &next, WriteFlags::default()),
+        Err(duplicated(3))
+    );
+}
+
+#[test]
+fn both_extensions_carry_through_together() {
+    let mut current = routed();
+    current
+        .sources
+        .push(serde_json::from_value(relay("feishu", "route-feishu")).unwrap());
+    let mut next = current.clone();
+    next.name = "renamed".into();
+    check(Some(&current), &next, WriteFlags::default()).unwrap();
+}

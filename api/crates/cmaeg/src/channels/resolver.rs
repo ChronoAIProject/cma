@@ -9,7 +9,7 @@ use crate::{
 };
 use cmaeg_core::{
     channel::ChannelDefinition,
-    ids::ChannelId,
+    ids::{ChannelId, ConsumerId},
     problem::{Problem, ProblemCode},
     seal::{open_blob, ChannelPointer, MasterKeyRing, OpenError},
 };
@@ -30,7 +30,11 @@ pub struct ResolvedChannel {
     pub id: ChannelId,
     pub pointer: ChannelPointer,
     pub definition: ChannelDefinition,
+    /// The default consumer's decoded key hash.
     pub agent_key_hash: [u8; 32],
+    /// Every consumer's decoded key hash, `default` first, then the
+    /// additional consumers in stored order; decoded once at restore.
+    pub consumer_keys: Vec<(ConsumerId, [u8; 32])>,
     pub loaded_at: Instant,
     pub version: u64,
 }
@@ -344,13 +348,17 @@ impl ChannelResolver {
         {
             return Err(ResolveError::Unavailable);
         }
-        let mut agent_key_hash = [0; 32];
-        for (index, byte) in agent_key_hash.iter_mut().enumerate() {
-            *byte = u8::from_str_radix(
-                &definition.secrets.agent_key_hash[7 + index * 2..9 + index * 2],
-                16,
-            )
-            .map_err(|_| ResolveError::InvalidDefinition)?;
+        let agent_key_hash = decode_key_hash(&definition.secrets.agent_key_hash)?;
+        let mut consumer_keys = vec![(ConsumerId::default_consumer(), agent_key_hash)];
+        for consumer in definition
+            .routing
+            .iter()
+            .flat_map(|routing| &routing.consumers)
+        {
+            consumer_keys.push((
+                consumer.id.clone(),
+                decode_key_hash(&consumer.agent_key_hash)?,
+            ));
         }
         definition.version = record.version;
         Ok(Arc::new(ResolvedChannel {
@@ -358,10 +366,23 @@ impl ChannelResolver {
             pointer,
             definition,
             agent_key_hash,
+            consumer_keys,
             loaded_at: Instant::now(),
             version: record.version,
         }))
     }
+}
+
+/// The bytes of a validated `sha256:<64 lowercase hex>` key hash.
+fn decode_key_hash(hash: &str) -> Result<[u8; 32], ResolveError> {
+    let mut bytes = [0; 32];
+    for (index, byte) in bytes.iter_mut().enumerate() {
+        *byte = hash
+            .get(7 + index * 2..9 + index * 2)
+            .and_then(|digits| u8::from_str_radix(digits, 16).ok())
+            .ok_or(ResolveError::InvalidDefinition)?;
+    }
+    Ok(bytes)
 }
 
 /// The restore checks of additional consumers that mirror the default's:

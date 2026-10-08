@@ -94,6 +94,7 @@ fn launch(app: &App, partition: Value) -> Result<String, &'static str> {
         },
         definition,
         agent_key_hash: [0; 32],
+        consumer_keys: Vec::new(),
         loaded_at: Instant::now(),
         version: 1,
     });
