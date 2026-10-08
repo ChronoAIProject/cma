@@ -4,7 +4,9 @@ use super::definition::{
     validate_update_request, ChannelCreateRequest, ChannelUpdateRequest, SourceRequest,
 };
 pub use super::lifecycle::{delete, rekey};
-pub use super::state::{CreatedChannel, LoadedChannel, ManagementError, ManagementState};
+pub use super::state::{
+    CreatedChannel, InvalidationPath, LoadedChannel, ManagementError, ManagementState,
+};
 pub use super::test_turn::{test_turn, TestResult};
 use super::write_gate::WriteFlags;
 use crate::{
@@ -216,7 +218,11 @@ pub async fn update(
             "cannot change an existing channel provider",
         )));
     }
-    state.resolver.invalidate(channel_id.as_str());
+    state.invalidate_record(
+        &pointer.record_id,
+        Some(channel_id.as_str()),
+        InvalidationPath::Rest,
+    );
     // The write gate runs inside the build, before the provider sees anything.
     let mut definition = build_update(&request, &current.definition, WriteFlags::default())
         .map_err(ManagementError::Invalid)?;
@@ -249,7 +255,11 @@ pub async fn update(
         )
         .await
         .map_err(ManagementError::Record)?;
-    state.resolver.invalidate(channel_id.as_str());
+    state.invalidate_record(
+        &pointer.record_id,
+        Some(channel_id.as_str()),
+        InvalidationPath::Rest,
+    );
     Ok(LoadedChannel {
         channel_id: channel_id.clone(),
         pointer: current.pointer,

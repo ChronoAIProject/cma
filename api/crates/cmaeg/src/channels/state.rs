@@ -12,6 +12,28 @@ use cmaeg_core::{
 };
 use std::{collections::BTreeMap, fmt, sync::Arc};
 use tokio::sync::Mutex;
+
+/// Bounded management classifications; no caller-controlled metric labels.
+#[derive(Clone, Copy)]
+pub enum InvalidationPath {
+    Rest,
+    Recovery,
+    Rekey,
+    Delete,
+    Console,
+}
+impl InvalidationPath {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Rest => "rest",
+            Self::Recovery => "recovery",
+            Self::Rekey => "rekey",
+            Self::Delete => "delete",
+            Self::Console => "console",
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct ManagementState {
     pub resolver: super::resolver::ChannelResolver,
@@ -40,6 +62,19 @@ pub(crate) struct CachedResponse {
 }
 
 impl ManagementState {
+    /// Count mutation invalidations even when the record has no cached aliases.
+    pub fn invalidate_record(
+        &self,
+        record_id: &RecordId,
+        also_id: Option<&str>,
+        path: InvalidationPath,
+    ) {
+        self.resolver.invalidate_record(record_id, also_id);
+        metrics::counter!(crate::telemetry::names::CHANNEL_INVALIDATIONS,
+            crate::telemetry::names::PATH => path.label())
+        .increment(1);
+    }
+
     pub fn new(
         providers: Arc<ProviderClient>,
         records: Arc<RecordClient>,
