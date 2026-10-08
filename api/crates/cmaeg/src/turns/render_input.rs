@@ -29,7 +29,7 @@ pub fn render(
                 cmaeg_core::chat::strip_address(
                     text,
                     &activity.source,
-                    first_bot_username(definition),
+                    addressed_username(definition, activity),
                 )
             } else {
                 text.clone()
@@ -121,8 +121,22 @@ fn with_block(text: String, block: Option<String>) -> String {
         Some(block) => format!("{}\n\n{block}", text.trim_end()),
     }
 }
-/// The bot username a chat address names: the first relay or Telegram source
-/// that declares one, as the renderer has always chosen it.
+/// The bot username a chat address names. On a definition with extended
+/// sources, that is the bot of the source the activity arrived on; a legacy
+/// definition keeps the renderer's original choice, so its provider input
+/// stays byte-identical (invariant I5).
+fn addressed_username<'a>(
+    definition: &'a ChannelDefinition,
+    activity: &Activity,
+) -> Option<&'a str> {
+    if definition.has_extended_sources() {
+        definition.bot_username_of(&activity.source)
+    } else {
+        first_bot_username(definition)
+    }
+}
+/// The first relay or Telegram source that declares a bot username, as the
+/// renderer has always chosen it for legacy definitions.
 fn first_bot_username(definition: &ChannelDefinition) -> Option<&str> {
     definition.sources.iter().find_map(|source| match source {
         Source::NyxidRelay { bot_username, .. } | Source::Telegram { bot_username, .. } => {

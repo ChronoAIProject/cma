@@ -15,6 +15,7 @@ use crate::{
 mod consumer;
 mod custom_attachments;
 mod extensions;
+mod lookup;
 mod partition;
 mod platform;
 mod secrets;
