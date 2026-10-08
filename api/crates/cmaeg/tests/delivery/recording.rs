@@ -1,11 +1,13 @@
-//! The legacy delivery recording: today's `DeliveryEngine` driven through
-//! in-process transports, with every outbound call, its token class, each
-//! Sync frame, each receipt and the paused-clock offset of each, compared
-//! with `fixtures/legacy_sequences.json`.
+//! The legacy delivery recording and invariant I6's golden: the
+//! `DeliveryEngine`, entered through `ShardedScheduler` as a `DeliverySink`,
+//! driven through in-process transports, with every outbound call, its token
+//! class, each Sync frame, each receipt and the paused-clock offset of each,
+//! compared with `fixtures/legacy_sequences.json`, sequences (a)–(h).
 //!
-//! Later delivery schedulers must reproduce this recording exactly for a
-//! single consumer. Run with `UPDATE_LEGACY_SEQUENCES=1` to rewrite the
-//! fixture after an intended change, and review its diff.
+//! Unrouted delivery must reproduce this recording byte for byte at every
+//! commit, whatever per-consumer state the engine grows, and no message in it
+//! may carry a consumer label. Run with `UPDATE_LEGACY_SEQUENCES=1` to rewrite
+//! the fixture only after an intended change, and review its diff.
 use super::{
     fake_http::{Answer, FakeHttp},
     recording_fixtures::{
@@ -227,6 +229,27 @@ fn legacy_delivery_matches_the_recorded_sequences() {
         assert_eq!(&recorded[name], expected, "sequence {name} changed");
     }
     assert_eq!(recorded, golden);
+    assert_unlabeled(&recorded);
+}
+
+/// No chat message of an unrouted channel carries a `[<label>] ` prefix. A
+/// label opens with a literal `[`, which message text can only produce
+/// escaped, as `\[`.
+fn assert_unlabeled(recorded: &Value) {
+    let mut texts = 0;
+    for (name, sequence) in recorded.as_object().unwrap() {
+        for call in sequence["calls"].as_array().unwrap() {
+            let text = match call["transport"].as_str() {
+                Some("relay") => &call["body"]["reply"]["text"],
+                Some("telegram") => &call["body"]["text"],
+                _ => continue,
+            };
+            let text = text.as_str().unwrap();
+            assert!(!text.starts_with('['), "{name} labeled a message: {text}");
+            texts += 1;
+        }
+    }
+    assert!(texts > 0, "the recording sent no chat message");
 }
 
 #[test]

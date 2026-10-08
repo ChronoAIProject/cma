@@ -1,6 +1,8 @@
 //! A recorder around the real `DeliveryEngine`.
 //!
-//! Relay and Bot API calls go to one in-process `FakeHttp`, webhook calls to
+//! Commands enter through a `ShardedScheduler` held as a `DeliverySink`, the
+//! value production hands to turn runners and tools, so the recording covers
+//! the engine's real entry point. Relay and Bot API calls go to one in-process `FakeHttp`, webhook calls to
 //! a recording `WebhookTransport`, and Sync frames are read from a registered
 //! waiter, so under tokio's paused clock no socket is opened and every offset
 //! is exact. Each call, receipt and frame is normalized: values that differ on
@@ -18,6 +20,7 @@ use cmaeg::{
         engine::DeliveryEngine,
         intents::{DeliveryCommand, IntentReceipt, ReplySource},
         relay_client::RelayClient,
+        router::{DeliverySink, ShardedScheduler},
         sync::SyncRegistry,
         webhook_client::{TransportError, WebhookClient, WebhookTransport},
     },
@@ -98,7 +101,7 @@ pub struct Recording {
     pub http: Arc<FakeHttp>,
     hooks: Arc<Hooks>,
     waiters: Arc<SyncRegistry>,
-    commands: mpsc::Sender<DeliveryCommand>,
+    sink: Arc<dyn DeliverySink>,
     engine: DeliveryEngine,
     started: Instant,
     /// Whether offsets are recorded; only paused-clock offsets are exact.
@@ -150,7 +153,7 @@ impl Recording {
             http,
             hooks,
             waiters,
-            commands,
+            sink: Arc::new(ShardedScheduler::new(commands)),
             engine,
             started: Instant::now(),
             timed,
@@ -167,13 +170,15 @@ impl Recording {
         tokio::time::sleep_until(self.started + Duration::from_millis(ms)).await;
     }
     pub async fn outcome(&self, turn: &Arc<LaunchRequest>, outcome: TurnOutcome) {
-        self.commands
-            .send(DeliveryCommand::StreamOutcome {
-                turn: turn.clone(),
-                outcome,
-            })
-            .await
-            .unwrap();
+        self.submit(DeliveryCommand::StreamOutcome {
+            turn: turn.clone(),
+            outcome,
+        })
+        .await;
+    }
+    /// Hand `command` to the engine as a turn runner or tool does.
+    pub async fn submit(&self, command: DeliveryCommand) {
+        self.sink.submit(command).await.unwrap();
     }
     /// Send `message` as a reply to `event` and record its receipt.
     pub async fn reply(
@@ -184,17 +189,15 @@ impl Recording {
         source: ReplySource,
     ) -> IntentReceipt {
         let (receipt, received) = oneshot::channel();
-        self.commands
-            .send(DeliveryCommand::Reply {
-                trace: tracing::Span::none(),
-                channel: channel.clone(),
-                event: event.clone(),
-                message: serde_json::from_value(message).unwrap(),
-                source,
-                receipt,
-            })
-            .await
-            .unwrap();
+        self.submit(DeliveryCommand::Reply {
+            trace: tracing::Span::none(),
+            channel: channel.clone(),
+            event: event.clone(),
+            message: serde_json::from_value(message).unwrap(),
+            source,
+            receipt,
+        })
+        .await;
         self.receipt("reply", received.await.unwrap())
     }
     /// Replace the message `reference` names and record the receipt.
@@ -205,16 +208,14 @@ impl Recording {
         message: Value,
     ) -> IntentReceipt {
         let (receipt, received) = oneshot::channel();
-        self.commands
-            .send(DeliveryCommand::Update {
-                trace: tracing::Span::none(),
-                channel: channel.clone(),
-                message_ref: reference,
-                message: serde_json::from_value(message).unwrap(),
-                receipt,
-            })
-            .await
-            .unwrap();
+        self.submit(DeliveryCommand::Update {
+            trace: tracing::Span::none(),
+            channel: channel.clone(),
+            message_ref: reference,
+            message: serde_json::from_value(message).unwrap(),
+            receipt,
+        })
+        .await;
         self.receipt("update", received.await.unwrap())
     }
     fn receipt(&mut self, command: &str, receipt: IntentReceipt) -> IntentReceipt {
