@@ -1,26 +1,34 @@
+//! One delivery worker: it runs its share of events' commands in arrival
+//! order and drives their timers.
 use super::{
-    event::{key, now, EventKey, EventState},
+    event::{key, now},
     gate::Ungated,
+    group::{consumer_of, Groups},
     intents::{DeliveryCommand, DeliveryOutcome, ReplySource},
     send::{unsupported, SendContext, Sender},
-    step::{finish, outcome_event, reply, timer_step},
+    step::{outcome_event, reply, timer_step},
 };
 use crate::{
+    channels::resolver::ResolvedChannel,
+    ingress::launch::LaunchRequest,
     turns::{outcomes::TurnOutcome, TurnTracker},
     DeliveryConfig,
 };
-use std::{collections::HashMap, sync::Arc, time::Duration};
-use tokio::{sync::mpsc, time::Instant};
+use cmaeg_core::{message::OutboundMessage, seal::EventRefPayload};
+use std::{sync::Arc, time::Duration};
+use tokio::{
+    sync::{mpsc, oneshot},
+    time::Instant,
+};
 use tracing::Instrument;
-const MAX_EVENTS: usize = 8192;
 pub(super) async fn run(
     mut commands: mpsc::Receiver<DeliveryCommand>,
     sender: Arc<Sender>,
     config: DeliveryConfig,
     tracker: Arc<TurnTracker>,
 ) {
-    // Each event belongs to exactly one worker, so state requires no cross-worker lock.
-    let mut events = HashMap::<EventKey, EventState>::new();
+    // Each event belongs to exactly one worker, so its group requires no cross-worker lock.
+    let mut groups = Groups::default();
     let mut tick = tokio::time::interval(Duration::from_millis(50));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
@@ -29,18 +37,18 @@ pub(super) async fn run(
             command = commands.recv() => {
                 let Some(command) = command else { break; };
                 let trace = command.trace();
-                handle(command, &mut events, &sender, &config, &tracker).instrument(trace).await;
+                handle(command, &mut groups, &sender, &config, &tracker).instrument(trace).await;
             }
             _ = tick.tick(), if !commands.is_closed() => {
-                expire(&mut events);
-                timers(&mut events, &sender, &config).await;
+                groups.expire();
+                timers(&mut groups, &sender, &config).await;
             }
         }
     }
 }
 async fn handle(
     command: DeliveryCommand,
-    events: &mut HashMap<EventKey, EventState>,
+    groups: &mut Groups,
     sender: &Sender,
     config: &DeliveryConfig,
     tracker: &TurnTracker,
@@ -53,7 +61,7 @@ async fn handle(
             message,
             receipt,
         } => {
-            // An update has no event state; its effects touch none either.
+            // An update has no group; its effects touch none either.
             let context = SendContext {
                 trace: &trace,
                 channel: &channel,
@@ -79,109 +87,137 @@ async fn handle(
             receipt,
             ..
         } => {
-            if receipt.is_closed() {
-                return;
-            }
-            let id = key(event.channel_id.as_str(), event.event_id.as_str());
-            if !reserve(events, &id) {
-                let mut result = unsupported();
-                result.delivery = DeliveryOutcome::Rejected {
-                    reason: "delivery_capacity".into(),
-                };
-                let _ = receipt.send(result);
-                return;
-            }
-            let state = events
-                .entry(id)
-                .or_insert_with(|| EventState::new(channel.clone(), event.clone()));
-            state.channel = channel;
-            state.event = event;
-            let result = reply(sender, state, &message).await;
-            if matches!(
-                result.delivery,
-                DeliveryOutcome::Confirmed { .. } | DeliveryOutcome::Unknown { .. }
-            ) {
-                state.last_output_at = Instant::now();
-                if source == ReplySource::Tool {
-                    state.tool_replied = true;
-                }
-            }
-            let _ = receipt.send(result);
+            tool_reply(
+                groups,
+                sender,
+                ToolReply {
+                    channel,
+                    event,
+                    message,
+                    source,
+                    receipt,
+                },
+            )
+            .await
         }
         DeliveryCommand::StreamOutcome { turn, outcome } => {
-            tracing::info!(outcome = outcome.kind(), "provider turn outcome");
-            // This is an already-admitted internal turn. Tool ingress separately enforces
-            // ref expiry; a long turn may still deliver with its retained channel key.
-            let Ok(opened) = cmaeg_core::seal::open::<cmaeg_core::seal::EventRefPayload>(
-                &sender.keys,
-                cmaeg_core::seal::TokenKind::EventRef,
-                turn.event_ref.as_str(),
-            ) else {
-                return;
-            };
-            if opened.payload.validate().is_err()
-                || opened.payload.channel_id != turn.channel.id
-                || opened.payload.event_id != turn.activity.event_id
-                || opened.payload.record_id != turn.channel.pointer.record_id
-            {
-                return;
-            }
-            let id = key(turn.channel.id.as_str(), turn.activity.event_id.as_str());
-            if !reserve(events, &id) {
-                tracing::warn!("delivery event capacity reached");
-                return;
-            }
-            let custom = matches!(
-                turn.activity.source,
-                cmaeg_core::activity::SourceKind::Custom
-            );
-            if custom {
-                sender.custom.stream(&opened.payload, &outcome);
-            }
-            let state = events
-                .entry(id)
-                .or_insert_with(|| EventState::new(turn.channel.clone(), opened.payload));
-            state.tool_replied |= tracker.has_tool_reply(turn.event_ref.as_str(), now());
-            if state.terminal {
-                return;
-            }
-            if custom {
-                if matches!(outcome, TurnOutcome::Accepted { .. }) {
-                    state.terminal_at = None;
-                }
-                sender
-                    .custom
-                    .outcome(&state.channel, &state.event, &outcome)
-                    .await;
-                if outcome.terminal() {
-                    finish(state);
-                }
-                return;
-            }
-            outcome_event(state, outcome, sender, config).await;
+            stream_outcome(groups, sender, config, tracker, turn, outcome).await
         }
     }
 }
-fn reserve(events: &mut HashMap<EventKey, EventState>, id: &EventKey) -> bool {
-    if events.len() >= MAX_EVENTS {
-        expire(events);
+
+struct ToolReply {
+    channel: Arc<ResolvedChannel>,
+    event: EventRefPayload,
+    message: OutboundMessage,
+    source: ReplySource,
+    receipt: oneshot::Sender<super::intents::IntentReceipt>,
+}
+
+/// A reply its handler sent for one consumer of an event. It joins that
+/// consumer's entry, so its outcome suppresses only that consumer's auto-final.
+async fn tool_reply(groups: &mut Groups, sender: &Sender, command: ToolReply) {
+    let ToolReply {
+        channel,
+        event,
+        message,
+        source,
+        receipt,
+    } = command;
+    if receipt.is_closed() {
+        return;
     }
-    events.contains_key(id) || events.len() < MAX_EVENTS
+    let id = key(event.channel_id.as_str(), event.event_id.as_str());
+    if !groups.reserve(&id, &consumer_of(&event)) {
+        let mut result = unsupported();
+        result.delivery = DeliveryOutcome::Rejected {
+            reason: "delivery_capacity".into(),
+        };
+        let _ = receipt.send(result);
+        return;
+    }
+    let (group, at) = groups.join(id, &channel, &event);
+    group.set_channel(channel);
+    group.consumers[at].event = event;
+    let result = reply(sender, group, at, &message).await;
+    if matches!(
+        result.delivery,
+        DeliveryOutcome::Confirmed { .. } | DeliveryOutcome::Unknown { .. }
+    ) {
+        let delivery = &mut group.consumers[at];
+        delivery.last_output_at = Instant::now();
+        if source == ReplySource::Tool {
+            delivery.tool_replied = true;
+        }
+    }
+    let _ = receipt.send(result);
 }
-fn expire(events: &mut HashMap<EventKey, EventState>) {
-    events.retain(|_, state| {
-        state
-            .terminal_at
-            .is_none_or(|at| at.elapsed() < Duration::from_secs(30))
-    });
-}
-async fn timers(
-    events: &mut HashMap<EventKey, EventState>,
+
+/// One provider outcome of one consumer's turn. An outcome after that
+/// consumer is terminal is ignored for it alone; the event's other consumers
+/// carry on.
+async fn stream_outcome(
+    groups: &mut Groups,
     sender: &Sender,
     config: &DeliveryConfig,
+    tracker: &TurnTracker,
+    turn: Arc<LaunchRequest>,
+    outcome: TurnOutcome,
 ) {
-    for state in events.values_mut() {
-        if timer_step(state, sender, config).await {
+    tracing::info!(outcome = outcome.kind(), "provider turn outcome");
+    // This is an already-admitted internal turn. Tool ingress separately enforces
+    // ref expiry; a long turn may still deliver with its retained channel key.
+    let Ok(opened) = cmaeg_core::seal::open::<EventRefPayload>(
+        &sender.keys,
+        cmaeg_core::seal::TokenKind::EventRef,
+        turn.event_ref.as_str(),
+    ) else {
+        return;
+    };
+    if opened.payload.validate().is_err()
+        || opened.payload.channel_id != turn.channel.id
+        || opened.payload.event_id != turn.activity.event_id
+        || opened.payload.record_id != turn.channel.pointer.record_id
+    {
+        return;
+    }
+    let id = key(turn.channel.id.as_str(), turn.activity.event_id.as_str());
+    if !groups.reserve(&id, &consumer_of(&opened.payload)) {
+        tracing::warn!("delivery event capacity reached");
+        return;
+    }
+    let custom = matches!(
+        turn.activity.source,
+        cmaeg_core::activity::SourceKind::Custom
+    );
+    if custom {
+        sender.custom.stream(&opened.payload, &outcome);
+    }
+    let (group, at) = groups.join(id, &turn.channel, &opened.payload);
+    let delivery = &mut group.consumers[at];
+    delivery.tool_replied |= tracker.has_tool_reply(turn.event_ref.as_str(), now());
+    if delivery.terminal {
+        return;
+    }
+    if custom {
+        if matches!(outcome, TurnOutcome::Accepted { .. }) {
+            group.terminal_at = None;
+        }
+        sender
+            .custom
+            .outcome(&group.channel, &group.consumers[at].event, &outcome)
+            .await;
+        if outcome.terminal() {
+            group.finish(at);
+        }
+        return;
+    }
+    outcome_event(group, at, outcome, sender, config).await;
+}
+
+async fn timers(groups: &mut Groups, sender: &Sender, config: &DeliveryConfig) {
+    for group in groups.values_mut() {
+        if timer_step(group, sender, config).await {
             return;
         }
     }

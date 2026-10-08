@@ -12,6 +12,10 @@ pub mod fake_http;
 pub mod fake_nyxid_reply;
 #[path = "fake_provider.rs"]
 pub mod fake_provider;
+#[path = "delivery/group_fixtures.rs"]
+pub mod group_fixtures;
+#[path = "delivery/groups.rs"]
+mod groups;
 #[path = "delivery/integration.rs"]
 mod integration;
 #[path = "delivery/multi_relay_cards.rs"]

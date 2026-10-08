@@ -1,7 +1,7 @@
-//! Per-event delivery steps, shared by every scheduler that delivers an event.
+//! Per-event delivery steps over an event's group and one of its consumers.
 use super::{
-    event::EventState,
     gate::Ungated,
+    group::EventGroup,
     intents::{DeliveryOutcome, IntentReceipt},
     send::{SendContext, Sender},
 };
@@ -9,124 +9,139 @@ use crate::{turns::outcomes::TurnOutcome, DeliveryConfig};
 use cmaeg_core::message::OutboundMessage;
 use std::time::Duration;
 use tokio::time::Instant;
+
+/// Apply consumer `at`'s turn outcome: the event's ack is scheduled once, and
+/// answers, auto-final and the failure text are that consumer's alone.
 pub(super) async fn outcome_event(
-    state: &mut EventState,
+    group: &mut EventGroup,
+    at: usize,
     outcome: TurnOutcome,
     sender: &Sender,
     config: &DeliveryConfig,
 ) {
     match outcome {
         TurnOutcome::Accepted { .. } => {
-            state.terminal_at = None;
-            if state.ack_due.is_none()
-                && !state.first_send_done
-                && state.channel.definition.reply.ack_after_ms > 0
+            group.terminal_at = None;
+            // Once per event: a second consumer's acceptance never schedules
+            // another ack, and a hand-off has no human waiting for one.
+            if !group.handoff
+                && !group.ack_sent
+                && group.ack_due.is_none()
+                && !group.first_send_done
+                && group.channel.definition.reply.ack_after_ms > 0
             {
-                state.ack_due = Some(
+                group.ack_due = Some(
                     Instant::now()
-                        + Duration::from_millis(state.channel.definition.reply.ack_after_ms.into()),
+                        + Duration::from_millis(group.channel.definition.reply.ack_after_ms.into()),
                 );
             }
         }
         TurnOutcome::TextDelta { .. } => {
-            state.last_output_at = Instant::now();
+            group.consumers[at].last_output_at = Instant::now();
         }
         TurnOutcome::MessageCommitted { text } => {
-            state.last_output_at = Instant::now();
-            if state.channel.definition.reply.auto_final && !state.tool_replied {
-                state.answer_attempted = true;
-                send_text(sender, state, text).await;
+            let delivery = &mut group.consumers[at];
+            delivery.last_output_at = Instant::now();
+            if delivery.policy.auto_final && !delivery.tool_replied {
+                delivery.answer_attempted = true;
+                send_text(sender, group, at, text).await;
             }
         }
         TurnOutcome::Completed { final_text } => {
-            if state.channel.definition.reply.auto_final
-                && !state.answer_attempted
-                && !state.tool_replied
-            {
+            let delivery = &mut group.consumers[at];
+            if delivery.policy.auto_final && !delivery.answer_attempted && !delivery.tool_replied {
                 if let Some(text) = final_text {
-                    state.answer_attempted = true;
-                    send_text(sender, state, text).await;
+                    delivery.answer_attempted = true;
+                    send_text(sender, group, at, text).await;
                 }
             }
-            finish(state);
+            group.finish(at);
         }
         TurnOutcome::Failed { .. } | TurnOutcome::Incomplete { .. } => {
-            if !state.tool_replied {
-                send_text(sender, state, config.failure_text.clone()).await;
+            if !group.consumers[at].tool_replied {
+                send_text(sender, group, at, config.failure_text.clone()).await;
             }
-            finish(state);
+            group.finish(at);
         }
         TurnOutcome::ToolStarted { .. } | TurnOutcome::ToolFinished { .. } => {}
     }
 }
-pub(super) fn finish(state: &mut EventState) {
-    state.terminal = true;
-    state.terminal_at = Some(Instant::now());
-    state.ack_due = None;
-}
+
 /// One event's timers: its due ack, or its next heartbeat. Returns `true`
 /// when it sent, which ends the current tick's pass over every event.
 pub(super) async fn timer_step(
-    state: &mut EventState,
+    group: &mut EventGroup,
     sender: &Sender,
     config: &DeliveryConfig,
 ) -> bool {
-    if state.terminal_at.is_some() {
+    if group.terminal_at.is_some() {
         return false;
     }
-    if state.ack_due.is_some_and(|at| at <= Instant::now()) {
-        state.ack_due = None;
-        if !state.first_send_done {
-            state.ack_sent = send_text(sender, state, config.ack_text.clone()).await;
-            state.last_progress_at = Instant::now();
+    if group.ack_due.is_some_and(|at| at <= Instant::now()) {
+        group.ack_due = None;
+        if !group.first_send_done {
+            group.ack_sent = send_progress(sender, group, config.ack_text.clone()).await;
+            group.last_progress_at = Instant::now();
             return true;
         }
     }
-    if state.ack_sent
-        && !state.tool_replied
-        && !state.answer_attempted
-        && state.heartbeats < 5
-        && state.last_output_at.max(state.last_progress_at).elapsed() >= config.heartbeat
-    {
-        state.heartbeats += 1;
-        send_text(sender, state, "Still working…".into()).await;
-        state.last_progress_at = Instant::now();
-        return true;
+    // Heartbeats follow the consumers still owed an answer, so one quiet
+    // consumer keeps them going after another has answered.
+    let quiet_since = group
+        .consumers
+        .iter()
+        .filter(|delivery| delivery.pending())
+        .map(|delivery| delivery.last_output_at)
+        .max();
+    if let Some(last_output_at) = quiet_since {
+        if group.ack_sent
+            && group.heartbeats < 5
+            && last_output_at.max(group.last_progress_at).elapsed() >= config.heartbeat
+        {
+            group.heartbeats += 1;
+            send_progress(sender, group, "Still working…".into()).await;
+            group.last_progress_at = Instant::now();
+            return true;
+        }
     }
     false
 }
-async fn send_text(sender: &Sender, state: &mut EventState, text: String) -> bool {
-    send_message(
-        sender,
-        state,
-        OutboundMessage {
-            text: Some(text),
-            blocks: vec![],
-            reply_to: None,
-        },
-    )
-    .await
+
+/// The event's progress (its ack or a heartbeat), sent once per event to the
+/// origin every consumer shares.
+async fn send_progress(sender: &Sender, group: &mut EventGroup, text: String) -> bool {
+    send_text(sender, group, 0, text).await
 }
-async fn send_message(sender: &Sender, state: &mut EventState, message: OutboundMessage) -> bool {
-    let result = reply(sender, state, &message).await;
+
+async fn send_text(sender: &Sender, group: &mut EventGroup, at: usize, text: String) -> bool {
+    let message = OutboundMessage {
+        text: Some(text),
+        blocks: vec![],
+        reply_to: None,
+    };
+    let result = reply(sender, group, at, &message).await;
     matches!(result.delivery, DeliveryOutcome::Confirmed { .. })
 }
-/// Send `message` for `state`'s event through the legacy lane's `Ungated`
-/// gate and apply the send's effects as soon as it returns. The serial
-/// worker reads no event state while a send awaits, so reads and writes keep
-/// the order they had when the send mutated the state.
+
+/// Send `message` for consumer `at` of `group`'s event through the
+/// `Ungated` gate and apply the send's effects as soon as it returns. The
+/// serial worker reads no group state while a send awaits, so reads and
+/// writes keep the order they had when the send mutated the state.
 pub(super) async fn reply(
     sender: &Sender,
-    state: &mut EventState,
+    group: &mut EventGroup,
+    at: usize,
     message: &OutboundMessage,
 ) -> IntentReceipt {
     let context = SendContext {
-        trace: &state.trace,
-        channel: &state.channel,
-        first_send_done: state.first_send_done,
+        trace: &group.trace,
+        channel: &group.channel,
+        first_send_done: group.first_send_done,
         gate: &Ungated,
     };
-    let (result, effects) = sender.reply(&context, &state.event, message).await;
-    state.first_send_done |= effects.first_send_done;
+    let (result, effects) = sender
+        .reply(&context, &group.consumers[at].event, message)
+        .await;
+    group.first_send_done |= effects.first_send_done;
     result
 }

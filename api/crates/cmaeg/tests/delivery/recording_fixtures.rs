@@ -29,7 +29,7 @@ pub fn keys() -> Arc<MasterKeyRing> {
 }
 
 /// The fixture channel under the pinned `id`, after `edit`.
-fn channel(id: &str, edit: impl FnOnce(&mut Value)) -> Arc<ResolvedChannel> {
+pub fn channel(id: &str, edit: impl FnOnce(&mut Value)) -> Arc<ResolvedChannel> {
     let mut value: Value = serde_json::from_str(include_str!(
         "../../../cmaeg-core/tests/fixtures/channel.json"
     ))
