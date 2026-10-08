@@ -1,8 +1,8 @@
 use super::{
     event::{key, now, EventKey, EventState},
     intents::{DeliveryCommand, DeliveryOutcome, ReplySource},
-    send::{unsupported, Sender},
-    step::{finish, outcome_event, timer_step},
+    send::{unsupported, SendContext, Sender},
+    step::{finish, outcome_event, reply, timer_step},
 };
 use crate::{
     turns::{outcomes::TurnOutcome, TurnTracker},
@@ -46,13 +46,20 @@ async fn handle(
 ) {
     match command {
         DeliveryCommand::Update {
+            trace,
             channel,
             message_ref,
             message,
             receipt,
-            ..
         } => {
-            let _ = receipt.send(sender.update(&channel, &message_ref, &message).await);
+            // An update has no event state; its effects touch none either.
+            let context = SendContext {
+                trace: &trace,
+                channel: &channel,
+                first_send_done: false,
+            };
+            let (result, _) = sender.update(&context, &message_ref, &message).await;
+            let _ = receipt.send(result);
         }
         DeliveryCommand::Typing {
             channel,
@@ -87,7 +94,7 @@ async fn handle(
                 .or_insert_with(|| EventState::new(channel.clone(), event.clone()));
             state.channel = channel;
             state.event = event;
-            let result = sender.reply(state, &message).await;
+            let result = reply(sender, state, &message).await;
             if matches!(
                 result.delivery,
                 DeliveryOutcome::Confirmed { .. } | DeliveryOutcome::Unknown { .. }

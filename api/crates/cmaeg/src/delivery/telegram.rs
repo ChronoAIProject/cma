@@ -1,33 +1,36 @@
 //! Native chat delivery using only the channel's encrypted platform credential.
 use super::{
-    event::EventState,
     intents::{DeliveryOutcome, IntentReceipt, TypingOutcome, TypingReceipt},
     render::{RelayText, Renderer},
-    send::{unsupported, Sender},
+    send::{unsupported, SendContext, SendEffects, Sender},
 };
 use crate::{channels::resolver::ResolvedChannel, telegram::Error, tools::Capabilities};
 use cmaeg_core::{
     channel::{Secret, Source},
     ids::MessageRef,
     message::OutboundMessage,
-    seal::{MessageRefPayload, ReplyAddress},
+    seal::{EventRefPayload, MessageRefPayload, ReplyAddress},
 };
 use serde_json::json;
 
 impl Sender {
     pub(super) async fn native_reply(
         &self,
-        state: &mut EventState,
+        ctx: &SendContext<'_>,
+        event: &EventRefPayload,
         message: &OutboundMessage,
-    ) -> IntentReceipt {
+    ) -> (IntentReceipt, SendEffects) {
+        // A native send never marks the event's first send; writing it would
+        // change when the relay ack is due.
+        let effects = SendEffects::default();
         let ReplyAddress::Telegram {
             bot_id,
             chat_id,
             thread_id,
             ..
-        } = &state.event.reply
+        } = &event.reply
         else {
-            return unsupported();
+            return (unsupported(), effects);
         };
         let (parts, rendering) = RelayText.render(message, &Capabilities::native_telegram());
         let mut receipt = IntentReceipt {
@@ -37,11 +40,11 @@ impl Sender {
                 reason: "empty_message".into(),
             },
         };
-        let Some(token) = token(&state.channel, bot_id) else {
+        let Some(token) = token(ctx.channel, bot_id) else {
             receipt.delivery = DeliveryOutcome::Rejected {
                 reason: "native_destination_revoked".into(),
             };
-            return receipt;
+            return (receipt, effects);
         };
         let controls = crate::interactions::has_controls(message);
         let mut prepared = if controls {
@@ -49,18 +52,18 @@ impl Sender {
                 receipt.delivery = DeliveryOutcome::Rejected {
                     reason: "interactive_message_must_fit_one_part".into(),
                 };
-                return receipt;
+                return (receipt, effects);
             }
             let Some(store) = &self.relay.interactions else {
-                return unsupported();
+                return (unsupported(), effects);
             };
-            match store.prepare(&state.channel, &state.event, message).await {
+            match store.prepare(ctx.channel, event, message).await {
                 Ok(prepared) => Some(prepared),
                 Err(_) => {
                     receipt.delivery = DeliveryOutcome::Rejected {
                         reason: "interaction_state_unavailable".into(),
                     };
-                    return receipt;
+                    return (receipt, effects);
                 }
             }
         } else {
@@ -127,8 +130,8 @@ impl Sender {
                     } else if receipt.message_ref.is_none() {
                         receipt.message_ref = MessageRef::seal(
                             &MessageRefPayload {
-                                channel_id: state.event.channel_id.clone(),
-                                event_id: state.event.event_id.clone(),
+                                channel_id: event.channel_id.clone(),
+                                event_id: event.event_id.clone(),
                                 platform_message_id: platform_id,
                                 route_id: route.clone(),
                                 interaction_record_id: None,
@@ -149,14 +152,16 @@ impl Sender {
                 reason: "partial_delivery".into(),
             };
         }
-        receipt
+        (receipt, effects)
     }
     pub(super) async fn native_update(
         &self,
-        channel: &ResolvedChannel,
+        ctx: &SendContext<'_>,
         reference: &MessageRefPayload,
         message: &OutboundMessage,
-    ) -> IntentReceipt {
+    ) -> (IntentReceipt, SendEffects) {
+        let effects = SendEffects::default();
+        let channel = ctx.channel;
         let Some((bot_id, chat_id)) =
             channel
                 .definition
@@ -170,47 +175,53 @@ impl Sender {
                     _ => None,
                 })
         else {
-            return unsupported();
+            return (unsupported(), effects);
         };
         let Some(token) = token(channel, bot_id) else {
-            return unsupported();
+            return (unsupported(), effects);
         };
         let (parts, rendering) = RelayText.render(message, &Capabilities::native_telegram());
         if parts.len() != 1 {
-            return IntentReceipt {
-                message_ref: None,
-                rendering,
-                delivery: DeliveryOutcome::Rejected {
-                    reason: "interactive_message_must_fit_one_part".into(),
+            return (
+                IntentReceipt {
+                    message_ref: None,
+                    rendering,
+                    delivery: DeliveryOutcome::Rejected {
+                        reason: "interactive_message_must_fit_one_part".into(),
+                    },
                 },
-            };
+                effects,
+            );
         }
         let mut prepared = if reference.interaction_record_id.is_some() {
             let Some(store) = &self.relay.interactions else {
-                return unsupported();
+                return (unsupported(), effects);
             };
             match store.replacement(channel, reference, message).await {
                 Ok(prepared) => Some(prepared),
                 Err(_) => {
-                    return IntentReceipt {
-                        message_ref: None,
-                        rendering,
-                        delivery: DeliveryOutcome::Rejected {
-                            reason: "interaction_expired_or_invalid".into(),
+                    return (
+                        IntentReceipt {
+                            message_ref: None,
+                            rendering,
+                            delivery: DeliveryOutcome::Rejected {
+                                reason: "interaction_expired_or_invalid".into(),
+                            },
                         },
-                    }
+                        effects,
+                    )
                 }
             }
         } else {
             if crate::interactions::has_controls(message) {
-                return unsupported();
+                return (unsupported(), effects);
             }
             None
         };
         let empty = json!({"inline_keyboard":[]});
         let markup = prepared.as_ref().map(|p| &p.markup).unwrap_or(&empty);
         let Some(_slot) = self.pacing.acquire(&reference.route_id).await else {
-            return unsupported();
+            return (unsupported(), effects);
         };
         let delivery = match self
             .relay
@@ -237,7 +248,7 @@ impl Sender {
         if matches!(receipt.delivery, DeliveryOutcome::Confirmed { .. }) {
             if let Some(prepared) = &mut prepared {
                 let Some(destination) = prepared.card.destination.clone() else {
-                    return unsupported();
+                    return (unsupported(), effects);
                 };
                 match self
                     .relay
@@ -258,7 +269,7 @@ impl Sender {
                 receipt.message_ref = MessageRef::seal(reference, &self.keys).ok();
             }
         }
-        receipt
+        (receipt, effects)
     }
     pub(super) async fn typing(
         &self,

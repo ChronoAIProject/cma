@@ -1,5 +1,9 @@
 //! Per-event delivery steps, shared by every scheduler that delivers an event.
-use super::{event::EventState, intents::DeliveryOutcome, send::Sender};
+use super::{
+    event::EventState,
+    intents::{DeliveryOutcome, IntentReceipt},
+    send::{SendContext, Sender},
+};
 use crate::{turns::outcomes::TurnOutcome, DeliveryConfig};
 use cmaeg_core::message::OutboundMessage;
 use std::time::Duration;
@@ -103,6 +107,23 @@ async fn send_text(sender: &Sender, state: &mut EventState, text: String) -> boo
     .await
 }
 async fn send_message(sender: &Sender, state: &mut EventState, message: OutboundMessage) -> bool {
-    let result = sender.reply(state, &message).await;
+    let result = reply(sender, state, &message).await;
     matches!(result.delivery, DeliveryOutcome::Confirmed { .. })
+}
+/// Send `message` for `state`'s event and apply the send's effects as soon as
+/// it returns. The serial worker reads no event state while a send awaits, so
+/// reads and writes keep the order they had when the send mutated the state.
+pub(super) async fn reply(
+    sender: &Sender,
+    state: &mut EventState,
+    message: &OutboundMessage,
+) -> IntentReceipt {
+    let context = SendContext {
+        trace: &state.trace,
+        channel: &state.channel,
+        first_send_done: state.first_send_done,
+    };
+    let (result, effects) = sender.reply(&context, &state.event, message).await;
+    state.first_send_done |= effects.first_send_done;
+    result
 }
