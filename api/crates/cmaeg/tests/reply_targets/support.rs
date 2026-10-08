@@ -17,7 +17,8 @@ use cmaeg::{
 use cmaeg_core::{
     activity::Activity,
     channel::ChannelDefinition,
-    ids::{ChannelId, ConversationId, IdempotencyKey},
+    channel::Secret,
+    ids::{ChannelId, ConsumerId, ConversationId, IdempotencyKey},
     seal::{seal_blob, ChannelPointer, EventRef, EventRefPayload, MasterKeyRing, ReplyAddress},
 };
 use serde_json::{json, Value};
@@ -140,6 +141,18 @@ impl App {
         (self.base, self.server) = serve(http::tools::router(self.state.clone())).await;
     }
     pub async fn event(&self, actor: &str, name: &str) -> EventRef {
+        let key = self.definition.secrets.provider_credential.clone().unwrap();
+        self.event_for(actor, name, None, key).await
+    }
+    /// An event issued to `consumer` (`None` = default), whose context the
+    /// provider stores under that consumer's `credential`.
+    pub async fn event_for(
+        &self,
+        actor: &str,
+        name: &str,
+        consumer: Option<ConsumerId>,
+        credential: Secret,
+    ) -> EventRef {
         let mut activity: Activity = serde_json::from_str(include_str!(
             "../../../cmaeg-core/tests/fixtures/activity.json"
         ))
@@ -192,7 +205,7 @@ impl App {
                     reply_token_expires_at: now() + 600,
                 }
             },
-            consumer: None,
+            consumer,
             lineage: None,
         };
         let event_ref = EventRef::seal(&event, &self.state.keys).unwrap();
@@ -207,7 +220,7 @@ impl App {
                     input: vec![],
                     metadata: Default::default(),
                     idempotency_key: IdempotencyKey::from_event(&event.event_id),
-                    agent_key: self.definition.secrets.provider_credential.clone().unwrap(),
+                    agent_key: credential,
                     event_context: Some(EventContextSnapshot {
                         schema_version: 1,
                         channel_id: self.id.clone(),

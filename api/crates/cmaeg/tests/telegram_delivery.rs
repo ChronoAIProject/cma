@@ -1,5 +1,7 @@
 #[path = "delivery/boundaries.rs"]
 mod boundaries;
+#[path = "delivery/consumer_refs.rs"]
+mod consumer_refs;
 #[path = "delivery/engine.rs"]
 mod engine;
 #[path = "fake_cma.rs"]

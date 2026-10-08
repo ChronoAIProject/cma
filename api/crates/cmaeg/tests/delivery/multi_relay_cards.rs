@@ -115,6 +115,7 @@ async fn replace_card(sources: Value) -> DeliveryOutcome {
             "callback-1",
             &data,
             platform_id,
+            &|consumer| consumer.is_none(),
         )
         .await
         .unwrap();

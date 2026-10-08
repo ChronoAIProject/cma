@@ -6,11 +6,11 @@ use crate::{
 };
 use cmaeg_core::{
     activity::{Activity, InteractionResult},
-    ids::{MessageRef, RecordId},
+    ids::{ConsumerId, MessageRef, RecordId},
     message::OutboundMessage,
     seal::{
-        open_consumer_interaction, open_interaction, seal_interaction, EventRefPayload,
-        MasterKeyRing, MessageRefPayload, ReplyAddress,
+        open_consumer_interaction, open_interaction, seal_consumer_interaction, seal_interaction,
+        EventRefPayload, MasterKeyRing, MessageRefPayload, ReplyAddress,
     },
 };
 use keyboard::{actions, keyboard};
@@ -24,6 +24,9 @@ pub use card::*;
 pub use keyboard::has_controls;
 
 const TTL: i64 = 24 * 60 * 60;
+/// Decides whether a click may consume a card owned by the given consumer
+/// (`None` is the default); see [`InteractionStore::consume`].
+pub type Admit = dyn Fn(Option<&ConsumerId>) -> bool + Send + Sync;
 #[derive(Clone)]
 pub struct InteractionStore {
     records: RecordClient,
@@ -42,12 +45,17 @@ impl InteractionStore {
             providers,
         }
     }
-    /// Every card is written as `in`: cards are the default consumer's until
-    /// a later change issues consumer-owned cards, sealed as `ic`.
+    /// A default card is written as `in`, exactly as before consumers
+    /// existed; a card a non-default consumer owns is sealed as `ic`, which an
+    /// image that predates consumers cannot open.
     async fn save(&self, card: &Card, version: Option<u64>) -> Result<u64, Error> {
         let bytes = serde_json::to_vec(card).map_err(|_| Error::Unavailable)?;
-        let blob =
-            seal_interaction(&self.keys, &card.id, &bytes).map_err(|_| Error::Unavailable)?;
+        let seal = if card.consumer.is_some() {
+            seal_consumer_interaction
+        } else {
+            seal_interaction
+        };
+        let blob = seal(&self.keys, &card.id, &bytes).map_err(|_| Error::Unavailable)?;
         self.records
             .put_expiring(
                 &RecordId::new(card.id.clone()).map_err(|_| Error::Denied)?,
@@ -97,14 +105,19 @@ impl InteractionStore {
         }
         Ok((card, value.version))
     }
+    /// Prepare a card for `event`, owned by the consumer the event was issued
+    /// to: its context is read through that consumer's binding and
+    /// credential, and its clicks are bound to that context's actor, chat and
+    /// thread.
     pub async fn prepare(
         &self,
         channel: &ResolvedChannel,
         event: &EventRefPayload,
         message: &OutboundMessage,
     ) -> Result<PreparedCard, Error> {
-        // Cards are the default consumer's until a card names its consumer.
-        let consumer = channel.consumer(None).ok_or(Error::Unavailable)?;
+        let consumer = channel
+            .consumer(event.consumer.as_ref())
+            .ok_or(Error::Unavailable)?;
         let credential = consumer.credential.ok_or(Error::Unavailable)?;
         let context = self
             .providers
@@ -143,7 +156,9 @@ impl InteractionStore {
             reference: None,
             consumed: None,
             superseded: false,
-            consumer: None,
+            // A reference never names the default, so a default card keeps
+            // its exact stored bytes.
+            consumer: event.consumer.clone(),
         };
         let markup = keyboard(&card)?;
         let version = self.save(&card, None).await?;
@@ -175,7 +190,7 @@ impl InteractionStore {
                 platform_message_id: destination.platform_id.clone(),
                 route_id: card.route_id.clone(),
                 interaction_record_id: Some(card.id.clone()),
-                consumer: None,
+                consumer: card.consumer.clone(),
             },
             &self.keys,
         )
@@ -202,12 +217,14 @@ impl InteractionStore {
             || destination.platform_id != reference.platform_message_id
             || old.superseded
             || old.consumed.is_none()
+            || old.consumer != reference.consumer
         {
             return Err(Error::Denied);
         }
         // Fence old buttons before changing an external message. Uncertain edits cannot revive them.
         old.superseded = true;
         self.save(&old, Some(version)).await?;
+        // The replacement keeps the old card's consumer, and so its kind.
         let mut card = old;
         card.id = uuid::Uuid::new_v4().to_string();
         card.revision += 1;
@@ -223,6 +240,13 @@ impl InteractionStore {
             markup,
         })
     }
+    /// Consume a click on a card. `admit` decides, from the card's consumer,
+    /// whether the click may be routed at all; it runs after the actor, chat
+    /// and thread checks and before `consumed` is written, so a refused click
+    /// leaves the card clickable.
+    // Each argument is one fact of the click the card is checked against;
+    // bundling them would only rename them at the one production caller.
+    #[allow(clippy::too_many_arguments)]
     pub async fn consume(
         &self,
         channel: &ResolvedChannel,
@@ -231,6 +255,7 @@ impl InteractionStore {
         callback_id: &str,
         data: &str,
         platform_message_id: &str,
+        admit: &Admit,
     ) -> Result<(InteractionResult, String), Error> {
         let (id, index) = decode(data)?;
         for _ in 0..2 {
@@ -247,6 +272,10 @@ impl InteractionStore {
                     .as_ref()
                     .is_none_or(|d| d.platform_id != platform_message_id)
             {
+                return Err(Error::Denied);
+            }
+            if !admit(card.consumer.as_ref()) {
+                tracing::info!(card = %id, "card click not admitted for its consumer");
                 return Err(Error::Denied);
             }
             let action = actions(&card.message)

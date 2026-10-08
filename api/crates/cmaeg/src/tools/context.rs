@@ -6,7 +6,7 @@ use crate::{channels::resolver::ResolvedChannel, media::visual::VisualKind};
 use cmaeg_core::{
     activity::{Activity, ActivityConversation, ActivityKind, ActivityRouting, Actor, SourceKind},
     channel::{ConsumerView, Platform},
-    ids::{ConversationId, EventId},
+    ids::{ConsumerId, ConsumerName, ConversationId, EventId},
     problem::{Problem, ProblemCode},
     seal::EventRefPayload,
 };
@@ -23,6 +23,18 @@ pub struct ContextResponse {
     pub conversation_id: ConversationId,
     pub activity: PublicActivity,
     pub capabilities: Capabilities,
+    /// The consumer the calling agent key belongs to; present only on a
+    /// channel with routing, so an unrouted response keeps its bytes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub consumer: Option<ConsumerSummary>,
+}
+/// Which of a routed channel's consumers a context response was read for.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct ConsumerSummary {
+    pub id: ConsumerId,
+    pub name: ConsumerName,
+    /// The consumer's reply label, else its name.
+    pub label: String,
 }
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct PublicActivity {
@@ -97,14 +109,15 @@ impl Capabilities {
         }
     }
 }
-/// The event's context as `channel`'s default consumer sees it. References
-/// do not name a consumer yet, so every tool read is the default's.
+/// The event's context as `matched`, the calling consumer, sees it: read
+/// through that consumer's own binding and credential.
 pub(super) async fn read(
     state: &ToolsState,
     channel: &ResolvedChannel,
+    matched: &ConsumerId,
     event: &EventRefPayload,
 ) -> Result<ContextResponse, Problem> {
-    let consumer = default_consumer(channel)?;
+    let consumer = consumer_view(channel, matched)?;
     let (activity, activity_verified) = read_activity(state, channel, &consumer, event).await?;
     let inbound_media = inbound_media(state, &consumer, &activity.source);
     Ok(project(
@@ -117,12 +130,20 @@ pub(super) async fn read(
     ))
 }
 
-/// The consumer a tool call is served as: the default one, the only
-/// consumer an issued reference can name today.
-pub(super) fn default_consumer(channel: &ResolvedChannel) -> Result<ConsumerView<'_>, Problem> {
-    channel.consumer(None).ok_or_else(|| {
-        tracing::error!("channel has no default consumer");
-        unavailable()
+/// The consumer a tool call is served as: `matched`, the consumer the caller's
+/// key belongs to. A consumer removed after its reference was minted has no
+/// view; its event's work belongs to a consumer that no longer exists, so the
+/// reference is answered as expired.
+pub(super) fn consumer_view<'a>(
+    channel: &'a ResolvedChannel,
+    matched: &ConsumerId,
+) -> Result<ConsumerView<'a>, Problem> {
+    channel.consumer(Some(matched)).ok_or_else(|| {
+        tracing::warn!(
+            channel = %crate::telemetry::channel_hash(channel.id.as_str()),
+            "event_ref names a removed consumer"
+        );
+        Problem::new(ProblemCode::EventRefExpired, 410, "consumer_removed")
     })
 }
 
@@ -191,7 +212,7 @@ pub(super) fn project(
     activity_verified: bool,
     inbound_media: Option<InboundMediaCapabilities>,
 ) -> ContextResponse {
-    let capabilities = Capabilities {
+    let mut capabilities = Capabilities {
         inbound_media,
         ..match activity.source {
             SourceKind::Telegram { .. } => Capabilities::native_telegram(),
@@ -199,6 +220,13 @@ pub(super) fn project(
             SourceKind::NyxidRelay { platform, .. } => Capabilities::relay(platform),
         }
     };
+    // A hand-off's actor is the publishing consumer, so no human click could
+    // ever match a card prepared from it; its controls are refused, and the
+    // projection says so up front so agents can plan around it.
+    if event.lineage.is_some() {
+        capabilities.buttons = "none".into();
+        capabilities.cards = "none".into();
+    }
     ContextResponse {
         event_id: event.event_id.clone(),
         channel_id: channel.id.clone(),
@@ -215,7 +243,27 @@ pub(super) fn project(
             routing: activity.routing,
         },
         capabilities,
+        consumer: summary(channel, consumer),
     }
+}
+/// The calling consumer as a routed channel presents it; `None` without
+/// routing, where the default is the only consumer.
+fn summary(channel: &ResolvedChannel, consumer: &ConsumerView<'_>) -> Option<ConsumerSummary> {
+    let routing = channel.definition.routing.as_ref()?;
+    let name = if consumer.id.is_default() {
+        &routing.default_consumer.name
+    } else {
+        &routing
+            .consumers
+            .iter()
+            .find(|stored| &stored.id == consumer.id)?
+            .name
+    };
+    Some(ConsumerSummary {
+        id: consumer.id.clone(),
+        name: name.clone(),
+        label: consumer.label.to_owned(),
+    })
 }
 pub(super) fn unavailable() -> Problem {
     Problem::new(
@@ -223,4 +271,72 @@ pub(super) fn unavailable() -> Problem {
         503,
         "event_context_unavailable",
     )
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::channels::routing_fixture;
+    use cmaeg_core::{ids::ChannelId, seal::ChannelPointer};
+
+    fn resolved(value: serde_json::Value) -> ResolvedChannel {
+        let definition = routing_fixture::definition(value);
+        ResolvedChannel {
+            id: ChannelId::new("cmaeg1.ch.context-fixture").unwrap(),
+            pointer: ChannelPointer {
+                v: 1,
+                record_id: definition.record_id.clone(),
+                record_url: "https://cma.example/api/v1/gateway/channel-records/record-1".into(),
+            },
+            definition,
+            agent_key_hash: [7; 32],
+            consumer_keys: Vec::new(),
+            loaded_at: std::time::Instant::now(),
+            version: 1,
+        }
+    }
+
+    fn id(value: &str) -> ConsumerId {
+        ConsumerId::parse(value).unwrap()
+    }
+
+    #[test]
+    fn a_routed_channel_summarizes_the_calling_consumer() {
+        let channel = resolved(routing_fixture::routed());
+        let summarize = |consumer: &ConsumerId| {
+            summary(&channel, &consumer_view(&channel, consumer).unwrap()).unwrap()
+        };
+        let lead = summarize(&ConsumerId::default_consumer());
+        assert_eq!(
+            (lead.id.as_str(), lead.name.as_str(), lead.label.as_str()),
+            ("default", "lead", "lead")
+        );
+        let reviewer = summarize(&id(routing_fixture::REVIEWER));
+        assert_eq!(
+            (
+                reviewer.id.as_str(),
+                reviewer.name.as_str(),
+                reviewer.label.as_str()
+            ),
+            (routing_fixture::REVIEWER, "reviewer", "reviewer")
+        );
+    }
+
+    #[test]
+    fn an_unrouted_channel_has_no_summary() {
+        let mut value = routing_fixture::routed();
+        value.as_object_mut().unwrap().remove("routing");
+        let channel = resolved(value);
+        let default = consumer_view(&channel, &ConsumerId::default_consumer()).unwrap();
+        assert_eq!(summary(&channel, &default), None);
+    }
+
+    #[test]
+    fn a_removed_consumer_is_answered_as_an_expired_reference() {
+        let channel = resolved(routing_fixture::routed());
+        let removed = consumer_view(&channel, &id("csm_0000000000ff")).unwrap_err();
+        assert_eq!(
+            (removed.code, removed.status, removed.detail.as_deref()),
+            (ProblemCode::EventRefExpired, 410, Some("consumer_removed"))
+        );
+    }
 }

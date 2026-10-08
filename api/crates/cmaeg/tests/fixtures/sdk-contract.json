@@ -1483,6 +1483,109 @@
         "typing": true
       },
       "channel_id": "fixture",
+      "consumer": {
+        "id": "csm_00000000000a",
+        "label": "Reviewer",
+        "name": "reviewer"
+      },
+      "conversation_id": "fixture",
+      "event_id": "fixture",
+      "provider_binding_id": "fixture",
+      "source": {
+        "type": "custom"
+      },
+      "expires_at": 1
+    },
+    {
+      "activity": {
+        "actor": {
+          "display_name": "fixture",
+          "id": "fixture",
+          "kind": "human"
+        },
+        "conversation": {
+          "id": "fixture",
+          "kind": "private",
+          "thread_id": "fixture"
+        },
+        "kind": {
+          "album_id": "fixture",
+          "attachments": [
+            {
+              "duration_seconds": 1,
+              "emoji": "fixture",
+              "filename": "fixture",
+              "height": 1,
+              "kind": "image",
+              "mime_type": "fixture",
+              "reference": "fixture",
+              "size_bytes": 1,
+              "source": {
+                "file_id": "fixture",
+                "file_unique_id": "fixture",
+                "type": "telegram"
+              },
+              "thumbnail": {
+                "file_id": "fixture",
+                "file_unique_id": "fixture",
+                "type": "telegram"
+              },
+              "variant": "photo",
+              "width": 1
+            }
+          ],
+          "mentions_bot": true,
+          "reply_to": "fixture",
+          "text": "fixture",
+          "type": "message"
+        },
+        "occurred_at": "fixture",
+        "routing": {
+          "addressing_bytes": 3,
+          "causation": {
+            "hop": 2,
+            "origin_source_id": "relay_lark",
+            "parent_event_id": "fixture",
+            "published_by": "csm_00000000000b",
+            "reply": "default",
+            "root": "0123456789abcdef0123456789abcdef"
+          },
+          "resolution": "agent_event",
+          "rule_id": "lark-ops",
+          "source_id": "agent",
+          "targets": [
+            {
+              "id": "csm_00000000000a",
+              "name": "reviewer"
+            },
+            {
+              "id": "default",
+              "name": "assistant"
+            }
+          ]
+        }
+      },
+      "activity_verified": true,
+      "capabilities": {
+        "attachments": "fixture",
+        "buttons": "none",
+        "cards": "none",
+        "edit": true,
+        "inbound_media": {
+          "downloads": true,
+          "read_tool": true,
+          "transcripts": true,
+          "visuals": "keyframes"
+        },
+        "max_text_chars": 1,
+        "typing": true
+      },
+      "channel_id": "fixture",
+      "consumer": {
+        "id": "default",
+        "label": "assistant",
+        "name": "assistant"
+      },
       "conversation_id": "fixture",
       "event_id": "fixture",
       "provider_binding_id": "fixture",
@@ -3478,6 +3581,18 @@
     },
     {
       "id": "default",
+      "name": "assistant"
+    }
+  ],
+  "ConsumerSummary": [
+    {
+      "id": "csm_00000000000a",
+      "label": "Reviewer",
+      "name": "reviewer"
+    },
+    {
+      "id": "default",
+      "label": "assistant",
       "name": "assistant"
     }
   ],

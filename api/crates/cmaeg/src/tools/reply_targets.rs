@@ -1,6 +1,10 @@
 //! Provider-neutral delayed replies to an authenticated event's original destination.
 mod receipts;
-use super::{context, state::validate, ToolsState};
+use super::{
+    context,
+    state::{owner, validate},
+    ToolsState,
+};
 use crate::{
     auth::AgentCaller,
     channels::resolver::ResolvedChannel,
@@ -8,6 +12,7 @@ use crate::{
 };
 use cmaeg_core::{
     channel::{Secret, Source},
+    ids::ConsumerId,
     message::OutboundMessage,
     problem::{Problem, ProblemCode},
     seal::{
@@ -19,6 +24,8 @@ use std::sync::Arc;
 use tokio::sync::oneshot;
 use utoipa::ToSchema;
 
+/// The tool name reply-target creation is logged under.
+const CREATE: &str = "createReplyTarget";
 #[derive(Clone, Serialize, ToSchema)]
 pub struct ReplyTargetResponse {
     pub reply_target_ref: ReplyTargetRef,
@@ -30,15 +37,17 @@ impl ToolsState {
         caller: AgentCaller,
         reference: &EventRef,
     ) -> Result<ReplyTargetResponse, Problem> {
-        let (_, mut event) = self.authorize_event(caller, reference).await?;
+        let (_, mut event, _) = self.authorize_event(caller, reference, CREATE).await?;
         let channel = self
             .resolver
             .resolve_current(event.channel_id.as_str())
             .await
             .map_err(|e| e.problem())?;
-        caller.authorize(&channel).map_err(|e| e.problem())?;
+        // Recheck against the live definition: a removed consumer or a
+        // rotated key no longer authorizes a new target.
+        let matched = owner(caller, &channel, event.consumer.as_ref(), CREATE)?;
         destination(&channel, &event.reply)?;
-        if !context::read(self, &channel, &event)
+        if !context::read(self, &channel, &matched, &event)
             .await?
             .activity_verified
         {
@@ -62,12 +71,14 @@ impl ToolsState {
                 "event_ref_expired",
             ));
         }
-        // A reference names no consumer yet, so the target is sealed for the
-        // default consumer's binding and key.
-        let (Some(consumer), Some(agent_key_hash)) =
-            (channel.consumer(None), channel.consumer_key_hash(None))
-        else {
-            tracing::error!("channel has no default consumer; reply target refused");
+        // The target is sealed for the consumer that created it: its slug,
+        // binding and key hash. The event inside still names that consumer,
+        // so the payload's shape is unchanged.
+        let (Some(consumer), Some(agent_key_hash)) = (
+            channel.consumer(Some(&matched)),
+            channel.consumer_key_hash(Some(&matched)),
+        ) else {
+            tracing::error!("matched consumer has no view; reply target refused");
             return Err(unavailable());
         };
         let payload = ReplyTargetPayload {
@@ -162,16 +173,34 @@ impl ToolsState {
             .resolve_current(target.event.channel_id.as_str())
             .await
             .map_err(|e| e.problem())?;
-        caller.authorize(&channel).map_err(|e| e.problem())?;
-        // The target is the default consumer's until references name one.
-        let binding_matches = channel.consumer(None).is_some_and(|consumer| {
-            consumer.provider.binding_id == target.binding_id
-                && consumer.provider.slug == target.provider
-        });
+        caller.consumer(&channel).map_err(|e| e.problem())?;
+        // The target belongs to the consumer whose binding it names, and only
+        // that consumer's current key may use it: removing the consumer,
+        // rotating its key or rebinding it revokes the target.
+        let default = ConsumerId::default_consumer();
+        let issued_to = target.event.consumer.as_ref().unwrap_or(&default);
+        let owner_matches = channel
+            .definition
+            .consumers()
+            .find(|consumer| consumer.provider.binding_id == target.binding_id)
+            .is_some_and(|consumer| {
+                consumer.provider.slug == target.provider
+                    && consumer.id == issued_to
+                    && channel
+                        .consumer_key_hash(Some(consumer.id))
+                        .is_some_and(|current| caller.matches(current))
+            });
         if !caller.matches(&target.agent_key_hash)
             || channel.pointer.record_id != target.event.record_id
-            || !binding_matches
+            || !owner_matches
         {
+            let channel = crate::telemetry::channel_hash(channel.id.as_str());
+            tracing::warn!(
+                %channel,
+                tool = "replyToTarget",
+                outcome = "reply_target_revoked",
+                "tool call refused"
+            );
             return Err(Problem::new(
                 ProblemCode::Forbidden,
                 403,

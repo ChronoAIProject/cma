@@ -93,7 +93,15 @@ pub async fn record() -> Value {
     let mut click = relay_activity.clone();
     click.event_id = "click-1".parse().unwrap();
     store
-        .consume(&relay, &click, "route-1", "callback-1", &data, platform_id)
+        .consume(
+            &relay,
+            &click,
+            "route-1",
+            "callback-1",
+            &data,
+            platform_id,
+            &|consumer| consumer.is_none(),
+        )
         .await
         .unwrap();
     let reference = card.message_ref.unwrap().open(&keys).unwrap().payload;

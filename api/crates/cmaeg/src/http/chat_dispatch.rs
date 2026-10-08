@@ -62,6 +62,9 @@ pub(crate) async fn dispatch(
                 &callback.id,
                 &callback.data,
                 &callback.message_id,
+                // Only default cards can exist until ingress routes clicks to
+                // the consumer that owns the card.
+                &|consumer| consumer.is_none(),
             )
             .await
         {

@@ -189,10 +189,12 @@ pub async fn call(
         }
         "updateMessage" => {
             let args: UpdateArguments = serde_json::from_value(arguments).map_err(|_| invalid())?;
-            let (_, event) = state
-                .authorize_event(caller, &event_ref(&args.event_ref)?)
+            let (_, event, _) = state
+                .authorize_event(caller, &event_ref(&args.event_ref)?, "updateMessage")
                 .await?;
-            let (_, message) = state.authorize_message(caller, &args.message_ref).await?;
+            let (_, message, _) = state
+                .authorize_message(caller, &args.message_ref, "updateMessage")
+                .await?;
             let same_event = message.channel_id == event.channel_id && message.event_id == event.event_id;
             if !same_event {
                 let context=state.context(caller,&event_ref(&args.event_ref)?).await?;

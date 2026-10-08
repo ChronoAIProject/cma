@@ -110,9 +110,9 @@ impl ToolsState {
                 })
             }
         };
-        // A link names no consumer yet, so it is the default consumer's.
-        let Some(consumer) = channel.consumer(None) else {
-            tracing::error!("channel has no default consumer; media link revoked");
+        // The link is the consumer's its event was issued to; a consumer
+        // removed since then no longer authorizes anything.
+        let Some(consumer) = channel.consumer(link.event.consumer.as_ref()) else {
             return Err(Refusal::revoked());
         };
         if !still_permitted(media, &channel, &consumer, &link) {
