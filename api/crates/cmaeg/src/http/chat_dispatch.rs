@@ -48,6 +48,37 @@ pub(crate) async fn dispatch(
         let Some(store) = &state.interactions else {
             return refused(Refusal::InteractiveActionUnsupported);
         };
+        // The store may retry a CAS. Capture its latest admitted decision, but
+        // publish it only once the matching click has actually been consumed.
+        let decision = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let captured = decision.clone();
+        let channel = request.channel.clone();
+        let activity = request.activity.clone();
+        let routing = state.routing.clone();
+        let admit = move |consumer: Option<&cmaeg_core::ids::ConsumerId>| {
+            if consumer.is_some() && channel.definition.routing.is_none() {
+                return false;
+            }
+            let input = cmaeg_core::routing::RouteInput {
+                activity: &activity,
+                chat_source: channel.definition.source_of(&activity.source),
+                card_consumer: Some(consumer),
+                published: None,
+                non_human_providers: &routing.non_human_providers,
+                attributes_signed: true,
+            };
+            match cmaeg_core::routing::resolve(
+                &channel.definition,
+                &input,
+                routing.multi_consumer_enabled,
+            ) {
+                Ok(resolution) => {
+                    *captured.lock().unwrap() = Some(resolution);
+                    true
+                }
+                Err(_) => false,
+            }
+        };
         let interaction = match store
             .consume(
                 &request.channel,
@@ -56,9 +87,7 @@ pub(crate) async fn dispatch(
                 &callback.id,
                 &callback.data,
                 &callback.message_id,
-                // Only default cards can exist until ingress routes clicks to
-                // the consumer that owns the card.
-                &|consumer| consumer.is_none(),
+                &admit,
             )
             .await
         {
@@ -76,6 +105,22 @@ pub(crate) async fn dispatch(
         };
         request.activity.kind = cmaeg_core::activity::ActivityKind::Interaction(interaction.0);
         request.activity.occurred_at = interaction.1;
+        let Some(decision) = decision.lock().unwrap().take() else {
+            tracing::error!("consumed interaction has no admitted routing decision");
+            return problem(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                ProblemCode::Internal,
+                "interaction_routing_invalid",
+            );
+        };
+        if let cmaeg_core::routing::Resolution::Routed(decision) = decision {
+            request.activity.routing = Some(decision.routing);
+            state.observer.routed(
+                &request.channel.pointer.record_id,
+                &crate::turns::observer::ActivitySummary::of(&request.activity),
+                &decision.trace,
+            );
+        }
         let Ok(mut opened) = request.event_ref.open(&state.master_keys, now) else {
             return invalid(timing.source(), VerificationError("event_ref_invalid"));
         };

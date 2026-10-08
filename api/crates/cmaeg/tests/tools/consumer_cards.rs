@@ -134,9 +134,9 @@ async fn a_click_the_gate_refuses_leaves_the_card_unconsumed() {
         })
         .await;
     assert!(matches!(refused, Err(Error::Denied)));
-    // Today's production gate admits only default cards.
-    let production = cards.click(&prepared, &|consumer| consumer.is_none()).await;
-    assert!(matches!(production, Err(Error::Denied)));
+    // A caller restricting admission to default cards preserves the same fence.
+    let default_only = cards.click(&prepared, &|consumer| consumer.is_none()).await;
+    assert!(matches!(default_only, Err(Error::Denied)));
     let (stored, refused_version) = cards.store.load(id).await.unwrap();
     assert!(
         stored.consumed.is_none(),

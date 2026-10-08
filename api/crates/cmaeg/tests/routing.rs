@@ -20,3 +20,8 @@ mod support;
 mod custom;
 #[path = "routing/custom_stream.rs"]
 mod custom_stream;
+
+#[path = "routing/cards.rs"]
+mod cards;
+#[path = "fake_provider.rs"]
+pub mod fake_provider;

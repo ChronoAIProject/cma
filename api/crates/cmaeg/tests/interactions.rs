@@ -41,7 +41,7 @@ use cmaeg_core::{
 use serde_json::json;
 use std::{sync::Arc, time::Duration};
 
-/// The admission chat dispatch applies while only default cards exist.
+/// A default-only admission policy for these legacy-card contracts.
 fn default_only(consumer: Option<&cmaeg_core::ids::ConsumerId>) -> bool {
     consumer.is_none()
 }

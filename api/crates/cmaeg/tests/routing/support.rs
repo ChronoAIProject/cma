@@ -281,6 +281,19 @@ impl App {
             .await
             .unwrap()
     }
+    pub fn replace_definition(&self, definition: &ChannelDefinition) {
+        definition.validate().unwrap();
+        self._cma.seed(
+            definition.record_id.as_str(),
+            &definition.owner.subject,
+            seal_blob(
+                &self.state.master_keys,
+                definition.to_blob_json().to_string().as_bytes(),
+            )
+            .unwrap(),
+        );
+        self.state.resolver.invalidate(&self.id);
+    }
     pub async fn idle(&self) {
         tokio::time::timeout(Duration::from_secs(4), async {
             while !self.tracker.is_empty() {
