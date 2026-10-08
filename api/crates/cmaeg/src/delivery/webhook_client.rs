@@ -1,5 +1,8 @@
 //! Bounded, signed delivery with DNS validation and address pinning on each attempt.
-use super::intents::DeliveryOutcome;
+use super::{
+    gate::{expired, SendGate, Ungated},
+    intents::DeliveryOutcome,
+};
 use crate::auth::webhook;
 pub use crate::net::exchange::TransportError;
 pub use crate::net::policy::public_ip;
@@ -70,6 +73,17 @@ impl WebhookClient {
         Self { transport }
     }
     pub async fn send(&self, destination: &str, secret: &Secret, event: &Value) -> DeliveryOutcome {
+        self.send_gated(destination, secret, event, &Ungated).await
+    }
+    /// `send`, with each attempt admitted by `gate` before its DNS lookup and
+    /// POST, and the delivery committed before the first one.
+    pub async fn send_gated(
+        &self,
+        destination: &str,
+        secret: &Secret,
+        event: &Value,
+        gate: &dyn SendGate,
+    ) -> DeliveryOutcome {
         let Some(url) = policy::target(destination) else {
             return rejected("webhook_target_invalid");
         };
@@ -90,6 +104,15 @@ impl WebhookClient {
         for (attempt, delay) in [0, 1, 4, 16].into_iter().enumerate() {
             if delay > 0 {
                 tokio::time::sleep(Duration::from_secs(delay)).await;
+            }
+            let permit = match gate.attempt().await {
+                Ok(permit) => permit,
+                Err(refusal) => return refusal.outcome(),
+            };
+            // Commit point (Amendment R3 §R3.1): the first attempt's lookup
+            // and POST are this delivery's first side effect.
+            if attempt == 0 && !gate.commit() {
+                return expired();
             }
             let result = tokio::time::timeout(Duration::from_secs(5), async {
                 let addresses = self
@@ -120,6 +143,9 @@ impl WebhookClient {
             })
             .await
             .unwrap_or(Err("webhook_unavailable"));
+            // Backoff never holds an attempt permit.
+            drop(permit);
+            gate.progress();
             tracing::info!(
                 attempt,
                 confirmed = matches!(result, Ok(200..=299)),
@@ -146,5 +172,160 @@ impl WebhookClient {
 fn rejected(reason: &str) -> DeliveryOutcome {
     DeliveryOutcome::Rejected {
         reason: reason.into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::delivery::gate::{AttemptPermit, GateRefusal, RouteTicket};
+    use std::{collections::VecDeque, sync::Mutex};
+
+    /// Answers every lookup with a public address and each POST with the next
+    /// status, counting POSTs.
+    struct Statuses {
+        statuses: Mutex<VecDeque<u16>>,
+        posts: Mutex<usize>,
+    }
+    impl WebhookTransport for Statuses {
+        fn resolve(&self, _url: Url) -> BoxFuture<'_, Result<Vec<SocketAddr>, TransportError>> {
+            Box::pin(async { Ok(vec!["8.8.8.8:443".parse().unwrap()]) })
+        }
+        fn post(
+            &self,
+            _url: Url,
+            _addresses: Vec<SocketAddr>,
+            _headers: HeaderMap,
+            _body: Arc<Vec<u8>>,
+        ) -> BoxFuture<'_, Result<u16, TransportError>> {
+            *self.posts.lock().unwrap() += 1;
+            let status = self.statuses.lock().unwrap().pop_front().unwrap_or(200);
+            Box::pin(async move { Ok(status) })
+        }
+    }
+    fn client(statuses: impl IntoIterator<Item = u16>) -> (WebhookClient, Arc<Statuses>) {
+        let transport = Arc::new(Statuses {
+            statuses: Mutex::new(statuses.into_iter().collect()),
+            posts: Mutex::default(),
+        });
+        (WebhookClient::with_transport(transport.clone()), transport)
+    }
+
+    /// Logs each call with its paused-clock second, and the attempt permits
+    /// still alive whenever progress is stamped.
+    struct Logging {
+        calls: Mutex<Vec<(&'static str, u64)>>,
+        live: Arc<()>,
+        commits: bool,
+        started: tokio::time::Instant,
+    }
+    impl Logging {
+        fn new(commits: bool) -> Self {
+            Self {
+                calls: Mutex::default(),
+                live: Arc::new(()),
+                commits,
+                started: tokio::time::Instant::now(),
+            }
+        }
+        fn log(&self, call: &'static str) {
+            let second = self.started.elapsed().as_secs();
+            self.calls.lock().unwrap().push((call, second));
+        }
+    }
+    impl SendGate for Logging {
+        fn enter_route<'a>(
+            &'a self,
+            _route: &'a str,
+        ) -> BoxFuture<'a, Result<RouteTicket, GateRefusal>> {
+            self.log("enter_route");
+            Box::pin(async { Ok(RouteTicket::empty()) })
+        }
+        fn commit(&self) -> bool {
+            self.log("commit");
+            self.commits
+        }
+        fn attempt<'a>(&'a self) -> BoxFuture<'a, Result<AttemptPermit, GateRefusal>> {
+            self.log("attempt");
+            let held = self.live.clone();
+            Box::pin(async move { Ok(AttemptPermit::holding(held)) })
+        }
+        fn progress(&self) {
+            assert_eq!(
+                Arc::strong_count(&self.live),
+                1,
+                "a permit outlived its attempt"
+            );
+            self.log("progress");
+        }
+    }
+    fn event() -> Value {
+        serde_json::json!({"id":"event-1","type":"cmaeg.response.completed"})
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn each_attempt_is_admitted_and_only_the_first_commits() {
+        let (client, transport) = client([500, 500, 500, 200]);
+        let gate = Logging::new(true);
+        let outcome = client
+            .send_gated(
+                "https://receiver.example/events",
+                &Secret::new("result-key"),
+                &event(),
+                &gate,
+            )
+            .await;
+        assert_eq!(
+            outcome,
+            DeliveryOutcome::Confirmed {
+                platform_message_id: None
+            }
+        );
+        assert_eq!(*transport.posts.lock().unwrap(), 4);
+        assert_eq!(
+            *gate.calls.lock().unwrap(),
+            [
+                ("attempt", 0),
+                ("commit", 0),
+                ("progress", 0),
+                ("attempt", 1),
+                ("progress", 1),
+                ("attempt", 5),
+                ("progress", 5),
+                ("attempt", 21),
+                ("progress", 21),
+            ]
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_refused_commit_sends_nothing_and_send_stays_ungated() {
+        let (client, transport) = client([]);
+        let gate = Logging::new(false);
+        let outcome = client
+            .send_gated(
+                "https://receiver.example/events",
+                &Secret::new("result-key"),
+                &event(),
+                &gate,
+            )
+            .await;
+        assert_eq!(outcome, expired());
+        assert_eq!(*transport.posts.lock().unwrap(), 0);
+        assert_eq!(*gate.calls.lock().unwrap(), [("attempt", 0), ("commit", 0)]);
+        let outcome = client
+            .send(
+                "https://receiver.example/events",
+                &Secret::new("result-key"),
+                &event(),
+            )
+            .await;
+        assert_eq!(
+            outcome,
+            DeliveryOutcome::Confirmed {
+                platform_message_id: None
+            }
+        );
+        assert_eq!(*transport.posts.lock().unwrap(), 1);
     }
 }

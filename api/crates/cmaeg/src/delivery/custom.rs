@@ -38,7 +38,7 @@ impl CustomDelivery {
         let data = custom::data(event, message.text.as_deref(), Some(message), None);
         // Commit point (Amendment R3 §R3.1): for a Sync-origin event the
         // emitted frame is the first side effect. Emitting to any other
-        // address does nothing, so its webhooks commit on their own.
+        // address does nothing, so its first webhook attempt commits.
         if matches!(event.reply, ReplyAddress::Sync { .. }) && !gate.commit() {
             return IntentReceipt {
                 message_ref: None,
@@ -170,7 +170,7 @@ impl CustomDelivery {
                 .iter()
                 .find(|(id, _)| id == hmac_key_id)
             {
-                Some((_, key)) => self.webhooks.send(url, key, &envelope).await,
+                Some((_, key)) => self.webhooks.send_gated(url, key, &envelope, gate).await,
                 None => DeliveryOutcome::Rejected {
                     reason: "webhook_key_missing".into(),
                 },
@@ -336,5 +336,55 @@ mod tests {
                 assert_eq!(frames.len(), 1, "a refused commit emits nothing");
             }
         }
+    }
+
+    /// Accepts every webhook at a public address.
+    struct Accepting;
+    impl crate::delivery::webhook_client::WebhookTransport for Accepting {
+        fn resolve(
+            &self,
+            _url: reqwest::Url,
+        ) -> BoxFuture<'_, Result<Vec<std::net::SocketAddr>, crate::net::exchange::TransportError>>
+        {
+            Box::pin(async { Ok(vec!["8.8.8.8:443".parse().unwrap()]) })
+        }
+        fn post(
+            &self,
+            _url: reqwest::Url,
+            _addresses: Vec<std::net::SocketAddr>,
+            _headers: reqwest::header::HeaderMap,
+            _body: Arc<Vec<u8>>,
+        ) -> BoxFuture<'_, Result<u16, crate::net::exchange::TransportError>> {
+            Box::pin(async { Ok(200) })
+        }
+    }
+
+    #[tokio::test]
+    async fn a_webhook_only_reply_commits_inside_its_first_attempt() {
+        let channel = channel(|value| {
+            value["reply"]["sinks"] = json!([{"type":"result_webhook","url":"https://receiver.example/events","hmac_key_id":"result"}]);
+            value["secrets"]["hmac_secrets"] = json!([["result", "result-key"]]);
+        });
+        let mut delivery = CustomDelivery::new("https://gateway.example".into(), Arc::default());
+        delivery.webhooks = WebhookClient::with_transport(Arc::new(Accepting));
+        let gate = RecordingGate::new(true);
+        let receipt = delivery
+            .reply(
+                &gate,
+                &channel,
+                &event(&channel, ReplyAddress::None),
+                &message(),
+            )
+            .await;
+        assert_eq!(
+            receipt.delivery,
+            DeliveryOutcome::Confirmed {
+                platform_message_id: None
+            }
+        );
+        assert_eq!(
+            gate.calls(),
+            ["enter_route", "attempt", "commit", "progress"]
+        );
     }
 }
