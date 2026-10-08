@@ -252,6 +252,7 @@ fn config(media: MediaConfig) -> Config {
         media,
         stt: SttConfig::default(),
         transformer: TransformerConfig::default(),
+        console: cmaeg::ConsoleConfig::default(),
     }
 }
 

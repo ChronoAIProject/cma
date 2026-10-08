@@ -7,6 +7,7 @@ use cmaeg_core::{channel::Secret, seal::MasterKeyRing};
 use reqwest::Url;
 
 mod cache;
+mod console;
 mod delivery;
 mod ingress;
 mod media;
@@ -16,6 +17,7 @@ mod stt;
 pub mod transformer;
 mod turns;
 pub use cache::*;
+pub use console::*;
 pub use delivery::*;
 pub use ingress::*;
 pub use media::{
@@ -66,6 +68,8 @@ pub enum ConfigError {
     InvalidMedia { detail: String },
     /// The configured media transformer failed its startup checks.
     MediaTransformer { detail: String },
+    /// A console setting was invalid.
+    InvalidConsole { detail: String },
 }
 
 impl std::fmt::Display for ConfigError {
@@ -99,6 +103,9 @@ impl std::fmt::Display for ConfigError {
             Self::MediaTransformer { detail } => {
                 write!(formatter, "media transformer unavailable: {detail}")
             }
+            Self::InvalidConsole { detail } => {
+                write!(formatter, "console configuration is invalid: {detail}")
+            }
         }
     }
 }
@@ -129,6 +136,7 @@ pub struct Config {
     pub media: MediaConfig,
     pub stt: SttConfig,
     pub transformer: TransformerConfig,
+    pub console: ConsoleConfig,
 }
 
 /// Secrets and origins used by the channel management plane.
@@ -194,6 +202,7 @@ impl Config {
             media,
             stt,
             transformer,
+            console: ConsoleConfig::from_env()?,
         })
     }
 }
