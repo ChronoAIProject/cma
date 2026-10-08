@@ -71,11 +71,13 @@ pub struct ReceivedRequest {
     pub path: String,
     pub authorization: Option<String>,
     pub idempotency_key: Option<String>,
+    pub content_type: Option<String>,
     pub body: String,
 }
 
 struct StateData {
     config: FakeProviderConfig,
+    /// Every request in arrival order, event-context reads included.
     requests: Mutex<Vec<ReceivedRequest>>,
     busy_once: AtomicBool,
     conversation_missing_once: AtomicBool,
@@ -135,7 +137,18 @@ impl FakeProvider {
         &self.base_url
     }
 
+    /// The requests that change provider state, in arrival order. Event-context
+    /// reads are left out, so the call counts tests assert stay independent
+    /// of the agent's own context lookups.
     pub fn requests(&self) -> Vec<ReceivedRequest> {
+        self.log()
+            .into_iter()
+            .filter(|request| request.method != "GET")
+            .collect()
+    }
+
+    /// Every request in arrival order, including event-context reads.
+    pub fn log(&self) -> Vec<ReceivedRequest> {
         self.state.requests.lock().unwrap().clone()
     }
 
@@ -313,7 +326,12 @@ async fn responses(
 }
 
 fn record(state: &StateData, method: &str, path: String, headers: HeaderMap, body: Bytes) {
-    state.requests.lock().unwrap().push(ReceivedRequest {
+    let request = received(method, path, &headers, &body);
+    state.requests.lock().unwrap().push(request);
+}
+
+fn received(method: &str, path: String, headers: &HeaderMap, body: &[u8]) -> ReceivedRequest {
+    ReceivedRequest {
         received_at: Instant::now(),
         method: method.into(),
         path,
@@ -325,15 +343,25 @@ fn record(state: &StateData, method: &str, path: String, headers: HeaderMap, bod
             .get("idempotency-key")
             .and_then(|value| value.to_str().ok())
             .map(str::to_owned),
-        body: String::from_utf8_lossy(&body).into_owned(),
-    });
+        content_type: headers
+            .get("content-type")
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned),
+        body: String::from_utf8_lossy(body).into_owned(),
+    }
 }
 
 async fn event_context(
     State(state): State<Arc<StateData>>,
-    Path((_binding, conversation, event)): Path<(String, String, String)>,
+    Path((binding, conversation, event)): Path<(String, String, String)>,
     headers: HeaderMap,
 ) -> Response {
+    state.requests.lock().unwrap().push(received(
+        "GET",
+        format!("/api/v1/cmaeg/bindings/{binding}/conversations/{conversation}/events/{event}"),
+        &headers,
+        &[],
+    ));
     let authorization = headers
         .get("authorization")
         .and_then(|value| value.to_str().ok());
