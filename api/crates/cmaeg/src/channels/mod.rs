@@ -9,6 +9,8 @@ mod consumers;
 pub mod creation;
 pub mod definition;
 mod definition_sources;
+#[cfg(test)]
+mod definition_write_tests;
 mod lifecycle;
 pub mod management;
 mod requests;

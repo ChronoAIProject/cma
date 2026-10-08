@@ -22,10 +22,10 @@ pub const DYNAMIC_SOURCES_DISABLED: &str = "dynamic_sources_disabled";
 /// The refusal of a write that introduces or modifies routing.
 pub const MULTI_CONSUMER_DISABLED: &str = "multi_consumer_disabled";
 
-/// Flags that admit writes of new stored shapes. All false until the flags exist.
+/// Operator switches that admit writes of new stored shapes; off by default.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct WriteFlags {
-    /// Admits routing to several consumers; wired by #998.
+    /// Admits routing to several consumers.
     pub multi_consumer: bool,
     /// Admits extended source and partition shapes; wired by #999.
     pub dynamic_sources: bool,

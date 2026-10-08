@@ -229,6 +229,19 @@ fn validate_definition(
     flags: WriteFlags,
 ) -> Result<(), ValidationError> {
     write_gate::check(current, definition, flags)?;
+    if current
+        .is_some_and(|current| current.secrets.agent_key_hash != definition.secrets.agent_key_hash)
+        && definition
+            .routing
+            .iter()
+            .flat_map(|routing| &routing.consumers)
+            .any(|consumer| consumer.agent_key_hash == definition.secrets.agent_key_hash)
+    {
+        return Err(ValidationError::new(
+            "/credentials/agent_key",
+            "consumer_key_reused",
+        ));
+    }
     definition.validate()?;
     if definition.profile.metadata.owner.subject != definition.owner.subject {
         return Err(ValidationError::new(

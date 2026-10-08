@@ -53,10 +53,16 @@ pub(super) struct Gateway {
 
 impl Gateway {
     pub(super) async fn start() -> Self {
+        Self::with_routing(false).await
+    }
+
+    pub(super) async fn with_routing(enabled: bool) -> Self {
         let provider = FakeProvider::start(FakeProviderConfig::default()).await;
         let cma = FakeCma::start(false).await;
         let nyxid = FakeNyxid::start().await;
-        let (base, stop, task) = app(&provider, &cma, &nyxid).await;
+        let mut state = management_state(&provider, &cma, &nyxid, key_ring(1));
+        state.routing.multi_consumer_enabled = enabled;
+        let (base, stop, task) = serve_app(state).await;
         Self {
             provider,
             cma,
@@ -66,6 +72,10 @@ impl Gateway {
             task,
             client: Client::new(),
         }
+    }
+
+    pub(super) fn provider_calls(&self) -> usize {
+        self.provider.requests().len()
     }
 
     async fn create(&self, body: &Value) -> reqwest::Response {

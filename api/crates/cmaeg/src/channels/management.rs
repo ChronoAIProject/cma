@@ -9,17 +9,16 @@ pub use super::state::{
 };
 use super::target::{loaded_id, open_target, ChannelTarget};
 pub use super::test_turn::{test_turn, TestResult};
-use super::write_gate::WriteFlags;
 use crate::{
     auth::Creator,
     providers::{BindingRequest, ToolsAdvertisement},
     records::{RecordError, RecordValue},
 };
 use cmaeg_core::{
-    channel::{ChannelDefinition, ConformanceLevel},
+    channel::{ChannelDefinition, ConformanceLevel, Extensions},
     ids::{BindingId, ChannelId, RecordId},
     profile::canonical_json,
-    seal::{open_blob, seal_blob, ChannelPointer, MasterKeyRing, OpenError},
+    seal::{open_blob, seal_blob, ChannelPointer, MasterKeyRing, OpenError, MAX_BLOB_BYTES},
     ValidationError,
 };
 use uuid::Uuid;
@@ -60,7 +59,7 @@ pub async fn create(
         record_id.clone(),
         binding_id.clone(),
         ConformanceLevel::L1,
-        WriteFlags::default(),
+        state.write_flags(),
     )
     .map_err(ManagementError::Invalid)?;
     let pointer =
@@ -225,7 +224,7 @@ pub async fn update(
         InvalidationPath::Rest,
     );
     // The write gate runs inside the build, before the provider sees anything.
-    let mut definition = build_update(&request, &current.definition, WriteFlags::default())
+    let mut definition = build_update(&request, &current.definition, state.write_flags())
         .map_err(ManagementError::Invalid)?;
     definition.version = current.record.version;
     // Validate the complete definition and its storage bound before the provider sees a mutation.
@@ -347,12 +346,19 @@ pub(super) fn seal_definition(
     ring: &MasterKeyRing,
     definition: &ChannelDefinition,
 ) -> Result<Vec<u8>, ManagementError> {
-    let json = definition.to_blob_json();
-    seal_blob(ring, canonical_json(json).as_bytes()).map_err(|error| match error {
-        cmaeg_core::seal::SealError::TooLarge => ManagementError::Invalid(ValidationError::new(
-            "/",
-            "sealed channel exceeds the record size limit",
-        )),
+    let plaintext = canonical_json(definition.to_blob_json());
+    seal_blob(ring, plaintext.as_bytes()).map_err(|error| match error {
+        cmaeg_core::seal::SealError::TooLarge => {
+            let mut detail = "sealed channel exceeds the record size limit".to_owned();
+            if !Extensions::of(definition).legacy_compatible() {
+                // seal_blob checks the canonical plaintext bound before encryption.
+                detail.push_str(&format!(
+                    " bytes={} limit={MAX_BLOB_BYTES}",
+                    plaintext.len()
+                ));
+            }
+            ManagementError::Invalid(ValidationError::new("/", detail))
+        }
         _ => ManagementError::Internal("channel blob cannot be sealed".into()),
     })
 }

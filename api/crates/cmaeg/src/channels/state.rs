@@ -50,6 +50,8 @@ pub struct ManagementState {
     /// Inbound media switch. Off, a custom source's attachments setting is
     /// refused, so it is stored only once every replica can parse it.
     pub media_enabled: bool,
+    /// Shared operator routing policy, including the management write switch.
+    pub routing: crate::RoutingConfig,
     mutations: Arc<[Mutex<()>; 64]>,
     pub(crate) idempotency: Arc<Mutex<BTreeMap<(String, String), CachedResponse>>>,
 }
@@ -100,8 +102,16 @@ impl ManagementState {
             cma_service_token: config.cma_service_token,
             telegram: None,
             media_enabled: false,
+            routing: crate::RoutingConfig::default(),
             idempotency: Arc::new(Mutex::new(BTreeMap::new())),
             mutations: Arc::new(std::array::from_fn(|_| Mutex::new(()))),
+        }
+    }
+
+    pub(crate) fn write_flags(&self) -> super::write_gate::WriteFlags {
+        super::write_gate::WriteFlags {
+            multi_consumer: self.routing.multi_consumer_enabled,
+            dynamic_sources: false,
         }
     }
 

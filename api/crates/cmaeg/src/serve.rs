@@ -36,6 +36,7 @@ pub(crate) async fn serve(config: Config) -> Result<(), Box<dyn std::error::Erro
     )?);
     state.telegram = Some(telegram.clone());
     state.media_enabled = config.media.enabled;
+    state.routing = config.routing.clone();
     let _reachability_probe = state.readiness.start_probe(state.records.clone());
     let tracker = turns::TurnTracker::new(state.readiness.clone());
     let (inbound, outcomes) = tokio::sync::mpsc::channel(256);
