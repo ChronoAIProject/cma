@@ -216,50 +216,9 @@ fn terminal(event: &EventRefPayload, outcome: &TurnOutcome) -> Option<(&'static 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::delivery::gate::{AttemptPermit, GateRefusal, RouteTicket};
+    use crate::delivery::gate::recording::RecordingGate;
     use cmaeg_core::{channel::ChannelDefinition, ids::ChannelId, seal::ChannelPointer};
     use futures_util::{future::BoxFuture, StreamExt};
-    use std::sync::Mutex;
-
-    /// Logs every gate call in order; `commit` answers `commits`.
-    struct RecordingGate {
-        calls: Mutex<Vec<&'static str>>,
-        commits: bool,
-    }
-    impl RecordingGate {
-        fn new(commits: bool) -> Self {
-            Self {
-                calls: Mutex::default(),
-                commits,
-            }
-        }
-        fn calls(&self) -> Vec<&'static str> {
-            self.calls.lock().unwrap().clone()
-        }
-        fn log(&self, call: &'static str) {
-            self.calls.lock().unwrap().push(call);
-        }
-    }
-    impl SendGate for RecordingGate {
-        fn enter_route<'a>(
-            &'a self,
-            _route: &'a str,
-        ) -> BoxFuture<'a, Result<RouteTicket, GateRefusal>> {
-            self.log("enter_route");
-            Box::pin(async { Ok(RouteTicket::empty()) })
-        }
-        fn commit(&self) -> bool {
-            self.log("commit");
-            self.commits
-        }
-        fn attempt<'a>(&'a self) -> BoxFuture<'a, Result<AttemptPermit, GateRefusal>> {
-            self.log("attempt");
-            Box::pin(async { Ok(AttemptPermit::empty()) })
-        }
-        fn progress(&self) {
-            self.log("progress");
-        }
-    }
 
     fn channel(edit: impl FnOnce(&mut Value)) -> ResolvedChannel {
         let mut value: Value = serde_json::from_str(include_str!(

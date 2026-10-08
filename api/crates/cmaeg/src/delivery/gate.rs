@@ -110,6 +110,72 @@ impl SendGate for Ungated {
     fn progress(&self) {}
 }
 
+/// A gate for unit tests that logs every call, commits as told, and checks
+/// that no attempt permit outlives its attempt.
+#[cfg(test)]
+pub(crate) mod recording {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+    use tokio::time::Instant;
+
+    pub(crate) struct RecordingGate {
+        /// Each call with the whole seconds elapsed since the gate was made.
+        calls: Mutex<Vec<(&'static str, u64)>>,
+        /// Every live attempt permit holds a clone.
+        live: Arc<()>,
+        commits: bool,
+        started: Instant,
+    }
+    impl RecordingGate {
+        pub(crate) fn new(commits: bool) -> Self {
+            Self {
+                calls: Mutex::default(),
+                live: Arc::new(()),
+                commits,
+                started: Instant::now(),
+            }
+        }
+        pub(crate) fn calls(&self) -> Vec<&'static str> {
+            self.timed_calls()
+                .into_iter()
+                .map(|(call, _)| call)
+                .collect()
+        }
+        pub(crate) fn timed_calls(&self) -> Vec<(&'static str, u64)> {
+            self.calls.lock().unwrap().clone()
+        }
+        fn log(&self, call: &'static str) {
+            let second = self.started.elapsed().as_secs();
+            self.calls.lock().unwrap().push((call, second));
+        }
+    }
+    impl SendGate for RecordingGate {
+        fn enter_route<'a>(
+            &'a self,
+            _route: &'a str,
+        ) -> BoxFuture<'a, Result<RouteTicket, GateRefusal>> {
+            self.log("enter_route");
+            Box::pin(ready(Ok(RouteTicket::empty())))
+        }
+        fn commit(&self) -> bool {
+            self.log("commit");
+            self.commits
+        }
+        fn attempt<'a>(&'a self) -> BoxFuture<'a, Result<AttemptPermit, GateRefusal>> {
+            self.log("attempt");
+            Box::pin(ready(Ok(AttemptPermit::holding(self.live.clone()))))
+        }
+        fn progress(&self) {
+            assert_eq!(
+                Arc::strong_count(&self.live),
+                1,
+                "an attempt permit outlived its attempt"
+            );
+            self.log("progress");
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
