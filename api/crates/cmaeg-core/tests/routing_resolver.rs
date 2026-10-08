@@ -6,6 +6,8 @@ mod constraints;
 mod event_field;
 #[path = "routing_resolver/fixture.rs"]
 mod fixture;
+#[path = "routing_resolver/kill_switch.rs"]
+mod kill_switch;
 #[path = "routing_policy/fixture.rs"]
 mod policy;
 #[path = "routing_resolver/precedence.rs"]

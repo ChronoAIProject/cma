@@ -67,7 +67,8 @@ pub(super) fn route(
         let selection = Selection::of(RouteResolution::AgentEvent, targets);
         return Ok(selection.bind(SourceId::agent(), Some(causation.clone())));
     }
-    Ok(select(def, roster, input, trace)?.bind(source_id, None))
+    let selection = select(def, roster, input, trace).map_err(|refusal| refusal.error)?;
+    Ok(selection.bind(source_id, None))
 }
 
 /// The card's consumer, `default` for `None`. A consumer removed or set
@@ -83,22 +84,33 @@ pub(super) fn interaction(
         .ok_or(RouteError::InteractionDenied)
 }
 
+/// A refusal and the resolution being attempted when it was raised, which
+/// the kill switch records in its shadow step.
+pub(super) struct Refusal {
+    pub(super) resolution: RouteResolution,
+    pub(super) error: RouteError,
+}
+
 /// Steps 3 to 5: explicit addressing, else the first matching active rule,
-/// else the default targets.
+/// else the default targets. The kill switch shadows exactly this.
 pub(super) fn select(
     def: &ChannelDefinition,
     roster: &Roster<'_>,
     input: &RouteInput<'_>,
     trace: &mut Trace,
-) -> Result<Selection, RouteError> {
+) -> Result<Selection, Refusal> {
     // Clicks are resolved only from their card, which the caller supplies.
     if matches!(input.activity.kind, ActivityKind::Interaction(_)) {
-        return Err(RouteError::InteractionDenied);
+        return Err(at(RouteResolution::Interaction)(
+            RouteError::InteractionDenied,
+        ));
     }
     if let Some(form) = addressing::recognize(roster, input) {
-        if let Some(addressed) = form.resolve(roster)? {
+        let refused = at(form.resolution());
+        if let Some(addressed) = form.resolve(roster).map_err(&refused)? {
             let resolution = addressed.resolution;
-            let targets = addressed_targets(roster, input, &addressed.targets, resolution, trace)?;
+            let targets = addressed_targets(roster, input, &addressed.targets, resolution, trace)
+                .map_err(&refused)?;
             return Ok(Selection {
                 resolution,
                 rule_id: None,
@@ -107,22 +119,30 @@ pub(super) fn select(
             });
         }
     }
-    if let Some(ids) = event_field::targets(roster, input)? {
-        let resolution = RouteResolution::EventField;
-        let targets = addressed_targets(roster, input, &ids, resolution, trace)?;
+    let resolution = RouteResolution::EventField;
+    if let Some(ids) = event_field::targets(roster, input).map_err(at(resolution))? {
+        let targets =
+            addressed_targets(roster, input, &ids, resolution, trace).map_err(at(resolution))?;
         return Ok(Selection::of(resolution, targets));
     }
     if let Some(rule) = rules::first_match(def, input.activity, trace) {
         trace.push(TraceStep::Precedence("rules"));
-        let targets = implicit(roster, input, &rule.targets, trace)?;
+        let resolution = RouteResolution::Rule;
+        let targets = implicit(roster, input, &rule.targets, trace).map_err(at(resolution))?;
         return Ok(Selection {
             rule_id: Some(rule.id.clone()),
-            ..Selection::of(RouteResolution::Rule, targets)
+            ..Selection::of(resolution, targets)
         });
     }
     trace.push(TraceStep::Precedence("default"));
-    let targets = implicit(roster, input, &roster.policy.default_targets, trace)?;
-    Ok(Selection::of(RouteResolution::Default, targets))
+    let resolution = RouteResolution::Default;
+    let targets =
+        implicit(roster, input, &roster.policy.default_targets, trace).map_err(at(resolution))?;
+    Ok(Selection::of(resolution, targets))
+}
+
+fn at(resolution: RouteResolution) -> impl Fn(RouteError) -> Refusal {
+    move |error| Refusal { resolution, error }
 }
 
 /// Record explicit addressing in the trace and check its targets.

@@ -99,6 +99,11 @@ pub(super) fn recognize<'t>(roster: &Roster<'_>, input: &RouteInput<'t>) -> Opti
 }
 
 impl Form<'_> {
+    /// `mention` or `command`, known before any target is resolved.
+    pub(super) fn resolution(&self) -> RouteResolution {
+        self.resolution
+    }
+
     /// Resolve the recognized form's targets against the roster.
     pub(super) fn resolve(&self, roster: &Roster<'_>) -> Result<Option<Addressed>, RouteError> {
         let mut targets = Targets::new(roster.max_targets());

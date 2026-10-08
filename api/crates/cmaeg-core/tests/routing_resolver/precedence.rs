@@ -282,15 +282,3 @@ fn unrouted_channels_are_always_legacy_without_a_trace() {
         }
     }
 }
-
-#[test]
-fn with_routing_off_a_routed_channel_refuses_its_events() {
-    let def = with_message_rule();
-    for activity in [
-        message(telegram(), "@main x"),
-        event("build.done", json!({})),
-    ] {
-        let refused = resolve(&def, &input(&def, &activity), false);
-        assert_eq!(refused, Err(RouteError::KillSwitchClosed));
-    }
-}
