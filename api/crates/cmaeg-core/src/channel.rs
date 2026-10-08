@@ -12,11 +12,13 @@ use crate::{
     require_string, ValidationError,
 };
 
+mod consumer;
 mod custom_attachments;
 mod partition;
 mod platform;
 mod secrets;
 mod telegram;
+pub use consumer::ConsumerView;
 pub use custom_attachments::{
     CustomAttachments, DEFAULT_CUSTOM_ATTACHMENT_POINTER, MAX_CUSTOM_ATTACHMENT_ORIGINS,
     MAX_CUSTOM_ATTACHMENT_POINTER_BYTES,
