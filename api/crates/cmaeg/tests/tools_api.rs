@@ -21,6 +21,8 @@ mod attachments_mcp;
 mod consumer_auth;
 #[path = "tools/consumer_context.rs"]
 mod consumer_context;
+#[path = "tools/consumer_media.rs"]
+mod consumer_media;
 #[path = "tools/consumer_support.rs"]
 pub mod consumer_support;
 #[path = "tools/download_support.rs"]

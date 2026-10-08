@@ -178,9 +178,9 @@ impl LinkRefusal {
 }
 
 impl ToolsState {
-    /// Mint a single-use link to attachment `index` of `event` for
-    /// `channel`'s binding and current agent key, as one ready `curl`
-    /// command. The caller has already refused an attachment without a
+    /// Mint a single-use link to attachment `index` of `event` for the
+    /// binding and current agent key of the consumer `event` was issued to,
+    /// as one ready `curl` command. The caller has already refused an attachment without a
     /// source. The token appears only inside `curl` and is never logged.
     pub fn mint_link(
         &self,
@@ -207,11 +207,17 @@ impl ToolsState {
         // Only an autonomous binding whose provider installs the gateway
         // tools may save originals; media off permits nothing.
         let media = self.media.as_deref().ok_or(LinkRefusal::NotPermitted)?;
-        // A link names no consumer yet, so it is minted for the default one.
-        let (Some(consumer), Some(agent_key_hash)) =
-            (channel.consumer(None), channel.consumer_key_hash(None))
-        else {
-            tracing::error!("channel has no default consumer; media link refused");
+        // The link is minted for the consumer the event was issued to, which
+        // `authorize_event` has already proved is the caller: its binding,
+        // current key and audience decide, never the default's.
+        let (Some(consumer), Some(agent_key_hash)) = (
+            channel.consumer(event.consumer.as_ref()),
+            channel.consumer_key_hash(event.consumer.as_ref()),
+        ) else {
+            tracing::warn!(
+                channel = %telemetry::channel_hash(channel.id.as_str()),
+                "the event's consumer is gone; media link refused"
+            );
             return Err(LinkRefusal::NotPermitted);
         };
         if !media.audience(&consumer).downloads {

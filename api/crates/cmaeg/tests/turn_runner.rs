@@ -1,3 +1,5 @@
+#[path = "turns/consumer_audience.rs"]
+mod consumer_audience;
 #[path = "turns/drain.rs"]
 mod drain;
 #[path = "turns/execution.rs"]
@@ -28,6 +30,8 @@ mod render_fences;
 mod render_media;
 #[path = "turns/render_sources.rs"]
 mod render_sources;
+#[path = "../../cmaeg-core/tests/routing_policy/fixture.rs"]
+pub mod routing_fixture;
 #[path = "relay/signer.rs"]
 pub mod signer;
 #[path = "turns/support.rs"]
