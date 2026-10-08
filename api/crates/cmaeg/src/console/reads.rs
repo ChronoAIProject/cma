@@ -221,6 +221,7 @@ impl ConsoleMemory {
                     &recorded.definition,
                     recorded.record_bytes,
                     recorded.valid,
+                    &self.non_human_providers,
                 ));
                 self.index.upsert(
                     record.clone(),

@@ -26,7 +26,12 @@ fn view(summary: ChannelSummary) -> ChannelView {
 }
 
 fn readable() -> ChannelSummary {
-    ChannelSummary::of(&definition(&record(1), "alice", "orders"), 60_000, true)
+    ChannelSummary::of(
+        &definition(&record(1), "alice", "orders"),
+        60_000,
+        true,
+        &std::collections::BTreeSet::new(),
+    )
 }
 
 #[test]

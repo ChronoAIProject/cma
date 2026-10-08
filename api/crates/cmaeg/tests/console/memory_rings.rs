@@ -349,7 +349,15 @@ async fn no_structure_holds_content_references_tokens_or_secrets() {
     .unwrap();
     definition.secrets.channel_key = Some(Secret::new("fixture-channel-key"));
     definition.secrets.hmac_secrets = vec![("ingress".into(), Secret::new("fixture-hmac-secret"))];
-    dump.push_str(&serde_json::to_string(&ChannelSummary::of(&definition, 2_048, true)).unwrap());
+    dump.push_str(
+        &serde_json::to_string(&ChannelSummary::of(
+            &definition,
+            2_048,
+            true,
+            &std::collections::BTreeSet::new(),
+        ))
+        .unwrap(),
+    );
     assert_eq!(rings.totals().entries, 3);
     for leak in LEAKS {
         assert!(!dump.contains(leak), "{leak} found in {dump}");

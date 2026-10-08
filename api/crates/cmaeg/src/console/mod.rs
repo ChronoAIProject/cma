@@ -375,14 +375,17 @@ pub(crate) fn compose(
     if !config.console.enabled {
         return Ok(None);
     }
-    let memory = Arc::new(memory::ConsoleMemory::new(
-        &config.console.memory,
-        memory::Sources {
-            heads: state.records.clone(),
-            reader: Arc::new(state.clone()),
-        },
-        memory::Schedule::from_config(&config.console.memory),
-    ));
+    let memory = Arc::new(
+        memory::ConsoleMemory::new(
+            &config.console.memory,
+            memory::Sources {
+                heads: state.records.clone(),
+                reader: Arc::new(state.clone()),
+            },
+            memory::Schedule::from_config(&config.console.memory),
+        )
+        .with_non_human_providers(config.routing.non_human_providers.clone()),
+    );
     let console = Console::new(ConsoleDeps {
         config: config.console.clone(),
         public_url: config.management.public_url.clone(),

@@ -1,0 +1,82 @@
+//! The console pages of a routed channel: consumers, the routing policy,
+//! and how each event was routed, all from gateway memory.
+use super::{
+    pages_support::World,
+    routed_support::{self, secrets},
+};
+
+async fn tab(world: &World, record: &str, tab: &str, sid: &str) -> String {
+    let path = format!("/console/channels/{record}?tab={tab}");
+    let response = world.harness.get_as(&path, sid).await;
+    assert_eq!(response.status(), 200, "{path}");
+    response.text().await.unwrap()
+}
+
+fn assert_no_secret(page: &str, name: &str) {
+    for secret in secrets() {
+        assert!(!page.contains(&secret), "{name} shows {secret}");
+    }
+}
+
+#[tokio::test]
+async fn the_consumers_tab_shows_what_routing_reads_of_each_consumer() {
+    let world = World::start().await;
+    let routed = routed_support::add(&world, 1, "alice", "alice-routed");
+    let (sid, _) = world.harness.sign_in("alice", "/console").await;
+    let page = tab(&world, routed.as_str(), "consumers", &sid).await;
+    let rows: Vec<&str> = page.split("<tr>").skip(2).collect();
+    assert_eq!(rows.len(), 3, "default, reviewer and nyx");
+    let (lead, reviewer, nyx) = (rows[0], rows[1], rows[2]);
+    for fact in [
+        "Lead",
+        "@lead",
+        "<code>default</code>",
+        "mentionable",
+        "answers (provider default)",
+        "automatic final answer on · to origin",
+        "to any routable consumer",
+    ] {
+        assert!(lead.contains(fact), "default: {fact}");
+    }
+    for fact in [
+        "@reviewer",
+        "<code>csm_00000000000a</code>",
+        "binding-reviewer",
+        "answers (provider default)",
+        "to <code>default</code>",
+    ] {
+        assert!(reviewer.contains(fact), "reviewer: {fact}");
+    }
+    assert!(!reviewer.contains("Pending"));
+    for fact in [
+        "@nyx",
+        "<span class=\"badge\">Pending</span>",
+        "not mentionable",
+        "answers (set on the consumer)",
+        "<td>off</td>",
+    ] {
+        assert!(nyx.contains(fact), "nyx: {fact}");
+    }
+    assert_no_secret(&page, "consumers");
+    world.close().await;
+}
+
+#[tokio::test]
+async fn a_consumers_capability_follows_the_configured_provider_set() {
+    let world = World::start().await;
+    let routed = routed_support::add(&world, 1, "alice", "alice-routed");
+    let (sid, _) = world.harness.sign_in("alice", "/console").await;
+    // Only cma_codex answers non-human actors by default; nyx's own
+    // setting is the only way an nyxbot consumer answers them.
+    let unset = routed_support::routed_with(&routed, "alice", "alice-routed", |value| {
+        value["routing"]["consumers"][1]
+            .as_object_mut()
+            .unwrap()
+            .remove("non_human");
+    });
+    world.store(unset, 2);
+    let page = tab(&world, routed.as_str(), "consumers", &sid).await;
+    let nyx = page.split("<tr>").nth(4).unwrap();
+    assert!(nyx.contains("ignores (provider default)"), "{nyx}");
+    world.close().await;
+}

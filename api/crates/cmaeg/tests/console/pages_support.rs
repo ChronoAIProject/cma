@@ -3,7 +3,7 @@
 //! fixture channel carries every kind of secret so a page that leaked one
 //! would be caught.
 use std::{
-    collections::HashMap,
+    collections::{BTreeSet, HashMap},
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc, Mutex,
@@ -252,20 +252,23 @@ impl World {
     async fn compose(availability: Option<SourceAvailability>) -> Self {
         let heads = Arc::new(FakeHeads::default());
         let reader = Arc::new(FakeReader::default());
-        let memory = Arc::new(ConsoleMemory::new(
-            &ConsoleMemoryConfig::default(),
-            Sources {
-                heads: heads.clone(),
-                reader: reader.clone(),
-            },
-            Schedule {
-                settle: Duration::ZERO,
-                resync: Duration::from_secs(3_600),
-                pacing: Pacing {
-                    base: Duration::from_millis(1),
+        let memory = Arc::new(
+            ConsoleMemory::new(
+                &ConsoleMemoryConfig::default(),
+                Sources {
+                    heads: heads.clone(),
+                    reader: reader.clone(),
                 },
-            },
-        ));
+                Schedule {
+                    settle: Duration::ZERO,
+                    resync: Duration::from_secs(3_600),
+                    pacing: Pacing {
+                        base: Duration::from_millis(1),
+                    },
+                },
+            )
+            .with_non_human_providers(BTreeSet::from(["cma_codex".to_owned()])),
+        );
         let sources = availability.map(|availability| {
             Arc::new(RecordingSources::new(
                 availability,

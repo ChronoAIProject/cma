@@ -29,6 +29,8 @@ mod pages_event;
 mod pages_hygiene;
 #[path = "console/pages_link.rs"]
 mod pages_link;
+#[path = "console/pages_routing.rs"]
+mod pages_routing;
 #[path = "console/pages_sources.rs"]
 mod pages_sources;
 #[path = "console/pages_support.rs"]
@@ -37,6 +39,8 @@ pub mod pages_support;
 mod pages_tabs;
 #[path = "console/protection.rs"]
 mod protection;
+#[path = "console/routed_support.rs"]
+pub mod routed_support;
 #[path = "console/sessions.rs"]
 mod sessions;
 #[path = "console/signin.rs"]
@@ -46,5 +50,7 @@ pub mod support;
 
 #[path = "relay/support.rs"]
 pub mod relay_support;
+#[path = "../../cmaeg-core/tests/routing_policy/fixture.rs"]
+pub mod routing_fixture;
 #[path = "relay/signer.rs"]
 pub mod signer;

@@ -3,7 +3,7 @@
 //!
 //! Nothing here is durable. A restart loses it and the index is listed again
 //! from CMA; activity is relearned from traffic.
-use std::{sync::Arc, time::Duration};
+use std::{collections::BTreeSet, sync::Arc, time::Duration};
 
 use moka::sync::Cache;
 
@@ -76,6 +76,8 @@ pub struct ConsoleMemory {
     /// `(owner, record)` reads that found no record of theirs, so probing
     /// unknown records cannot turn into a stream of CMA reads.
     pub(super) misses: Cache<(String, cmaeg_core::ids::RecordId), ()>,
+    /// `CMAEG_NON_HUMAN_PROVIDERS`, read into each summary's consumers.
+    pub(super) non_human_providers: BTreeSet<String>,
 }
 
 impl ConsoleMemory {
@@ -101,7 +103,16 @@ impl ConsoleMemory {
                 .max_capacity(MISSES)
                 .time_to_live(MISS_TTL)
                 .build(),
+            non_human_providers: BTreeSet::new(),
         }
+    }
+
+    /// Read consumers' actor-kind capability against `providers`, the
+    /// gateway's `CMAEG_NON_HUMAN_PROVIDERS`. Without it a consumer answers
+    /// non-human actors only when it says so itself.
+    pub fn with_non_human_providers(mut self, providers: BTreeSet<String>) -> Self {
+        self.non_human_providers = providers;
+        self
     }
 
     /// Apply one observation from the queue.

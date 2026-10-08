@@ -7,10 +7,10 @@
 //! render resolves the version from the owner index and reuses the cached
 //! summary, so CMA is read only when a channel changed or its summary was
 //! evicted.
-use std::sync::Arc;
+use std::{collections::BTreeSet, sync::Arc};
 
 use cmaeg_core::{
-    channel::{ChannelDefinition, Source, SourceId},
+    channel::{ChannelDefinition, ConsumerView, ReplyChoice, Source, SourceId},
     ids::{ChannelId, ConsumerId, RecordId},
     profile::NyxIdIdentityKind,
 };
@@ -53,12 +53,53 @@ pub struct ConsumerChip {
     pub slug: String,
     /// The consumer's public key hash, masked as `sha256:…<last 8>`.
     pub key_hash: String,
+    /// Stored before its provider binding exists; routing skips it.
     pub pending: bool,
     /// `profile`, or the existing agent it targets.
     pub target: String,
     pub binding_id: String,
     pub level: &'static str,
+    /// Its effective automatic final answer: its own, else the channel's.
     pub auto_final: bool,
+    /// Where its automatic outputs go.
+    pub destination: ReplyChoice,
+    /// Whether a leading `@name` or `/to name` may address it.
+    pub mentionable: bool,
+    /// Whether it answers non-human actors (custom events and hand-offs).
+    pub non_human: bool,
+    /// True when `non_human` is the consumer's own setting rather than its
+    /// provider's default from `CMAEG_NON_HUMAN_PROVIDERS`.
+    pub non_human_set: bool,
+    /// Whether it may publish hand-offs, and to which consumers; empty
+    /// targets mean any routable consumer.
+    pub publish: Option<Vec<ConsumerId>>,
+}
+
+impl ConsumerChip {
+    /// The chip of `consumer`, its capability read against the configured
+    /// non-human provider set.
+    fn of(consumer: &ConsumerView<'_>, non_human_providers: &BTreeSet<String>) -> Self {
+        Self {
+            id: consumer.id.clone(),
+            name: mask::display_name(consumer.name),
+            label: mask::display_name(consumer.label),
+            slug: consumer.provider.slug.to_string(),
+            key_hash: mask::hash(consumer.agent_key_hash),
+            pending: consumer.pending,
+            target: target_label(&consumer.provider.target),
+            binding_id: consumer.provider.binding_id.to_string(),
+            level: level_label(consumer.provider.level),
+            auto_final: consumer.reply.auto_final,
+            destination: consumer.reply.destination,
+            mentionable: consumer.mentionable,
+            non_human: consumer.non_human_effective(non_human_providers),
+            non_human_set: consumer.non_human.is_some(),
+            publish: consumer
+                .publish
+                .enabled
+                .then(|| consumer.publish.targets.clone()),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -82,8 +123,15 @@ pub struct ChannelSummary {
 }
 
 impl ChannelSummary {
-    /// The summary of a definition read for its owner.
-    pub fn of(definition: &ChannelDefinition, record_bytes: usize, valid: bool) -> Self {
+    /// The summary of a definition read for its owner. `non_human_providers`
+    /// is `CMAEG_NON_HUMAN_PROVIDERS`, which decides a consumer's actor-kind
+    /// capability unless it sets its own.
+    pub fn of(
+        definition: &ChannelDefinition,
+        record_bytes: usize,
+        valid: bool,
+        non_human_providers: &BTreeSet<String>,
+    ) -> Self {
         let status = if !valid {
             SummaryStatus::Invalid
         } else if definition
@@ -107,18 +155,7 @@ impl ChannelSummary {
             sources: definition.sources.iter().map(Source::source_id).collect(),
             consumers: definition
                 .consumers()
-                .map(|consumer| ConsumerChip {
-                    id: consumer.id.clone(),
-                    name: mask::display_name(consumer.name),
-                    label: mask::display_name(consumer.label),
-                    slug: consumer.provider.slug.to_string(),
-                    key_hash: mask::hash(consumer.agent_key_hash),
-                    pending: false,
-                    target: target_label(&consumer.provider.target),
-                    binding_id: consumer.provider.binding_id.to_string(),
-                    level: level_label(consumer.provider.level),
-                    auto_final: consumer.reply.auto_final,
-                })
+                .map(|consumer| ConsumerChip::of(&consumer, non_human_providers))
                 .collect(),
             // Legacy channels only until routing policies exist.
             routed: false,
