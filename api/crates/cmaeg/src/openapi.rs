@@ -17,6 +17,9 @@ use utoipa::OpenApi;
         cmaeg_core::ids::ConsumerId,
         crate::channels::warnings::Warning,
         crate::channels::warnings::WarningReason,
+        crate::channels::sources::SourceAttachRequest,
+        crate::channels::sources::SourceCredentials,
+        http::sources::SourceAttachResponse,
     )),
     paths(
         http::connections::capabilities,
@@ -36,6 +39,8 @@ use utoipa::OpenApi;
         http::consumers::add,
         http::consumers::update,
         http::consumers::remove,
+        http::sources::attach,
+        http::sources::detach,
         http::callbacks::callback,
         http::telegram::callback,
         http::events::receive_event,

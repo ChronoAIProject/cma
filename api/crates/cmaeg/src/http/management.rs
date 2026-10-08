@@ -48,6 +48,14 @@ pub fn management_router(state: ManagementState) -> Router {
             "/v1/channels/{channel_id}/consumers/{consumer_id}",
             axum::routing::put(super::consumers::update).delete(super::consumers::remove),
         )
+        .route(
+            "/v1/channels/{channel_id}/sources",
+            post(super::sources::attach),
+        )
+        .route(
+            "/v1/channels/{channel_id}/sources/{source_id}",
+            axum::routing::delete(super::sources::detach),
+        )
         .with_state(state)
         .layer(axum::middleware::from_fn(protocol_headers))
 }

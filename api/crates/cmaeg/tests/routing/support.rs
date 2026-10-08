@@ -115,6 +115,13 @@ impl Drop for App {
 }
 impl App {
     pub async fn new(enabled: bool, edit: impl FnOnce(&mut Value)) -> Self {
+        Self::with_cache(enabled, Default::default(), edit).await
+    }
+    pub async fn with_cache(
+        enabled: bool,
+        cache: cmaeg::ChannelCacheConfig,
+        edit: impl FnOnce(&mut Value),
+    ) -> Self {
         let cma = FakeCma::start(false).await;
         let platform = Platform::default();
         let router = Router::new()
@@ -156,7 +163,7 @@ impl App {
             &definition.owner.subject,
             seal_blob(&keys, definition.to_blob_json().to_string().as_bytes()).unwrap(),
         );
-        let resolver = ChannelResolver::new(records, keys.clone(), Default::default());
+        let resolver = ChannelResolver::new(records, keys.clone(), cache);
         let channel = resolver.resolve(id.as_str()).await.unwrap();
         let recorder = Arc::new(Recorder::default());
         let observer = Arc::new(Observer::default());

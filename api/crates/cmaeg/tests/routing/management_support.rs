@@ -25,7 +25,15 @@ pub struct OwnerApp {
 }
 impl OwnerApp {
     pub async fn new(enabled: bool) -> Self {
-        let ingress = App::new(enabled, |raw| {
+        Self::with_sources(enabled, false).await
+    }
+    pub async fn with_sources(enabled: bool, dynamic_sources: bool) -> Self {
+        let mut cache = cmaeg::ChannelCacheConfig::default();
+        if dynamic_sources {
+            // This walkthrough deliberately makes several invalidating writes in a burst.
+            cache.restores_per_minute = std::num::NonZeroU32::new(60_000).unwrap();
+        }
+        let ingress = App::with_cache(enabled, cache, |raw| {
             raw["owner"]["subject"] = "alice".into();
             raw["profile"]["metadata"]["owner"]["subject"] = "alice".into();
             raw["profile_digest"] = fixture::digest_of(&raw["profile"]).into();
@@ -73,6 +81,7 @@ impl OwnerApp {
         );
         management.resolver = ingress.state.resolver.clone();
         management.routing = ingress.state.routing.clone();
+        management.routing.dynamic_sources_enabled = dynamic_sources;
         management.media_tool_providers = ["cma_codex".parse().unwrap(), "nyxbot".parse().unwrap()]
             .into_iter()
             .collect();

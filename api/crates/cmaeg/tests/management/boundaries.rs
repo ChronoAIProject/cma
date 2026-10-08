@@ -259,8 +259,10 @@ async fn http_errors_and_openapi_share_the_management_contract() {
         operations,
         [
             "addChannelConsumer",
+            "attachChannelSource",
             "createChannel",
             "deleteChannel",
+            "detachChannelSource",
             "getChannel",
             "putChannelRouting",
             "recoverChannel",

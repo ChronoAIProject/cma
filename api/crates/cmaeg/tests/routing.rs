@@ -37,3 +37,5 @@ mod management_support;
 mod management_walkthrough;
 #[path = "routing/source_mutations.rs"]
 mod source_mutations;
+#[path = "routing/source_walkthrough.rs"]
+mod source_walkthrough;

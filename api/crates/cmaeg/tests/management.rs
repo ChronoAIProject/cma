@@ -226,6 +226,8 @@ mod dynamic_updates;
 mod previous_schema;
 #[path = "management/source_credentials.rs"]
 mod source_credentials;
+#[path = "management/source_http.rs"]
+mod source_http;
 #[path = "management/source_policy.rs"]
 mod source_policy;
 #[path = "management/source_privacy.rs"]

@@ -22,6 +22,7 @@ pub mod reply_targets;
 pub mod request_start;
 pub mod routing;
 pub mod schema;
+pub mod sources;
 pub mod telegram;
 pub mod tools;
 
