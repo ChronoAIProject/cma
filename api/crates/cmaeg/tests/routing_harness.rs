@@ -13,6 +13,8 @@ mod kill_switch;
 mod latency;
 #[path = "routing_harness/logs.rs"]
 mod logs;
+#[path = "routing_harness/manual.rs"]
+mod manual;
 #[path = "routing_harness/peers.rs"]
 mod peers;
 #[path = "../../cmaeg-core/tests/routing_policy/fixture.rs"]
@@ -23,3 +25,5 @@ pub mod relay_support;
 mod requests;
 #[path = "relay/signer.rs"]
 pub mod signer;
+#[path = "routing_harness/smoke.rs"]
+mod smoke;
