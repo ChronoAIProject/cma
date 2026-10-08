@@ -1,18 +1,22 @@
 //! The console's memory rule: with the console enabled, its in-memory state
 //! must fit in an eighth of the cmaeg container's memory limit.
 
+use cmaeg::console::summary::SUMMARY_UNIT_BYTES;
+
 use super::{configmap_value, container_memory, with_memory, CONFIGMAP, DEPLOYMENT};
 
 /// The memory each bounded console structure may hold, as
 /// `(key, bytes per unit, default)`. The activity budget is already in bytes.
 /// A session holds two tokens, its metadata and the owner switcher's
 /// organization list; an index head a record id, an owner and a version; a
-/// channel id at most 512 B plus its key; a summary its names and chips.
+/// channel id at most 512 B plus its key. The summary cache is weighed in
+/// the gateway's own 2 KiB units, a summary taking one per 2 KiB it holds,
+/// so its term is exact however large a channel's routing policy is.
 const CONSOLE_TERMS: [(&str, u64, u64); 5] = [
     ("CMAEG_CONSOLE_ACTIVITY_MAX_BYTES", 1, 33_554_432),
     ("CMAEG_CONSOLE_INDEX_MAX_RECORDS", 300, 100_000),
     ("CMAEG_CONSOLE_CHANNEL_IDS_MAX", 600, 20_000),
-    ("CMAEG_CONSOLE_SUMMARY_CACHE_MAX", 2 * 1024, 2_000),
+    ("CMAEG_CONSOLE_SUMMARY_CACHE_MAX", SUMMARY_UNIT_BYTES, 2_000),
     ("CMAEG_CONSOLE_SESSIONS_MAX", 4 * 1024, 1_000),
 ];
 

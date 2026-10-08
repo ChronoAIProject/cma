@@ -7,6 +7,12 @@
 //! render resolves the version from the owner index and reuses the cached
 //! summary, so CMA is read only when a channel changed or its summary was
 //! evicted.
+//!
+//! The cache is weighed rather than counted. A channel's owner decides how
+//! large its consumers and routing policy are, so a summary takes one unit
+//! of `CMAEG_CONSOLE_SUMMARY_CACHE_MAX` per [`SUMMARY_UNIT_BYTES`] it holds,
+//! and the console memory rule's `SUMMARY_CACHE_MAX × 2 KiB` stays a bound
+//! on bytes however large the channels it caches are.
 use std::{collections::BTreeSet, sync::Arc};
 
 use cmaeg_core::{
@@ -24,6 +30,12 @@ use super::{
     mask,
 };
 
+/// The bytes one unit of `CMAEG_CONSOLE_SUMMARY_CACHE_MAX` stands for, and
+/// what the console memory rule charges per unit.
+pub const SUMMARY_UNIT_BYTES: u64 = 2 * 1024;
+/// What a cached summary holds besides its serialized fields: its cache
+/// entry, its key and its structs' own headers.
+const ENTRY_OVERHEAD_BYTES: u64 = 512;
 /// CMA's record size limit.
 const RECORD_LIMIT: usize = 65_536;
 /// Above this share of the limit a summary warns that the record is nearly
@@ -174,6 +186,25 @@ impl ChannelSummary {
         }
     }
 
+    /// The units of `CMAEG_CONSOLE_SUMMARY_CACHE_MAX` it takes: its
+    /// serialized size plus its entry's overhead, in [`SUMMARY_UNIT_BYTES`]
+    /// rounded up, so every summary takes at least one.
+    pub fn units(&self) -> u32 {
+        let mut counted = ByteCount::default();
+        if let Err(error) = serde_json::to_writer(&mut counted, self) {
+            // Its fields are plain strings, numbers and lists, so this
+            // cannot fail; were it to, a summary that cannot be weighed is
+            // too heavy for any cache rather than free.
+            tracing::error!(%error, "console summary could not be weighed; it is not cached");
+            return u32::MAX;
+        }
+        let bytes = u64::try_from(counted.0).unwrap_or(u64::MAX);
+        let units = bytes
+            .saturating_add(ENTRY_OVERHEAD_BYTES)
+            .div_ceil(SUMMARY_UNIT_BYTES);
+        u32::try_from(units).unwrap_or(u32::MAX)
+    }
+
     /// A record whose head names `holder` as its owner but whose definition
     /// cannot be read: shown by status only.
     pub fn without_definition(holder: &str, status: SummaryStatus) -> Self {
@@ -203,15 +234,35 @@ pub fn created_channel_id(definition: &ChannelDefinition) -> Option<ChannelId> {
         .map(|creation| creation.channel_id.clone())
 }
 
-/// Summaries by `(record_id, version)`, least recently used first out.
+/// Counts what is written and keeps nothing, so weighing a summary does
+/// not allocate its serialization.
+#[derive(Default)]
+struct ByteCount(usize);
+
+impl std::io::Write for ByteCount {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0 = self.0.saturating_add(buf.len());
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Summaries by `(record_id, version)`, least recently used first out,
+/// holding at most `max_units` [`ChannelSummary::units`] in all.
 pub struct Summaries {
     cache: Cache<(RecordId, u64), Arc<ChannelSummary>>,
 }
 
 impl Summaries {
-    pub fn new(max: u64) -> Self {
+    pub fn new(max_units: u64) -> Self {
         Self {
-            cache: Cache::new(max),
+            cache: Cache::builder()
+                .max_capacity(max_units)
+                .weigher(|_key, summary: &Arc<ChannelSummary>| summary.units())
+                .build(),
         }
     }
 
@@ -223,5 +274,8 @@ impl Summaries {
 
     pub fn insert(&self, record: RecordId, version: u64, summary: Arc<ChannelSummary>) {
         self.cache.insert((record, version), summary);
+        // Eviction is applied lazily; settle it so the cache is within its
+        // units once the insert returns, as the memory rule assumes.
+        self.cache.run_pending_tasks();
     }
 }

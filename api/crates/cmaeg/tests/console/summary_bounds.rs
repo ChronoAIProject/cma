@@ -1,13 +1,21 @@
 //! A cached summary stays small however large a valid routing policy is:
 //! eight consumers and 32 rules whose every match list holds 64 entries of
-//! 512 bytes.
-use std::collections::BTreeSet;
+//! 512 bytes. The summary cache is weighed, so what it holds stays within
+//! the bytes the console memory rule charges for it.
+use std::{collections::BTreeSet, sync::Arc};
 
-use cmaeg::console::{routing_view::PATTERN_TEXT_BYTES, summary::ChannelSummary};
+use cmaeg::console::{
+    routing_view::PATTERN_TEXT_BYTES,
+    summary::{ChannelSummary, Summaries, SummaryStatus, SUMMARY_UNIT_BYTES},
+};
 use cmaeg_core::channel::{ChannelDefinition, MAX_MATCH_ENTRIES, MAX_MATCH_ENTRY_BYTES, MAX_RULES};
 use serde_json::{json, Value};
 
-use super::policy::{self, agent_key, NYX, REVIEWER};
+use super::{
+    pages_support::{self, record},
+    policy::{self, agent_key, NYX, REVIEWER},
+    routed_support,
+};
 
 /// Every source slot a rule may name; repeated to fill a 64-entry list.
 const SOURCES: [&str; 8] = [
@@ -131,4 +139,87 @@ fn every_rule_of_a_maximal_policy_projects_to_a_bounded_size() {
         let bytes = serde_json::to_vec(rule).unwrap().len();
         assert!(bytes <= 1024, "rule {index} projects to {bytes} bytes");
     }
+}
+
+/// The bytes a summary serializes to, which its units must cover.
+fn serialized(summary: &ChannelSummary) -> u64 {
+    u64::try_from(serde_json::to_vec(summary).unwrap().len()).unwrap()
+}
+
+#[test]
+fn a_summary_is_weighed_by_at_least_its_serialized_size() {
+    let mut single = pages_support::definition(&record(1), "alice", "orders");
+    single.sources.truncate(1);
+    let summaries = [
+        // A maximal routed channel: the bounded projection keeps it to about
+        // a dozen units.
+        (summary_of(&maximal()), 16),
+        // A channel with one source takes one unit; with three sources and
+        // every secret, or a small routing policy, two.
+        (summary_of(&single), 1),
+        (
+            summary_of(&pages_support::definition(&record(1), "alice", "orders")),
+            2,
+        ),
+        (
+            summary_of(&routed_support::routed_with(
+                &record(2),
+                "alice",
+                "routed",
+                |_| {},
+            )),
+            2,
+        ),
+        (
+            ChannelSummary::without_definition("alice", SummaryStatus::Unreadable),
+            1,
+        ),
+    ];
+    for (summary, most) in &summaries {
+        let units = summary.units();
+        let bytes = serialized(summary);
+        assert!(
+            bytes <= u64::from(units) * SUMMARY_UNIT_BYTES,
+            "{bytes} bytes in {units} units"
+        );
+        assert!(
+            units <= *most,
+            "{bytes} bytes take {units} units, not at most {most}"
+        );
+    }
+}
+
+#[test]
+fn the_summary_cache_holds_at_most_its_units() {
+    const MAX_UNITS: u64 = 100;
+    let maximal = Arc::new(summary_of(&maximal()));
+    let units = u64::from(maximal.units());
+    let cache = Summaries::new(MAX_UNITS);
+    for index in 0..50 {
+        cache.insert(record(index), 1, maximal.clone());
+    }
+    let held = (0..50)
+        .filter(|index| cache.get(&record(*index), 1).is_some())
+        .count();
+    let held = u64::try_from(held).unwrap();
+    assert!(held >= 1, "a maximal summary fits in {MAX_UNITS} units");
+    assert!(
+        held * units <= MAX_UNITS,
+        "{held} summaries of {units} units"
+    );
+    // One-unit summaries fill the same cache one per unit.
+    let small = Arc::new(ChannelSummary::without_definition(
+        "alice",
+        SummaryStatus::Unreadable,
+    ));
+    assert_eq!(small.units(), 1);
+    let cache = Summaries::new(MAX_UNITS);
+    let indexes = 0..usize::try_from(MAX_UNITS).unwrap();
+    for index in indexes.clone() {
+        cache.insert(record(index), 1, small.clone());
+    }
+    let held = indexes
+        .filter(|index| cache.get(&record(*index), 1).is_some())
+        .count();
+    assert_eq!(u64::try_from(held).unwrap(), MAX_UNITS);
 }
