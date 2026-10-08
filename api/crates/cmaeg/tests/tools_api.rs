@@ -41,6 +41,8 @@ pub mod media_support;
 pub mod relay_support;
 #[path = "tools/rest.rs"]
 mod rest;
+#[path = "tools/routed_mcp.rs"]
+mod routed_mcp;
 #[path = "../../cmaeg-core/tests/routing_policy/fixture.rs"]
 pub mod routing_fixture;
 #[path = "tools/rpc.rs"]

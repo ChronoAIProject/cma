@@ -1,5 +1,6 @@
 //! MCP argument schemas derive from the same message model as the REST routes.
 use super::results::{self, ToolOutput};
+use super::schemas::{RoutedReplyArguments, RoutedSchemas};
 use crate::{
     auth::AgentCaller,
     http::tools::event_ref,
@@ -112,11 +113,45 @@ const ATTACHMENT_TOOL: ToolSpec = ToolSpec {
     idempotent: true,
     open_world: true,
 };
-/// The tools, with `readEventAttachment` appended while media is enabled.
-pub fn list(media_enabled: bool) -> Value {
-    let base = definitions(Schemas::openapi());
-    let mut tools: Vec<_> = TOOLS.iter().map(|tool| describe(tool, &base)).collect();
-    if media_enabled {
+#[derive(Clone, Copy, Default)]
+pub struct ToolFlags {
+    pub media: bool,
+    pub multi_consumer: bool,
+}
+impl ToolFlags {
+    pub fn of(state: &ToolsState) -> Self {
+        Self {
+            media: state.media.is_some(),
+            multi_consumer: state.multi_consumer_enabled,
+        }
+    }
+}
+/// Discovery is gateway-wide: an authenticated key does not identify a
+/// channel. Legacy channels therefore see destination while routing is on,
+/// but their explicit default requests receive default_reply_unavailable.
+pub fn list(flags: ToolFlags) -> Value {
+    let base = definitions(if flags.multi_consumer {
+        RoutedSchemas::openapi()
+    } else {
+        Schemas::openapi()
+    });
+    let mut tools: Vec<_> = TOOLS
+        .iter()
+        .map(|tool| {
+            if flags.multi_consumer && tool.name == "replyToEvent" {
+                describe(
+                    &ToolSpec {
+                        schema: "RoutedReplyArguments",
+                        ..*tool
+                    },
+                    &base,
+                )
+            } else {
+                describe(tool, &base)
+            }
+        })
+        .collect();
+    if flags.media {
         tools.push(describe(
             &ATTACHMENT_TOOL,
             &definitions(AttachmentSchemas::openapi()),
@@ -180,10 +215,16 @@ pub async fn call(
     }
     let value = match name {
         "replyToEvent" => {
-            let args: ReplyArguments = serde_json::from_value(arguments).map_err(|_| invalid())?;
+            let (reference, message, destination) = if ToolFlags::of(state).multi_consumer {
+                let args: RoutedReplyArguments = serde_json::from_value(arguments).map_err(|_| invalid())?;
+                (args.event_ref, args.message, args.destination)
+            } else {
+                let args: ReplyArguments = serde_json::from_value(arguments).map_err(|_| invalid())?;
+                (event_ref(&args.event_ref)?, args.message, None)
+            };
             serde_json::to_value(
                 state
-                    .reply(caller, &event_ref(&args.event_ref)?, args.message, None)
+                    .reply(caller, &reference, message, destination)
                     .await?,
             )
         }

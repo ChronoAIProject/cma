@@ -153,7 +153,9 @@ impl App {
             downloads: Default::default(),
             multi_consumer_enabled,
         };
-        let router = http::callbacks::router(ingress).merge(http::tools::router(tools));
+        let router = http::callbacks::router(ingress)
+            .merge(http::tools::router(tools.clone()))
+            .merge(cmaeg::mcp::router(tools));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
         fixture.url = format!("{base}/v1/callbacks/{}", fixture.id);

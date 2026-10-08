@@ -34,6 +34,26 @@ async fn a_legacy_channel_never_sends_an_explicit_default_to_its_origin() {
         receipt["delivery"],
         json!({"outcome":"rejected","reason":"default_reply_unavailable"})
     );
+    let response: Value = app
+        .fixture
+        .client
+        .post(format!("{}/mcp", app.base))
+        .bearer_auth(&app.key)
+        .json(
+            &json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{
+            "name":"replyToEvent","arguments":{"event_ref":app.turn.event_ref.as_str(),
+            "message":{"text":"private MCP destination"},"destination":"default"}}}),
+        )
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        response["result"]["structuredContent"]["delivery"],
+        receipt["delivery"]
+    );
     app.drain().await;
     assert!(app.fake.requests.lock().unwrap().is_empty());
 }
