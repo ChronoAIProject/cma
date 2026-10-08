@@ -554,10 +554,51 @@
     {
       "conversation_id": "fixture",
       "event_id": "fixture",
-      "status": "accepted"
+      "status": "accepted",
+      "consumers": [
+        {
+          "code": "provider_rejected",
+          "consumer_id": "csm_000000000002",
+          "conversation_id": "conv_reviewer",
+          "name": "reviewer",
+          "provider_code": "policy_denied",
+          "status": "refused"
+        }
+      ]
     },
     {
       "reason": "bot_sender",
+      "status": "refused"
+    },
+    {
+      "consumers": [
+        {
+          "code": "provider_rejected",
+          "consumer_id": "csm_000000000002",
+          "conversation_id": "conv_reviewer",
+          "name": "reviewer",
+          "provider_code": "policy_denied",
+          "status": "refused"
+        }
+      ],
+      "conversation_id": "conv_main",
+      "event_id": "routed-event",
+      "status": "accepted"
+    },
+    {
+      "reason": "target_unknown",
+      "status": "refused"
+    },
+    {
+      "reason": "target_not_mentionable",
+      "status": "refused"
+    },
+    {
+      "reason": "too_many_targets",
+      "status": "refused"
+    },
+    {
+      "reason": "consumer_unavailable",
       "status": "refused"
     }
   ],
@@ -1688,6 +1729,31 @@
     {
       "conversation_id": "fixture",
       "event_id": "fixture",
+      "status": "accepted",
+      "consumers": [
+        {
+          "code": "provider_rejected",
+          "consumer_id": "csm_000000000002",
+          "conversation_id": "conv_reviewer",
+          "name": "reviewer",
+          "provider_code": "policy_denied",
+          "status": "refused"
+        }
+      ]
+    },
+    {
+      "consumers": [
+        {
+          "code": "provider_rejected",
+          "consumer_id": "csm_000000000002",
+          "conversation_id": "conv_reviewer",
+          "name": "reviewer",
+          "provider_code": "policy_denied",
+          "status": "refused"
+        }
+      ],
+      "conversation_id": "conv_main",
+      "event_id": "routed-event",
       "status": "accepted"
     }
   ],
@@ -2446,7 +2512,11 @@
     "group_not_addressed",
     "addressing_evidence_unavailable",
     "thread_evidence_unavailable",
-    "platform_verifier_unavailable"
+    "platform_verifier_unavailable",
+    "target_unknown",
+    "target_not_mentionable",
+    "too_many_targets",
+    "consumer_unavailable"
   ],
   "RekeyResponse": [
     {
@@ -3607,5 +3677,20 @@
     "event_field",
     "interaction",
     "agent_event"
+  ],
+  "AdmissionStatus": [
+    "accepted",
+    "deferred",
+    "refused"
+  ],
+  "ConsumerAdmission": [
+    {
+      "code": "provider_rejected",
+      "consumer_id": "csm_000000000002",
+      "conversation_id": "conv_reviewer",
+      "name": "reviewer",
+      "provider_code": "policy_denied",
+      "status": "refused"
+    }
   ]
 }

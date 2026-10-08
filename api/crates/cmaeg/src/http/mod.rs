@@ -5,6 +5,7 @@ mod chat_dispatch;
 pub(crate) mod connection_browser;
 pub mod connections;
 pub(crate) mod connections_ui;
+pub mod consumer_admission;
 pub mod creation;
 pub(crate) mod docs;
 pub mod events;

@@ -105,6 +105,7 @@ pub(crate) async fn dispatch(
             Json(CallbackResponse::Accepted {
                 event_id,
                 conversation_id,
+                consumers: None,
             }),
         )
             .into_response(),

@@ -53,6 +53,8 @@ pub enum CallbackResponse {
     Accepted {
         event_id: String,
         conversation_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        consumers: Option<Vec<super::consumer_admission::ConsumerAdmission>>,
     },
     Refused {
         reason: Refusal,

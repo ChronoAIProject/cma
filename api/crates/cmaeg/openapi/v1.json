@@ -385,6 +385,14 @@
           }
         ]
       },
+      "AdmissionStatus": {
+        "enum": [
+          "accepted",
+          "deferred",
+          "refused"
+        ],
+        "type": "string"
+      },
       "AgentEventPolicy": {
         "additionalProperties": false,
         "description": "Limits on events agents publish to other consumers of the channel.",
@@ -1259,6 +1267,15 @@
         "oneOf": [
           {
             "properties": {
+              "consumers": {
+                "items": {
+                  "$ref": "#/components/schemas/ConsumerAdmission"
+                },
+                "type": [
+                  "array",
+                  "null"
+                ]
+              },
               "conversation_id": {
                 "type": "string"
               },
@@ -1810,6 +1827,41 @@
           "provider",
           "agent_key_hash",
           "created_at"
+        ],
+        "type": "object"
+      },
+      "ConsumerAdmission": {
+        "properties": {
+          "code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "consumer_id": {
+            "$ref": "#/components/schemas/ConsumerId"
+          },
+          "conversation_id": {
+            "$ref": "#/components/schemas/ConversationId"
+          },
+          "name": {
+            "$ref": "#/components/schemas/ConsumerName"
+          },
+          "provider_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/AdmissionStatus"
+          }
+        },
+        "required": [
+          "consumer_id",
+          "name",
+          "conversation_id",
+          "status"
         ],
         "type": "object"
       },
@@ -2380,6 +2432,15 @@
       },
       "EventAccepted": {
         "properties": {
+          "consumers": {
+            "items": {
+              "$ref": "#/components/schemas/ConsumerAdmission"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
           "conversation_id": {
             "$ref": "#/components/schemas/ConversationId"
           },
@@ -3420,7 +3481,11 @@
           "group_not_addressed",
           "addressing_evidence_unavailable",
           "thread_evidence_unavailable",
-          "platform_verifier_unavailable"
+          "platform_verifier_unavailable",
+          "target_unknown",
+          "target_not_mentionable",
+          "too_many_targets",
+          "consumer_unavailable"
         ],
         "type": "string"
       },

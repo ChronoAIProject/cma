@@ -40,6 +40,8 @@ pub struct EventAccepted {
     pub status: AcceptedStatus,
     pub event_id: cmaeg_core::ids::EventId,
     pub conversation_id: cmaeg_core::ids::ConversationId,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub consumers: Option<Vec<super::consumer_admission::ConsumerAdmission>>,
 }
 #[derive(Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -306,6 +308,7 @@ async fn prepare_event(
         status: AcceptedStatus::Accepted,
         event_id: turn.activity.event_id.clone(),
         conversation_id: turn.conversation_id.clone(),
+        consumers: None,
     };
     Ok(PreparedEvent {
         turn,
