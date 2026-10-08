@@ -1,6 +1,13 @@
 use cmaeg::{
+    channels::resolver::ResolvedChannel,
+    delivery::{notice::submit_notice, router::ShardedScheduler},
     http::metrics::MetricsServer,
     telemetry::{self, names},
+};
+use cmaeg_core::{
+    channel::ChannelDefinition,
+    ids::ChannelId,
+    seal::{ChannelPointer, ReplyAddress},
 };
 use std::{
     io::{self, Write},
@@ -155,4 +162,67 @@ async fn metrics_register_once_and_curl_scrapes_the_private_listener() {
         .status();
     task.abort();
     assert_eq!(status, 404);
+}
+
+/// The label keys of every sample of `family` in `text`.
+fn label_keys<'a>(text: &'a str, family: &str) -> Vec<&'a str> {
+    text.lines()
+        .filter_map(|line| line.strip_prefix(family))
+        .filter_map(|rest| rest.strip_prefix('{'))
+        .flat_map(|rest| rest.split('}').next().unwrap_or_default().split(','))
+        .filter_map(|pair| pair.split('=').next())
+        .collect()
+}
+
+#[tokio::test]
+async fn multi_consumer_delivery_metrics_exist_with_bounded_labels_only() {
+    let handle = telemetry::install().unwrap();
+    let definition: ChannelDefinition =
+        serde_json::from_str(include_str!("../../cmaeg-core/tests/fixtures/channel.json")).unwrap();
+    let channel = std::sync::Arc::new(ResolvedChannel {
+        id: ChannelId::new("cmaeg1.ch.telemetry-fixture").unwrap(),
+        pointer: ChannelPointer {
+            v: 1,
+            record_id: definition.record_id.clone(),
+            record_url: "https://cma.example/api/v1/gateway/channel-records/record-1".into(),
+        },
+        definition,
+        agent_key_hash: [0; 32],
+        consumer_keys: Vec::new(),
+        loaded_at: std::time::Instant::now(),
+        version: 1,
+    });
+    let (inbound, _queued) = tokio::sync::mpsc::channel(1);
+    let sink = ShardedScheduler::new(inbound);
+    for queued in [true, false] {
+        let submitted = submit_notice(
+            &sink,
+            tracing::Span::none(),
+            channel.clone(),
+            ReplyAddress::None,
+            "msg-1".parse().unwrap(),
+            "notice".into(),
+        );
+        assert_eq!(submitted, queued);
+    }
+    let text = handle.render();
+    assert!(
+        text.contains("cmaeg_routing_notices_dropped_total{reason=\"queue_full\"} 1"),
+        "{text}"
+    );
+    for (family, allowed) in [
+        (names::DELIVERY_LABELS, &["transport"][..]),
+        (names::DEFAULT_REPLY, &["transport", "outcome"][..]),
+        (names::ROUTING_NOTICES_DROPPED, &["reason"][..]),
+    ] {
+        assert_eq!(
+            text.matches(&format!("# TYPE {family} counter")).count(),
+            1,
+            "{family} is not registered: {text}"
+        );
+        // Consumer ids, names, owners, records and channel ids are never labels.
+        for key in label_keys(&text, family) {
+            assert!(allowed.contains(&key), "{family} carries {key}: {text}");
+        }
+    }
 }

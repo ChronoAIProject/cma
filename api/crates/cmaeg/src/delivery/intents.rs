@@ -70,12 +70,27 @@ impl DeliveryCommand {
             | Self::Notice { trace, .. } => trace.clone(),
             Self::StreamOutcome { turn, .. } => turn.trace.clone(),
             Self::ConsumerFailed {
-                channel, payload, ..
+                channel,
+                payload,
+                consumer,
+                ..
             } => tracing::info_span!(
                 "cmaeg.deliver",
                 channel = %crate::telemetry::channel_hash(channel.id.as_str()),
-                event_id = %payload.event_id
+                event_id = %payload.event_id,
+                consumer = %consumer
             ),
+        }
+    }
+    /// The consumer a command acts for, `None` for `default` and for a
+    /// notice, which answers no consumer.
+    pub fn consumer(&self) -> Option<&ConsumerId> {
+        match self {
+            Self::Reply { event, .. } | Self::Typing { event, .. } => event.consumer.as_ref(),
+            Self::Update { message_ref, .. } => message_ref.consumer.as_ref(),
+            Self::StreamOutcome { turn, .. } => turn.consumer.as_ref(),
+            Self::ConsumerFailed { consumer, .. } => Some(consumer),
+            Self::Notice { .. } => None,
         }
     }
     /// The (channel, event) a command belongs to: the one exhaustive match

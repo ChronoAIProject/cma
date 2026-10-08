@@ -1,10 +1,13 @@
 //! Per-event delivery steps over an event's group and one of its consumers.
 use super::{
-    address::{output_address as resolve_output, routing_send, EffectiveAddress, SendKind},
+    address::{
+        count_unavailable, output_address as resolve_output, routing_send, EffectiveAddress,
+        SendKind, DEFAULT_REPLY_UNAVAILABLE,
+    },
     gate::Ungated,
     group::EventGroup,
     intents::{DeliveryOutcome, IntentReceipt},
-    label::active_label,
+    label::{self, active_label},
     send::{SendContext, Sender},
 };
 use crate::{turns::outcomes::TurnOutcome, DeliveryConfig};
@@ -164,6 +167,9 @@ pub(super) fn output_address(
 /// Record a rejected automatic output: nothing is sent, and the consumer is
 /// terminal, so the event's other consumers and its expiry carry on.
 fn reject_output(group: &mut EventGroup, at: usize, reason: &'static str) {
+    if reason == DEFAULT_REPLY_UNAVAILABLE {
+        count_unavailable(&group.channel.definition);
+    }
     tracing::warn!(
         channel = %crate::telemetry::channel_hash(group.channel.id.as_str()),
         consumer = %group.consumers[at].consumer,
@@ -252,6 +258,7 @@ pub(super) async fn reply(
     message: &OutboundMessage,
     label: Option<&str>,
 ) -> IntentReceipt {
+    label::count(label, label::transport(&group.consumers[at].event.reply));
     let context = SendContext {
         trace: &group.trace,
         channel: &group.channel,

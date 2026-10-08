@@ -13,6 +13,8 @@ pub const CHANNELS_CACHED: &str = "cmaeg_channels_cached";
 pub const RELAY_ENVELOPE_REPAIRS: &str = "cmaeg_relay_envelope_repairs_total";
 pub const CALLBACK_INVALID: &str = "cmaeg_callback_invalid_total";
 pub const DELIVERY_WORKER_RESTARTS: &str = "cmaeg_delivery_worker_restarts_total";
+pub const DELIVERY_LABELS: &str = "cmaeg_delivery_labels_total";
+pub const DEFAULT_REPLY: &str = "cmaeg_default_reply_total";
 pub const ROUTING_NOTICES_DROPPED: &str = "cmaeg_routing_notices_dropped_total";
 pub const MEDIA_ACTIVITY_DEGRADED: &str = "cmaeg_media_activity_degraded_total";
 pub const MEDIA_FACTS_REPAIRED: &str = "cmaeg_media_facts_repaired_total";
@@ -49,6 +51,7 @@ pub const OP: &str = "op";
 pub const VIEW: &str = "view";
 pub const STATUS: &str = "status";
 pub const MEDIA: &str = "media";
+pub const TRANSPORT: &str = "transport";
 pub const HISTOGRAMS: [&str; 6] = [
     INGRESS_TO_PROVIDER,
     RESTORE_DURATION,
@@ -57,13 +60,16 @@ pub const HISTOGRAMS: [&str; 6] = [
     DELIVERY_DURATION,
     TOOL_DURATION,
 ];
-pub const COUNTERS: [&str; 10] = [
+pub const COUNTERS: [&str; 13] = [
     EVENTS,
     REFUSALS,
     PROVIDER_ERRORS,
     RELAY_ENVELOPE_REPAIRS,
     CALLBACK_INVALID,
     DELIVERY_WORKER_RESTARTS,
+    DELIVERY_LABELS,
+    DEFAULT_REPLY,
+    ROUTING_NOTICES_DROPPED,
     MEDIA_ACTIVITY_DEGRADED,
     MEDIA_FACTS_REPAIRED,
     MEDIA_ITEMS,

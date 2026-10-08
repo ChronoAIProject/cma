@@ -98,7 +98,8 @@ impl CustomDelivery {
         }
     }
     #[tracing::instrument(name="cmaeg.deliver", skip_all, fields(
-        channel = %crate::telemetry::channel_hash(channel.id.as_str()), event_id = %event.event_id))]
+        channel = %crate::telemetry::channel_hash(channel.id.as_str()), event_id = %event.event_id,
+        consumer = event.consumer.as_ref().map_or("default", |id| id.as_str())))]
     pub async fn outcome(
         &self,
         channel: &ResolvedChannel,

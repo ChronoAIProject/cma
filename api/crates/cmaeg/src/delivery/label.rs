@@ -1,7 +1,9 @@
 //! The `[<label>] ` prefix that tells a chat which consumer it is reading.
+use crate::telemetry::names;
 use cmaeg_core::{
     channel::{ChannelDefinition, ReplyLabel},
     ids::ConsumerId,
+    seal::ReplyAddress,
 };
 
 /// A label is active when `routing_send` holds and either `reply_label` is
@@ -33,6 +35,23 @@ pub(super) fn active_label(
         return None;
     }
     channel.consumer(consumer).map(|view| view.label.to_owned())
+}
+
+/// The chat transport an address sends through, as a metric label.
+pub(super) fn transport(address: &ReplyAddress) -> Option<&'static str> {
+    match address {
+        ReplyAddress::Telegram { .. } => Some("telegram"),
+        ReplyAddress::NyxidRelay { .. } => Some("relay"),
+        ReplyAddress::Sync { .. } | ReplyAddress::ResultWebhook { .. } | ReplyAddress::None => None,
+    }
+}
+
+/// Count a chat send that carries `label`. Custom sinks are never labeled,
+/// so `transport` is `None` for them and nothing is counted.
+pub(super) fn count(label: Option<&str>, transport: Option<&'static str>) {
+    if let (Some(_), Some(transport)) = (label, transport) {
+        metrics::counter!(names::DELIVERY_LABELS, names::TRANSPORT => transport).increment(1);
+    }
 }
 
 #[cfg(test)]
@@ -95,6 +114,36 @@ mod tests {
         assert_eq!(
             active_label(&routed("always", false), Some(&unknown), true),
             None
+        );
+    }
+
+    #[test]
+    fn labeled_chat_sends_are_counted_by_transport_only() {
+        let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+        let metrics = recorder.handle();
+        metrics::with_local_recorder(&recorder, || {
+            count(Some("lead"), Some("relay"));
+            count(Some("lead"), Some("telegram"));
+            count(None, Some("relay"));
+            count(Some("lead"), transport(&ReplyAddress::None));
+        });
+        let rendered = metrics.render();
+        assert!(
+            rendered.contains("cmaeg_delivery_labels_total{transport=\"relay\"} 1"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("cmaeg_delivery_labels_total{transport=\"telegram\"} 1"),
+            "{rendered}"
+        );
+        assert_eq!(
+            rendered.matches("cmaeg_delivery_labels_total{").count(),
+            2,
+            "{rendered}"
+        );
+        assert!(
+            !rendered.contains("lead"),
+            "a label is never a metric label: {rendered}"
         );
     }
 }

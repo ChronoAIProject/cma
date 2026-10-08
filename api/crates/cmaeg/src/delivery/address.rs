@@ -1,8 +1,9 @@
 //! Which sends are routed, and where a routed send goes. A routed send may
 //! carry a label and resolve a destination; an unrouted one is exactly
 //! today's: no label, no default destination, the current branch.
+use crate::telemetry::names;
 use cmaeg_core::{
-    channel::{ChannelDefinition, ReplyChoice},
+    channel::{ChannelDefinition, DefaultReply, ReplyChoice},
     message::OutboundMessage,
     seal::{EventRefPayload, MessageRefPayload, ReplyAddress},
 };
@@ -136,6 +137,24 @@ fn resolve(event: &EventRefPayload, requested: ReplyChoice) -> EffectiveAddress 
             reason: DEFAULT_REPLY_UNAVAILABLE,
         },
     }
+}
+
+/// Count a send refused because the default destination is unavailable,
+/// by the transport the channel's default destination names.
+pub(super) fn count_unavailable(def: &ChannelDefinition) {
+    let transport = match def
+        .routing
+        .as_ref()
+        .and_then(|routing| routing.default_reply.as_ref())
+    {
+        Some(DefaultReply::TelegramChat { .. }) => "telegram",
+        Some(DefaultReply::RelayConversation { .. }) => "relay",
+        Some(DefaultReply::Sinks {}) => "sinks",
+        None => "none",
+    };
+    metrics::counter!(names::DEFAULT_REPLY, names::TRANSPORT => transport,
+        names::OUTCOME => "unavailable")
+    .increment(1);
 }
 
 /// Whether `message` would bind an interactive card to a hand-off. Cards

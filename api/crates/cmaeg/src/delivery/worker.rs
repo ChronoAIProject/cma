@@ -2,15 +2,15 @@
 //! order and drives their timers.
 use super::{
     address::{
-        routing_send, routing_send_for_message, tool_address, AddressClass, EffectiveAddress,
-        SendKind,
+        count_unavailable, routing_send, routing_send_for_message, tool_address, AddressClass,
+        EffectiveAddress, SendKind, DEFAULT_REPLY_UNAVAILABLE,
     },
     event::{key, now},
     failure::{consumer_failed, ConsumerFailure},
     gate::Ungated,
     group::{consumer_of, Groups},
     intents::{DeliveryCommand, DeliveryOutcome, ReplySource},
-    label::active_label,
+    label::{self, active_label},
     notice::{send_notice, Notice},
     send::{unsupported, SendContext, Sender},
     step::{custom_outcome, outcome_event, output_address, reply, timer_step},
@@ -76,6 +76,12 @@ async fn handle(
                 config.multi_consumer_enabled,
             );
             let label = active_label(&channel.definition, message_ref.consumer.as_ref(), routed);
+            let transport = if message_ref.route_id.starts_with("telegram:") {
+                "telegram"
+            } else {
+                "relay"
+            };
+            label::count(label.as_deref(), Some(transport));
             let context = SendContext {
                 trace: &trace,
                 channel: &channel,
@@ -187,6 +193,9 @@ async fn tool_reply(
         SendKind::Tool,
     );
     if let EffectiveAddress::Rejected { reason } = tool_address(&event, routed) {
+        if reason == DEFAULT_REPLY_UNAVAILABLE {
+            count_unavailable(&channel.definition);
+        }
         tracing::warn!(
             channel = %crate::telemetry::channel_hash(channel.id.as_str()),
             consumer = %consumer_of(&event),

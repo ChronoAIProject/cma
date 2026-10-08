@@ -283,3 +283,28 @@ fn only_telegram_cards_on_a_handoff_are_detected() {
     };
     assert!(handoff_controls(&native, &buttons));
 }
+
+#[test]
+fn an_unavailable_default_reply_is_counted_by_its_configured_transport() {
+    let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+    let metrics = recorder.handle();
+    let mut telegram = definition(true);
+    telegram.routing.as_mut().unwrap().default_reply = Some(
+        serde_json::from_value(
+            json!({"type":"telegram_chat","source_id":"telegram","chat_id":"42"}),
+        )
+        .unwrap(),
+    );
+    metrics::with_local_recorder(&recorder, || {
+        count_unavailable(&definition(true));
+        count_unavailable(&telegram);
+        count_unavailable(&telegram);
+    });
+    let rendered = metrics.render();
+    for line in [
+        "cmaeg_default_reply_total{transport=\"none\",outcome=\"unavailable\"} 1",
+        "cmaeg_default_reply_total{transport=\"telegram\",outcome=\"unavailable\"} 2",
+    ] {
+        assert!(rendered.contains(line), "{rendered}");
+    }
+}

@@ -243,7 +243,8 @@ impl ToolsState {
         received: oneshot::Receiver<T>,
     ) -> Result<T, Problem> {
         let (channel, event_id) = command.event_key();
-        let span = tracing::info_span!("cmaeg.deliver", channel = %crate::telemetry::channel_hash(channel.as_str()), event_id = %event_id);
+        let consumer = command.consumer().map_or("default", ConsumerId::as_str);
+        let span = tracing::info_span!("cmaeg.deliver", channel = %crate::telemetry::channel_hash(channel.as_str()), event_id = %event_id, consumer);
         tokio::time::timeout(
             Duration::from_secs(8),
             async {
