@@ -13,6 +13,8 @@ mod enablement;
 mod hygiene;
 #[path = "console/memory.rs"]
 mod memory;
+#[path = "console/memory_routing.rs"]
+mod memory_routing;
 #[path = "console/observations.rs"]
 mod observations;
 #[path = "console/owner.rs"]
@@ -48,9 +50,11 @@ mod signin;
 #[path = "console/support.rs"]
 pub mod support;
 
+#[path = "../../cmaeg-core/tests/routing_policy/fixture.rs"]
+pub mod policy;
 #[path = "relay/support.rs"]
 pub mod relay_support;
-#[path = "../../cmaeg-core/tests/routing_policy/fixture.rs"]
-pub mod routing_fixture;
+#[path = "../../cmaeg-core/tests/routing_resolver/fixture.rs"]
+pub mod resolver_fixture;
 #[path = "relay/signer.rs"]
 pub mod signer;

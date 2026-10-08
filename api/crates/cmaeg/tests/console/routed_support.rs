@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 
 use super::{
     pages_support::{channel_id, record, World},
-    routing_fixture::{self, agent_key, hash, NYX, REVIEWER, ROUTE},
+    policy::{self, agent_key, hash, NYX, REVIEWER, ROUTE},
 };
 
 /// A chat id one rule matches; rules show chats only by count.
@@ -45,7 +45,7 @@ pub fn secrets() -> Vec<String> {
 /// not mentionable, three rules of which `slack-only` names no attached
 /// source, and the Lark relay's route as the default reply destination.
 pub fn routed_value() -> Value {
-    let mut value = routing_fixture::routed();
+    let mut value = policy::routed();
     let routing = &mut value["routing"];
     routing["default_consumer"] = json!({"name": "lead", "label": "Lead",
         "publish": {"enabled": true, "targets": []}});
@@ -83,7 +83,7 @@ pub fn routed_with(
     value["record_id"] = record.as_str().into();
     value["owner"]["subject"] = owner.into();
     value["profile"]["metadata"]["owner"]["subject"] = owner.into();
-    value["profile_digest"] = routing_fixture::digest_of(&value["profile"]).into();
+    value["profile_digest"] = policy::digest_of(&value["profile"]).into();
     value["name"] = name.into();
     let mut definition: ChannelDefinition = serde_json::from_value(value).unwrap();
     definition.validate().unwrap();

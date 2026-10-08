@@ -26,8 +26,10 @@ use crate::{
 };
 
 mod entry;
+mod route;
 
 pub use entry::{ActivityEntry, ActivityFilter, ConsumerProgress};
+pub use route::{RouteTarget, RoutingSummary, TraceStepView, TraceView};
 
 /// A channel's recent traffic, as the channel list shows it.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -97,8 +99,17 @@ impl ActivityRings {
         }
     }
 
-    /// Add an admitted event's entry.
+    /// Add an authenticated event's entry: admitted, or refused by routing.
+    ///
+    /// One admission can be reported twice, once with routing's trace by the
+    /// ingress that routed it and once without by the launcher, in either
+    /// order. While neither has launched, the second report completes the
+    /// first one's entry instead of adding another; a later report of the
+    /// same event, such as a platform's redelivery, gets its own entry.
     pub fn admitted(&self, record: RecordId, seed: ActivitySeed) {
+        let Some(seed) = self.complete(&record, seed) else {
+            return;
+        };
         self.push(record, |seq| ActivityEntry {
             seq,
             at: seed.at,
@@ -109,9 +120,28 @@ impl ActivityRings {
             chat_masked: seed.chat_masked,
             attachments: seed.attachments,
             consumers: Vec::new(),
-            refusal: None,
-            causation: None,
+            refusal: seed.refusal,
+            causation: seed.causation,
+            routing: seed.routing,
+            trace: seed.trace,
         });
+    }
+
+    /// Fold `seed` into the entry of the same admission, if the ring holds
+    /// one; otherwise hand `seed` back.
+    fn complete(&self, record: &RecordId, seed: ActivitySeed) -> Option<ActivitySeed> {
+        let key = seed.event_key.clone();
+        let mut seed = Some(seed);
+        self.with_entry(record, &key, |entry| {
+            let Some(report) = seed.take_if(|report| same_admission(entry, report)) else {
+                return false;
+            };
+            entry.trace = entry.trace.take().or(report.trace);
+            entry.routing = entry.routing.take().or(report.routing);
+            entry.causation = entry.causation.take().or(report.causation);
+            true
+        });
+        seed
     }
 
     /// Add an authenticated refusal's entry.
@@ -128,12 +158,28 @@ impl ActivityRings {
             consumers: Vec::new(),
             refusal: Some(seed.reason),
             causation: None,
+            routing: None,
+            trace: None,
         });
     }
 
     /// Apply `update` to the newest entry of `record` with `event_key`; an
     /// event whose entry was already evicted is ignored.
     pub fn update(&self, record: &RecordId, event_key: &str, update: Update) {
+        self.with_entry(record, event_key, |entry| {
+            apply(entry, update);
+            true
+        });
+    }
+
+    /// Let `change` edit the newest entry of `record` with `event_key`, then
+    /// count its new size when it reports a change.
+    fn with_entry(
+        &self,
+        record: &RecordId,
+        event_key: &str,
+        change: impl FnOnce(&mut ActivityEntry) -> bool,
+    ) {
         let mut state = self.lock();
         let Some(channel) = state.channels.get_mut(record) else {
             return;
@@ -146,29 +192,8 @@ impl ActivityRings {
         else {
             return;
         };
-        match update {
-            Update::Launch {
-                consumer,
-                outcome,
-                accepted_ms,
-            } => {
-                let progress = entry.consumer(&consumer);
-                progress.launch = Some(outcome);
-                progress.accepted_ms = accepted_ms;
-            }
-            Update::Delivery {
-                consumer,
-                step,
-                outcome,
-                destination,
-            } => {
-                let progress = entry.consumer(&consumer);
-                progress.tool_replied |=
-                    step == DeliveryStep::ToolReply && outcome == DeliveryClass::Confirmed;
-                progress.delivery = Some((step, outcome));
-                progress.destination = Some(destination);
-            }
-            Update::Published(causation) => entry.causation = Some(causation),
+        if !change(entry) {
+            return;
         }
         let grown = entry.weight();
         let previous = std::mem::replace(weight, grown);
@@ -340,6 +365,44 @@ impl ActivityRings {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
+}
+
+/// Apply a known event's change to its entry.
+fn apply(entry: &mut ActivityEntry, update: Update) {
+    match update {
+        Update::Launch {
+            consumer,
+            outcome,
+            accepted_ms,
+        } => {
+            let progress = entry.consumer(&consumer);
+            progress.launch = Some(outcome);
+            progress.accepted_ms = accepted_ms;
+        }
+        Update::Delivery {
+            consumer,
+            step,
+            outcome,
+            destination,
+        } => {
+            let progress = entry.consumer(&consumer);
+            progress.tool_replied |=
+                step == DeliveryStep::ToolReply && outcome == DeliveryClass::Confirmed;
+            progress.delivery = Some((step, outcome));
+            progress.destination = Some(destination);
+        }
+        Update::Published(causation) => entry.causation = Some(causation),
+    }
+}
+
+/// Whether `report` is the other report of the admission `entry` records:
+/// neither has launched or been refused, and exactly one carries routing's
+/// trace.
+fn same_admission(entry: &ActivityEntry, report: &ActivitySeed) -> bool {
+    entry.consumers.is_empty()
+        && entry.refusal.is_none()
+        && report.refusal.is_none()
+        && entry.trace.is_some() != report.trace.is_some()
 }
 
 fn drop_if_empty(state: &mut State, record: &RecordId) {

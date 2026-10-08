@@ -69,7 +69,7 @@ async fn every_owner_controlled_string_is_escaped_and_no_secret_is_rendered() {
     world.traffic(&target, &format!("{JS}//{SCRIPT}"));
     world.memory.apply(Observation::Routed {
         record: target.clone(),
-        entry_seed: ActivitySeed {
+        entry_seed: Box::new(ActivitySeed {
             at: OffsetDateTime::now_utc(),
             event_key: "00000000000000ff".into(),
             source: SCRIPT.into(),
@@ -77,7 +77,11 @@ async fn every_owner_controlled_string_is_escaped_and_no_secret_is_rendered() {
             actor_masked: IMG.into(),
             chat_masked: SCRIPT.into(),
             attachments: [0; 4],
-        },
+            routing: None,
+            trace: None,
+            refusal: None,
+            causation: None,
+        }),
     });
     let (sid, _) = world.harness.sign_in("alice", "/console").await;
     let pages = every_page(&world, target.as_str(), &sid).await;

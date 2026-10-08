@@ -4,7 +4,10 @@ use cmaeg_core::ids::ConsumerId;
 use serde::Serialize;
 use time::OffsetDateTime;
 
-use super::rfc3339;
+use super::{
+    rfc3339,
+    route::{RoutingSummary, TraceView},
+};
 use crate::{
     console::observer::{CausationSummary, DeliveryClass},
     turns::observer::{DeliveryStep, Destination, LaunchClass},
@@ -35,8 +38,14 @@ pub struct ActivityEntry {
     /// Attachment counts: image, audio, video, and file or other.
     pub attachments: [u8; 4],
     pub consumers: Vec<ConsumerProgress>,
+    /// Why the event was refused, at ingress or by routing.
     pub refusal: Option<String>,
     pub causation: Option<CausationSummary>,
+    /// The routing decision the event carried; absent on the legacy path.
+    pub routing: Option<RoutingSummary>,
+    /// How routing reached its decision or refusal, when the ingress that
+    /// routed the event reported it.
+    pub trace: Option<TraceView>,
 }
 
 /// One consumer's progress with an event.
@@ -74,6 +83,8 @@ impl ActivityEntry {
             + self.chat_masked.len()
             + self.refusal.as_ref().map_or(0, String::len)
             + self.consumers.len() * CONSUMER_BYTES
+            + self.routing.as_ref().map_or(0, RoutingSummary::weight)
+            + self.trace.as_ref().map_or(0, TraceView::weight)
     }
 
     /// True for a refusal, a refused launch, a failure notice or a rejected

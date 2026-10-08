@@ -334,11 +334,15 @@ impl World {
             actor_masked: "…5678".into(),
             chat_masked: "…7890".into(),
             attachments: [1, 0, 0, 2],
+            routing: None,
+            trace: None,
+            refusal: None,
+            causation: None,
         };
         for observation in [
             Observation::Routed {
                 record: record.clone(),
-                entry_seed: seed(EVENT),
+                entry_seed: Box::new(seed(EVENT)),
             },
             Observation::Launch {
                 record: record.clone(),
@@ -357,7 +361,7 @@ impl World {
             },
             Observation::Routed {
                 record: record.clone(),
-                entry_seed: seed(FOLLOW_UP),
+                entry_seed: Box::new(seed(FOLLOW_UP)),
             },
             Observation::Published {
                 record: record.clone(),

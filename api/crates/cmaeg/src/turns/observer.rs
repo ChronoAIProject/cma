@@ -12,6 +12,7 @@ use std::{sync::Arc, time::Instant};
 use cmaeg_core::{
     activity::Activity,
     ids::{ConsumerId, EventId, RecordId},
+    routing::Trace,
 };
 use futures_util::future::BoxFuture;
 use serde::Serialize;
@@ -97,6 +98,27 @@ pub struct ProducerFacts<'a> {
 pub trait ActivityObserver: Send + Sync {
     /// An authenticated event is about to launch.
     fn admitted(&self, _record: &RecordId, _activity: &Activity) {}
+
+    /// Routing decided an authenticated event's consumers, and it is about
+    /// to launch: to `activity.routing`'s targets, or, when that is absent,
+    /// on the legacy path the kill switch's shadow decision allowed.
+    /// `trace` is how the decision was reached; it is never sealed or sent
+    /// to a provider. The ingress that routed the event reports it once,
+    /// before launching; a launcher that also reports the launch through
+    /// [`ActivityObserver::admitted`] describes the same admission.
+    fn routed(&self, _record: &RecordId, _activity: &Activity, _trace: &Trace) {}
+
+    /// Routing refused an authenticated event. `reason` is the stable label
+    /// of the routing error and `trace` what `routing::explain` recorded for
+    /// it, including the kill switch's shadow decision.
+    fn route_refused(
+        &self,
+        _record: &RecordId,
+        _activity: &Activity,
+        _reason: &str,
+        _trace: &Trace,
+    ) {
+    }
 
     /// An authenticated event was refused before launching. `event_id` is
     /// absent when the refusal came before the event was identified.

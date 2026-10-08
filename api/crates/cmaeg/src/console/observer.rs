@@ -14,12 +14,16 @@ use std::sync::{
 use cmaeg_core::{
     activity::{Activity, ActivityKind, AttachmentKind},
     ids::{ChannelId, ConsumerId, EventId, RecordId},
+    routing::Trace,
 };
 use serde::Serialize;
 use time::OffsetDateTime;
 use tokio::sync::mpsc::{self, error::TrySendError};
 
-use super::{activity::rfc3339, mask};
+use super::{
+    activity::{rfc3339, RoutingSummary, TraceView},
+    mask,
+};
 use crate::{
     channels::observer::ChannelIndexObserver,
     delivery::intents::DeliveryOutcome,
@@ -40,10 +44,14 @@ const CE_TYPE_BYTES: usize = 128;
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "observation", rename_all = "snake_case")]
 pub enum Observation {
-    /// An authenticated event was admitted and is launching.
+    /// An authenticated event was admitted and is launching, or was
+    /// refused by routing; the seed says which, and carries routing's
+    /// decision and trace when they were reported.
     Routed {
         record: RecordId,
-        entry_seed: ActivitySeed,
+        /// Boxed: with routing's decision and trace a seed is several times
+        /// the size of every other observation.
+        entry_seed: Box<ActivitySeed>,
     },
     /// An authenticated event was refused before launching.
     Refused {
@@ -99,13 +107,23 @@ pub struct ActivitySeed {
     pub at: OffsetDateTime,
     pub event_key: String,
     /// The source slot it arrived on, by the id REST and routing use:
-    /// `telegram`, `relay_<platform>` or `custom`.
+    /// `telegram`, `relay_<platform>`, `custom`, or `agent` for a hand-off.
     pub source: String,
     pub kind: &'static str,
     pub actor_masked: String,
     pub chat_masked: String,
     /// Attachment counts by kind: image, audio, video, and file or other.
     pub attachments: [u8; 4],
+    /// The routing decision bound into the activity; absent on the legacy
+    /// path.
+    pub routing: Option<RoutingSummary>,
+    /// Routing's trace; present only when the ingress that routed the event
+    /// reported it.
+    pub trace: Option<TraceView>,
+    /// Routing's refusal, as a bounded label.
+    pub refusal: Option<String>,
+    /// Where a hand-off came from, from its routing decision.
+    pub causation: Option<CausationSummary>,
 }
 
 impl ActivitySeed {
@@ -116,14 +134,37 @@ impl ActivitySeed {
             ActivityKind::Command { .. } => ("command", [0; 4]),
             ActivityKind::Event { attachments, .. } => ("event", counts(attachments)),
         };
+        let routing = activity.routing.as_ref();
+        let source = routing.map_or_else(
+            || activity.source.source_id(),
+            |routing| routing.source_id.clone(),
+        );
         Self {
             at: OffsetDateTime::now_utc(),
             event_key: mask::event_key(activity.event_id.as_str()),
-            source: activity.source.source_id().into(),
+            source: source.into(),
             kind,
             actor_masked: mask::actor(&activity.actor.id),
             chat_masked: mask::chat(&activity.conversation.id),
             attachments,
+            routing: routing.map(RoutingSummary::of),
+            trace: None,
+            refusal: None,
+            causation: routing
+                .and_then(|routing| routing.causation.as_ref())
+                .map(|causation| CausationSummary {
+                    parent_key: mask::event_key(causation.parent_event_id.as_str()),
+                    hop: causation.hop,
+                    published_by: causation.published_by.clone(),
+                }),
+        }
+    }
+
+    /// The seed of an event routing decided, with how it decided.
+    fn traced(activity: &Activity, trace: &Trace) -> Self {
+        Self {
+            trace: Some(TraceView::of(trace)),
+            ..Self::of(activity)
         }
     }
 }
@@ -232,7 +273,24 @@ impl ActivityObserver for ConsoleObserver {
     fn admitted(&self, record: &RecordId, activity: &Activity) {
         self.send(Observation::Routed {
             record: record.clone(),
-            entry_seed: ActivitySeed::of(activity),
+            entry_seed: Box::new(ActivitySeed::of(activity)),
+        });
+    }
+
+    fn routed(&self, record: &RecordId, activity: &Activity, trace: &Trace) {
+        self.send(Observation::Routed {
+            record: record.clone(),
+            entry_seed: Box::new(ActivitySeed::traced(activity, trace)),
+        });
+    }
+
+    fn route_refused(&self, record: &RecordId, activity: &Activity, reason: &str, trace: &Trace) {
+        self.send(Observation::Routed {
+            record: record.clone(),
+            entry_seed: Box::new(ActivitySeed {
+                refusal: Some(mask::label(reason)),
+                ..ActivitySeed::traced(activity, trace)
+            }),
         });
     }
 

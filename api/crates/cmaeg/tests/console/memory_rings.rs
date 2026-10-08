@@ -47,6 +47,10 @@ fn seed(event: &str) -> ActivitySeed {
         actor_masked: "…1234".into(),
         chat_masked: "…5678".into(),
         attachments: [0; 4],
+        routing: None,
+        trace: None,
+        refusal: None,
+        causation: None,
     }
 }
 
@@ -317,7 +321,7 @@ async fn no_structure_holds_content_references_tokens_or_secrets() {
     for observation in observations {
         dump.push_str(&serde_json::to_string(&observation).unwrap());
         match observation {
-            Observation::Routed { record, entry_seed } => rings.admitted(record, entry_seed),
+            Observation::Routed { record, entry_seed } => rings.admitted(record, *entry_seed),
             Observation::Refused { record, seed } => rings.refused(record, seed),
             Observation::Producer {
                 record,

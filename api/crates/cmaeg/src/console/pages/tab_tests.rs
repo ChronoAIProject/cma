@@ -184,6 +184,8 @@ fn entry() -> crate::console::activity::ActivityEntry {
             hop: 2,
             published_by: cmaeg_core::ids::ConsumerId::default_consumer(),
         }),
+        routing: None,
+        trace: None,
     }
 }
 

@@ -125,7 +125,7 @@ impl ConsoleMemory {
             } => self.index.upsert(record, owner, version),
             Observation::IndexRemoved { record } => self.index.remove(&record),
             Observation::ChannelId { record, id } => self.channel_ids.learn(record, id),
-            Observation::Routed { record, entry_seed } => self.rings.admitted(record, entry_seed),
+            Observation::Routed { record, entry_seed } => self.rings.admitted(record, *entry_seed),
             Observation::Refused { record, seed } => self.rings.refused(record, seed),
             Observation::Launch {
                 record,
