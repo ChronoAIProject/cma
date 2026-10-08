@@ -1,0 +1,6 @@
+event: cmaeg.text.delta
+data: {"conversation_id":"<conversation_id>","event_id":"streamed-1","text":"hello"}
+
+event: cmaeg.completed
+data: {"conversation_id":"<conversation_id>","error":null,"event_id":"streamed-1","message":null,"text":"hello"}
+

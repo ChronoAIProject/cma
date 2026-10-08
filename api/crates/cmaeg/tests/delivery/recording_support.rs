@@ -50,12 +50,15 @@ use tokio::{
 /// Records each webhook lookup and POST, answering POSTs with `statuses` in
 /// order and then 200.
 pub struct Hooks {
+    /// Exact posted bytes for wire goldens, before the I6 semantic normalization.
+    pub raw_bodies: Mutex<Vec<String>>,
     calls: Mutex<Vec<(Instant, Value)>>,
     statuses: Mutex<VecDeque<u16>>,
 }
 impl Hooks {
     pub fn answering(statuses: impl IntoIterator<Item = u16>) -> Arc<Self> {
         Arc::new(Self {
+            raw_bodies: Mutex::default(),
             calls: Mutex::default(),
             statuses: Mutex::new(statuses.into_iter().collect()),
         })
@@ -85,6 +88,10 @@ impl WebhookTransport for Hooks {
             };
             recorded.insert(name.as_str().into(), value.into());
         }
+        self.raw_bodies
+            .lock()
+            .unwrap()
+            .push(String::from_utf8(body.as_ref().clone()).unwrap());
         let body: Value = serde_json::from_slice(&body).unwrap();
         self.record(
             json!({"transport":"webhook","endpoint":url.as_str(),"headers":recorded,"body":normalize(body)}),

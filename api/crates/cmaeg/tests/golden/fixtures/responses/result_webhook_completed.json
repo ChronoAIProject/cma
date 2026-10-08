@@ -1,0 +1,1 @@
+{"data":{"conversation_id":"conv_00000000000000000000000000000001","error":null,"event_id":"event-1","message":null,"text":"The answer."},"datacontenttype":"application/json","id":"<id>","source":"https://gateway.example/channels/d73609e085657147","specversion":"1.0","subject":"event-1","time":"<time>","type":"cmaeg.response.completed"}
