@@ -1,5 +1,5 @@
 //! Provider-neutral delayed replies to an authenticated event's original destination.
-mod receipts;
+pub(super) mod receipts;
 use super::{
     context,
     state::{owner, validate},
@@ -9,7 +9,10 @@ use crate::http::request_start::RequestStart;
 use crate::{
     auth::AgentCaller,
     channels::resolver::ResolvedChannel,
-    delivery::intents::{DeliveryCommand, IntentReceipt, ReplySource},
+    delivery::{
+        intents::{DeliveryCommand, DeliveryOutcome, IntentReceipt, ReplySource},
+        routing_send, SendKind,
+    },
 };
 use cmaeg_core::{
     channel::{Secret, Source},
@@ -104,7 +107,7 @@ impl ToolsState {
         reference: &ReplyTargetRef,
         request_id: &str,
         message: OutboundMessage,
-        _start: RequestStart,
+        start: RequestStart,
     ) -> Result<IntentReceipt, Problem> {
         validate(&message)?;
         if request_id.is_empty()
@@ -141,21 +144,34 @@ impl ToolsState {
         // Recheck after durable admission; rotation/deletion during the store call must refuse dispatch.
         let channel = self.authorize_target(caller, &target).await?;
         let (receipt, received) = oneshot::channel();
-        let result = self
-            .deliver(
-                DeliveryCommand::Reply {
-                    trace: tracing::Span::current(),
-                    channel,
-                    event: target.event,
-                    message,
-                    source: ReplySource::Tool,
-                    destination: None,
-                    receipt,
-                },
-                received,
-            )
-            .await
-            .unwrap_or_else(|_| receipts::uncertain("delivery_unconfirmed"));
+        let routed = routing_send(
+            &channel.definition,
+            &target.event,
+            self.multi_consumer_enabled,
+            SendKind::Tool,
+        );
+        let command = DeliveryCommand::Reply {
+            trace: tracing::Span::current(),
+            channel,
+            event: target.event,
+            message,
+            source: ReplySource::Tool,
+            destination: None,
+            receipt,
+        };
+        let result = if routed {
+            self.deliver_routed(start, command, received).await
+        } else {
+            self.deliver(command, received).await
+        };
+        // Preserve the durable answer on both the first response and replay;
+        // late worker completion never rewrites the claimed receipt.
+        let result = match result {
+            Ok(receipt) if !matches!(&receipt.delivery, DeliveryOutcome::Unknown { reason } if reason == "delivery_in_progress") => {
+                receipt
+            }
+            _ => receipts::uncertain("delivery_unconfirmed"),
+        };
         store.finish(claim, &result).await?;
         Ok(result)
     }

@@ -2,6 +2,10 @@
 mod authority;
 #[path = "reply_targets/consumers.rs"]
 mod consumers;
+#[path = "reply_targets/deadline.rs"]
+mod deadline;
+#[path = "reply_targets/deadline_mcp.rs"]
+mod deadline_mcp;
 #[path = "reply_targets/delivery.rs"]
 mod delivery;
 #[path = "fake_cma.rs"]

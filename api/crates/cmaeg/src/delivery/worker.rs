@@ -16,6 +16,7 @@ use super::{
     part_keys::PartKeys,
     send::{unsupported, SendContext, Sender},
     step::{custom_outcome, outcome_event, output_address, reply, timer_step},
+    tool_receipt::ToolReceipt,
 };
 use crate::{
     channels::resolver::ResolvedChannel,
@@ -81,6 +82,14 @@ async fn handle(
                 &message_ref,
                 config.multi_consumer_enabled,
             );
+            let receipt = ToolReceipt::new(
+                receipt,
+                routed,
+                "update",
+                &channel.id,
+                &message_ref.event_id,
+                message_ref.consumer.as_ref(),
+            );
             let label = active_label(&channel.definition, message_ref.consumer.as_ref(), routed);
             let transport = if message_ref.route_id.starts_with("telegram:") {
                 "telegram"
@@ -96,7 +105,7 @@ async fn handle(
                 label: label.as_deref(),
             };
             let (result, _) = sender.update(&context, &message_ref, &message).await;
-            let _ = receipt.send(result);
+            receipt.send(result);
         }
         DeliveryCommand::Typing {
             channel,
@@ -193,14 +202,22 @@ async fn tool_reply(
         destination,
         receipt,
     } = command;
-    if receipt.is_closed() {
-        return;
-    }
     let routed = routing_send(
         &channel.definition,
         &event,
         config.multi_consumer_enabled,
         SendKind::Tool,
+    );
+    if receipt.is_closed() && !routed {
+        return;
+    }
+    let receipt = ToolReceipt::new(
+        receipt,
+        routed,
+        "reply",
+        &channel.id,
+        &event.event_id,
+        event.consumer.as_ref(),
     );
     // The handler resolved this snapshot at the call, so a default
     // destination changed or detached since applies to later calls only.
@@ -231,7 +248,7 @@ async fn tool_reply(
     {
         match sender.custom.begin_reply(&Ungated, &event, &message) {
             Err(result) => {
-                let _ = receipt.send(result);
+                receipt.send(result);
                 return;
             }
             Ok(streamed) => {
@@ -298,7 +315,7 @@ async fn tool_reply(
             delivery.tool_replied = true;
         }
     }
-    let _ = receipt.send(result);
+    receipt.send(result);
 }
 
 #[tracing::instrument(name="cmaeg.deliver", skip_all, fields(
@@ -328,7 +345,7 @@ async fn complete_sync_reply(
 fn reject_tool_reply(
     channel: &ResolvedChannel,
     event: &EventRefPayload,
-    receipt: oneshot::Sender<super::intents::IntentReceipt>,
+    receipt: ToolReceipt,
     reason: &'static str,
 ) {
     if reason == DEFAULT_REPLY_UNAVAILABLE {
@@ -344,7 +361,7 @@ fn reject_tool_reply(
     result.delivery = DeliveryOutcome::Rejected {
         reason: reason.into(),
     };
-    let _ = receipt.send(result);
+    receipt.send(result);
 }
 
 /// One provider outcome of one consumer's turn. An outcome after that

@@ -146,7 +146,7 @@ fn hash(value: &impl Serialize) -> String {
         )
     )
 }
-pub(super) fn uncertain(reason: &str) -> IntentReceipt {
+pub(in crate::tools) fn uncertain(reason: &str) -> IntentReceipt {
     IntentReceipt {
         message_ref: None,
         rendering: RenderingReport {

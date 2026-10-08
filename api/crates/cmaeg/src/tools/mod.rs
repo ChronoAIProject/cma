@@ -6,6 +6,10 @@ mod context;
 mod download_access;
 mod media_links;
 mod reply_targets;
+mod routed;
+#[cfg(test)]
+#[path = "../../tests/tools/routed_deadline.rs"]
+mod routed_deadline;
 mod state;
 pub use attachment_view::{
     AttachmentImage, AttachmentImageOrigin, AttachmentStatus, AttachmentText, AttachmentTextSource,

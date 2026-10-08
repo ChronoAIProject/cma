@@ -147,6 +147,14 @@ impl ChannelResolver {
     pub fn cache_len(&self) -> usize {
         self.inner.cache.len()
     }
+    /// Seed complete authority before socket-free, paused-clock handler tests.
+    #[cfg(test)]
+    pub(crate) fn cache_for_test(&self, channel: Arc<ResolvedChannel>) {
+        self.inner.cache.insert(
+            channel.id.to_string(),
+            CacheEntry::Present(channel, Instant::now() + self.inner.config.ttl),
+        );
+    }
     pub(crate) fn record_client(&self) -> RecordClient {
         (*self.inner.records).clone()
     }

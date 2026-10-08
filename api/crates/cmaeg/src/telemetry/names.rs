@@ -5,6 +5,7 @@ pub const PROVIDER_ACCEPT: &str = "cmaeg_provider_accept_seconds";
 pub const TURN_DURATION: &str = "cmaeg_turn_duration_seconds";
 pub const DELIVERY_DURATION: &str = "cmaeg_delivery_seconds";
 pub const TOOL_DURATION: &str = "cmaeg_tool_call_seconds";
+pub const TOOL_SENDS_LATE: &str = "cmaeg_tool_sends_late_total";
 pub const EVENTS: &str = "cmaeg_events_total";
 pub const REFUSALS: &str = "cmaeg_refusals_total";
 pub const PROVIDER_ERRORS: &str = "cmaeg_provider_errors_total";
@@ -60,7 +61,8 @@ pub const HISTOGRAMS: [&str; 6] = [
     DELIVERY_DURATION,
     TOOL_DURATION,
 ];
-pub const COUNTERS: [&str; 13] = [
+pub const COUNTERS: [&str; 14] = [
+    TOOL_SENDS_LATE,
     EVENTS,
     REFUSALS,
     PROVIDER_ERRORS,

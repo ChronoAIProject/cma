@@ -141,6 +141,35 @@ impl App {
         self.engine = Some(engine(receiver, &self.state, &self.relay));
         (self.base, self.server) = serve(http::tools::router(self.state.clone())).await;
     }
+    /// Hold admitted commands in the existing queue while durable-store tests
+    /// run in real time against the fake CMA.
+    pub async fn hold_delivery(
+        &mut self,
+    ) -> mpsc::Receiver<cmaeg::delivery::intents::DeliveryCommand> {
+        self.server.abort();
+        self.drain().await;
+        let (delivery, receiver) = mpsc::channel(16);
+        self.state.delivery = Arc::new(cmaeg::delivery::router::ShardedScheduler::new(delivery));
+        let router =
+            http::tools::router(self.state.clone()).merge(cmaeg::mcp::router(self.state.clone()));
+        (self.base, self.server) = serve(router).await;
+        receiver
+    }
+    pub fn release_delivery(
+        &mut self,
+        receiver: mpsc::Receiver<cmaeg::delivery::intents::DeliveryCommand>,
+    ) {
+        self.engine = Some(engine(receiver, &self.state, &self.relay));
+    }
+    pub async fn drain(&mut self) {
+        assert!(
+            self.engine
+                .take()
+                .unwrap()
+                .drain(std::time::Instant::now() + Duration::from_secs(30))
+                .await
+        );
+    }
     pub async fn event(&self, actor: &str, name: &str) -> EventRef {
         let key = self.definition.secrets.provider_credential.clone().unwrap();
         self.event_for(actor, name, None, key).await
@@ -289,7 +318,10 @@ fn engine(
         receiver,
         state.keys.clone(),
         RelayClient::new(&relay.base, Duration::from_millis(200)).unwrap(),
-        DeliveryConfig::default(),
+        DeliveryConfig {
+            multi_consumer_enabled: state.multi_consumer_enabled,
+            ..Default::default()
+        },
         state.tracker.clone(),
         CustomDelivery::new(state.public_origin.clone(), Arc::default()),
     )

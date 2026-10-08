@@ -6,6 +6,7 @@ use crate::{
     delivery::{
         intents::{DeliveryCommand, DeliveryOutcome, IntentReceipt, ReplySource, TypingReceipt},
         router::DeliverySink,
+        routing_send, routing_send_for_message, SendKind,
     },
     media::service::MediaService,
     providers::ProviderClient,
@@ -18,7 +19,7 @@ use cmaeg_core::{
     problem::{Problem, ProblemCode},
     seal::{EventRef, EventRefPayload, MasterKeyRing, MessageRefPayload, OpenError},
 };
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 use tokio::sync::oneshot;
 use tracing::Instrument;
 #[derive(Clone)]
@@ -91,7 +92,7 @@ impl ToolsState {
         reference: &EventRef,
         message: OutboundMessage,
         destination: Option<ReplyChoice>,
-        _start: RequestStart,
+        start: RequestStart,
     ) -> Result<IntentReceipt, Problem> {
         let mut observation = crate::telemetry::operations::Operation::new(
             crate::telemetry::names::TOOL_DURATION,
@@ -105,20 +106,26 @@ impl ToolsState {
                 .await?;
             let expires_at = event.expires_at;
             let (receipt, received) = oneshot::channel();
-            let result = self
-                .deliver(
-                    DeliveryCommand::Reply {
-                        trace: tracing::Span::current(),
-                        channel,
-                        event,
-                        message,
-                        source: ReplySource::Tool,
-                        destination,
-                        receipt,
-                    },
-                    received,
-                )
-                .await?;
+            let routed = routing_send(
+                &channel.definition,
+                &event,
+                self.multi_consumer_enabled,
+                SendKind::Tool,
+            );
+            let command = DeliveryCommand::Reply {
+                trace: tracing::Span::current(),
+                channel,
+                event,
+                message,
+                source: ReplySource::Tool,
+                destination,
+                receipt,
+            };
+            let result = if routed {
+                self.deliver_routed(start, command, received).await
+            } else {
+                self.deliver(command, received).await
+            }?;
             if matches!(result.delivery, DeliveryOutcome::Confirmed { .. }) {
                 if let Err(reason) =
                     self.tracker
@@ -141,7 +148,7 @@ impl ToolsState {
         caller: AgentCaller,
         reference: &MessageRef,
         message: OutboundMessage,
-        _start: RequestStart,
+        start: RequestStart,
     ) -> Result<IntentReceipt, Problem> {
         let mut observation = crate::telemetry::operations::Operation::new(
             crate::telemetry::names::TOOL_DURATION,
@@ -154,17 +161,23 @@ impl ToolsState {
                 .authorize_message(caller, reference, "updateMessage")
                 .await?;
             let (receipt, received) = oneshot::channel();
-            self.deliver(
-                DeliveryCommand::Update {
-                    trace: tracing::Span::current(),
-                    channel,
-                    message_ref,
-                    message,
-                    receipt,
-                },
-                received,
-            )
-            .await
+            let routed = routing_send_for_message(
+                &channel.definition,
+                &message_ref,
+                self.multi_consumer_enabled,
+            );
+            let command = DeliveryCommand::Update {
+                trace: tracing::Span::current(),
+                channel,
+                message_ref,
+                message,
+                receipt,
+            };
+            if routed {
+                self.deliver_routed(start, command, received).await
+            } else {
+                self.deliver(command, received).await
+            }
         }
         .await;
         observation.finish(if result.is_ok() { "success" } else { "error" });
@@ -260,7 +273,7 @@ impl ToolsState {
         let consumer = command.consumer().map_or("default", ConsumerId::as_str);
         let span = tracing::info_span!("cmaeg.deliver", channel = %crate::telemetry::channel_hash(channel.as_str()), event_id = %event_id, consumer);
         tokio::time::timeout(
-            Duration::from_secs(8),
+            super::routed::TOOL_DEADLINE,
             async {
                 self.delivery.submit(command).await.map_err(|_| {
                     Problem::new(ProblemCode::Internal, 503, "delivery_unavailable")

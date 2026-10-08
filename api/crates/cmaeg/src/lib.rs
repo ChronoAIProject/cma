@@ -1,5 +1,9 @@
 //! CMA Event Gateway HTTP service.
 
+// Reuse the in-process integration fixtures in socket-free unit tests.
+#[cfg(test)]
+extern crate self as cmaeg;
+
 mod audit;
 pub mod auth;
 pub mod channels;
