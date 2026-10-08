@@ -8,9 +8,9 @@ use axum::{
 use serde::Deserialize;
 
 use super::{
-    authority::{Authorized, OwnerScope},
+    authority::{Authorized, Denied},
     cookies, csrf,
-    extract::{Fresh, RequestedOwner},
+    extract::{denied_response, RequestedOwner},
     guard::CurrentSession,
     pages::{layout, signin},
     redirect::{self, HOME},
@@ -60,44 +60,38 @@ pub(crate) async fn home(
     })
 }
 
-/// `POST /console/owner`: a mutation. Its extractor verified the requested
-/// owner afresh, exactly as `X-CMAEG-Owner` is verified, so only now is the
-/// selection stored. A refused choice leaves it unchanged with a notice.
+/// `POST /console/owner`: the switch takes the same `Authorized` extractor as
+/// every other route, so the current selection is verified first; then the
+/// requested owner is verified exactly as `X-CMAEG-Owner` is, through REST's
+/// cache, and only then stored. A refused choice leaves the selection
+/// unchanged with a notice.
 pub(crate) async fn switch_owner(
+    State(console): State<Console>,
     Extension(session): Extension<CurrentSession>,
     requested: Option<Extension<RequestedOwner>>,
-    Fresh(authorized): Fresh<Authorized>,
+    _current: Authorized,
 ) -> Response {
     let Some(cell) = session.0 else {
         return redirect::signed_out(true);
     };
-    let verified = match (requested, authorized.scope()) {
-        (Some(Extension(RequestedOwner(OwnerSelection::Personal))), OwnerScope::Personal) => {
-            Some(OwnerSelection::Personal)
-        }
-        (
-            Some(Extension(RequestedOwner(OwnerSelection::Organization(id)))),
-            OwnerScope::Organization,
-        ) if id == authorized.owner() => Some(OwnerSelection::Organization(id)),
-        _ => None,
-    };
     let subject_hash = subject_hash_prefix(&cell.meta().subject);
-    let mut meta = cell.meta();
-    let (outcome, owner_kind) = match verified {
-        Some(selection) => {
-            let kind = match selection {
+    let (outcome, owner_kind) = match requested {
+        Some(Extension(RequestedOwner(requested))) => {
+            let owner_kind = match requested {
                 OwnerSelection::Personal => "personal",
                 OwnerSelection::Organization(_) => "organization",
             };
-            meta.selected = selection;
-            ("ok", kind)
+            match console.authority().select(&cell, requested).await {
+                Ok(_) => ("ok", owner_kind),
+                Err(Denied::Refused) => ("refused", owner_kind),
+                Err(denied) => return denied_response(denied),
+            }
         }
         None => {
-            meta.flash = Some(Flash::OwnerRefused);
+            cell.meta().flash = Some(Flash::OwnerRefused);
             ("refused", "unknown")
         }
     };
-    drop(meta);
     tracing::info!(
         action = "owner",
         record_hash = "-",

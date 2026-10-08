@@ -40,7 +40,6 @@ use reqwest::Client;
 use tokio::sync::SemaphorePermit;
 
 pub use authority::{Authorized, OwnerScope};
-pub use extract::Fresh;
 pub use oidc::{DiscoveryError, EndpointCell, OidcEndpoints};
 
 use oidc::DiscoverySink as _;
@@ -72,8 +71,8 @@ pub struct ConsoleDeps {
     pub clock: Arc<dyn Clock>,
     /// Seals the sign-in state cookie.
     pub keys: Arc<MasterKeyRing>,
-    /// The identity and organization-admin rule REST uses; the console calls
-    /// only its uncached form.
+    /// REST's identity and organization-admin rule and its per-token cache,
+    /// shared with REST: the console's only authority cache.
     pub creator_auth: Arc<CreatorAuthenticator>,
     /// The owner's channels for the signed-in layout.
     pub directory: Arc<dyn ChannelDirectory>,
@@ -131,12 +130,11 @@ impl Console {
         let tokens = TokenClient::new(http.clone(), &deps.config.client_id, &secret);
         let sessions = Arc::new(SessionStore::new(
             SessionLimits::from(&deps.config),
-            deps.clock.clone(),
+            deps.clock,
             tokens.clone(),
             endpoints.clone(),
         ));
-        let authority =
-            ConsoleAuthority::new(deps.creator_auth.clone(), sessions.clone(), deps.clock);
+        let authority = ConsoleAuthority::new(deps.creator_auth.clone(), sessions.clone());
         Ok(Self {
             inner: Arc::new(Inner {
                 public_url: deps.public_url,

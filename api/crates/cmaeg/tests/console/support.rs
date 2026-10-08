@@ -57,8 +57,8 @@ pub struct Harness {
     pub console: Console,
     pub clock: Arc<ManualClock>,
     pub keys: Arc<MasterKeyRing>,
-    /// The authenticator REST would share; the console must never fill its
-    /// cache.
+    /// The authenticator REST shares; its per-token cache is the console's
+    /// only authority cache.
     pub creator_auth: Arc<CreatorAuthenticator>,
     pub http: reqwest::Client,
     shutdown: Option<oneshot::Sender<()>>,
@@ -149,6 +149,17 @@ impl Harness {
         }
     }
 
+    /// Move time by `by` for both clocks the console reads: its own session
+    /// clock and tokio's, which times REST's creator cache. Call it only
+    /// while no request is in flight; tokio's clock runs on in real time
+    /// afterwards.
+    pub async fn advance(&self, by: Duration) {
+        self.clock.advance(by);
+        tokio::time::pause();
+        tokio::time::advance(by).await;
+        tokio::time::resume();
+    }
+
     pub async fn get(&self, path: &str) -> reqwest::Response {
         self.http
             .get(format!("{}{path}", self.base))
@@ -227,6 +238,20 @@ impl Harness {
             request = request.header("cookie", format!("__Host-cmaeg-console={sid}"));
         }
         request.send().await.unwrap()
+    }
+
+    /// Ask the owner switch for `owner`, with the CSRF value of the form the
+    /// signed-in page shows.
+    pub async fn switch_owner(&self, sid: &str, owner: &str) -> reqwest::Response {
+        let page = self.get_as("/console", sid).await.text().await.unwrap();
+        let csrf = csrf_for(&page, "/console/owner");
+        self.post(
+            "/console/owner",
+            Some(sid),
+            None,
+            &[("csrf", &csrf), ("owner", owner)],
+        )
+        .await
     }
 
     /// A session for `subject` created directly in the store; its cookie value.

@@ -5,7 +5,8 @@
 //! before any await. `meta` is a std mutex held only for short synchronous
 //! reads and writes; `auth` is an async mutex that makes refresh single-flight
 //! and serializes one session's NyxID checks. No `DashMap` guard and no std
-//! mutex guard is ever held across an await.
+//! mutex guard is ever held across an await. The session keeps no authority
+//! verdict: REST's creator cache is the only cache (Amendment R6 §R6.4).
 use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -20,10 +21,7 @@ use dashmap::DashMap;
 use ring::rand::{SecureRandom, SystemRandom};
 use sha2::{Digest, Sha256};
 
-use super::{
-    authority::Verdict, clock::Clock, oidc::EndpointCell, revoke::Revoker, subject_hash_prefix,
-    token::*,
-};
+use super::{clock::Clock, oidc::EndpointCell, revoke::Revoker, subject_hash_prefix, token::*};
 use crate::{telemetry::names, ConsoleConfig};
 
 /// A transient refresh failure is retried after this long.
@@ -86,14 +84,12 @@ pub struct SessionMeta {
     pub orgs: Option<(Vec<OrgChoice>, Instant)>,
 }
 
-/// A session's NyxID tokens and its last authority verdict. Reached only
-/// through the `auth` async mutex.
+/// A session's NyxID tokens. Reached only through the `auth` async mutex.
 pub struct SessionAuth {
     access: Secret,
     refresh: Secret,
     access_expires_at: Instant,
     refresh_retry_at: Option<Instant>,
-    pub(crate) verdict: Option<Verdict>,
 }
 
 impl SessionAuth {
@@ -115,8 +111,6 @@ impl SessionAuth {
         self.refresh = tokens.refresh;
         self.access_expires_at = issued_at + tokens.expires_in;
         self.refresh_retry_at = None;
-        // A verdict belongs to the token it was derived from.
-        self.verdict = None;
     }
 }
 
@@ -182,11 +176,9 @@ impl EndReason {
 pub enum Refresh {
     NotDue,
     Rotated,
-    /// NyxID could not answer now. `usable` tells whether the current access
-    /// token may still be served.
-    Transient {
-        usable: bool,
-    },
+    /// NyxID could not answer now. A refresh is due only within 30 s of
+    /// expiry, so the current access token is no longer served either.
+    Transient,
     /// NyxID refused the refresh token; the session has ended.
     Ended,
 }
@@ -261,7 +253,6 @@ impl SessionStore {
                 refresh: tokens.refresh,
                 access_expires_at: now + tokens.expires_in,
                 refresh_retry_at: None,
-                verdict: None,
             }),
             ended: AtomicBool::new(false),
         });
@@ -299,6 +290,23 @@ impl SessionStore {
                 None
             }
             None => Some(cell),
+        }
+    }
+
+    /// True when `cell` has ended, ending it first if it is idle or past its
+    /// absolute lifetime. Authority runs it under the `auth` lock, so a
+    /// request that waited behind another never serves an expired session.
+    pub fn end_if_expired(&self, cell: &Arc<SessionCell>) -> bool {
+        if cell.is_ended() {
+            return true;
+        }
+        let expired = self.expiry(&cell.meta(), self.clock.now());
+        match expired {
+            Some(reason) => {
+                self.end(cell, reason);
+                true
+            }
+            None => false,
         }
     }
 
@@ -340,30 +348,22 @@ impl SessionStore {
         }
     }
 
-    /// Refresh the access token when it expires within 30 s, or when `force`
-    /// is set; the caller holds the `auth` lock, so concurrent requests of
+    /// Refresh the access token only when it expires within 30 s (Amendment
+    /// R6 §R6.4); the caller holds the `auth` lock, so concurrent requests of
     /// one session make one refresh. The rotated refresh token replaces the
     /// old one before the lock is released.
-    pub async fn refresh(
-        &self,
-        cell: &Arc<SessionCell>,
-        auth: &mut SessionAuth,
-        force: bool,
-    ) -> Refresh {
+    pub async fn refresh(&self, cell: &Arc<SessionCell>, auth: &mut SessionAuth) -> Refresh {
         let now = self.clock.now();
-        let due = force || !auth.access_usable(now);
-        if !due {
+        if auth.access_usable(now) {
             return Refresh::NotDue;
         }
-        if !force && auth.refresh_retry_at.is_some_and(|at| now < at) {
-            return Refresh::Transient {
-                usable: auth.access_usable(now),
-            };
+        // A NyxID outage costs at most one token request per session per
+        // 10 s.
+        if auth.refresh_retry_at.is_some_and(|at| now < at) {
+            return Refresh::Transient;
         }
         let Some(endpoints) = self.endpoints.get() else {
-            return Refresh::Transient {
-                usable: auth.access_usable(now),
-            };
+            return Refresh::Transient;
         };
         match self.tokens.refresh(&endpoints.token, &auth.refresh).await {
             Ok(tokens) => {
@@ -379,9 +379,7 @@ impl SessionStore {
                 // reuse the old token; NyxID then refuses it with
                 // invalid_grant and the session ends, failing closed.
                 auth.refresh_retry_at = Some(now + REFRESH_RETRY);
-                Refresh::Transient {
-                    usable: auth.access_usable(now),
-                }
+                Refresh::Transient
             }
         }
     }

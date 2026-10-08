@@ -1,7 +1,8 @@
-//! The two authority extractors. `Authorized` is a read's proof and
-//! `Fresh<Authorized>` a mutation's: each derives authority again for this
-//! request, after the guard has resolved the session (and, for a POST,
-//! checked Origin and CSRF).
+//! The one authority extractor. Every console route that reads or writes,
+//! the owner switch included, takes `Authorized`: it derives authority again
+//! for this request after the guard has resolved the session (and, for a
+//! POST, checked Origin and CSRF). There is no separate mutation extractor
+//! (Amendment R6 §R6.4).
 use axum::{
     extract::FromRequestParts,
     http::{header, request::Parts, Method, StatusCode},
@@ -9,7 +10,7 @@ use axum::{
 };
 
 use super::{
-    authority::{Authorized, Denied, Need},
+    authority::{Authorized, Denied},
     cookies,
     guard::CurrentSession,
     pages::{self, signin},
@@ -17,9 +18,6 @@ use super::{
     session::OwnerSelection,
     Console,
 };
-
-/// A mutation's authority: verified afresh whatever the session's verdict.
-pub struct Fresh<T>(pub T);
 
 /// The owner a POST asks to switch to; set by the guard from the verified
 /// form of the owner switch.
@@ -30,57 +28,55 @@ impl FromRequestParts<Console> for Authorized {
     type Rejection = Response;
 
     async fn from_request_parts(parts: &mut Parts, console: &Console) -> Result<Self, Response> {
-        authorize(parts, console, Need::Read).await
-    }
-}
-
-impl FromRequestParts<Console> for Fresh<Authorized> {
-    type Rejection = Response;
-
-    async fn from_request_parts(parts: &mut Parts, console: &Console) -> Result<Self, Response> {
-        let need = parts
+        let post = parts.method == Method::POST;
+        let Some(cell) = parts
             .extensions
-            .get::<RequestedOwner>()
-            .map_or(Need::Fresh, |requested| Need::Select(requested.0.clone()));
-        authorize(parts, console, need).await.map(Fresh)
+            .get::<CurrentSession>()
+            .and_then(|session| session.0.clone())
+        else {
+            return Err(if post {
+                redirect::signed_out(true)
+            } else {
+                sign_in(parts)
+            });
+        };
+        match console.authority().authorize(&cell).await {
+            Ok(authorized) => Ok(authorized),
+            // The flash explains the change, and an organization record now
+            // reads as 404 under this Personal authority.
+            Err(Denied::Downgraded(personal)) if !post => Ok(personal),
+            Err(Denied::SignedOut) if !post => Err(ended(sign_in(parts))),
+            Err(denied) => Err(denied_response(denied)),
+        }
     }
 }
 
-async fn authorize(parts: &Parts, console: &Console, need: Need) -> Result<Authorized, Response> {
-    let post = parts.method == Method::POST;
-    let Some(cell) = parts
-        .extensions
-        .get::<CurrentSession>()
-        .and_then(|session| session.0.clone())
-    else {
-        return Err(signed_out(parts, post, false));
-    };
-    match console.authority().authorize(&cell, need).await {
-        Ok(authorized) => Ok(authorized),
-        Err(Denied::SignedOut) => Err(signed_out(parts, post, true)),
+/// What a request whose authority was denied gets; a POST makes no change.
+/// Without a session a POST goes to the signed-out page, and a session that
+/// just ended also loses its cookie.
+pub(crate) fn denied_response(denied: Denied) -> Response {
+    match denied {
+        Denied::SignedOut => ended(redirect::signed_out(true)),
         // No channel data: the generic page, and the session is kept.
-        Err(Denied::Unavailable) => Err(pages::unavailable()),
+        Denied::Unavailable => pages::unavailable(),
         // The flash explains it on the page the browser lands on.
-        Err(Denied::Downgraded | Denied::Refused) => Err(redirect::see_other(redirect::HOME)),
+        Denied::Downgraded(_) | Denied::Refused => redirect::see_other(redirect::HOME),
     }
 }
 
-/// Without a session a GET renders the sign-in page and a POST goes to the
-/// signed-out page; a session that just ended also loses its cookie.
-fn signed_out(parts: &Parts, post: bool, ended: bool) -> Response {
-    let mut response = if post {
-        redirect::signed_out(true)
-    } else {
-        signin::sign_in(
-            StatusCode::OK,
-            &redirect::return_to(parts.uri.path_and_query().map(|value| value.as_str())),
-            None,
-        )
-    };
-    if ended {
-        response
-            .headers_mut()
-            .insert(header::SET_COOKIE, cookies::clear(cookies::SESSION));
-    }
+/// Without a session a GET renders the sign-in page, never a redirect to
+/// NyxID.
+fn sign_in(parts: &Parts) -> Response {
+    signin::sign_in(
+        StatusCode::OK,
+        &redirect::return_to(parts.uri.path_and_query().map(|value| value.as_str())),
+        None,
+    )
+}
+
+fn ended(mut response: Response) -> Response {
+    response
+        .headers_mut()
+        .insert(header::SET_COOKIE, cookies::clear(cookies::SESSION));
     response
 }

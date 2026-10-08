@@ -177,10 +177,12 @@ pub(crate) async fn callback(
         }
     };
     // The id_token is discarded unread: identity is NyxID's users/me, and
-    // PKCE plus state already bind the code to this browser.
+    // PKCE plus state already bind the code to this browser. REST's rule and
+    // its 3 s timeout name the session subject, and fill REST's per-token
+    // cache exactly as a REST call with this token would.
     let creator = match console
         .creator_auth()
-        .verify_uncached(tokens.access.as_str(), None)
+        .authenticate_token(tokens.access.as_str(), None)
         .await
     {
         Ok(creator) => creator,

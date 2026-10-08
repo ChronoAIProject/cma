@@ -1,5 +1,6 @@
-//! The console's notion of now. Session lifetimes, token ages and authority
-//! verdicts all read it, so tests can move time without waiting.
+//! The console's notion of now. Session lifetimes, token expiry and the
+//! switcher's refetch all read it, so tests can move time without waiting.
+//! Owner authority has no clock of its own: it rides REST's creator cache.
 use std::time::Instant;
 
 pub trait Clock: Send + Sync {

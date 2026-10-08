@@ -1,21 +1,9 @@
 //! Owner scoping: the switcher offers Personal and admin organizations, and
-//! every switch is verified afresh before it is stored.
+//! every switch is verified through REST's creator cache before it is
+//! stored.
 use super::support::{csrf_for, Harness};
 use cmaeg::console::session::{Flash, OwnerSelection};
 use std::{sync::atomic::Ordering, time::Duration};
-
-async fn switch(harness: &Harness, sid: &str, owner: &str) -> reqwest::Response {
-    let page = harness.get_as("/console", sid).await.text().await.unwrap();
-    let csrf = csrf_for(&page, "/console/owner");
-    harness
-        .post(
-            "/console/owner",
-            Some(sid),
-            None,
-            &[("csrf", &csrf), ("owner", owner)],
-        )
-        .await
-}
 
 fn selected(harness: &Harness, sid: &str) -> OwnerSelection {
     harness
@@ -51,14 +39,14 @@ async fn the_switcher_offers_admin_organizations_and_disables_the_rest() {
 }
 
 #[tokio::test]
-async fn an_owner_switch_is_verified_afresh_before_it_is_stored() {
+async fn an_owner_switch_is_verified_before_it_is_stored() {
     let harness = Harness::enabled().await;
     let oauth = &harness.nyxid.oauth;
     oauth.grant("org-a", "Org A", "alice", "admin");
     oauth.grant("org-b", "Org B", "alice", "member");
     let (sid, _) = harness.sign_in("alice", "/console").await;
     let before = oauth.authorization_calls.load(Ordering::SeqCst);
-    let response = switch(&harness, &sid, "org-a").await;
+    let response = harness.switch_owner(&sid, "org-a").await;
     assert_eq!(response.status(), 303);
     assert_eq!(response.headers()["location"], "/console");
     assert_eq!(oauth.authorization_calls.load(Ordering::SeqCst), before + 1);
@@ -68,8 +56,10 @@ async fn an_owner_switch_is_verified_afresh_before_it_is_stored() {
     );
     let page = harness.get_as("/console", &sid).await.text().await.unwrap();
     assert!(page.contains("Channels of organization Org A."));
+    // The organization's entry in REST's cache answered that page.
+    assert_eq!(oauth.authorization_calls.load(Ordering::SeqCst), before + 1);
     // A member-only organization is refused; the selection stays.
-    let refused = switch(&harness, &sid, "org-b").await;
+    let refused = harness.switch_owner(&sid, "org-b").await;
     assert_eq!(refused.headers()["location"], "/console");
     assert_eq!(
         selected(&harness, &sid),
@@ -78,42 +68,52 @@ async fn an_owner_switch_is_verified_afresh_before_it_is_stored() {
     let page = harness.get_as("/console", &sid).await.text().await.unwrap();
     assert!(page.contains("That owner could not be selected."));
     // A malformed choice is refused the same way.
-    switch(&harness, &sid, "bad owner").await;
+    harness.switch_owner(&sid, "bad owner").await;
     assert_eq!(
         harness.console.sessions().find(&sid).unwrap().meta().flash,
         Some(Flash::OwnerRefused)
     );
-    assert_eq!(switch(&harness, &sid, "personal").await.status(), 303);
+    assert_eq!(harness.switch_owner(&sid, "personal").await.status(), 303);
     assert_eq!(selected(&harness, &sid), OwnerSelection::Personal);
     harness.close().await;
 }
 
 #[tokio::test]
-async fn a_demoted_admin_cannot_reselect_and_drops_to_personal_with_the_flash() {
+async fn a_demoted_admin_drops_to_personal_and_cannot_reselect_once_the_cache_expires() {
     let harness = Harness::enabled().await;
     let oauth = &harness.nyxid.oauth;
     oauth.grant("org-a", "Org A", "alice", "admin");
     let (sid, _) = harness.sign_in("alice", "/console").await;
-    switch(&harness, &sid, "org-a").await;
-    assert!(harness
-        .get_as("/console", &sid)
-        .await
-        .text()
-        .await
-        .unwrap()
-        .contains("Channels of organization Org A."));
+    harness.switch_owner(&sid, "org-a").await;
+    let page = harness.get_as("/console", &sid).await.text().await.unwrap();
+    assert!(page.contains("Channels of organization Org A."));
+    let csrf = csrf_for(&page, "/console/owner");
     oauth.grant("org-a", "Org A", "alice", "member");
-    // Right after the demotion, re-selecting is refused despite the fresh
-    // read verdict, and the next read checks again.
-    let refused = switch(&harness, &sid, "org-a").await;
-    assert_eq!(refused.headers()["location"], "/console");
+    // Past REST's 60 s cache, re-selecting the organization makes no change:
+    // the request's own authority finds the demotion first.
+    harness.advance(Duration::from_secs(61)).await;
+    let response = harness
+        .post(
+            "/console/owner",
+            Some(&sid),
+            None,
+            &[("csrf", &csrf), ("owner", "org-a")],
+        )
+        .await;
+    assert_eq!(response.headers()["location"], "/console");
+    assert_eq!(selected(&harness, &sid), OwnerSelection::Personal);
     let page = harness.get_as("/console", &sid).await.text().await.unwrap();
     assert!(
         page.contains("Your admin access to Org A has ended"),
         "{page}"
     );
     assert!(page.contains("Channels of your personal account."));
+    // From Personal, the switch itself now refuses the organization.
+    let refused = harness.switch_owner(&sid, "org-a").await;
+    assert_eq!(refused.headers()["location"], "/console");
     assert_eq!(selected(&harness, &sid), OwnerSelection::Personal);
+    let page = harness.get_as("/console", &sid).await.text().await.unwrap();
+    assert!(page.contains("That owner could not be selected."));
     harness.close().await;
 }
 

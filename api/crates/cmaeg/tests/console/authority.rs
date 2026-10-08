@@ -1,9 +1,11 @@
-//! Per-request owner authority (Amendment R3): demotion within 60 s, stale
-//! tokens, refresh classification, locking, the REST cache, fail-closed
-//! unavailability, the permit bounds, and the route table walk.
-use super::support::{metrics, sample, Harness};
+//! Per-request owner authority (Amendment R6 §R6.4). Every request checks
+//! through REST's creator cache, so a demotion or a deactivation stops the
+//! console within 60 s; plus one cache fill per session, refresh
+//! classification, fail-closed unavailability, locking, expiry and the route
+//! table walk.
+use super::support::{csrf_for, metrics, sample, Harness};
 use cmaeg::console::{
-    authority::{Denied, Need},
+    authority::Denied,
     session::{Flash, OwnerSelection, SessionCell},
     table::{Access, ROUTES},
     OwnerScope,
@@ -13,101 +15,96 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// One second past REST's 60 s success TTL.
+const PAST_CACHE: Duration = Duration::from_secs(61);
+
 async fn signed_in(harness: &Harness, subject: &str) -> (String, Arc<SessionCell>) {
     let (sid, _) = harness.sign_in(subject, "/console").await;
     let cell = harness.console.sessions().find(&sid).unwrap();
     (sid, cell)
 }
 
-fn select(cell: &SessionCell, organization: &str) {
-    cell.meta().selected = OwnerSelection::Organization(organization.into());
-}
-
-async fn read(harness: &Harness, cell: &Arc<SessionCell>) -> Result<OwnerScope, Denied> {
-    harness
-        .console
-        .authority()
-        .authorize(cell, Need::Read)
-        .await
-        .map(|authorized| authorized.scope())
+async fn page(harness: &Harness, sid: &str) -> String {
+    harness.get_as("/console", sid).await.text().await.unwrap()
 }
 
 #[tokio::test]
-async fn a_demoted_admin_keeps_reads_for_60_seconds_then_drops_to_personal() {
+async fn a_demoted_admin_loses_the_organization_within_60_seconds() {
     for removal in ["demoted", "deleted"] {
         let harness = Harness::enabled().await;
         let oauth = &harness.nyxid.oauth;
         oauth.grant("org-a", "Org A", "alice", "admin");
-        let (_, cell) = signed_in(&harness, "alice").await;
-        select(&cell, "org-a");
-        assert_eq!(read(&harness, &cell).await, Ok(OwnerScope::Organization));
+        // One session reads with a GET, the other writes with a POST.
+        let (reader, reader_cell) = signed_in(&harness, "alice").await;
+        let (writer, writer_cell) = signed_in(&harness, "alice").await;
+        for sid in [&reader, &writer] {
+            assert_eq!(harness.switch_owner(sid, "org-a").await.status(), 303);
+        }
+        let csrf = csrf_for(&page(&harness, &writer).await, "/console/owner");
         match removal {
             "demoted" => oauth.grant("org-a", "Org A", "alice", "member"),
             _ => oauth.remove_org("org-a"),
         }
-        harness.clock.advance(Duration::from_secs(59));
-        assert_eq!(read(&harness, &cell).await, Ok(OwnerScope::Organization));
-        harness.clock.advance(Duration::from_secs(2));
-        let refreshes = oauth.refresh_calls();
-        assert_eq!(
-            read(&harness, &cell).await,
-            Ok(OwnerScope::Personal),
-            "{removal}"
+        // REST's cache answers for up to 60 s, exactly as it does for REST.
+        harness.advance(Duration::from_secs(59)).await;
+        assert!(page(&harness, &reader)
+            .await
+            .contains("Channels of organization Org A."));
+        harness.advance(Duration::from_secs(2)).await;
+        // A GET is served as Personal, so an organization record reads 404.
+        let shown = page(&harness, &reader).await;
+        assert!(
+            shown.contains("Channels of your personal account."),
+            "{removal}: {shown}"
         );
-        // A refresh came first, so a stale token was ruled out.
-        assert_eq!(oauth.refresh_calls(), refreshes + 1);
-        {
-            let meta = cell.meta();
-            assert_eq!(meta.selected, OwnerSelection::Personal);
-            assert_eq!(
-                meta.flash,
-                Some(Flash::AdminEnded {
-                    organization: "org-a".into()
-                })
-            );
+        assert!(shown.contains("Your admin access to"), "{removal}: {shown}");
+        let personal = harness
+            .console
+            .authority()
+            .authorize(&reader_cell)
+            .await
+            .unwrap();
+        assert_eq!(
+            (personal.owner(), personal.scope()),
+            ("alice", OwnerScope::Personal)
+        );
+        // A POST makes no change and goes home, where the flash explains it.
+        let response = harness
+            .post(
+                "/console/owner",
+                Some(&writer),
+                None,
+                &[("csrf", &csrf), ("owner", "org-a")],
+            )
+            .await;
+        assert_eq!(response.status(), 303);
+        assert_eq!(response.headers()["location"], "/console");
+        for cell in [&reader_cell, &writer_cell] {
+            assert_eq!(cell.meta().selected, OwnerSelection::Personal);
         }
-        // A mutation right after the demotion is refused outright.
-        select(&cell, "org-a");
         assert_eq!(
-            harness
-                .console
-                .authority()
-                .authorize(&cell, Need::Fresh)
-                .await
-                .err(),
-            Some(Denied::Downgraded)
+            writer_cell.meta().flash,
+            Some(Flash::AdminEnded {
+                organization: "org-a".into()
+            })
         );
+        assert_eq!(oauth.refresh_calls(), 0, "a refusal never forces a refresh");
         assert!(
             sample(
                 &metrics(),
                 "cmaeg_console_authorizations_total{outcome=\"downgraded\"}"
-            ) >= 1.0
+            ) >= 2.0
         );
         harness.close().await;
     }
 }
 
 #[tokio::test]
-async fn a_stale_token_refreshes_and_keeps_the_organization_without_a_flash() {
+async fn a_deactivated_user_is_signed_out_within_60_seconds() {
     let harness = Harness::enabled().await;
-    let oauth = &harness.nyxid.oauth;
-    oauth.grant("org-a", "Org A", "alice", "admin");
-    let (_, cell) = signed_in(&harness, "alice").await;
-    select(&cell, "org-a");
-    assert_eq!(read(&harness, &cell).await, Ok(OwnerScope::Organization));
-    harness.clock.advance(Duration::from_secs(61));
-    oauth.expire_access("alice");
-    assert_eq!(read(&harness, &cell).await, Ok(OwnerScope::Organization));
-    assert_eq!(oauth.refresh_calls(), 1);
-    assert_eq!(cell.meta().flash, None);
-    harness.close().await;
-}
-
-#[tokio::test]
-async fn a_deactivated_user_is_signed_out_after_one_forced_refresh() {
-    let harness = Harness::enabled().await;
-    let (sid, cell) = signed_in(&harness, "alice").await;
-    assert_eq!(read(&harness, &cell).await, Ok(OwnerScope::Personal));
+    let (reader, reader_cell) = signed_in(&harness, "alice").await;
+    let (writer, writer_cell) = signed_in(&harness, "alice").await;
+    let csrf = csrf_for(&page(&harness, &writer).await, "/console/owner");
     harness
         .nyxid
         .oauth
@@ -115,15 +112,120 @@ async fn a_deactivated_user_is_signed_out_after_one_forced_refresh() {
         .lock()
         .unwrap()
         .insert("alice".into());
-    harness.clock.advance(Duration::from_secs(59));
-    assert_eq!(read(&harness, &cell).await, Ok(OwnerScope::Personal));
-    harness.clock.advance(Duration::from_secs(2));
-    assert_eq!(read(&harness, &cell).await, Err(Denied::SignedOut));
-    assert_eq!(harness.nyxid.oauth.refresh_calls(), 1);
-    assert!(cell.is_ended());
-    let page = harness.get_as("/console", &sid).await;
-    assert_eq!(page.status(), 200);
-    assert!(page.text().await.unwrap().contains("Sign in with NyxID"));
+    harness.advance(Duration::from_secs(59)).await;
+    assert!(page(&harness, &reader).await.contains("Signed in as"));
+    harness.advance(Duration::from_secs(2)).await;
+    let response = harness.get_as("/console", &reader).await;
+    assert_eq!(response.status(), 200);
+    assert!(response.headers()["set-cookie"]
+        .to_str()
+        .unwrap()
+        .starts_with("__Host-cmaeg-console=;"));
+    assert!(response
+        .text()
+        .await
+        .unwrap()
+        .contains("Sign in with NyxID"));
+    // A POST in that state changes nothing and reports the ended session.
+    let response = harness
+        .post(
+            "/console/owner",
+            Some(&writer),
+            None,
+            &[("csrf", &csrf), ("owner", "personal")],
+        )
+        .await;
+    assert_eq!(response.status(), 303);
+    assert_eq!(
+        response.headers()["location"],
+        "/console/signed-out?reason=expired"
+    );
+    assert!(reader_cell.is_ended() && writer_cell.is_ended());
+    assert!(harness.console.sessions().is_empty());
+    assert_eq!(harness.nyxid.oauth.refresh_calls(), 0);
+    harness.close().await;
+}
+
+#[tokio::test]
+async fn an_outage_fails_closed_without_channel_data_and_keeps_the_session() {
+    let harness = Harness::enabled().await;
+    let oauth = &harness.nyxid.oauth;
+    oauth.grant("org-a", "Secret Org Name", "carol", "admin");
+    let (carol, carol_cell) = signed_in(&harness, "carol").await;
+    harness.switch_owner(&carol, "org-a").await;
+    let (dave, _) = signed_in(&harness, "dave").await;
+    harness.advance(PAST_CACHE).await;
+    oauth.down.store(true, Ordering::SeqCst);
+    for sid in [&carol, &dave] {
+        let response = harness.get_as("/console", sid).await;
+        assert_eq!(response.status(), 503);
+        let text = response.text().await.unwrap();
+        assert!(text.contains("Console unavailable"));
+        for fixture in ["Secret Org Name", "org-a", "arol", "dave"] {
+            assert!(!text.contains(fixture), "{fixture}");
+        }
+    }
+    assert_eq!(harness.console.sessions().len(), 2);
+    // NyxID returns. REST caches the failure for 10 s, then service resumes
+    // with the selection kept.
+    oauth.down.store(false, Ordering::SeqCst);
+    assert_eq!(harness.get_as("/console", &carol).await.status(), 503);
+    harness.advance(Duration::from_secs(11)).await;
+    assert!(page(&harness, &carol)
+        .await
+        .contains("Channels of organization Secret Org Name."));
+    assert_eq!(
+        carol_cell.meta().selected,
+        OwnerSelection::Organization("org-a".into())
+    );
+    assert_eq!(harness.get_as("/console", &dave).await.status(), 200);
+    assert!(
+        sample(
+            &metrics(),
+            "cmaeg_console_authorizations_total{outcome=\"unavailable\"}"
+        ) >= 2.0
+    );
+    harness.close().await;
+}
+
+#[tokio::test]
+async fn a_session_makes_one_cache_fill_per_minute() {
+    let harness = Harness::enabled().await;
+    let oauth = &harness.nyxid.oauth;
+    oauth.grant("org-a", "Org A", "alice", "admin");
+    let (sid, _) = signed_in(&harness, "alice").await;
+    let identity = || oauth.users_me_calls.load(Ordering::SeqCst);
+    // Two concurrent requests make one check.
+    harness.advance(PAST_CACHE).await;
+    let before = identity();
+    let (first, second) = tokio::join!(
+        harness.get_as("/console", &sid),
+        harness.get_as("/console", &sid)
+    );
+    assert_eq!(
+        (first.status().as_u16(), second.status().as_u16()),
+        (200, 200)
+    );
+    assert_eq!(identity(), before + 1);
+    // Ten requests within 60 s make one.
+    harness.advance(PAST_CACHE).await;
+    let before = identity();
+    for _ in 0..10 {
+        assert_eq!(harness.get_as("/console", &sid).await.status(), 200);
+        harness.advance(Duration::from_secs(5)).await;
+    }
+    assert_eq!(identity(), before + 1);
+    // An organization view fills its own entry once as well.
+    harness.switch_owner(&sid, "org-a").await;
+    let authorizations = oauth.authorization_calls.load(Ordering::SeqCst);
+    for _ in 0..10 {
+        assert_eq!(harness.get_as("/console", &sid).await.status(), 200);
+        harness.advance(Duration::from_secs(5)).await;
+    }
+    assert_eq!(
+        oauth.authorization_calls.load(Ordering::SeqCst),
+        authorizations
+    );
     harness.close().await;
 }
 
@@ -132,46 +234,47 @@ async fn refresh_failures_are_classified_on_every_request() {
     let harness = Harness::enabled().await;
     let oauth = &harness.nyxid.oauth;
     let (sid, _) = signed_in(&harness, "alice").await;
-    // A token-endpoint 503 is never noticed while the token has more than
-    // 30 s left: no refresh is due.
-    harness.clock.advance(Duration::from_secs(300));
+    // No refresh while the token has more than 30 s left, so a broken token
+    // endpoint goes unnoticed.
+    harness.advance(Duration::from_secs(300)).await;
     oauth.token_status.store(503, Ordering::SeqCst);
     assert_eq!(harness.get_as("/console", &sid).await.status(), 200);
     assert_eq!(oauth.refresh_calls(), 0);
     // Within 30 s of expiry it shows the 503 page and keeps the session.
-    harness.clock.advance(Duration::from_secs(570));
-    let page = harness.get_as("/console", &sid).await;
-    assert_eq!(page.status(), 503);
-    assert!(page.text().await.unwrap().contains("Console unavailable"));
+    harness.advance(Duration::from_secs(570)).await;
+    let response = harness.get_as("/console", &sid).await;
+    assert_eq!(response.status(), 503);
+    assert!(response
+        .text()
+        .await
+        .unwrap()
+        .contains("Console unavailable"));
     assert_eq!(harness.console.sessions().len(), 1);
     // NyxID recovers: the next refresh after the retry window serves again.
     oauth.token_status.store(200, Ordering::SeqCst);
-    harness.clock.advance(Duration::from_secs(11));
+    harness.advance(Duration::from_secs(11)).await;
     assert_eq!(harness.get_as("/console", &sid).await.status(), 200);
+    assert_eq!(oauth.refresh_calls(), 2);
     // invalid_grant ends the session once the rotated token is due.
-    harness.clock.advance(Duration::from_secs(870));
+    harness.advance(Duration::from_secs(870)).await;
     oauth.token_status.store(400, Ordering::SeqCst);
-    let page = harness.get_as("/console", &sid).await;
-    assert_eq!(page.status(), 200);
-    assert!(page.headers()["set-cookie"]
+    let response = harness.get_as("/console", &sid).await;
+    assert_eq!(response.status(), 200);
+    assert!(response.headers()["set-cookie"]
         .to_str()
         .unwrap()
         .starts_with("__Host-cmaeg-console=;"));
-    assert!(page.text().await.unwrap().contains("Sign in with NyxID"));
+    assert!(response
+        .text()
+        .await
+        .unwrap()
+        .contains("Sign in with NyxID"));
     assert!(harness.console.sessions().is_empty());
     let rendered = metrics();
-    assert!(
-        sample(
-            &rendered,
-            "cmaeg_console_authorizations_total{outcome=\"unavailable\"}"
-        ) >= 1.0
-    );
-    assert!(
-        sample(
-            &rendered,
-            "cmaeg_console_authorizations_total{outcome=\"ended\"}"
-        ) >= 1.0
-    );
+    for outcome in ["refresh_transient", "refreshed", "ended"] {
+        let series = format!("cmaeg_console_authorizations_total{{outcome=\"{outcome}\"}}");
+        assert!(sample(&rendered, &series) >= 1.0, "{outcome}");
+    }
     harness.close().await;
 }
 
@@ -180,6 +283,8 @@ async fn a_hanging_check_never_blocks_other_sessions_and_one_session_refreshes_o
     let harness = Arc::new(Harness::enabled().await);
     let (stuck, _) = signed_in(&harness, "alice").await;
     let (bob, _) = signed_in(&harness, "bob").await;
+    // Past the entries the sign-ins filled, so both checks reach NyxID.
+    harness.advance(PAST_CACHE).await;
     harness
         .nyxid
         .oauth
@@ -195,9 +300,9 @@ async fn a_hanging_check_never_blocks_other_sessions_and_one_session_refreshes_o
     let started = Instant::now();
     assert_eq!(harness.get_as("/console", &bob).await.status(), 200);
     assert!(started.elapsed() < Duration::from_secs(1));
-    // NyxID's silence fails closed after the 3 s check timeout.
+    // NyxID's silence fails closed after REST's 3 s check timeout.
     assert_eq!(hanging.await.unwrap(), 503);
-    harness.clock.advance(Duration::from_secs(870));
+    harness.advance(Duration::from_secs(870) - PAST_CACHE).await;
     harness
         .nyxid
         .oauth
@@ -213,125 +318,35 @@ async fn a_hanging_check_never_blocks_other_sessions_and_one_session_refreshes_o
         (200, 200)
     );
     assert_eq!(harness.nyxid.oauth.refresh_calls(), before + 1);
-}
-
-#[tokio::test]
-async fn ten_minutes_of_page_refreshes_make_few_checks_and_leave_the_rest_cache_alone() {
-    let harness = Harness::enabled().await;
-    let (sid, _) = signed_in(&harness, "alice").await;
-    let oauth = &harness.nyxid.oauth;
-    let checks_after_sign_in = oauth.users_me_calls.load(Ordering::SeqCst);
-    for _ in 0..60 {
-        harness.clock.advance(Duration::from_secs(10));
-        assert_eq!(harness.get_as("/console", &sid).await.status(), 200);
-    }
-    let read_checks = oauth.users_me_calls.load(Ordering::SeqCst) - checks_after_sign_in;
-    assert!(read_checks <= 20, "{read_checks} read checks");
-    let access = oauth.access_tokens_of("alice");
-    let before = oauth.users_me_calls.load(Ordering::SeqCst);
-    harness
-        .creator_auth
-        .authenticate_token(access.last().unwrap(), None)
-        .await
-        .unwrap();
-    assert_eq!(oauth.users_me_calls.load(Ordering::SeqCst), before + 1);
-    harness.close().await;
-}
-
-#[tokio::test]
-async fn an_outage_fails_closed_and_permits_bound_checks() {
-    let harness = Arc::new(Harness::enabled().await);
-    let oauth = &harness.nyxid.oauth;
-    oauth.grant("org-a", "Secret Org Name", "carol", "admin");
-    let (carol, cell) = signed_in(&harness, "carol").await;
-    select(&cell, "org-a");
-    oauth.down.store(true, Ordering::SeqCst);
-    let page = harness.get_as("/console", &carol).await;
-    assert_eq!(page.status(), 503);
-    let text = page.text().await.unwrap();
-    assert!(
-        !text.contains("Secret Org Name") && !text.contains("org-a") && !text.contains("carol")
-    );
-    assert_eq!(harness.console.sessions().len(), 1);
-    // Recovery: after the 10 s unavailable verdict, service resumes.
-    oauth.down.store(false, Ordering::SeqCst);
-    assert_eq!(harness.get_as("/console", &carol).await.status(), 503);
-    harness.clock.advance(Duration::from_secs(11));
-    assert_eq!(harness.get_as("/console", &carol).await.status(), 200);
-
-    // Eight hanging subjects hold every permit; a ninth waits 2 s, then 503.
-    let mut hanging = Vec::new();
-    for index in 0..8 {
-        let subject = format!("hang-{index}");
-        let (sid, _) = signed_in(&harness, &subject).await;
-        oauth.hang.lock().unwrap().insert(subject);
-        let harness = harness.clone();
-        hanging.push(tokio::spawn(async move {
-            harness.get_as("/console", &sid).await.status()
-        }));
-    }
-    let (ninth, _) = signed_in(&harness, "ninth").await;
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    let started = Instant::now();
-    assert_eq!(harness.get_as("/console", &ninth).await.status(), 503);
-    let waited = started.elapsed();
-    assert!(
-        waited >= Duration::from_millis(1_900) && waited < Duration::from_millis(2_900),
-        "{waited:?}"
-    );
-    for task in hanging {
-        assert_eq!(task.await.unwrap(), 503);
-    }
     harness.close_shared().await;
 }
 
 #[tokio::test]
-async fn one_subject_never_holds_more_than_one_permit() {
-    let harness = Arc::new(Harness::enabled().await);
-    let oauth = &harness.nyxid.oauth;
-    let (first, _) = signed_in(&harness, "alice").await;
-    let (second, _) = signed_in(&harness, "alice").await;
-    let (bob, _) = signed_in(&harness, "bob").await;
-    oauth.hang.lock().unwrap().insert("alice".into());
-    let calls = oauth.users_me_calls.load(Ordering::SeqCst);
-    let hanging = tokio::spawn({
-        let harness = harness.clone();
-        async move { harness.get_as("/console", &first).await.status() }
-    });
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    let started = Instant::now();
-    assert_eq!(harness.get_as("/console", &second).await.status(), 503);
-    assert!(started.elapsed() >= Duration::from_millis(1_900));
-    // Alice's second session never reached NyxID; bob is served meanwhile.
-    assert_eq!(oauth.users_me_calls.load(Ordering::SeqCst), calls + 1);
-    assert_eq!(harness.get_as("/console", &bob).await.status(), 200);
-    assert_eq!(hanging.await.unwrap(), 503);
-    harness.close_shared().await;
-}
-
-#[tokio::test]
-async fn a_mutation_verifies_afresh_despite_a_fresh_read_verdict() {
+async fn sessions_end_after_30_idle_minutes_or_8_hours() {
     let harness = Harness::enabled().await;
-    let (_, cell) = signed_in(&harness, "alice").await;
-    assert_eq!(read(&harness, &cell).await, Ok(OwnerScope::Personal));
-    let calls = harness.nyxid.oauth.users_me_calls.load(Ordering::SeqCst);
-    assert_eq!(read(&harness, &cell).await, Ok(OwnerScope::Personal));
-    assert_eq!(
-        harness.nyxid.oauth.users_me_calls.load(Ordering::SeqCst),
-        calls
-    );
-    let fresh = harness
-        .console
-        .authority()
-        .authorize(&cell, Need::Fresh)
-        .await
-        .unwrap();
-    assert_eq!(fresh.owner(), "alice");
-    assert_eq!(fresh.creator().subject, "alice");
-    assert_eq!(
-        harness.nyxid.oauth.users_me_calls.load(Ordering::SeqCst),
-        calls + 1
-    );
+    let (idle, _) = signed_in(&harness, "alice").await;
+    let (busy, _) = signed_in(&harness, "bob").await;
+    let step = Duration::from_secs(29 * 60);
+    harness.advance(step).await;
+    assert_eq!(harness.get_as("/console", &busy).await.status(), 200);
+    harness.advance(Duration::from_secs(60)).await;
+    assert!(page(&harness, &idle).await.contains("Sign in with NyxID"));
+    // Bob stays active, and is signed out only at the absolute 8 hours.
+    assert!(page(&harness, &busy).await.contains("Signed in as"));
+    let mut elapsed = step + Duration::from_secs(60);
+    while elapsed + step < Duration::from_secs(8 * 3600) {
+        harness.advance(step).await;
+        elapsed += step;
+        assert!(page(&harness, &busy).await.contains("Signed in as"));
+    }
+    harness.advance(step).await;
+    assert!(page(&harness, &busy).await.contains("Sign in with NyxID"));
+    assert!(harness.console.sessions().is_empty());
+    let rendered = metrics();
+    for reason in ["idle", "absolute"] {
+        let series = format!("cmaeg_console_session_evictions_total{{reason=\"{reason}\"}}");
+        assert_eq!(sample(&rendered, &series), 1.0, "{reason}");
+    }
     harness.close().await;
 }
 
@@ -339,8 +354,7 @@ async fn a_mutation_verifies_afresh_despite_a_fresh_read_verdict() {
 async fn logout_ends_the_session_while_nyxid_is_down() {
     let harness = Harness::enabled().await;
     let (sid, _) = signed_in(&harness, "alice").await;
-    let page = harness.get_as("/console", &sid).await.text().await.unwrap();
-    let csrf = super::support::csrf_for(&page, "/console/logout");
+    let csrf = csrf_for(&page(&harness, &sid).await, "/console/logout");
     harness.nyxid.oauth.down.store(true, Ordering::SeqCst);
     harness
         .nyxid
@@ -372,12 +386,15 @@ async fn every_route_but_sign_in_plumbing_derives_authority() {
             "/console/logout"
         ]
     );
+    assert!(ROUTES
+        .iter()
+        .all(|route| matches!(route.access, Access::Public | Access::Authorized)));
     let harness = Harness::enabled().await;
     let (sid, _) = signed_in(&harness, "alice").await;
     // The forms' CSRF values, read while NyxID still answers.
-    let home = harness.get_as("/console", &sid).await.text().await.unwrap();
+    let home = page(&harness, &sid).await;
     harness.nyxid.oauth.down.store(true, Ordering::SeqCst);
-    harness.clock.advance(std::time::Duration::from_secs(61));
+    harness.advance(PAST_CACHE).await;
     for route in ROUTES.iter().filter(|route| route.access != Access::Public) {
         let (anonymous, authorized) = match route.method {
             "GET" => (
@@ -385,7 +402,7 @@ async fn every_route_but_sign_in_plumbing_derives_authority() {
                 harness.get_as(route.path, &sid).await,
             ),
             _ => {
-                let csrf = super::support::csrf_for(&home, route.path);
+                let csrf = csrf_for(&home, route.path);
                 (
                     harness.post(route.path, None, None, &[]).await,
                     harness
@@ -404,5 +421,11 @@ async fn every_route_but_sign_in_plumbing_derives_authority() {
         // With NyxID down, a route that derives authority fails closed.
         assert_eq!(authorized.status(), 503, "{} {}", route.method, route.path);
     }
+    // The authority API itself reports the outage and keeps the session.
+    let cell = harness.console.sessions().find(&sid).unwrap();
+    assert_eq!(
+        harness.console.authority().authorize(&cell).await,
+        Err(Denied::Unavailable)
+    );
     harness.close().await;
 }

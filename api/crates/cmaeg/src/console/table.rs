@@ -1,7 +1,8 @@
 //! Every console route and the authority it requires. The router is built
 //! from this table, so a route cannot exist without an entry, and a test
 //! walks it: only the sign-in, login, callback, signed-out and logout routes
-//! may be public; every other route derives authority on every request.
+//! may be public; every other route, read or write, takes the one
+//! `Authorized` extractor and derives authority on every request.
 use axum::routing::{get, post, MethodRouter};
 
 use super::{login, redirect, routes, Console};
@@ -10,10 +11,8 @@ use super::{login, redirect, routes, Console};
 pub enum Access {
     /// Sign-in plumbing: never reads or writes channel data.
     Public,
-    /// Takes `Authorized`.
-    Read,
-    /// Takes `Fresh<Authorized>`.
-    Mutation,
+    /// Takes `Authorized`, whether it reads or writes.
+    Authorized,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -27,7 +26,7 @@ pub const ROUTES: &[ConsoleRoute] = &[
     ConsoleRoute {
         method: "GET",
         path: redirect::HOME,
-        access: Access::Read,
+        access: Access::Authorized,
     },
     ConsoleRoute {
         method: "GET",
@@ -52,7 +51,7 @@ pub const ROUTES: &[ConsoleRoute] = &[
     ConsoleRoute {
         method: "POST",
         path: redirect::OWNER,
-        access: Access::Mutation,
+        access: Access::Authorized,
     },
 ];
 

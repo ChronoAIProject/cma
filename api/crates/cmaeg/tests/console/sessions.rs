@@ -30,11 +30,7 @@ fn create(harness: &Harness, subject: &str) -> (Secret, Arc<SessionCell>) {
 
 async fn refresh(harness: &Harness, cell: &Arc<SessionCell>) -> Refresh {
     let mut auth = cell.lock_auth().await;
-    harness
-        .console
-        .sessions()
-        .refresh(cell, &mut auth, false)
-        .await
+    harness.console.sessions().refresh(cell, &mut auth).await
 }
 
 async fn revoked_eventually(harness: &Harness, count: usize) -> Vec<String> {
@@ -124,16 +120,13 @@ async fn transient_refresh_failures_keep_the_session_and_retry_after_ten_seconds
         }
         assert_eq!(
             refresh(&harness, &cell).await,
-            Refresh::Transient { usable: false },
+            Refresh::Transient,
             "{failure}"
         );
         assert!(harness.console.sessions().find(sid.as_str()).is_some());
         // No new call inside the 10 s retry window.
         harness.clock.advance(Duration::from_secs(9));
-        assert_eq!(
-            refresh(&harness, &cell).await,
-            Refresh::Transient { usable: false }
-        );
+        assert_eq!(refresh(&harness, &cell).await, Refresh::Transient);
         assert_eq!(oauth.refresh_calls(), 1, "{failure}");
         oauth.token_status.store(200, Ordering::SeqCst);
         oauth.token_malformed.store(false, Ordering::SeqCst);
@@ -153,10 +146,7 @@ async fn a_timeout_keeps_the_session_and_a_nearly_expired_token_is_not_served() 
         .oauth
         .token_delay_ms
         .store(6_000, Ordering::SeqCst);
-    assert_eq!(
-        refresh(&harness, &cell).await,
-        Refresh::Transient { usable: false }
-    );
+    assert_eq!(refresh(&harness, &cell).await, Refresh::Transient);
     assert!(harness.console.sessions().find(sid.as_str()).is_some());
     harness.close().await;
 }

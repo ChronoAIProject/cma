@@ -84,23 +84,45 @@ async fn the_full_flow_signs_in_with_a_matching_pkce_verifier() {
 }
 
 #[tokio::test]
-async fn sign_in_leaves_the_rest_creator_cache_unchanged() {
+async fn the_session_subject_is_rests_creator_and_fills_its_cache() {
     let harness = Harness::enabled().await;
-    harness.sign_in("alice", "/console").await;
+    let (sid, _) = harness.sign_in("alice", "/console").await;
     let access = harness.nyxid.oauth.access_tokens_of("alice");
     assert_eq!(access.len(), 1);
-    // REST's first look at the token misses the cache, so it calls NyxID.
+    // The callback resolved the identity with authenticate_token, so REST's
+    // own look at the same token is a cache hit.
     let before = harness.nyxid.oauth.users_me_calls.load(Ordering::SeqCst);
-    harness
+    let creator = harness
         .creator_auth
         .authenticate_token(&access[0], None)
         .await
         .unwrap();
     assert_eq!(
         harness.nyxid.oauth.users_me_calls.load(Ordering::SeqCst),
-        before + 1
+        before
     );
+    let cell = harness.console.sessions().find(&sid).unwrap();
+    assert_eq!(cell.meta().subject, creator.subject);
     harness.close().await;
+}
+
+/// The console adds no way around REST's cache: `auth/creator.rs` exposes
+/// exactly the functions it had before the console existed.
+#[test]
+fn creator_authentication_gains_no_public_function() {
+    let source = include_str!("../../src/auth/creator.rs");
+    let public: Vec<&str> = source
+        .lines()
+        .map(str::trim_start)
+        .filter_map(|line| {
+            line.strip_prefix("pub fn ")
+                .or_else(|| line.strip_prefix("pub async fn "))
+                .or_else(|| line.strip_prefix("pub(crate) fn "))
+                .or_else(|| line.strip_prefix("pub(crate) async fn "))
+        })
+        .map(|rest| rest.split(['(', '<']).next().unwrap())
+        .collect();
+    assert_eq!(public, ["new", "authenticate", "authenticate_token"]);
 }
 
 #[tokio::test]

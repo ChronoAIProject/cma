@@ -150,7 +150,7 @@ struct ErrorBody {
     error: Option<String>,
 }
 
-/// The classification table of the token endpoint (Amendment R3).
+/// The classification table of the token endpoint (Amendment R6 §R6.4).
 pub(crate) fn classify(status: StatusCode, body: &[u8]) -> Result<TokenSet, TokenFailure> {
     if status == StatusCode::OK {
         let parsed: TokenBody =
