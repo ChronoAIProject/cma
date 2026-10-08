@@ -5,7 +5,9 @@ use super::{
     sync::SyncRegistry,
     webhook_client::WebhookClient,
 };
-use crate::{channels::resolver::ResolvedChannel, turns::outcomes::TurnOutcome};
+use crate::{
+    channels::resolver::ResolvedChannel, tools::ConsumerSummary, turns::outcomes::TurnOutcome,
+};
 use cmaeg_core::{
     channel::Sink,
     message::OutboundMessage,
@@ -34,10 +36,11 @@ impl CustomDelivery {
         channel: &ResolvedChannel,
         event: &EventRefPayload,
         message: &OutboundMessage,
+        consumer: Option<ConsumerSummary>,
     ) -> IntentReceipt {
-        match self.begin_reply(gate, event, message) {
+        match self.begin_reply(gate, event, message, consumer.clone()) {
             Ok(streamed) => {
-                self.complete_reply(gate, channel, event, message, streamed)
+                self.complete_reply(gate, channel, event, message, streamed, consumer)
                     .await
             }
             Err(receipt) => receipt,
@@ -50,6 +53,7 @@ impl CustomDelivery {
         gate: &dyn SendGate,
         event: &EventRefPayload,
         message: &OutboundMessage,
+        consumer: Option<ConsumerSummary>,
     ) -> Result<bool, IntentReceipt> {
         if matches!(event.reply, ReplyAddress::Sync { .. }) && !gate.commit() {
             return Err(IntentReceipt {
@@ -58,7 +62,13 @@ impl CustomDelivery {
                 delivery: expired(),
             });
         }
-        let data = custom::data(event, message.text.as_deref(), Some(message), None);
+        let data = custom::data(
+            event,
+            message.text.as_deref(),
+            Some(message),
+            None,
+            consumer,
+        );
         Ok(self.emit(event, "cmaeg.message", &data, false))
     }
     /// Complete a reply whose Sync attempt already happened. In particular,
@@ -70,8 +80,15 @@ impl CustomDelivery {
         event: &EventRefPayload,
         message: &OutboundMessage,
         streamed: bool,
+        consumer: Option<ConsumerSummary>,
     ) -> IntentReceipt {
-        let data = custom::data(event, message.text.as_deref(), Some(message), None);
+        let data = custom::data(
+            event,
+            message.text.as_deref(),
+            Some(message),
+            None,
+            consumer,
+        );
         let delivery = self
             .webhook(
                 gate,
@@ -97,8 +114,15 @@ impl CustomDelivery {
         channel: &ResolvedChannel,
         event: &EventRefPayload,
         message: &OutboundMessage,
+        consumer: Option<ConsumerSummary>,
     ) -> IntentReceipt {
-        let mut data = custom::data(event, message.text.as_deref(), Some(message), None);
+        let mut data = custom::data(
+            event,
+            message.text.as_deref(),
+            Some(message),
+            None,
+            consumer,
+        );
         custom::to_default(&mut data);
         let delivery = self
             .webhook(gate, channel, event, "cmaeg.response.message", data, false)
@@ -109,7 +133,31 @@ impl CustomDelivery {
             delivery,
         }
     }
-    pub fn stream(&self, event: &EventRefPayload, outcome: &TurnOutcome) -> bool {
+    pub fn stream(
+        &self,
+        event: &EventRefPayload,
+        outcome: &TurnOutcome,
+        consumer: Option<ConsumerSummary>,
+    ) -> bool {
+        self.stream_frame(event, outcome, consumer, false)
+    }
+    /// Only a finalizer's pre-launch refusal has this marker; an ordinary
+    /// provider failure remains a failed outcome.
+    pub(super) fn refused(
+        &self,
+        event: &EventRefPayload,
+        outcome: &TurnOutcome,
+        consumer: Option<ConsumerSummary>,
+    ) -> bool {
+        self.stream_frame(event, outcome, consumer, true)
+    }
+    fn stream_frame(
+        &self,
+        event: &EventRefPayload,
+        outcome: &TurnOutcome,
+        consumer: Option<ConsumerSummary>,
+        refused: bool,
+    ) -> bool {
         let frame = match outcome {
             TurnOutcome::TextDelta { text } => Some((
                 "cmaeg.text.delta",
@@ -126,9 +174,10 @@ impl CustomDelivery {
                         reply_to: None,
                     }),
                     None,
+                    None,
                 ),
             )),
-            _ => terminal(event, outcome).map(|(_, data)| {
+            _ => terminal(event, outcome, None).map(|(_, data)| {
                 (
                     if matches!(outcome, TurnOutcome::Completed { .. }) {
                         "cmaeg.completed"
@@ -139,15 +188,23 @@ impl CustomDelivery {
                 )
             }),
         };
-        frame.is_some_and(|(name, data)| self.emit(event, name, &data, outcome.terminal()))
+        frame.is_some_and(|(name, mut data)| {
+            custom::tag_consumer(&mut data, consumer);
+            if refused {
+                data["refused"] = true.into();
+            }
+            self.emit(event, name, &data, outcome.terminal())
+        })
     }
     pub async fn outcome(
         &self,
         channel: &ResolvedChannel,
         event: &EventRefPayload,
         outcome: &TurnOutcome,
+        consumer: Option<ConsumerSummary>,
     ) {
-        self.post_terminal(channel, event, outcome, false).await;
+        self.post_terminal(channel, event, outcome, false, consumer)
+            .await;
     }
     /// Post a terminal outcome to the result webhook sinks as the channel's
     /// default reply destination, tagged `destination: "default"`. Returns
@@ -157,8 +214,10 @@ impl CustomDelivery {
         channel: &ResolvedChannel,
         event: &EventRefPayload,
         outcome: &TurnOutcome,
+        consumer: Option<ConsumerSummary>,
     ) -> Option<DeliveryOutcome> {
-        self.post_terminal(channel, event, outcome, true).await
+        self.post_terminal(channel, event, outcome, true, consumer)
+            .await
     }
     #[tracing::instrument(name="cmaeg.deliver", skip_all, fields(
         channel = %crate::telemetry::channel_hash(channel.id.as_str()), event_id = %crate::telemetry::channel_hash(event.event_id.as_str()),
@@ -169,8 +228,9 @@ impl CustomDelivery {
         event: &EventRefPayload,
         outcome: &TurnOutcome,
         default: bool,
+        consumer: Option<ConsumerSummary>,
     ) -> Option<DeliveryOutcome> {
-        let (kind, mut data) = terminal(event, outcome)?;
+        let (kind, mut data) = terminal(event, outcome, consumer)?;
         if default {
             custom::to_default(&mut data);
         }
@@ -263,11 +323,15 @@ impl CustomDelivery {
         result
     }
 }
-fn terminal(event: &EventRefPayload, outcome: &TurnOutcome) -> Option<(&'static str, Value)> {
+fn terminal(
+    event: &EventRefPayload,
+    outcome: &TurnOutcome,
+    consumer: Option<ConsumerSummary>,
+) -> Option<(&'static str, Value)> {
     match outcome {
         TurnOutcome::Completed { final_text } => Some((
             "cmaeg.response.completed",
-            custom::data(event, final_text.as_deref(), None, None),
+            custom::data(event, final_text.as_deref(), None, None, consumer),
         )),
         TurnOutcome::Failed { .. } | TurnOutcome::Incomplete { .. } => Some((
             "cmaeg.response.failed",
@@ -280,6 +344,7 @@ fn terminal(event: &EventRefPayload, outcome: &TurnOutcome) -> Option<(&'static 
                     502,
                     "provider turn did not complete",
                 )),
+                consumer,
             ),
         )),
         _ => None,

@@ -102,6 +102,14 @@ async fn a_full_sync_waiter_uses_default_before_attempting_any_legacy_sink() {
                 usize::from(flag && default)
             );
             assert_eq!(hooks, usize::from(!(flag && default)));
+            for call in result["calls"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|call| call["transport"] == "webhook")
+            {
+                assert_eq!(call["body"]["data"]["consumer"]["id"], reviewer().as_str());
+            }
             drop(held);
         }
     }
@@ -147,4 +155,7 @@ async fn a_successful_sync_tool_reply_keeps_existing_sinks_without_default_deliv
     assert_eq!(hooks.len(), 2);
     assert_eq!(hooks[0]["body"]["type"], "cmaeg.response.message");
     assert!(hooks[0]["body"]["data"].get("destination").is_none());
+    let identity = json!({"id":"default","name":"lead","label":"lead"});
+    assert_eq!(hooks[0]["body"]["data"]["consumer"], identity);
+    assert_eq!(result["sync"][0]["data"]["consumer"], identity);
 }

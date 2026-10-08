@@ -79,7 +79,11 @@ pub(super) async fn consumer_failed(
     // Before capacity is checked, so a Sync waiter always receives this
     // consumer's terminal frame, as a `StreamOutcome`'s frame is emitted.
     let streamed = matches!(payload.reply, ReplyAddress::Sync { .. })
-        && sender.custom.stream(&payload, &outcome);
+        && sender.custom.refused(
+            &payload,
+            &outcome,
+            super::consumer::summary(&channel.definition, &payload, true),
+        );
     let id = key(payload.channel_id.as_str(), payload.event_id.as_str());
     if !groups.reserve(&id, &consumer) {
         tracing::warn!("delivery event capacity reached");

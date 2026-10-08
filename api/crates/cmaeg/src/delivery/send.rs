@@ -28,6 +28,7 @@ pub(super) struct SendContext<'a> {
     pub gate: &'a dyn SendGate,
     /// The consumer label a chat send opens with; custom sinks never use it.
     pub label: Option<&'a str>,
+    pub consumer: Option<crate::tools::ConsumerSummary>,
 }
 /// State changes a finished send asks its scheduler to apply.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -85,7 +86,7 @@ impl Sender {
         let ReplyAddress::NyxidRelay { platform, .. } = &event.reply else {
             let result = self
                 .custom
-                .reply(ctx.gate, ctx.channel, event, message)
+                .reply(ctx.gate, ctx.channel, event, message, ctx.consumer.clone())
                 .await;
             return (result, SendEffects::default());
         };

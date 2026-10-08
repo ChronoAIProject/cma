@@ -108,6 +108,7 @@ pub(super) async fn send_notice(sender: &Sender, notice: Notice) {
         first_send_done: false,
         gate: &Ungated,
         label: None,
+        consumer: None,
     };
     let message = OutboundMessage {
         text: Some(text),

@@ -63,7 +63,9 @@ async fn a_sync_origin_reply_commits_before_its_frame_is_emitted() {
             },
         );
         let gate = RecordingGate::new(commits);
-        let receipt = delivery.reply(&gate, &channel, &event, &message()).await;
+        let receipt = delivery
+            .reply(&gate, &channel, &event, &message(), None)
+            .await;
         assert_eq!(gate.calls(), ["commit"]);
         // A sentinel marks the end of whatever the reply emitted.
         assert!(waiters.emit(&waiter, "cmaeg.completed", &json!({"sentinel":true}), true));
@@ -119,6 +121,7 @@ async fn a_webhook_only_reply_commits_inside_its_first_attempt() {
             &channel,
             &event(&channel, ReplyAddress::None),
             &message(),
+            None,
         )
         .await;
     assert_eq!(

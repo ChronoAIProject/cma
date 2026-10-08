@@ -108,6 +108,14 @@ async fn a_sinks_default_posts_webhooks_tagged_as_the_default() {
     assert_eq!(hooks[0]["data"]["text"], "Tool.");
     assert_eq!(hooks[1]["type"], "cmaeg.response.completed");
     assert_eq!(hooks[1]["data"]["text"], "Review.");
+    assert_eq!(
+        hooks[0]["data"]["consumer"],
+        json!({"id":"default","name":"lead","label":"lead"})
+    );
+    assert_eq!(
+        hooks[1]["data"]["consumer"],
+        json!({"id":reviewer(),"name":"reviewer","label":"reviewer"})
+    );
     for hook in &hooks {
         assert_eq!(hook["data"]["destination"], "default");
         assert_eq!(hook["subject"], "msg-1");

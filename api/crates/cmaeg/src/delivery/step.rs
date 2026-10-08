@@ -4,7 +4,7 @@ use super::{
         count_unavailable, effective, requested, routing_send, AddressClass, EffectiveAddress,
         SendKind, DEFAULT_REPLY_UNAVAILABLE,
     },
-    default_destination,
+    consumer, default_destination,
     gate::Ungated,
     group::EventGroup,
     intents::{DeliveryOutcome, IntentReceipt},
@@ -211,6 +211,11 @@ pub(super) async fn custom_outcome(
     if matches!(outcome, TurnOutcome::Accepted { .. }) {
         group.terminal_at = None;
     }
+    let summary = consumer::summary(
+        &group.channel.definition,
+        &group.consumers[at].event,
+        group.consumers[at].routed_turn,
+    );
     match address {
         EffectiveAddress::Rejected { reason } => {
             if outcome.terminal() {
@@ -222,7 +227,7 @@ pub(super) async fn custom_outcome(
             let event = &group.consumers[at].event;
             let delivered = sender
                 .custom
-                .default_outcome(&group.channel, event, &outcome)
+                .default_outcome(&group.channel, event, &outcome, summary)
                 .await;
             if let Some(delivered) = delivered {
                 default_destination::record(&group.channel, "webhook", &delivered);
@@ -231,7 +236,12 @@ pub(super) async fn custom_outcome(
         _ => {
             sender
                 .custom
-                .outcome(&group.channel, &group.consumers[at].event, &outcome)
+                .outcome(
+                    &group.channel,
+                    &group.consumers[at].event,
+                    &outcome,
+                    summary,
+                )
                 .await
         }
     }
@@ -244,7 +254,7 @@ pub(super) async fn custom_outcome(
 /// unlabeled, to the origin every consumer shares.
 async fn send_progress(sender: &Sender, group: &mut EventGroup, text: String) -> bool {
     let origin = EffectiveAddress::Origin(group.consumers[0].event.reply.clone());
-    send_text(sender, group, 0, text, None, &origin, None).await
+    send_text(sender, group, 0, text, false, &origin, None).await
 }
 
 /// Consumer `at`'s answer or failure text, opened with its label, at its
@@ -264,18 +274,9 @@ async fn send_output(
         reject_output(group, at, reason);
         return false;
     }
-    let label = output_label(group, at, flag);
+    let routed = output_routing(group, at, flag);
     let keys = output_keys(group, at, kind);
-    send_text(
-        sender,
-        group,
-        at,
-        text,
-        label.as_deref(),
-        &address,
-        Some(&keys),
-    )
-    .await
+    send_text(sender, group, at, text, routed, &address, Some(&keys)).await
 }
 
 /// The keys of consumer `at`'s next automatic output, numbered by its
@@ -298,7 +299,7 @@ async fn send_text(
     group: &mut EventGroup,
     at: usize,
     text: String,
-    label: Option<&str>,
+    routed: bool,
     address: &EffectiveAddress,
     keys: Option<&PartKeys>,
 ) -> bool {
@@ -307,12 +308,12 @@ async fn send_text(
         blocks: vec![],
         reply_to: None,
     };
-    let result = reply(sender, group, at, &message, label, address, keys).await;
+    let result = reply(sender, group, at, &message, routed, address, keys).await;
     matches!(result.delivery, DeliveryOutcome::Confirmed { .. })
 }
 
 /// Send `message` for consumer `at` of `group`'s event to `address`, opened
-/// with `label`, through the `Ungated` gate, and apply the send's effects as
+/// with its routed label, through the `Ungated` gate, and apply the send's effects as
 /// soon as it returns. `keys` number the parts of a default relay send. The
 /// serial worker reads no group state while a send awaits, so reads and
 /// writes keep the order they had when the send mutated the state.
@@ -321,19 +322,21 @@ pub(super) async fn reply(
     group: &mut EventGroup,
     at: usize,
     message: &OutboundMessage,
-    label: Option<&str>,
+    routed: bool,
     address: &EffectiveAddress,
     keys: Option<&PartKeys>,
 ) -> IntentReceipt {
-    label::count(label, label::effective_transport(address));
+    let event = &group.consumers[at].event;
+    let label = active_label(&group.channel.definition, event.consumer.as_ref(), routed);
+    label::count(label.as_deref(), label::effective_transport(address));
     let context = SendContext {
         trace: &group.trace,
         channel: &group.channel,
         first_send_done: group.first_send_done,
         gate: &Ungated,
-        label,
+        label: label.as_deref(),
+        consumer: consumer::summary(&group.channel.definition, event, routed),
     };
-    let event = &group.consumers[at].event;
     // A default destination answers no inbound message, so its sends never
     // mark the event's first send or spend the origin's reply token.
     let (result, effects) = match address {

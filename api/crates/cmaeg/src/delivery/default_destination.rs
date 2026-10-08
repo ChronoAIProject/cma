@@ -86,7 +86,7 @@ impl Sender {
                 }
                 _ => {
                     self.custom
-                        .default_reply(ctx.gate, ctx.channel, event, message)
+                        .default_reply(ctx.gate, ctx.channel, event, message, ctx.consumer.clone())
                         .await
                 }
             }

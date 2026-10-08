@@ -103,6 +103,7 @@ async fn handle(
                 first_send_done: false,
                 gate: &Ungated,
                 label: label.as_deref(),
+                consumer: None,
             };
             let (result, _) = sender.update(&context, &message_ref, &message).await;
             receipt.send(result);
@@ -236,6 +237,7 @@ async fn tool_reply(
     if !groups.reserve(&id, &consumer_of(&event)) {
         return reject_tool_reply(&channel, &event, receipt, "delivery_capacity");
     }
+    let summary = super::consumer::summary(&channel.definition, &event, routed);
     let mut sync_attempt = None;
     if matches!(address, EffectiveAddress::Origin(ReplyAddress::Sync { .. }))
         && default_ok(
@@ -246,7 +248,10 @@ async fn tool_reply(
         )
         && !handoff_controls(&event, &message)
     {
-        match sender.custom.begin_reply(&Ungated, &event, &message) {
+        match sender
+            .custom
+            .begin_reply(&Ungated, &event, &message, summary.clone())
+        {
             Err(result) => {
                 receipt.send(result);
                 return;
@@ -277,7 +282,6 @@ async fn tool_reply(
         },
         _ => None,
     };
-    let label = active_label(&channel.definition, event.consumer.as_ref(), routed);
     let (group, at) = groups.join(id, &channel, &event);
     // A tool uses its call-time snapshot only for this send. The serial
     // worker cannot observe the temporary replacement from another command.
@@ -290,19 +294,11 @@ async fn tool_reply(
             &group.consumers[at].event,
             &message,
             streamed,
+            summary,
         )
         .await
     } else {
-        reply(
-            sender,
-            group,
-            at,
-            &message,
-            label.as_deref(),
-            &address,
-            keys.as_ref(),
-        )
-        .await
+        reply(sender, group, at, &message, routed, &address, keys.as_ref()).await
     };
     group.channel = turn_channel;
     if matches!(
@@ -327,6 +323,7 @@ async fn complete_sync_reply(
     event: &EventRefPayload,
     message: &OutboundMessage,
     streamed: bool,
+    consumer: Option<crate::tools::ConsumerSummary>,
 ) -> super::intents::IntentReceipt {
     let mut observation = crate::telemetry::operations::Operation::new(
         crate::telemetry::names::DELIVERY_DURATION,
@@ -335,7 +332,7 @@ async fn complete_sync_reply(
     );
     let result = sender
         .custom
-        .complete_reply(&Ungated, channel, event, message, streamed)
+        .complete_reply(&Ungated, channel, event, message, streamed, consumer)
         .await;
     observation.finish(result.delivery.kind());
     result
@@ -401,7 +398,12 @@ async fn stream_outcome(
         turn.activity.source,
         cmaeg_core::activity::SourceKind::Custom
     );
-    let streamed = custom && sender.custom.stream(&opened.payload, &outcome);
+    let summary = super::consumer::summary(
+        &turn.channel.definition,
+        &opened.payload,
+        turn.activity.routing.is_some(),
+    );
+    let streamed = custom && sender.custom.stream(&opened.payload, &outcome, summary);
     let (group, at) = groups.join(id, &turn.channel, &opened.payload);
     // A newer tool call may have created the group before this older turn's
     // first outcome. Automatic outputs always use the admission snapshot.

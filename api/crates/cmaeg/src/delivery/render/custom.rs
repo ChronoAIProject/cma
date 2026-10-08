@@ -1,4 +1,5 @@
 //! Custom sinks preserve neutral messages as JSON without platform degradation.
+use crate::tools::ConsumerSummary;
 use cmaeg_core::{
     message::{
         BlockRendering, BlockRenderingOutcome, OutboundMessage, RenderingOutcome, RenderingReport,
@@ -33,12 +34,22 @@ pub fn data(
     text: Option<&str>,
     message: Option<&OutboundMessage>,
     error: Option<cmaeg_core::problem::Problem>,
+    consumer: Option<ConsumerSummary>,
 ) -> Value {
-    json!({"conversation_id":event.conversation_id,"event_id":event.event_id,"text":text,"message":message,"error":error})
+    let mut data = json!({"conversation_id":event.conversation_id,"event_id":event.event_id,"text":text,"message":message,"error":error});
+    tag_consumer(&mut data, consumer);
+    data
 }
 /// Tag envelope `data` as delivered to the channel's default reply
 /// destination. The envelope's `subject` stays the event id, so a receiver
 /// still correlates it with the event it answers.
 pub fn to_default(data: &mut Value) {
     data["destination"] = "default".into();
+}
+
+/// The legacy object is untouched when the admitted turn was not routed.
+pub fn tag_consumer(data: &mut Value, consumer: Option<ConsumerSummary>) {
+    if let Some(consumer) = consumer {
+        data["consumer"] = json!(consumer);
+    }
 }

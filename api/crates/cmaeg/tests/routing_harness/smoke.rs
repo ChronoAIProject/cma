@@ -147,6 +147,19 @@ async fn custom_multi_target_accepts_each_consumer_and_delivers_each_terminal() 
         assert_eq!(matching[0].1["type"], "cmaeg.response.completed");
         assert_eq!(matching[0].1["subject"], "custom-smoke");
         assert_eq!(matching[0].1["data"]["event_id"], "custom-smoke");
+        assert_eq!(
+            matching[0].1["data"]["consumer"]["id"],
+            consumer["consumer_id"]
+        );
+        assert_eq!(matching[0].1["data"]["consumer"]["name"], consumer["name"]);
+        assert_eq!(
+            matching[0].1["data"]["consumer"]["label"],
+            if consumer["consumer_id"] == "default" {
+                "Main"
+            } else {
+                "Reviewer"
+            }
+        );
     }
     println!(
         "custom reviewer,main: 202, ordered admissions, one completed webhook per conversation"

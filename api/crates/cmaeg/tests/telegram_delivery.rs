@@ -4,6 +4,8 @@ mod addresses;
 mod boundaries;
 #[path = "delivery/consumer_refs.rs"]
 mod consumer_refs;
+#[path = "delivery/custom_consumers.rs"]
+mod custom_consumers;
 #[path = "delivery/default_destinations.rs"]
 mod default_destinations;
 #[path = "delivery/default_fixtures.rs"]
