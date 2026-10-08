@@ -217,4 +217,9 @@ pub(crate) fn describe_console() {
         "Bytes counted by the console's activity entries and producer entries"
     );
     metrics::gauge!(names::CONSOLE_ACTIVITY_BYTES).set(0);
+    metrics::describe_counter!(
+        names::CONSOLE_REQUESTS,
+        "Console requests by route template and outcome"
+    );
+    metrics::counter!(names::CONSOLE_REQUESTS).absolute(0);
 }

@@ -85,3 +85,33 @@ async fn the_list_pages_fifty_rows_and_filters_by_name() {
     assert!(!cut.contains(&"x".repeat(81)));
     world.close().await;
 }
+
+#[tokio::test]
+async fn every_console_route_is_counted_by_template_and_outcome() {
+    use super::support::{metrics, sample};
+    let world = World::start().await;
+    let orders = world.add(1, "alice", "alice-orders");
+    let (sid, _) = world.harness.sign_in("alice", "/console").await;
+    let series = |page: &str, outcome: &str| {
+        format!("cmaeg_console_requests_total{{page=\"{page}\",outcome=\"{outcome}\"}}")
+    };
+    let detail = series("/console/channels/{record_id}", "ok");
+    let missing = series("/console/channels/{record_id}", "not_found");
+    let before = (sample(&metrics(), &detail), sample(&metrics(), &missing));
+    text(&world, &format!("/console/channels/{orders}"), &sid).await;
+    let unknown = world
+        .harness
+        .get_as(
+            "/console/channels/00000000-0000-4000-8000-000000000999",
+            &sid,
+        )
+        .await;
+    assert_eq!(unknown.status(), 404);
+    let rendered = metrics();
+    assert!(sample(&rendered, &detail) >= before.0 + 1.0, "{rendered}");
+    assert!(sample(&rendered, &missing) >= before.1 + 1.0);
+    // Record ids never become label values.
+    assert!(!rendered.contains(orders.as_str()));
+    assert!(sample(&rendered, &series("/console/callback", "redirect")) >= 1.0);
+    world.close().await;
+}

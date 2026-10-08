@@ -46,6 +46,7 @@ pub const CONSOLE_UNAUTHENTICATED: &str = "cmaeg_console_unauthenticated_total";
 pub const CONSOLE_INDEX_RECORDS: &str = "cmaeg_console_index_records";
 pub const CONSOLE_INDEX_PARTIAL: &str = "cmaeg_console_index_partial";
 pub const CONSOLE_ACTIVITY_BYTES: &str = "cmaeg_console_activity_bytes";
+pub const CONSOLE_REQUESTS: &str = "cmaeg_console_requests_total";
 pub const SOURCE: &str = "source";
 pub const COLD: &str = "cold";
 pub const OUTCOME: &str = "outcome";
@@ -60,6 +61,7 @@ pub const OP: &str = "op";
 pub const VIEW: &str = "view";
 pub const STATUS: &str = "status";
 pub const MEDIA: &str = "media";
+pub const PAGE: &str = "page";
 pub const HISTOGRAMS: [&str; 6] = [
     INGRESS_TO_PROVIDER,
     RESTORE_DURATION,

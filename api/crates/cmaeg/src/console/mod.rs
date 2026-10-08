@@ -35,6 +35,7 @@ pub mod producers;
 pub mod reader;
 pub mod reads;
 mod redirect;
+mod request_metrics;
 mod revoke;
 mod routes;
 pub mod session;
@@ -186,9 +187,10 @@ impl Console {
         })
     }
 
-    /// The `/console*` routes. Every response carries the security headers;
-    /// every request passes the enablement gate, then the session guard that
-    /// checks Origin and CSRF on every POST.
+    /// The `/console*` routes. Every response carries the security headers
+    /// and is counted by route and outcome; every request passes the
+    /// enablement gate, then the session guard that checks Origin and CSRF
+    /// on every POST.
     pub fn router(&self) -> Router {
         table::ROUTES
             .iter()
@@ -198,6 +200,7 @@ impl Console {
             .route("/console/{*rest}", any(not_found))
             .layer(from_fn_with_state(self.clone(), guard::session_guard))
             .layer(from_fn_with_state(self.clone(), gate))
+            .layer(axum::middleware::from_fn(request_metrics::count))
             .layer(map_response(headers::secure))
             .with_state(self.clone())
     }
