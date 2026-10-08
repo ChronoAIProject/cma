@@ -1,4 +1,5 @@
 //! Bounded, stateless provider turn execution and drain.
+mod audience;
 mod consume;
 mod metadata;
 pub mod outcomes;

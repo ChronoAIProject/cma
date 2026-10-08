@@ -6,13 +6,9 @@
 //! excerpts) fenced between per-turn random markers so the model can tell data
 //! from instructions. Prompts are stored and sent to the model provider, so no
 //! locator, link, token or capability is ever rendered.
-use crate::MediaToolProviders;
-use cmaeg_core::{
-    activity::{
-        forbidden_text_char, Activity, ActivityKind, Attachment, AttachmentKind, MediaVariant,
-    },
-    channel::ChannelDefinition,
-    profile::ActionMode,
+pub use super::audience::Audience;
+use cmaeg_core::activity::{
+    forbidden_text_char, Activity, ActivityKind, Attachment, AttachmentKind, MediaVariant,
 };
 use ring::rand::{SecureRandom, SystemRandom};
 use sha2::{Digest, Sha256};
@@ -86,28 +82,6 @@ impl RenderMedia {
             nonce,
             inline: Vec::new(),
             notes: Vec::new(),
-        }
-    }
-}
-
-/// What the agent behind a binding can do with an attachment.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Audience {
-    /// The binding installs the gateway MCP tools.
-    pub tools: bool,
-    /// The agent may also save originals into its workspace.
-    pub downloads: bool,
-}
-
-impl Audience {
-    /// Existing-agent bindings never receive gateway tools, and a provider
-    /// outside the configured set does not install them.
-    pub fn of(definition: &ChannelDefinition, providers: &MediaToolProviders) -> Self {
-        let tools = definition.provider.target.is_profile()
-            && providers.contains(&definition.provider.slug);
-        Self {
-            tools,
-            downloads: tools && definition.profile.permission.action_mode == ActionMode::Autonomous,
         }
     }
 }
