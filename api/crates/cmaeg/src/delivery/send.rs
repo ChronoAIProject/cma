@@ -1,5 +1,6 @@
 use super::{
     event::now,
+    gate::{expired, SendGate},
     intents::{DeliveryOutcome, IntentReceipt},
     pacing::Pacing,
     relay_client::{unknown, Credential, RelayClient},
@@ -23,6 +24,8 @@ pub(super) struct SendContext<'a> {
     pub trace: &'a tracing::Span,
     pub channel: &'a Arc<ResolvedChannel>,
     pub first_send_done: bool,
+    /// Called at every send path's first side effect; the legacy lane passes `Ungated`.
+    pub gate: &'a dyn SendGate,
 }
 /// State changes a finished send asks its scheduler to apply.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -69,7 +72,10 @@ impl Sender {
             return self.native_reply(ctx, event, message).await;
         }
         let ReplyAddress::NyxidRelay { platform, .. } = &event.reply else {
-            let result = self.custom.reply(ctx.channel, event, message).await;
+            let result = self
+                .custom
+                .reply(ctx.gate, ctx.channel, event, message)
+                .await;
             return (result, SendEffects::default());
         };
         // Native controls and their updates are proven only for Telegram; every
@@ -102,6 +108,13 @@ impl Sender {
             result.delivery = DeliveryOutcome::Unsupported;
             return (result, SendEffects { first_send_done });
         };
+        let _ticket = match ctx.gate.enter_route(route_id).await {
+            Ok(ticket) => ticket,
+            Err(refusal) => {
+                result.delivery = refusal.outcome();
+                return (result, SendEffects { first_send_done });
+            }
+        };
         let mut confirmed_parts = 0;
         let mut first_platform_id = None;
         for (index, part) in parts.iter().enumerate() {
@@ -111,6 +124,19 @@ impl Sender {
                 };
                 break;
             };
+            let permit = match ctx.gate.attempt().await {
+                Ok(permit) => permit,
+                Err(refusal) => {
+                    result.delivery = refusal.outcome();
+                    break;
+                }
+            };
+            // Commit point (Amendment R3 §R3.1): the first part's request is
+            // this send's first side effect.
+            if index == 0 && !ctx.gate.commit() {
+                result.delivery = expired();
+                break;
+            }
             // Choose immediately before dispatch, after pacing, because the token may expire while queued.
             let use_token = !first_send_done
                 && *reply_token_expires_at > now()
@@ -133,9 +159,17 @@ impl Sender {
             };
             first_send_done = true;
             let mut outcome = self.relay.send(&event.reply, credential, &part.text).await;
+            drop(permit);
             if let DeliveryOutcome::RateLimited { retry_after } = outcome {
                 slot.cooldown(retry_after);
                 slot.retry().await;
+                let retry = match ctx.gate.attempt().await {
+                    Ok(permit) => permit,
+                    Err(refusal) => {
+                        result.delivery = refusal.outcome();
+                        break;
+                    }
+                };
                 // The single-use credential is never presented twice, even after a 429.
                 outcome = match ctx.channel.definition.secrets.channel_key.as_ref() {
                     Some(key) => {
@@ -147,11 +181,13 @@ impl Sender {
                         reason: "no_credential".into(),
                     },
                 };
+                drop(retry);
                 if let DeliveryOutcome::RateLimited { retry_after } = outcome {
                     slot.cooldown(retry_after);
                     outcome = unknown("rate_limited_after_retry");
                 }
             }
+            ctx.gate.progress();
             tracing::info!(
                 outcome = outcome.kind(),
                 part = index,
@@ -205,6 +241,14 @@ impl Sender {
         true
     }
 }
+/// A receipt for a send a gate stopped before its side effect.
+pub(super) fn refused(rendering: RenderingReport, delivery: DeliveryOutcome) -> IntentReceipt {
+    IntentReceipt {
+        message_ref: None,
+        rendering,
+        delivery,
+    }
+}
 pub(super) fn unsupported() -> IntentReceipt {
     IntentReceipt {
         message_ref: None,
@@ -243,15 +287,28 @@ impl Sender {
         let Some(store) = &self.relay.interactions else {
             return (rejected("interactions_unavailable"), effects);
         };
+        let cmaeg_core::seal::ReplyAddress::NyxidRelay { route_id, .. } = &event.reply else {
+            return (unsupported(), effects);
+        };
+        let _ticket = match ctx.gate.enter_route(route_id).await {
+            Ok(ticket) => ticket,
+            Err(refusal) => return (refused(rendering, refusal.outcome()), effects),
+        };
+        // Commit point (Amendment R3 §R3.1): the durable card write is this
+        // send's first side effect.
+        if !ctx.gate.commit() {
+            return (refused(rendering, expired()), effects);
+        }
         let mut prepared = match store.prepare(ctx.channel, event, message).await {
             Ok(p) => p,
             Err(_) => return (rejected("interaction_state_unavailable"), effects),
         };
-        let cmaeg_core::seal::ReplyAddress::NyxidRelay { route_id, .. } = &event.reply else {
-            return (unsupported(), effects);
-        };
         let Some(_slot) = self.pacing.acquire(route_id).await else {
             return (rejected("pacing_capacity"), effects);
+        };
+        let _permit = match ctx.gate.attempt().await {
+            Ok(permit) => permit,
+            Err(refusal) => return (refused(rendering, refusal.outcome()), effects),
         };
         effects.first_send_done = true;
         let (delivery, outbound) = self
@@ -333,6 +390,15 @@ impl Sender {
         let Some(key) = channel.definition.secrets.channel_key.as_ref() else {
             return (unsupported(), effects);
         };
+        let _ticket = match ctx.gate.enter_route(&reference.route_id).await {
+            Ok(ticket) => ticket,
+            Err(refusal) => return (refused(rendering, refusal.outcome()), effects),
+        };
+        // Commit point (Amendment R3 §R3.1): fencing the old card is this
+        // send's first side effect.
+        if !ctx.gate.commit() {
+            return (refused(rendering, expired()), effects);
+        }
         let mut prepared = match store.replacement(channel, reference, message).await {
             Ok(p) => p,
             Err(_) => {
@@ -353,6 +419,10 @@ impl Sender {
         };
         let Some(_slot) = self.pacing.acquire(&reference.route_id).await else {
             return (unsupported(), effects);
+        };
+        let _permit = match ctx.gate.attempt().await {
+            Ok(permit) => permit,
+            Err(refusal) => return (refused(rendering, refusal.outcome()), effects),
         };
         let delivery = self
             .relay

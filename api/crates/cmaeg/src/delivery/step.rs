@@ -1,6 +1,7 @@
 //! Per-event delivery steps, shared by every scheduler that delivers an event.
 use super::{
     event::EventState,
+    gate::Ungated,
     intents::{DeliveryOutcome, IntentReceipt},
     send::{SendContext, Sender},
 };
@@ -110,9 +111,10 @@ async fn send_message(sender: &Sender, state: &mut EventState, message: Outbound
     let result = reply(sender, state, &message).await;
     matches!(result.delivery, DeliveryOutcome::Confirmed { .. })
 }
-/// Send `message` for `state`'s event and apply the send's effects as soon as
-/// it returns. The serial worker reads no event state while a send awaits, so
-/// reads and writes keep the order they had when the send mutated the state.
+/// Send `message` for `state`'s event through the legacy lane's `Ungated`
+/// gate and apply the send's effects as soon as it returns. The serial
+/// worker reads no event state while a send awaits, so reads and writes keep
+/// the order they had when the send mutated the state.
 pub(super) async fn reply(
     sender: &Sender,
     state: &mut EventState,
@@ -122,6 +124,7 @@ pub(super) async fn reply(
         trace: &state.trace,
         channel: &state.channel,
         first_send_done: state.first_send_done,
+        gate: &Ungated,
     };
     let (result, effects) = sender.reply(&context, &state.event, message).await;
     state.first_send_done |= effects.first_send_done;

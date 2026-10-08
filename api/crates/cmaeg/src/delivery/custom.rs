@@ -1,4 +1,5 @@
 use super::{
+    gate::{expired, SendGate, Ungated, NO_CHAT_ROUTE},
     intents::{DeliveryOutcome, IntentReceipt},
     render::custom,
     sync::SyncRegistry,
@@ -29,14 +30,32 @@ impl CustomDelivery {
     }
     pub async fn reply(
         &self,
+        gate: &dyn SendGate,
         channel: &ResolvedChannel,
         event: &EventRefPayload,
         message: &OutboundMessage,
     ) -> IntentReceipt {
         let data = custom::data(event, message.text.as_deref(), Some(message), None);
+        // Commit point (Amendment R3 §R3.1): for a Sync-origin event the
+        // emitted frame is the first side effect. Emitting to any other
+        // address does nothing, so its webhooks commit on their own.
+        if matches!(event.reply, ReplyAddress::Sync { .. }) && !gate.commit() {
+            return IntentReceipt {
+                message_ref: None,
+                rendering: custom::report(message),
+                delivery: expired(),
+            };
+        }
         let streamed = self.emit(event, "cmaeg.message", &data, false);
         let delivery = self
-            .webhook(channel, event, "cmaeg.response.message", data, streamed)
+            .webhook(
+                gate,
+                channel,
+                event,
+                "cmaeg.response.message",
+                data,
+                streamed,
+            )
             .await;
         IntentReceipt {
             message_ref: None,
@@ -92,7 +111,9 @@ impl CustomDelivery {
                 crate::telemetry::names::PLATFORM,
                 "custom",
             );
-            let delivered = self.webhook(channel, event, kind, data, false).await;
+            let delivered = self
+                .webhook(&Ungated, channel, event, kind, data, false)
+                .await;
             observation.finish(delivered.kind());
             tracing::info!(
                 outcome = delivered.kind(),
@@ -115,6 +136,7 @@ impl CustomDelivery {
     }
     async fn webhook(
         &self,
+        gate: &dyn SendGate,
         channel: &ResolvedChannel,
         event: &EventRefPayload,
         kind: &str,
@@ -130,10 +152,17 @@ impl CustomDelivery {
             DeliveryOutcome::Unsupported
         };
         let mut attempted = streamed;
+        let mut ticket = None;
         for sink in &channel.definition.reply.sinks {
             let Sink::ResultWebhook { url, hmac_key_id } = sink else {
                 continue;
             };
+            if ticket.is_none() {
+                match gate.enter_route(NO_CHAT_ROUTE).await {
+                    Ok(admitted) => ticket = Some(admitted),
+                    Err(refusal) => return refusal.outcome(),
+                }
+            }
             let outcome = match channel
                 .definition
                 .secrets
@@ -181,5 +210,131 @@ fn terminal(event: &EventRefPayload, outcome: &TurnOutcome) -> Option<(&'static 
             ),
         )),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::delivery::gate::{AttemptPermit, GateRefusal, RouteTicket};
+    use cmaeg_core::{channel::ChannelDefinition, ids::ChannelId, seal::ChannelPointer};
+    use futures_util::{future::BoxFuture, StreamExt};
+    use std::sync::Mutex;
+
+    /// Logs every gate call in order; `commit` answers `commits`.
+    struct RecordingGate {
+        calls: Mutex<Vec<&'static str>>,
+        commits: bool,
+    }
+    impl RecordingGate {
+        fn new(commits: bool) -> Self {
+            Self {
+                calls: Mutex::default(),
+                commits,
+            }
+        }
+        fn calls(&self) -> Vec<&'static str> {
+            self.calls.lock().unwrap().clone()
+        }
+        fn log(&self, call: &'static str) {
+            self.calls.lock().unwrap().push(call);
+        }
+    }
+    impl SendGate for RecordingGate {
+        fn enter_route<'a>(
+            &'a self,
+            _route: &'a str,
+        ) -> BoxFuture<'a, Result<RouteTicket, GateRefusal>> {
+            self.log("enter_route");
+            Box::pin(async { Ok(RouteTicket::empty()) })
+        }
+        fn commit(&self) -> bool {
+            self.log("commit");
+            self.commits
+        }
+        fn attempt<'a>(&'a self) -> BoxFuture<'a, Result<AttemptPermit, GateRefusal>> {
+            self.log("attempt");
+            Box::pin(async { Ok(AttemptPermit::empty()) })
+        }
+        fn progress(&self) {
+            self.log("progress");
+        }
+    }
+
+    fn channel(edit: impl FnOnce(&mut Value)) -> ResolvedChannel {
+        let mut value: Value = serde_json::from_str(include_str!(
+            "../../../cmaeg-core/tests/fixtures/channel.json"
+        ))
+        .unwrap();
+        edit(&mut value);
+        let definition: ChannelDefinition = serde_json::from_value(value).unwrap();
+        ResolvedChannel {
+            id: ChannelId::new("cmaeg1.ch.gate-fixture").unwrap(),
+            pointer: ChannelPointer {
+                v: 1,
+                record_id: definition.record_id.clone(),
+                record_url: "https://cma.example/api/v1/gateway/channel-records/record-1".into(),
+            },
+            definition,
+            agent_key_hash: [0; 32],
+            loaded_at: std::time::Instant::now(),
+            version: 1,
+        }
+    }
+
+    fn event(channel: &ResolvedChannel, reply: ReplyAddress) -> EventRefPayload {
+        EventRefPayload {
+            v: 1,
+            activity_sha256: None,
+            channel_id: channel.id.clone(),
+            record_id: channel.pointer.record_id.clone(),
+            event_id: "msg-1".parse().unwrap(),
+            partition_key: "msg-1".into(),
+            conversation_id: "conversation-1".parse().unwrap(),
+            expires_at: i64::MAX,
+            reply,
+        }
+    }
+
+    fn message() -> OutboundMessage {
+        OutboundMessage {
+            text: Some("hello".into()),
+            blocks: vec![],
+            reply_to: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_sync_origin_reply_commits_before_its_frame_is_emitted() {
+        let channel = channel(|_| {});
+        for commits in [false, true] {
+            let waiters = Arc::new(SyncRegistry::default());
+            let (waiter, frames) = waiters.register().unwrap();
+            let delivery = CustomDelivery::new("https://gateway.example".into(), waiters.clone());
+            let event = event(
+                &channel,
+                ReplyAddress::Sync {
+                    waiter: waiter.clone(),
+                },
+            );
+            let gate = RecordingGate::new(commits);
+            let receipt = delivery.reply(&gate, &channel, &event, &message()).await;
+            assert_eq!(gate.calls(), ["commit"]);
+            // A sentinel marks the end of whatever the reply emitted.
+            assert!(waiters.emit(&waiter, "cmaeg.completed", &json!({"sentinel":true}), true));
+            let frames: Vec<_> = frames.stream().collect().await;
+            if commits {
+                assert_eq!(
+                    receipt.delivery,
+                    DeliveryOutcome::Confirmed {
+                        platform_message_id: None
+                    }
+                );
+                assert_eq!(frames.len(), 2, "the frame follows the commit");
+            } else {
+                assert_eq!(receipt.delivery, expired());
+                assert_eq!(frames.len(), 1, "a refused commit emits nothing");
+            }
+        }
     }
 }

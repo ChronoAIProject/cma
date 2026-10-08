@@ -1,8 +1,9 @@
 //! Native chat delivery using only the channel's encrypted platform credential.
 use super::{
+    gate::expired,
     intents::{DeliveryOutcome, IntentReceipt, TypingOutcome, TypingReceipt},
     render::{RelayText, Renderer},
-    send::{unsupported, SendContext, SendEffects, Sender},
+    send::{refused, unsupported, SendContext, SendEffects, Sender},
 };
 use crate::{channels::resolver::ResolvedChannel, telegram::Error, tools::Capabilities};
 use cmaeg_core::{
@@ -46,6 +47,14 @@ impl Sender {
             };
             return (receipt, effects);
         };
+        let route = crate::telegram::route(bot_id, chat_id);
+        let _ticket = match ctx.gate.enter_route(&route).await {
+            Ok(ticket) => ticket,
+            Err(refusal) => {
+                receipt.delivery = refusal.outcome();
+                return (receipt, effects);
+            }
+        };
         let controls = crate::interactions::has_controls(message);
         let mut prepared = if controls {
             if parts.len() != 1 {
@@ -57,6 +66,12 @@ impl Sender {
             let Some(store) = &self.relay.interactions else {
                 return (unsupported(), effects);
             };
+            // Commit point (Amendment R3 §R3.1): the durable card write is
+            // this send's first side effect.
+            if !ctx.gate.commit() {
+                receipt.delivery = expired();
+                return (receipt, effects);
+            }
             match store.prepare(ctx.channel, event, message).await {
                 Ok(prepared) => Some(prepared),
                 Err(_) => {
@@ -69,31 +84,52 @@ impl Sender {
         } else {
             None
         };
-        let route = crate::telegram::route(bot_id, chat_id);
         let mut confirmed = 0;
         let mut first = None;
-        for part in &parts {
+        for (index, part) in parts.iter().enumerate() {
             let Some(mut slot) = self.pacing.acquire(&route).await else {
                 receipt.delivery = DeliveryOutcome::Rejected {
                     reason: "pacing_capacity".into(),
                 };
                 break;
             };
+            let permit = match ctx.gate.attempt().await {
+                Ok(permit) => permit,
+                Err(refusal) => {
+                    receipt.delivery = refusal.outcome();
+                    break;
+                }
+            };
+            // Commit point of a text reply: its first request. A reply with
+            // controls committed before its card write; committing is idempotent.
+            if index == 0 && !ctx.gate.commit() {
+                receipt.delivery = expired();
+                break;
+            }
             let markup = prepared.as_ref().map(|p| &p.markup);
             let mut sent = self
                 .relay
                 .telegram
                 .send_message(token, chat_id, thread_id.as_deref(), &part.text, markup)
                 .await;
+            drop(permit);
             if let Err(Error::RateLimited(delay)) = sent {
                 slot.cooldown(delay);
                 slot.retry().await;
+                let _retry = match ctx.gate.attempt().await {
+                    Ok(permit) => permit,
+                    Err(refusal) => {
+                        receipt.delivery = refusal.outcome();
+                        break;
+                    }
+                };
                 sent = self
                     .relay
                     .telegram
                     .send_message(token, chat_id, thread_id.as_deref(), &part.text, markup)
                     .await;
             }
+            ctx.gate.progress();
             match sent {
                 Ok(platform_id) => {
                     confirmed += 1;
@@ -193,10 +229,19 @@ impl Sender {
                 effects,
             );
         }
+        let _ticket = match ctx.gate.enter_route(&reference.route_id).await {
+            Ok(ticket) => ticket,
+            Err(refusal) => return (refused(rendering, refusal.outcome()), effects),
+        };
         let mut prepared = if reference.interaction_record_id.is_some() {
             let Some(store) = &self.relay.interactions else {
                 return (unsupported(), effects);
             };
+            // Commit point (Amendment R3 §R3.1): fencing the old card is this
+            // send's first side effect.
+            if !ctx.gate.commit() {
+                return (refused(rendering, expired()), effects);
+            }
             match store.replacement(channel, reference, message).await {
                 Ok(prepared) => Some(prepared),
                 Err(_) => {
@@ -223,6 +268,15 @@ impl Sender {
         let Some(_slot) = self.pacing.acquire(&reference.route_id).await else {
             return (unsupported(), effects);
         };
+        let _permit = match ctx.gate.attempt().await {
+            Ok(permit) => permit,
+            Err(refusal) => return (refused(rendering, refusal.outcome()), effects),
+        };
+        // A plain edit's request is its first side effect; after a card write
+        // this commit is idempotent.
+        if !ctx.gate.commit() {
+            return (refused(rendering, expired()), effects);
+        }
         let delivery = match self
             .relay
             .telegram

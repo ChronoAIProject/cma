@@ -2,6 +2,7 @@
 pub mod custom;
 pub mod engine;
 mod event;
+pub mod gate;
 pub mod intents;
 mod pacing;
 pub mod relay_client;

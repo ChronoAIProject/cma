@@ -1,5 +1,6 @@
 use super::{
     event::{key, now, EventKey, EventState},
+    gate::Ungated,
     intents::{DeliveryCommand, DeliveryOutcome, ReplySource},
     send::{unsupported, SendContext, Sender},
     step::{finish, outcome_event, reply, timer_step},
@@ -57,6 +58,7 @@ async fn handle(
                 trace: &trace,
                 channel: &channel,
                 first_send_done: false,
+                gate: &Ungated,
             };
             let (result, _) = sender.update(&context, &message_ref, &message).await;
             let _ = receipt.send(result);
