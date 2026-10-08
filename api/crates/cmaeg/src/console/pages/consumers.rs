@@ -79,7 +79,7 @@ fn non_human(consumer: &ConsumerChip) -> &'static str {
     }
 }
 
-pub(crate) fn destination(choice: ReplyChoice) -> &'static str {
+fn destination(choice: ReplyChoice) -> &'static str {
     match choice {
         ReplyChoice::Origin => "origin",
         ReplyChoice::Default => "default reply destination",

@@ -77,16 +77,46 @@ fn a_nearly_full_record_warns_on_the_overview_and_the_consumers() {
     assert!(consumers::render(&view).contains("record nearly full"));
 }
 
+/// The fixture channel with a policy that gives every event to `default`
+/// and one rule naming only a source the channel does not hold.
+fn routed() -> ChannelSummary {
+    let mut definition = definition(&record(1), "alice", "orders");
+    definition.routing = Some(
+        serde_json::from_value(serde_json::json!({
+            "version": 1,
+            "default_consumer": {"name": "lead"},
+            "default_targets": ["default"],
+            "rules": [{"id": "slack-only", "when": {"sources": ["relay_slack"]},
+                "targets": ["default"]}]
+        }))
+        .unwrap(),
+    );
+    ChannelSummary::of(
+        &definition,
+        2_048,
+        true,
+        &std::collections::BTreeSet::from(["cma_codex".to_owned()]),
+    )
+}
+
 #[test]
 fn routed_channels_explain_routing_while_it_is_off() {
-    let mut summary = readable();
-    summary.routed = true;
-    summary.default_receives_all = Some(true);
-    let routed = view(summary);
+    let routed = view(routed());
     let html = routing::render(&routed, false);
     assert!(html.contains("All events continue to the default consumer"));
-    assert!(html.contains("cannot display"));
+    assert!(html.contains("<dt>Model</dt><dd>routed</dd>"));
+    assert!(html.contains("<code>slack-only</code> <span class=\"badge\">inactive</span>"));
+    assert!(html.contains("<dt>Default targets</dt><dd>@lead <code>default</code></dd>"));
     assert!(!routing::render(&routed, true).contains("disabled by the operator"));
+}
+
+#[test]
+fn a_routed_channel_whose_definition_is_unreadable_shows_no_policy() {
+    let mut summary = ChannelSummary::without_definition("alice", SummaryStatus::Unreadable);
+    summary.routed = true;
+    let html = routing::render(&view(summary), true);
+    assert!(html.contains("its routing is not shown"));
+    assert!(!html.contains("<h2>Rules</h2>"));
 }
 
 #[test]

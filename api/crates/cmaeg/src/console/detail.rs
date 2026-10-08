@@ -12,7 +12,7 @@ use cmaeg_core::channel::{
 };
 use serde::Serialize;
 
-use super::mask;
+use super::{mask, routing_view::RoutingView};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ChannelDetail {
@@ -22,6 +22,8 @@ pub struct ChannelDetail {
     pub secrets: SecretsView,
     /// True when a connection manages the channel's sources.
     pub connection_managed: bool,
+    /// The routing policy; absent on a legacy channel.
+    pub routing: Option<RoutingView>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -91,6 +93,7 @@ impl ChannelDetail {
                     .collect(),
             },
             connection_managed: definition.connection_ref.is_some(),
+            routing: RoutingView::of(definition),
         }
     }
 }

@@ -10,7 +10,9 @@
 use std::{collections::BTreeSet, sync::Arc};
 
 use cmaeg_core::{
-    channel::{ChannelDefinition, ConsumerView, ReplyChoice, Source, SourceId},
+    channel::{
+        default_receives_all, ChannelDefinition, ConsumerView, ReplyChoice, Source, SourceId,
+    },
     ids::{ChannelId, ConsumerId, RecordId},
     profile::NyxIdIdentityKind,
 };
@@ -113,7 +115,10 @@ pub struct ChannelSummary {
     /// The channel's source slots, by the same id REST and routing use.
     pub sources: Vec<SourceId>,
     pub consumers: Vec<ConsumerChip>,
+    /// Whether the channel stores a routing policy.
     pub routed: bool,
+    /// On a routed channel, whether every event its policy can admit
+    /// reaches `default`; absent on a legacy channel.
     pub default_receives_all: Option<bool>,
     pub status: SummaryStatus,
     pub record_bytes: u32,
@@ -157,9 +162,11 @@ impl ChannelSummary {
                 .consumers()
                 .map(|consumer| ConsumerChip::of(&consumer, non_human_providers))
                 .collect(),
-            // Legacy channels only until routing policies exist.
-            routed: false,
-            default_receives_all: None,
+            routed: definition.routing.is_some(),
+            default_receives_all: definition
+                .routing
+                .is_some()
+                .then(|| default_receives_all(definition, non_human_providers)),
             status,
             record_bytes: u32::try_from(record_bytes).unwrap_or(u32::MAX),
             warnings,

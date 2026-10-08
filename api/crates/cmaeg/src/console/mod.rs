@@ -38,6 +38,7 @@ mod redirect;
 mod request_metrics;
 mod revoke;
 mod routes;
+pub mod routing_view;
 pub mod session;
 pub mod source_changes;
 mod source_routes;

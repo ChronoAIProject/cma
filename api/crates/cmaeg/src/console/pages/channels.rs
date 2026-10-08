@@ -106,16 +106,7 @@ fn table_row(row: &ChannelRow) -> String {
             })
             .collect()
     });
-    let routing = summary.map_or(
-        "",
-        |summary| {
-            if summary.routed {
-                "routed"
-            } else {
-                "legacy"
-            }
-        },
-    );
+    let routing = summary.map_or_else(String::new, routing_label);
     let last = row.activity.last_event.map_or_else(|| "—".to_owned(), when);
     format!(
         "<tr><td>{name}</td><td><code>{}</code></td><td>{}</td><td>{sources}</td><td>{consumers}</td><td>{routing}</td><td>{}</td><td>{} events · {} failed</td><td>{}</td></tr>",
@@ -126,6 +117,22 @@ fn table_row(row: &ChannelRow) -> String {
         row.activity.failures,
         row.version,
     )
+}
+
+/// `legacy`, or how many rules a routed channel has.
+fn routing_label(summary: &ChannelSummary) -> String {
+    if !summary.routed {
+        return "legacy".to_owned();
+    }
+    match summary
+        .detail
+        .as_ref()
+        .and_then(|detail| detail.routing.as_ref())
+    {
+        Some(routing) if routing.rules.len() == 1 => "1 rule".to_owned(),
+        Some(routing) => format!("{} rules", routing.rules.len()),
+        None => "routed".to_owned(),
+    }
 }
 
 /// A summary's status word: `ready`, `pending`, `invalid`, `unreadable` or
