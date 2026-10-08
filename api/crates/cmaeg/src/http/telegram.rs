@@ -1,6 +1,8 @@
 //! Native Telegram webhook; authentication precedes all platform interpretation.
 use super::{
-    callbacks::{invalid, refused, too_large, CallbackResponse},
+    callbacks::{
+        authenticated_invalid, authenticated_refusal, invalid, too_large, CallbackResponse,
+    },
     chat_dispatch::AdmittedChat,
     problems::{problem, protocol_headers},
 };
@@ -100,10 +102,11 @@ async fn admit_update(
     let secret = match verify::single(&parts.headers, "x-telegram-bot-api-secret-token", true) {
         Ok(Some(secret)) if secret.len() <= 256 => secret,
         _ => {
+            state.activity.unauthenticated(SOURCE);
             return Err(invalid(
                 SOURCE,
                 VerificationError("telegram_webhook_secret"),
-            ))
+            ));
         }
     };
     let channel = match state.resolver.resolve_current(channel_id).await {
@@ -137,6 +140,7 @@ async fn admit_update(
         ));
     };
     let Some(expected) = channel.definition.secrets.telegram_webhook_secret.as_ref() else {
+        state.activity.unauthenticated(SOURCE);
         return Err(invalid(
             SOURCE,
             VerificationError("telegram_webhook_secret"),
@@ -145,11 +149,16 @@ async fn admit_update(
     if !bool::from(
         Sha256::digest(secret.as_bytes()).ct_eq(&Sha256::digest(expected.as_str().as_bytes())),
     ) {
+        state.activity.unauthenticated(SOURCE);
         return Err(invalid(
             SOURCE,
             VerificationError("telegram_webhook_secret"),
         ));
     }
+    // Authenticated from here on: every refusal is reported for the console.
+    let record = channel.definition.record_id.clone();
+    let refuse = |reason| authenticated_refusal(state, &record, SOURCE, reason);
+    let reject = |error| authenticated_invalid(state, &record, SOURCE, error);
     if parts
         .headers
         .get(header::CONTENT_LENGTH)
@@ -177,18 +186,13 @@ async fn admit_update(
     };
     let raw = match serde_json::from_slice(&body) {
         Ok(raw) => raw,
-        Err(_) => {
-            return Err(invalid(
-                SOURCE,
-                VerificationError("telegram_update_invalid"),
-            ))
-        }
+        Err(_) => return Err(reject(VerificationError("telegram_update_invalid"))),
     };
     let observed =
         match telegram::observe(raw, &bot_id, bot_username.as_deref(), state.media_enabled) {
             Ok(Outcome::Admitted(observed)) => *observed,
-            Ok(Outcome::Refused(reason)) => return Err(refused(reason)),
-            Err(error) => return Err(invalid(SOURCE, error)),
+            Ok(Outcome::Refused(reason)) => return Err(refuse(reason)),
+            Err(error) => return Err(reject(error)),
         };
     if let Err(reason) = admit(
         admission,
@@ -202,12 +206,12 @@ async fn admit_update(
             addressed: observed.facts.addressed(admission),
         },
     ) {
-        return Err(refused(reason));
+        return Err(refuse(reason));
     }
     if channel.definition.partition.key == PartitionKey::Thread
         && observed.facts.thread_id.is_none()
     {
-        return Err(refused(Refusal::ThreadEvidenceUnavailable));
+        return Err(refuse(Refusal::ThreadEvidenceUnavailable));
     }
     let callback = observed.facts.callback.clone();
     let route = observed.payload.conversation.id.clone();
@@ -234,8 +238,8 @@ async fn admit_update(
     ) {
         Ok(Built::Launch(request)) => *request,
         // A 202 refusal, so Telegram does not redeliver the update.
-        Ok(Built::Refused(reason)) => return Err(refused(reason)),
-        Err(error) => return Err(invalid(SOURCE, error)),
+        Ok(Built::Refused(reason)) => return Err(refuse(reason)),
+        Err(error) => return Err(reject(error)),
     };
     Ok(AdmittedChat {
         request,

@@ -5,7 +5,10 @@ use super::{
     intents::{DeliveryOutcome, IntentReceipt},
     send::{SendContext, Sender},
 };
-use crate::{turns::outcomes::TurnOutcome, DeliveryConfig};
+use crate::{
+    turns::{observer::DeliveryStep, outcomes::TurnOutcome},
+    DeliveryConfig,
+};
 use cmaeg_core::message::OutboundMessage;
 use std::time::Duration;
 use tokio::time::Instant;
@@ -35,7 +38,7 @@ pub(super) async fn outcome_event(
             state.last_output_at = Instant::now();
             if state.channel.definition.reply.auto_final && !state.tool_replied {
                 state.answer_attempted = true;
-                send_text(sender, state, text).await;
+                send_text(sender, state, text, DeliveryStep::Answer).await;
             }
         }
         TurnOutcome::Completed { final_text } => {
@@ -45,14 +48,20 @@ pub(super) async fn outcome_event(
             {
                 if let Some(text) = final_text {
                     state.answer_attempted = true;
-                    send_text(sender, state, text).await;
+                    send_text(sender, state, text, DeliveryStep::Answer).await;
                 }
             }
             finish(state);
         }
         TurnOutcome::Failed { .. } | TurnOutcome::Incomplete { .. } => {
             if !state.tool_replied {
-                send_text(sender, state, config.failure_text.clone()).await;
+                send_text(
+                    sender,
+                    state,
+                    config.failure_text.clone(),
+                    DeliveryStep::Failure,
+                )
+                .await;
             }
             finish(state);
         }
@@ -77,7 +86,8 @@ pub(super) async fn timer_step(
     if state.ack_due.is_some_and(|at| at <= Instant::now()) {
         state.ack_due = None;
         if !state.first_send_done {
-            state.ack_sent = send_text(sender, state, config.ack_text.clone()).await;
+            state.ack_sent =
+                send_text(sender, state, config.ack_text.clone(), DeliveryStep::Ack).await;
             state.last_progress_at = Instant::now();
             return true;
         }
@@ -89,36 +99,42 @@ pub(super) async fn timer_step(
         && state.last_output_at.max(state.last_progress_at).elapsed() >= config.heartbeat
     {
         state.heartbeats += 1;
-        send_text(sender, state, "Still working…".into()).await;
+        send_text(
+            sender,
+            state,
+            "Still working…".into(),
+            DeliveryStep::Heartbeat,
+        )
+        .await;
         state.last_progress_at = Instant::now();
         return true;
     }
     false
 }
-async fn send_text(sender: &Sender, state: &mut EventState, text: String) -> bool {
-    send_message(
-        sender,
-        state,
-        OutboundMessage {
-            text: Some(text),
-            blocks: vec![],
-            reply_to: None,
-        },
-    )
-    .await
-}
-async fn send_message(sender: &Sender, state: &mut EventState, message: OutboundMessage) -> bool {
-    let result = reply(sender, state, &message).await;
+async fn send_text(
+    sender: &Sender,
+    state: &mut EventState,
+    text: String,
+    step: DeliveryStep,
+) -> bool {
+    let message = OutboundMessage {
+        text: Some(text),
+        blocks: vec![],
+        reply_to: None,
+    };
+    let result = reply(sender, state, &message, step).await;
     matches!(result.delivery, DeliveryOutcome::Confirmed { .. })
 }
 /// Send `message` for `state`'s event through the legacy lane's `Ungated`
 /// gate and apply the send's effects as soon as it returns. The serial
 /// worker reads no event state while a send awaits, so reads and writes keep
-/// the order they had when the send mutated the state.
+/// the order they had when the send mutated the state. The outcome is
+/// reported as `step` of the event's default consumer.
 pub(super) async fn reply(
     sender: &Sender,
     state: &mut EventState,
     message: &OutboundMessage,
+    step: DeliveryStep,
 ) -> IntentReceipt {
     let context = SendContext {
         trace: &state.trace,
@@ -128,5 +144,6 @@ pub(super) async fn reply(
     };
     let (result, effects) = sender.reply(&context, &state.event, message).await;
     state.first_send_done |= effects.first_send_done;
+    sender.observe(&state.event, step, &result.delivery);
     result
 }

@@ -16,7 +16,11 @@ use cmaeg::{
     providers::{ProviderClient, ProviderRegistry},
     records::RecordClient,
     tools::ToolsState,
-    turns::{outcomes::TurnOutcome, TurnRunner, TurnTracker},
+    turns::{
+        observer::{ActivityObserver, NoopObserver},
+        outcomes::TurnOutcome,
+        TurnRunner, TurnTracker,
+    },
     DeliveryConfig, TurnConfig,
 };
 use cmaeg_core::{message::OutboundMessage, seal::EventRefPayload};
@@ -55,7 +59,29 @@ impl App {
         config: DeliveryConfig,
         provider_config: FakeProviderConfig,
     ) -> Self {
-        Self::build("telegram", false, replies, ack_ms, config, provider_config).await
+        Self::build(
+            "telegram",
+            false,
+            replies,
+            ack_ms,
+            config,
+            provider_config,
+            Arc::new(NoopObserver),
+        )
+        .await
+    }
+    /// [`App::standard`] whose delivery engine reports to `observer`.
+    pub async fn observed(ack_ms: u32, observer: Arc<dyn ActivityObserver>) -> Self {
+        Self::build(
+            "telegram",
+            false,
+            vec![],
+            ack_ms,
+            DeliveryConfig::default(),
+            FakeProviderConfig::default(),
+            observer,
+        )
+        .await
     }
     /// A relay channel on `platform`. With `interactive`, the relay client holds an
     /// interaction store whose record service is unreachable, so any attempt to
@@ -68,6 +94,7 @@ impl App {
             0,
             DeliveryConfig::default(),
             FakeProviderConfig::default(),
+            Arc::new(NoopObserver),
         )
         .await
     }
@@ -78,6 +105,7 @@ impl App {
         ack_ms: u32,
         config: DeliveryConfig,
         provider_config: FakeProviderConfig,
+        observer: Arc<dyn ActivityObserver>,
     ) -> Self {
         let fake = FakeReply::start(replies).await;
         let key = format!("nyx_{}", uuid::Uuid::new_v4().simple());
@@ -117,7 +145,7 @@ impl App {
                 providers.clone(),
             )));
         }
-        let engine = DeliveryEngine::start(
+        let engine = DeliveryEngine::start_observed(
             receiver,
             fixture.state.master_keys.clone(),
             relay,
@@ -127,6 +155,7 @@ impl App {
                 "https://gateway.example".into(),
                 Arc::default(),
             ),
+            observer,
         );
         let runner = Arc::new(TurnRunner::new(
             providers.clone(),

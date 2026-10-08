@@ -28,6 +28,9 @@ pub struct ManagementState {
     /// Inbound media switch. Off, a custom source's attachments setting is
     /// refused, so it is stored only once every replica can parse it.
     pub media_enabled: bool,
+    /// Receives every record head management writes or deletes; a no-op
+    /// unless the console is on.
+    pub index: Arc<dyn super::observer::ChannelIndexObserver>,
     mutations: Arc<[Mutex<()>; 64]>,
     pub(crate) idempotency: Arc<Mutex<BTreeMap<(String, String), CachedResponse>>>,
 }
@@ -47,10 +50,30 @@ impl ManagementState {
         config: crate::ManagementConfig,
         cache_config: crate::ChannelCacheConfig,
     ) -> Self {
-        let resolver = super::resolver::ChannelResolver::new(
+        Self::observed(
+            providers,
+            records,
+            creator_auth,
+            config,
+            cache_config,
+            Arc::new(crate::turns::observer::NoopObserver),
+        )
+    }
+
+    /// Management state whose writes, deletes and restores report to `index`.
+    pub fn observed(
+        providers: Arc<ProviderClient>,
+        records: Arc<RecordClient>,
+        creator_auth: Arc<CreatorAuthenticator>,
+        config: crate::ManagementConfig,
+        cache_config: crate::ChannelCacheConfig,
+        index: Arc<dyn super::observer::ChannelIndexObserver>,
+    ) -> Self {
+        let resolver = super::resolver::ChannelResolver::observed(
             records.clone(),
             config.master_keys.clone(),
             cache_config,
+            index.clone(),
         );
         Self {
             resolver,
@@ -65,6 +88,7 @@ impl ManagementState {
             cma_service_token: config.cma_service_token,
             telegram: None,
             media_enabled: false,
+            index,
             idempotency: Arc::new(Mutex::new(BTreeMap::new())),
             mutations: Arc::new(std::array::from_fn(|_| Mutex::new(()))),
         }

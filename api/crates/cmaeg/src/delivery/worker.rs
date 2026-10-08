@@ -6,7 +6,7 @@ use super::{
     step::{finish, outcome_event, reply, timer_step},
 };
 use crate::{
-    turns::{outcomes::TurnOutcome, TurnTracker},
+    turns::{observer::DeliveryStep, outcomes::TurnOutcome, TurnTracker},
     DeliveryConfig,
 };
 use std::{collections::HashMap, sync::Arc, time::Duration};
@@ -96,7 +96,11 @@ async fn handle(
                 .or_insert_with(|| EventState::new(channel.clone(), event.clone()));
             state.channel = channel;
             state.event = event;
-            let result = reply(sender, state, &message).await;
+            let step = match source {
+                ReplySource::Tool => DeliveryStep::ToolReply,
+                ReplySource::Stream => DeliveryStep::Answer,
+            };
+            let result = reply(sender, state, &message, step).await;
             if matches!(
                 result.delivery,
                 DeliveryOutcome::Confirmed { .. } | DeliveryOutcome::Unknown { .. }
@@ -149,10 +153,17 @@ async fn handle(
                 if matches!(outcome, TurnOutcome::Accepted { .. }) {
                     state.terminal_at = None;
                 }
-                sender
+                if let Some(delivered) = sender
                     .custom
                     .outcome(&state.channel, &state.event, &outcome)
-                    .await;
+                    .await
+                {
+                    let step = match outcome {
+                        TurnOutcome::Completed { .. } => DeliveryStep::Answer,
+                        _ => DeliveryStep::Failure,
+                    };
+                    sender.observe(&state.event, step, &delivered);
+                }
                 if outcome.terminal() {
                     finish(state);
                 }

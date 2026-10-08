@@ -6,7 +6,11 @@ use super::{
     relay_client::{unknown, Credential, RelayClient},
     render::{RelayText, Renderer},
 };
-use crate::{channels::resolver::ResolvedChannel, tools::Capabilities};
+use crate::{
+    channels::resolver::ResolvedChannel,
+    tools::Capabilities,
+    turns::observer::{default_consumer, ActivityObserver, DeliveryStep, Destination},
+};
 use cmaeg_core::{
     channel::Platform,
     ids::MessageRef,
@@ -39,8 +43,22 @@ pub(super) struct Sender {
     pub pacing: Pacing,
     // Token-use tombstones outlive the short event state but retain no credentials.
     pub consumed: Mutex<HashMap<[u8; 32], i64>>,
+    /// Receives each delivery step's outcome; a no-op unless the console is on.
+    pub observer: Arc<dyn ActivityObserver>,
 }
 impl Sender {
+    /// Report a legacy delivery: the default consumer, to the event's origin.
+    pub fn observe(&self, event: &EventRefPayload, step: DeliveryStep, outcome: &DeliveryOutcome) {
+        self.observer.delivered(
+            &event.record_id,
+            &event.event_id,
+            default_consumer(),
+            step,
+            outcome,
+            Destination::Origin,
+        );
+    }
+
     #[tracing::instrument(name="cmaeg.deliver", parent = ctx.trace, skip_all, fields(
         channel = %crate::telemetry::channel_hash(ctx.channel.id.as_str()), event_id = %event.event_id))]
     pub async fn reply(

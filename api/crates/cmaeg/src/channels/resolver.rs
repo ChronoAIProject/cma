@@ -1,7 +1,9 @@
 //! One bounded CMA restore shared by concurrent callers on each cold channel.
 use super::cache::{CacheEntry, ChannelCache, Lookup};
+use super::observer::ChannelIndexObserver;
 use crate::{
     records::{RecordClient, RecordError},
+    turns::observer::NoopObserver,
     ChannelCacheConfig,
 };
 use cmaeg_core::{
@@ -107,6 +109,7 @@ pub struct ChannelResolver {
 }
 struct Inner {
     records: Arc<RecordClient>,
+    observer: Arc<dyn ChannelIndexObserver>,
     keys: Arc<MasterKeyRing>,
     config: ChannelCacheConfig,
     cache: ChannelCache,
@@ -122,11 +125,21 @@ impl ChannelResolver {
         keys: Arc<MasterKeyRing>,
         config: ChannelCacheConfig,
     ) -> Self {
+        Self::observed(records, keys, config, Arc::new(NoopObserver))
+    }
+    /// A resolver that reports each channel id it restores to `observer`.
+    pub fn observed(
+        records: Arc<RecordClient>,
+        keys: Arc<MasterKeyRing>,
+        config: ChannelCacheConfig,
+        observer: Arc<dyn ChannelIndexObserver>,
+    ) -> Self {
         let quota =
             Quota::per_minute(config.restores_per_minute).allow_burst(NonZeroU32::new(3).unwrap());
         Self {
             inner: Arc::new(Inner {
                 records,
+                observer,
                 keys,
                 cache: ChannelCache::new(&config),
                 config,
@@ -349,6 +362,7 @@ impl ChannelResolver {
             .map_err(|_| ResolveError::InvalidDefinition)?;
         }
         definition.version = record.version;
+        self.inner.observer.observed(&pointer.record_id, &id);
         Ok(Arc::new(ResolvedChannel {
             id,
             pointer,

@@ -189,4 +189,14 @@ pub(crate) fn describe_console() {
         "Console requests whose owner authority was derived, by outcome"
     );
     metrics::counter!(names::CONSOLE_AUTHORIZATIONS).absolute(0);
+    metrics::describe_counter!(
+        names::CONSOLE_OBSERVER_DROPPED,
+        "Console observations dropped because the observation queue was full"
+    );
+    metrics::counter!(names::CONSOLE_OBSERVER_DROPPED).absolute(0);
+    metrics::describe_counter!(
+        names::CONSOLE_UNAUTHENTICATED,
+        "Ingress requests that failed authentication, by source; never recorded in console memory"
+    );
+    metrics::counter!(names::CONSOLE_UNAUTHENTICATED).absolute(0);
 }

@@ -2,6 +2,7 @@
 mod audience;
 mod consume;
 mod metadata;
+pub mod observer;
 pub mod outcomes;
 mod projection;
 pub mod render_input;

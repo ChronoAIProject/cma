@@ -45,6 +45,7 @@ pub async fn delete(
         .await
     {
         Ok(true) | Ok(false) => {
+            state.index.removed(&current.definition.record_id);
             crate::connections::binding::release(state, &current.definition).await?;
             state.resolver.invalidate(channel_id.as_str());
             Ok(())
@@ -64,7 +65,7 @@ pub async fn rekey(state: &ManagementState, channel_id: &ChannelId) -> Result<u8
     let mut definition = loaded.definition;
     definition.version = loaded.record.version;
     let blob = seal_definition(state.master_keys.as_ref(), &definition)?;
-    state
+    let version = state
         .records
         .put(
             &definition.record_id,
@@ -79,6 +80,9 @@ pub async fn rekey(state: &ManagementState, channel_id: &ChannelId) -> Result<u8
             }
             other => ManagementError::Record(other),
         })?;
+    state
+        .index
+        .changed(&definition.record_id, &definition.owner.subject, version);
     state.resolver.invalidate(channel_id.as_str());
     Ok(state.master_keys.current_kid())
 }

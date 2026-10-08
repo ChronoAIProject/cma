@@ -12,6 +12,8 @@ pub mod fake_nyxid_reply;
 pub mod fake_provider;
 #[path = "delivery/integration.rs"]
 mod integration;
+#[path = "delivery/observations.rs"]
+mod observations;
 #[path = "delivery/platforms.rs"]
 mod platforms;
 #[path = "delivery/recording.rs"]

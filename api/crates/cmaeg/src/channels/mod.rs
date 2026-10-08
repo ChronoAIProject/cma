@@ -8,6 +8,7 @@ pub mod definition;
 mod definition_sources;
 mod lifecycle;
 pub mod management;
+pub mod observer;
 mod requests;
 pub mod resolver;
 pub(crate) mod state;

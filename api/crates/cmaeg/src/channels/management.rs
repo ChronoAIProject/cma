@@ -85,7 +85,10 @@ pub async fn create(
     }
     .await;
     let version = match saved {
-        Ok(version) => version,
+        Ok(version) => {
+            state.index.changed(&record_id, &creator.subject, version);
+            version
+        }
         Err(error) => {
             if state
                 .providers
@@ -246,6 +249,9 @@ pub async fn update(
         )
         .await
         .map_err(ManagementError::Record)?;
+    state
+        .index
+        .changed(&definition.record_id, &creator.subject, version);
     state.resolver.invalidate(channel_id.as_str());
     Ok(LoadedChannel {
         channel_id: channel_id.clone(),

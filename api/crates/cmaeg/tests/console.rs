@@ -9,6 +9,8 @@ mod authority;
 mod enablement;
 #[path = "console/hygiene.rs"]
 mod hygiene;
+#[path = "console/observations.rs"]
+mod observations;
 #[path = "console/owner.rs"]
 mod owner;
 #[path = "console/protection.rs"]
@@ -19,3 +21,8 @@ mod sessions;
 mod signin;
 #[path = "console/support.rs"]
 pub mod support;
+
+#[path = "relay/support.rs"]
+pub mod relay_support;
+#[path = "relay/signer.rs"]
+pub mod signer;

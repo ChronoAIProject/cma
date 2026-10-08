@@ -170,6 +170,9 @@ mod platforms;
 #[path = "management/invalidation.rs"]
 mod invalidation;
 
+#[path = "management/index_hooks.rs"]
+mod index_hooks;
+
 #[path = "management/creation.rs"]
 mod creation;
 

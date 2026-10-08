@@ -30,6 +30,7 @@ use axum::{
 };
 use cmaeg_core::{
     channel::{PartitionKey, Source},
+    ids::RecordId,
     problem::ProblemCode,
 };
 use serde::Serialize;
@@ -205,12 +206,19 @@ async fn admit_callback(
     .await
     {
         Ok(verified) => verified,
-        Err(error) => return Err(invalid(SOURCE, error)),
+        Err(error) => {
+            state.activity.unauthenticated(SOURCE);
+            return Err(invalid(SOURCE, error));
+        }
     };
+    // Authenticated from here on: every refusal is reported for the console.
+    let record = channel.definition.record_id.clone();
+    let refuse = |reason| authenticated_refusal(state, &record, SOURCE, reason);
+    let reject = |error| authenticated_invalid(state, &record, SOURCE, error);
     let facts = match observe(source, &verified.payload, state.media_enabled) {
         Ok(Observation::Message(facts)) => facts,
-        Ok(Observation::Refused(reason)) => return Err(refused(reason)),
-        Err(error) => return Err(invalid(SOURCE, error)),
+        Ok(Observation::Refused(reason)) => return Err(refuse(reason)),
+        Err(error) => return Err(reject(error)),
     };
     if let Err(reason) = admit(
         admission,
@@ -223,14 +231,14 @@ async fn admit_callback(
             addressed: facts.addressed(admission),
         },
     ) {
-        return Err(refused(reason));
+        return Err(refuse(reason));
     }
     if channel.definition.partition.key == PartitionKey::Thread && facts.thread_id.is_none() {
-        return Err(refused(Refusal::ThreadEvidenceUnavailable));
+        return Err(refuse(Refusal::ThreadEvidenceUnavailable));
     }
     let now = time::OffsetDateTime::now_utc().unix_timestamp();
     if verified.reply_expires_at <= now || verified.callback_deadline <= now {
-        return Err(invalid(SOURCE, VerificationError("token_time")));
+        return Err(reject(VerificationError("token_time")));
     }
     let callback = facts.callback.clone();
     let route = verified.payload.conversation.id.clone();
@@ -245,13 +253,14 @@ async fn admit_callback(
     ) {
         Ok(Built::Launch(request)) => *request,
         // A 202 refusal, because NyxID never retries a rejected callback.
-        Ok(Built::Refused(reason)) => return Err(refused(reason)),
+        Ok(Built::Refused(reason)) => return Err(refuse(reason)),
         Err(reason) => {
+            state.activity.refused(&record, SOURCE, None, reason);
             return Err(problem(
                 StatusCode::BAD_REQUEST,
                 ProblemCode::InvalidRequest,
                 reason,
-            ))
+            ));
         }
     };
     verify_span.record("event_id", request.activity.event_id.as_str());
@@ -262,6 +271,33 @@ async fn admit_callback(
         route,
         now,
     })
+}
+
+/// A refusal of an authenticated event: answered as [`refused`] and reported
+/// to the activity observer with the same label.
+pub(crate) fn authenticated_refusal(
+    state: &IngressState,
+    record: &RecordId,
+    source: &'static str,
+    reason: Refusal,
+) -> Response {
+    let response = refused(reason);
+    if let Some(RefusalReason(label)) = response.extensions().get::<RefusalReason>() {
+        state.activity.refused(record, source, None, label);
+    }
+    response
+}
+
+/// An authenticated event that failed normalization: answered as
+/// [`invalid`] and reported to the activity observer.
+pub(crate) fn authenticated_invalid(
+    state: &IngressState,
+    record: &RecordId,
+    source: &'static str,
+    error: VerificationError,
+) -> Response {
+    state.activity.refused(record, source, None, error.0);
+    invalid(source, error)
 }
 
 pub(crate) fn refused(reason: Refusal) -> Response {

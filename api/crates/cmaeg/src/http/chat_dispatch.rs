@@ -1,6 +1,6 @@
 //! Shared admitted chat dispatch for relay and native transports.
 use super::{
-    callbacks::{invalid, refused, CallbackResponse},
+    callbacks::{authenticated_refusal, invalid, CallbackResponse},
     problems::problem,
 };
 use crate::ingress::{
@@ -44,8 +44,15 @@ pub(crate) async fn dispatch(
         now,
     } = admitted;
     if let Some(callback) = callback {
+        let record = &request.channel.definition.record_id;
+        let source = timing.source();
         let Some(store) = &state.interactions else {
-            return refused(Refusal::InteractiveActionUnsupported);
+            return authenticated_refusal(
+                &state,
+                record,
+                source,
+                Refusal::InteractiveActionUnsupported,
+            );
         };
         let interaction = match store
             .consume(
@@ -60,7 +67,12 @@ pub(crate) async fn dispatch(
         {
             Ok(value) => value,
             Err(crate::interactions::Error::Denied) => {
-                return refused(Refusal::InteractionExpiredOrInvalid)
+                return authenticated_refusal(
+                    &state,
+                    record,
+                    source,
+                    Refusal::InteractionExpiredOrInvalid,
+                )
             }
             Err(crate::interactions::Error::Unavailable) => {
                 return problem(

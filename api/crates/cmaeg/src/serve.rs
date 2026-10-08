@@ -7,8 +7,8 @@ use tokio::sync::oneshot;
 use tower_http::{catch_panic::CatchPanicLayer, limit::RequestBodyLimitLayer};
 
 use crate::{
-    auth, connections, delivery, http, ingress, interactions, mcp, media, providers, records,
-    router_with_state, service_auth, telegram, telemetry, tools, turns, Config,
+    auth, connections, console, delivery, http, ingress, interactions, mcp, media, providers,
+    records, router_with_state, service_auth, telegram, telemetry, tools, turns, Config,
     REQUEST_BODY_LIMIT_BYTES,
 };
 
@@ -24,12 +24,15 @@ pub(crate) async fn serve(config: Config) -> Result<(), Box<dyn std::error::Erro
     let creator_auth = std::sync::Arc::new(auth::CreatorAuthenticator::new(
         &config.management.nyxid_base_url,
     )?);
-    let mut state = http::ManagementState::new(
+    // No-op observers and no queue while CMAEG_CONSOLE_ENABLED is off.
+    let mut observers = console::observer::Observers::new(config.console.enabled);
+    let mut state = http::ManagementState::observed(
         providers.clone(),
         records,
         creator_auth,
         config.management.clone(),
         config.channel_cache.clone(),
+        observers.index.clone(),
     );
     let telegram = std::sync::Arc::new(telegram::TelegramClient::production(
         config.delivery.reply_timeout,
@@ -47,7 +50,7 @@ pub(crate) async fn serve(config: Config) -> Result<(), Box<dyn std::error::Erro
         state.master_keys.clone(),
         providers.clone(),
     ));
-    let delivery_engine = delivery::engine::DeliveryEngine::start(
+    let delivery_engine = delivery::engine::DeliveryEngine::start_observed(
         outcomes,
         state.master_keys.clone(),
         delivery::relay_client::RelayClient::new(
@@ -61,6 +64,7 @@ pub(crate) async fn serve(config: Config) -> Result<(), Box<dyn std::error::Erro
             config.management.public_url.clone(),
             waiters.clone(),
         ),
+        observers.activity.clone(),
     );
     let tool_providers = std::sync::Arc::new(config.media.tool_providers.clone());
     // Installed before the media transformer's setup so its readiness gauge
@@ -68,10 +72,11 @@ pub(crate) async fn serve(config: Config) -> Result<(), Box<dyn std::error::Erro
     let metrics = telemetry::install()?;
     // After the recorder, which registers its gauge. `None` while
     // CMAEG_CONSOLE_ENABLED is off: then no /console route exists.
-    let console = crate::console::compose(
+    let console = console::compose(
         &config,
         state.master_keys.clone(),
         state.creator_auth.clone(),
+        observers.queue.take(),
     )?;
     // Before the listener binds: a configured transformer must pass its
     // sandbox self-check, or the gateway does not start.
@@ -109,11 +114,12 @@ pub(crate) async fn serve(config: Config) -> Result<(), Box<dyn std::error::Erro
         state.resolver.clone(),
         state.master_keys.clone(),
         config.ingress,
-        runner.clone(),
+        observers.launcher(runner.clone()),
     )?
     .with_telegram(telegram)
     .with_interactions(interactions)
-    .with_media_enabled(config.media.enabled);
+    .with_media_enabled(config.media.enabled)
+    .with_activity_observer(observers.activity.clone());
     let tools_state = tools::ToolsState {
         resolver: state.resolver.clone(),
         keys: state.master_keys.clone(),

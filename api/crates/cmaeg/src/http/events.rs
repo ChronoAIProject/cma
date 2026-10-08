@@ -5,10 +5,11 @@ use crate::{
     auth::webhook,
     delivery::sync::{SyncRegistry, Waiter},
     ingress::{
-        custom,
+        custom::{self, ProducerHint},
         launch::{LaunchOutcome, LaunchRequest},
         IngressState,
     },
+    turns::observer::{LaunchClass, ProducerFacts},
 };
 use axum::{
     body::to_bytes,
@@ -23,13 +24,15 @@ use axum::{
 };
 use cmaeg_core::{
     channel::{Sink, Source},
-    cloudevent::{parse_binary, parse_structured, MAX_CLOUD_EVENT_BYTES},
+    cloudevent::{parse_binary, parse_structured, CloudEvent, MAX_CLOUD_EVENT_BYTES},
+    ids::{EventId, RecordId},
     problem::ProblemCode,
     seal::ReplyAddress,
 };
 use serde::{Deserialize, Serialize};
 use std::{sync::Arc, time::Duration};
 const MAX_ATTACHMENT_DETAIL_BYTES: usize = 256;
+const SOURCE: &str = "custom";
 #[derive(Clone)]
 pub struct CustomIngressState {
     pub ingress: IngressState,
@@ -111,11 +114,14 @@ pub async fn receive_event(
         turn,
         waiter,
         accepted,
+        report,
     } = match prepare_event(&state, &channel_id, stream, request, timing).await {
         Ok(prepared) => prepared,
         Err(response) => return response,
     };
-    match state.ingress.launcher.launch_holding(turn, permit).await {
+    let outcome = state.ingress.launcher.launch_holding(turn, permit).await;
+    report.outcome(&state.ingress, LaunchClass::of(&outcome));
+    match outcome {
         LaunchOutcome::Refused(error) => {
             let busy = error.code == ProblemCode::ProviderBusy;
             let mut response = super::tools::result::<()>(Err(error));
@@ -139,6 +145,52 @@ struct PreparedEvent {
     turn: LaunchRequest,
     waiter: Option<Waiter>,
     accepted: EventAccepted,
+    report: EventReport,
+}
+
+/// What happens to one authenticated event, reported for the console: each
+/// refusal, and the producer its `ce.source` names with the event's outcome.
+struct EventReport {
+    record: RecordId,
+    hint: ProducerHint,
+    /// Set once the CloudEvent parsed.
+    event: Option<(Option<EventId>, String, String)>,
+}
+
+impl EventReport {
+    /// Note the parsed event's id, `ce.source` and `ce.type`.
+    fn parsed(&mut self, event: &CloudEvent) {
+        self.event = Some((
+            EventId::new(event.id.as_str()).ok(),
+            event.source.clone(),
+            event.r#type.clone(),
+        ));
+    }
+
+    /// Report a refusal as `reason`, then answer with `response`.
+    fn refuse(&self, ingress: &IngressState, reason: &str, response: Response) -> Response {
+        self.outcome(ingress, LaunchClass::Refused);
+        let event_id = self.event.as_ref().and_then(|(id, _, _)| id.as_ref());
+        ingress
+            .activity
+            .refused(&self.record, SOURCE, event_id, reason);
+        response
+    }
+
+    /// Report the producer with the event's outcome.
+    fn outcome(&self, ingress: &IngressState, outcome: LaunchClass) {
+        if let Some((_, source, ce_type)) = &self.event {
+            ingress.activity.produced(
+                &self.record,
+                ProducerFacts {
+                    source,
+                    hint: &self.hint.to_string(),
+                    ce_type,
+                    outcome,
+                },
+            );
+        }
+    }
 }
 /// Authenticates and normalizes one custom event into a launchable turn.
 ///
@@ -215,19 +267,27 @@ async fn prepare_event(
         return Err(invalid("channel has no custom source"));
     };
     let now = time::OffsetDateTime::now_utc().unix_timestamp();
-    if !custom::authenticated(
+    let Some(hint) = custom::authenticate(
         auth,
         &channel.definition.secrets,
         &parts.headers,
         &body,
         now,
-    ) {
+    ) else {
+        state.ingress.activity.unauthenticated(SOURCE);
         return Err(problem(
             StatusCode::UNAUTHORIZED,
             ProblemCode::NotAuthenticated,
             "custom event authentication failed",
         ));
-    }
+    };
+    // Authenticated from here on: every refusal is reported for the console.
+    let mut report = EventReport {
+        record: channel.definition.record_id.clone(),
+        hint,
+        event: None,
+    };
+    let ingress = &state.ingress;
     let parsed = if structured {
         parse_structured(&body)
     } else {
@@ -238,7 +298,11 @@ async fn prepare_event(
             .filter(|name| name.as_str().starts_with("ce-"))
         {
             let Some(value) = webhook::single(&parts.headers, name.as_str()) else {
-                return Err(invalid("invalid or duplicate CloudEvents header"));
+                return Err(report.refuse(
+                    ingress,
+                    "invalid_cloud_event",
+                    invalid("invalid or duplicate CloudEvents header"),
+                ));
             };
             headers.push((name.to_string(), value.to_owned()));
         }
@@ -249,9 +313,16 @@ async fn prepare_event(
     };
     let event = match parsed {
         Ok(event) => event,
-        Err(_) => return Err(invalid("invalid CloudEvent")),
+        Err(_) => {
+            return Err(report.refuse(
+                ingress,
+                "invalid_cloud_event",
+                invalid("invalid CloudEvent"),
+            ))
+        }
     };
     verify_span.record("event_id", event.id.as_str());
+    report.parsed(&event);
     // Extraction only reads the verified body; no locator is fetched here.
     let attachments = match config {
         Some(config) if state.ingress.media_enabled => {
@@ -259,7 +330,11 @@ async fn prepare_event(
                 Ok(attachments) => attachments,
                 Err(error) => {
                     tracing::info!("custom event attachment refused");
-                    return Err(invalid(&attachment_invalid(&error.pointer)));
+                    return Err(report.refuse(
+                        ingress,
+                        "attachment_invalid",
+                        invalid(&attachment_invalid(&error.pointer)),
+                    ));
                 }
             }
         }
@@ -272,13 +347,21 @@ async fn prepare_event(
     let mut waiter = None;
     let reply = if stream {
         if !channel.definition.reply.sinks.contains(&Sink::Sync {}) {
-            return Err(invalid("stream requires a Sync sink"));
+            return Err(report.refuse(
+                ingress,
+                "stream_requires_sync_sink",
+                invalid("stream requires a Sync sink"),
+            ));
         }
         let Some((id, pending)) = state.waiters.register() else {
-            return Err(problem(
-                StatusCode::SERVICE_UNAVAILABLE,
-                ProblemCode::Internal,
+            return Err(report.refuse(
+                ingress,
                 "sync_capacity",
+                problem(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    ProblemCode::Internal,
+                    "sync_capacity",
+                ),
             ));
         };
         waiter = Some(pending);
@@ -296,7 +379,7 @@ async fn prepare_event(
         now,
     ) {
         Ok(turn) => turn,
-        Err(reason) => return Err(invalid(reason)),
+        Err(reason) => return Err(report.refuse(ingress, reason, invalid(reason))),
     };
     drop(verify_guard);
     drop(verify_time);
@@ -310,6 +393,7 @@ async fn prepare_event(
         turn,
         waiter,
         accepted,
+        report,
     })
 }
 fn invalid(detail: &str) -> Response {

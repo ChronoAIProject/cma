@@ -1,6 +1,10 @@
 //! Shared ingress clients and admission capacity.
 use super::{launch::TurnLauncher, relay::jwks::JwksCache};
-use crate::{channels::resolver::ChannelResolver, IngressConfig};
+use crate::{
+    channels::resolver::ChannelResolver,
+    turns::observer::{ActivityObserver, NoopObserver},
+    IngressConfig,
+};
 use cmaeg_core::seal::MasterKeyRing;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
@@ -17,8 +21,15 @@ pub struct IngressState {
     pub receipt_observer: Option<Arc<dyn super::receipts::PlatformReceiptObserver>>,
     /// Whether Telegram media is admitted; off, media is refused as before.
     pub media_enabled: bool,
+    /// Receives authenticated refusals, producers and authentication
+    /// failures; a no-op unless the console is on.
+    pub activity: Arc<dyn ActivityObserver>,
 }
 impl IngressState {
+    pub fn with_activity_observer(mut self, observer: Arc<dyn ActivityObserver>) -> Self {
+        self.activity = observer;
+        self
+    }
     pub fn with_media_enabled(mut self, enabled: bool) -> Self {
         self.media_enabled = enabled;
         self
@@ -49,6 +60,7 @@ impl IngressState {
             telegram: None,
             receipt_observer: None,
             media_enabled: false,
+            activity: Arc::new(NoopObserver),
             resolver,
             master_keys,
             jwks: Arc::new(JwksCache::new(config.jwks_ttl)?),

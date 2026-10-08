@@ -16,6 +16,8 @@ mod guard;
 mod headers;
 mod login;
 mod login_limit;
+pub mod mask;
+pub mod observer;
 mod oidc;
 mod orgs;
 pub(crate) mod pages;
@@ -322,14 +324,22 @@ async fn gate(State(console): State<Console>, request: Request, next: Next) -> R
 }
 
 /// Build the console when `CMAEG_CONSOLE_ENABLED` is on and start its
-/// background work; `None` while it is off, so nothing is allocated.
+/// background work, draining `observations` from the hot paths; `None` while
+/// it is off, so nothing is allocated.
 pub(crate) fn compose(
     config: &crate::Config,
     keys: Arc<MasterKeyRing>,
     creator_auth: Arc<CreatorAuthenticator>,
+    observations: Option<observer::ObservationQueue>,
 ) -> Result<Option<Router>, reqwest::Error> {
     if !config.console.enabled {
         return Ok(None);
+    }
+    if let Some(queue) = observations {
+        // The one drainer. The console memory that keeps observations is
+        // composed in later steps; until then they are only taken off the
+        // queue, so the hot paths never find it full.
+        drop(tokio::spawn(queue.drain(|_observation| {})));
     }
     let console = Console::new(ConsoleDeps {
         config: config.console.clone(),
