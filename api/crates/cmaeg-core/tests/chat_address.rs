@@ -3,7 +3,7 @@
 use cmaeg_core::{
     activity::SourceKind,
     channel::Platform,
-    chat::{strip_address, strip_mention_keys},
+    chat::{bot_address_len, leading_address_end, strip_address, strip_mention_keys},
 };
 
 fn telegram() -> SourceKind {
@@ -131,4 +131,79 @@ fn an_address_alone_leaves_an_empty_remainder() {
     assert_eq!(strip_address("@bot @bot", &telegram(), Some("bot")), "");
     assert_eq!(strip_mention_keys("@_user_1 @_user_2"), "");
     assert_eq!(strip_mention_keys(""), "");
+}
+
+/// Every bot-address fixture above, with where the routing resolver's
+/// leading-run scanner says the leading run of addresses ends.
+fn scanned_fixtures() -> Vec<(&'static str, SourceKind, Option<&'static str>, usize)> {
+    let mut fixtures = vec![
+        ("@bot hello", telegram(), Some("bot"), 5),
+        ("hi @bot there", telegram(), Some("bot"), 0),
+        ("hello @bot", telegram(), Some("bot"), 0),
+        ("@bot, are you there?", telegram(), Some("bot"), 4),
+        ("@BoT hello", telegram(), Some("bot"), 5),
+        ("@bot hello", telegram(), Some("BOT"), 5),
+        ("@botx hi", telegram(), Some("bot"), 0),
+        ("x@bot hi", telegram(), Some("bot"), 0),
+        ("@bot_ hi", telegram(), Some("bot"), 0),
+        ("@@bot hi", telegram(), Some("bot"), 0),
+        ("@bot@ hi", telegram(), Some("bot"), 0),
+        ("@bot a @bot b @BOT", telegram(), Some("bot"), 5),
+        ("@bot hello", telegram(), None, 0),
+        (" padded @bot ", telegram(), None, 1),
+        ("", telegram(), None, 0),
+        ("@bot hello", SourceKind::Custom, None, 0),
+        ("@bot", telegram(), Some("bot"), 4),
+        ("  @bot  ", telegram(), Some("bot"), 8),
+        ("@bot @bot", telegram(), Some("bot"), 9),
+    ];
+    for platform in [Platform::Telegram, Platform::Discord, Platform::Slack] {
+        fixtures.push(("@bot status", relay(platform), Some("bot"), 5));
+    }
+    for platform in [Platform::Lark, Platform::Feishu] {
+        fixtures.extend([
+            ("@_user_1 @_user_2 text", relay(platform), None, 18),
+            (
+                " @_user_1  @_user_12 ask @_user_2 later",
+                relay(platform),
+                None,
+                21,
+            ),
+            ("@_user_ keep", relay(platform), None, 0),
+            ("@_user_1x keep", relay(platform), None, 0),
+            ("@_user_1", relay(platform), None, 8),
+            ("@_user_1 @bot text", relay(platform), Some("bot"), 9),
+        ]);
+    }
+    fixtures
+}
+
+#[test]
+fn the_leading_run_scanner_agrees_with_strip_address() {
+    for (text, source, username, expected) in scanned_fixtures() {
+        let end = leading_address_end(text, &source, username);
+        assert_eq!(end, expected, "{text:?}");
+        // Everything the scanner skips, the renderer strips too...
+        assert_eq!(
+            strip_address(&text[..end], &source, username).trim(),
+            "",
+            "{text:?}"
+        );
+        // ...and it skips nothing the renderer keeps: stripping the rest
+        // alone renders exactly what stripping the whole text renders.
+        assert_eq!(
+            strip_address(&text[end..], &source, username).trim(),
+            strip_address(text, &source, username).trim(),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn a_bot_address_at_the_start_is_measured_with_the_same_rules() {
+    assert_eq!(bot_address_len("@bot reviewer", "bot"), Some(4));
+    assert_eq!(bot_address_len("@BOT", "bot"), Some(4));
+    for text in ["@botx reviewer", "@bot_ x", "@bot@x", "bot x", "", " @bot"] {
+        assert_eq!(bot_address_len(text, "bot"), None, "{text:?}");
+    }
 }

@@ -2,4 +2,4 @@
 
 mod address;
 
-pub use address::{strip_address, strip_mention_keys};
+pub use address::{bot_address_len, leading_address_end, strip_address, strip_mention_keys};

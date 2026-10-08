@@ -13,6 +13,8 @@ use crate::{
     ids::ConsumerId,
 };
 
+pub mod addressing;
+mod roster;
 pub mod rules;
 mod trace;
 
