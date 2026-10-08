@@ -3807,6 +3807,66 @@
         ],
         "type": "object"
       },
+      "RoutingPutRequest": {
+        "additionalProperties": false,
+        "description": "Full replacement of routing policy; consumer bindings are managed separately.",
+        "properties": {
+          "addressing": {
+            "$ref": "#/components/schemas/Addressing"
+          },
+          "agent_events": {
+            "$ref": "#/components/schemas/AgentEventPolicy"
+          },
+          "default_consumer": {
+            "$ref": "#/components/schemas/DefaultConsumer"
+          },
+          "default_reply": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DefaultReply"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "default_targets": {
+            "items": {
+              "$ref": "#/components/schemas/ConsumerId"
+            },
+            "type": "array"
+          },
+          "expected_version": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_targets": {
+            "description": "Defaults to 4 and cannot exceed the gateway's routed channel turn cap.",
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "reply_label": {
+            "$ref": "#/components/schemas/ReplyLabel"
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/components/schemas/RoutingRule"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "expected_version",
+          "default_consumer",
+          "default_targets"
+        ],
+        "type": "object"
+      },
       "RoutingRule": {
         "additionalProperties": false,
         "description": "A rule: events matching `when` target `targets`.",
@@ -5293,6 +5353,146 @@
         "security": [
           {
             "serviceBearer": []
+          }
+        ],
+        "tags": [
+          "channels"
+        ]
+      }
+    },
+    "/channels/{channel_id}/routing": {
+      "delete": {
+        "operationId": "removeChannelRouting",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "channel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization owner UUID; caller must be an authorized NyxID organization administrator",
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "expected_version",
+            "required": true,
+            "schema": {
+              "format": "int64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cascade",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "channels"
+        ]
+      },
+      "put": {
+        "operationId": "putChannelRouting",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "channel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization owner UUID; caller must be an authorized NyxID organization administrator",
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RoutingPutRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
           }
         ],
         "tags": [

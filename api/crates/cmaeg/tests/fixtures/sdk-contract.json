@@ -3692,5 +3692,78 @@
       "provider_code": "policy_denied",
       "status": "refused"
     }
+  ],
+  "RoutingPutRequest": [
+    {
+      "default_consumer": {
+        "name": "lead",
+        "label": "Lead",
+        "mentionable": false,
+        "non_human": true,
+        "reply": {
+          "auto_final": true,
+          "destination": "origin"
+        },
+        "publish": {
+          "enabled": true,
+          "targets": [
+            "csm_00000000000a"
+          ]
+        }
+      },
+      "rules": [
+        {
+          "id": "lark-ops",
+          "when": {
+            "sources": [
+              "relay_lark"
+            ],
+            "kinds": [
+              "message",
+              "event"
+            ],
+            "chats": [
+              "fixture"
+            ],
+            "senders": [
+              "fixture"
+            ],
+            "event_types": [
+              "com.example.*"
+            ],
+            "event_sources": [
+              "urn:fixture"
+            ]
+          },
+          "targets": [
+            "default",
+            "csm_00000000000a"
+          ]
+        }
+      ],
+      "default_targets": [
+        "default"
+      ],
+      "addressing": {
+        "mentions": true,
+        "command": false,
+        "event_field": false,
+        "unknown_target_notice": true
+      },
+      "max_targets": 2,
+      "reply_label": "always",
+      "default_reply": {
+        "type": "telegram_chat",
+        "source_id": "telegram",
+        "chat_id": "-100",
+        "thread_id": "7"
+      },
+      "agent_events": {
+        "max_hops": 3,
+        "per_consumer_per_minute": 5,
+        "per_channel_per_minute": 20
+      },
+      "expected_version": 9
+    }
   ]
 }

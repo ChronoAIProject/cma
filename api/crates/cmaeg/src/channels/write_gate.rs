@@ -54,8 +54,10 @@ pub(crate) fn check(
     if extensions.legacy_compatible() {
         return Ok(());
     }
-    let carried_sources =
-        current.is_some_and(|current| carries_through(current, next, Extension::Sources));
+    let carried_sources = current.is_some_and(|current| {
+        carries_through(current, next, Extension::Sources)
+            || removes_inert_key_on_exit(current, next)
+    });
     let carried_routing =
         current.is_some_and(|current| carries_through(current, next, Extension::Routing));
     let sources = !extensions.sources || flags.dynamic_sources || carried_sources;
@@ -95,6 +97,29 @@ pub(crate) fn check(
 enum Extension {
     Sources,
     Routing,
+}
+
+/// A routing exit also strips an unused custom partition key. Remaining
+/// source extensions still carry through exactly; this cannot detach a
+/// source, change its credential or remove a key used by a custom source.
+fn removes_inert_key_on_exit(current: &ChannelDefinition, next: &ChannelDefinition) -> bool {
+    if current.routing.is_none()
+        || next.routing.is_some()
+        || !next.secrets.consumer_keys.is_empty()
+        || current.partition.custom_key.is_none()
+        || next.partition.custom_key.is_some()
+        || current
+            .sources
+            .iter()
+            .any(|source| matches!(source, Source::Custom { .. }))
+    {
+        return false;
+    }
+    let mut partition = current.partition.clone();
+    partition.custom_key = None;
+    let mut before = SourceExtension::of(current);
+    before.partition = &partition;
+    before == SourceExtension::of(next)
 }
 
 /// Whether `current` uses `extension` and `next` keeps it intact.

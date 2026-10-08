@@ -28,6 +28,8 @@ use utoipa::OpenApi;
         http::management::delete_channel,
         http::management::test_channel,
         http::management::rekey_channel,
+        http::routing::put,
+        http::routing::remove,
         http::callbacks::callback,
         http::telegram::callback,
         http::events::receive_event,

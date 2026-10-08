@@ -13,12 +13,14 @@ mod definition_sources;
 mod definition_write_tests;
 mod lifecycle;
 pub mod management;
+pub mod observer;
 mod requests;
 pub mod resolver;
 /// The routed channel the core's routing tests use, shared by this crate's tests.
 #[cfg(test)]
 #[path = "../../../cmaeg-core/tests/routing_policy/fixture.rs"]
 pub(crate) mod routing_fixture;
+pub mod routing_policy;
 pub(crate) mod state;
 pub mod target;
 mod test_turn;

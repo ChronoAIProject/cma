@@ -52,6 +52,8 @@ pub struct ManagementState {
     pub media_enabled: bool,
     /// Shared operator routing policy, including the management write switch.
     pub routing: crate::RoutingConfig,
+    pub routed_capacity: crate::RoutedCapacityConfig,
+    pub index: Arc<dyn super::observer::ChannelIndexObserver>,
     mutations: Arc<[Mutex<()>; 64]>,
     pub(crate) idempotency: Arc<Mutex<BTreeMap<(String, String), CachedResponse>>>,
 }
@@ -103,6 +105,8 @@ impl ManagementState {
             telegram: None,
             media_enabled: false,
             routing: crate::RoutingConfig::default(),
+            routed_capacity: crate::RoutedCapacityConfig::default(),
+            index: Arc::new(crate::turns::observer::NoopObserver),
             idempotency: Arc::new(Mutex::new(BTreeMap::new())),
             mutations: Arc::new(std::array::from_fn(|_| Mutex::new(()))),
         }
@@ -134,10 +138,18 @@ impl CreatorAuthState for ManagementState {
 #[derive(Debug)]
 pub enum ManagementError {
     Invalid(ValidationError),
+    InvalidReason(&'static str),
     Provider(ProviderError),
     Record(RecordError),
     NotFound,
-    Conflict { expected: u64, actual: Option<u64> },
+    Conflict {
+        expected: u64,
+        actual: Option<u64>,
+    },
+    ConflictReason {
+        detail: &'static str,
+        pointer: Option<String>,
+    },
     Unauthorized,
     Internal(String),
 }
@@ -146,6 +158,7 @@ impl fmt::Display for ManagementError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Invalid(error) => write!(formatter, "{error}"),
+            Self::InvalidReason(detail) => formatter.write_str(detail),
             Self::Provider(error) => write!(formatter, "{error}"),
             Self::Record(error) => write!(formatter, "{error}"),
             Self::NotFound => formatter.write_str("channel was not found"),
@@ -154,6 +167,12 @@ impl fmt::Display for ManagementError {
                     formatter,
                     "channel version conflict: expected {expected}, actual {actual:?}"
                 )
+            }
+            Self::ConflictReason { detail, pointer } => {
+                if let Some(pointer) = pointer {
+                    write!(formatter, "{pointer}: ")?;
+                }
+                formatter.write_str(detail)
             }
             Self::Unauthorized => formatter.write_str("management service authentication failed"),
             Self::Internal(detail) => formatter.write_str(detail),

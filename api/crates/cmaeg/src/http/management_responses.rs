@@ -89,6 +89,16 @@ pub(super) fn management_error(error: ManagementError) -> Response {
             ProblemCode::InvalidRequest,
             error.to_string(),
         ),
+        ManagementError::InvalidReason(detail) => (
+            StatusCode::BAD_REQUEST,
+            ProblemCode::InvalidRequest,
+            detail.into(),
+        ),
+        error @ ManagementError::ConflictReason { .. } => (
+            StatusCode::CONFLICT,
+            ProblemCode::Conflict,
+            error.to_string(),
+        ),
         ManagementError::Provider(crate::providers::ProviderError::UnknownProvider(detail))
         | ManagementError::Provider(crate::providers::ProviderError::InvalidRequest(detail)) => {
             (StatusCode::BAD_REQUEST, ProblemCode::InvalidRequest, detail)

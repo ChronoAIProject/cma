@@ -36,6 +36,10 @@ pub fn management_router(state: ManagementState) -> Router {
         )
         .route("/v1/channels/{channel_id}/test", post(test_channel))
         .route("/v1/channels/{channel_id}/rekey", post(rekey_channel))
+        .route(
+            "/v1/channels/{channel_id}/routing",
+            axum::routing::put(super::routing::put).delete(super::routing::remove),
+        )
         .with_state(state)
         .layer(axum::middleware::from_fn(protocol_headers))
 }

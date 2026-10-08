@@ -197,3 +197,6 @@ mod write_gate;
 
 #[path = "management/routing.rs"]
 mod routing;
+
+#[path = "management/routing_policy.rs"]
+mod routing_policy;

@@ -19,6 +19,7 @@ pub mod readiness;
 pub mod reply_targets;
 #[doc(hidden)]
 pub mod request_start;
+pub mod routing;
 pub mod schema;
 pub mod telegram;
 pub mod tools;
