@@ -54,10 +54,14 @@ pub(crate) async fn channel(
     let Some(view) = owned_channel(&console, &authorized, record).await else {
         return pages::not_found();
     };
+    let signed_in = SignedIn::load(&console, &cell).await;
     let query = query.map(|Query(query)| query).unwrap_or_default();
     let tab = Tab::parse(query.tab.as_deref());
     let (head, content) = match tab {
-        Tab::Overview => (String::new(), overview_tab(&console, &view)),
+        Tab::Overview => (
+            String::new(),
+            overview_tab(&console, &signed_in, &view, None),
+        ),
         Tab::Sources => (String::new(), sources_tab(&console, &authorized, &view)),
         Tab::Consumers => (String::new(), consumers::render(&view)),
         Tab::Routing => (
@@ -93,7 +97,6 @@ pub(crate) async fn channel(
             (String::new(), producers::render(&producers))
         }
     };
-    let signed_in = SignedIn::load(&console, &cell).await;
     signed_in.render(
         StatusCode::OK,
         &channel::title(&view),
@@ -155,13 +158,20 @@ pub(crate) async fn owned_channel(
     console.directory().channel(authorized, &record).await
 }
 
-fn overview_tab(console: &Console, view: &ChannelView) -> String {
+/// The Overview tab; `link_error` re-renders a refused paste-link.
+pub(crate) fn overview_tab(
+    console: &Console,
+    signed_in: &SignedIn,
+    view: &ChannelView,
+    link_error: Option<&str>,
+) -> String {
+    let csrf = signed_in.csrf(overview::LINK_PATH, view.record.as_str());
     overview::render(&OverviewView {
         view,
         public_url: console.public_url(),
         sources: console.source_changes().availability(),
         multi_consumer: console.multi_consumer(),
-        unknown_id: "<span class=\"empty\">Not observed since restart.</span>",
+        unknown_id: &overview::paste_form(&view.record, &csrf, link_error),
     })
 }
 

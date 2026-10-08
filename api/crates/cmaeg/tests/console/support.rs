@@ -317,6 +317,16 @@ impl Harness {
     }
 }
 
+/// The CSRF value the console mints for the route template `action` on
+/// `record` with a session's `key`: base64url(HMAC-SHA256(key, action ␟
+/// record)). Tests use it for forms no fixture page shows.
+pub fn csrf_token(key: &[u8; 32], action: &str, record: &str) -> String {
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+    let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, key);
+    let tag = ring::hmac::sign(&key, format!("{action}\u{1f}{record}").as_bytes());
+    URL_SAFE_NO_PAD.encode(tag.as_ref())
+}
+
 /// The CSRF value of the form posting to `action` in `page`.
 pub fn csrf_for(page: &str, action: &str) -> String {
     let form = format!("action=\"{action}\"><input type=\"hidden\" name=\"csrf\" value=\"");

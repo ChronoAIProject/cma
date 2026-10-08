@@ -12,6 +12,7 @@ use futures_util::future::BoxFuture;
 use super::{
     activity::{ActivityEntry, ActivityFilter, RecentActivity},
     authority::Authorized,
+    channel_ids::LinkError,
     producers::ProducerView,
     summary::ChannelSummary,
 };
@@ -88,6 +89,15 @@ pub trait ChannelDirectory: Send + Sync {
     /// `record`'s custom producers, most recently seen first, when `auth`
     /// owns it.
     fn producers(&self, auth: &Authorized, record: &RecordId) -> Option<Vec<ProducerView>>;
+
+    /// Remember `id` as `record`'s displayed channel id when `auth` owns the
+    /// record and the id opens to it. Nothing is re-sealed.
+    fn link<'a>(
+        &'a self,
+        auth: &'a Authorized,
+        record: &'a RecordId,
+        id: &'a ChannelId,
+    ) -> BoxFuture<'a, Result<(), LinkError>>;
 }
 
 /// No channel memory: every owner has an empty list.
@@ -131,5 +141,14 @@ impl ChannelDirectory for NoChannels {
 
     fn producers(&self, _auth: &Authorized, _record: &RecordId) -> Option<Vec<ProducerView>> {
         None
+    }
+
+    fn link<'a>(
+        &'a self,
+        _auth: &'a Authorized,
+        _record: &'a RecordId,
+        _id: &'a ChannelId,
+    ) -> BoxFuture<'a, Result<(), LinkError>> {
+        Box::pin(std::future::ready(Err(LinkError::NotFound)))
     }
 }

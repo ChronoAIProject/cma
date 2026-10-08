@@ -318,6 +318,15 @@ impl ChannelDirectory for ConsoleMemory {
     fn producers(&self, auth: &Authorized, record: &RecordId) -> Option<Vec<ProducerView>> {
         ConsoleMemory::producers(self, auth, record)
     }
+
+    fn link<'a>(
+        &'a self,
+        auth: &'a Authorized,
+        record: &'a RecordId,
+        id: &'a ChannelId,
+    ) -> BoxFuture<'a, Result<(), LinkError>> {
+        ConsoleMemory::link(self, auth, record, id).boxed()
+    }
 }
 
 #[cfg(test)]

@@ -6,8 +6,8 @@
 use axum::routing::{get, post, MethodRouter};
 
 use super::{
-    channel_routes, login,
-    pages::{channel, event},
+    channel_routes, login, mutations,
+    pages::{channel, event, overview},
     redirect, routes, Console,
 };
 
@@ -67,6 +67,11 @@ pub const ROUTES: &[ConsoleRoute] = &[
         path: event::PATH,
         access: Access::Authorized,
     },
+    ConsoleRoute {
+        method: "POST",
+        path: overview::LINK_PATH,
+        access: Access::Authorized,
+    },
 ];
 
 /// The handler of `route`. A table entry without a handler fails the first
@@ -81,6 +86,7 @@ pub(crate) fn handler(route: &ConsoleRoute) -> MethodRouter<Console> {
         ("POST", redirect::OWNER) => post(routes::switch_owner),
         ("GET", channel::PATH) => get(channel_routes::channel),
         ("GET", event::PATH) => get(channel_routes::event),
+        ("POST", overview::LINK_PATH) => post(mutations::link),
         (method, path) => unreachable!("console route {method} {path} has no handler"),
     }
 }

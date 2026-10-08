@@ -3,7 +3,7 @@
 //! console within 60 s; plus one cache fill per session, refresh
 //! classification, fail-closed unavailability, locking, expiry and the route
 //! table walk.
-use super::support::{csrf_for, metrics, sample, Harness};
+use super::support::{csrf_for, csrf_token, metrics, sample, Harness};
 use cmaeg::console::{
     authority::Denied,
     session::{Flash, OwnerSelection, SessionCell},
@@ -15,6 +15,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// A record id for the route walk's channel routes.
+const RECORD: &str = "00000000-0000-4000-8000-000000000001";
 /// One second past REST's 60 s success TTL.
 const PAST_CACHE: Duration = Duration::from_secs(61);
 
@@ -395,18 +397,32 @@ async fn every_route_but_sign_in_plumbing_derives_authority() {
     let home = page(&harness, &sid).await;
     harness.nyxid.oauth.down.store(true, Ordering::SeqCst);
     harness.advance(PAST_CACHE).await;
+    let key = harness
+        .console
+        .sessions()
+        .find(&sid)
+        .unwrap()
+        .meta()
+        .csrf_key;
     for route in ROUTES.iter().filter(|route| route.access != Access::Public) {
+        let path = route
+            .path
+            .replace("{record_id}", RECORD)
+            .replace("{source_id}", "custom")
+            .replace("{event_key}", "0123456789abcdef");
         let (anonymous, authorized) = match route.method {
-            "GET" => (
-                harness.get(route.path).await,
-                harness.get_as(route.path, &sid).await,
-            ),
+            "GET" => (harness.get(&path).await, harness.get_as(&path, &sid).await),
             _ => {
-                let csrf = csrf_for(&home, route.path);
+                // Channel forms appear only on channel pages; mint theirs.
+                let csrf = if route.path.contains("{record_id}") {
+                    csrf_token(&key, route.path, RECORD)
+                } else {
+                    csrf_for(&home, route.path)
+                };
                 (
-                    harness.post(route.path, None, None, &[]).await,
+                    harness.post(&path, None, None, &[]).await,
                     harness
-                        .post(route.path, Some(&sid), None, &[("csrf", &csrf)])
+                        .post(&path, Some(&sid), None, &[("csrf", &csrf)])
                         .await,
                 )
             }

@@ -21,6 +21,8 @@ mod owner;
 mod pages;
 #[path = "console/pages_event.rs"]
 mod pages_event;
+#[path = "console/pages_link.rs"]
+mod pages_link;
 #[path = "console/pages_support.rs"]
 pub mod pages_support;
 #[path = "console/pages_tabs.rs"]

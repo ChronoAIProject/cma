@@ -25,6 +25,7 @@ mod login;
 mod login_limit;
 pub mod mask;
 pub mod memory;
+mod mutations;
 pub mod observer;
 mod oidc;
 mod orgs;

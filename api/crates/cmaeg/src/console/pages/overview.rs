@@ -1,11 +1,16 @@
 //! The Overview tab: identity, endpoints, settings, the record-size meter,
 //! which secrets are set (never their values) and the flag banners.
-use cmaeg_core::profile::NyxIdIdentityKind;
+use cmaeg_core::{ids::RecordId, profile::NyxIdIdentityKind};
 
-use super::{banners, escape, facts};
+use super::{banners, channel::path, escape, facts};
 use crate::console::{
     detail::ChannelDetail, directory::ChannelView, source_changes::SourceAvailability,
 };
+
+/// The route template of the paste-link form.
+pub(crate) const LINK_PATH: &str = "/console/channels/{record_id}/link";
+/// The longest channel id the form accepts.
+const MAX_CHANNEL_ID: usize = 1024;
 
 /// About the definition size a sealed CMA record can hold.
 pub(crate) const RECORD_BYTES_SHOWN: u32 = 48 * 1024;
@@ -68,6 +73,23 @@ pub(crate) fn render(overview: &OverviewView<'_>) -> String {
         ),
     }
     html
+}
+
+/// Where the channel id would be: a note and the form that links a pasted
+/// id after checking it opens to this record. A refusal's message is fixed
+/// console text; the pasted value is never echoed.
+pub(crate) fn paste_form(record: &RecordId, csrf: &str, error: Option<&str>) -> String {
+    let error = error.map_or_else(String::new, |message| {
+        format!(
+            "<p class=\"notice error\" role=\"alert\">{}</p>",
+            escape(message)
+        )
+    });
+    format!(
+        "<span class=\"empty\">Not observed since restart; paste to link.</span>{error}<form class=\"filter\" method=\"post\" action=\"{}\"><input type=\"hidden\" name=\"csrf\" value=\"{}\"><label for=\"channel_id\">Channel id</label><input id=\"channel_id\" name=\"channel_id\" maxlength=\"{MAX_CHANNEL_ID}\" autocomplete=\"off\" required><button type=\"submit\" class=\"secondary\">Link</button></form>",
+        escape(&format!("{}/link", path(record))),
+        escape(csrf),
+    )
 }
 
 /// The addresses senders use, built only from a channel id the console has
