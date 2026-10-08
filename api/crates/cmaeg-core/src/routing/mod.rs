@@ -14,6 +14,7 @@ use crate::{
 };
 
 pub mod addressing;
+pub mod event_field;
 mod roster;
 pub mod rules;
 mod trace;
