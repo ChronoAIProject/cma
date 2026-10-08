@@ -196,3 +196,52 @@ async fn a_detach_confirmation_names_blocking_references_and_rules_left_inactive
     assert_no_secret(&lark, "detach");
     world.close().await;
 }
+
+#[tokio::test]
+async fn every_page_of_a_routed_channel_escapes_labels_and_shows_no_secret() {
+    const SCRIPT: &str = "<script>alert(1)</script>";
+    const IMG: &str = "\"><img src=x>";
+    let world =
+        World::with_sources(cmaeg::console::source_changes::SourceAvailability::Available).await;
+    let target = super::pages_support::record(1);
+    world.store(
+        routed_support::routed_with(&target, "alice", SCRIPT, |value| {
+            value["routing"]["default_consumer"]["label"] = SCRIPT.into();
+            value["routing"]["consumers"][0]["label"] = IMG.into();
+        }),
+        1,
+    );
+    world.traffic(&target, "https://sensors.example/line-1");
+    let (sid, _) = world.harness.sign_in("alice", "/console").await;
+    let mut paths = vec!["/console".to_owned()];
+    paths.extend(
+        super::pages_support::TABS
+            .iter()
+            .map(|name| format!("/console/channels/{target}?tab={name}")),
+    );
+    paths.push(format!(
+        "/console/channels/{target}/events/{}",
+        super::pages_support::EVENT
+    ));
+    paths.push(format!(
+        "/console/channels/{target}/sources/relay_lark/detach"
+    ));
+    let mut all = String::new();
+    for path in paths {
+        let response = world.harness.get_as(&path, &sid).await;
+        assert_eq!(response.status(), 200, "{path}");
+        let body = response.text().await.unwrap();
+        let lower = body.to_lowercase();
+        assert!(!lower.contains("<script"), "{path} carries a script");
+        assert!(!lower.contains("<img"), "{path} carries an image tag");
+        assert_no_secret(&body, &path);
+        all.push_str(&body);
+    }
+    for escaped in [
+        "&lt;script&gt;alert(1)&lt;/script&gt;",
+        "&quot;&gt;&lt;img src=x&gt;",
+    ] {
+        assert!(all.contains(escaped), "{escaped} is not shown escaped");
+    }
+    world.close().await;
+}
