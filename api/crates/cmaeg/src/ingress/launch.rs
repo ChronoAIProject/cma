@@ -2,7 +2,7 @@
 use crate::channels::resolver::ResolvedChannel;
 use cmaeg_core::{
     activity::Activity,
-    ids::{ConversationId, IdempotencyKey},
+    ids::{ConsumerId, ConversationId, IdempotencyKey},
     problem::{Problem, ProblemCode},
     seal::EventRef,
 };
@@ -20,6 +20,8 @@ pub struct LaunchRequest {
     pub received_at: Instant,
     pub trace: tracing::Span,
     pub timing: Option<crate::telemetry::timing::IngressTiming>,
+    /// The consumer that serves this turn. None means the default consumer.
+    pub consumer: Option<ConsumerId>,
 }
 #[derive(Debug)]
 pub enum LaunchOutcome {

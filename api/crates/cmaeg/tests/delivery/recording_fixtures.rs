@@ -139,6 +139,7 @@ pub fn turn(
 ) -> Arc<LaunchRequest> {
     Arc::new(LaunchRequest {
         timing: None,
+        consumer: None,
         trace: tracing::Span::none(),
         channel: channel.clone(),
         idempotency_key: IdempotencyKey::from_event(&activity.event_id),

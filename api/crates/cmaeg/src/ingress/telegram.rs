@@ -211,6 +211,7 @@ pub(crate) fn launch(
     .map_err(|_| invalid())?;
     Ok(Built::Launch(Box::new(LaunchRequest {
         timing: None,
+        consumer: None,
         trace: tracing::Span::current(),
         channel,
         activity,

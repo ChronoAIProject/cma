@@ -205,6 +205,7 @@ impl ConnectionService {
             received_at: Instant::now(),
             trace: tracing::Span::current(),
             timing: None,
+            consumer: None,
         })
     }
     pub async fn notify_completion(

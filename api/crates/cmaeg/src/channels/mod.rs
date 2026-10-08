@@ -2,6 +2,7 @@
 
 pub mod audit;
 pub mod cache;
+mod consumers;
 pub mod creation;
 pub mod definition;
 mod definition_sources;

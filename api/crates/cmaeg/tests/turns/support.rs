@@ -117,6 +117,7 @@ impl Fixture {
         .unwrap();
         LaunchRequest {
             timing: None,
+            consumer: None,
             trace: tracing::Span::current(),
             channel: self.channel.clone(),
             idempotency_key: IdempotencyKey::from_event(&activity.event_id),
