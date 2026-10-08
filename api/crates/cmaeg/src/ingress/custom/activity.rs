@@ -21,6 +21,17 @@ pub fn launch_request(
     received_at: Instant,
     now: i64,
 ) -> Result<LaunchRequest, &'static str> {
+    let activity = normalize(&channel, ce, attachments)?;
+    seal(channel, activity, reply, keys, received_at, now)
+}
+
+/// Normalize and validate without allocating a stream waiter or sealing a reply.
+/// Routed ingress can decide its targets before it acquires either resource.
+pub fn normalize(
+    channel: &ResolvedChannel,
+    ce: CloudEvent,
+    attachments: Vec<Attachment>,
+) -> Result<Activity, &'static str> {
     // A chat-keyed channel partitions custom events by its `custom_key`. A
     // chat key can only remain on a definition no writer could store.
     let conversation = match channel.definition.partition.key_for(&SourceKind::Custom) {
@@ -54,6 +65,19 @@ pub fn launch_request(
         routing: None,
     };
     activity.validate().map_err(|_| "activity_invalid")?;
+    Ok(activity)
+}
+
+/// Bind the final reply address to a validated activity exactly once.
+pub fn seal(
+    channel: Arc<ResolvedChannel>,
+    activity: Activity,
+    reply: ReplyAddress,
+    keys: &MasterKeyRing,
+    received_at: Instant,
+    now: i64,
+) -> Result<LaunchRequest, &'static str> {
+    let event_id = activity.event_id.clone();
     let partition = activity.partition_key(&channel.definition.partition);
     let conversation_id = ConversationId::derive(
         keys,
