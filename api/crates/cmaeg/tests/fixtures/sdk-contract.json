@@ -56,6 +56,30 @@
         "platform": "telegram",
         "route_id": "fixture",
         "type": "nyxid_relay"
+      },
+      "routing": {
+        "addressing_bytes": 3,
+        "causation": {
+          "hop": 2,
+          "origin_source_id": "relay_lark",
+          "parent_event_id": "fixture",
+          "published_by": "csm_00000000000b",
+          "reply": "default",
+          "root": "0123456789abcdef0123456789abcdef"
+        },
+        "resolution": "agent_event",
+        "rule_id": "lark-ops",
+        "source_id": "agent",
+        "targets": [
+          {
+            "id": "csm_00000000000a",
+            "name": "reviewer"
+          },
+          {
+            "id": "default",
+            "name": "assistant"
+          }
+        ]
       }
     }
   ],
@@ -1417,7 +1441,31 @@
           "text": "fixture",
           "type": "message"
         },
-        "occurred_at": "fixture"
+        "occurred_at": "fixture",
+        "routing": {
+          "addressing_bytes": 3,
+          "causation": {
+            "hop": 2,
+            "origin_source_id": "relay_lark",
+            "parent_event_id": "fixture",
+            "published_by": "csm_00000000000b",
+            "reply": "default",
+            "root": "0123456789abcdef0123456789abcdef"
+          },
+          "resolution": "agent_event",
+          "rule_id": "lark-ops",
+          "source_id": "agent",
+          "targets": [
+            {
+              "id": "csm_00000000000a",
+              "name": "reviewer"
+            },
+            {
+              "id": "default",
+              "name": "assistant"
+            }
+          ]
+        }
       },
       "activity_verified": true,
       "capabilities": {
@@ -1588,6 +1636,30 @@
           "platform": "telegram",
           "route_id": "fixture",
           "type": "nyxid_relay"
+        },
+        "routing": {
+          "addressing_bytes": 3,
+          "causation": {
+            "hop": 2,
+            "origin_source_id": "relay_lark",
+            "parent_event_id": "fixture",
+            "published_by": "csm_00000000000b",
+            "reply": "default",
+            "root": "0123456789abcdef0123456789abcdef"
+          },
+          "resolution": "agent_event",
+          "rule_id": "lark-ops",
+          "source_id": "agent",
+          "targets": [
+            {
+              "id": "csm_00000000000a",
+              "name": "reviewer"
+            },
+            {
+              "id": "default",
+              "name": "assistant"
+            }
+          ]
         }
       },
       "channel_id": "fixture",
@@ -1964,7 +2036,31 @@
         "text": "fixture",
         "type": "message"
       },
-      "occurred_at": "fixture"
+      "occurred_at": "fixture",
+      "routing": {
+        "addressing_bytes": 3,
+        "causation": {
+          "hop": 2,
+          "origin_source_id": "relay_lark",
+          "parent_event_id": "fixture",
+          "published_by": "csm_00000000000b",
+          "reply": "default",
+          "root": "0123456789abcdef0123456789abcdef"
+        },
+        "resolution": "agent_event",
+        "rule_id": "lark-ops",
+        "source_id": "agent",
+        "targets": [
+          {
+            "id": "csm_00000000000a",
+            "name": "reviewer"
+          },
+          {
+            "id": "default",
+            "name": "assistant"
+          }
+        ]
+      }
     }
   ],
   "PublicChannelDefinition": [
@@ -3338,5 +3434,60 @@
     "relay_lark",
     "custom",
     "agent"
+  ],
+  "ActivityRouting": [
+    {
+      "addressing_bytes": 3,
+      "causation": {
+        "hop": 2,
+        "origin_source_id": "relay_lark",
+        "parent_event_id": "fixture",
+        "published_by": "csm_00000000000b",
+        "reply": "default",
+        "root": "0123456789abcdef0123456789abcdef"
+      },
+      "resolution": "agent_event",
+      "rule_id": "lark-ops",
+      "source_id": "agent",
+      "targets": [
+        {
+          "id": "csm_00000000000a",
+          "name": "reviewer"
+        },
+        {
+          "id": "default",
+          "name": "assistant"
+        }
+      ]
+    }
+  ],
+  "Causation": [
+    {
+      "hop": 2,
+      "origin_source_id": "relay_lark",
+      "parent_event_id": "fixture",
+      "published_by": "csm_00000000000b",
+      "reply": "default",
+      "root": "0123456789abcdef0123456789abcdef"
+    }
+  ],
+  "ConsumerTarget": [
+    {
+      "id": "csm_00000000000a",
+      "name": "reviewer"
+    },
+    {
+      "id": "default",
+      "name": "assistant"
+    }
+  ],
+  "RouteResolution": [
+    "default",
+    "rule",
+    "mention",
+    "command",
+    "event_field",
+    "interaction",
+    "agent_event"
   ]
 }

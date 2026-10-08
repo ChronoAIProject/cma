@@ -32,6 +32,17 @@
           "occurred_at": {
             "type": "string"
           },
+          "routing": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ActivityRouting",
+                "description": "The consumers a routed event reaches; absent on every unrouted event,\nso an activity without routing keeps its exact bytes and digest."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "schema_version": {
             "format": "int32",
             "minimum": 0,
@@ -200,6 +211,60 @@
           "event"
         ],
         "type": "string"
+      },
+      "ActivityRouting": {
+        "additionalProperties": false,
+        "description": "Which consumers an event reaches and why. Present only on routed events;\nan activity without it is exactly the activity a channel without routing\nhas always produced.",
+        "properties": {
+          "addressing_bytes": {
+            "description": "Byte offset into the raw message text (into `args` for a `to` command)\nwhere the unaddressed remainder begins: leading bot addresses, mention\nkeys and consumer addressing come before it. Omitted when 0.",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "causation": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Causation",
+                "description": "Present exactly on hand-off events."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resolution": {
+            "$ref": "#/components/schemas/RouteResolution"
+          },
+          "rule_id": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RuleId",
+                "description": "The rule that selected the targets, when a rule did."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_id": {
+            "$ref": "#/components/schemas/SourceId",
+            "description": "The source slot the event arrived on; `agent` for a hand-off."
+          },
+          "targets": {
+            "description": "1..=8 consumers with unique ids. `targets[0]` is the primary consumer.",
+            "items": {
+              "$ref": "#/components/schemas/ConsumerTarget"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "source_id",
+          "resolution",
+          "targets"
+        ],
+        "type": "object"
       },
       "Actor": {
         "additionalProperties": false,
@@ -1292,6 +1357,49 @@
         ],
         "type": "object"
       },
+      "Causation": {
+        "additionalProperties": false,
+        "description": "What caused a hand-off: the event it continues and the chain it belongs to.",
+        "properties": {
+          "hop": {
+            "description": "The hand-off's position in its chain, 1..=4.",
+            "format": "int32",
+            "maximum": 4,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "origin_source_id": {
+            "$ref": "#/components/schemas/SourceId",
+            "description": "The source slot the chain's first event arrived on."
+          },
+          "parent_event_id": {
+            "$ref": "#/components/schemas/EventId",
+            "description": "The event whose turn published this one."
+          },
+          "published_by": {
+            "$ref": "#/components/schemas/ConsumerId",
+            "description": "The consumer that published this event."
+          },
+          "reply": {
+            "$ref": "#/components/schemas/ReplyChoice",
+            "description": "Where the targets' automatic replies go."
+          },
+          "root": {
+            "description": "The chain's record-scoped root id: 32 lowercase hex digits.",
+            "pattern": "^[0-9a-f]{32}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "parent_event_id",
+          "root",
+          "published_by",
+          "hop",
+          "reply",
+          "origin_source_id"
+        ],
+        "type": "object"
+      },
       "ChannelCreateRequest": {
         "additionalProperties": false,
         "description": "Request wrapper used by channel creation.",
@@ -1724,6 +1832,23 @@
             "description": "Where automatic outputs go."
           }
         },
+        "type": "object"
+      },
+      "ConsumerTarget": {
+        "additionalProperties": false,
+        "description": "One consumer an event reaches.",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/ConsumerId"
+          },
+          "name": {
+            "$ref": "#/components/schemas/ConsumerName"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
         "type": "object"
       },
       "ContextConfig": {
@@ -3092,6 +3217,17 @@
           },
           "occurred_at": {
             "type": "string"
+          },
+          "routing": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ActivityRouting",
+                "description": "The activity's routing decision; absent on every unrouted event."
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -3486,6 +3622,19 @@
           "expires_at"
         ],
         "type": "object"
+      },
+      "RouteResolution": {
+        "description": "How an event's targets were resolved.",
+        "enum": [
+          "default",
+          "rule",
+          "mention",
+          "command",
+          "event_field",
+          "interaction",
+          "agent_event"
+        ],
+        "type": "string"
       },
       "RoutingPolicy": {
         "additionalProperties": false,

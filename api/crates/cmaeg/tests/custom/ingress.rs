@@ -283,6 +283,9 @@ async fn long_source_and_subject_survive_in_activity_with_compact_reference_and_
     assert_eq!(context["activity"]["actor"]["id"], source);
     assert_eq!(context["activity"]["conversation"]["id"], subject);
     assert_eq!(context["capabilities"]["buttons"], "json");
+    // A legacy custom event reads back verified, with no routing decision.
+    assert_eq!(context["activity_verified"], true);
+    assert!(context["activity"].get("routing").is_none());
     app.drain().await;
 }
 #[tokio::test]

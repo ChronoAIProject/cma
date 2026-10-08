@@ -51,6 +51,7 @@ pub fn launch_request(
         occurred_at,
         source: SourceKind::Custom,
         kind: ActivityKind::Event { ce, attachments },
+        routing: None,
     };
     activity.validate().map_err(|_| "activity_invalid")?;
     let partition = activity.partition_key(&channel.definition.partition);

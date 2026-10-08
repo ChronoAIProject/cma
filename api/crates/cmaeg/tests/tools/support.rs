@@ -17,10 +17,10 @@ use cmaeg::{
     turns::TurnTracker,
 };
 use cmaeg_core::{
-    activity::Activity,
+    activity::{Activity, ActivityRouting},
     ids::MessageRef,
     message::{OutboundMessage, RenderingOutcome, RenderingReport},
-    seal::{EventRef, MessageRefPayload},
+    seal::{event_ref::activity_digest, EventRef, MasterKeyRing, MessageRefPayload},
 };
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -63,18 +63,28 @@ impl App {
         Self::with_text("hello").await
     }
     pub async fn with_text(text: &str) -> Self {
-        Self::build("telegram", text, None).await
+        Self::build("telegram", text, None, None).await
     }
     /// A group message on `platform` carrying the envelope's default text.
     pub async fn on(platform: &str) -> Self {
-        Self::build(platform, "hello", None).await
+        Self::build(platform, "hello", None, None).await
     }
     /// A message carrying `setup`'s attachments, with a media service over
     /// its fakes. `event_ref` is the media event's reference.
     pub async fn with_media(setup: MediaSetup) -> Self {
-        Self::build("telegram", "hello", Some(setup)).await
+        Self::build("telegram", "hello", Some(setup), None).await
     }
-    async fn build(platform: &str, text: &str, media: Option<MediaSetup>) -> Self {
+    /// A message whose stored activity carries `routing`, bound into its
+    /// event_ref's digest as routed ingress binds it.
+    pub async fn routed(routing: ActivityRouting) -> Self {
+        Self::build("telegram", "hello", None, Some(routing)).await
+    }
+    async fn build(
+        platform: &str,
+        text: &str,
+        media: Option<MediaSetup>,
+        routing: Option<ActivityRouting>,
+    ) -> Self {
         let key = format!("nyxid_ag_{}", uuid::Uuid::new_v4().simple());
         let edit = media.as_ref().map(|setup| setup.edit);
         let fixture = Fixture::on(
@@ -100,6 +110,9 @@ impl App {
         let mut request = fixture.recorder.requests.lock().unwrap().pop().unwrap();
         if let Some(setup) = &media {
             request = setup.retarget(request, &fixture.state.master_keys);
+        }
+        if let Some(routing) = routing {
+            request = route(request, routing, &fixture.state.master_keys);
         }
         let event_ref = request.event_ref.clone();
         let activity = request.activity.clone();
@@ -254,6 +267,23 @@ impl App {
             .await
             .unwrap()
     }
+}
+/// Bind `routing` into the request's activity and reseal its event_ref over
+/// the routed activity's digest.
+fn route(
+    mut request: LaunchRequest,
+    routing: ActivityRouting,
+    keys: &MasterKeyRing,
+) -> LaunchRequest {
+    request.activity.routing = Some(routing);
+    let mut payload = request
+        .event_ref
+        .open(keys, super::relay_support::now())
+        .unwrap()
+        .payload;
+    payload.activity_sha256 = Some(activity_digest(&request.activity));
+    request.event_ref = EventRef::seal(&payload, keys).unwrap();
+    request
 }
 async fn store_context(provider: &ProviderClient, request: LaunchRequest) {
     let snapshot = EventContextSnapshot {

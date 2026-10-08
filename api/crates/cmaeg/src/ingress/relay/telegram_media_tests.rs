@@ -389,6 +389,7 @@ fn activity(media: TelegramMedia, source: &SourceKind) -> Activity {
         },
         occurred_at: "2026-10-07T00:00:00Z".into(),
         source: source.clone(),
+        routing: None,
     }
 }
 

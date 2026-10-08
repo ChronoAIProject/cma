@@ -208,7 +208,11 @@ async fn event_context_tools() {
         .send()
         .await
         .unwrap();
-    assert_eq!(read.status(), 200, "{}", read.text().await.unwrap());
+    assert_eq!(read.status(), 200);
+    // A legacy relay event reads back verified, with no routing decision.
+    let context: Value = read.json().await.unwrap();
+    assert_eq!(context["activity_verified"], true);
+    assert!(context["activity"].get("routing").is_none());
     let verified = app
         .client
         .post(&url)

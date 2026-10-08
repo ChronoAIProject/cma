@@ -24,6 +24,8 @@ pub use attachment::{
 };
 mod attachment_facts;
 pub use attachment_facts::FactRepairs;
+mod routing;
+pub use routing::{ActivityRouting, Causation, ConsumerTarget, RouteResolution, MAX_HOPS};
 
 pub const ACTIVITY_SCHEMA_VERSION: u16 = 1;
 
@@ -37,6 +39,10 @@ pub struct Activity {
     pub conversation: ActivityConversation,
     pub occurred_at: String,
     pub source: SourceKind,
+    /// The consumers a routed event reaches; absent on every unrouted event,
+    /// so an activity without routing keeps its exact bytes and digest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub routing: Option<ActivityRouting>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
@@ -188,6 +194,9 @@ impl Activity {
                 })?;
                 validate_attachments(attachments, &self.source, "/kind/attachments")?;
             }
+        }
+        if let Some(routing) = &self.routing {
+            routing.validate(&self.kind)?;
         }
         Ok(())
     }

@@ -81,6 +81,7 @@ pub(crate) fn launch_request(
             platform,
             route_id: payload.conversation.id.clone(),
         },
+        routing: None,
     };
     let activity = match media_guard::admit(activity, "nyxid_relay") {
         Ok(Admit::Ok(activity)) => *activity,
