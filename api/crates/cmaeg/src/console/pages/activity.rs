@@ -89,8 +89,8 @@ pub(crate) fn render(activity: &ActivityView<'_>) -> String {
 
 fn form(activity: &ActivityView<'_>) -> String {
     let filter = activity.filter;
-    let options = |choices: &[(String, String)], chosen: Option<&str>| -> String {
-        let mut html = String::from("<option value=\"\">Any</option>");
+    let options = |empty: &str, choices: &[(String, String)], chosen: Option<&str>| -> String {
+        let mut html = format!("<option value=\"\">{empty}</option>");
         for (value, label) in choices {
             let selected = if Some(value.as_str()) == chosen {
                 " selected"
@@ -128,10 +128,18 @@ fn form(activity: &ActivityView<'_>) -> String {
     format!(
         "<form class=\"filter\" method=\"get\" action=\"{}\"><input type=\"hidden\" name=\"tab\" value=\"activity\"><label for=\"consumer\">Consumer</label><select id=\"consumer\" name=\"consumer\">{}</select><label for=\"outcome\">Outcome</label><select id=\"outcome\" name=\"outcome\">{}</select><label for=\"source\">Source</label><select id=\"source\" name=\"source\">{}</select><label for=\"refresh\">Refresh</label><select id=\"refresh\" name=\"refresh\">{}</select><button type=\"submit\" class=\"secondary\">Apply</button></form>",
         escape(&path(&activity.view.record)),
-        options(&consumers, filter.consumer.as_ref().map(ConsumerId::as_str)),
-        options(&outcomes, filter.outcome.map(launch_label)),
-        options(&sources, filter.source.as_deref()),
-        options(&refresh, activity.refresh.map(|seconds| seconds.to_string()).as_deref()),
+        options(
+            "Any",
+            &consumers,
+            filter.consumer.as_ref().map(ConsumerId::as_str)
+        ),
+        options("Any", &outcomes, filter.outcome.map(launch_label)),
+        options("Any", &sources, filter.source.as_deref()),
+        options(
+            "Off",
+            &refresh,
+            activity.refresh.map(|seconds| seconds.to_string()).as_deref()
+        ),
     )
 }
 
@@ -291,6 +299,35 @@ mod tests {
         let dropped = filter(Some("<script>"), Some("maybe"), Some("\"><img src=x>"));
         assert!(dropped.consumer.is_none() && dropped.outcome.is_none());
         assert!(dropped.source.is_none());
+    }
+
+    #[test]
+    fn the_refresh_choice_reads_off_until_one_is_chosen() {
+        use crate::console::{
+            directory::ChannelView,
+            summary::{ChannelSummary, SummaryStatus},
+            test_support::record,
+        };
+        let view = ChannelView {
+            record: record(1),
+            version: 1,
+            summary: std::sync::Arc::new(ChannelSummary::without_definition(
+                "alice",
+                SummaryStatus::Ready,
+            )),
+            channel_id: None,
+        };
+        let page = |refresh| {
+            render(&ActivityView {
+                view: &view,
+                entries: &[],
+                filter: &ActivityFilter::default(),
+                refresh,
+            })
+        };
+        assert!(page(None)
+            .contains("<select id=\"refresh\" name=\"refresh\"><option value=\"\">Off</option>"));
+        assert!(page(Some(30)).contains("<option value=\"30\" selected>every 30 s</option>"));
     }
 
     #[test]

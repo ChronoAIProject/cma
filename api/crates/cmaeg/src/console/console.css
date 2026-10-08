@@ -25,6 +25,7 @@ table { width: 100%; border-collapse: collapse; font-size: 14px; }
 th, td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid var(--line); }
 th { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
 code { font-size: 13px; overflow-wrap: anywhere; }
+td code { overflow-wrap: normal; white-space: nowrap; }
 .chip { display: inline-block; margin: 0 4px 4px 0; padding: 1px 8px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); font-size: 12px; white-space: nowrap; }
 .chip.ready { border-color: var(--accent); }
 .chip.invalid, .chip.unreadable, .chip.unavailable { border-color: var(--error); color: var(--error); }
