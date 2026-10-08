@@ -101,9 +101,10 @@ pub struct ConsoleDeps {
     pub directory: Arc<dyn ChannelDirectory>,
     /// How the console attaches and detaches sources, if it may.
     pub source_changes: Arc<dyn SourceChanges>,
-    /// Whether the operator has multi-consumer routing on. No routing policy
-    /// exists in this image yet, so the gateway composes `false`; the pages
-    /// already explain what a routed channel does while it is off.
+    /// Whether the operator has multi-consumer routing on. Its switch,
+    /// `CMAEG_MULTI_CONSUMER_ENABLED`, arrives with #993, so the gateway
+    /// composes `false`, the switch's default: stored routing then fails
+    /// closed per event, which the routing banners explain.
     pub multi_consumer: bool,
 }
 
