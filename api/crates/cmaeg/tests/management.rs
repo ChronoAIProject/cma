@@ -156,6 +156,8 @@ async fn created(client: &Client, base: &str) -> serde_json::Value {
 mod binary;
 #[path = "management/binary_media.rs"]
 mod binary_media;
+#[path = "management/binary_routing.rs"]
+mod binary_routing;
 #[path = "management/binary_support.rs"]
 mod binary_support;
 #[path = "management/boundaries.rs"]

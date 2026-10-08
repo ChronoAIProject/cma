@@ -56,7 +56,7 @@ struct StatusResponse {
     status: &'static str,
 }
 
-pub use audit::audit_custom_attachments;
+pub use audit::{audit_custom_attachments, audit_routing};
 pub use openapi::ApiDoc;
 
 /// Build the stateless HTTP router.

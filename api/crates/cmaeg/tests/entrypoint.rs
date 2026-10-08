@@ -1,7 +1,7 @@
 //! Process argument dispatch: unknown arguments are a usage error, never a panic.
 use std::{ffi::OsStr, process::Output};
 
-const USAGE: &str = "usage: cmaeg [--print-openapi | --audit-custom-attachments [--clear] | --media-job <op> <bin-dir> <job-dir> [arg] | --media-sandbox-check | --media-self-test <fixtures-dir>]\n";
+const USAGE: &str = "usage: cmaeg [--print-openapi | --audit-custom-attachments [--clear] | --audit-routing [--clear [--allow-default-widening]] | --media-job <op> <bin-dir> <job-dir> [arg] | --media-sandbox-check | --media-self-test <fixtures-dir>]\n";
 
 fn run(arguments: &[&OsStr]) -> Output {
     std::process::Command::new(env!("CARGO_BIN_EXE_cmaeg"))
@@ -21,6 +21,48 @@ fn assert_usage(output: &Output) {
 fn unknown_arguments_print_the_usage_line_and_exit_two() {
     assert_usage(&run(&[OsStr::new("--serve")]));
     assert_usage(&run(&[OsStr::new("--print-openapi"), OsStr::new("extra")]));
+}
+
+/// Only the three documented forms run the routing audit; the override is
+/// accepted only after `--clear`, and nothing may follow it.
+#[test]
+fn the_routing_audit_accepts_only_its_documented_forms() {
+    for arguments in [
+        &["--audit-routing", "--allow-default-widening"][..],
+        &["--audit-routing", "--allow-default-widening", "--clear"],
+        &["--audit-routing", "--clear", "--clear"],
+        &[
+            "--audit-routing",
+            "--clear",
+            "--allow-default-widening",
+            "extra",
+        ],
+        &["--audit-routing", "--bogus"],
+        &["--allow-default-widening"],
+        &["--clear", "--audit-routing"],
+    ] {
+        assert_usage(&run_strs(arguments));
+    }
+}
+
+/// Each documented form is dispatched to the audit, which fails on the
+/// cleared environment as a classified stop rather than a usage error.
+#[test]
+fn every_routing_audit_form_runs_the_audit() {
+    for arguments in [
+        &["--audit-routing"][..],
+        &["--audit-routing", "--clear"],
+        &["--audit-routing", "--clear", "--allow-default-widening"],
+    ] {
+        let output = run_strs(arguments);
+        assert_eq!(output.status.code(), Some(1), "{arguments:?}");
+        assert!(output.stdout.is_empty(), "{arguments:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stderr).lines().last(),
+            Some("configuration invalid"),
+            "{arguments:?}"
+        );
+    }
 }
 
 #[cfg(unix)]

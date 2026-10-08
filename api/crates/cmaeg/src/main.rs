@@ -1,10 +1,13 @@
-use cmaeg::media::transform::{
-    argv::{MEDIA_JOB_FLAG as MEDIA_JOB, SANDBOX_CHECK_FLAG as SANDBOX_CHECK},
-    self_test::SELF_TEST_FLAG as SELF_TEST,
+use cmaeg::{
+    channels::audit_routing::RoutingAuditMode,
+    media::transform::{
+        argv::{MEDIA_JOB_FLAG as MEDIA_JOB, SANDBOX_CHECK_FLAG as SANDBOX_CHECK},
+        self_test::SELF_TEST_FLAG as SELF_TEST,
+    },
 };
 use std::{ffi::OsString, io::Write, path::Path};
 
-const USAGE: &str = "usage: cmaeg [--print-openapi | --audit-custom-attachments [--clear] | --media-job <op> <bin-dir> <job-dir> [arg] | --media-sandbox-check | --media-self-test <fixtures-dir>]";
+const USAGE: &str = "usage: cmaeg [--print-openapi | --audit-custom-attachments [--clear] | --audit-routing [--clear [--allow-default-widening]] | --media-job <op> <bin-dir> <job-dir> [arg] | --media-sandbox-check | --media-self-test <fixtures-dir>]";
 
 fn main() {
     // `args_os` never panics: `args` aborts with exit 101 on a non-UTF-8
@@ -52,6 +55,15 @@ fn main() {
         [] => serve(),
         ["--audit-custom-attachments"] => audit(false),
         ["--audit-custom-attachments", "--clear"] => audit(true),
+        ["--audit-routing"] => audit_routing(RoutingAuditMode::Report),
+        ["--audit-routing", "--clear"] => audit_routing(RoutingAuditMode::Clear {
+            allow_default_widening: false,
+        }),
+        ["--audit-routing", "--clear", "--allow-default-widening"] => {
+            audit_routing(RoutingAuditMode::Clear {
+                allow_default_widening: true,
+            })
+        }
         _ => usage(),
     }
 }
@@ -91,31 +103,51 @@ fn serve() {
     }
 }
 
-/// The rollback audit. Stdout carries only the JSON report, so logs go to
-/// stderr, and an error is printed as its classified name alone. It exits 0
-/// only when no setting remains and every record could be read.
+/// The custom attachment rollback audit. It exits 0 only when no setting
+/// remains and every record could be read.
 fn audit(clear: bool) {
-    cmaeg::init_logging_to_stderr();
-    cmaeg::install_panic_hook();
-    let runtime = match cmaeg::runtime::build() {
-        Ok(runtime) => runtime,
-        Err(cmaeg::runtime::RuntimeError::Prewarm) => fail("blocking pool prewarm failed"),
-        Err(_) => fail("runtime unavailable"),
-    };
+    let runtime = audit_runtime();
     let report = match runtime.block_on(cmaeg::audit_custom_attachments(clear)) {
         Ok(report) => report,
         Err(error) => fail(&error.to_string()),
     };
+    finish_audit(&report.lines(), report.complete());
+}
+
+/// The multi-consumer rollback audit. It exits 0 only when no definition an
+/// older image cannot read remains and every record could be read.
+fn audit_routing(mode: RoutingAuditMode) {
+    let runtime = audit_runtime();
+    let report = match runtime.block_on(cmaeg::audit_routing(mode)) {
+        Ok(report) => report,
+        Err(error) => fail(&error.to_string()),
+    };
+    finish_audit(&report.lines(), report.complete());
+}
+
+/// An audit's logging and runtime. Stdout carries only the JSON report, so
+/// logs go to stderr, and an error is printed as its classified name alone.
+fn audit_runtime() -> tokio::runtime::Runtime {
+    cmaeg::init_logging_to_stderr();
+    cmaeg::install_panic_hook();
+    match cmaeg::runtime::build() {
+        Ok(runtime) => runtime,
+        Err(cmaeg::runtime::RuntimeError::Prewarm) => fail("blocking pool prewarm failed"),
+        Err(_) => fail("runtime unavailable"),
+    }
+}
+
+/// Print the report's lines and exit 0 when it is complete, else 1.
+fn finish_audit(lines: &[String], complete: bool) -> ! {
     let mut stdout = std::io::stdout().lock();
-    let written = report
-        .lines()
+    let written = lines
         .iter()
         .try_for_each(|line| writeln!(stdout, "{line}"))
         .and_then(|()| stdout.flush());
     if written.is_err() {
         fail("stdout unavailable");
     }
-    std::process::exit(if report.complete() { 0 } else { 1 });
+    std::process::exit(if complete { 0 } else { 1 });
 }
 
 fn fail(reason: &str) -> ! {
