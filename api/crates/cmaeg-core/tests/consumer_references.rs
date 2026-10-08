@@ -129,7 +129,7 @@ fn a_hand_off_lineage_is_bounded_and_names_distinct_publishers() {
     for hop in 1..=4 {
         lineage(hop).validate().unwrap();
     }
-    let cases: [(&str, Breakage); 7] = [
+    let cases: [(&str, Breakage); 6] = [
         ("/hop", |lineage| lineage.hop = 0),
         ("/hop", |lineage| {
             lineage.hop = 5;
@@ -137,9 +137,6 @@ fn a_hand_off_lineage_is_bounded_and_names_distinct_publishers() {
         }),
         ("/path", |lineage| lineage.hop = 1),
         ("/path", |lineage| lineage.path[1] = lineage.path[0].clone()),
-        ("/path", |lineage| {
-            lineage.path[0] = ConsumerId::default_consumer()
-        }),
         ("/root", |lineage| {
             lineage.root = lineage.root.to_uppercase()
         }),
@@ -206,3 +203,37 @@ fn root_ids_hash_the_documented_domain_and_separators() {
 }
 
 const ROOT_VECTOR: &str = "abd900dfc851fc9138d35d28db77d523";
+
+#[test]
+fn default_can_publish_a_unique_hop_without_becoming_a_reference_consumer() {
+    let mut chain = lineage(2);
+    chain.path[0] = ConsumerId::default_consumer();
+    chain.validate().unwrap();
+    let mut payload = event();
+    payload.lineage = Some(chain.clone());
+    payload.consumer = None;
+    let sealed = EventRef::seal(&payload, &keys()).unwrap();
+    assert_eq!(sealed.open(&keys(), NOW).unwrap().payload, payload);
+    chain.path[1] = ConsumerId::default_consumer();
+    assert_eq!(chain.validate().unwrap_err().pointer, "/path");
+    payload.consumer = Some(ConsumerId::default_consumer());
+    assert_eq!(payload.validate().unwrap_err().pointer, "/consumer");
+}
+
+#[test]
+fn inherited_root_parsing_requires_the_exact_lowercase_digest_shape() {
+    let root = RootId::derive(
+        &RecordId::new("record").unwrap(),
+        &EventId::new("event").unwrap(),
+    );
+    assert_eq!(RootId::parse(root.as_str()).unwrap(), root);
+    for invalid in [
+        "".to_owned(),
+        "a".repeat(31),
+        "a".repeat(33),
+        "g".repeat(32),
+        "A".repeat(32),
+    ] {
+        assert_eq!(RootId::parse(&invalid).unwrap_err().pointer, "/root");
+    }
+}

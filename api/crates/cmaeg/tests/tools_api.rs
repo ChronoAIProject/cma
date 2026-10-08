@@ -37,6 +37,8 @@ mod media_downloads;
 mod media_links;
 #[path = "tools/media_support.rs"]
 pub mod media_support;
+#[path = "tools/publish_builder.rs"]
+mod publish_builder;
 #[path = "relay/support.rs"]
 pub mod relay_support;
 #[path = "tools/rest.rs"]

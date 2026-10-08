@@ -43,14 +43,10 @@ impl Lineage {
             ));
         }
         let mut seen = BTreeSet::new();
-        if self
-            .path
-            .iter()
-            .any(|publisher| publisher.is_default() || !seen.insert(publisher))
-        {
+        if self.path.iter().any(|publisher| !seen.insert(publisher)) {
             return Err(ValidationError::new(
                 "/path",
-                "must name distinct consumers other than default",
+                "must name distinct consumers",
             ));
         }
         if !is_root_id(&self.root) {
@@ -78,6 +74,17 @@ pub struct RootId(String);
 const ROOT_DIGEST_BYTES: usize = 16;
 
 impl RootId {
+    /// Parse an inherited root after validating the sealed wire grammar.
+    pub fn parse(value: &str) -> Result<Self, ValidationError> {
+        if !is_root_id(value) {
+            return Err(ValidationError::new(
+                "/root",
+                "must be 32 lowercase hex digits",
+            ));
+        }
+        Ok(Self(value.to_owned()))
+    }
+
     pub fn derive(record_id: &RecordId, root_event_id: &EventId) -> Self {
         let mut input = Vec::new();
         input.extend_from_slice(b"cmaeg.root.v1\x1f");
