@@ -1,5 +1,6 @@
-//! Identifiers of the agents that consume a channel's events, their names
-//! and the routing rules that select them.
+//! Identifiers of the agents that consume a channel's events, their names,
+//! the routing rules that select them, and the conversation and idempotency
+//! identities derived for each of them.
 use crate::ValidationError;
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -188,5 +189,107 @@ impl From<RuleId> for String {
 impl fmt::Display for RuleId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(&self.0)
+    }
+}
+
+/// The largest partition key an event_ref seals verbatim.
+pub const MAX_SEALED_PARTITION_KEY_BYTES: usize = 512;
+
+/// A partition key in the form an event_ref seals it: the raw key when it is
+/// at most [`MAX_SEALED_PARTITION_KEY_BYTES`], otherwise `sha256:` followed by
+/// the lowercase hex digest of the raw key. Long custom subjects stay whole in
+/// the provider's activity; only this compact form travels in references.
+///
+/// Ingress, fan-out and hand-offs share this one rule, because a hand-off has
+/// only its parent's sealed key and must still derive the same per-consumer
+/// conversation as the event that arrived at ingress.
+pub fn compact_partition_key(raw: &str) -> String {
+    if raw.len() <= MAX_SEALED_PARTITION_KEY_BYTES {
+        return raw.to_owned();
+    }
+    let digest = ring::digest::digest(&ring::digest::SHA256, raw.as_bytes());
+    format!("sha256:{}", super::hex(digest.as_ref()))
+}
+
+impl super::ConversationId {
+    /// Derive a non-default consumer's provider conversation id: `conv_` and
+    /// 16 bytes of HMAC over `cmaeg.consumer.conversation.v1`, the channel id,
+    /// the partition rule version, the consumer id and the compact partition
+    /// key, joined by `\x1f`.
+    ///
+    /// The key is the compact form of [`compact_partition_key`], so ingress
+    /// and a hand-off that holds only the sealed key derive the same id. The
+    /// distinct domain string keeps these ids disjoint from the default
+    /// consumer's, and the consumer id grammar excludes `\x1f`, so no two
+    /// inputs join to the same bytes. The derivation never reads an agent key,
+    /// so rotating a consumer's key keeps its live conversations.
+    ///
+    /// The default consumer never uses this: it keeps
+    /// [`ConversationId::derive`](super::ConversationId::derive) over the raw
+    /// partition key, so its existing conversations are unchanged (I4).
+    pub fn derive_for_consumer(
+        ring: &crate::seal::MasterKeyRing,
+        channel_id: &super::ChannelId,
+        rule_version: u16,
+        consumer: &ConsumerId,
+        compact_partition_key: &str,
+    ) -> Self {
+        Self::derive_for_consumer_with_kid(
+            ring,
+            ring.derivation_kid(),
+            channel_id,
+            rule_version,
+            consumer,
+            compact_partition_key,
+        )
+    }
+
+    /// [`derive_for_consumer`](Self::derive_for_consumer) with an explicitly
+    /// retained key, for the channel rekey walk.
+    pub fn derive_for_consumer_with_kid(
+        ring: &crate::seal::MasterKeyRing,
+        kid: u8,
+        channel_id: &super::ChannelId,
+        rule_version: u16,
+        consumer: &ConsumerId,
+        compact_partition_key: &str,
+    ) -> Self {
+        debug_assert!(
+            !consumer.is_default(),
+            "the default consumer keeps ConversationId::derive over the raw partition key"
+        );
+        let mut input = Vec::new();
+        input.extend_from_slice(b"cmaeg.consumer.conversation.v1\x1f");
+        input.extend_from_slice(channel_id.as_str().as_bytes());
+        input.extend_from_slice(b"\x1f");
+        input.extend_from_slice(rule_version.to_string().as_bytes());
+        input.extend_from_slice(b"\x1f");
+        input.extend_from_slice(consumer.as_str().as_bytes());
+        input.extend_from_slice(b"\x1f");
+        input.extend_from_slice(compact_partition_key.as_bytes());
+        let signature = crate::seal::sign(ring, kid, &input);
+        Self(format!("conv_{}", super::hex(&signature[..16])))
+    }
+}
+
+/// Hex digits of the event id digest in a per-consumer idempotency key.
+const CONSUMER_KEY_DIGEST_HEX: usize = 40;
+
+impl super::IdempotencyKey {
+    /// A non-default consumer's idempotency key for one event:
+    /// `evc_<consumer>_` and the first 40 hex digits of SHA-256 over the event
+    /// id, 61 bytes for a `csm_` id.
+    ///
+    /// The digest makes the key collision-free for event ids that the 200-byte
+    /// `evt_` form would truncate to the same prefix, and keeps it within the
+    /// provider's bound whatever the id's length. The default consumer keeps
+    /// [`IdempotencyKey::from_event`](super::IdempotencyKey::from_event).
+    pub fn for_consumer(event_id: &super::EventId, consumer: &ConsumerId) -> Self {
+        let digest = ring::digest::digest(&ring::digest::SHA256, event_id.as_str().as_bytes());
+        let digits = super::hex(digest.as_ref());
+        Self(format!(
+            "evc_{consumer}_{}",
+            &digits[..CONSUMER_KEY_DIGEST_HEX]
+        ))
     }
 }

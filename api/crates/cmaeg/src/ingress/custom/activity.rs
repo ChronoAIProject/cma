@@ -6,10 +6,9 @@ use cmaeg_core::{
     },
     channel::PartitionKey,
     cloudevent::CloudEvent,
-    ids::{ConversationId, EventId, IdempotencyKey},
+    ids::{compact_partition_key, ConversationId, EventId, IdempotencyKey},
     seal::{EventRef, EventRefPayload, MasterKeyRing, ReplyAddress},
 };
-use sha2::{Digest, Sha256};
 use std::{sync::Arc, time::Instant};
 /// Normalize an authenticated event and the attachments already extracted
 /// from it into a sealed, launchable turn.
@@ -69,11 +68,7 @@ pub fn launch_request(
             record_id: channel.pointer.record_id.clone(),
             event_id: event_id.clone(),
             // Long URI subjects stay in the provider's activity; the compact ref carries their digest.
-            partition_key: if partition.len() <= 512 {
-                partition
-            } else {
-                format!("sha256:{:x}", Sha256::digest(partition.as_bytes()))
-            },
+            partition_key: compact_partition_key(&partition),
             conversation_id: conversation_id.clone(),
             expires_at: now.saturating_add(1800),
             reply,

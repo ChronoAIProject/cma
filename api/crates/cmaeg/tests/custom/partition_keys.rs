@@ -2,7 +2,10 @@
 //! decides their conversation, exactly as a legacy custom channel's `key`
 //! would, while chat activities keep the chat key.
 use super::support::App;
-use cmaeg::{channels::resolver::ResolvedChannel, ingress::custom::activity::launch_request};
+use cmaeg::{
+    channels::resolver::ResolvedChannel,
+    ingress::{custom::activity::launch_request, launch::LaunchRequest},
+};
 use cmaeg_core::{
     channel::ChannelDefinition,
     cloudevent::CloudEvent,
@@ -10,6 +13,7 @@ use cmaeg_core::{
     seal::{open_blob, ChannelPointer, ReplyAddress},
 };
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::{sync::Arc, time::Instant};
 
 /// A Telegram relay beside the custom source, under a chat key with
@@ -83,6 +87,15 @@ fn stored_definition(app: &App) -> ChannelDefinition {
 /// Normalize one event for a channel whose partition is `partition`,
 /// bypassing restore so an unstorable definition can be tried too.
 fn launch(app: &App, partition: Value) -> Result<String, &'static str> {
+    let ce: CloudEvent = serde_json::from_value(app.event("event-1")).unwrap();
+    launch_event(app, partition, ce).map(|request| request.conversation_id.as_str().to_owned())
+}
+
+fn launch_event(
+    app: &App,
+    partition: Value,
+    ce: CloudEvent,
+) -> Result<LaunchRequest, &'static str> {
     let mut definition = stored_definition(app);
     definition.partition = serde_json::from_value(partition).unwrap();
     let channel = Arc::new(ResolvedChannel {
@@ -98,7 +111,6 @@ fn launch(app: &App, partition: Value) -> Result<String, &'static str> {
         loaded_at: Instant::now(),
         version: 1,
     });
-    let ce: CloudEvent = serde_json::from_value(app.event("event-1")).unwrap();
     launch_request(
         channel,
         ce,
@@ -108,7 +120,6 @@ fn launch(app: &App, partition: Value) -> Result<String, &'static str> {
         Instant::now(),
         0,
     )
-    .map(|request| request.conversation_id.as_str().to_owned())
 }
 
 #[tokio::test]
@@ -134,4 +145,44 @@ async fn custom_ingress_keys_events_by_the_custom_key_and_refuses_a_chat_key() {
         launch(&app, json!({"version":1,"key":"conversation"})),
         Err("custom_partition_invalid")
     );
+}
+
+/// The event_ref carries a subject longer than 512 bytes in its compact form,
+/// byte for byte as custom ingress always has: `sha256:` and the lowercase hex
+/// digest of the raw subject. The conversation is still derived over the raw
+/// subject, so both stay exactly as they were.
+#[tokio::test]
+async fn custom_ingress_seals_long_subjects_in_their_compact_form() {
+    let app = App::new(
+        |value| chat_keyed(value, Some("event_subject")),
+        Default::default(),
+        Default::default(),
+        0,
+    )
+    .await;
+    let keys = &app.fixture.state.master_keys;
+    let long = format!("urn:subject:{}", "s".repeat(588));
+    assert_eq!(long.len(), 600);
+    for (subject, sealed) in [
+        ("order-9".to_owned(), "order-9".to_owned()),
+        (
+            long.clone(),
+            format!("sha256:{:x}", Sha256::digest(long.as_bytes())),
+        ),
+    ] {
+        let mut event = app.event("event-1");
+        event["subject"] = subject.clone().into();
+        let request = launch_event(
+            &app,
+            json!({"version":1,"key":"event_subject"}),
+            serde_json::from_value(event).unwrap(),
+        )
+        .unwrap();
+        let payload = request.event_ref.open(keys, 0).unwrap().payload;
+        assert_eq!(payload.partition_key, sealed);
+        assert_eq!(
+            request.conversation_id,
+            ConversationId::derive(keys, &app.fixture.id, 1, &subject)
+        );
+    }
 }

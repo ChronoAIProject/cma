@@ -81,7 +81,10 @@ pub use message_ref::MessageRef;
 id_type!(BindingId);
 id_type!(ProviderSlug);
 mod consumer;
-pub use consumer::{ConsumerId, ConsumerName, RuleId, DEFAULT_CONSUMER_ID};
+pub use consumer::{
+    compact_partition_key, ConsumerId, ConsumerName, RuleId, DEFAULT_CONSUMER_ID,
+    MAX_SEALED_PARTITION_KEY_BYTES,
+};
 
 /// An encrypted pointer to a CMA channel record.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, ToSchema)]
