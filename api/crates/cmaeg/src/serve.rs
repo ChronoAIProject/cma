@@ -66,6 +66,9 @@ pub(crate) async fn serve(config: Config) -> Result<(), Box<dyn std::error::Erro
     // Installed before the media transformer's setup so its readiness gauge
     // is recorded; the metrics listener still binds after the gateway's.
     let metrics = telemetry::install()?;
+    // After the recorder, which registers its gauge. `None` while
+    // CMAEG_CONSOLE_ENABLED is off: then no /console route exists.
+    let console = crate::console::compose(&config)?;
     // Before the listener binds: a configured transformer must pass its
     // sandbox self-check, or the gateway does not start.
     let transformer = media::transform::setup::start_configured(&config).await?;
@@ -141,6 +144,7 @@ pub(crate) async fn serve(config: Config) -> Result<(), Box<dyn std::error::Erro
             .merge(http::tools::router(tools_state.clone()))
             .merge(http::media::router(tools_state.clone()))
             .merge(mcp::router(tools_state))
+            .merge(console.unwrap_or_default())
             .layer(RequestBodyLimitLayer::new(REQUEST_BODY_LIMIT_BYTES))
             .layer(CatchPanicLayer::custom(http::problems::panic_response))
             .into_make_service_with_connect_info::<SocketAddr>(),

@@ -151,3 +151,14 @@ fn describe_media() {
         metrics::gauge!(name).set(0);
     }
 }
+
+/// Console metrics, registered at zero only when the console is built, so a
+/// gateway with the console off exports none of them.
+pub(crate) fn describe_console() {
+    metrics::describe_gauge!(
+        names::CONSOLE_ENABLED,
+        metrics::Unit::Count,
+        "1 while the console's OAuth client is configured and NyxID discovery has succeeded"
+    );
+    metrics::gauge!(names::CONSOLE_ENABLED).set(0);
+}

@@ -5,6 +5,7 @@ pub mod auth;
 pub mod channels;
 mod config;
 pub mod connections;
+pub mod console;
 pub mod delivery;
 pub mod hardening;
 pub mod http;

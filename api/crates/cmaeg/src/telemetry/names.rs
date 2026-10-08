@@ -34,6 +34,7 @@ pub const MEDIA_PREPARE: &str = "cmaeg_media_prepare_seconds";
 pub const MEDIA_TRANSFORM_TOTAL: &str = "cmaeg_media_transform_total";
 pub const MEDIA_TRANSFORM_SECONDS: &str = "cmaeg_media_transform_seconds";
 pub const MEDIA_SANDBOX_READY: &str = "cmaeg_media_sandbox_ready";
+pub const CONSOLE_ENABLED: &str = "cmaeg_console_enabled";
 pub const SOURCE: &str = "source";
 pub const COLD: &str = "cold";
 pub const OUTCOME: &str = "outcome";

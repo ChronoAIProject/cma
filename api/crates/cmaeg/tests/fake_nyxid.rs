@@ -18,10 +18,15 @@ use std::{
 };
 use tokio::{net::TcpListener, sync::oneshot};
 
+#[path = "fake_nyxid_console.rs"]
+pub mod console;
+
 pub struct FakeNyxid {
     pub base_url: String,
     pub service_tokens: Arc<TokenState>,
     pub attachments: Arc<AttachmentState>,
+    /// Console sign-in: discovery, tokens, revocation and organizations.
+    pub oauth: Arc<console::OAuthState>,
     shutdown: Option<oneshot::Sender<()>>,
 }
 
@@ -71,6 +76,8 @@ impl Default for AttachmentState {
 pub struct TokenState {
     pub calls: AtomicUsize,
     pub expires_in: AtomicU64,
+    /// `/oauth/token` and `users/me` serve console grants and tokens too.
+    pub oauth: Arc<console::OAuthState>,
 }
 
 impl FakeNyxid {
@@ -78,9 +85,12 @@ impl FakeNyxid {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let (shutdown, signal) = oneshot::channel();
+        let oauth = Arc::new(console::OAuthState::default());
+        *oauth.base_url.lock().unwrap() = format!("http://{address}");
         let service_tokens = Arc::new(TokenState {
             calls: AtomicUsize::new(0),
             expires_in: AtomicU64::new(3600),
+            oauth: oauth.clone(),
         });
         let attachments = Arc::new(AttachmentState::default());
         let router = Router::new()
@@ -94,6 +104,18 @@ impl FakeNyxid {
                         get(attachment),
                     )
                     .with_state(attachments.clone()),
+            )
+            .merge(
+                Router::new()
+                    .route("/.well-known/openid-configuration", get(console::discovery))
+                    .route("/oauth/authorize", get(console::authorize))
+                    .route("/oauth/revoke", post(console::revoke))
+                    .route("/api/v1/orgs", get(console::org_list))
+                    .route(
+                        "/api/v1/orgs/{id}/authorization",
+                        get(console::org_authorization),
+                    )
+                    .with_state(oauth.clone()),
             );
         tokio::spawn(async move {
             axum::serve(listener, router)
@@ -107,6 +129,7 @@ impl FakeNyxid {
             base_url: format!("http://{address}"),
             service_tokens,
             attachments,
+            oauth,
             shutdown: Some(shutdown),
         }
     }
@@ -118,7 +141,10 @@ impl FakeNyxid {
     }
 }
 
-async fn users_me(headers: HeaderMap) -> impl IntoResponse {
+async fn users_me(State(state): State<Arc<TokenState>>, headers: HeaderMap) -> Response {
+    if let Some(response) = console::users_me(&state.oauth, &headers).await {
+        return response;
+    }
     let Some(value) = headers
         .get("authorization")
         .and_then(|value| value.to_str().ok())
@@ -137,8 +163,12 @@ async fn users_me(headers: HeaderMap) -> impl IntoResponse {
 
 async fn service_token(
     State(state): State<Arc<TokenState>>,
+    headers: HeaderMap,
     Form(form): Form<std::collections::BTreeMap<String, String>>,
-) -> impl IntoResponse {
+) -> Response {
+    if form.get("grant_type").map(String::as_str) != Some("client_credentials") {
+        return console::token(state.oauth.clone(), headers, form).await;
+    }
     assert_eq!(form["client_id"], "fixture-client");
     assert_eq!(form["client_secret"], "fixture-client-secret");
     assert_eq!(form["grant_type"], "client_credentials");
@@ -148,6 +178,7 @@ async fn service_token(
         serde_json::json!({"access_token":"cma-service", "token_type":"Bearer",
         "expires_in":state.expires_in.load(Ordering::SeqCst)}),
     )
+    .into_response()
 }
 
 async fn attachment(
