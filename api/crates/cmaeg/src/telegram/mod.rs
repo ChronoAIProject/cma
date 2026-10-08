@@ -1,17 +1,25 @@
 //! Telegram platform transport. Errors and tracing never contain token-bearing URLs.
 mod files;
 mod management;
-pub use files::{FileError, TelegramFile};
 #[cfg(test)]
 mod tests;
+mod transport;
 use cmaeg_core::channel::Secret;
-use reqwest::{Client, Url};
+pub use files::{FileError, TelegramFile};
+use reqwest::{
+    header::{HeaderMap, HeaderValue, CONTENT_TYPE},
+    Client, Url,
+};
 use serde_json::{json, Value};
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
+pub use transport::{HttpTransport, TelegramTransport};
 
 #[derive(Clone)]
 pub struct TelegramClient {
+    /// File downloads stream their body to the caller, so they keep the
+    /// client; every Bot API call goes through `transport`.
     http: Client,
+    transport: Arc<dyn TelegramTransport>,
     origin: Url,
     timeout: Duration,
 }
@@ -38,10 +46,17 @@ impl TelegramClient {
             .build()
             .map_err(|_| config_error())?;
         Ok(Self {
+            transport: Arc::new(HttpTransport { http: http.clone() }),
             http,
             origin,
             timeout,
         })
+    }
+    /// Send Bot API calls through `transport` instead of HTTP, as tests
+    /// answering in process do. File downloads still use HTTP.
+    pub fn with_transport(mut self, transport: Arc<dyn TelegramTransport>) -> Self {
+        self.transport = transport;
+        self
     }
     pub fn production(timeout: Duration) -> Result<Self, crate::ConfigError> {
         Self::new("https://api.telegram.org", timeout)
@@ -65,29 +80,18 @@ impl TelegramClient {
             .origin
             .join(&format!("/bot{value}/{method}"))
             .map_err(|_| Error::Rejected)?;
-        let mut response = self
-            .http
-            .post(endpoint)
-            .timeout(self.timeout)
-            .json(body)
-            .send()
-            .await
-            .map_err(|error| transport_failure(error.without_url()))?;
-        if response.content_length().is_some_and(|size| size > 32_768) {
+        let Ok(body) = serde_json::to_vec(body) else {
             return Err(Error::Unconfirmed);
-        }
-        let status = response.status();
-        let mut bytes = Vec::new();
-        while let Some(chunk) = response
-            .chunk()
+        };
+        let mut headers = HeaderMap::new();
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        let reply = self
+            .transport
+            .post(endpoint, headers, body, self.timeout)
             .await
-            .map_err(|error| transport_failure(error.without_url()))?
-        {
-            if bytes.len() + chunk.len() > 32_768 {
-                return Err(Error::Unconfirmed);
-            }
-            bytes.extend_from_slice(&chunk);
-        }
+            .map_err(|_| Error::Unconfirmed)?;
+        let status = reply.status;
+        let bytes = reply.body.map_err(|_| Error::Unconfirmed)?;
         let value: Value = serde_json::from_slice(&bytes).map_err(|_| Error::Unconfirmed)?;
         Ok((status, value))
     }
@@ -208,12 +212,6 @@ fn positive(value: &Value) -> Result<String, Error> {
         .filter(|id| *id > 0)
         .map(|id| id.to_string())
         .ok_or(Error::Unconfirmed)
-}
-/// Classifies a transport failure. It only receives errors already stripped
-/// of their token-bearing URL, so a classifier that later inspects or logs
-/// the error cannot expose the bot token.
-fn transport_failure(_error: reqwest::Error) -> Error {
-    Error::Unconfirmed
 }
 fn config_error() -> crate::ConfigError {
     crate::ConfigError::InvalidManagement {

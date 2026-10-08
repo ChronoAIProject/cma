@@ -1,6 +1,7 @@
 //! Bounded, signed delivery with DNS validation and address pinning on each attempt.
 use super::intents::DeliveryOutcome;
 use crate::auth::webhook;
+pub use crate::net::exchange::TransportError;
 pub use crate::net::policy::public_ip;
 use crate::net::{policy, resolve};
 use cmaeg_core::channel::Secret;
@@ -9,10 +10,6 @@ use reqwest::{header::HeaderMap, Url};
 use serde_json::Value;
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
-#[derive(Debug)]
-pub enum TransportError {
-    Unavailable,
-}
 /// Replaceable IO boundary for local integration fixtures; destination policy remains in the client.
 pub trait WebhookTransport: Send + Sync {
     fn resolve(&self, url: Url) -> BoxFuture<'_, Result<Vec<SocketAddr>, TransportError>>;
