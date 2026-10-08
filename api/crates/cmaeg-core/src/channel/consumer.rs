@@ -185,26 +185,41 @@ static PUBLISH_DISABLED: PublishPolicy = PublishPolicy {
 };
 
 impl ChannelDefinition {
-    /// `None` or `Some("default")` returns the implicit default consumer.
-    /// Any other id is `None` until additional consumers exist.
+    /// `None` or `Some("default")` returns the implicit default consumer;
+    /// any other id, the additional consumer stored under it in `routing`,
+    /// with its agent key from the sealed `consumer_keys`.
     pub fn consumer(&self, id: Option<&ConsumerId>) -> Option<ConsumerView<'_>> {
         match id {
             None => Some(self.default_consumer()),
             Some(id) if id.is_default() => Some(self.default_consumer()),
-            Some(_) => None,
+            Some(id) => self
+                .routing
+                .as_ref()?
+                .consumers
+                .iter()
+                .find(|consumer| &consumer.id == id)
+                .map(|consumer| self.additional_consumer(consumer)),
         }
     }
 
-    /// The default consumer first; only it exists for now.
+    /// The default consumer first, then the additional consumers in stored
+    /// order, pending ones included; routing code skips those.
     pub fn consumers(&self) -> impl Iterator<Item = ConsumerView<'_>> {
-        std::iter::once(self.default_consumer())
+        let additional = self
+            .routing
+            .iter()
+            .flat_map(|routing| routing.consumers.iter())
+            .map(|consumer| self.additional_consumer(consumer));
+        std::iter::once(self.default_consumer()).chain(additional)
     }
 
-    /// The default consumer: the top-level binding, named `default`, mentionable,
-    /// replying to the origin under the channel's policy and never publishing.
+    /// The default consumer: the top-level binding and agent key, presented
+    /// as `routing.default_consumer` says. Without routing it is named and
+    /// labelled `default`, mentionable, replies to the origin under the
+    /// channel's policy and never publishes.
     fn default_consumer(&self) -> ConsumerView<'_> {
         let id = default_id();
-        ConsumerView {
+        let view = ConsumerView {
             id,
             name: id.as_str(),
             label: id.as_str(),
@@ -215,12 +230,57 @@ impl ChannelDefinition {
             credential: self.secrets.provider_credential.as_ref(),
             mentionable: true,
             non_human: None,
-            reply: EffectiveReply {
-                auto_final: self.reply.auto_final,
-                destination: ReplyChoice::Origin,
-            },
+            reply: self.effective_reply(&ConsumerReply::default()),
             publish: &PUBLISH_DISABLED,
             pending: false,
+        };
+        let Some(routing) = &self.routing else {
+            return view;
+        };
+        let presented = &routing.default_consumer;
+        ConsumerView {
+            name: presented.name.as_str(),
+            label: presented
+                .label
+                .as_deref()
+                .unwrap_or(presented.name.as_str()),
+            mentionable: presented.mentionable,
+            non_human: presented.non_human,
+            reply: self.effective_reply(&presented.reply),
+            publish: &presented.publish,
+            ..view
+        }
+    }
+
+    fn additional_consumer<'a>(&'a self, consumer: &'a Consumer) -> ConsumerView<'a> {
+        ConsumerView {
+            id: &consumer.id,
+            name: consumer.name.as_str(),
+            label: consumer.label.as_deref().unwrap_or(consumer.name.as_str()),
+            profile: &consumer.profile,
+            profile_digest: &consumer.profile_digest,
+            provider: &consumer.provider,
+            agent_key_hash: &consumer.agent_key_hash,
+            credential: self
+                .secrets
+                .consumer_keys
+                .iter()
+                .find(|(id, _)| id == &consumer.id)
+                .map(|(_, key)| key),
+            mentionable: consumer.mentionable,
+            non_human: consumer.non_human,
+            reply: self.effective_reply(&consumer.reply),
+            publish: &consumer.publish,
+            pending: consumer.pending,
+        }
+    }
+
+    /// A consumer's reply policy over the channel's: its own `auto_final`,
+    /// else the channel's.
+    fn effective_reply(&self, reply: &ConsumerReply) -> EffectiveReply {
+        EffectiveReply {
+            auto_final: reply.auto_final.unwrap_or(self.reply.auto_final),
+            destination: reply.destination,
         }
     }
 }

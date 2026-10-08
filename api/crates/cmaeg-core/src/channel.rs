@@ -18,6 +18,7 @@ mod extensions;
 mod lookup;
 mod partition;
 mod platform;
+mod routing;
 mod secrets;
 mod source_id;
 mod telegram;
@@ -30,6 +31,11 @@ pub use custom_attachments::{
     MAX_CUSTOM_ATTACHMENT_POINTER_BYTES,
 };
 pub use extensions::Extensions;
+pub use routing::{
+    ActivityKindName, Addressing, AgentEventPolicy, DefaultReply, Pattern, ReplyLabel,
+    RoutingPolicy, RoutingRule, RuleMatch, MAX_ADDITIONAL_CONSUMERS, MAX_MATCH_ENTRIES,
+    MAX_MATCH_ENTRY_BYTES, MAX_RULES, MAX_TARGETS, ROUTING_POLICY_VERSION,
+};
 pub use secrets::{ChannelSecrets, Secret};
 pub use source_id::{SourceId, AGENT_SOURCE_ID};
 mod sources;
@@ -239,6 +245,9 @@ pub struct ChannelDefinition {
     pub connection_ref: Option<String>,
     pub partition: PartitionRule,
     pub reply: ReplyPolicy,
+    /// Multi-consumer routing; absent on every legacy channel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub routing: Option<RoutingPolicy>,
     #[serde(default, skip_serializing)]
     pub secrets: ChannelSecrets,
     pub created_at: String,
@@ -355,7 +364,7 @@ impl ChannelDefinition {
             .as_object()
             .cloned()
             .expect("channel definition is an object");
-        object.insert("secrets".into(), json!({
+        let mut secrets = json!({
             "agent_key_hash": self.secrets.agent_key_hash,
             "channel_key": self.secrets.channel_key.as_ref().map(Secret::as_str),
             "hmac_secrets": self.secrets.hmac_secrets.iter().map(|(key, secret)| {
@@ -364,7 +373,18 @@ impl ChannelDefinition {
             "provider_credential": self.secrets.provider_credential.as_ref().map(Secret::as_str),
             "telegram_bot_token": self.secrets.telegram_bot_token.as_ref().map(Secret::as_str),
             "telegram_webhook_secret": self.secrets.telegram_webhook_secret.as_ref().map(Secret::as_str),
-        }));
+        });
+        // Emitted only when present, so a legacy blob keeps its exact bytes and
+        // an older image, which refuses the unknown key, can still read it.
+        if !self.secrets.consumer_keys.is_empty() {
+            secrets["consumer_keys"] = self
+                .secrets
+                .consumer_keys
+                .iter()
+                .map(|(id, secret)| json!([id, secret.as_str()]))
+                .collect();
+        }
+        object.insert("secrets".into(), secrets);
         Value::Object(object)
     }
 

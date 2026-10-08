@@ -54,6 +54,7 @@ pub fn build_definition(
         connection_ref: request.connection_ref.clone(),
         partition: request.partition.clone(),
         reply: request.reply.clone(),
+        routing: None,
         secrets: build_secrets(credentials),
         created_at: OffsetDateTime::now_utc()
             .format(&Rfc3339)
@@ -178,6 +179,9 @@ pub fn build_update(
         connection_ref: request.connection_ref.clone(),
         partition: request.partition.clone(),
         reply: request.reply.clone(),
+        // No request carries routing yet, so a full update keeps the stored
+        // policy, exactly as it keeps the consumer keys in the secrets.
+        routing: current.routing.clone(),
         secrets: credentials,
         created_at: current.created_at.clone(),
         version: current.version,

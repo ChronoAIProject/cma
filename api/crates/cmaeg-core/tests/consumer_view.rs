@@ -8,6 +8,9 @@ use cmaeg_core::{
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
 
+#[path = "routing_policy/fixture.rs"]
+mod fixture;
+
 fn definition() -> ChannelDefinition {
     let mut definition: ChannelDefinition =
         serde_json::from_str(include_str!("fixtures/channel.json")).unwrap();
@@ -74,13 +77,106 @@ fn effective_non_human_is_the_override_else_the_provider_slug() {
 }
 
 #[test]
-fn additional_consumers_do_not_exist_yet() {
+fn a_channel_without_routing_has_only_the_default_consumer() {
     let definition = definition();
     let other = ConsumerId::parse("csm_0123456789ab").unwrap();
     assert!(definition.consumer(Some(&other)).is_none());
     let views: Vec<_> = definition.consumers().collect();
     assert_eq!(views.len(), 1);
     assert!(views[0].id.is_default());
+}
+
+#[test]
+fn additional_consumers_read_their_own_binding_and_key() {
+    let mut value = fixture::routed();
+    value["routing"]["consumers"][1]["label"] = "Nyx Bot".into();
+    value["routing"]["consumers"][1]["pending"] = true.into();
+    value["routing"]["consumers"][1]["mentionable"] = false.into();
+    value["routing"]["consumers"][1]["non_human"] = true.into();
+    value["routing"]["consumers"][1]["reply"] =
+        json!({"auto_final": false, "destination": "default"});
+    value["routing"]["consumers"][1]["publish"] = json!({"enabled": true, "targets": ["default"]});
+    let definition = fixture::definition(value);
+    let reviewer = ConsumerId::parse(fixture::REVIEWER).unwrap();
+    let view = definition.consumer(Some(&reviewer)).unwrap();
+    let stored = &definition.routing.as_ref().unwrap().consumers[0];
+    assert_eq!(view.id, &reviewer);
+    assert_eq!((view.name, view.label), ("reviewer", "reviewer"));
+    assert!(std::ptr::eq(view.profile, &stored.profile));
+    assert!(std::ptr::eq(view.provider, &stored.provider));
+    assert_eq!(view.profile_digest, stored.profile_digest);
+    assert_eq!(view.agent_key_hash, stored.agent_key_hash);
+    assert_eq!(
+        view.credential.map(Secret::as_str),
+        Some(fixture::agent_key(fixture::REVIEWER).as_str())
+    );
+    assert!(view.mentionable && !view.pending && view.non_human.is_none());
+    assert_eq!(view.reply.auto_final, definition.reply.auto_final);
+
+    let views: Vec<_> = definition.consumers().collect();
+    let ids: Vec<_> = views.iter().map(|view| view.id.as_str()).collect();
+    assert_eq!(ids, ["default", fixture::REVIEWER, fixture::NYX]);
+    let nyx = views[2];
+    assert_eq!((nyx.name, nyx.label), ("nyx", "Nyx Bot"));
+    assert!(nyx.pending && !nyx.mentionable);
+    assert_eq!(nyx.non_human, Some(true));
+    assert!(nyx.non_human_effective(&BTreeSet::new()));
+    assert_eq!(
+        nyx.reply,
+        EffectiveReply {
+            auto_final: false,
+            destination: ReplyChoice::Default,
+        }
+    );
+    assert!(nyx.publish.enabled);
+    assert_eq!(nyx.provider.slug.as_str(), "nyxbot");
+    let unknown = ConsumerId::parse("csm_0123456789ab").unwrap();
+    assert!(definition.consumer(Some(&unknown)).is_none());
+}
+
+#[test]
+fn the_default_consumer_takes_its_presentation_from_routing() {
+    let mut value = fixture::routed();
+    let mut definition = fixture::definition(value.clone());
+    let view = definition.consumer(None).unwrap();
+    assert_eq!((view.name, view.label), ("lead", "lead"));
+    assert!(std::ptr::eq(view.provider, &definition.provider));
+    assert_eq!(
+        view.credential.map(Secret::as_str),
+        Some(fixture::agent_key("default").as_str())
+    );
+    value["routing"]["default_consumer"] = json!({"name": "lead", "label": "Lead",
+        "mentionable": false, "non_human": false, "reply": {"auto_final": false},
+        "publish": {"enabled": true}});
+    definition = fixture::definition(value);
+    let view = definition
+        .consumer(Some(&ConsumerId::default_consumer()))
+        .unwrap();
+    assert!(view.id.is_default());
+    assert_eq!(view.label, "Lead");
+    assert!(!view.mentionable && !view.pending);
+    assert_eq!(view.non_human, Some(false));
+    assert_eq!(
+        view.reply,
+        EffectiveReply {
+            auto_final: false,
+            destination: ReplyChoice::Origin,
+        }
+    );
+    assert!(view.publish.enabled && view.publish.targets.is_empty());
+}
+
+#[test]
+fn a_consumer_without_a_stored_key_has_no_credential() {
+    let mut value = fixture::routed();
+    value["secrets"]["consumer_keys"] = json!([]);
+    let definition = fixture::definition(value);
+    let nyx = ConsumerId::parse(fixture::NYX).unwrap();
+    assert!(definition
+        .consumer(Some(&nyx))
+        .unwrap()
+        .credential
+        .is_none());
 }
 
 #[test]
