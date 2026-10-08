@@ -3,6 +3,8 @@
 #[path = "fake_nyxid.rs"]
 pub mod fake_nyxid;
 
+#[path = "console/authority.rs"]
+mod authority;
 #[path = "console/enablement.rs"]
 mod enablement;
 #[path = "console/protection.rs"]

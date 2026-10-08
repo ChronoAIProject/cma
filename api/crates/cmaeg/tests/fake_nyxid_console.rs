@@ -150,6 +150,15 @@ impl OAuthState {
             .count()
     }
 
+    /// Forget `subject`'s access tokens, as NyxID does once they expire;
+    /// its refresh tokens keep working.
+    pub fn expire_access(&self, subject: &str) {
+        self.access
+            .lock()
+            .unwrap()
+            .retain(|_, owner| owner.as_str() != subject);
+    }
+
     /// The access tokens issued to `subject`.
     pub fn access_tokens_of(&self, subject: &str) -> Vec<String> {
         self.access

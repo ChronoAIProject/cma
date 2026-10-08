@@ -215,13 +215,17 @@ async fn logout_revokes_and_a_later_get_creates_no_session_without_a_click() {
     assert!(signed_out.contains("href=\"/console/login?return_to=%2Fconsole\""));
     // A reload with the old cookie stays signed out and calls nobody.
     let calls = harness.nyxid.oauth.token_calls.lock().unwrap().len();
+    let identity = harness.nyxid.oauth.users_me_calls.load(Ordering::SeqCst);
     let again = harness.get_as("/console", &sid).await;
     assert_eq!(again.status(), 200);
     assert!(again.headers().get("location").is_none());
     assert!(again.text().await.unwrap().contains("Sign in with NyxID"));
     assert!(harness.console.sessions().is_empty());
     assert_eq!(harness.nyxid.oauth.token_calls.lock().unwrap().len(), calls);
-    assert_eq!(harness.nyxid.oauth.users_me_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        harness.nyxid.oauth.users_me_calls.load(Ordering::SeqCst),
+        identity
+    );
     let expired = harness
         .get("/console/signed-out?reason=expired")
         .await

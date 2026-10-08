@@ -1,13 +1,14 @@
 //! The console's own pages: home, signed-out and logout.
 use axum::{
     extract::{Query, State},
-    http::{header, StatusCode, Uri},
+    http::{header, StatusCode},
     response::{Html, IntoResponse, Response},
     Extension,
 };
 use serde::Deserialize;
 
 use super::{
+    authority::Authorized,
     cookies, csrf,
     guard::CurrentSession,
     pages::{self, signin},
@@ -17,15 +18,14 @@ use super::{
 };
 use crate::http::html::escape;
 
-/// `GET /console`. Without a session: the sign-in page, never a redirect to
-/// NyxID.
-pub(crate) async fn home(Extension(session): Extension<CurrentSession>, uri: Uri) -> Response {
+/// `GET /console`. Without a session the extractor renders the sign-in
+/// page, never a redirect to NyxID.
+pub(crate) async fn home(
+    Extension(session): Extension<CurrentSession>,
+    _authorized: Authorized,
+) -> Response {
     let Some(cell) = session.0 else {
-        return signin::sign_in(
-            StatusCode::OK,
-            &redirect::return_to(uri.path_and_query().map(|value| value.as_str())),
-            None,
-        );
+        return signin::sign_in(StatusCode::OK, redirect::HOME, None);
     };
     let (subject, key) = {
         let meta = cell.meta();

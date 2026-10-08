@@ -40,6 +40,7 @@ pub const CONSOLE_SESSION_EVICTIONS: &str = "cmaeg_console_session_evictions_tot
 pub const CONSOLE_REVOCATIONS: &str = "cmaeg_console_revocations_total";
 pub const CONSOLE_REJECTIONS: &str = "cmaeg_console_rejections_total";
 pub const CONSOLE_LOGINS: &str = "cmaeg_console_logins_total";
+pub const CONSOLE_AUTHORIZATIONS: &str = "cmaeg_console_authorizations_total";
 pub const SOURCE: &str = "source";
 pub const COLD: &str = "cold";
 pub const OUTCOME: &str = "outcome";

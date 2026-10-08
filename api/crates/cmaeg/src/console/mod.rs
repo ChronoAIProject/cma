@@ -6,9 +6,11 @@
 //! readiness: until its OAuth client is configured and NyxID's discovery
 //! document has passed validation, every `/console*` request gets a generic
 //! 503 page while ingress keeps serving.
+pub mod authority;
 pub mod clock;
 mod cookies;
 mod csrf;
+mod extract;
 mod guard;
 mod headers;
 mod login;
@@ -19,6 +21,7 @@ mod redirect;
 mod revoke;
 mod routes;
 pub mod session;
+pub mod table;
 pub mod token;
 
 use std::{sync::Arc, time::Duration};
@@ -27,18 +30,21 @@ use axum::{
     extract::{Request, State},
     middleware::{from_fn_with_state, map_response, Next},
     response::Response,
-    routing::{any, get, post},
+    routing::any,
     Router,
 };
 use cmaeg_core::seal::MasterKeyRing;
 use reqwest::Client;
 use tokio::sync::SemaphorePermit;
 
+pub use authority::{Authorized, OwnerScope};
+pub use extract::Fresh;
 pub use oidc::{DiscoveryError, EndpointCell, OidcEndpoints};
 
 use oidc::DiscoverySink as _;
 
 use crate::{auth::CreatorAuthenticator, telemetry::names, ConsoleConfig};
+use authority::ConsoleAuthority;
 use clock::Clock;
 use login_limit::LoginLimiter;
 use session::{SessionLimits, SessionStore};
@@ -88,6 +94,7 @@ struct Inner {
     missing_key: Option<&'static str>,
     endpoints: Arc<EndpointCell>,
     sessions: Arc<SessionStore>,
+    authority: ConsoleAuthority,
 }
 
 impl Console {
@@ -117,10 +124,12 @@ impl Console {
         let tokens = TokenClient::new(http.clone(), &deps.config.client_id, &secret);
         let sessions = Arc::new(SessionStore::new(
             SessionLimits::from(&deps.config),
-            deps.clock,
+            deps.clock.clone(),
             tokens.clone(),
             endpoints.clone(),
         ));
+        let authority =
+            ConsoleAuthority::new(deps.creator_auth.clone(), sessions.clone(), deps.clock);
         Ok(Self {
             inner: Arc::new(Inner {
                 public_url: deps.public_url,
@@ -135,6 +144,7 @@ impl Console {
                 missing_key,
                 endpoints,
                 sessions,
+                authority,
             }),
         })
     }
@@ -143,12 +153,11 @@ impl Console {
     /// every request passes the enablement gate, then the session guard that
     /// checks Origin and CSRF on every POST.
     pub fn router(&self) -> Router {
-        Router::new()
-            .route(redirect::HOME, get(routes::home))
-            .route(redirect::LOGIN, get(login::start))
-            .route(redirect::CALLBACK, get(login::callback))
-            .route(redirect::SIGNED_OUT, get(routes::signed_out))
-            .route(redirect::LOGOUT, post(routes::logout))
+        table::ROUTES
+            .iter()
+            .fold(Router::new(), |router, route| {
+                router.route(route.path, table::handler(route))
+            })
             .route("/console/{*rest}", any(not_found))
             .layer(from_fn_with_state(self.clone(), guard::session_guard))
             .layer(from_fn_with_state(self.clone(), gate))
@@ -194,6 +203,10 @@ impl Console {
 
     pub fn sessions(&self) -> &Arc<SessionStore> {
         &self.inner.sessions
+    }
+
+    pub fn authority(&self) -> &ConsoleAuthority {
+        &self.inner.authority
     }
 
     /// Sweep idle and expired sessions every minute.

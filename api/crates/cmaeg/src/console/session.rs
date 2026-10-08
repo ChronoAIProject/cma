@@ -20,7 +20,10 @@ use dashmap::DashMap;
 use ring::rand::{SecureRandom, SystemRandom};
 use sha2::{Digest, Sha256};
 
-use super::{clock::Clock, oidc::EndpointCell, revoke::Revoker, subject_hash_prefix, token::*};
+use super::{
+    authority::Verdict, clock::Clock, oidc::EndpointCell, revoke::Revoker, subject_hash_prefix,
+    token::*,
+};
 use crate::{telemetry::names, ConsoleConfig};
 
 /// A transient refresh failure is retried after this long.
@@ -85,13 +88,15 @@ pub struct SessionMeta {
     pub orgs: Option<(Vec<OrgChoice>, Instant)>,
 }
 
-/// A session's NyxID tokens. Reached only through the `auth` async mutex.
+/// A session's NyxID tokens and its last authority verdict. Reached only
+/// through the `auth` async mutex.
 pub struct SessionAuth {
     access: Secret,
     refresh: Secret,
     access_issued_at: Instant,
     access_expires_at: Instant,
     refresh_retry_at: Option<Instant>,
+    pub(crate) verdict: Option<Verdict>,
 }
 
 impl SessionAuth {
@@ -114,6 +119,8 @@ impl SessionAuth {
         self.access_issued_at = issued_at;
         self.access_expires_at = issued_at + tokens.expires_in;
         self.refresh_retry_at = None;
+        // A verdict belongs to the token it was derived from.
+        self.verdict = None;
     }
 }
 
@@ -259,6 +266,7 @@ impl SessionStore {
                 access_issued_at: now,
                 access_expires_at: now + tokens.expires_in,
                 refresh_retry_at: None,
+                verdict: None,
             }),
             ended: AtomicBool::new(false),
         });

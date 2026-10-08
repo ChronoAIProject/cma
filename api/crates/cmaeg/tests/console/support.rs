@@ -238,6 +238,13 @@ impl Harness {
         sid.as_str().to_owned()
     }
 
+    /// Close a harness shared with spawned requests.
+    pub async fn close_shared(self: Arc<Self>) {
+        if let Ok(harness) = Arc::try_unwrap(self) {
+            harness.close().await;
+        }
+    }
+
     pub async fn close(mut self) {
         if let Some(shutdown) = self.shutdown.take() {
             let _ = shutdown.send(());
