@@ -19,10 +19,18 @@ mod observations;
 mod owner;
 #[path = "console/pages.rs"]
 mod pages;
+#[path = "console/pages_authority.rs"]
+mod pages_authority;
+#[path = "console/pages_changes.rs"]
+pub mod pages_changes;
 #[path = "console/pages_event.rs"]
 mod pages_event;
+#[path = "console/pages_hygiene.rs"]
+mod pages_hygiene;
 #[path = "console/pages_link.rs"]
 mod pages_link;
+#[path = "console/pages_sources.rs"]
+mod pages_sources;
 #[path = "console/pages_support.rs"]
 pub mod pages_support;
 #[path = "console/pages_tabs.rs"]

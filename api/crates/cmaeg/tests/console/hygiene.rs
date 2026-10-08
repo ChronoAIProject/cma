@@ -1,33 +1,9 @@
 //! No secret leaves the process: client secret, tokens, codes, verifiers,
 //! states and session ids never appear in a console response body, a
 //! gateway `Location` or a log line.
-use super::support::{csrf_for, Harness};
-use std::{
-    io::Write,
-    sync::{Arc, Mutex},
-    time::Duration,
-};
-use tracing_subscriber::{fmt::MakeWriter, layer::SubscriberExt, Layer};
-
-#[derive(Clone, Default)]
-struct Captured(Arc<Mutex<Vec<u8>>>);
-
-impl Write for Captured {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        self.0.lock().unwrap().extend_from_slice(bytes);
-        Ok(bytes.len())
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
-impl<'a> MakeWriter<'a> for Captured {
-    type Writer = Captured;
-    fn make_writer(&'a self) -> Self::Writer {
-        self.clone()
-    }
-}
+use super::support::{csrf_for, Captured, Harness};
+use std::time::Duration;
+use tracing_subscriber::{layer::SubscriberExt, Layer};
 
 /// What a browser sees from the gateway: bodies and same-origin locations.
 #[derive(Default)]

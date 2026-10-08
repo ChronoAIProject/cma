@@ -7,6 +7,7 @@
 //! document has passed validation, every `/console*` request gets a generic
 //! 503 page while ingress keeps serving.
 pub mod activity;
+mod attach_form;
 pub mod authority;
 pub mod channel_ids;
 mod channel_routes;
@@ -38,6 +39,7 @@ mod revoke;
 mod routes;
 pub mod session;
 pub mod source_changes;
+mod source_routes;
 pub mod summary;
 pub mod table;
 #[cfg(test)]

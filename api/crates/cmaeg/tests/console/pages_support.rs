@@ -20,6 +20,7 @@ use cmaeg::{
         memory::{ConsoleMemory, Schedule, Sources},
         observer::{ActivitySeed, CausationSummary, DeliveryClass, Observation, RefusalSeed},
         reader::ChannelReader,
+        source_changes::SourceAvailability,
     },
     records::{RecordError, RecordHead},
     turns::observer::{DeliveryStep, Destination, LaunchClass},
@@ -36,7 +37,10 @@ use cmaeg_core::{
 use futures_util::future::BoxFuture;
 use time::OffsetDateTime;
 
-use super::support::{Composition, Harness};
+use super::{
+    pages_changes::RecordingSources,
+    support::{csrf_token, Composition, Harness},
+};
 
 /// Every secret a fixture channel holds; none may appear on any page.
 pub const SECRETS: &[&str] = &[
@@ -210,10 +214,42 @@ pub struct World {
     pub memory: Arc<ConsoleMemory>,
     pub heads: Arc<FakeHeads>,
     pub reader: Arc<FakeReader>,
+    /// The source changes the console makes, when composed with them.
+    pub sources: Option<Arc<RecordingSources>>,
 }
 
 impl World {
+    /// A console composed as this release ships it: no source changes.
     pub async fn start() -> Self {
+        Self::compose(None).await
+    }
+
+    /// A console whose source changes are `availability`.
+    pub async fn with_sources(availability: SourceAvailability) -> Self {
+        Self::compose(Some(availability)).await
+    }
+
+    /// The recorded source changes.
+    pub fn changes(&self) -> &RecordingSources {
+        self.sources
+            .as_deref()
+            .expect("composed with source changes")
+    }
+
+    /// The CSRF value of `action` on `record` for session `sid`.
+    pub fn csrf(&self, sid: &str, action: &str, record: &RecordId) -> String {
+        let key = self
+            .harness
+            .console
+            .sessions()
+            .find(sid)
+            .unwrap()
+            .meta()
+            .csrf_key;
+        csrf_token(&key, action, record.as_str())
+    }
+
+    async fn compose(availability: Option<SourceAvailability>) -> Self {
         let heads = Arc::new(FakeHeads::default());
         let reader = Arc::new(FakeReader::default());
         let memory = Arc::new(ConsoleMemory::new(
@@ -230,16 +266,27 @@ impl World {
                 },
             },
         ));
-        let harness = Harness::enabled_with(Composition {
+        let sources = availability.map(|availability| {
+            Arc::new(RecordingSources::new(
+                availability,
+                reader.clone(),
+                memory.clone(),
+            ))
+        });
+        let mut composition = Composition {
             directory: memory.clone(),
             ..Composition::default()
-        })
-        .await;
+        };
+        if let Some(sources) = &sources {
+            composition.source_changes = sources.clone();
+        }
+        let harness = Harness::enabled_with(composition).await;
         Self {
             harness,
             memory,
             heads,
             reader,
+            sources,
         }
     }
 

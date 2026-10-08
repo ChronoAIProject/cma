@@ -7,8 +7,8 @@ use axum::routing::{get, post, MethodRouter};
 
 use super::{
     channel_routes, login, mutations,
-    pages::{channel, event, overview},
-    redirect, routes, Console,
+    pages::{channel, detach, event, forms, overview},
+    redirect, routes, source_routes, Console,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,6 +72,21 @@ pub const ROUTES: &[ConsoleRoute] = &[
         path: overview::LINK_PATH,
         access: Access::Authorized,
     },
+    ConsoleRoute {
+        method: "POST",
+        path: forms::ATTACH_PATH,
+        access: Access::Authorized,
+    },
+    ConsoleRoute {
+        method: "GET",
+        path: detach::DETACH_PATH,
+        access: Access::Authorized,
+    },
+    ConsoleRoute {
+        method: "POST",
+        path: detach::DETACH_PATH,
+        access: Access::Authorized,
+    },
 ];
 
 /// The handler of `route`. A table entry without a handler fails the first
@@ -87,6 +102,9 @@ pub(crate) fn handler(route: &ConsoleRoute) -> MethodRouter<Console> {
         ("GET", channel::PATH) => get(channel_routes::channel),
         ("GET", event::PATH) => get(channel_routes::event),
         ("POST", overview::LINK_PATH) => post(mutations::link),
+        ("POST", forms::ATTACH_PATH) => post(source_routes::attach),
+        ("GET", detach::DETACH_PATH) => get(source_routes::confirm_detach),
+        ("POST", detach::DETACH_PATH) => post(source_routes::detach),
         (method, path) => unreachable!("console route {method} {path} has no handler"),
     }
 }

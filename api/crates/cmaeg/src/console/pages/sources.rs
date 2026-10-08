@@ -1,7 +1,9 @@
-//! The Sources tab: one row per source with its settings and last event.
+//! The Sources tab: one row per source with its settings and last event,
+//! and, while source changes are available, a Detach control per row and
+//! the attach forms. Otherwise a banner says why they are absent.
 use time::OffsetDateTime;
 
-use super::{banners, escape, or_dash, table, when};
+use super::{banners, detach::detach_href, escape, or_dash, table, when};
 use crate::console::{
     detail::SourceView, directory::ChannelView, source_changes::SourceAvailability,
 };
@@ -12,6 +14,8 @@ pub(crate) struct SourcesView<'a> {
     /// order.
     pub last_events: &'a [Option<OffsetDateTime>],
     pub availability: SourceAvailability,
+    /// The attach forms, shown while source changes are available.
+    pub forms: &'a str,
 }
 
 pub(crate) fn render(sources: &SourcesView<'_>) -> String {
@@ -24,6 +28,10 @@ pub(crate) fn render(sources: &SourcesView<'_>) -> String {
             "<p class=\"notice\" role=\"status\">A connection manages this channel's sources.</p>",
         );
     }
+    // A connection-managed channel's sources change only through it.
+    let controls =
+        sources.availability == SourceAvailability::Available && !detail.connection_managed;
+    let record = &sources.view.record;
     if detail.sources.is_empty() {
         html.push_str("<p class=\"empty\">This channel has no sources.</p>");
     } else {
@@ -31,24 +39,39 @@ pub(crate) fn render(sources: &SourcesView<'_>) -> String {
             .sources
             .iter()
             .zip(sources.last_events.iter().chain(std::iter::repeat(&None)))
-            .map(|(source, last)| row(source, *last))
+            .map(|(source, last)| {
+                let detach = if controls {
+                    format!(
+                        "<td><a href=\"{}\">Detach</a></td>",
+                        escape(&detach_href(record, &source.id))
+                    )
+                } else {
+                    String::new()
+                };
+                format!("{}{detach}", row(source, *last))
+            })
             .collect();
-        html.push_str(&table(
-            &[
-                "Source",
-                "Type",
-                "Platform",
-                "Routes",
-                "Bot",
-                "Admission",
-                "Authentication",
-                "Settings",
-                "Last event",
-            ],
-            &rows,
-        ));
+        let mut headers = vec![
+            "Source",
+            "Type",
+            "Platform",
+            "Routes",
+            "Bot",
+            "Admission",
+            "Authentication",
+            "Settings",
+            "Last event",
+        ];
+        if controls {
+            headers.push("");
+        }
+        html.push_str(&table(&headers, &rows));
     }
-    html.push_str(&banners::sources(sources.availability));
+    if controls {
+        html.push_str(sources.forms);
+    } else {
+        html.push_str(&banners::sources(sources.availability));
+    }
     html
 }
 

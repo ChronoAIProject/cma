@@ -1,0 +1,89 @@
+//! The confirmation page before a source is detached, and the page that
+//! says a source change cannot be made in this gateway now.
+use axum::http::StatusCode;
+use cmaeg_core::ids::RecordId;
+
+use super::{
+    channel::{href, path, Tab},
+    escape, facts,
+};
+use crate::console::{
+    detail::SourceView, directory::ChannelView, source_changes::SourceAvailability,
+};
+
+/// The route template of the confirmation page and of its form.
+pub(crate) const DETACH_PATH: &str = "/console/channels/{record_id}/sources/{source_id}/detach";
+
+/// The same-origin address of `source`'s detach confirmation.
+pub(crate) fn detach_href(record: &RecordId, source: &str) -> String {
+    format!("{}/sources/{source}/detach", path(record))
+}
+
+pub(crate) struct DetachView<'a> {
+    pub view: &'a ChannelView,
+    pub source: &'a SourceView,
+    pub csrf: &'a str,
+    pub error: Option<&'a str>,
+}
+
+/// What the detach will do, and the form that does it at the version the
+/// owner sees.
+pub(crate) fn render(detach: &DetachView<'_>) -> String {
+    let view = detach.view;
+    let source = detach.source;
+    let remaining = view
+        .summary
+        .detail
+        .as_ref()
+        .map_or(0, |detail| detail.sources.len().saturating_sub(1));
+    let error = detach.error.map_or_else(String::new, |message| {
+        format!(
+            "<p class=\"notice error\" role=\"alert\">{}</p>",
+            escape(message)
+        )
+    });
+    let mut consequences = vec![
+        "<li>The source stops admitting events as soon as the detach completes.</li>".to_owned(),
+        "<li>Secrets only this source uses are dropped; secrets other sources or sinks still use are kept.</li>".to_owned(),
+    ];
+    if remaining == 0 {
+        consequences.push("<li>The channel will have no sources and will admit no events until one is attached.</li>".to_owned());
+    }
+    format!(
+        "<h2>Detach <code>{}</code>?</h2>{error}{}<h3>Blocking references</h3><p>None: this channel has no routing policy, so no default reply source names this source.</p><h3>Rules that become inactive</h3><p>None.</p><h3>What happens</h3><ul>{}</ul><form class=\"inline\" method=\"post\" action=\"{}\"><input type=\"hidden\" name=\"csrf\" value=\"{}\"><input type=\"hidden\" name=\"expected_version\" value=\"{}\"><button type=\"submit\">Detach</button></form> <a class=\"button secondary\" href=\"{}\">Cancel</a>",
+        escape(&source.id),
+        facts(&[
+            ("Type", escape(source.kind)),
+            ("Platform", super::or_dash(source.platform)),
+            ("Version", view.version.to_string()),
+        ]),
+        consequences.concat(),
+        escape(&detach_href(&view.record, &source.id)),
+        escape(detach.csrf),
+        view.version,
+        escape(&href(&view.record, Tab::Sources)),
+    )
+}
+
+/// The status and text of a source change this gateway cannot make now.
+pub(crate) fn unavailable(availability: SourceAvailability) -> (StatusCode, &'static str) {
+    match availability {
+        SourceAvailability::Disabled => (
+            StatusCode::BAD_REQUEST,
+            "Source changes are disabled by the operator.",
+        ),
+        SourceAvailability::NotYetAvailable | SourceAvailability::Available => (
+            StatusCode::NOT_IMPLEMENTED,
+            "Source changes are not available in this gateway release yet. Nothing was changed.",
+        ),
+    }
+}
+
+/// The body of that page, with a way back to the sources.
+pub(crate) fn unavailable_body(record: &RecordId, text: &str) -> String {
+    format!(
+        "<h1>Source change not made</h1><p class=\"lead\">{}</p><p><a class=\"button secondary\" href=\"{}\">Back to sources</a></p>",
+        escape(text),
+        escape(&href(record, Tab::Sources)),
+    )
+}

@@ -49,6 +49,7 @@ fn an_unreadable_definition_shows_its_status_only() {
         view: &view,
         last_events: &[],
         availability: SourceAvailability::Available,
+        forms: "<form>attach</form>",
     });
     assert!(sources.contains("its sources are not shown"));
     assert!(consumers::render(&view).contains("No consumer is known"));
@@ -94,10 +95,13 @@ fn connection_managed_and_sourceless_channels_say_so() {
     let html = sources::render(&SourcesView {
         view: &view,
         last_events: &[],
-        availability: SourceAvailability::NotYetAvailable,
+        availability: SourceAvailability::Available,
+        forms: "<form>attach</form>",
     });
     assert!(html.contains("A connection manages this channel's sources."));
     assert!(html.contains("This channel has no sources."));
+    // A connection-managed channel's sources change only through it.
+    assert!(!html.contains("<form>attach</form>"));
     assert!(!html.contains("connection-reference-value"));
 }
 

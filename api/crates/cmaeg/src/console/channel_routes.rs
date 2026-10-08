@@ -15,6 +15,7 @@ use serde::Deserialize;
 
 use super::{
     activity::ActivityFilter,
+    attach_form::Submitted,
     authority::Authorized,
     directory::ChannelView,
     frame::SignedIn,
@@ -22,7 +23,7 @@ use super::{
     pages::{
         self, activity, channel,
         channel::Tab,
-        consumers, event, overview,
+        consumers, event, forms, overview,
         overview::OverviewView,
         producers, routing,
         sources::{self, SourcesView},
@@ -62,7 +63,10 @@ pub(crate) async fn channel(
             String::new(),
             overview_tab(&console, &signed_in, &view, None),
         ),
-        Tab::Sources => (String::new(), sources_tab(&console, &authorized, &view)),
+        Tab::Sources => (
+            String::new(),
+            sources_tab(&console, &authorized, &signed_in, &view, None, None),
+        ),
         Tab::Consumers => (String::new(), consumers::render(&view)),
         Tab::Routing => (
             String::new(),
@@ -175,7 +179,15 @@ pub(crate) fn overview_tab(
     })
 }
 
-fn sources_tab(console: &Console, authorized: &Authorized, view: &ChannelView) -> String {
+/// The Sources tab; `submitted` and `error` re-render a refused attach.
+pub(crate) fn sources_tab(
+    console: &Console,
+    authorized: &Authorized,
+    signed_in: &SignedIn,
+    view: &ChannelView,
+    submitted: Option<&Submitted>,
+    error: Option<&str>,
+) -> String {
     let last_events: Vec<_> = view
         .summary
         .detail
@@ -195,9 +207,17 @@ fn sources_tab(console: &Console, authorized: &Authorized, view: &ChannelView) -
                 .and_then(|entries| entries.first().map(|entry| entry.at))
         })
         .collect();
+    let forms = forms::render(
+        &view.record,
+        &signed_in.csrf(forms::ATTACH_PATH, view.record.as_str()),
+        view.version,
+        submitted,
+        error,
+    );
     sources::render(&SourcesView {
         view,
         last_events: &last_events,
         availability: console.source_changes().availability(),
+        forms: &forms,
     })
 }
