@@ -29,3 +29,5 @@ mod sdk;
 pub mod signer;
 #[path = "routing_harness/smoke.rs"]
 mod smoke;
+#[path = "custom/stream_all.rs"]
+mod stream_all;

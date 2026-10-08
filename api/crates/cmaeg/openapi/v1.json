@@ -5047,7 +5047,7 @@
             }
           },
           {
-            "description": "stream requires a configured Sync sink",
+            "description": "stream requires a configured Sync sink; stream_all (multi-consumer) multiplexes every targeted consumer",
             "in": "query",
             "name": "mode",
             "required": false,

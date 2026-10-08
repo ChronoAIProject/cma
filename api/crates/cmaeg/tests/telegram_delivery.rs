@@ -58,6 +58,10 @@ pub mod relay_support;
 mod relay_transport;
 #[path = "relay/signer.rs"]
 pub mod signer;
+#[path = "delivery/stream_all.rs"]
+mod stream_all;
+#[path = "delivery/stream_all_fixture.rs"]
+mod stream_all_fixture;
 #[path = "delivery/support.rs"]
 mod support;
 #[path = "delivery/transport.rs"]

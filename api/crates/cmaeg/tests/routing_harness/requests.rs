@@ -53,11 +53,20 @@ impl App {
         event: Value,
         stream: bool,
     ) -> reqwest::Response {
+        self.event_mode(channel, event, stream.then_some("stream"))
+            .await
+    }
+    pub async fn event_mode(
+        &self,
+        channel: &ResolvedChannel,
+        event: Value,
+        mode: Option<&str>,
+    ) -> reqwest::Response {
         let body = event.to_string();
         let timestamp = now().to_string();
         let secret = Secret::new("Zml4dHVyZQ==");
         let signature = webhook::signature(&secret, "delivery-1", &timestamp, body.as_bytes());
-        let suffix = if stream { "?mode=stream" } else { "" };
+        let suffix = mode.map_or_else(String::new, |mode| format!("?mode={mode}"));
         self.client
             .post(format!(
                 "{}/v1/channels/{}/events{suffix}",

@@ -1,5 +1,6 @@
 //! Authenticated structured/binary CloudEvents with optional live result streaming.
 mod routing;
+mod streaming;
 
 use super::problems::{problem, protocol_headers};
 use crate::telemetry::timing::IngressTiming;
@@ -64,7 +65,7 @@ pub fn router(state: CustomIngressState) -> Router {
     )
 }
 #[utoipa::path(post, path="/v1/channels/{channel_id}/events", operation_id="receiveCustomEvent", tag="ingress",
-    params(("channel_id"=String, Path), ("mode"=Option<String>, Query, description="stream requires a configured Sync sink"),
+    params(("channel_id"=String, Path), ("mode"=Option<String>, Query, description="stream requires a configured Sync sink; stream_all (multi-consumer) multiplexes every targeted consumer"),
         ("webhook-id"=Option<String>, Header, description="Required for HMAC authentication"),
         ("webhook-timestamp"=Option<String>, Header, description="Required for HMAC authentication; Unix seconds within 300 seconds"),
         ("webhook-signature"=Option<String>, Header, description="Required for HMAC authentication; v1,base64 over id.timestamp.raw_body using the retained secret string bytes"),
@@ -93,9 +94,10 @@ pub async fn receive_event(
     let Ok(Query(mode)) = Query::<Mode>::try_from_uri(request.uri()) else {
         return invalid("invalid mode query");
     };
-    let stream = match mode.mode.as_deref() {
-        Some("stream") => true,
-        None => false,
+    let (stream, multiplex) = match mode.mode.as_deref() {
+        Some("stream") => (true, false),
+        Some("stream_all") if state.ingress.routing.multi_consumer_enabled => (true, true),
+        None => (false, false),
         _ => return invalid("invalid mode"),
     };
     let Ok(permit) = state.ingress.inflight.clone().try_acquire_owned() else {
@@ -115,11 +117,19 @@ pub async fn receive_event(
         turn,
         waiter,
         mut accepted,
-    } = match prepare_event(&state, &channel_id, stream, request, timing).await {
+    } = match prepare_event(&state, &channel_id, stream, multiplex, request, timing).await {
         Ok(prepared) => prepared,
         Err(response) => return response,
     };
-    let outcome = match routing::launch(&state.ingress, turn, permit, stream, &mut accepted).await {
+    let outcome = match routing::launch(
+        &state.ingress,
+        turn,
+        permit,
+        stream && !multiplex,
+        &mut accepted,
+    )
+    .await
+    {
         Ok(outcome) => outcome,
         Err(response) => return response,
     };
@@ -166,6 +176,7 @@ async fn prepare_event(
     state: &CustomIngressState,
     channel_id: &str,
     stream: bool,
+    multiplex: bool,
     request: Request,
     timing: IngressTiming,
 ) -> Result<PreparedEvent, Response> {
@@ -245,6 +256,11 @@ async fn prepare_event(
             "custom event authentication failed",
         ));
     }
+    // The opt-in mode requires Sync before evaluating any routing directives.
+    // Existing plain-stream and async validation order remains below.
+    if multiplex && !channel.definition.reply.sinks.contains(&Sink::Sync {}) {
+        return Err(invalid("invalid mode"));
+    }
     let parsed = if structured {
         parse_structured(&body)
     } else {
@@ -289,8 +305,8 @@ async fn prepare_event(
         }
         None => Vec::new(),
     };
-    // A routed event resolves before stream setup so the kill switch and target
-    // refusals cannot be hidden by an absent sink or a full waiter registry.
+    // Plain-stream and async requests preserve routing-refusal precedence.
+    // The new multiplexed mode has already required Sync above.
     let input = if channel.definition.routing.is_some() {
         let attributes_signed =
             structured || !matches!(auth, cmaeg_core::channel::CustomAuth::Hmac { .. });
@@ -308,6 +324,7 @@ async fn prepare_event(
         EventInput::Legacy(Box::new(event), attachments)
     };
     if stream
+        && !multiplex
         && matches!(&input, EventInput::Normalized(activity) if !routing::stream_allowed(&state.ingress, &channel, activity))
     {
         return Err(invalid("fanout_requires_stream_all"));
@@ -317,7 +334,19 @@ async fn prepare_event(
         if !channel.definition.reply.sinks.contains(&Sink::Sync {}) {
             return Err(invalid("stream requires a Sync sink"));
         }
-        let Some((id, pending)) = state.waiters.register() else {
+        let registered = if multiplex {
+            let targets = match &input {
+                EventInput::Normalized(activity) => {
+                    activity.routing.as_ref().map(|r| r.targets.as_slice())
+                }
+                EventInput::Legacy(..) => None,
+            };
+            streaming::register(&state.waiters, &channel.definition, targets)
+                .map_err(|response| *response)?
+        } else {
+            state.waiters.register()
+        };
+        let Some((id, pending)) = registered else {
             return Err(problem(
                 StatusCode::SERVICE_UNAVAILABLE,
                 ProblemCode::Internal,
@@ -370,6 +399,7 @@ async fn prepare_event(
     drop(verify_guard);
     drop(verify_time);
     turn.timing = Some(timing);
+    turn.sync_fanout = multiplex;
     let accepted = EventAccepted {
         status: AcceptedStatus::Accepted,
         event_id: turn.activity.event_id.clone(),

@@ -94,14 +94,14 @@ pub(super) async fn launch(
     state: &IngressState,
     turn: LaunchRequest,
     hold: OwnedSemaphorePermit,
-    stream: bool,
+    primary_only: bool,
     accepted: &mut EventAccepted,
 ) -> Result<LaunchOutcome, Response> {
     if turn.activity.routing.is_none() {
         return Ok(state.launcher.launch_holding(turn, hold).await);
     }
     let outcome = state.launcher.launch_routed(turn, Some(hold)).await;
-    let result = if stream {
+    let result = if primary_only {
         outcome
             .consumers
             .first()
