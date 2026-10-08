@@ -97,6 +97,7 @@ impl MediaApp {
         // Outcomes are not under test; a full channel would stall the turns.
         let (delivery, mut outcomes) = mpsc::channel(256);
         let sink = tokio::spawn(async move { while outcomes.recv().await.is_some() {} });
+        let delivery = Arc::new(cmaeg::delivery::router::ShardedScheduler::new(delivery));
         let runner = Arc::new(TurnRunner::new(providers, tracker.clone(), delivery, turns));
         let state = IngressState::new(
             fixture.state.resolver.clone(),

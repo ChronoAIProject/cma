@@ -38,7 +38,9 @@ pub(crate) async fn serve(config: Config) -> Result<(), Box<dyn std::error::Erro
     state.media_enabled = config.media.enabled;
     let _reachability_probe = state.readiness.start_probe(state.records.clone());
     let tracker = turns::TurnTracker::new(state.readiness.clone());
-    let (delivery, outcomes) = tokio::sync::mpsc::channel(256);
+    let (inbound, outcomes) = tokio::sync::mpsc::channel(256);
+    let delivery: std::sync::Arc<dyn delivery::router::DeliverySink> =
+        std::sync::Arc::new(delivery::router::ShardedScheduler::new(inbound));
     let waiters = std::sync::Arc::new(delivery::sync::SyncRegistry::default());
     let interactions = std::sync::Arc::new(interactions::InteractionStore::new(
         (*state.records).clone(),

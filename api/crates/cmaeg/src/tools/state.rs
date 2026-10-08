@@ -2,8 +2,9 @@ use super::{context::ContextResponse, MediaDownloads};
 use crate::{
     auth::AgentCaller,
     channels::resolver::{ChannelResolver, ResolvedChannel},
-    delivery::intents::{
-        DeliveryCommand, DeliveryOutcome, IntentReceipt, ReplySource, TypingReceipt,
+    delivery::{
+        intents::{DeliveryCommand, DeliveryOutcome, IntentReceipt, ReplySource, TypingReceipt},
+        router::DeliverySink,
     },
     media::service::MediaService,
     providers::ProviderClient,
@@ -16,14 +17,14 @@ use cmaeg_core::{
     seal::{EventRef, EventRefPayload, MasterKeyRing, MessageRefPayload, OpenError},
 };
 use std::{sync::Arc, time::Duration};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::oneshot;
 use tracing::Instrument;
 #[derive(Clone)]
 pub struct ToolsState {
     pub resolver: ChannelResolver,
     pub keys: Arc<MasterKeyRing>,
     pub providers: Arc<ProviderClient>,
-    pub delivery: mpsc::Sender<DeliveryCommand>,
+    pub delivery: Arc<dyn DeliverySink>,
     pub tracker: Arc<TurnTracker>,
     pub public_origin: String,
     /// The media service turns share, or `None` while inbound media is
@@ -244,7 +245,7 @@ impl ToolsState {
         tokio::time::timeout(
             Duration::from_secs(8),
             async {
-                self.delivery.send(command).await.map_err(|_| {
+                self.delivery.submit(command).await.map_err(|_| {
                     Problem::new(ProblemCode::Internal, 503, "delivery_unavailable")
                 })?;
                 received

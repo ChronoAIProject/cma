@@ -184,7 +184,7 @@ impl App {
             resolver: fixture.state.resolver.clone(),
             keys: fixture.state.master_keys.clone(),
             providers,
-            delivery,
+            delivery: Arc::new(cmaeg::delivery::router::ShardedScheduler::new(delivery)),
             tracker: TurnTracker::new(http::readiness::Readiness::initialized()),
             public_origin: "https://gateway.example".into(),
             media: media.clone(),

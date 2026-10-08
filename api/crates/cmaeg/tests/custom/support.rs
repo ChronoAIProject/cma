@@ -103,6 +103,7 @@ impl App {
             ProviderClient::new(registry, Duration::from_secs(1), Duration::from_secs(2), 8)
                 .unwrap(),
         );
+        let delivery = Arc::new(cmaeg::delivery::router::ShardedScheduler::new(delivery));
         let runner = Arc::new(TurnRunner::new(
             providers.clone(),
             tracker.clone(),

@@ -3,17 +3,18 @@ use super::{
     projection::Projection,
 };
 use crate::{
+    delivery::router::DeliverySink,
     ingress::launch::{LaunchOutcome, LaunchRequest},
     providers::TurnStream,
 };
 use cmaeg_core::problem::{Problem, ProblemCode};
 use std::sync::Arc;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::oneshot;
 
 pub(super) async fn consume(
     mut stream: TurnStream,
     turn: Arc<LaunchRequest>,
-    delivery: &mpsc::Sender<DeliveryCommand>,
+    delivery: &dyn DeliverySink,
     admitted: &mut Option<oneshot::Sender<LaunchOutcome>>,
 ) -> Result<&'static str, &'static str> {
     let mut acceptance_pending = true;
@@ -47,12 +48,12 @@ pub(super) async fn consume(
     }
 }
 pub(super) async fn send(
-    delivery: &mpsc::Sender<DeliveryCommand>,
+    delivery: &dyn DeliverySink,
     turn: &Arc<LaunchRequest>,
     outcome: TurnOutcome,
 ) -> Result<(), &'static str> {
     delivery
-        .send(DeliveryCommand::StreamOutcome {
+        .submit(DeliveryCommand::StreamOutcome {
             turn: turn.clone(),
             outcome,
         })

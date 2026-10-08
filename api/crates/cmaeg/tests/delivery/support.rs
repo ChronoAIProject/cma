@@ -8,6 +8,7 @@ use cmaeg::{
         engine::DeliveryEngine,
         intents::{DeliveryCommand, IntentReceipt, ReplySource},
         relay_client::RelayClient,
+        router::ShardedScheduler,
     },
     http,
     ingress::{launch::LaunchRequest, IngressState},
@@ -130,7 +131,7 @@ impl App {
         let runner = Arc::new(TurnRunner::new(
             providers.clone(),
             tracker.clone(),
-            commands.clone(),
+            Arc::new(ShardedScheduler::new(commands.clone())),
             TurnConfig::default(),
         ));
         let ingress = IngressState::new(
@@ -144,7 +145,7 @@ impl App {
             resolver: fixture.state.resolver.clone(),
             keys: fixture.state.master_keys.clone(),
             providers,
-            delivery: commands.clone(),
+            delivery: Arc::new(ShardedScheduler::new(commands.clone())),
             tracker: tracker.clone(),
             public_origin: "https://gateway.example".into(),
             media: None,

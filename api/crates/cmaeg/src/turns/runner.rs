@@ -1,13 +1,14 @@
 //! Acceptance budget is independent of the detached, bounded provider consumer.
 use super::{
     consume, metadata,
-    outcomes::{DeliveryCommand, TurnOutcome},
+    outcomes::TurnOutcome,
     render_input,
     render_media::{self, Audience, RenderMedia},
     sequencer::{Sequencer, Ticket},
     tracker::TurnTracker,
 };
 use crate::{
+    delivery::router::DeliverySink,
     ingress::launch::{LaunchOutcome, LaunchRequest, TurnLauncher},
     media::{
         prepare::{prepare, PrepareConfig, Prepared},
@@ -27,7 +28,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use tokio::sync::{mpsc, oneshot, OwnedSemaphorePermit};
+use tokio::sync::{oneshot, OwnedSemaphorePermit};
 
 /// Headroom over the predecessor's own bound, so a fence normally ends with
 /// its predecessor's start rather than with its own timeout.
@@ -37,7 +38,7 @@ const FENCE_SLACK: Duration = Duration::from_secs(5);
 pub struct TurnRunner {
     providers: Arc<ProviderClient>,
     tracker: Arc<TurnTracker>,
-    delivery: mpsc::Sender<DeliveryCommand>,
+    delivery: Arc<dyn DeliverySink>,
     config: TurnConfig,
     /// Providers whose profile bindings install the gateway MCP tools; only
     /// their agents are told how to open an attachment through a tool.
@@ -54,7 +55,7 @@ impl TurnRunner {
     pub fn new(
         providers: Arc<ProviderClient>,
         tracker: Arc<TurnTracker>,
-        delivery: mpsc::Sender<DeliveryCommand>,
+        delivery: Arc<dyn DeliverySink>,
         config: TurnConfig,
     ) -> Self {
         Self {
@@ -131,7 +132,7 @@ impl TurnRunner {
                 }
                 _ => (ProblemCode::ProviderUnavailable, "provider_unavailable"),
             })?;
-            consume::consume(stream, turn.clone(), &self.delivery, &mut admitted)
+            consume::consume(stream, turn.clone(), &*self.delivery, &mut admitted)
                 .await
                 .map_err(|reason| (ProblemCode::ProviderUnavailable, reason))
         })
@@ -150,20 +151,13 @@ impl TurnRunner {
         observation.finish(error.1);
         provider_error(&provider, error.1);
         consume::refuse(&mut admitted, error.0, error.1);
-        // A stalled delivery sink must not keep a timed-out turn alive indefinitely.
-        let command = DeliveryCommand::StreamOutcome {
+        self.delivery.terminal(
             turn,
-            outcome: TurnOutcome::Failed {
+            TurnOutcome::Failed {
                 code: error.1.into(),
                 message: failure_message(error.1).into(),
             },
-        };
-        if self.delivery.try_send(command).is_err() {
-            tracing::warn!(
-                reason = error.1,
-                "turn failure could not reach delivery sink"
-            );
-        }
+        );
     }
     /// The turn's media, prepared when there is a media service and the
     /// activity carries attachments, and otherwise descriptors only.

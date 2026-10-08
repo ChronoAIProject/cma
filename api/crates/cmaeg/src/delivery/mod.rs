@@ -7,6 +7,7 @@ pub mod intents;
 mod pacing;
 pub mod relay_client;
 pub mod render;
+pub mod router;
 mod send;
 mod step;
 pub mod sync;

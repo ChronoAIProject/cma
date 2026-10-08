@@ -190,7 +190,9 @@ fn gateway(backend: &str, keys: Arc<MasterKeyRing>) -> ToolsState {
             ProviderClient::new(registry, Duration::from_secs(1), Duration::from_secs(1), 1)
                 .unwrap(),
         ),
-        delivery: tokio::sync::mpsc::channel(1).0,
+        delivery: Arc::new(cmaeg::delivery::router::ShardedScheduler::new(
+            tokio::sync::mpsc::channel(1).0,
+        )),
         tracker: TurnTracker::new(Readiness::initialized()),
         public_origin: "https://gateway.example".into(),
         media: None,

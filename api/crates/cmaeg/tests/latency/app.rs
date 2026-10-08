@@ -96,6 +96,7 @@ impl App {
             tracker.clone(),
             cmaeg::delivery::custom::CustomDelivery::new("http://127.0.0.1:8090".into(), waiters),
         );
+        let delivery = Arc::new(cmaeg::delivery::router::ShardedScheduler::new(delivery));
         let runner = Arc::new(TurnRunner::new(
             providers.clone(),
             tracker.clone(),

@@ -103,7 +103,7 @@ impl App {
             ),
             keys: keys.clone(),
             providers,
-            delivery,
+            delivery: Arc::new(cmaeg::delivery::router::ShardedScheduler::new(delivery)),
             tracker: tracker.clone(),
             public_origin: "https://gateway.example".into(),
             media: None,
@@ -130,7 +130,7 @@ impl App {
         self.server.abort();
         self.engine.take();
         let (delivery, receiver) = mpsc::channel(16);
-        self.state.delivery = delivery;
+        self.state.delivery = Arc::new(cmaeg::delivery::router::ShardedScheduler::new(delivery));
         self.state.resolver = ChannelResolver::new(
             Arc::new(self.records.clone()),
             self.state.keys.clone(),

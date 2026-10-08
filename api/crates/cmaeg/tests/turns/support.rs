@@ -53,6 +53,7 @@ impl Fixture {
         let readiness = Readiness::initialized();
         let tracker = TurnTracker::new(readiness.clone());
         let (delivery, outcomes) = mpsc::channel(64);
+        let delivery = Arc::new(cmaeg::delivery::router::ShardedScheduler::new(delivery));
         let runner = TurnRunner::new(client, tracker.clone(), delivery, config);
         let keys = MasterKeyRing::parse(&format!("1:{}", STANDARD.encode([1; 32]))).unwrap();
         let mut definition: ChannelDefinition = serde_json::from_str(include_str!(
