@@ -22,6 +22,11 @@ pub struct LaunchRequest {
     pub timing: Option<crate::telemetry::timing::IngressTiming>,
     /// The consumer that serves this turn. None means the default consumer.
     pub consumer: Option<ConsumerId>,
+    /// Multiplex every consumer into Sync; plain streams retain only child zero.
+    pub sync_fanout: bool,
+    /// The runner takes this at execute entry. Delivery-held request clones
+    /// must not keep capacity after execution ends; spawn refusal drops it.
+    pub lease: std::sync::Mutex<Option<crate::turns::capacity::TurnLease>>,
 }
 #[derive(Debug)]
 pub enum LaunchOutcome {

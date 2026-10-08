@@ -77,7 +77,8 @@ pub const COUNTERS: [&str; 14] = [
     MEDIA_ITEMS,
     MEDIA_RELAY_CORRELATION,
 ];
-pub const GAUGES: [&str; 2] = [TURNS_INFLIGHT, CHANNELS_CACHED];
+pub const ROUTED_TURNS_IN_FLIGHT: &str = "cmaeg_routed_turns_in_flight";
+pub const GAUGES: [&str; 3] = [TURNS_INFLIGHT, CHANNELS_CACHED, ROUTED_TURNS_IN_FLIGHT];
 pub const BUCKETS: [f64; 11] = [
     0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0,
 ];

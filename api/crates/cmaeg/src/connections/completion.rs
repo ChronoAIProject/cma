@@ -198,6 +198,8 @@ impl ConnectionService {
             return Err(Error::Conflict);
         }
         Ok(LaunchRequest {
+            sync_fanout: false,
+            lease: std::sync::Mutex::new(None),
             channel,
             activity,
             conversation_id: event.conversation_id,

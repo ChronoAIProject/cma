@@ -176,6 +176,8 @@ fn relayed_turn(edit: impl FnOnce(&mut Activity)) -> (LaunchRequest, i64) {
     let event_ref = EventRef::seal(&payload, &ring()).unwrap();
     edit(&mut activity);
     let turn = LaunchRequest {
+        sync_fanout: false,
+        lease: std::sync::Mutex::new(None),
         channel: Arc::new(resolved(|_| {})),
         conversation_id: payload.conversation_id.clone(),
         idempotency_key: IdempotencyKey::from_event(&activity.event_id),

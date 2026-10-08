@@ -90,6 +90,7 @@ impl TurnRunner {
         sender: oneshot::Sender<LaunchOutcome>,
         mut ticket: Ticket,
     ) {
+        let _lease = turn.lease.lock().unwrap().take();
         use crate::telemetry::{
             names,
             operations::{provider_error, Operation},
@@ -321,6 +322,7 @@ impl TurnRunner {
             if let Err(reason) = self.tracker.spawn(&turn, async move {
                 runner.execute(pending, sender, ticket).await;
             }) {
+                drop(turn.lease.lock().unwrap().take());
                 return LaunchOutcome::Refused(Problem::new(
                     if reason == "draining" {
                         ProblemCode::Draining

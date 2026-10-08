@@ -111,6 +111,8 @@ pub fn consumer_turn(
     event: &EventRefPayload,
 ) -> Arc<LaunchRequest> {
     Arc::new(LaunchRequest {
+        sync_fanout: false,
+        lease: std::sync::Mutex::new(None),
         timing: None,
         consumer: event.consumer.clone(),
         trace: tracing::Span::none(),

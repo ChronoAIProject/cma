@@ -1,3 +1,5 @@
+#[path = "turns/capacity.rs"]
+mod capacity;
 #[path = "turns/consumer_audience.rs"]
 mod consumer_audience;
 #[path = "turns/drain.rs"]

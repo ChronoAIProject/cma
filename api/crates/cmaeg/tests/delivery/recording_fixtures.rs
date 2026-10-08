@@ -141,6 +141,8 @@ pub fn turn(
     event: &EventRefPayload,
 ) -> Arc<LaunchRequest> {
     Arc::new(LaunchRequest {
+        sync_fanout: false,
+        lease: std::sync::Mutex::new(None),
         timing: None,
         consumer: None,
         trace: tracing::Span::none(),

@@ -80,6 +80,8 @@ pub fn launch_request(
     )
     .map_err(|_| "event_ref_too_large")?;
     Ok(LaunchRequest {
+        sync_fanout: false,
+        lease: std::sync::Mutex::new(None),
         timing: None,
         consumer: None,
         trace: tracing::Span::current(),

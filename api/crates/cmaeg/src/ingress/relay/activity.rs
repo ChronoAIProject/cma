@@ -119,6 +119,8 @@ pub(crate) fn launch_request(
     )
     .map_err(|_| "event_ref_too_large")?;
     Ok(Built::Launch(Box::new(LaunchRequest {
+        sync_fanout: false,
+        lease: std::sync::Mutex::new(None),
         timing: None,
         consumer: None,
         trace: tracing::Span::current(),
