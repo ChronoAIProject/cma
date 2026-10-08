@@ -1,23 +1,30 @@
 //! A media-enabled tools app: an event whose activity carries attachments,
 //! sealed into its event_ref, served by a media service over in-memory
-//! sources, a fake transcriber and a fake visual extractor.
+//! sources, a fake transcriber and a fake visual extractor, or the media
+//! transformer's production adapters over a scripted transformer.
 use super::media::fakes::{attachment, FakeSource};
 use bytes::Bytes;
 use cmaeg::{
     ingress::launch::LaunchRequest,
     media::{
+        budget::InflightBytes,
         derive::DeriveError,
         image::NormalizedImage,
         service::{MediaDeps, MediaService},
         transcribe::{
-            meter::SttSpend, upload::NoTranscoder, AudioContainer, AudioInput, TranscribeError,
-            Transcriber, Transcript,
+            meter::SttSpend,
+            upload::{AudioTranscoder, NoTranscoder},
+            AudioContainer, AudioInput, TranscribeError, Transcriber, Transcript,
+        },
+        transform::{
+            adapters::{TransformerKeyframes, TransformerTranscoder},
+            MediaTransformer,
         },
         visual::{PlatformThumbnail, VisualExtractor, VisualKind, VisualRequest},
         MediaLimits,
     },
     tools::MediaDownloads,
-    MediaConfig, MediaToolProviders, SttConfig,
+    MediaConfig, MediaToolProviders, SttConfig, TransformerConfig,
 };
 use cmaeg_core::{
     activity::{ActivityKind, Attachment, AttachmentKind, AttachmentSource, SourceKind},
@@ -191,6 +198,10 @@ pub struct MediaSetup {
     /// Extract frames with the production platform-thumbnail extractor over
     /// the fake source instead of the fake extractor.
     pub thumbnails: bool,
+    /// Wire this transformer behind the production keyframe and transcode
+    /// adapters, as `compose` wires a configured one; it overrides
+    /// `thumbnails` and the fake extractor.
+    pub transformer: Option<Arc<dyn MediaTransformer>>,
     pub limits: MediaLimits,
     /// Applied to the channel definition before it is stored.
     pub edit: fn(&mut Value),
@@ -208,6 +219,7 @@ impl MediaSetup {
             longest_partition_key: false,
             digest: true,
             thumbnails: false,
+            transformer: None,
             limits: MediaLimits::from_config(&MediaConfig::default()),
             edit: |_| {},
         }
@@ -249,6 +261,11 @@ impl MediaSetup {
 
     pub fn platform_thumbnails(mut self) -> Self {
         self.thumbnails = true;
+        self
+    }
+
+    pub fn transformer(mut self, transformer: Arc<dyn MediaTransformer>) -> Self {
+        self.transformer = Some(transformer);
         self
     }
 
@@ -315,18 +332,38 @@ impl MediaSetup {
     pub fn service(&self, keys: Arc<MasterKeyRing>) -> MediaService {
         let decode = Arc::new(Semaphore::new(1));
         let sources = self.fakes.source.registry();
-        let visuals: Arc<dyn VisualExtractor> = if self.thumbnails {
-            Arc::new(PlatformThumbnail::new(sources.clone(), decode.clone()))
-        } else {
-            self.fakes.visuals.clone()
-        };
-        // The direct upload path under the default spend limits, which no
-        // test here comes near.
+        // The default spend limits, which no test here comes near.
         let stt = SttConfig::default();
         let transcriber: Arc<dyn Transcriber> = self.fakes.transcriber.clone();
+        let (visuals, transcoder): (Arc<dyn VisualExtractor>, Arc<dyn AudioTranscoder>) =
+            match &self.transformer {
+                Some(transformer) => (
+                    Arc::new(TransformerKeyframes::new(
+                        transformer.clone(),
+                        sources.clone(),
+                        decode.clone(),
+                        self.limits.max_bytes,
+                        TransformerConfig::default().video_frames,
+                    )),
+                    Arc::new(TransformerTranscoder::new(
+                        transformer.clone(),
+                        &stt,
+                        transcriber.clone(),
+                        self.limits.max_bytes,
+                    )),
+                ),
+                None => (
+                    if self.thumbnails {
+                        Arc::new(PlatformThumbnail::new(sources.clone(), decode.clone()))
+                    } else {
+                        self.fakes.visuals.clone()
+                    },
+                    Arc::new(NoTranscoder::new(&stt, transcriber.clone())),
+                ),
+            };
         MediaService::new(MediaDeps {
             sources,
-            transcoder: Arc::new(NoTranscoder::new(&stt, transcriber.clone())),
+            transcoder,
             stt: Arc::new(SttSpend::new(&stt)),
             transcriber,
             visuals,
@@ -336,6 +373,7 @@ impl MediaSetup {
                 self.tool_providers.iter().map(|slug| slug.parse().unwrap()),
             )),
             decode,
+            inflight: InflightBytes::new(&self.limits),
         })
     }
 }

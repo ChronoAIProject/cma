@@ -11,6 +11,8 @@ pub mod media {
 }
 #[path = "tools/attachment_capabilities.rs"]
 mod attachment_capabilities;
+#[path = "tools/attachment_transformer.rs"]
+mod attachment_transformer;
 #[path = "tools/attachments.rs"]
 mod attachments;
 #[path = "tools/attachments_mcp.rs"]

@@ -1,0 +1,11 @@
+# cargo-nextest configuration for the api workspace.
+
+# The CPU-limit test proves RLIMIT_CPU kills a job before the per-process wall
+# clock does. Both are 20 seconds, so the job must average more than one full
+# CPU across its four threads, and it runs at SCHED_IDLE like every media job:
+# any other test busy on the same machine starves it until the wall clock wins
+# and the job is classified as a timeout instead. Running it alone keeps the
+# assertion exact without loosening either limit for the test's sake.
+[[profile.default.overrides]]
+filter = 'binary_id(cmaeg::media_sandbox) & test(=lifecycle::spin_yields_cpu_limit)'
+threads-required = "num-test-threads"

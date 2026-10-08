@@ -63,15 +63,23 @@ pub(crate) async fn serve(config: Config) -> Result<(), Box<dyn std::error::Erro
         ),
     );
     let tool_providers = std::sync::Arc::new(config.media.tool_providers.clone());
+    // Installed before the media transformer's setup so its readiness gauge
+    // is recorded; the metrics listener still binds after the gateway's.
+    let metrics = telemetry::install()?;
+    // Before the listener binds: a configured transformer must pass its
+    // sandbox self-check, or the gateway does not start.
+    let transformer = media::transform::setup::start_configured(&config).await?;
     // The one media service of the process, or `None` while
     // CMAEG_MEDIA_ENABLED=false so nothing is allocated. Turn preparation and
-    // the attachment tools share it, so they share its budgets and cache.
+    // the attachment tools share it, so they share its budgets, cache and
+    // transformer.
     let media = media::service::compose(
         &config,
         media::service::ComposeDeps {
             keys: state.master_keys.clone(),
             tool_providers: tool_providers.clone(),
             telegram: telegram.clone(),
+            transformer,
         },
     )?;
     let runner = std::sync::Arc::new(
@@ -115,8 +123,7 @@ pub(crate) async fn serve(config: Config) -> Result<(), Box<dyn std::error::Erro
     let ingress = ingress.with_receipt_observer(std::sync::Arc::new(connections.clone()));
     let _connection_worker = connections.start_completion_worker(runner);
     let listener = tokio::net::TcpListener::bind(config.listen).await?;
-    let _metrics =
-        http::metrics::MetricsServer::start(config.metrics_listen, telemetry::install()?).await?;
+    let _metrics = http::metrics::MetricsServer::start(config.metrics_listen, metrics).await?;
     tracing::info!(bind = %config.listen, "CMAEG listening");
 
     let (shutdown_started, shutdown_signal) = oneshot::channel();

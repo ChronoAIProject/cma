@@ -74,6 +74,17 @@ fn describe_media() {
         "Time a turn spent on its eager attachment items, by outcome"
     );
     let _ = metrics::histogram!(names::MEDIA_PREPARE);
+    metrics::describe_histogram!(
+        names::MEDIA_TRANSFORM_SECONDS,
+        metrics::Unit::Seconds,
+        "Sandboxed media job time, spawn to reap, by op"
+    );
+    let _ = metrics::histogram!(names::MEDIA_TRANSFORM_SECONDS);
+    metrics::describe_counter!(
+        names::MEDIA_TRANSFORM_TOTAL,
+        "Sandboxed media jobs by op and outcome"
+    );
+    metrics::counter!(names::MEDIA_TRANSFORM_TOTAL).absolute(0);
     metrics::describe_counter!(
         names::MEDIA_FETCH_BYTES,
         metrics::Unit::Bytes,
@@ -129,6 +140,11 @@ fn describe_media() {
             names::STT_CHANNELS_AT_BUDGET,
             metrics::Unit::Count,
             "CMAEG channels refused by their own speech-to-text budget in the last hour",
+        ),
+        (
+            names::MEDIA_SANDBOX_READY,
+            metrics::Unit::Count,
+            "1 once the media transformer's sandbox self-check passed at startup",
         ),
     ] {
         metrics::describe_gauge!(name, unit, description);

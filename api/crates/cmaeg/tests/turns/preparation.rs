@@ -398,6 +398,29 @@ async fn excerpt_and_untruncated_transcript_have_no_notice() {
         input.contains("[transcript covers the first 1:05]"),
         "{input}"
     );
+
+    // The transformer truncates at T, ten minutes at the default limits.
+    let transformed = Media::new(Speech::Transformer, BUDGET).await;
+    let request = transformed.turn("long", vec![voice(&transformed, 0, None)], |_| {});
+    let prepared = prepare(
+        &transformed.service,
+        &request,
+        audience,
+        &config(BUDGET),
+        Some("0123456789ab".into()),
+        deadline(BUDGET),
+        now(),
+    )
+    .await;
+    assert_eq!(
+        prepared.media.inline[0].notice,
+        Some(InlineNotice::AudioTruncated { seconds: 600 })
+    );
+    let input = rendered(&request, &prepared.media, audience);
+    assert!(
+        input.contains("[transcript covers the first 10:00]"),
+        "{input}"
+    );
 }
 
 #[tokio::test]
