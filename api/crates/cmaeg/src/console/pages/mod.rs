@@ -3,10 +3,19 @@
 //! stylesheet the CSP admits by hash. Every owner- or NyxID-controlled string
 //! goes through `escape`; error pages are generic and never echo upstream
 //! bodies.
+pub(crate) mod activity;
 pub(crate) mod banners;
+pub(crate) mod channel;
 pub(crate) mod channels;
+pub(crate) mod consumers;
 pub(crate) mod layout;
+pub(crate) mod overview;
+pub(crate) mod producers;
+pub(crate) mod routing;
 pub(crate) mod signin;
+pub(crate) mod sources;
+#[cfg(test)]
+mod tab_tests;
 
 use axum::{
     http::StatusCode,
@@ -56,6 +65,30 @@ pub(crate) fn forbidden() -> Response {
         "Request refused",
         "<h1>Request refused</h1><p class=\"lead\">This request could not be verified. Go back to the console and try again.</p><p><a class=\"button secondary\" href=\"/console\">Go to the console</a></p>",
     )
+}
+
+/// A table with `headers` and rows of `<td>` markup the caller escaped.
+pub(crate) fn table(headers: &[&str], rows: &[String]) -> String {
+    let head: String = headers
+        .iter()
+        .map(|header| format!("<th>{}</th>", escape(header)))
+        .collect();
+    let body: String = rows.iter().map(|row| format!("<tr>{row}</tr>")).collect();
+    format!("<div class=\"scroll\"><table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div>")
+}
+
+/// A definition list of fixed terms and values the caller escaped.
+pub(crate) fn facts(items: &[(&str, String)]) -> String {
+    let rows: String = items
+        .iter()
+        .map(|(term, value)| format!("<dt>{}</dt><dd>{value}</dd>", escape(term)))
+        .collect();
+    format!("<dl class=\"facts\">{rows}</dl>")
+}
+
+/// `value` escaped, or a dash when absent.
+pub(crate) fn or_dash(value: Option<&str>) -> String {
+    value.map_or_else(|| "—".to_owned(), escape)
 }
 
 /// A moment as the console shows it: RFC 3339 in UTC, to the second.

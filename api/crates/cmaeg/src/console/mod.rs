@@ -9,10 +9,12 @@
 pub mod activity;
 pub mod authority;
 pub mod channel_ids;
+mod channel_routes;
 pub mod clock;
 pub mod cma_budget;
 mod cookies;
 mod csrf;
+pub mod detail;
 pub mod directory;
 mod extract;
 mod frame;

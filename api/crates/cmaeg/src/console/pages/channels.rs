@@ -71,11 +71,15 @@ fn filter(query: Option<&str>) -> String {
 fn table_row(row: &ChannelRow) -> String {
     let short: String = row.record_id.chars().take(SHORT_RECORD).collect();
     let summary = row.summary.as_deref();
-    let name = match (summary, row.name.is_empty()) {
+    let label = match (summary, row.name.is_empty()) {
         (None, _) => "<span class=\"empty\">Loading…</span>".to_owned(),
         (Some(_), true) => "<span class=\"empty\">(no name)</span>".to_owned(),
         (Some(_), false) => escape(&row.name),
     };
+    let name = format!(
+        "<a href=\"{}\">{label}</a>",
+        escape(&format!("{HOME}/channels/{}", row.record_id))
+    );
     let status = summary.map_or("loading", |summary| status_label(summary));
     let sources = summary.map_or_else(String::new, |summary| {
         summary.sources.iter().map(|id| chip(id, "")).collect()
@@ -199,12 +203,17 @@ mod tests {
                 slug: "cma_codex".into(),
                 key_hash: "sha256:…00000000".into(),
                 pending: true,
+                target: "profile".into(),
+                binding_id: "binding-1".into(),
+                level: "L1",
+                auto_final: true,
             }],
             routed: false,
             default_receives_all: None,
             status: SummaryStatus::Ready,
             record_bytes: 100,
             warnings: Vec::new(),
+            detail: None,
         }
     }
 
@@ -242,6 +251,9 @@ mod tests {
         assert!(html.contains("&lt;script&gt;alert(1)&lt;/script&gt;"));
         assert!(!html.contains("<img"));
         assert!(html.contains("<code>00000000</code>"));
+        assert!(html.contains(
+            "<a href=\"/console/channels/00000000-0000-4000-8000-000000000001\">&lt;script&gt;"
+        ));
         assert!(html.contains("relay_lark"));
         assert!(html.contains("&lt;b&gt;label&lt;/b&gt; · cma_codex"));
         assert!(html.contains(">Pending<"));

@@ -5,7 +5,7 @@
 //! `Authorized` extractor and derives authority on every request.
 use axum::routing::{get, post, MethodRouter};
 
-use super::{login, redirect, routes, Console};
+use super::{channel_routes, login, pages::channel, redirect, routes, Console};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Access {
@@ -53,6 +53,11 @@ pub const ROUTES: &[ConsoleRoute] = &[
         path: redirect::OWNER,
         access: Access::Authorized,
     },
+    ConsoleRoute {
+        method: "GET",
+        path: channel::PATH,
+        access: Access::Authorized,
+    },
 ];
 
 /// The handler of `route`. A table entry without a handler fails the first
@@ -65,6 +70,7 @@ pub(crate) fn handler(route: &ConsoleRoute) -> MethodRouter<Console> {
         ("GET", redirect::SIGNED_OUT) => get(routes::signed_out),
         ("POST", redirect::LOGOUT) => post(routes::logout),
         ("POST", redirect::OWNER) => post(routes::switch_owner),
+        ("GET", channel::PATH) => get(channel_routes::channel),
         (method, path) => unreachable!("console route {method} {path} has no handler"),
     }
 }

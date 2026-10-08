@@ -18,10 +18,11 @@ use cmaeg::{
         channel_ids::LinkError,
         cma_budget::{Pacing, RecordHeads},
         memory::{ConsoleMemory, Schedule, Sources},
-        observer::Observation,
+        observer::{ActivitySeed, CausationSummary, DeliveryClass, Observation, RefusalSeed},
         reader::ChannelReader,
     },
     records::{RecordError, RecordHead},
+    turns::observer::{DeliveryStep, Destination, LaunchClass},
     ConsoleMemoryConfig,
 };
 use cmaeg_core::{
@@ -29,10 +30,11 @@ use cmaeg_core::{
         AdmissionPolicy, ChannelCreation, ChannelDefinition, CustomAttachments, CustomAuth,
         GroupAdmission, IdentityAdmission, Platform, Secret, Source,
     },
-    ids::{ChannelId, RecordId},
+    ids::{ChannelId, ConsumerId, RecordId},
     profile::NyxIdIdentityKind,
 };
 use futures_util::future::BoxFuture;
+use time::OffsetDateTime;
 
 use super::support::{Composition, Harness};
 
@@ -119,6 +121,20 @@ pub fn definition(record: &RecordId, owner: &str, name: &str) -> ChannelDefiniti
     });
     definition
 }
+
+/// Every tab of a channel's detail page.
+pub const TABS: &[&str] = &[
+    "overview",
+    "sources",
+    "consumers",
+    "routing",
+    "activity",
+    "producers",
+];
+/// The event key of the fixture traffic's first event.
+pub const EVENT: &str = "0123456789abcdef";
+/// The event key of the fixture traffic's published follow-up.
+pub const FOLLOW_UP: &str = "fedcba9876543210";
 
 /// CMA's record listing, counted.
 #[derive(Default)]
@@ -253,6 +269,84 @@ impl World {
         let record = record(index);
         self.store(definition(&record, owner, name), 1);
         record
+    }
+
+    /// Traffic on `record`: a relayed Lark message accepted and answered by
+    /// the default consumer, a follow-up it published, a refused event and
+    /// a custom producer named `producer`.
+    pub fn traffic(&self, record: &RecordId, producer: &str) {
+        let default = ConsumerId::default_consumer();
+        let seed = |key: &str| ActivitySeed {
+            at: OffsetDateTime::now_utc(),
+            event_key: key.into(),
+            source: "nyxid_relay:lark".into(),
+            kind: "message",
+            actor_masked: "…5678".into(),
+            chat_masked: "…7890".into(),
+            attachments: [1, 0, 0, 2],
+        };
+        for observation in [
+            Observation::Routed {
+                record: record.clone(),
+                entry_seed: seed(EVENT),
+            },
+            Observation::Launch {
+                record: record.clone(),
+                event_key: EVENT.into(),
+                consumer: default.clone(),
+                outcome: LaunchClass::Accepted,
+                accepted_ms: Some(120),
+            },
+            Observation::Delivery {
+                record: record.clone(),
+                event_key: EVENT.into(),
+                consumer: default.clone(),
+                step: DeliveryStep::Answer,
+                outcome: DeliveryClass::Confirmed,
+                destination: Destination::Origin,
+            },
+            Observation::Routed {
+                record: record.clone(),
+                entry_seed: seed(FOLLOW_UP),
+            },
+            Observation::Published {
+                record: record.clone(),
+                event_key: FOLLOW_UP.into(),
+                causation: CausationSummary {
+                    parent_key: EVENT.into(),
+                    hop: 1,
+                    published_by: default.clone(),
+                },
+            },
+            Observation::Delivery {
+                record: record.clone(),
+                event_key: FOLLOW_UP.into(),
+                consumer: default.clone(),
+                step: DeliveryStep::Failure,
+                outcome: DeliveryClass::Rejected {
+                    reason: "chat_not_found".into(),
+                },
+                destination: Destination::Default,
+            },
+            Observation::Refused {
+                record: record.clone(),
+                seed: RefusalSeed {
+                    at: OffsetDateTime::now_utc(),
+                    event_key: None,
+                    source: "custom",
+                    reason: "schema_mismatch".into(),
+                },
+            },
+            Observation::Producer {
+                record: record.clone(),
+                source_uri: producer.into(),
+                hint: "hmac:hmac-key-1".into(),
+                ce_type: "com.example.order".into(),
+                outcome: LaunchClass::Accepted,
+            },
+        ] {
+            self.memory.apply(observation);
+        }
     }
 
     pub fn reads(&self) -> usize {

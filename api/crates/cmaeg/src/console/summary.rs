@@ -2,10 +2,11 @@
 //! reading CMA on every page, cached by `(record_id, version)`.
 //!
 //! A summary is built from the definition `management::load_by_record` reads
-//! with REST's owner check, and keeps only names, chips and a status: never a
-//! profile, a credential or a secret. A page render resolves the version from
-//! the owner index and reuses the cached summary, so CMA is read only when a
-//! channel changed or its summary was evicted.
+//! with REST's owner check, and keeps only names, chips, a status and the
+//! detail tabs' settings: never a profile, a credential or a secret. A page
+//! render resolves the version from the owner index and reuses the cached
+//! summary, so CMA is read only when a channel changed or its summary was
+//! evicted.
 use std::sync::Arc;
 
 use cmaeg_core::{
@@ -16,7 +17,10 @@ use cmaeg_core::{
 use moka::sync::Cache;
 use serde::Serialize;
 
-use super::mask;
+use super::{
+    detail::{level_label, target_label, ChannelDetail},
+    mask,
+};
 
 /// CMA's record size limit.
 const RECORD_LIMIT: usize = 65_536;
@@ -50,6 +54,11 @@ pub struct ConsumerChip {
     /// The consumer's public key hash, masked as `sha256:…<last 8>`.
     pub key_hash: String,
     pub pending: bool,
+    /// `profile`, or the existing agent it targets.
+    pub target: String,
+    pub binding_id: String,
+    pub level: &'static str,
+    pub auto_final: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -69,6 +78,8 @@ pub struct ChannelSummary {
     pub status: SummaryStatus,
     pub record_bytes: u32,
     pub warnings: Vec<&'static str>,
+    /// What the detail tabs show; absent when the definition was unreadable.
+    pub detail: Option<ChannelDetail>,
 }
 
 impl ChannelSummary {
@@ -104,6 +115,10 @@ impl ChannelSummary {
                     slug: consumer.provider.slug.to_string(),
                     key_hash: mask::hash(consumer.agent_key_hash),
                     pending: false,
+                    target: target_label(&consumer.provider.target),
+                    binding_id: consumer.provider.binding_id.to_string(),
+                    level: level_label(consumer.provider.level),
+                    auto_final: consumer.auto_final,
                 })
                 .collect(),
             // Legacy channels only until routing policies exist.
@@ -112,6 +127,7 @@ impl ChannelSummary {
             status,
             record_bytes: u32::try_from(record_bytes).unwrap_or(u32::MAX),
             warnings,
+            detail: Some(ChannelDetail::of(definition)),
         }
     }
 
@@ -130,6 +146,7 @@ impl ChannelSummary {
             status,
             record_bytes: 0,
             warnings: Vec::new(),
+            detail: None,
         }
     }
 }

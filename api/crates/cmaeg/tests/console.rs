@@ -21,6 +21,8 @@ mod owner;
 mod pages;
 #[path = "console/pages_support.rs"]
 pub mod pages_support;
+#[path = "console/pages_tabs.rs"]
+mod pages_tabs;
 #[path = "console/protection.rs"]
 mod protection;
 #[path = "console/sessions.rs"]

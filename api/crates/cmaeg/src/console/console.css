@@ -34,6 +34,13 @@ form.filter { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; mar
 input, textarea { min-height: 40px; max-width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; background: var(--surface); color: inherit; font: inherit; }
 input:focus-visible, textarea:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 .pager { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.tabs { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 24px; border-bottom: 1px solid var(--line); }
+.tabs a { padding: 8px 14px; border-radius: 8px 8px 0 0; text-decoration: none; }
+.tabs a[aria-current="page"] { background: var(--selected); font-weight: 650; }
+dl.facts { display: grid; grid-template-columns: minmax(140px, max-content) 1fr; gap: 6px 18px; margin: 0 0 28px; }
+dl.facts dt { color: var(--muted); font-size: 14px; }
+dl.facts dd { margin: 0; overflow-wrap: anywhere; }
+meter { width: min(100%, 280px); vertical-align: middle; }
 @media (prefers-color-scheme: dark) {
   :root { color: #f3eadb; background: #17130d; --line: #4a3f2e; --accent: #e5d3b3; --selected: #2a2318; --surface: #1f1a12; --muted: #bba98a; --error: #f09a8f; }
   .button, button { color: #17130d; }

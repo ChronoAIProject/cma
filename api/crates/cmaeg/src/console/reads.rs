@@ -15,7 +15,7 @@ use super::{
     activity::{ActivityEntry, ActivityFilter, RingTotals},
     authority::Authorized,
     channel_ids::LinkError,
-    directory::{ChannelDirectory, ChannelPage, ChannelRow},
+    directory::{ChannelDirectory, ChannelPage, ChannelRow, ChannelView},
     memory::ConsoleMemory,
     producers::ProducerView,
     summary::{created_channel_id, ChannelSummary, SummaryStatus},
@@ -45,6 +45,19 @@ impl ConsoleMemory {
             Some(summary) => owned(summary, auth),
             None => self.fill(auth, record).await,
         }
+    }
+
+    /// `record`'s summary, indexed version and displayable channel id when
+    /// `auth` owns it.
+    pub async fn channel(&self, auth: &Authorized, record: &RecordId) -> Option<ChannelView> {
+        let summary = self.summary(auth, record).await?;
+        let version = self.index.version_for(auth, record)?;
+        Some(ChannelView {
+            record: record.clone(),
+            version,
+            summary,
+            channel_id: self.channel_ids.get(record),
+        })
     }
 
     /// The newest [`ACTIVITY_ROWS`] activity entries of `record` matching
@@ -274,6 +287,27 @@ impl ChannelDirectory for ConsoleMemory {
         query: Option<&'a str>,
     ) -> BoxFuture<'a, ChannelPage> {
         ConsoleMemory::channels_for(self, auth, page, query).boxed()
+    }
+
+    fn channel<'a>(
+        &'a self,
+        auth: &'a Authorized,
+        record: &'a RecordId,
+    ) -> BoxFuture<'a, Option<ChannelView>> {
+        ConsoleMemory::channel(self, auth, record).boxed()
+    }
+
+    fn activity(
+        &self,
+        auth: &Authorized,
+        record: &RecordId,
+        filter: ActivityFilter,
+    ) -> Option<Vec<ActivityEntry>> {
+        ConsoleMemory::activity(self, auth, record, filter)
+    }
+
+    fn producers(&self, auth: &Authorized, record: &RecordId) -> Option<Vec<ProducerView>> {
+        ConsoleMemory::producers(self, auth, record)
     }
 }
 
