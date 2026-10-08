@@ -63,6 +63,27 @@ impl CustomDelivery {
             delivery,
         }
     }
+    /// Post `message` to the result webhook sinks as the channel's default
+    /// reply destination, tagged `destination: "default"`. Nothing is emitted
+    /// to a Sync origin: the default destination is not the origin.
+    pub async fn default_reply(
+        &self,
+        gate: &dyn SendGate,
+        channel: &ResolvedChannel,
+        event: &EventRefPayload,
+        message: &OutboundMessage,
+    ) -> IntentReceipt {
+        let mut data = custom::data(event, message.text.as_deref(), Some(message), None);
+        custom::to_default(&mut data);
+        let delivery = self
+            .webhook(gate, channel, event, "cmaeg.response.message", data, false)
+            .await;
+        IntentReceipt {
+            message_ref: None,
+            rendering: custom::report(message),
+            delivery,
+        }
+    }
     pub fn stream(&self, event: &EventRefPayload, outcome: &TurnOutcome) {
         let frame = match outcome {
             TurnOutcome::TextDelta { text } => Some((
@@ -97,30 +118,53 @@ impl CustomDelivery {
             self.emit(event, name, &data, outcome.terminal());
         }
     }
-    #[tracing::instrument(name="cmaeg.deliver", skip_all, fields(
-        channel = %crate::telemetry::channel_hash(channel.id.as_str()), event_id = %event.event_id,
-        consumer = event.consumer.as_ref().map_or("default", |id| id.as_str())))]
     pub async fn outcome(
         &self,
         channel: &ResolvedChannel,
         event: &EventRefPayload,
         outcome: &TurnOutcome,
     ) {
-        if let Some((kind, data)) = terminal(event, outcome) {
-            let mut observation = crate::telemetry::operations::Operation::new(
-                crate::telemetry::names::DELIVERY_DURATION,
-                crate::telemetry::names::PLATFORM,
-                "custom",
-            );
-            let delivered = self
-                .webhook(&Ungated, channel, event, kind, data, false)
-                .await;
-            observation.finish(delivered.kind());
-            tracing::info!(
-                outcome = delivered.kind(),
-                "custom terminal delivery finished"
-            );
+        self.post_terminal(channel, event, outcome, false).await;
+    }
+    /// Post a terminal outcome to the result webhook sinks as the channel's
+    /// default reply destination, tagged `destination: "default"`. Returns
+    /// the delivery, `None` for an outcome that is not terminal.
+    pub async fn default_outcome(
+        &self,
+        channel: &ResolvedChannel,
+        event: &EventRefPayload,
+        outcome: &TurnOutcome,
+    ) -> Option<DeliveryOutcome> {
+        self.post_terminal(channel, event, outcome, true).await
+    }
+    #[tracing::instrument(name="cmaeg.deliver", skip_all, fields(
+        channel = %crate::telemetry::channel_hash(channel.id.as_str()), event_id = %event.event_id,
+        consumer = event.consumer.as_ref().map_or("default", |id| id.as_str())))]
+    async fn post_terminal(
+        &self,
+        channel: &ResolvedChannel,
+        event: &EventRefPayload,
+        outcome: &TurnOutcome,
+        default: bool,
+    ) -> Option<DeliveryOutcome> {
+        let (kind, mut data) = terminal(event, outcome)?;
+        if default {
+            custom::to_default(&mut data);
         }
+        let mut observation = crate::telemetry::operations::Operation::new(
+            crate::telemetry::names::DELIVERY_DURATION,
+            crate::telemetry::names::PLATFORM,
+            "custom",
+        );
+        let delivered = self
+            .webhook(&Ungated, channel, event, kind, data, false)
+            .await;
+        observation.finish(delivered.kind());
+        tracing::info!(
+            outcome = delivered.kind(),
+            "custom terminal delivery finished"
+        );
+        Some(delivered)
     }
     /// Whether `address` is a Sync origin whose waiter can still take a
     /// frame; `false` for every other address.

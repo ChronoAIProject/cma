@@ -1,6 +1,7 @@
 //! Neutral delivery intents; the transport engine owns external sends.
 mod address;
 pub mod custom;
+mod default_destination;
 pub mod engine;
 mod event;
 mod failure;

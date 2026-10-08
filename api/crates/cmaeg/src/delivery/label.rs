@@ -1,4 +1,5 @@
 //! The `[<label>] ` prefix that tells a chat which consumer it is reading.
+use super::address::EffectiveAddress;
 use crate::telemetry::names;
 use cmaeg_core::{
     channel::{ChannelDefinition, ReplyLabel},
@@ -43,6 +44,17 @@ pub(super) fn transport(address: &ReplyAddress) -> Option<&'static str> {
         ReplyAddress::Telegram { .. } => Some("telegram"),
         ReplyAddress::NyxidRelay { .. } => Some("relay"),
         ReplyAddress::Sync { .. } | ReplyAddress::ResultWebhook { .. } | ReplyAddress::None => None,
+    }
+}
+
+/// The chat transport a resolved address sends through, as a metric label:
+/// its origin's, or the default chat's.
+pub(super) fn effective_transport(address: &EffectiveAddress) -> Option<&'static str> {
+    match address {
+        EffectiveAddress::Origin(origin) => transport(origin),
+        EffectiveAddress::DefaultTelegramChat { .. } => Some("telegram"),
+        EffectiveAddress::DefaultRelayConversation { .. } => Some("relay"),
+        EffectiveAddress::DefaultSinks | EffectiveAddress::Rejected { .. } => None,
     }
 }
 

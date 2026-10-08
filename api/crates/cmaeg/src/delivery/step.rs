@@ -1,19 +1,26 @@
 //! Per-event delivery steps over an event's group and one of its consumers.
 use super::{
     address::{
-        count_unavailable, deliverable, effective, requested, routing_send, EffectiveAddress,
+        count_unavailable, effective, requested, routing_send, AddressClass, EffectiveAddress,
         SendKind, DEFAULT_REPLY_UNAVAILABLE,
     },
+    default_destination,
     gate::Ungated,
     group::EventGroup,
     intents::{DeliveryOutcome, IntentReceipt},
     label::{self, active_label},
-    send::{SendContext, Sender},
+    part_keys::PartKeys,
+    send::{SendContext, SendEffects, Sender},
 };
 use crate::{turns::outcomes::TurnOutcome, DeliveryConfig};
 use cmaeg_core::message::OutboundMessage;
 use std::time::Duration;
 use tokio::time::Instant;
+
+/// The `kind` of an automatic output's idempotency keys: an answer, or the
+/// failure text.
+const ANSWER: &str = "answer";
+const FAILURE: &str = "failure";
 
 /// Apply consumer `at`'s turn outcome: the event's ack is scheduled once, and
 /// answers, auto-final and the failure text are that consumer's alone.
@@ -29,7 +36,10 @@ pub(super) async fn outcome_event(
             group.terminal_at = None;
             // Once per event: a second consumer's acceptance never schedules
             // another ack, and a hand-off has no human waiting for one.
+            // Progress goes only to a chat origin: a custom event answered
+            // in a default chat never had an ack, and keeps none.
             if !group.handoff
+                && AddressClass::of(&group.consumers[at].event.reply) == AddressClass::Chat
                 && !group.ack_sent
                 && group.ack_due.is_none()
                 && !group.first_send_done
@@ -49,7 +59,7 @@ pub(super) async fn outcome_event(
             delivery.last_output_at = Instant::now();
             if delivery.policy.auto_final && !delivery.tool_replied {
                 delivery.answer_attempted = true;
-                send_output(sender, group, at, text, config).await;
+                send_output(sender, group, at, text, config, ANSWER).await;
             }
         }
         TurnOutcome::Completed { final_text } => {
@@ -57,14 +67,15 @@ pub(super) async fn outcome_event(
             if delivery.policy.auto_final && !delivery.answer_attempted && !delivery.tool_replied {
                 if let Some(text) = final_text {
                     delivery.answer_attempted = true;
-                    send_output(sender, group, at, text, config).await;
+                    send_output(sender, group, at, text, config, ANSWER).await;
                 }
             }
             group.finish(at);
         }
         TurnOutcome::Failed { .. } | TurnOutcome::Incomplete { .. } => {
             if !group.consumers[at].tool_replied {
-                send_output(sender, group, at, config.failure_text.clone(), config).await;
+                let text = config.failure_text.clone();
+                send_output(sender, group, at, text, config, FAILURE).await;
             }
             group.finish(at);
         }
@@ -159,7 +170,7 @@ pub(super) fn output_address(
     multi_consumer_enabled: bool,
 ) -> EffectiveAddress {
     let delivery = &group.consumers[at];
-    deliverable(effective(
+    effective(
         &group.channel.definition,
         &delivery.event,
         requested(delivery.policy.destination, &delivery.event),
@@ -168,7 +179,7 @@ pub(super) fn output_address(
         SendKind::Output {
             routed_turn: delivery.routed_turn,
         },
-    ))
+    )
 }
 
 /// Record a rejected automatic output: nothing is sent, and the consumer is
@@ -187,7 +198,8 @@ fn reject_output(group: &mut EventGroup, at: usize, reason: &'static str) {
 }
 
 /// A custom-class consumer's outcome. Its Sync frame was already emitted;
-/// the terminal outcome goes to the result webhooks.
+/// the terminal outcome goes to the result webhooks, tagged as the default
+/// destination when the consumer's answers go there.
 pub(super) async fn custom_outcome(
     group: &mut EventGroup,
     at: usize,
@@ -198,16 +210,30 @@ pub(super) async fn custom_outcome(
     if matches!(outcome, TurnOutcome::Accepted { .. }) {
         group.terminal_at = None;
     }
-    if let EffectiveAddress::Rejected { reason } = address {
-        if outcome.terminal() {
-            reject_output(group, at, reason);
+    match address {
+        EffectiveAddress::Rejected { reason } => {
+            if outcome.terminal() {
+                reject_output(group, at, reason);
+            }
+            return;
         }
-        return;
+        EffectiveAddress::DefaultSinks => {
+            let event = &group.consumers[at].event;
+            let delivered = sender
+                .custom
+                .default_outcome(&group.channel, event, &outcome)
+                .await;
+            if let Some(delivered) = delivered {
+                default_destination::record(&group.channel, "webhook", &delivered);
+            }
+        }
+        _ => {
+            sender
+                .custom
+                .outcome(&group.channel, &group.consumers[at].event, &outcome)
+                .await
+        }
     }
-    sender
-        .custom
-        .outcome(&group.channel, &group.consumers[at].event, &outcome)
-        .await;
     if outcome.terminal() {
         group.finish(at);
     }
@@ -216,7 +242,8 @@ pub(super) async fn custom_outcome(
 /// The event's progress (its ack or a heartbeat), sent once per event,
 /// unlabeled, to the origin every consumer shares.
 async fn send_progress(sender: &Sender, group: &mut EventGroup, text: String) -> bool {
-    send_text(sender, group, 0, text, None).await
+    let origin = EffectiveAddress::Origin(group.consumers[0].event.reply.clone());
+    send_text(sender, group, 0, text, None, &origin, None).await
 }
 
 /// Consumer `at`'s answer or failure text, opened with its label, at its
@@ -228,14 +255,41 @@ async fn send_output(
     at: usize,
     text: String,
     config: &DeliveryConfig,
+    kind: &'static str,
 ) -> bool {
     let flag = config.multi_consumer_enabled;
-    if let EffectiveAddress::Rejected { reason } = output_address(sender, group, at, flag) {
+    let address = output_address(sender, group, at, flag);
+    if let EffectiveAddress::Rejected { reason } = address {
         reject_output(group, at, reason);
         return false;
     }
     let label = output_label(group, at, flag);
-    send_text(sender, group, at, text, label.as_deref()).await
+    let keys = output_keys(group, at, kind);
+    send_text(
+        sender,
+        group,
+        at,
+        text,
+        label.as_deref(),
+        &address,
+        Some(&keys),
+    )
+    .await
+}
+
+/// The keys of consumer `at`'s next automatic output, numbered by its
+/// output sequence so two committed messages never share a key.
+fn output_keys(group: &mut EventGroup, at: usize, kind: &'static str) -> PartKeys {
+    let delivery = &mut group.consumers[at];
+    let seq = delivery.outputs;
+    delivery.outputs += 1;
+    PartKeys::Output {
+        record_id: delivery.event.record_id.as_str().into(),
+        event_id: delivery.event.event_id.as_str().into(),
+        consumer: delivery.consumer.as_str().into(),
+        kind,
+        seq,
+    }
 }
 
 async fn send_text(
@@ -244,18 +298,21 @@ async fn send_text(
     at: usize,
     text: String,
     label: Option<&str>,
+    address: &EffectiveAddress,
+    keys: Option<&PartKeys>,
 ) -> bool {
     let message = OutboundMessage {
         text: Some(text),
         blocks: vec![],
         reply_to: None,
     };
-    let result = reply(sender, group, at, &message, label).await;
+    let result = reply(sender, group, at, &message, label, address, keys).await;
     matches!(result.delivery, DeliveryOutcome::Confirmed { .. })
 }
 
-/// Send `message` for consumer `at` of `group`'s event, opened with
-/// `label`, through the `Ungated` gate and apply the send's effects as soon as it returns. The
+/// Send `message` for consumer `at` of `group`'s event to `address`, opened
+/// with `label`, through the `Ungated` gate, and apply the send's effects as
+/// soon as it returns. `keys` number the parts of a default relay send. The
 /// serial worker reads no group state while a send awaits, so reads and
 /// writes keep the order they had when the send mutated the state.
 pub(super) async fn reply(
@@ -264,8 +321,10 @@ pub(super) async fn reply(
     at: usize,
     message: &OutboundMessage,
     label: Option<&str>,
+    address: &EffectiveAddress,
+    keys: Option<&PartKeys>,
 ) -> IntentReceipt {
-    label::count(label, label::transport(&group.consumers[at].event.reply));
+    label::count(label, label::effective_transport(address));
     let context = SendContext {
         trace: &group.trace,
         channel: &group.channel,
@@ -273,9 +332,18 @@ pub(super) async fn reply(
         gate: &Ungated,
         label,
     };
-    let (result, effects) = sender
-        .reply(&context, &group.consumers[at].event, message)
-        .await;
+    let event = &group.consumers[at].event;
+    // A default destination answers no inbound message, so its sends never
+    // mark the event's first send or spend the origin's reply token.
+    let (result, effects) = match address {
+        EffectiveAddress::Origin(_) => sender.reply(&context, event, message).await,
+        _ => (
+            sender
+                .default_reply(&context, event, address, message, keys)
+                .await,
+            SendEffects::default(),
+        ),
+    };
     group.first_send_done |= effects.first_send_done;
     result
 }

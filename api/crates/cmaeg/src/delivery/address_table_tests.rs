@@ -348,22 +348,3 @@ fn each_snapshot_resolves_the_default_it_names_now() {
         );
     }
 }
-
-#[test]
-fn a_resolved_default_is_refused_until_its_transport_delivers_it() {
-    let unavailable = EffectiveAddress::Rejected {
-        reason: DEFAULT_REPLY_UNAVAILABLE,
-    };
-    for address in [
-        default_chat(),
-        EffectiveAddress::DefaultRelayConversation {
-            platform: Platform::Lark,
-            route_id: ROUTE.into(),
-        },
-        EffectiveAddress::DefaultSinks,
-    ] {
-        assert_eq!(deliverable(address), unavailable);
-    }
-    let origin = EffectiveAddress::Origin(chat_origin());
-    assert_eq!(deliverable(origin.clone()), origin);
-}

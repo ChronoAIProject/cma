@@ -2,9 +2,8 @@
 //! order and drives their timers.
 use super::{
     address::{
-        count_unavailable, deliverable, effective, requested, routing_send,
-        routing_send_for_message, AddressClass, EffectiveAddress, SendKind,
-        DEFAULT_REPLY_UNAVAILABLE,
+        count_unavailable, effective, requested, routing_send, routing_send_for_message,
+        AddressClass, EffectiveAddress, SendKind, DEFAULT_REPLY_UNAVAILABLE,
     },
     event::{key, now},
     failure::{consumer_failed, ConsumerFailure},
@@ -13,6 +12,7 @@ use super::{
     intents::{DeliveryCommand, DeliveryOutcome, ReplySource},
     label::{self, active_label},
     notice::{send_notice, Notice},
+    part_keys::PartKeys,
     send::{unsupported, SendContext, Sender},
     step::{custom_outcome, outcome_event, output_address, reply, timer_step},
 };
@@ -195,30 +195,27 @@ async fn tool_reply(
     );
     // The handler resolved this snapshot at the call, so a default
     // destination changed or detached since applies to later calls only.
-    let address = deliverable(effective(
+    let address = effective(
         &channel.definition,
         &event,
         requested(ReplyChoice::Origin, &event),
         sender.custom.sync_registered(&event.reply),
         config.multi_consumer_enabled,
         SendKind::Tool,
-    ));
+    );
+    // One seed per command, drawn only when a relay send needs part keys.
+    let keys = match &address {
+        EffectiveAddress::DefaultRelayConversation { .. } => match PartKeys::tool() {
+            Ok(keys) => Some(keys),
+            Err(_) => {
+                tracing::error!("no random seed for a default relay send's keys");
+                return reject_tool_reply(&channel, &event, receipt, DEFAULT_REPLY_UNAVAILABLE);
+            }
+        },
+        _ => None,
+    };
     if let EffectiveAddress::Rejected { reason } = address {
-        if reason == DEFAULT_REPLY_UNAVAILABLE {
-            count_unavailable(&channel.definition);
-        }
-        tracing::warn!(
-            channel = %crate::telemetry::channel_hash(channel.id.as_str()),
-            consumer = %consumer_of(&event),
-            reason,
-            "tool reply rejected"
-        );
-        let mut result = unsupported();
-        result.delivery = DeliveryOutcome::Rejected {
-            reason: reason.into(),
-        };
-        let _ = receipt.send(result);
-        return;
+        return reject_tool_reply(&channel, &event, receipt, reason);
     }
     let id = key(event.channel_id.as_str(), event.event_id.as_str());
     if !groups.reserve(&id, &consumer_of(&event)) {
@@ -233,7 +230,16 @@ async fn tool_reply(
     let (group, at) = groups.join(id, &channel, &event);
     group.set_channel(channel);
     group.consumers[at].event = event;
-    let result = reply(sender, group, at, &message, label.as_deref()).await;
+    let result = reply(
+        sender,
+        group,
+        at,
+        &message,
+        label.as_deref(),
+        &address,
+        keys.as_ref(),
+    )
+    .await;
     if matches!(
         result.delivery,
         DeliveryOutcome::Confirmed { .. } | DeliveryOutcome::Unknown { .. }
@@ -244,6 +250,29 @@ async fn tool_reply(
             delivery.tool_replied = true;
         }
     }
+    let _ = receipt.send(result);
+}
+
+/// Answer a tool reply that may not be sent with `reason`, logged at warn.
+fn reject_tool_reply(
+    channel: &ResolvedChannel,
+    event: &EventRefPayload,
+    receipt: oneshot::Sender<super::intents::IntentReceipt>,
+    reason: &'static str,
+) {
+    if reason == DEFAULT_REPLY_UNAVAILABLE {
+        count_unavailable(&channel.definition);
+    }
+    tracing::warn!(
+        channel = %crate::telemetry::channel_hash(channel.id.as_str()),
+        consumer = %consumer_of(event),
+        reason,
+        "tool reply rejected"
+    );
+    let mut result = unsupported();
+    result.delivery = DeliveryOutcome::Rejected {
+        reason: reason.into(),
+    };
     let _ = receipt.send(result);
 }
 

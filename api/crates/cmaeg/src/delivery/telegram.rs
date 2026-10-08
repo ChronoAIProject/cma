@@ -14,6 +14,14 @@ use cmaeg_core::{
 };
 use serde_json::json;
 
+/// A native Telegram chat a send addresses.
+#[derive(Clone, Copy)]
+pub(super) struct NativeChat<'a> {
+    pub bot_id: &'a str,
+    pub chat_id: &'a str,
+    pub thread_id: Option<&'a str>,
+}
+
 impl Sender {
     pub(super) async fn native_reply(
         &self,
@@ -21,9 +29,6 @@ impl Sender {
         event: &EventRefPayload,
         message: &OutboundMessage,
     ) -> (IntentReceipt, SendEffects) {
-        // A native send never marks the event's first send; writing it would
-        // change when the relay ack is due.
-        let effects = SendEffects::default();
         let ReplyAddress::Telegram {
             bot_id,
             chat_id,
@@ -31,8 +36,33 @@ impl Sender {
             ..
         } = &event.reply
         else {
-            return (unsupported(), effects);
+            return (unsupported(), SendEffects::default());
         };
+        let chat = NativeChat {
+            bot_id,
+            chat_id,
+            thread_id: thread_id.as_deref(),
+        };
+        self.native_send(ctx, event, chat, message).await
+    }
+    /// Send `message` for `event` to `chat` with the channel's current bot
+    /// token, paced on the chat's native route: the origin of a native event,
+    /// or the channel's default chat.
+    pub(super) async fn native_send(
+        &self,
+        ctx: &SendContext<'_>,
+        event: &EventRefPayload,
+        chat: NativeChat<'_>,
+        message: &OutboundMessage,
+    ) -> (IntentReceipt, SendEffects) {
+        // A native send never marks the event's first send; writing it would
+        // change when the relay ack is due.
+        let effects = SendEffects::default();
+        let NativeChat {
+            bot_id,
+            chat_id,
+            thread_id,
+        } = chat;
         let (parts, rendering) =
             RelayText.render_labeled(message, &Capabilities::native_telegram(), ctx.label);
         let mut receipt = IntentReceipt {
@@ -111,7 +141,7 @@ impl Sender {
             let mut sent = self
                 .relay
                 .telegram
-                .send_message(token, chat_id, thread_id.as_deref(), &part.text, markup)
+                .send_message(token, chat_id, thread_id, &part.text, markup)
                 .await;
             drop(permit);
             if let Err(Error::RateLimited(delay)) = sent {
@@ -127,7 +157,7 @@ impl Sender {
                 sent = self
                     .relay
                     .telegram
-                    .send_message(token, chat_id, thread_id.as_deref(), &part.text, markup)
+                    .send_message(token, chat_id, thread_id, &part.text, markup)
                     .await;
             }
             ctx.gate.progress();

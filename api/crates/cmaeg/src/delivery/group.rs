@@ -53,6 +53,9 @@ pub(super) struct ConsumerDelivery {
     pub answer_attempted: bool,
     pub terminal: bool,
     pub last_output_at: Instant,
+    /// Automatic outputs sent so far, which number the idempotency keys of
+    /// outputs to a default relay conversation.
+    pub outputs: u32,
 }
 
 impl ConsumerDelivery {
@@ -120,6 +123,7 @@ impl EventGroup {
             answer_attempted: false,
             terminal: false,
             last_output_at: Instant::now(),
+            outputs: 0,
         });
         self.consumers.len() - 1
     }

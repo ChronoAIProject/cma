@@ -247,19 +247,6 @@ impl EffectiveAddress {
     }
 }
 
-/// A resolved default destination is refused as unavailable until the
-/// default transports deliver to it; nothing is routed before they do.
-pub(crate) fn deliverable(address: EffectiveAddress) -> EffectiveAddress {
-    match address {
-        EffectiveAddress::DefaultTelegramChat { .. }
-        | EffectiveAddress::DefaultRelayConversation { .. }
-        | EffectiveAddress::DefaultSinks => EffectiveAddress::Rejected {
-            reason: DEFAULT_REPLY_UNAVAILABLE,
-        },
-        other => other,
-    }
-}
-
 /// Count a send refused because the default destination is unavailable,
 /// by the transport the channel's default destination names.
 pub(super) fn count_unavailable(def: &ChannelDefinition) {
@@ -269,8 +256,8 @@ pub(super) fn count_unavailable(def: &ChannelDefinition) {
         .and_then(|routing| routing.default_reply.as_ref())
     {
         Some(DefaultReply::TelegramChat { .. }) => "telegram",
-        Some(DefaultReply::RelayConversation { .. }) => "relay",
-        Some(DefaultReply::Sinks {}) => "sinks",
+        Some(DefaultReply::RelayConversation { .. }) => "nyxid_relay",
+        Some(DefaultReply::Sinks {}) => "webhook",
         None => "none",
     };
     metrics::counter!(names::DEFAULT_REPLY, names::TRANSPORT => transport,

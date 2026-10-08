@@ -36,3 +36,9 @@ pub fn data(
 ) -> Value {
     json!({"conversation_id":event.conversation_id,"event_id":event.event_id,"text":text,"message":message,"error":error})
 }
+/// Tag envelope `data` as delivered to the channel's default reply
+/// destination. The envelope's `subject` stays the event id, so a receiver
+/// still correlates it with the event it answers.
+pub fn to_default(data: &mut Value) {
+    data["destination"] = "default".into();
+}
