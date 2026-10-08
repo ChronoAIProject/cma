@@ -126,6 +126,25 @@ impl OAuthState {
         tokens
     }
 
+    /// An access and refresh token for `subject`, as a sign-in issues them.
+    pub fn issue_tokens(&self, subject: &str) -> (String, String) {
+        let issued = self.issue(subject);
+        (
+            issued["access_token"].as_str().unwrap().to_owned(),
+            issued["refresh_token"].as_str().unwrap().to_owned(),
+        )
+    }
+
+    /// How many refresh grants the token endpoint received.
+    pub fn refresh_calls(&self) -> usize {
+        self.token_calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|call| call.grant_type == "refresh_token")
+            .count()
+    }
+
     pub fn subject_of(&self, access: &str) -> Option<String> {
         self.access.lock().unwrap().get(access).cloned()
     }

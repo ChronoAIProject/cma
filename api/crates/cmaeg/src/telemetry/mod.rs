@@ -161,4 +161,20 @@ pub(crate) fn describe_console() {
         "1 while the console's OAuth client is configured and NyxID discovery has succeeded"
     );
     metrics::gauge!(names::CONSOLE_ENABLED).set(0);
+    metrics::describe_gauge!(
+        names::CONSOLE_SESSIONS,
+        metrics::Unit::Count,
+        "Console sessions held in memory"
+    );
+    metrics::gauge!(names::CONSOLE_SESSIONS).set(0);
+    metrics::describe_counter!(
+        names::CONSOLE_SESSION_EVICTIONS,
+        "Console sessions ended by a cap or an expiry, by reason"
+    );
+    metrics::counter!(names::CONSOLE_SESSION_EVICTIONS).absolute(0);
+    metrics::describe_counter!(
+        names::CONSOLE_REVOCATIONS,
+        "Best-effort refresh token revocations of ended console sessions, by outcome"
+    );
+    metrics::counter!(names::CONSOLE_REVOCATIONS).absolute(0);
 }

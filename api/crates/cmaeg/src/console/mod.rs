@@ -6,13 +6,14 @@
 //! readiness: until its OAuth client is configured and NyxID's discovery
 //! document has passed validation, every `/console*` request gets a generic
 //! 503 page while ingress keeps serving.
+pub mod clock;
 mod oidc;
 pub(crate) mod pages;
+mod revoke;
+pub mod session;
+pub mod token;
 
-use std::{
-    sync::{Arc, RwLock},
-    time::Duration,
-};
+use std::{sync::Arc, time::Duration};
 
 use axum::{
     extract::{Request, State},
@@ -23,11 +24,18 @@ use axum::{
 };
 use reqwest::Client;
 
-pub use oidc::{DiscoveryError, OidcEndpoints};
+pub use oidc::{DiscoveryError, EndpointCell, OidcEndpoints};
 
 use oidc::DiscoverySink as _;
 
 use crate::{telemetry::names, ConsoleConfig};
+use clock::Clock;
+use session::{SessionLimits, SessionStore};
+use token::TokenClient;
+
+/// How often idle and expired sessions are swept, so their refresh tokens
+/// are revoked even when nobody returns.
+const SWEEP_INTERVAL: Duration = Duration::from_secs(60);
 
 /// What the console is built from.
 pub struct ConsoleDeps {
@@ -37,6 +45,8 @@ pub struct ConsoleDeps {
     pub public_url: String,
     /// `CMAEG_NYXID_BASE_URL`: the only origin console endpoints may use.
     pub nyxid_base_url: String,
+    /// The time source of session lifetimes and token ages.
+    pub clock: Arc<dyn Clock>,
 }
 
 /// The console's shared state. Built only while `CMAEG_CONSOLE_ENABLED` is
@@ -51,7 +61,8 @@ struct Inner {
     http: Client,
     /// The client setting whose absence keeps the console disabled.
     missing_key: Option<&'static str>,
-    endpoints: RwLock<Option<Arc<OidcEndpoints>>>,
+    endpoints: Arc<EndpointCell>,
+    sessions: Arc<SessionStore>,
 }
 
 impl Console {
@@ -70,12 +81,28 @@ impl Console {
         }
         crate::telemetry::describe_console();
         metrics::gauge!(names::CONSOLE_ENABLED).set(0);
+        let endpoints = Arc::new(EndpointCell::default());
+        // With the secret missing the gate answers every request with 503,
+        // so this client is never used.
+        let secret = deps
+            .config
+            .client_secret
+            .clone()
+            .unwrap_or_else(|| cmaeg_core::channel::Secret::new(""));
+        let tokens = TokenClient::new(http.clone(), &deps.config.client_id, &secret);
+        let sessions = Arc::new(SessionStore::new(
+            SessionLimits::from(&deps.config),
+            deps.clock,
+            tokens,
+            endpoints.clone(),
+        ));
         Ok(Self {
             inner: Arc::new(Inner {
                 nyxid_base_url: deps.nyxid_base_url,
                 http,
                 missing_key,
-                endpoints: RwLock::new(None),
+                endpoints,
+                sessions,
             }),
         })
     }
@@ -88,17 +115,30 @@ impl Console {
             .layer(from_fn_with_state(self.clone(), gate))
     }
 
+    pub fn sessions(&self) -> &Arc<SessionStore> {
+        &self.inner.sessions
+    }
+
+    /// Sweep idle and expired sessions every minute.
+    pub fn spawn_sweeper(&self) -> tokio::task::JoinHandle<()> {
+        let sessions = self.inner.sessions.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(SWEEP_INTERVAL);
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                interval.tick().await;
+                sessions.sweep();
+            }
+        })
+    }
+
     /// True once the client is configured and discovery has succeeded.
     pub fn is_enabled(&self) -> bool {
         self.inner.missing_key.is_none() && self.endpoints().is_some()
     }
 
     pub(crate) fn endpoints(&self) -> Option<Arc<OidcEndpoints>> {
-        self.inner
-            .endpoints
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone()
+        self.inner.endpoints.get()
     }
 
     /// One discovery attempt, publishing its result as the background task
@@ -131,23 +171,23 @@ impl Console {
 impl oidc::DiscoverySink for Inner {
     fn publish(&self, endpoints: Option<Arc<OidcEndpoints>>) {
         let enabled = self.missing_key.is_none() && endpoints.is_some();
-        *self
-            .endpoints
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = endpoints;
+        self.endpoints.set(endpoints);
         metrics::gauge!(names::CONSOLE_ENABLED).set(if enabled { 1.0 } else { 0.0 });
     }
 
     fn current(&self) -> bool {
-        self.endpoints
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .is_some()
+        self.endpoints.get().is_some()
     }
 }
 
 async fn not_found() -> Response {
     pages::not_found()
+}
+
+/// The first 8 hex characters of SHA-256(subject): the only form of a NyxID
+/// subject console logs carry.
+pub(crate) fn subject_hash_prefix(subject: &str) -> String {
+    crate::telemetry::channel_hash(subject)[..8].to_owned()
 }
 
 /// Answer every console request with the generic 503 page until the console
@@ -169,8 +209,10 @@ pub(crate) fn compose(config: &crate::Config) -> Result<Option<Router>, reqwest:
         config: config.console.clone(),
         public_url: config.management.public_url.clone(),
         nyxid_base_url: config.management.nyxid_base_url.clone(),
+        clock: Arc::new(clock::SystemClock),
     })?;
-    // Detached: discovery runs for the life of the process.
+    // Detached: discovery and the sweeper run for the life of the process.
     drop(console.spawn_discovery());
+    drop(console.spawn_sweeper());
     Ok(Some(console.router()))
 }

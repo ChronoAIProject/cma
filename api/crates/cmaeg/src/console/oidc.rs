@@ -2,7 +2,10 @@
 //! OpenID configuration advertises everything sign-in relies on, and only on
 //! the configured NyxID origin, so a misconfigured or impersonated provider
 //! can never receive a code, a verifier or the client secret.
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{Arc, RwLock},
+    time::Duration,
+};
 
 use reqwest::{Client, StatusCode, Url};
 use serde_json::Value;
@@ -21,6 +24,27 @@ pub struct OidcEndpoints {
     pub authorization: Url,
     pub token: Url,
     pub revocation: Url,
+}
+
+/// The endpoints in use, shared by sign-in, refresh and revocation. Empty
+/// until discovery succeeds.
+#[derive(Default)]
+pub struct EndpointCell(RwLock<Option<Arc<OidcEndpoints>>>);
+
+impl EndpointCell {
+    pub fn get(&self) -> Option<Arc<OidcEndpoints>> {
+        self.0
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    pub(crate) fn set(&self, endpoints: Option<Arc<OidcEndpoints>>) {
+        *self
+            .0
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = endpoints;
+    }
 }
 
 /// Why discovery did not produce endpoints.
