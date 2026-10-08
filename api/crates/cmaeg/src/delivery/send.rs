@@ -4,7 +4,7 @@ use super::{
     intents::{DeliveryOutcome, IntentReceipt},
     pacing::Pacing,
     relay_client::{unknown, Credential, RelayClient},
-    render::{RelayText, Renderer},
+    render::RelayText,
 };
 use crate::{channels::resolver::ResolvedChannel, tools::Capabilities};
 use cmaeg_core::{
@@ -26,6 +26,8 @@ pub(super) struct SendContext<'a> {
     pub first_send_done: bool,
     /// Called at every send path's first side effect; the legacy lane passes `Ungated`.
     pub gate: &'a dyn SendGate,
+    /// The consumer label a chat send opens with; custom sinks never use it.
+    pub label: Option<&'a str>,
 }
 /// State changes a finished send asks its scheduler to apply.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -90,7 +92,7 @@ impl Sender {
         if !interactive {
             capabilities.buttons = "numbered_text".into();
         }
-        let (parts, rendering) = RelayText.render(message, &capabilities);
+        let (parts, rendering) = RelayText.render_labeled(message, &capabilities, ctx.label);
         let mut result = IntentReceipt {
             message_ref: None,
             rendering,
@@ -296,7 +298,8 @@ impl Sender {
         let mut effects = SendEffects {
             first_send_done: ctx.first_send_done,
         };
-        let (parts, rendering) = RelayText.render(message, &Capabilities::telegram());
+        let (parts, rendering) =
+            RelayText.render_labeled(message, &Capabilities::telegram(), ctx.label);
         let rejected = |reason: &str| IntentReceipt {
             message_ref: None,
             rendering: rendering.clone(),
@@ -400,7 +403,8 @@ impl Sender {
         {
             return (unsupported(), effects);
         }
-        let (parts, rendering) = RelayText.render(message, &Capabilities::telegram());
+        let (parts, rendering) =
+            RelayText.render_labeled(message, &Capabilities::telegram(), ctx.label);
         if parts.len() != 1 {
             return (
                 IntentReceipt {

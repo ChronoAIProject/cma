@@ -1,10 +1,12 @@
 //! Neutral delivery intents; the transport engine owns external sends.
+mod address;
 pub mod custom;
 pub mod engine;
 mod event;
 pub mod gate;
 mod group;
 pub mod intents;
+mod label;
 mod pacing;
 pub mod relay_client;
 pub mod render;

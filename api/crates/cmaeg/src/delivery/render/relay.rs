@@ -1,18 +1,37 @@
-use super::{text::chunks, RenderedPart, Renderer};
+use super::{
+    text::{chunks_reserving, escape},
+    RenderedPart, Renderer,
+};
 use crate::tools::Capabilities;
 use cmaeg_core::message::{
     Block, BlockRendering, BlockRenderingOutcome, ChoiceOption, OutboundMessage, RenderingOutcome,
     RenderingReport,
 };
-/// Text renderer for NyxID relay platforms. Native controls are left to the
-/// interactive path only when the capabilities advertise an inline keyboard;
-/// otherwise choices degrade to numbered text.
+/// Text renderer for NyxID relay platforms and native Telegram. Native
+/// controls are left to the interactive path only when the capabilities
+/// advertise an inline keyboard; otherwise choices degrade to numbered text.
 pub struct RelayText;
 impl Renderer for RelayText {
     fn render(
         &self,
         message: &OutboundMessage,
         capabilities: &Capabilities,
+    ) -> (Vec<RenderedPart>, RenderingReport) {
+        self.render_labeled(message, capabilities, None)
+    }
+}
+impl RelayText {
+    /// Render `message`, opening its first part with `[<label>] ` when a
+    /// label is given. The label is escaped as body text is, its prefix
+    /// counts toward the first part's UTF-16 budget, and it is not a block,
+    /// so the report's block indexes are those of the unlabeled message.
+    /// Every chat transport renders through here; there is no second
+    /// labeled renderer.
+    pub fn render_labeled(
+        &self,
+        message: &OutboundMessage,
+        capabilities: &Capabilities,
+        label: Option<&str>,
     ) -> (Vec<RenderedPart>, RenderingReport) {
         let mut sections = Vec::new();
         if let Some(text) = &message.text {
@@ -40,17 +59,25 @@ impl Renderer for RelayText {
                 outcome,
             });
         }
-        let parts: Vec<_> = chunks(
+        let prefix = label.map(|label| format!("[{}] ", escape(label)));
+        let reserved = prefix
+            .as_ref()
+            .map_or(0, |prefix| prefix.encode_utf16().count());
+        let mut parts: Vec<_> = chunks_reserving(
             &if sections.is_empty() {
                 "Choose an option".into()
             } else {
                 sections.join("\n\n")
             },
             (capabilities.max_text_chars as usize).clamp(2, 4000),
+            reserved,
         )
         .into_iter()
         .map(|text| RenderedPart { text })
         .collect();
+        if let (Some(prefix), Some(first)) = (prefix, parts.first_mut()) {
+            first.text.insert_str(0, &prefix);
+        }
         if parts.len() > 1 {
             report.outcome = RenderingOutcome::Degraded;
             // The sentinel names a whole-message transformation, outside block indices 0..15.

@@ -1,10 +1,12 @@
 //! One delivery worker: it runs its share of events' commands in arrival
 //! order and drives their timers.
 use super::{
+    address::{routing_send, routing_send_for_message, SendKind},
     event::{key, now},
     gate::Ungated,
     group::{consumer_of, Groups},
     intents::{DeliveryCommand, DeliveryOutcome, ReplySource},
+    label::active_label,
     send::{unsupported, SendContext, Sender},
     step::{outcome_event, reply, timer_step},
 };
@@ -61,12 +63,20 @@ async fn handle(
             message,
             receipt,
         } => {
-            // An update has no group; its effects touch none either.
+            // An update has no group; its effects touch none either. An
+            // edited message keeps its author's label under today's rule.
+            let routed = routing_send_for_message(
+                &channel.definition,
+                &message_ref,
+                config.multi_consumer_enabled,
+            );
+            let label = active_label(&channel.definition, message_ref.consumer.as_ref(), routed);
             let context = SendContext {
                 trace: &trace,
                 channel: &channel,
                 first_send_done: false,
                 gate: &Ungated,
+                label: label.as_deref(),
             };
             let (result, _) = sender.update(&context, &message_ref, &message).await;
             let _ = receipt.send(result);
@@ -90,6 +100,7 @@ async fn handle(
             tool_reply(
                 groups,
                 sender,
+                config,
                 ToolReply {
                     channel,
                     event,
@@ -116,7 +127,12 @@ struct ToolReply {
 
 /// A reply its handler sent for one consumer of an event. It joins that
 /// consumer's entry, so its outcome suppresses only that consumer's auto-final.
-async fn tool_reply(groups: &mut Groups, sender: &Sender, command: ToolReply) {
+async fn tool_reply(
+    groups: &mut Groups,
+    sender: &Sender,
+    config: &DeliveryConfig,
+    command: ToolReply,
+) {
     let ToolReply {
         channel,
         event,
@@ -136,10 +152,17 @@ async fn tool_reply(groups: &mut Groups, sender: &Sender, command: ToolReply) {
         let _ = receipt.send(result);
         return;
     }
+    let routed = routing_send(
+        &channel.definition,
+        &event,
+        config.multi_consumer_enabled,
+        SendKind::Tool,
+    );
+    let label = active_label(&channel.definition, event.consumer.as_ref(), routed);
     let (group, at) = groups.join(id, &channel, &event);
     group.set_channel(channel);
     group.consumers[at].event = event;
-    let result = reply(sender, group, at, &message).await;
+    let result = reply(sender, group, at, &message, label.as_deref()).await;
     if matches!(
         result.delivery,
         DeliveryOutcome::Confirmed { .. } | DeliveryOutcome::Unknown { .. }
@@ -195,6 +218,7 @@ async fn stream_outcome(
     }
     let (group, at) = groups.join(id, &turn.channel, &opened.payload);
     let delivery = &mut group.consumers[at];
+    delivery.routed_turn = turn.activity.routing.is_some();
     delivery.tool_replied |= tracker.has_tool_reply(turn.event_ref.as_str(), now());
     if delivery.terminal {
         return;

@@ -18,6 +18,8 @@ pub mod group_fixtures;
 mod groups;
 #[path = "delivery/integration.rs"]
 mod integration;
+#[path = "delivery/labels.rs"]
+mod labels;
 #[path = "delivery/multi_relay_cards.rs"]
 mod multi_relay_cards;
 #[path = "delivery/platforms.rs"]

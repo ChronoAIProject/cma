@@ -1,8 +1,10 @@
 //! Per-event delivery steps over an event's group and one of its consumers.
 use super::{
+    address::{routing_send, SendKind},
     gate::Ungated,
     group::EventGroup,
     intents::{DeliveryOutcome, IntentReceipt},
+    label::active_label,
     send::{SendContext, Sender},
 };
 use crate::{turns::outcomes::TurnOutcome, DeliveryConfig};
@@ -44,7 +46,7 @@ pub(super) async fn outcome_event(
             delivery.last_output_at = Instant::now();
             if delivery.policy.auto_final && !delivery.tool_replied {
                 delivery.answer_attempted = true;
-                send_text(sender, group, at, text).await;
+                send_output(sender, group, at, text, config).await;
             }
         }
         TurnOutcome::Completed { final_text } => {
@@ -52,14 +54,14 @@ pub(super) async fn outcome_event(
             if delivery.policy.auto_final && !delivery.answer_attempted && !delivery.tool_replied {
                 if let Some(text) = final_text {
                     delivery.answer_attempted = true;
-                    send_text(sender, group, at, text).await;
+                    send_output(sender, group, at, text, config).await;
                 }
             }
             group.finish(at);
         }
         TurnOutcome::Failed { .. } | TurnOutcome::Incomplete { .. } => {
             if !group.consumers[at].tool_replied {
-                send_text(sender, group, at, config.failure_text.clone()).await;
+                send_output(sender, group, at, config.failure_text.clone(), config).await;
             }
             group.finish(at);
         }
@@ -99,7 +101,8 @@ pub(super) async fn timer_step(
             && last_output_at.max(group.last_progress_at).elapsed() >= config.heartbeat
         {
             group.heartbeats += 1;
-            send_progress(sender, group, "Still working…".into()).await;
+            let text = heartbeat(group, config.multi_consumer_enabled);
+            send_progress(sender, group, text).await;
             group.last_progress_at = Instant::now();
             return true;
         }
@@ -107,24 +110,70 @@ pub(super) async fn timer_step(
     false
 }
 
-/// The event's progress (its ack or a heartbeat), sent once per event to the
-/// origin every consumer shares.
-async fn send_progress(sender: &Sender, group: &mut EventGroup, text: String) -> bool {
-    send_text(sender, group, 0, text).await
+/// The heartbeat text. With labels active it names the consumers still owed
+/// an answer, ` (<labels, comma-separated>)`.
+fn heartbeat(group: &EventGroup, multi_consumer_enabled: bool) -> String {
+    let pending: Vec<String> = (0..group.consumers.len())
+        .filter(|at| group.consumers[*at].pending())
+        .filter_map(|at| output_label(group, at, multi_consumer_enabled))
+        .collect();
+    if pending.is_empty() {
+        "Still working…".into()
+    } else {
+        format!("Still working… ({})", pending.join(", "))
+    }
 }
 
-async fn send_text(sender: &Sender, group: &mut EventGroup, at: usize, text: String) -> bool {
+/// Consumer `at`'s label on its automatic outputs, when one is active.
+fn output_label(group: &EventGroup, at: usize, multi_consumer_enabled: bool) -> Option<String> {
+    let delivery = &group.consumers[at];
+    let routed = routing_send(
+        &group.channel.definition,
+        &delivery.event,
+        multi_consumer_enabled,
+        SendKind::Output {
+            routed_turn: delivery.routed_turn,
+        },
+    );
+    active_label(&group.channel.definition, Some(&delivery.consumer), routed)
+}
+
+/// The event's progress (its ack or a heartbeat), sent once per event,
+/// unlabeled, to the origin every consumer shares.
+async fn send_progress(sender: &Sender, group: &mut EventGroup, text: String) -> bool {
+    send_text(sender, group, 0, text, None).await
+}
+
+/// Consumer `at`'s answer or failure text, opened with its label.
+async fn send_output(
+    sender: &Sender,
+    group: &mut EventGroup,
+    at: usize,
+    text: String,
+    config: &DeliveryConfig,
+) -> bool {
+    let label = output_label(group, at, config.multi_consumer_enabled);
+    send_text(sender, group, at, text, label.as_deref()).await
+}
+
+async fn send_text(
+    sender: &Sender,
+    group: &mut EventGroup,
+    at: usize,
+    text: String,
+    label: Option<&str>,
+) -> bool {
     let message = OutboundMessage {
         text: Some(text),
         blocks: vec![],
         reply_to: None,
     };
-    let result = reply(sender, group, at, &message).await;
+    let result = reply(sender, group, at, &message, label).await;
     matches!(result.delivery, DeliveryOutcome::Confirmed { .. })
 }
 
-/// Send `message` for consumer `at` of `group`'s event through the
-/// `Ungated` gate and apply the send's effects as soon as it returns. The
+/// Send `message` for consumer `at` of `group`'s event, opened with
+/// `label`, through the `Ungated` gate and apply the send's effects as soon as it returns. The
 /// serial worker reads no group state while a send awaits, so reads and
 /// writes keep the order they had when the send mutated the state.
 pub(super) async fn reply(
@@ -132,12 +181,14 @@ pub(super) async fn reply(
     group: &mut EventGroup,
     at: usize,
     message: &OutboundMessage,
+    label: Option<&str>,
 ) -> IntentReceipt {
     let context = SendContext {
         trace: &group.trace,
         channel: &group.channel,
         first_send_done: group.first_send_done,
         gate: &Ungated,
+        label,
     };
     let (result, effects) = sender
         .reply(&context, &group.consumers[at].event, message)

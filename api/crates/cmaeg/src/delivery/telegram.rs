@@ -2,7 +2,7 @@
 use super::{
     gate::expired,
     intents::{DeliveryOutcome, IntentReceipt, TypingOutcome, TypingReceipt},
-    render::{RelayText, Renderer},
+    render::RelayText,
     send::{refused, unsupported, SendContext, SendEffects, Sender},
 };
 use crate::{channels::resolver::ResolvedChannel, telegram::Error, tools::Capabilities};
@@ -33,7 +33,8 @@ impl Sender {
         else {
             return (unsupported(), effects);
         };
-        let (parts, rendering) = RelayText.render(message, &Capabilities::native_telegram());
+        let (parts, rendering) =
+            RelayText.render_labeled(message, &Capabilities::native_telegram(), ctx.label);
         let mut receipt = IntentReceipt {
             message_ref: None,
             rendering,
@@ -217,7 +218,8 @@ impl Sender {
         let Some(token) = token(channel, bot_id) else {
             return (unsupported(), effects);
         };
-        let (parts, rendering) = RelayText.render(message, &Capabilities::native_telegram());
+        let (parts, rendering) =
+            RelayText.render_labeled(message, &Capabilities::native_telegram(), ctx.label);
         if parts.len() != 1 {
             return (
                 IntentReceipt {

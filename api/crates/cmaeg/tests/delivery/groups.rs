@@ -1,6 +1,6 @@
 //! Per-consumer delivery groups on the real engine, under the paused clock:
 //! two consumers of one relay event share its ack and heartbeats, and each
-//! gets its own answer, auto-final suppression and failure text.
+//! gets its own labeled answer, auto-final suppression and failure text.
 use super::{
     fake_http::FakeHttp,
     group_fixtures::{
@@ -20,7 +20,8 @@ use std::{sync::Arc, time::Duration};
 use tokio::sync::oneshot;
 
 const ACK: &str = "Working on it…";
-const HEARTBEAT: &str = "Still working…";
+/// Heartbeats name the consumers still owed an answer.
+const HEARTBEAT: &str = "Still working… (reviewer)";
 const FAILURE: &str = "Sorry, I couldn’t finish that request. Please try again.";
 
 /// One relay event's two consumers: their events and turns.
@@ -29,7 +30,12 @@ struct Event {
     reviewer: (EventRefPayload, Arc<LaunchRequest>),
 }
 
+/// A recording with multi-consumer routing on, so both consumers are labeled.
 fn start(ack_after_ms: u32, config: DeliveryConfig) -> (Recording, Event) {
+    let config = DeliveryConfig {
+        multi_consumer_enabled: true,
+        ..config
+    };
     let recording = Recording::start(FakeHttp::platforms(), Hooks::answering([]), config);
     let channel = routed_channel(ack_after_ms, |_| {});
     let activity = routed_activity();
@@ -108,14 +114,14 @@ async fn two_consumers_share_one_ack_and_each_gets_its_answer() {
         chat(&recorded),
         sent(&[
             (1500, "reply_token", ACK),
-            (4500, "channel_key", "Lead."),
-            (7500, "channel_key", "Review."),
+            (4500, "channel_key", "[lead] Lead."),
+            (7500, "channel_key", "[reviewer] Review."),
         ])
     );
 }
 
 #[tokio::test(start_paused = true)]
-async fn heartbeats_continue_while_any_consumer_is_unanswered() {
+async fn heartbeats_name_the_unanswered_consumers_while_any_is_pending() {
     let config = DeliveryConfig {
         heartbeat: Duration::from_secs(10),
         ..Default::default()
@@ -123,7 +129,7 @@ async fn heartbeats_continue_while_any_consumer_is_unanswered() {
     let (recording, event) = start(1000, config);
     recording.outcome(&event.lead.1, accepted()).await;
     recording.outcome(&event.reviewer.1, accepted()).await;
-    recording.at(5000).await;
+    recording.at(15_000).await;
     recording.outcome(&event.lead.1, completed("Lead.")).await;
     recording.at(70_000).await;
     recording
@@ -134,13 +140,13 @@ async fn heartbeats_continue_while_any_consumer_is_unanswered() {
         chat(&recorded),
         sent(&[
             (1000, "reply_token", ACK),
-            (5000, "channel_key", "Lead."),
-            (11_000, "channel_key", HEARTBEAT),
+            (11_000, "channel_key", "Still working… (lead, reviewer)"),
+            (15_000, "channel_key", "[lead] Lead."),
             (21_000, "channel_key", HEARTBEAT),
             (31_000, "channel_key", HEARTBEAT),
             (41_000, "channel_key", HEARTBEAT),
             (51_000, "channel_key", HEARTBEAT),
-            (70_000, "channel_key", "Review."),
+            (70_000, "channel_key", "[reviewer] Review."),
         ])
     );
 }
@@ -163,8 +169,8 @@ async fn one_consumer_finishing_never_swallows_the_others_answer() {
     assert_eq!(
         chat(&recorded),
         sent(&[
-            (0, "reply_token", "Lead."),
-            (3000, "channel_key", "Review."),
+            (0, "reply_token", "[lead] Lead."),
+            (3000, "channel_key", "[reviewer] Review."),
         ])
     );
 }
@@ -196,8 +202,8 @@ async fn a_tool_reply_suppresses_only_its_own_consumers_auto_final() {
     assert_eq!(
         chat(&recorded),
         sent(&[
-            (0, "reply_token", "From the tool."),
-            (3000, "channel_key", "Review."),
+            (0, "reply_token", "[lead] From the tool."),
+            (3000, "channel_key", "[reviewer] Review."),
         ])
     );
 }
@@ -232,8 +238,8 @@ async fn a_reply_queued_before_completed_suppresses_that_auto_final() {
     assert_eq!(
         chat(&recorded),
         sent(&[
-            (0, "reply_token", "From the tool."),
-            (3000, "channel_key", "Review."),
+            (0, "reply_token", "[lead] From the tool."),
+            (3000, "channel_key", "[reviewer] Review."),
         ])
     );
 }
@@ -249,7 +255,10 @@ async fn a_failed_consumer_gets_its_failure_text_while_the_other_continues() {
     let recorded = recording.finish().await;
     assert_eq!(
         chat(&recorded),
-        sent(&[(0, "reply_token", FAILURE), (3000, "channel_key", "Lead."),])
+        sent(&[
+            (0, "reply_token", &format!("[reviewer] {FAILURE}")),
+            (3000, "channel_key", "[lead] Lead."),
+        ])
     );
 }
 
@@ -278,10 +287,10 @@ async fn a_group_expires_30_seconds_after_its_last_consumer_finishes() {
     assert_eq!(
         chat(&recorded),
         sent(&[
-            (0, "reply_token", "Lead."),
-            (3000, "channel_key", "Review."),
+            (0, "reply_token", "[lead] Lead."),
+            (3000, "channel_key", "[reviewer] Review."),
             (35_100, "channel_key", ACK),
-            (38_100, "channel_key", "Again."),
+            (38_100, "channel_key", "[reviewer] Again."),
         ])
     );
 }
@@ -303,6 +312,6 @@ async fn a_handoff_group_sends_no_ack_and_no_heartbeat() {
     let recorded = recording.finish().await;
     assert_eq!(
         chat(&recorded),
-        sent(&[(70_000, "reply_token", "Handed off.")])
+        sent(&[(70_000, "reply_token", "[reviewer] Handed off.")])
     );
 }

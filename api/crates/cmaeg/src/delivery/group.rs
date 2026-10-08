@@ -46,6 +46,9 @@ pub(super) struct ConsumerDelivery {
     /// `consumer.reply.auto_final ?? channel.reply.auto_final`, from the
     /// group's current channel snapshot.
     pub policy: EffectiveReply,
+    /// Whether this consumer's turn is routed (`activity.routing` present).
+    /// Fixed for the turn's life; false until its first outcome arrives.
+    pub routed_turn: bool,
     pub tool_replied: bool,
     pub answer_attempted: bool,
     pub terminal: bool,
@@ -112,6 +115,7 @@ impl EventGroup {
             consumer,
             event: event.clone(),
             policy,
+            routed_turn: false,
             tool_replied: false,
             answer_attempted: false,
             terminal: false,
