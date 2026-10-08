@@ -1,3 +1,6 @@
+mod routing;
+pub(crate) use routing::{routed_activity, BuildError};
+
 use crate::{channels::resolver::ResolvedChannel, ingress::launch::LaunchRequest};
 use cmaeg_core::{
     activity::{

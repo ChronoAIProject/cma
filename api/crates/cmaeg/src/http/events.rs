@@ -1,4 +1,6 @@
 //! Authenticated structured/binary CloudEvents with optional live result streaming.
+mod routing;
+
 use super::problems::{problem, protocol_headers};
 use crate::telemetry::timing::IngressTiming;
 use crate::{
@@ -112,12 +114,16 @@ pub async fn receive_event(
     let PreparedEvent {
         turn,
         waiter,
-        accepted,
+        mut accepted,
     } = match prepare_event(&state, &channel_id, stream, request, timing).await {
         Ok(prepared) => prepared,
         Err(response) => return response,
     };
-    match state.ingress.launcher.launch_holding(turn, permit).await {
+    let outcome = match routing::launch(&state.ingress, turn, permit, stream, &mut accepted).await {
+        Ok(outcome) => outcome,
+        Err(response) => return response,
+    };
+    match outcome {
         LaunchOutcome::Refused(error) => {
             let error = error.problem;
             let busy = error.code == ProblemCode::ProviderBusy;
@@ -136,6 +142,14 @@ pub async fn receive_event(
             None => (StatusCode::ACCEPTED, Json(accepted)).into_response(),
         },
     }
+}
+/// Preserve legacy normalization order without copying the bounded event body.
+enum EventInput {
+    Normalized(Box<cmaeg_core::activity::Activity>),
+    Legacy(
+        Box<cmaeg_core::cloudevent::CloudEvent>,
+        Vec<cmaeg_core::activity::Attachment>,
+    ),
 }
 /// An authenticated event ready to launch, with the request already released.
 struct PreparedEvent {
@@ -272,6 +286,29 @@ async fn prepare_event(
         }
         None => Vec::new(),
     };
+    // A routed event resolves before stream setup so the kill switch and target
+    // refusals cannot be hidden by an absent sink or a full waiter registry.
+    let input = if channel.definition.routing.is_some() {
+        let attributes_signed =
+            structured || !matches!(auth, cmaeg_core::channel::CustomAuth::Hmac { .. });
+        EventInput::Normalized(Box::new(
+            custom::activity::routed_activity(
+                &channel,
+                &state.ingress,
+                event,
+                attachments,
+                attributes_signed,
+            )
+            .map_err(routing::build_error)?,
+        ))
+    } else {
+        EventInput::Legacy(Box::new(event), attachments)
+    };
+    if stream
+        && matches!(&input, EventInput::Normalized(activity) if !routing::stream_allowed(&state.ingress, &channel, activity))
+    {
+        return Err(invalid("fanout_requires_stream_all"));
+    }
     let mut waiter = None;
     let reply = if stream {
         if !channel.definition.reply.sinks.contains(&Sink::Sync {}) {
@@ -289,15 +326,26 @@ async fn prepare_event(
     } else {
         ReplyAddress::None
     };
-    let mut turn = match custom::activity::launch_request(
-        channel,
-        event,
-        attachments,
-        reply,
-        &state.ingress.master_keys,
-        received_at,
-        now,
-    ) {
+    let built = match input {
+        EventInput::Normalized(activity) => custom::activity::seal(
+            channel,
+            *activity,
+            reply,
+            &state.ingress.master_keys,
+            received_at,
+            now,
+        ),
+        EventInput::Legacy(event, attachments) => custom::activity::launch_request(
+            channel,
+            *event,
+            attachments,
+            reply,
+            &state.ingress.master_keys,
+            received_at,
+            now,
+        ),
+    };
+    let mut turn = match built {
         Ok(turn) => turn,
         Err(reason) => return Err(invalid(reason)),
     };

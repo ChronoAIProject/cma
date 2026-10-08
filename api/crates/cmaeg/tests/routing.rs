@@ -15,3 +15,8 @@ pub mod routing_fixture;
 pub mod signer;
 #[path = "routing/support.rs"]
 mod support;
+
+#[path = "routing/custom.rs"]
+mod custom;
+#[path = "routing/custom_stream.rs"]
+mod custom_stream;

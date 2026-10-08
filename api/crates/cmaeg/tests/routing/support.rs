@@ -102,6 +102,7 @@ pub struct App {
     pub capacity: Arc<RoutedCapacity>,
     pub outcomes: Option<mpsc::Receiver<DeliveryCommand>>,
     pub client: reqwest::Client,
+    pub waiters: Arc<cmaeg::delivery::sync::SyncRegistry>,
     _cma: FakeCma,
     tasks: Vec<JoinHandle<()>>,
 }
@@ -182,8 +183,14 @@ impl App {
                 },
                 observer.clone(),
             );
+        let waiters = Arc::new(cmaeg::delivery::sync::SyncRegistry::default());
         let (base, task) = serve(
-            http::callbacks::router(state.clone()).merge(http::telegram::router(state.clone())),
+            http::callbacks::router(state.clone())
+                .merge(http::telegram::router(state.clone()))
+                .merge(http::events::router(http::events::CustomIngressState {
+                    ingress: state.clone(),
+                    waiters: waiters.clone(),
+                })),
         )
         .await;
         Self {
@@ -199,6 +206,7 @@ impl App {
             capacity,
             outcomes: Some(outcomes),
             client: reqwest::Client::new(),
+            waiters,
             _cma: cma,
             tasks: vec![task, platform_task],
         }
@@ -225,6 +233,50 @@ impl App {
             .post(format!("{}/v1/telegram/{}", self.base, self.id))
             .header("x-telegram-bot-api-secret-token", "fixture-webhook")
             .json(raw)
+            .send()
+            .await
+            .unwrap()
+    }
+    pub fn custom_request(
+        &self,
+        body: String,
+        structured: bool,
+        stream: bool,
+    ) -> reqwest::RequestBuilder {
+        let timestamp = super::relay_support::now().to_string();
+        let secret = &self
+            .channel
+            .definition
+            .secrets
+            .hmac_secrets
+            .iter()
+            .find(|(id, _)| id == "key-1")
+            .unwrap()
+            .1;
+        let signature =
+            cmaeg::auth::webhook::signature(secret, "delivery-1", &timestamp, body.as_bytes());
+        self.client
+            .post(format!(
+                "{}/v1/channels/{}/events{}",
+                self.base,
+                self.id,
+                if stream { "?mode=stream" } else { "" }
+            ))
+            .header(
+                "content-type",
+                if structured {
+                    "application/cloudevents+json"
+                } else {
+                    "application/json"
+                },
+            )
+            .header("webhook-id", "delivery-1")
+            .header("webhook-timestamp", timestamp)
+            .header("webhook-signature", signature)
+            .body(body)
+    }
+    pub async fn custom(&self, body: Value, stream: bool) -> reqwest::Response {
+        self.custom_request(body.to_string(), true, stream)
             .send()
             .await
             .unwrap()
