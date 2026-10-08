@@ -14,6 +14,8 @@ pub mod default_relay;
 mod default_relay_sends;
 #[path = "delivery/default_snapshots.rs"]
 mod default_snapshots;
+#[path = "delivery/default_sync.rs"]
+mod default_sync;
 #[path = "delivery/default_tools.rs"]
 mod default_tools;
 #[path = "delivery/engine.rs"]

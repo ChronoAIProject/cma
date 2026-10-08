@@ -78,9 +78,8 @@ pub(super) async fn consumer_failed(
     };
     // Before capacity is checked, so a Sync waiter always receives this
     // consumer's terminal frame, as a `StreamOutcome`'s frame is emitted.
-    if matches!(payload.reply, ReplyAddress::Sync { .. }) {
-        sender.custom.stream(&payload, &outcome);
-    }
+    let streamed = matches!(payload.reply, ReplyAddress::Sync { .. })
+        && sender.custom.stream(&payload, &outcome);
     let id = key(payload.channel_id.as_str(), payload.event_id.as_str());
     if !groups.reserve(&id, &consumer) {
         tracing::warn!("delivery event capacity reached");
@@ -98,7 +97,7 @@ pub(super) async fn consumer_failed(
     }
     // A fan-out child is a routed turn by construction.
     group.consumers[at].routed_turn = true;
-    let address = output_address(sender, group, at, config.multi_consumer_enabled);
+    let address = output_address(sender, group, at, config.multi_consumer_enabled, streamed);
     let class = address
         .class()
         .unwrap_or_else(|| AddressClass::of(&group.consumers[at].event.reply));

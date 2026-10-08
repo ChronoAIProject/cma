@@ -168,13 +168,14 @@ pub(super) fn output_address(
     group: &EventGroup,
     at: usize,
     multi_consumer_enabled: bool,
+    sync_emitted: bool,
 ) -> EffectiveAddress {
     let delivery = &group.consumers[at];
     effective(
         &group.channel.definition,
         &delivery.event,
         requested(None, delivery.policy.destination, &delivery.event),
-        sender.custom.sync_registered(&delivery.event.reply),
+        sync_emitted || sender.custom.sync_registered(&delivery.event.reply),
         multi_consumer_enabled,
         SendKind::Output {
             routed_turn: delivery.routed_turn,
@@ -258,7 +259,7 @@ async fn send_output(
     kind: &'static str,
 ) -> bool {
     let flag = config.multi_consumer_enabled;
-    let address = output_address(sender, group, at, flag);
+    let address = output_address(sender, group, at, flag, false);
     if let EffectiveAddress::Rejected { reason } = address {
         reject_output(group, at, reason);
         return false;

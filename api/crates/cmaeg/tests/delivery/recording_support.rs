@@ -100,7 +100,7 @@ pub struct Recording {
     pub keys: Arc<MasterKeyRing>,
     pub http: Arc<FakeHttp>,
     hooks: Arc<Hooks>,
-    waiters: Arc<SyncRegistry>,
+    pub waiters: Arc<SyncRegistry>,
     sink: Arc<dyn DeliverySink>,
     engine: DeliveryEngine,
     started: Instant,

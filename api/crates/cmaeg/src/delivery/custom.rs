@@ -35,18 +35,43 @@ impl CustomDelivery {
         event: &EventRefPayload,
         message: &OutboundMessage,
     ) -> IntentReceipt {
-        let data = custom::data(event, message.text.as_deref(), Some(message), None);
-        // Commit point (Amendment R3 §R3.1): for a Sync-origin event the
-        // emitted frame is the first side effect. Emitting to any other
-        // address does nothing, so its first webhook attempt commits.
+        match self.begin_reply(gate, event, message) {
+            Ok(streamed) => {
+                self.complete_reply(gate, channel, event, message, streamed)
+                    .await
+            }
+            Err(receipt) => receipt,
+        }
+    }
+    /// Attempt the Sync side effect once, before deciding whether a lost
+    /// waiter should fall back to a default destination or the legacy sinks.
+    pub(super) fn begin_reply(
+        &self,
+        gate: &dyn SendGate,
+        event: &EventRefPayload,
+        message: &OutboundMessage,
+    ) -> Result<bool, IntentReceipt> {
         if matches!(event.reply, ReplyAddress::Sync { .. }) && !gate.commit() {
-            return IntentReceipt {
+            return Err(IntentReceipt {
                 message_ref: None,
                 rendering: custom::report(message),
                 delivery: expired(),
-            };
+            });
         }
-        let streamed = self.emit(event, "cmaeg.message", &data, false);
+        let data = custom::data(event, message.text.as_deref(), Some(message), None);
+        Ok(self.emit(event, "cmaeg.message", &data, false))
+    }
+    /// Complete a reply whose Sync attempt already happened. In particular,
+    /// a successful Sync reply still reaches the existing result sinks.
+    pub(super) async fn complete_reply(
+        &self,
+        gate: &dyn SendGate,
+        channel: &ResolvedChannel,
+        event: &EventRefPayload,
+        message: &OutboundMessage,
+        streamed: bool,
+    ) -> IntentReceipt {
+        let data = custom::data(event, message.text.as_deref(), Some(message), None);
         let delivery = self
             .webhook(
                 gate,
@@ -84,7 +109,7 @@ impl CustomDelivery {
             delivery,
         }
     }
-    pub fn stream(&self, event: &EventRefPayload, outcome: &TurnOutcome) {
+    pub fn stream(&self, event: &EventRefPayload, outcome: &TurnOutcome) -> bool {
         let frame = match outcome {
             TurnOutcome::TextDelta { text } => Some((
                 "cmaeg.text.delta",
@@ -114,9 +139,7 @@ impl CustomDelivery {
                 )
             }),
         };
-        if let Some((name, data)) = frame {
-            self.emit(event, name, &data, outcome.terminal());
-        }
+        frame.is_some_and(|(name, data)| self.emit(event, name, &data, outcome.terminal()))
     }
     pub async fn outcome(
         &self,
