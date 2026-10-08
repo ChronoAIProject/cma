@@ -7,6 +7,7 @@
 //! document has passed validation, every `/console*` request gets a generic
 //! 503 page while ingress keeps serving.
 pub mod authority;
+pub mod channel_ids;
 pub mod clock;
 pub mod cma_budget;
 mod cookies;
@@ -24,10 +25,13 @@ pub mod observer;
 mod oidc;
 mod orgs;
 pub(crate) mod pages;
+pub mod reader;
+pub mod reads;
 mod redirect;
 mod revoke;
 mod routes;
 pub mod session;
+pub mod summary;
 pub mod table;
 #[cfg(test)]
 pub(crate) mod test_support;
@@ -340,6 +344,14 @@ pub(crate) fn compose(
     if !config.console.enabled {
         return Ok(None);
     }
+    let memory = Arc::new(memory::ConsoleMemory::new(
+        &config.console.memory,
+        memory::Sources {
+            heads: state.records.clone(),
+            reader: Arc::new(state.clone()),
+        },
+        memory::Schedule::from_config(&config.console.memory),
+    ));
     let console = Console::new(ConsoleDeps {
         config: config.console.clone(),
         public_url: config.management.public_url.clone(),
@@ -347,13 +359,8 @@ pub(crate) fn compose(
         clock: Arc::new(clock::SystemClock),
         keys: state.master_keys.clone(),
         creator_auth: state.creator_auth.clone(),
-        directory: Arc::new(directory::NoChannels),
+        directory: memory.clone(),
     })?;
-    let memory = Arc::new(memory::ConsoleMemory::new(
-        &config.console.memory,
-        state.records.clone(),
-        memory::Schedule::from_config(&config.console.memory),
-    ));
     if let Some(queue) = observations {
         memory.spawn(queue, state.readiness.clone());
     }

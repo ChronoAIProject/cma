@@ -1,5 +1,6 @@
 //! Fixtures shared by the console's unit tests.
 use std::{
+    collections::HashMap,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Mutex,
@@ -7,15 +8,21 @@ use std::{
     time::{Duration, Instant},
 };
 
-use cmaeg_core::ids::RecordId;
+use cmaeg_core::{
+    channel::{ChannelCreation, ChannelDefinition},
+    ids::{ChannelId, RecordId},
+};
 use futures_util::future::BoxFuture;
 
 use super::{
     authority::{Authorized, OwnerScope},
+    channel_ids::LinkError,
     cma_budget::RecordHeads,
+    reader::ChannelReader,
 };
 use crate::{
     auth::Creator,
+    channels::management::{ManagementError, RecordedChannel},
     records::{RecordError, RecordHead},
 };
 
@@ -95,5 +102,97 @@ impl RecordHeads for FakeHeads {
                 .cloned()
                 .collect())
         })
+    }
+}
+
+/// The fixture channel at `record`, owned by `owner`, named `name`, with a
+/// retained creation channel id.
+pub(crate) fn definition(record: &RecordId, owner: &str, name: &str) -> ChannelDefinition {
+    let mut definition: ChannelDefinition = serde_json::from_str(include_str!(
+        "../../../cmaeg-core/tests/fixtures/channel.json"
+    ))
+    .unwrap();
+    definition.record_id = record.clone();
+    definition.owner.subject = owner.to_owned();
+    definition.name = name.to_owned();
+    definition.secrets.channel_key = Some(cmaeg_core::channel::Secret::new("fixture-channel-key"));
+    definition.creation = Some(ChannelCreation {
+        channel_id: channel_id(record),
+        fingerprint: "fixture".into(),
+        ready: true,
+    });
+    definition
+}
+
+/// A display-only channel id fixture for `record`.
+pub(crate) fn channel_id(record: &RecordId) -> ChannelId {
+    ChannelId::new(format!("cmaeg1.ch.fixture-{record}")).unwrap()
+}
+
+/// How a [`FakeReader`] read fails.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ReadFailure {
+    Unreadable,
+    Unavailable,
+}
+
+/// One-record reads with management's owner check, counting each read.
+#[derive(Default)]
+pub(crate) struct FakeReader {
+    pub channels: Mutex<HashMap<RecordId, (ChannelDefinition, u64)>>,
+    pub reads: AtomicUsize,
+    pub failure: Mutex<Option<ReadFailure>>,
+}
+
+impl FakeReader {
+    pub(crate) fn store(&self, definition: ChannelDefinition, version: u64) {
+        self.channels
+            .lock()
+            .unwrap()
+            .insert(definition.record_id.clone(), (definition, version));
+    }
+}
+
+impl ChannelReader for FakeReader {
+    fn read<'a>(
+        &'a self,
+        creator: &'a Creator,
+        record: &'a RecordId,
+    ) -> BoxFuture<'a, Result<RecordedChannel, ManagementError>> {
+        Box::pin(async move {
+            self.reads.fetch_add(1, Ordering::SeqCst);
+            match *self.failure.lock().unwrap() {
+                Some(ReadFailure::Unreadable) => {
+                    return Err(ManagementError::Internal("fixture unreadable".into()))
+                }
+                Some(ReadFailure::Unavailable) => {
+                    return Err(ManagementError::Record(RecordError::Unavailable(
+                        "fixture outage".into(),
+                    )))
+                }
+                None => {}
+            }
+            let channels = self.channels.lock().unwrap();
+            let (definition, version) = channels.get(record).ok_or(ManagementError::NotFound)?;
+            if definition.owner.subject != creator.subject {
+                return Err(ManagementError::NotFound);
+            }
+            Ok(RecordedChannel {
+                definition: definition.clone(),
+                version: *version,
+                record_bytes: 2_048,
+                valid: true,
+            })
+        })
+    }
+
+    fn opens_to(&self, id: &ChannelId, record: &RecordId) -> Result<(), LinkError> {
+        if !id.as_str().starts_with("cmaeg1.ch.fixture-") {
+            return Err(LinkError::Malformed);
+        }
+        if *id != channel_id(record) {
+            return Err(LinkError::Mismatch);
+        }
+        Ok(())
     }
 }

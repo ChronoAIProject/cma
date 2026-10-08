@@ -3,15 +3,45 @@
 use std::{sync::Arc, time::Duration};
 
 use cmaeg::{
+    auth::Creator,
+    channels::management::{ManagementError, RecordedChannel},
     console::{
+        channel_ids::LinkError,
         cma_budget::Pacing,
-        memory::{ConsoleMemory, Schedule},
+        memory::{ConsoleMemory, Schedule, Sources},
+        reader::ChannelReader,
     },
     records::RecordClient,
     ConsoleMemoryConfig,
 };
+use cmaeg_core::ids::{ChannelId, RecordId};
+use futures_util::future::BoxFuture;
 
 use crate::fake_cma::FakeCma;
+
+/// A reader for tests that only list heads: every record reads as absent.
+struct NoRecords;
+
+impl ChannelReader for NoRecords {
+    fn read<'a>(
+        &'a self,
+        _creator: &'a Creator,
+        _record: &'a RecordId,
+    ) -> BoxFuture<'a, Result<RecordedChannel, ManagementError>> {
+        Box::pin(async { Err(ManagementError::NotFound) })
+    }
+
+    fn opens_to(&self, _id: &ChannelId, _record: &RecordId) -> Result<(), LinkError> {
+        Err(LinkError::Malformed)
+    }
+}
+
+fn sources(cma: &FakeCma) -> Sources {
+    Sources {
+        heads: Arc::new(RecordClient::new(&cma.base_url, "cma-service").unwrap()),
+        reader: Arc::new(NoRecords),
+    }
+}
 
 fn schedule() -> Schedule {
     Schedule {
@@ -41,8 +71,7 @@ async fn seeded(count: usize) -> FakeCma {
 async fn the_index_lists_every_seeded_record_and_exports_its_gauges() {
     let metrics = cmaeg::telemetry::install().unwrap();
     let cma = seeded(1_000).await;
-    let records = Arc::new(RecordClient::new(&cma.base_url, "cma-service").unwrap());
-    let memory = ConsoleMemory::new(&ConsoleMemoryConfig::default(), records, schedule());
+    let memory = ConsoleMemory::new(&ConsoleMemoryConfig::default(), sources(&cma), schedule());
     memory.list_all().await;
     let status = memory.index_status();
     assert_eq!(status.records, 1_000);
@@ -60,12 +89,11 @@ async fn the_index_lists_every_seeded_record_and_exports_its_gauges() {
 async fn a_bounded_index_reports_itself_partial() {
     let metrics = cmaeg::telemetry::install().unwrap();
     let cma = seeded(1_100).await;
-    let records = Arc::new(RecordClient::new(&cma.base_url, "cma-service").unwrap());
     let config = ConsoleMemoryConfig {
         index_max_records: 1_000,
         ..ConsoleMemoryConfig::default()
     };
-    let memory = ConsoleMemory::new(&config, records, schedule());
+    let memory = ConsoleMemory::new(&config, sources(&cma), schedule());
     memory.list_all().await;
     assert_eq!(memory.index_status().records, 1_000);
     assert!(memory.index_status().partial);

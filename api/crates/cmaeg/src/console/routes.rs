@@ -48,7 +48,8 @@ pub(crate) async fn home(
     let (page, filter) = query.map_or((0, None), |Query(query)| (query.page.unwrap_or(0), query.q));
     let channels = console
         .directory()
-        .channels_for(&authorized, page, filter.as_deref());
+        .channels_for(&authorized, page, filter.as_deref())
+        .await;
     layout::render(&layout::LayoutView {
         subject: &mask(&subject),
         selected: &selected,

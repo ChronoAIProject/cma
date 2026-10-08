@@ -8,10 +8,17 @@ use crate::{
     channels::observer::ChannelIndexObserver,
     console::{
         observer::ConsoleObserver,
-        test_support::{authorized, record, FakeHeads},
+        test_support::{authorized, record, FakeHeads, FakeReader},
     },
     records::RecordHead,
 };
+
+fn sources(heads: Arc<FakeHeads>) -> Sources {
+    Sources {
+        heads,
+        reader: Arc::new(FakeReader::default()),
+    }
+}
 
 fn config(max_records: usize) -> ConsoleMemoryConfig {
     ConsoleMemoryConfig {
@@ -41,7 +48,7 @@ async fn listing_starts_only_after_readiness_and_its_settle() {
     let heads = Arc::new(FakeHeads::seeded(1_000));
     let memory = Arc::new(ConsoleMemory::new(
         &config(100_000),
-        heads.clone(),
+        sources(heads.clone()),
         schedule(Duration::from_millis(200), Duration::from_secs(3_600)),
     ));
     let (_observer, queue) = ConsoleObserver::new();
@@ -77,7 +84,7 @@ async fn listing_starts_only_after_readiness_and_its_settle() {
 async fn observations_keep_the_index_current() {
     let memory = Arc::new(ConsoleMemory::new(
         &config(1_000),
-        Arc::new(FakeHeads::default()),
+        sources(Arc::new(FakeHeads::default())),
         schedule(Duration::from_secs(3_600), Duration::from_secs(3_600)),
     ));
     let (observer, queue) = ConsoleObserver::new();
@@ -95,7 +102,7 @@ async fn an_owner_is_reconciled_at_most_once_per_interval() {
     let heads = Arc::new(FakeHeads::seeded(4));
     let memory = ConsoleMemory::new(
         &config(1_000),
-        heads.clone(),
+        sources(heads.clone()),
         schedule(Duration::from_secs(3_600), Duration::from_secs(3_600)),
     );
     // A stale head the owner's listing no longer has is retired.
@@ -120,7 +127,7 @@ async fn a_failed_reconcile_may_be_retried_at_once() {
     *heads.fail.lock().unwrap() = true;
     let memory = ConsoleMemory::new(
         &config(1_000),
-        heads.clone(),
+        sources(heads.clone()),
         schedule(Duration::from_secs(3_600), Duration::from_secs(3_600)),
     );
     memory.index.upsert(record(0), "alice".into(), 1);
@@ -137,7 +144,7 @@ async fn a_resync_drops_records_cma_no_longer_has() {
     let heads = Arc::new(FakeHeads::seeded(3));
     let memory = Arc::new(ConsoleMemory::new(
         &config(1_000),
-        heads.clone(),
+        sources(heads.clone()),
         schedule(Duration::ZERO, Duration::from_millis(100)),
     ));
     let (_observer, queue) = ConsoleObserver::new();
@@ -162,7 +169,7 @@ async fn a_failed_listing_keeps_the_index() {
     let heads = Arc::new(FakeHeads::seeded(3));
     let memory = ConsoleMemory::new(
         &config(1_000),
-        heads.clone(),
+        sources(heads.clone()),
         schedule(Duration::ZERO, Duration::from_secs(3_600)),
     );
     memory.list_all().await;
@@ -179,7 +186,7 @@ async fn a_listing_beyond_the_bound_marks_the_index_partial() {
     let heads = Arc::new(FakeHeads::seeded(150));
     let memory = ConsoleMemory::new(
         &config(100),
-        heads,
+        sources(heads),
         schedule(Duration::ZERO, Duration::from_secs(3_600)),
     );
     memory.list_all().await;

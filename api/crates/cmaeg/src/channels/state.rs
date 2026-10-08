@@ -158,3 +158,15 @@ pub struct LoadedChannel {
     pub definition: ChannelDefinition,
     pub record: RecordValue,
 }
+
+/// A channel read by its record id; see
+/// [`super::management::load_by_record`].
+#[derive(Debug)]
+pub struct RecordedChannel {
+    pub definition: ChannelDefinition,
+    pub version: u64,
+    /// The sealed record's size, against CMA's 64 KiB record limit.
+    pub record_bytes: usize,
+    /// Whether the definition passes this image's reader rules.
+    pub valid: bool,
+}

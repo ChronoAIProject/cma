@@ -9,9 +9,12 @@ use moka::sync::Cache;
 
 use super::{
     authority::Authorized,
+    channel_ids::ChannelIds,
     cma_budget::{page_all, CmaBudget, Pacing, RecordHeads},
     index::{entry, IndexStatus, OwnerIndex},
     observer::{Observation, ObservationQueue},
+    reader::ChannelReader,
+    summary::Summaries,
 };
 use crate::{http::readiness::Readiness, ConsoleMemoryConfig};
 
@@ -22,6 +25,18 @@ pub const SETTLE: Duration = Duration::from_secs(30);
 pub const RECONCILE_EVERY: Duration = Duration::from_secs(30);
 /// Owners whose last re-listing is remembered.
 const RECONCILED_OWNERS: u64 = 10_000;
+/// How long a record that was not the reader's is not read again for them.
+const MISS_TTL: Duration = Duration::from_secs(30);
+/// Misses remembered.
+const MISSES: u64 = 10_000;
+
+/// Where the console reads CMA from.
+pub struct Sources {
+    /// Record heads, for the owner index.
+    pub heads: Arc<dyn RecordHeads>,
+    /// One record, for summaries and paste-links.
+    pub reader: Arc<dyn ChannelReader>,
+}
 
 /// When the index lists CMA.
 #[derive(Debug, Clone, Copy)]
@@ -43,30 +58,40 @@ impl Schedule {
     }
 }
 
-/// Everything the console remembers about channels.
+/// Everything the console remembers about channels. Its owner-checked
+/// reads are in `reads.rs`.
 pub struct ConsoleMemory {
-    index: OwnerIndex,
-    budget: CmaBudget,
+    pub(super) index: OwnerIndex,
+    pub(super) budget: CmaBudget,
+    pub(super) summaries: Summaries,
+    pub(super) channel_ids: ChannelIds,
+    pub(super) reader: Arc<dyn ChannelReader>,
     heads: Arc<dyn RecordHeads>,
     schedule: Schedule,
     /// Owners re-listed within the last [`RECONCILE_EVERY`].
     reconciled: Cache<String, ()>,
+    /// `(owner, record)` reads that found no record of theirs, so probing
+    /// unknown records cannot turn into a stream of CMA reads.
+    pub(super) misses: Cache<(String, cmaeg_core::ids::RecordId), ()>,
 }
 
 impl ConsoleMemory {
-    pub fn new(
-        config: &ConsoleMemoryConfig,
-        heads: Arc<dyn RecordHeads>,
-        schedule: Schedule,
-    ) -> Self {
+    pub fn new(config: &ConsoleMemoryConfig, sources: Sources, schedule: Schedule) -> Self {
         Self {
             index: OwnerIndex::new(config.index_max_records),
             budget: CmaBudget::default(),
-            heads,
+            summaries: Summaries::new(config.summary_cache_max),
+            channel_ids: ChannelIds::new(config.channel_ids_max),
+            reader: sources.reader,
+            heads: sources.heads,
             schedule,
             reconciled: Cache::builder()
                 .max_capacity(RECONCILED_OWNERS)
                 .time_to_live(RECONCILE_EVERY)
+                .build(),
+            misses: Cache::builder()
+                .max_capacity(MISSES)
+                .time_to_live(MISS_TTL)
                 .build(),
         }
     }
@@ -80,14 +105,14 @@ impl ConsoleMemory {
                 version,
             } => self.index.upsert(record, owner, version),
             Observation::IndexRemoved { record } => self.index.remove(&record),
-            // Kept by the structures added alongside the index.
+            Observation::ChannelId { record, id } => self.channel_ids.learn(record, id),
+            // Kept by the activity rings added alongside the index.
             Observation::Routed { .. }
             | Observation::Refused { .. }
             | Observation::Launch { .. }
             | Observation::Delivery { .. }
             | Observation::Published { .. }
-            | Observation::Producer { .. }
-            | Observation::ChannelId { .. } => {}
+            | Observation::Producer { .. } => {}
         }
     }
 
