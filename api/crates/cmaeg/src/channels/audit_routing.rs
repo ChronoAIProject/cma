@@ -6,8 +6,10 @@
 //! `custom_key` with 503 `channel_invalid`. The audit pages through every
 //! channel record and reports each definition that is not legacy-compatible,
 //! with whether `default` would still receive every event once routing is
-//! gone. A record it cannot open, or a definition the reader refuses, could
-//! still store an extension, so the audit fails closed on it.
+//! gone; when asked, it clears what it safely can (see
+//! [`super::audit_routing_clear`]). A record it cannot open, or a definition
+//! the reader refuses, could still store an extension, so the audit fails
+//! closed on it.
 //!
 //! Output and logs carry only the record ID, the channel hash and
 //! classifications: never a definition, profile, secret, key, blob, token,
@@ -15,8 +17,9 @@
 use super::{
     audit::{AuditError, AuditReport},
     audit_pages::{for_each_definition, Listed},
+    audit_routing_clear::{clear, Clearing},
 };
-use crate::records::RecordClient;
+use crate::{providers::ProviderClient, records::RecordClient};
 use cmaeg_core::{
     channel::{default_receives_all, ChannelDefinition, Extensions},
     ids::RecordId,
@@ -61,6 +64,10 @@ pub struct RoutingFinding {
 pub enum RoutingAuditMode {
     /// Report only: no write and no provider call.
     Report,
+    /// Clear what can be cleared safely. `allow_default_widening` also
+    /// clears routing that keeps events from `default`; it requires the
+    /// owner's recorded sign-off.
+    Clear { allow_default_widening: bool },
 }
 
 impl AuditReport<RoutingFinding> {
@@ -105,19 +112,34 @@ impl AuditReport<RoutingFinding> {
     }
 }
 
-/// Scan every channel record and report each definition that is not
-/// legacy-compatible. `non_human` is the configured non-human provider set,
-/// which decides whether `default` answers custom events.
+/// Scan every channel record, report each definition that is not
+/// legacy-compatible and, in clear mode, clear what it safely can.
+/// `non_human` is the configured non-human provider set, which decides
+/// whether `default` answers custom events. `providers` removes additional
+/// consumers' bindings; without it, a clear that needs one stops the audit
+/// as [`AuditError::ProviderConfiguration`].
 pub async fn audit_routing(
     records: &RecordClient,
     keys: &MasterKeyRing,
+    providers: Option<&ProviderClient>,
     non_human: &BTreeSet<String>,
     mode: RoutingAuditMode,
 ) -> Result<AuditReport<RoutingFinding>, AuditError> {
     let mut report = AuditReport::default();
+    let clearing = match mode {
+        RoutingAuditMode::Report => None,
+        RoutingAuditMode::Clear {
+            allow_default_widening,
+        } => Some(Clearing {
+            records,
+            keys,
+            providers,
+            non_human,
+            allow_default_widening,
+        }),
+    };
     for_each_definition(records, keys, &mut report, async |report, listed| {
-        audit_record(listed, non_human, mode, report);
-        Ok(())
+        audit_record(listed, non_human, clearing.as_ref(), report).await
     })
     .await?;
     tracing::info!(
@@ -132,22 +154,23 @@ pub async fn audit_routing(
     Ok(report)
 }
 
-fn audit_record(
+async fn audit_record(
     listed: Listed<'_>,
     non_human: &BTreeSet<String>,
-    mode: RoutingAuditMode,
+    clearing: Option<&Clearing<'_>>,
     report: &mut AuditReport<RoutingFinding>,
-) {
+) -> Result<(), AuditError> {
     let Listed {
+        head,
         record_id,
         definition,
-        ..
+        version,
     } = listed;
-    let Some(finding) = classify(record_id, &definition, non_human, report) else {
-        return;
+    let Some(mut finding) = classify(record_id, &definition, non_human, report) else {
+        return Ok(());
     };
-    match mode {
-        RoutingAuditMode::Report => {
+    match clearing {
+        None => {
             tracing::debug!(
                 record_id = %finding.record_id,
                 channel_hash = ?finding.channel_hash,
@@ -157,8 +180,41 @@ fn audit_record(
             );
             report.remaining += 1;
         }
+        Some(_) if head.owner != definition.owner.subject => {
+            // The write is keyed by the listed owner; a definition naming
+            // another owner is left for an operator rather than rewritten
+            // under it, and none of its bindings is touched.
+            tracing::warn!(record_id = %finding.record_id, "channel record owner does not match its definition; not cleared");
+            report.remaining += 1;
+        }
+        Some(clearing) => {
+            let outcome = clear(clearing, head, definition, version, report).await?;
+            finding.action = outcome.action;
+            finding.reason = outcome.reason;
+            if outcome.action == RoutingAuditAction::Cleared {
+                report.cleared += 1;
+                tracing::info!(
+                    record_id = %finding.record_id,
+                    channel_hash = ?finding.channel_hash,
+                    unbound = outcome.unbound,
+                    allow_default_widening = outcome.widened,
+                    "routing extensions cleared"
+                );
+            } else {
+                report.remaining += 1;
+                tracing::warn!(
+                    record_id = %finding.record_id,
+                    channel_hash = ?finding.channel_hash,
+                    action = ?outcome.action,
+                    reason = outcome.reason,
+                    unbound = outcome.unbound,
+                    "routing extensions not cleared"
+                );
+            }
+        }
     }
     report.findings.push(finding);
+    Ok(())
 }
 
 /// The finding for a definition an older image cannot read, or `None` for a

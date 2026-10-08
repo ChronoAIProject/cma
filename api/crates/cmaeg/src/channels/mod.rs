@@ -3,6 +3,7 @@
 pub mod audit;
 mod audit_pages;
 pub mod audit_routing;
+pub mod audit_routing_clear;
 pub mod cache;
 mod consumers;
 pub mod creation;

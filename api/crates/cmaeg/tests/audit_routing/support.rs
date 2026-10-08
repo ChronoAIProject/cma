@@ -1,15 +1,18 @@
 //! Channel shapes, sealing and fakes shared by the routing audit tests.
-use super::{fake_cma::FakeCma, routing_fixture};
+use super::{fake_cma::FakeCma, fake_provider::FakeProvider, routing_fixture};
 use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
-use cmaeg::channels::definition::channel_pointer;
+use cmaeg::{
+    channels::definition::channel_pointer,
+    providers::{ProviderClient, ProviderRegistry},
+};
 use cmaeg_core::{
     channel::ChannelDefinition,
     ids::{ChannelId, RecordId},
     profile::canonical_json,
-    seal::{seal_blob, MasterKeyRing},
+    seal::{open_blob, seal_blob, MasterKeyRing},
 };
 use serde_json::{json, Value};
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, time::Duration};
 
 /// Distinctive, so the hygiene test can prove it never reaches the output.
 pub const OWNER: &str = "routing-audit-owner-fixture";
@@ -24,6 +27,35 @@ pub fn non_human() -> BTreeSet<String> {
 
 pub fn records(cma: &FakeCma) -> cmaeg::records::RecordClient {
     cmaeg::records::RecordClient::new(&cma.base_url, "cma-service").unwrap()
+}
+
+/// A client for both fixture providers, `cma_codex` and `nyxbot`, served by
+/// one fake. Without management authentication every call carries the
+/// consumer's own agent key, so a test can see which key was used.
+pub fn providers(provider: &FakeProvider) -> ProviderClient {
+    let entry = |slug: &str| {
+        json!({"slug": slug, "base_url": provider.base_url(), "kind": "responses_http",
+            "paths": {"agent_card": "/.well-known/agent-card.json",
+                "binding": "/api/v1/cmaeg/bindings/{binding_id}",
+                "conversation": "/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}",
+                "responses": "/api/v2/responses"},
+            "max_inflight": 8})
+    };
+    let registry =
+        ProviderRegistry::parse(&json!([entry("cma_codex"), entry("nyxbot")]).to_string()).unwrap();
+    ProviderClient::new(registry, Duration::from_secs(1), Duration::from_secs(5), 8).unwrap()
+}
+
+/// The binding deletions the fake provider received, as `(path, bearer)`.
+pub fn unbinds(provider: &FakeProvider) -> Vec<(String, String)> {
+    provider
+        .requests()
+        .into_iter()
+        .map(|request| {
+            assert_eq!(request.method, "DELETE", "only unbinds are expected");
+            (request.path, request.authorization.unwrap_or_default())
+        })
+        .collect()
 }
 
 /// The core's routed channel: Telegram, a Lark relay and a custom source;
@@ -115,6 +147,15 @@ pub fn seed(
     definition.validate().unwrap();
     cma.seed(&id, OWNER, seal(keys, &definition));
     (definition, channel)
+}
+
+/// The stored plaintext of `record_id` and its record version.
+pub fn stored(cma: &FakeCma, keys: &MasterKeyRing, record_id: &RecordId) -> (Vec<u8>, u64) {
+    let record = cma.records().remove(record_id.as_str()).unwrap();
+    (
+        open_blob(keys, &record.blob).unwrap().payload,
+        record.version,
+    )
 }
 
 pub fn hash(channel: &Option<ChannelId>) -> String {

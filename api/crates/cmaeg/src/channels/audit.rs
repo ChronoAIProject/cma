@@ -15,7 +15,7 @@ use cmaeg_core::{
     seal::MasterKeyRing,
 };
 use serde::Serialize;
-use std::fmt;
+use std::{convert::Infallible, fmt};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuditFinding {
@@ -121,6 +121,9 @@ pub enum AuditError {
     RecordStoreRejected,
     RecordStoreMalformed,
     Seal,
+    /// The routing audit needed to remove a provider binding, but no
+    /// provider client could be built from the configuration.
+    ProviderConfiguration,
 }
 
 impl fmt::Display for AuditError {
@@ -132,6 +135,7 @@ impl fmt::Display for AuditError {
             Self::RecordStoreRejected => "record store rejected a request",
             Self::RecordStoreMalformed => "record store response malformed",
             Self::Seal => "channel definition cannot be sealed",
+            Self::ProviderConfiguration => "provider configuration unavailable",
         })
     }
 }
@@ -240,7 +244,7 @@ async fn clear_record(
         async |mut definition| {
             if !carries_attachments(&definition) {
                 // A concurrent update already removed it.
-                return Ok(Step::Done);
+                return Ok(Step::<Infallible>::Done);
             }
             remove_attachments(&mut definition);
             Ok(Step::Write(Box::new(definition)))
@@ -250,6 +254,7 @@ async fn clear_record(
     Ok(match rewritten {
         Rewritten::Cleared => AuditAction::Cleared,
         Rewritten::Conflict => AuditAction::Conflict,
+        Rewritten::Stopped(never) => match never {},
     })
 }
 

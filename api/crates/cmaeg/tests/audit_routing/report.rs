@@ -1,6 +1,10 @@
 //! Report mode: every definition an older image cannot read is listed, and
 //! nothing is written.
-use super::{fake_cma::FakeCma, support::*};
+use super::{
+    fake_cma::FakeCma,
+    fake_provider::{FakeProvider, FakeProviderConfig},
+    support::*,
+};
 use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
 use cmaeg::channels::audit_routing::{
     audit_routing, RoutingAuditAction, RoutingAuditMode, RoutingFinding,
@@ -15,6 +19,7 @@ async fn report(
     audit_routing(
         &records(cma),
         &key_ring(),
+        None,
         non_human,
         RoutingAuditMode::Report,
     )
@@ -31,7 +36,16 @@ async fn report_lists_every_extended_shape_and_skips_legacy_channels() {
     let (custom_key, _) = seed(&cma, &keys, inert_custom_key(), false);
     let (detached, _) = seed(&cma, &keys, zero_sources(), false);
     seed(&cma, &keys, legacy(), true);
-    let report = report(&cma, &non_human()).await;
+    let provider = FakeProvider::start(FakeProviderConfig::default()).await;
+    let report = audit_routing(
+        &records(&cma),
+        &keys,
+        Some(&providers(&provider)),
+        &non_human(),
+        RoutingAuditMode::Report,
+    )
+    .await
+    .unwrap();
     assert_eq!(
         (report.scanned, report.channels, report.unreadable),
         (5, 5, 0)
@@ -62,8 +76,10 @@ async fn report_lists_every_extended_shape_and_skips_legacy_channels() {
         .findings
         .iter()
         .all(|finding| finding.action == RoutingAuditAction::Found && finding.reason.is_none()));
-    // Reporting alone never writes.
+    // Reporting alone never writes, nor calls a provider.
     assert!(cma.records().values().all(|record| record.version == 1));
+    assert!(provider.log().is_empty());
+    provider.close().await;
     cma.close().await;
 }
 

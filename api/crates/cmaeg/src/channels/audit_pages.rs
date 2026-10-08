@@ -110,38 +110,44 @@ async fn read<F>(
 }
 
 /// What an audit's step wants done with the current definition.
-pub(super) enum Step {
+pub(super) enum Step<S> {
     /// Nothing is left to change, for example after a concurrent update.
     Done,
     /// Store this definition in place of the current one.
     Write(Box<ChannelDefinition>),
+    /// Leave the record unchanged, for the audit's own reason.
+    Stop(S),
 }
 
 /// How a compare-and-swap rewrite ended.
-pub(super) enum Rewritten {
+pub(super) enum Rewritten<S> {
     /// Written, found already done, or deleted meanwhile: nothing remains.
     Cleared,
+    /// Left unchanged by the audit's step.
+    Stopped(S),
     /// The record changed again, or became unreadable, after one re-read.
     Conflict,
 }
 
 /// Rewrite one definition under compare-and-swap. `step` decides what to
-/// write from the current definition; after one version conflict the record
-/// is re-read and `step` decides again from what is stored now. The write is
+/// write from the current definition, or that nothing may be written; after
+/// one version conflict the record is re-read and `step` decides again from
+/// what is stored now. The write is
 /// keyed by the listed owner, and the stored definition records the version
 /// it was written over, as updates do.
-pub(super) async fn rewrite<F>(
+pub(super) async fn rewrite<F, S>(
     records: &RecordClient,
     keys: &MasterKeyRing,
     head: &RecordHead,
     mut definition: ChannelDefinition,
     mut version: u64,
     report: &mut AuditReport<F>,
-    mut step: impl AsyncFnMut(ChannelDefinition) -> Result<Step, AuditError>,
-) -> Result<Rewritten, AuditError> {
+    mut step: impl AsyncFnMut(ChannelDefinition) -> Result<Step<S>, AuditError>,
+) -> Result<Rewritten<S>, AuditError> {
     for attempt in 0..2 {
         let mut next = match step(definition).await? {
             Step::Done => return Ok(Rewritten::Cleared),
+            Step::Stop(reason) => return Ok(Rewritten::Stopped(reason)),
             Step::Write(next) => *next,
         };
         next.version = version;
