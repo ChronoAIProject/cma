@@ -1,5 +1,7 @@
 //! The gateway console: enablement, sign-in and per-request authority, each
 //! against the fake NyxID's OAuth endpoints.
+#[path = "fake_cma.rs"]
+pub mod fake_cma;
 #[path = "fake_nyxid.rs"]
 pub mod fake_nyxid;
 
@@ -9,6 +11,8 @@ mod authority;
 mod enablement;
 #[path = "console/hygiene.rs"]
 mod hygiene;
+#[path = "console/memory.rs"]
+mod memory;
 #[path = "console/observations.rs"]
 mod observations;
 #[path = "console/owner.rs"]

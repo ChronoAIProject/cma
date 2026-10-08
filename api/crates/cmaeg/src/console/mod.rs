@@ -8,15 +8,18 @@
 //! 503 page while ingress keeps serving.
 pub mod authority;
 pub mod clock;
+pub mod cma_budget;
 mod cookies;
 mod csrf;
 pub mod directory;
 mod extract;
 mod guard;
 mod headers;
+pub mod index;
 mod login;
 mod login_limit;
 pub mod mask;
+pub mod memory;
 pub mod observer;
 mod oidc;
 mod orgs;
@@ -26,6 +29,8 @@ mod revoke;
 mod routes;
 pub mod session;
 pub mod table;
+#[cfg(test)]
+pub(crate) mod test_support;
 pub mod token;
 
 use std::{sync::Arc, time::Duration};
@@ -324,32 +329,34 @@ async fn gate(State(console): State<Console>, request: Request, next: Next) -> R
 }
 
 /// Build the console when `CMAEG_CONSOLE_ENABLED` is on and start its
-/// background work, draining `observations` from the hot paths; `None` while
-/// it is off, so nothing is allocated.
+/// background work: sign-in discovery, the session sweeper, and the channel
+/// memory draining `observations` from the hot paths. `None` while it is off,
+/// so nothing is allocated.
 pub(crate) fn compose(
     config: &crate::Config,
-    keys: Arc<MasterKeyRing>,
-    creator_auth: Arc<CreatorAuthenticator>,
+    state: &crate::channels::management::ManagementState,
     observations: Option<observer::ObservationQueue>,
 ) -> Result<Option<Router>, reqwest::Error> {
     if !config.console.enabled {
         return Ok(None);
-    }
-    if let Some(queue) = observations {
-        // The one drainer. The console memory that keeps observations is
-        // composed in later steps; until then they are only taken off the
-        // queue, so the hot paths never find it full.
-        drop(tokio::spawn(queue.drain(|_observation| {})));
     }
     let console = Console::new(ConsoleDeps {
         config: config.console.clone(),
         public_url: config.management.public_url.clone(),
         nyxid_base_url: config.management.nyxid_base_url.clone(),
         clock: Arc::new(clock::SystemClock),
-        keys,
-        creator_auth,
+        keys: state.master_keys.clone(),
+        creator_auth: state.creator_auth.clone(),
         directory: Arc::new(directory::NoChannels),
     })?;
+    let memory = Arc::new(memory::ConsoleMemory::new(
+        &config.console.memory,
+        state.records.clone(),
+        memory::Schedule::from_config(&config.console.memory),
+    ));
+    if let Some(queue) = observations {
+        memory.spawn(queue, state.readiness.clone());
+    }
     // Detached: discovery and the sweeper run for the life of the process.
     drop(console.spawn_discovery());
     drop(console.spawn_sweeper());

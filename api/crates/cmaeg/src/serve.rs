@@ -72,12 +72,7 @@ pub(crate) async fn serve(config: Config) -> Result<(), Box<dyn std::error::Erro
     let metrics = telemetry::install()?;
     // After the recorder, which registers its gauge. `None` while
     // CMAEG_CONSOLE_ENABLED is off: then no /console route exists.
-    let console = console::compose(
-        &config,
-        state.master_keys.clone(),
-        state.creator_auth.clone(),
-        observers.queue.take(),
-    )?;
+    let console = console::compose(&config, &state, observers.queue.take())?;
     // Before the listener binds: a configured transformer must pass its
     // sandbox self-check, or the gateway does not start.
     let transformer = media::transform::setup::start_configured(&config).await?;

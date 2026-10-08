@@ -199,4 +199,16 @@ pub(crate) fn describe_console() {
         "Ingress requests that failed authentication, by source; never recorded in console memory"
     );
     metrics::counter!(names::CONSOLE_UNAUTHENTICATED).absolute(0);
+    metrics::describe_gauge!(
+        names::CONSOLE_INDEX_RECORDS,
+        metrics::Unit::Count,
+        "Channel record heads in the console's owner index"
+    );
+    metrics::gauge!(names::CONSOLE_INDEX_RECORDS).set(0);
+    metrics::describe_gauge!(
+        names::CONSOLE_INDEX_PARTIAL,
+        metrics::Unit::Count,
+        "1 while the console's owner index is at its bound and may miss channels"
+    );
+    metrics::gauge!(names::CONSOLE_INDEX_PARTIAL).set(0);
 }
