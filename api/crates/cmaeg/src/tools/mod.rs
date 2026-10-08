@@ -5,6 +5,7 @@ mod attachments;
 mod context;
 mod download_access;
 mod media_links;
+mod publish_limits;
 mod reply_targets;
 mod routed;
 #[cfg(test)]
@@ -27,5 +28,6 @@ pub use media_links::{
     LinkRefusal, MediaDownloads, DOWNLOAD_RESPONSE_WEIGHT, DOWNLOAD_STREAMS_GLOBAL,
     DOWNLOAD_STREAMS_PER_CHANNEL,
 };
+pub use publish_limits::{PublishLimits, RootLimit};
 pub use reply_targets::ReplyTargetResponse;
 pub use state::ToolsState;
