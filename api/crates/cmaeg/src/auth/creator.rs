@@ -3,7 +3,7 @@
 use std::{
     fmt,
     sync::atomic::{AtomicU64, Ordering},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use axum::{
@@ -17,6 +17,10 @@ use dashmap::DashMap;
 use reqwest::Client;
 use ring::digest::{digest, SHA256};
 use serde::Deserialize;
+// Tokio's clock is the process clock outside tests; under a paused test
+// runtime it lets a caller's test move the cache past its TTLs without
+// waiting a real minute.
+use tokio::time::Instant;
 
 const SUCCESS_TTL: Duration = Duration::from_secs(60);
 const FAILURE_TTL: Duration = Duration::from_secs(10);

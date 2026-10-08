@@ -489,3 +489,51 @@ async fn uncached_verification_matches_token_authentication_without_touching_the
         Err(CreatorAuthError::ProviderUnavailable)
     );
 }
+
+#[tokio::test]
+async fn cached_results_expire_on_tokios_clock() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let router = Router::new()
+        .route(
+            "/api/v1/users/me",
+            get(
+                |State(calls): State<Arc<AtomicUsize>>, headers: HeaderMap| async move {
+                    calls.fetch_add(1, Ordering::Relaxed);
+                    match headers.get("authorization").unwrap().to_str().unwrap() {
+                        "Bearer human" => (StatusCode::OK, r#"{"id":"human"}"#.to_owned()),
+                        _ => (StatusCode::UNAUTHORIZED, String::new()),
+                    }
+                },
+            ),
+        )
+        .with_state(calls.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let auth =
+        CreatorAuthenticator::new(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
+    let task = tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
+    // Moves only tokio's clock, while no request is in flight, then lets it
+    // run in real time again.
+    async fn skip(by: Duration) {
+        tokio::time::pause();
+        tokio::time::advance(by).await;
+        tokio::time::resume();
+    }
+    auth.authenticate_token("human", None).await.unwrap();
+    auth.authenticate_token("stranger", None).await.unwrap_err();
+    assert_eq!(calls.load(Ordering::Relaxed), 2);
+    skip(FAILURE_TTL - Duration::from_secs(1)).await;
+    auth.authenticate_token("human", None).await.unwrap();
+    auth.authenticate_token("stranger", None).await.unwrap_err();
+    assert_eq!(calls.load(Ordering::Relaxed), 2);
+    // The failure's 10 s are over; the success's 60 s are not.
+    skip(Duration::from_secs(2)).await;
+    auth.authenticate_token("human", None).await.unwrap();
+    auth.authenticate_token("stranger", None).await.unwrap_err();
+    assert_eq!(calls.load(Ordering::Relaxed), 3);
+    skip(SUCCESS_TTL).await;
+    auth.authenticate_token("human", None).await.unwrap();
+    assert_eq!(calls.load(Ordering::Relaxed), 4);
+    task.abort();
+}
