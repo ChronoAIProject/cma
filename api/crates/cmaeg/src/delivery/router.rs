@@ -151,6 +151,7 @@ mod tests {
                 reply_to: None,
             },
             source: ReplySource::Tool,
+            destination: None,
             receipt,
         };
         (command, received)

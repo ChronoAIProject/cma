@@ -106,6 +106,7 @@ async fn handle(
             event,
             message,
             source,
+            destination,
             receipt,
             ..
         } => {
@@ -118,6 +119,7 @@ async fn handle(
                     event,
                     message,
                     source,
+                    destination,
                     receipt,
                 },
             )
@@ -166,6 +168,7 @@ struct ToolReply {
     event: EventRefPayload,
     message: OutboundMessage,
     source: ReplySource,
+    destination: Option<ReplyChoice>,
     receipt: oneshot::Sender<super::intents::IntentReceipt>,
 }
 
@@ -182,6 +185,7 @@ async fn tool_reply(
         event,
         message,
         source,
+        destination,
         receipt,
     } = command;
     if receipt.is_closed() {
@@ -198,7 +202,7 @@ async fn tool_reply(
     let address = effective(
         &channel.definition,
         &event,
-        requested(ReplyChoice::Origin, &event),
+        requested(destination, ReplyChoice::Origin, &event),
         sender.custom.sync_registered(&event.reply),
         config.multi_consumer_enabled,
         SendKind::Tool,

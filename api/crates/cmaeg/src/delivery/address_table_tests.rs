@@ -14,6 +14,42 @@ const ROUTE: &str = "6f1c9a3e-2b4d-4c5e-8f70-112233445566";
 const TOOL: SendKind = SendKind::Tool;
 const ROUTED_OUTPUT: SendKind = SendKind::Output { routed_turn: true };
 
+#[test]
+fn unmarked_default_consumers_never_redirect_a_default_request() {
+    let mut payload = event(chat_origin());
+    payload.consumer = None;
+    payload.lineage = None;
+    for routing in [false, true] {
+        let def = channel(Some(telegram_default()), |value| {
+            if !routing {
+                value.as_object_mut().unwrap().remove("routing");
+            }
+        });
+        for flag in [false, true] {
+            for kind in [TOOL, ROUTED_OUTPUT, SendKind::Output { routed_turn: false }] {
+                for choice in [ReplyChoice::Origin, ReplyChoice::Default] {
+                    let actual = effective(&def, &payload, choice, false, flag, kind);
+                    let expected = if choice == ReplyChoice::Origin
+                        || matches!(kind, SendKind::Output { routed_turn: false })
+                    {
+                        EffectiveAddress::Origin(payload.reply.clone())
+                    } else if routing && flag {
+                        default_chat()
+                    } else {
+                        EffectiveAddress::Rejected {
+                            reason: DEFAULT_REPLY_UNAVAILABLE,
+                        }
+                    };
+                    assert_eq!(
+                        actual, expected,
+                        "routing={routing} flag={flag} kind={kind:?} choice={choice:?}"
+                    );
+                }
+            }
+        }
+    }
+}
+
 /// A routed channel with a native bot, a Lark relay and a custom source,
 /// whose `routing.default_reply` is `default_reply`, after `edit`.
 fn channel(default_reply: Option<Value>, edit: impl FnOnce(&mut Value)) -> ChannelDefinition {
@@ -218,7 +254,7 @@ fn with_the_flag_off_a_default_request_is_rejected_never_redirected() {
     let payload = event(chat_origin());
     // An automatic output whose consumer asks for `default`.
     assert!(!default_ok(&def, &payload, false, ROUTED_OUTPUT));
-    let output = requested(ReplyChoice::Default, &payload);
+    let output = requested(None, ReplyChoice::Default, &payload);
     assert_eq!(
         effective(&def, &payload, output, false, false, ROUTED_OUTPUT),
         unavailable
@@ -232,7 +268,7 @@ fn with_the_flag_off_a_default_request_is_rejected_never_redirected() {
         reply: ReplyChoice::Default,
     });
     for kind in [TOOL, ROUTED_OUTPUT] {
-        let asked = requested(ReplyChoice::Origin, &handoff);
+        let asked = requested(None, ReplyChoice::Origin, &handoff);
         assert_eq!(asked, ReplyChoice::Default);
         assert_eq!(
             effective(&def, &handoff, asked, false, false, kind),
@@ -269,14 +305,14 @@ fn an_unrouted_turns_outputs_always_go_to_the_origin() {
 }
 
 #[test]
-fn requests_follow_the_consumer_then_the_lineage_then_the_origin() {
+fn requests_follow_the_tool_then_the_consumer_then_the_lineage_then_the_origin() {
     let mut payload = event(chat_origin());
     assert_eq!(
-        requested(ReplyChoice::Origin, &payload),
+        requested(None, ReplyChoice::Origin, &payload),
         ReplyChoice::Origin
     );
     assert_eq!(
-        requested(ReplyChoice::Default, &payload),
+        requested(None, ReplyChoice::Default, &payload),
         ReplyChoice::Default
     );
     payload.lineage = Some(Lineage {
@@ -286,12 +322,21 @@ fn requests_follow_the_consumer_then_the_lineage_then_the_origin() {
         reply: ReplyChoice::Default,
     });
     assert_eq!(
-        requested(ReplyChoice::Origin, &payload),
+        requested(None, ReplyChoice::Origin, &payload),
         ReplyChoice::Default
+    );
+    // A tool's explicit destination comes before the lineage.
+    assert_eq!(
+        requested(Some(ReplyChoice::Origin), ReplyChoice::Origin, &payload),
+        ReplyChoice::Origin
     );
     payload.lineage.as_mut().unwrap().reply = ReplyChoice::Origin;
     assert_eq!(
-        requested(ReplyChoice::Default, &payload),
+        requested(Some(ReplyChoice::Default), ReplyChoice::Origin, &payload),
+        ReplyChoice::Default
+    );
+    assert_eq!(
+        requested(None, ReplyChoice::Default, &payload),
         ReplyChoice::Default,
         "the consumer's own destination comes first"
     );

@@ -140,13 +140,14 @@ async fn an_automatic_output_for_the_default_destination_is_rejected_visibly() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn unrouted_sends_keep_todays_origin_whatever_the_destination() {
+async fn routed_default_outputs_are_refused_while_legacy_outputs_keep_the_origin() {
     let channel = routed_channel(0, |value| {
         value["routing"]["default_consumer"]["reply"] = json!({"destination": "default"});
     });
     let activity = routed_activity();
     let lead = consumer_event(&channel, &activity, None);
-    // With the flag off, a default reference on a routed channel is today's.
+    // A routed automatic output explicitly asking for default must be refused
+    // even when the default consumer's reference carries no consumer marker.
     let mut off = recording(false);
     answer(&off, &channel, &activity, &lead, "Lead.").await;
     let receipt = off
@@ -156,7 +157,7 @@ async fn unrouted_sends_keep_todays_origin_whatever_the_destination() {
         receipt.delivery,
         DeliveryOutcome::Confirmed { .. }
     ));
-    assert_eq!(texts(&off.finish().await), ["Lead.", "Tool."]);
+    assert_eq!(texts(&off.finish().await), ["Tool."]);
     // A turn admitted unrouted keeps its origin after its channel is routed.
     let mut unrouted = activity.clone();
     unrouted.routing = None;

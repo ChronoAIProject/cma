@@ -183,7 +183,7 @@ pub async fn call(
             let args: ReplyArguments = serde_json::from_value(arguments).map_err(|_| invalid())?;
             serde_json::to_value(
                 state
-                    .reply(caller, &event_ref(&args.event_ref)?, args.message)
+                    .reply(caller, &event_ref(&args.event_ref)?, args.message, None)
                     .await?,
             )
         }

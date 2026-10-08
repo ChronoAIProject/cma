@@ -18,6 +18,7 @@ use cmaeg::{
 };
 use cmaeg_core::{
     activity::{Activity, ActivityRouting},
+    channel::ReplyChoice,
     ids::MessageRef,
     message::{OutboundMessage, RenderingOutcome, RenderingReport},
     seal::{event_ref::activity_digest, EventRef, MasterKeyRing, MessageRefPayload},
@@ -47,6 +48,7 @@ pub struct App {
     pub message_ref: MessageRef,
     pub requests: Arc<Mutex<Vec<OutboundMessage>>>,
     pub delay: Arc<AtomicU64>,
+    pub destinations: Arc<Mutex<Vec<Option<ReplyChoice>>>>,
     /// The media service, when the app was built with one.
     pub media: Option<Arc<MediaService>>,
     tasks: Vec<JoinHandle<()>>,
@@ -63,27 +65,31 @@ impl App {
         Self::with_text("hello").await
     }
     pub async fn with_text(text: &str) -> Self {
-        Self::build("telegram", text, None, None).await
+        Self::build("telegram", text, None, None, false).await
     }
     /// A group message on `platform` carrying the envelope's default text.
     pub async fn on(platform: &str) -> Self {
-        Self::build(platform, "hello", None, None).await
+        Self::build(platform, "hello", None, None, false).await
     }
     /// A message carrying `setup`'s attachments, with a media service over
     /// its fakes. `event_ref` is the media event's reference.
     pub async fn with_media(setup: MediaSetup) -> Self {
-        Self::build("telegram", "hello", Some(setup), None).await
+        Self::build("telegram", "hello", Some(setup), None, false).await
     }
     /// A message whose stored activity carries `routing`, bound into its
     /// event_ref's digest as routed ingress binds it.
     pub async fn routed(routing: ActivityRouting) -> Self {
-        Self::build("telegram", "hello", None, Some(routing)).await
+        Self::build("telegram", "hello", None, Some(routing), false).await
+    }
+    pub async fn with_routing_flag(setup: Option<MediaSetup>, enabled: bool) -> Self {
+        Self::build("telegram", "hello", setup, None, enabled).await
     }
     async fn build(
         platform: &str,
         text: &str,
         media: Option<MediaSetup>,
         routing: Option<ActivityRouting>,
+        multi_consumer_enabled: bool,
     ) -> Self {
         let key = format!("nyxid_ag_{}", uuid::Uuid::new_v4().simple());
         let edit = media.as_ref().map(|setup| setup.edit);
@@ -147,6 +153,8 @@ impl App {
         let (delivery, mut commands) = mpsc::channel::<DeliveryCommand>(16);
         let requests = Arc::new(Mutex::new(Vec::new()));
         let recording = requests.clone();
+        let destinations = Arc::new(Mutex::new(Vec::new()));
+        let choices = destinations.clone();
         let delay = Arc::new(AtomicU64::new(0));
         let delayed = delay.clone();
         let returned_ref = message_ref.clone();
@@ -155,9 +163,13 @@ impl App {
                 tokio::time::sleep(Duration::from_millis(delayed.load(Ordering::SeqCst))).await;
                 match command {
                     DeliveryCommand::Reply {
-                        message, receipt, ..
+                        message,
+                        destination,
+                        receipt,
+                        ..
                     } => {
                         recording.lock().unwrap().push(message);
+                        choices.lock().unwrap().push(destination);
                         let _ = receipt.send(IntentReceipt {
                             message_ref: Some(returned_ref.clone()),
                             rendering: RenderingReport {
@@ -203,6 +215,7 @@ impl App {
             public_origin: "https://gateway.example".into(),
             media: media.clone(),
             downloads,
+            multi_consumer_enabled,
         };
         let router = http::tools::router(state.clone())
             .merge(http::media::router(state.clone()))
@@ -222,6 +235,7 @@ impl App {
             activity,
             message_ref,
             requests,
+            destinations,
             delay,
             media,
             tasks: vec![engine, server],

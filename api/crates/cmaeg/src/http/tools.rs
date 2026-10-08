@@ -1,5 +1,6 @@
 //! Stable REST projections for agent tools.
 use super::problems::{problem, protocol_headers};
+use crate::channels::write_gate::MULTI_CONSUMER_DISABLED;
 use crate::{
     auth::AgentCaller,
     delivery::intents::{IntentReceipt, TypingReceipt},
@@ -10,7 +11,7 @@ use crate::{
     },
 };
 use axum::{
-    extract::{rejection::QueryRejection, Path, Query, State},
+    extract::{rejection::QueryRejection, Path, Query, RawQuery, State},
     http::{
         header::{CONTENT_TYPE, RETRY_AFTER},
         HeaderMap, HeaderValue, StatusCode,
@@ -20,6 +21,7 @@ use axum::{
     Json, Router,
 };
 use cmaeg_core::{
+    channel::ReplyChoice,
     ids::MessageRef,
     message::OutboundMessage,
     problem::{Problem, ProblemCode},
@@ -50,14 +52,22 @@ pub fn router(state: ToolsState) -> Router {
     )
 }
 #[utoipa::path(post,path="/v1/events/{event_ref}/replies",operation_id="replyToEvent",tag="tools",
-    security(("agentBearer"=[])),params(("event_ref"=String,Path)),request_body=OutboundMessage,
+    security(("agentBearer"=[])),
+    params(("event_ref"=String,Path),
+        ("destination"=Option<ReplyChoice>,Query,description="Where the reply goes on a channel with routing: `origin`, the event's own source, or `default`, the channel's default reply source, resolved when the reply is sent. Absent, the reply follows a hand-off's choice, else the origin. While multi-consumer routing is off, `default` is refused with `multi_consumer_disabled`.")),
+    request_body=OutboundMessage,
     responses((status=200,body=IntentReceipt),(status="default",body=Problem,content_type="application/problem+json")))]
 pub async fn reply_to_event(
     State(state): State<ToolsState>,
     caller: AgentCaller,
     Path(reference): Path<String>,
+    RawQuery(query): RawQuery,
     body: Result<Json<OutboundMessage>, axum::extract::rejection::JsonRejection>,
 ) -> Response {
+    let destination = match destination(query.as_deref(), state.multi_consumer_enabled) {
+        Ok(value) => value,
+        Err(error) => return result::<IntentReceipt>(Err(error)),
+    };
     let message = match json(body) {
         Ok(value) => value,
         Err(error) => return result::<IntentReceipt>(Err(error)),
@@ -66,7 +76,42 @@ pub async fn reply_to_event(
         Ok(value) => value,
         Err(error) => return result::<IntentReceipt>(Err(error)),
     };
-    result(state.reply(caller, &reference, message).await)
+    result(state.reply(caller, &reference, message, destination).await)
+}
+/// The explicit `destination` of a reply. With multi-consumer routing off,
+/// `default` is refused, because delivering a message meant for a private
+/// default destination to a possibly public origin would be a silent privacy
+/// failure; every other value is ignored, as unknown query parameters are.
+/// With it on, `origin` and `default` are honoured and anything else, a
+/// repeated parameter included, is refused.
+fn destination(
+    query: Option<&str>,
+    multi_consumer_enabled: bool,
+) -> Result<Option<ReplyChoice>, Problem> {
+    let values: Vec<_> = url::form_urlencoded::parse(query.unwrap_or_default().as_bytes())
+        .filter(|(name, _)| name == "destination")
+        .map(|(_, value)| value)
+        .collect();
+    if !multi_consumer_enabled {
+        if values.iter().any(|value| value == "default") {
+            return Err(Problem::new(
+                ProblemCode::InvalidRequest,
+                400,
+                MULTI_CONSUMER_DISABLED,
+            ));
+        }
+        return Ok(None);
+    }
+    match values.as_slice() {
+        [] => Ok(None),
+        [value] if value == "origin" => Ok(Some(ReplyChoice::Origin)),
+        [value] if value == "default" => Ok(Some(ReplyChoice::Default)),
+        _ => Err(Problem::new(
+            ProblemCode::InvalidRequest,
+            400,
+            "destination must be origin or default",
+        )),
+    }
 }
 #[utoipa::path(post,path="/v1/messages/{message_ref}/update",operation_id="updateMessage",tag="tools",
     security(("agentBearer"=[])),params(("message_ref"=String,Path)),request_body=OutboundMessage,

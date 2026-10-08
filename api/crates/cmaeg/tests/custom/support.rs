@@ -127,6 +127,7 @@ impl App {
             public_origin: "https://gateway.example".into(),
             media: None,
             downloads: Default::default(),
+            multi_consumer_enabled: false,
         };
         let router = http::events::router(CustomIngressState {
             ingress,

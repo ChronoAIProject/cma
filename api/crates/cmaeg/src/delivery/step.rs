@@ -173,7 +173,7 @@ pub(super) fn output_address(
     effective(
         &group.channel.definition,
         &delivery.event,
-        requested(delivery.policy.destination, &delivery.event),
+        requested(None, delivery.policy.destination, &delivery.event),
         sender.custom.sync_registered(&delivery.event.reply),
         multi_consumer_enabled,
         SendKind::Output {

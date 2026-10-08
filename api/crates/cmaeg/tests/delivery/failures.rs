@@ -261,6 +261,7 @@ fn every_command_of_an_event_names_the_same_event_key() {
             event: event.reviewer.clone(),
             message: serde_json::from_value(json!({"text":"Reply."})).unwrap(),
             source: ReplySource::Tool,
+            destination: None,
             receipt,
         },
         consumer_failed(&event.channel, &event.reviewer),

@@ -147,6 +147,7 @@ impl ToolsState {
                     event: target.event,
                     message,
                     source: ReplySource::Tool,
+                    destination: None,
                     receipt,
                 },
                 received,

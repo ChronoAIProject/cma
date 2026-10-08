@@ -25,6 +25,8 @@ mod consumer_context;
 mod consumer_media;
 #[path = "tools/consumer_support.rs"]
 pub mod consumer_support;
+#[path = "tools/destinations.rs"]
+mod destinations;
 #[path = "tools/download_support.rs"]
 pub mod download_support;
 #[path = "tools/link_redemption.rs"]

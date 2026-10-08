@@ -179,6 +179,7 @@ async fn ordinary_native_reply_edit_typing_and_restart_use_sealed_original_chat(
                     reply_to: None,
                 },
                 source: ReplySource::Tool,
+                destination: None,
                 receipt,
             })
             .await
@@ -321,7 +322,7 @@ async fn native_buttons_deliver_and_consume_with_durable_original_actor_fences()
         ),
     );
     let (receipt, received) = oneshot::channel();
-    commands.send(DeliveryCommand::Reply{trace:tracing::Span::current(),channel:request.channel,event,message:serde_json::from_value(json!({"text":"Choose","blocks":[{"type":"buttons","id":"choice","options":[{"id":"first","label":"First"}]}]})).unwrap(),source:ReplySource::Tool,receipt}).await.unwrap();
+    commands.send(DeliveryCommand::Reply{trace:tracing::Span::current(),channel:request.channel,event,message:serde_json::from_value(json!({"text":"Choose","blocks":[{"type":"buttons","id":"choice","options":[{"id":"first","label":"First"}]}]})).unwrap(),source:ReplySource::Tool,destination:None,receipt}).await.unwrap();
     let result = received.await.unwrap();
     assert!(matches!(result.delivery, DeliveryOutcome::Confirmed { .. }));
     assert!(result.message_ref.is_some());

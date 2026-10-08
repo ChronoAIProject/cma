@@ -3,6 +3,7 @@ use crate::{
     turns::outcomes::TurnOutcome,
 };
 use cmaeg_core::{
+    channel::ReplyChoice,
     ids::{ChannelId, ConsumerId, EventId, MessageRef},
     message::{OutboundMessage, RenderingReport},
     seal::{EventRefPayload, MessageRefPayload, ReplyAddress},
@@ -24,6 +25,9 @@ pub enum DeliveryCommand {
         event: EventRefPayload,
         message: OutboundMessage,
         source: ReplySource,
+        /// The tool's explicit destination; `None` asks for none, so the
+        /// reply follows a hand-off's lineage, else the origin.
+        destination: Option<ReplyChoice>,
         receipt: oneshot::Sender<IntentReceipt>,
     },
     Update {

@@ -137,6 +137,7 @@ impl Fixture {
             public_origin: management.public_url.clone(),
             media: None,
             downloads: Default::default(),
+            multi_consumer_enabled: false,
         };
         ConnectionService::new(management, tools)
     }

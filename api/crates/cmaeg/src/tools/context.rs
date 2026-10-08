@@ -2,7 +2,11 @@ use super::{
     attachment_view::{InboundMediaCapabilities, VisualSupport},
     ToolsState,
 };
-use crate::{channels::resolver::ResolvedChannel, media::visual::VisualKind};
+use crate::{
+    channels::resolver::ResolvedChannel,
+    delivery::{default_ok, SendKind},
+    media::visual::VisualKind,
+};
 use cmaeg_core::{
     activity::{Activity, ActivityConversation, ActivityKind, ActivityRouting, Actor, SourceKind},
     channel::{ConsumerView, Platform},
@@ -58,6 +62,12 @@ pub struct Capabilities {
     /// inbound media is disabled.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inbound_media: Option<InboundMediaCapabilities>,
+    /// Whether a reply from the calling consumer may ask for the channel's
+    /// default reply destination (`replyToEvent` `destination=default`).
+    /// Present only on a channel with routing, so an unrouted response keeps
+    /// its bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_destination: Option<bool>,
 }
 impl Capabilities {
     pub fn custom() -> Self {
@@ -69,6 +79,7 @@ impl Capabilities {
             attachments: "reference".into(),
             max_text_chars: 32768,
             inbound_media: None,
+            default_destination: None,
         }
     }
     pub fn native_telegram() -> Self {
@@ -86,6 +97,7 @@ impl Capabilities {
             attachments: "link_text".into(),
             max_text_chars: 4000,
             inbound_media: None,
+            default_destination: None,
         }
     }
     /// Text-only delivery through NyxID's generic relay reply: no native
@@ -99,6 +111,7 @@ impl Capabilities {
             attachments: "link_text".into(),
             max_text_chars: 4000,
             inbound_media: None,
+            default_destination: None,
         }
     }
     /// Interactive controls and updates are proven only for Telegram.
@@ -125,8 +138,11 @@ pub(super) async fn read(
         &consumer,
         event,
         activity,
-        activity_verified,
-        inbound_media,
+        Projection {
+            activity_verified,
+            inbound_media,
+            multi_consumer_enabled: state.multi_consumer_enabled,
+        },
     ))
 }
 
@@ -204,16 +220,36 @@ pub(super) async fn read_activity(
     Ok((snapshot.activity, activity_verified))
 }
 
+/// What a context projection reports beyond the event and its activity.
+pub(super) struct Projection {
+    pub activity_verified: bool,
+    pub inbound_media: Option<InboundMediaCapabilities>,
+    pub multi_consumer_enabled: bool,
+}
+
 pub(super) fn project(
     channel: &ResolvedChannel,
     consumer: &ConsumerView<'_>,
     event: &EventRefPayload,
     activity: Activity,
-    activity_verified: bool,
-    inbound_media: Option<InboundMediaCapabilities>,
+    projection: Projection,
 ) -> ContextResponse {
+    let Projection {
+        activity_verified,
+        inbound_media,
+        multi_consumer_enabled,
+    } = projection;
     let mut capabilities = Capabilities {
         inbound_media,
+        // The same rule the worker applies to this consumer's tool sends.
+        default_destination: channel.definition.routing.is_some().then(|| {
+            default_ok(
+                &channel.definition,
+                event,
+                multi_consumer_enabled,
+                SendKind::Tool,
+            )
+        }),
         ..match activity.source {
             SourceKind::Telegram { .. } => Capabilities::native_telegram(),
             SourceKind::Custom => Capabilities::custom(),

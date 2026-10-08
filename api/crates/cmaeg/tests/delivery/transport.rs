@@ -122,6 +122,7 @@ async fn closed_receipt_skips_queued_tool_send_and_drain_deadline_cancels_slow_w
                 reply_to: None,
             },
             source: ReplySource::Tool,
+            destination: None,
             receipt,
         })
         .await

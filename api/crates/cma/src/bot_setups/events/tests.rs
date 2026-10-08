@@ -197,6 +197,7 @@ fn gateway(backend: &str, keys: Arc<MasterKeyRing>) -> ToolsState {
         public_origin: "https://gateway.example".into(),
         media: None,
         downloads: Default::default(),
+        multi_consumer_enabled: false,
     }
 }
 fn advance_router(

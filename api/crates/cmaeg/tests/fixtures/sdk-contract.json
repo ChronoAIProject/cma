@@ -566,6 +566,7 @@
       "attachments": "fixture",
       "buttons": "fixture",
       "cards": "fixture",
+      "default_destination": true,
       "edit": true,
       "inbound_media": {
         "downloads": true,
@@ -1472,6 +1473,7 @@
         "attachments": "fixture",
         "buttons": "fixture",
         "cards": "fixture",
+        "default_destination": true,
         "edit": true,
         "inbound_media": {
           "downloads": true,
@@ -1570,6 +1572,7 @@
         "attachments": "fixture",
         "buttons": "none",
         "cards": "none",
+        "default_destination": false,
         "edit": true,
         "inbound_media": {
           "downloads": true,

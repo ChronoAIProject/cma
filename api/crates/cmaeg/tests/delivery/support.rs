@@ -117,6 +117,7 @@ impl App {
                 providers.clone(),
             )));
         }
+        let multi_consumer_enabled = config.multi_consumer_enabled;
         let engine = DeliveryEngine::start(
             receiver,
             fixture.state.master_keys.clone(),
@@ -150,6 +151,7 @@ impl App {
             public_origin: "https://gateway.example".into(),
             media: None,
             downloads: Default::default(),
+            multi_consumer_enabled,
         };
         let router = http::callbacks::router(ingress).merge(http::tools::router(tools));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -200,6 +202,7 @@ impl App {
                 event: self.event.clone(),
                 message,
                 source: ReplySource::Tool,
+                destination: None,
                 receipt,
             })
             .await

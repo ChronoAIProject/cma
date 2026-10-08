@@ -109,6 +109,7 @@ impl App {
             public_origin: "https://gateway.example".into(),
             media: None,
             downloads: Default::default(),
+            multi_consumer_enabled: false,
         };
         let engine = engine(receiver, &state, &relay);
         let (base, server) = serve(http::tools::router(state.clone())).await;

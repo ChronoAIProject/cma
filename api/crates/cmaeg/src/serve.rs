@@ -118,6 +118,7 @@ pub(crate) async fn serve(config: Config) -> Result<(), Box<dyn std::error::Erro
         downloads: std::sync::Arc::new(
             tools::MediaDownloads::default().with_link_ttl(config.media.link_ttl_seconds),
         ),
+        multi_consumer_enabled: config.routing.multi_consumer_enabled,
     };
     let connections = connections::ConnectionService::new(state.clone(), tools_state.clone());
     let ingress = ingress.with_receipt_observer(std::sync::Arc::new(connections.clone()));

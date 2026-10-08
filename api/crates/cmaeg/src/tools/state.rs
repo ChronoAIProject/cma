@@ -11,6 +11,7 @@ use crate::{
     turns::TurnTracker,
 };
 use cmaeg_core::{
+    channel::ReplyChoice,
     ids::{ConsumerId, MessageRef},
     message::OutboundMessage,
     problem::{Problem, ProblemCode},
@@ -32,6 +33,9 @@ pub struct ToolsState {
     pub media: Option<Arc<MediaService>>,
     /// The pod's download redemptions and stream slots.
     pub downloads: Arc<MediaDownloads>,
+    /// `CMAEG_MULTI_CONSUMER_ENABLED`: the same process-wide value delivery
+    /// classifies sends with, so a handler and the worker always agree.
+    pub multi_consumer_enabled: bool,
 }
 impl ToolsState {
     /// Open `reference` and authorize `caller` as the consumer it was issued
@@ -78,11 +82,14 @@ impl ToolsState {
         let matched = owner(caller, &channel, message.consumer.as_ref(), tool)?;
         Ok((channel, message, matched))
     }
+    /// Reply to the event `reference` names. `destination` is the caller's
+    /// explicit choice, already refused by the caller while the flag is off.
     pub async fn reply(
         &self,
         caller: AgentCaller,
         reference: &EventRef,
         message: OutboundMessage,
+        destination: Option<ReplyChoice>,
     ) -> Result<IntentReceipt, Problem> {
         let mut observation = crate::telemetry::operations::Operation::new(
             crate::telemetry::names::TOOL_DURATION,
@@ -104,6 +111,7 @@ impl ToolsState {
                         event,
                         message,
                         source: ReplySource::Tool,
+                        destination,
                         receipt,
                     },
                     received,
@@ -233,8 +241,11 @@ impl ToolsState {
             &consumer,
             &event,
             activity,
-            true,
-            inbound_media,
+            super::context::Projection {
+                activity_verified: true,
+                inbound_media,
+                multi_consumer_enabled: self.multi_consumer_enabled,
+            },
         ))
     }
     pub(super) async fn deliver<T>(

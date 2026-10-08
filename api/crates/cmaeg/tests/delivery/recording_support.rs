@@ -195,6 +195,7 @@ impl Recording {
             event: event.clone(),
             message: serde_json::from_value(message).unwrap(),
             source,
+            destination: None,
             receipt,
         })
         .await;

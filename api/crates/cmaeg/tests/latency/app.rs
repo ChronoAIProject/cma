@@ -119,6 +119,7 @@ impl App {
             public_origin: "http://127.0.0.1:8090".into(),
             media: None,
             downloads: Default::default(),
+            multi_consumer_enabled: false,
         };
         let router = cmaeg::router_with_state(state.clone())
             .merge(http::callbacks::router(ingress))

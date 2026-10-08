@@ -1310,6 +1310,13 @@
           "cards": {
             "type": "string"
           },
+          "default_destination": {
+            "description": "Whether a reply from the calling consumer may ask for the channel's\ndefault reply destination (`replyToEvent` `destination=default`).\nPresent only on a channel with routing, so an unrouted response keeps\nits bytes.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "edit": {
             "type": "boolean"
           },
@@ -5468,6 +5475,15 @@
             "required": true,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "description": "Where the reply goes on a channel with routing: `origin`, the event's own source, or `default`, the channel's default reply source, resolved when the reply is sent. Absent, the reply follows a hand-off's choice, else the origin. While multi-consumer routing is off, `default` is refused with `multi_consumer_disabled`.",
+            "in": "query",
+            "name": "destination",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ReplyChoice"
             }
           }
         ],

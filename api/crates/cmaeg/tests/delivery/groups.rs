@@ -224,6 +224,7 @@ async fn a_reply_queued_before_completed_suppresses_that_auto_final() {
             event: event.lead.0.clone(),
             message: serde_json::from_value(json!({"text":"From the tool."})).unwrap(),
             source: ReplySource::Tool,
+            destination: None,
             receipt,
         })
         .await;

@@ -165,10 +165,18 @@ fn reply_capable(def: &ChannelDefinition, origin: &ReplyAddress, sync_registered
     }
 }
 
-/// The destination a send asks for, in precedence order: `default` when the
-/// consumer's own `reply.destination` is `default` (automatic outputs; tools
-/// pass `Origin`), else a hand-off's `lineage.reply`, else the origin.
-pub(crate) fn requested(consumer: ReplyChoice, event: &EventRefPayload) -> ReplyChoice {
+/// The destination a send asks for, in precedence order: a tool's explicit
+/// `destination`, else `default` when the consumer's own `reply.destination`
+/// is `default` (automatic outputs; tools pass `Origin`), else a hand-off's
+/// `lineage.reply`, else the origin.
+pub(crate) fn requested(
+    explicit: Option<ReplyChoice>,
+    consumer: ReplyChoice,
+    event: &EventRefPayload,
+) -> ReplyChoice {
+    if let Some(explicit) = explicit {
+        return explicit;
+    }
     if consumer == ReplyChoice::Default {
         return ReplyChoice::Default;
     }
@@ -178,8 +186,8 @@ pub(crate) fn requested(consumer: ReplyChoice, event: &EventRefPayload) -> Reply
         .map_or(ReplyChoice::Origin, |lineage| lineage.reply)
 }
 
-/// Where a send asking for `requested` goes. Unrouted, always the origin,
-/// exactly as today. Routed:
+/// Where a send asking for `requested` goes. Unrouted automatic outputs keep
+/// the origin; an explicit default tool reply must never leak there. Routed:
 /// - `origin` goes to a reply-capable origin; otherwise to the default
 ///   destination when `default_ok`; otherwise to the origin as today
 ///   (`unsupported`, or the sinks);
@@ -195,6 +203,13 @@ pub(crate) fn effective(
 ) -> EffectiveAddress {
     let origin = || EffectiveAddress::Origin(payload.reply.clone());
     if !routing_send(def, payload, multi_consumer_enabled, kind) {
+        if !matches!(kind, SendKind::Output { routed_turn: false })
+            && requested == ReplyChoice::Default
+        {
+            return EffectiveAddress::Rejected {
+                reason: DEFAULT_REPLY_UNAVAILABLE,
+            };
+        }
         return origin();
     }
     let default = || {

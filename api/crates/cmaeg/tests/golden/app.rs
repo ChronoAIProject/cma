@@ -139,6 +139,7 @@ impl GoldenApp {
             public_origin: PUBLIC_URL.into(),
             media: None,
             downloads: Default::default(),
+            multi_consumer_enabled: false,
         };
         let router = cmaeg::router_with_state(state.clone())
             .merge(http::events::router(CustomIngressState {
