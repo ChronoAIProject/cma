@@ -43,6 +43,7 @@ pub mod session;
 pub mod source_changes;
 mod source_routes;
 pub mod summary;
+mod summary_weight;
 pub mod table;
 #[cfg(test)]
 pub(crate) mod test_support;

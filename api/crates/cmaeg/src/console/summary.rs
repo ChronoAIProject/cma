@@ -11,8 +11,10 @@
 //! The cache is weighed rather than counted. A channel's owner decides how
 //! large its consumers and routing policy are, so a summary takes one unit
 //! of `CMAEG_CONSOLE_SUMMARY_CACHE_MAX` per [`SUMMARY_UNIT_BYTES`] it holds,
-//! and the console memory rule's `SUMMARY_CACHE_MAX × 2 KiB` stays a bound
-//! on bytes however large the channels it caches are.
+//! charging nested allocation capacities as well as serialized fields. The
+//! console memory rule budgets `SUMMARY_CACHE_MAX × 2 KiB` for these charges.
+//! Moka eviction is best effort; this is not an exact RSS bound and does not
+//! include summaries kept alive by callers after eviction.
 use std::{collections::BTreeSet, sync::Arc};
 
 use cmaeg_core::{
@@ -33,9 +35,6 @@ use super::{
 /// The bytes one unit of `CMAEG_CONSOLE_SUMMARY_CACHE_MAX` stands for, and
 /// what the console memory rule charges per unit.
 pub const SUMMARY_UNIT_BYTES: u64 = 2 * 1024;
-/// What a cached summary holds besides its serialized fields: its cache
-/// entry, its key and its structs' own headers.
-const ENTRY_OVERHEAD_BYTES: u64 = 512;
 /// CMA's record size limit.
 const RECORD_LIMIT: usize = 65_536;
 /// Above this share of the limit a summary warns that the record is nearly
@@ -187,8 +186,9 @@ impl ChannelSummary {
     }
 
     /// The units of `CMAEG_CONSOLE_SUMMARY_CACHE_MAX` it takes: its
-    /// serialized size plus its entry's overhead, in [`SUMMARY_UNIT_BYTES`]
-    /// rounded up, so every summary takes at least one.
+    /// larger serialized or conservative resident-size charge, rounded up in
+    /// [`SUMMARY_UNIT_BYTES`]. The latter includes nested allocation capacity,
+    /// the normalized record key and cache/Arc overhead allowances.
     pub fn units(&self) -> u32 {
         let mut counted = ByteCount::default();
         if let Err(error) = serde_json::to_writer(&mut counted, self) {
@@ -200,7 +200,7 @@ impl ChannelSummary {
         }
         let bytes = u64::try_from(counted.0).unwrap_or(u64::MAX);
         let units = bytes
-            .saturating_add(ENTRY_OVERHEAD_BYTES)
+            .max(super::summary_weight::resident_charge(self))
             .div_ceil(SUMMARY_UNIT_BYTES);
         u32::try_from(units).unwrap_or(u32::MAX)
     }
@@ -251,7 +251,7 @@ impl std::io::Write for ByteCount {
 }
 
 /// Summaries by `(record_id, version)`, least recently used first out,
-/// holding at most `max_units` [`ChannelSummary::units`] in all.
+/// with a best-effort capacity of `max_units` [`ChannelSummary::units`].
 pub struct Summaries {
     cache: Cache<(RecordId, u64), Arc<ChannelSummary>>,
 }
@@ -273,9 +273,12 @@ impl Summaries {
     }
 
     pub fn insert(&self, record: RecordId, version: u64, summary: Arc<ChannelSummary>) {
+        // RecordId accepts a String with arbitrary spare capacity. Copy its
+        // validated bytes so the fixed MAX_ID_BYTES payload charge covers it.
+        let record = RecordId::new(record.as_str()).expect("existing record id is valid");
         self.cache.insert((record, version), summary);
-        // Eviction is applied lazily; settle it so the cache is within its
-        // units once the insert returns, as the memory rule assumes.
+        // Settle pending eviction work; Moka still documents best-effort
+        // capacity under concurrency, rather than a process RSS guarantee.
         self.cache.run_pending_tasks();
     }
 }

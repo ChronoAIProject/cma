@@ -10,8 +10,9 @@ use super::{configmap_value, container_memory, with_memory, CONFIGMAP, DEPLOYMEN
 /// A session holds two tokens, its metadata and the owner switcher's
 /// organization list; an index head a record id, an owner and a version; a
 /// channel id at most 512 B plus its key. The summary cache is weighed in
-/// the gateway's own 2 KiB units, a summary taking one per 2 KiB it holds,
-/// so its term is exact however large a channel's routing policy is.
+/// the gateway's own 2 KiB units of conservative retained-allocation charges,
+/// including nested vector/string capacity and normalized keys. Moka eviction
+/// is best effort; this budget does not measure exact RSS or caller-held Arcs.
 const CONSOLE_TERMS: [(&str, u64, u64); 5] = [
     ("CMAEG_CONSOLE_ACTIVITY_MAX_BYTES", 1, 33_554_432),
     ("CMAEG_CONSOLE_INDEX_MAX_RECORDS", 300, 100_000),

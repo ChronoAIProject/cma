@@ -1,7 +1,8 @@
 //! A cached summary stays small however large a valid routing policy is:
 //! eight consumers and 32 rules whose every match list holds 64 entries of
-//! 512 bytes. The summary cache is weighed, so what it holds stays within
-//! the bytes the console memory rule charges for it.
+//! 512 bytes. Charges include retained allocation capacities, not only JSON.
+//! Sequential cache tests settle Moka maintenance; the production bound is
+//! best effort and does not include Arcs retained by readers after eviction.
 use std::{collections::BTreeSet, sync::Arc};
 
 use cmaeg::console::{
@@ -151,15 +152,13 @@ fn a_summary_is_weighed_by_at_least_its_serialized_size() {
     let mut single = pages_support::definition(&record(1), "alice", "orders");
     single.sources.truncate(1);
     let summaries = [
-        // A maximal routed channel: the bounded projection keeps it to about
-        // a dozen units.
-        (summary_of(&maximal()), 16),
-        // A channel with one source takes one unit; with three sources and
-        // every secret, or a small routing policy, two.
-        (summary_of(&single), 1),
+        // Rich channels pay for every nested allocation, including buffers
+        // whose String/Vec headers have no serialized representation.
+        (summary_of(&maximal()), 80),
+        (summary_of(&single), 4),
         (
             summary_of(&pages_support::definition(&record(1), "alice", "orders")),
-            2,
+            8,
         ),
         (
             summary_of(&routed_support::routed_with(
@@ -168,7 +167,7 @@ fn a_summary_is_weighed_by_at_least_its_serialized_size() {
                 "routed",
                 |_| {},
             )),
-            2,
+            8,
         ),
         (
             ChannelSummary::without_definition("alice", SummaryStatus::Unreadable),
@@ -222,4 +221,72 @@ fn the_summary_cache_holds_at_most_its_units() {
         .filter(|index| cache.get(&record(*index), 1).is_some())
         .count();
     assert_eq!(u64::try_from(held).unwrap(), MAX_UNITS);
+}
+
+#[test]
+fn nested_spare_capacity_is_charged_even_when_serialization_is_unchanged() {
+    let mut summary = summary_of(&maximal());
+    let before = serialized(&summary);
+    let before_units = summary.units();
+    // Reserve space without changing displayed content. A serialization-only
+    // estimator cannot see either a nested vector buffer or a string buffer.
+    let rules = &mut summary
+        .detail
+        .as_mut()
+        .unwrap()
+        .routing
+        .as_mut()
+        .unwrap()
+        .rules;
+    rules[0].matches.reserve_exact(4096);
+    rules[0].matches[0].reserve_exact(65_536);
+    let buffers = rules[0].matches.capacity() * std::mem::size_of::<String>()
+        + rules[0].matches[0].capacity();
+    assert_eq!(serialized(&summary), before);
+    assert!(summary.units() > before_units + 64);
+    assert!(u64::from(summary.units()) * SUMMARY_UNIT_BYTES >= buffers as u64);
+}
+
+#[test]
+fn an_overweight_summary_is_not_cached_but_a_long_record_key_is_supported() {
+    const MAX_UNITS: u64 = 100;
+    let cache = Summaries::new(MAX_UNITS);
+    let mut large = ChannelSummary::without_definition("alice", SummaryStatus::Unreadable);
+    large.name.reserve_exact(256 * 1024);
+    assert!(u64::from(large.units()) > MAX_UNITS);
+    cache.insert(record(900), 1, Arc::new(large));
+    assert!(cache.get(&record(900), 1).is_none());
+
+    // RecordId keeps input String capacity. Insertion re-copies its validated
+    // bytes and charges the full 512-byte key bound separately from metadata.
+    let mut text = String::with_capacity(256 * 1024);
+    text.push_str(&"x".repeat(cmaeg_core::ids::MAX_ID_BYTES));
+    let id = cmaeg_core::ids::RecordId::new(text).unwrap();
+    let summary = Arc::new(ChannelSummary::without_definition(
+        "alice",
+        SummaryStatus::Unreadable,
+    ));
+    let lookup = id.clone();
+    cache.insert(id, 2, summary.clone());
+    assert_eq!(cache.get(&lookup, 2).unwrap(), summary);
+}
+
+#[test]
+fn heterogeneous_summaries_share_the_charged_budget() {
+    const MAX_UNITS: u64 = 100;
+    let cache = Summaries::new(MAX_UNITS);
+    for index in 0..80 {
+        let mut summary = ChannelSummary::without_definition("alice", SummaryStatus::Unreadable);
+        summary.name.reserve_exact((index % 7) * 2048);
+        cache.insert(record(index), 1, Arc::new(summary));
+    }
+    let retained: Vec<_> = (0..80)
+        .filter_map(|index| cache.get(&record(index), 1))
+        .collect();
+    let charged: u64 = retained
+        .iter()
+        .map(|summary| u64::from(summary.units()))
+        .sum();
+    assert!(!retained.is_empty());
+    assert!(charged <= MAX_UNITS, "retained {charged} units");
 }

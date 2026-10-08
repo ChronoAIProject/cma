@@ -80,7 +80,7 @@ pub struct ConsoleMemoryConfig {
     /// Interval between full, paced re-listings of the record heads.
     pub index_resync: Duration,
     /// 2 KiB units of channel summaries cached by `(record_id, version)`;
-    /// a summary takes one unit per 2 KiB it holds.
+    /// rounded-up conservative allocation charges, with best-effort eviction.
     pub summary_cache_max: u64,
     /// Observed channel ids kept for display.
     pub channel_ids_max: u64,
