@@ -39,6 +39,8 @@ mod pages_sources;
 pub mod pages_support;
 #[path = "console/pages_tabs.rs"]
 mod pages_tabs;
+#[path = "console/pages_trace.rs"]
+mod pages_trace;
 #[path = "console/protection.rs"]
 mod protection;
 #[path = "console/routed_support.rs"]

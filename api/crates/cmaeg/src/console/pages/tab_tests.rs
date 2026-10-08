@@ -223,5 +223,5 @@ fn refused_and_routed_events_explain_their_routing() {
         entry: &entry(),
         parent_held: true,
     });
-    assert!(html.contains("keeps no routing trace"));
+    assert!(html.contains("No routing decision was recorded for this event"));
 }

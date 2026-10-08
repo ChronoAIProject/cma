@@ -15,6 +15,7 @@ pub(crate) mod layout;
 pub(crate) mod overview;
 pub(crate) mod producers;
 pub(crate) mod reveal;
+pub(crate) mod route;
 pub(crate) mod routing;
 pub(crate) mod signin;
 pub(crate) mod sources;

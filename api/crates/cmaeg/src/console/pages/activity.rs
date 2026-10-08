@@ -3,7 +3,7 @@
 //! refresh. Entries hold no message text, CloudEvent data or reference.
 use cmaeg_core::ids::{ConsumerId, RecordId};
 
-use super::{channel::path, escape, event::event_href, table, when};
+use super::{channel::path, escape, event::event_href, route, table, when};
 use crate::{
     console::{
         activity::{ActivityEntry, ActivityFilter, ConsumerProgress},
@@ -80,6 +80,7 @@ pub(crate) fn render(activity: &ActivityView<'_>) -> String {
             "Actor",
             "Chat",
             "Attachments",
+            "Routing",
             "Consumers",
         ],
         &rows,
@@ -167,13 +168,14 @@ fn row(record: &RecordId, entry: &ActivityEntry) -> String {
             .join("<br>")
     };
     format!(
-        "<td>{}</td><td>{event}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{consumers}</td>",
+        "<td>{}</td><td>{event}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{consumers}</td>",
         escape(&when(entry.at)),
         escape(&entry.source),
         escape(entry.kind),
         or_dash_empty(&entry.actor_masked),
         or_dash_empty(&entry.chat_masked),
         attachments(entry.attachments),
+        route::cell(entry),
     )
 }
 

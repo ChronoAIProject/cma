@@ -6,7 +6,7 @@ use cmaeg_core::ids::RecordId;
 use super::{
     activity::{attachments, delivery_label, destination_label, launch_label, step_label},
     channel::{href, path, Tab},
-    escape, facts, when,
+    escape, facts, route, when,
 };
 use crate::console::{
     activity::{ActivityEntry, ConsumerProgress},
@@ -57,7 +57,7 @@ pub(crate) fn render(event: &EventView<'_>) -> String {
         ("Attachments", attachments(entry.attachments)),
     ]));
     html.push_str("<h2>Routing</h2>");
-    html.push_str(&routing(event));
+    html.push_str(&route::section(entry, &event.view.summary));
     html.push_str("<h2>Consumers</h2>");
     if entry.consumers.is_empty() {
         html.push_str("<p class=\"empty\">No consumer has reported progress for this event.</p>");
@@ -90,22 +90,6 @@ pub(crate) fn render(event: &EventView<'_>) -> String {
         ]));
     }
     html
-}
-
-/// How the event reached its consumers. This image has no routing policy,
-/// so an admitted event went to the default consumer.
-fn routing(event: &EventView<'_>) -> String {
-    if let Some(reason) = &event.entry.refusal {
-        return format!(
-            "<p>Refused before routing: <code>{}</code>.</p>",
-            escape(reason)
-        );
-    }
-    if event.view.summary.routed {
-        return "<p class=\"empty\">This channel has a routing policy; this gateway release keeps no routing trace for it.</p>".to_owned();
-    }
-    "<p>Legacy channel: no routing policy, so the event went to the default consumer.</p>"
-        .to_owned()
 }
 
 /// One consumer's steps in order: launched, accepted after X ms, its latest
