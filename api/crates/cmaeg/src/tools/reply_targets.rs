@@ -1,6 +1,10 @@
 //! Provider-neutral delayed replies to an authenticated event's original destination.
 mod receipts;
-use super::{context, state::validate, ToolsState};
+use super::{
+    context,
+    state::{owner, validate},
+    ToolsState,
+};
 use crate::{
     auth::AgentCaller,
     channels::resolver::ResolvedChannel,
@@ -19,6 +23,8 @@ use std::sync::Arc;
 use tokio::sync::oneshot;
 use utoipa::ToSchema;
 
+/// The tool name reply-target creation is logged under.
+const CREATE: &str = "createReplyTarget";
 #[derive(Clone, Serialize, ToSchema)]
 pub struct ReplyTargetResponse {
     pub reply_target_ref: ReplyTargetRef,
@@ -30,13 +36,15 @@ impl ToolsState {
         caller: AgentCaller,
         reference: &EventRef,
     ) -> Result<ReplyTargetResponse, Problem> {
-        let (_, mut event) = self.authorize_event(caller, reference).await?;
+        let (_, mut event, _) = self.authorize_event(caller, reference, CREATE).await?;
         let channel = self
             .resolver
             .resolve_current(event.channel_id.as_str())
             .await
             .map_err(|e| e.problem())?;
-        caller.authorize(&channel).map_err(|e| e.problem())?;
+        // Recheck against the live definition: a removed consumer or a
+        // rotated key no longer authorizes a new target.
+        owner(caller, &channel, event.consumer.as_ref(), CREATE)?;
         destination(&channel, &event.reply)?;
         if !context::read(self, &channel, &event)
             .await?
@@ -162,7 +170,7 @@ impl ToolsState {
             .resolve_current(target.event.channel_id.as_str())
             .await
             .map_err(|e| e.problem())?;
-        caller.authorize(&channel).map_err(|e| e.problem())?;
+        caller.consumer(&channel).map_err(|e| e.problem())?;
         // The target is the default consumer's until references name one.
         let binding_matches = channel.consumer(None).is_some_and(|consumer| {
             consumer.provider.binding_id == target.binding_id

@@ -11,7 +11,7 @@ use crate::{
     turns::TurnTracker,
 };
 use cmaeg_core::{
-    ids::MessageRef,
+    ids::{ConsumerId, MessageRef},
     message::OutboundMessage,
     problem::{Problem, ProblemCode},
     seal::{EventRef, EventRefPayload, MasterKeyRing, MessageRefPayload, OpenError},
@@ -34,11 +34,15 @@ pub struct ToolsState {
     pub downloads: Arc<MediaDownloads>,
 }
 impl ToolsState {
+    /// Open `reference` and authorize `caller` as the consumer it was issued
+    /// to, returning that consumer with the channel and event. `tool` names
+    /// the operation in refusal logs.
     pub async fn authorize_event(
         &self,
         caller: AgentCaller,
         reference: &EventRef,
-    ) -> Result<(Arc<ResolvedChannel>, EventRefPayload), Problem> {
+        tool: &'static str,
+    ) -> Result<(Arc<ResolvedChannel>, EventRefPayload, ConsumerId), Problem> {
         let event = reference
             .open(&self.keys, now())
             .map_err(open_error)?
@@ -48,19 +52,20 @@ impl ToolsState {
             .resolve(event.channel_id.as_str())
             .await
             .map_err(|error| error.problem())?;
-        caller
-            .authorize(&channel)
-            .map_err(|error| error.problem())?;
+        let matched = owner(caller, &channel, event.consumer.as_ref(), tool)?;
         if event.record_id != channel.pointer.record_id {
             return Err(invalid("event channel does not match its record"));
         }
-        Ok((channel, event))
+        Ok((channel, event, matched))
     }
+    /// Open `reference` and authorize `caller` as the consumer whose message
+    /// it names, as [`ToolsState::authorize_event`] does for events.
     pub async fn authorize_message(
         &self,
         caller: AgentCaller,
         reference: &MessageRef,
-    ) -> Result<(Arc<ResolvedChannel>, MessageRefPayload), Problem> {
+        tool: &'static str,
+    ) -> Result<(Arc<ResolvedChannel>, MessageRefPayload, ConsumerId), Problem> {
         let message = reference
             .open(&self.keys)
             .map_err(|_| invalid("message_ref_invalid"))?
@@ -70,10 +75,8 @@ impl ToolsState {
             .resolve(message.channel_id.as_str())
             .await
             .map_err(|error| error.problem())?;
-        caller
-            .authorize(&channel)
-            .map_err(|error| error.problem())?;
-        Ok((channel, message))
+        let matched = owner(caller, &channel, message.consumer.as_ref(), tool)?;
+        Ok((channel, message, matched))
     }
     pub async fn reply(
         &self,
@@ -88,7 +91,9 @@ impl ToolsState {
         );
         let result = async {
             validate(&message)?;
-            let (channel, event) = self.authorize_event(caller, reference).await?;
+            let (channel, event, _) = self
+                .authorize_event(caller, reference, "replyToEvent")
+                .await?;
             let expires_at = event.expires_at;
             let (receipt, received) = oneshot::channel();
             let result = self
@@ -134,7 +139,9 @@ impl ToolsState {
         );
         let result = async {
             validate(&message)?;
-            let (channel, message_ref) = self.authorize_message(caller, reference).await?;
+            let (channel, message_ref, _) = self
+                .authorize_message(caller, reference, "updateMessage")
+                .await?;
             let (receipt, received) = oneshot::channel();
             self.deliver(
                 DeliveryCommand::Update {
@@ -163,7 +170,9 @@ impl ToolsState {
             "sendTyping",
         );
         let result = async {
-            let (channel, event) = self.authorize_event(caller, reference).await?;
+            let (channel, event, _) = self
+                .authorize_event(caller, reference, "sendTyping")
+                .await?;
             let (receipt, received) = oneshot::channel();
             self.deliver(
                 DeliveryCommand::Typing {
@@ -191,7 +200,9 @@ impl ToolsState {
             "readEventContext",
         );
         let result = async {
-            let (channel, event) = self.authorize_event(caller, reference).await?;
+            let (channel, event, _) = self
+                .authorize_event(caller, reference, "readEventContext")
+                .await?;
             super::context::read(self, &channel, &event).await
         }
         .await;
@@ -209,7 +220,9 @@ impl ToolsState {
         activity
             .validate()
             .map_err(|_| invalid("invalid activity"))?;
-        let (channel, event) = self.authorize_event(caller, reference).await?;
+        let (channel, event, _) = self
+            .authorize_event(caller, reference, "verifyEventContext")
+            .await?;
         if !event.verifies_activity(&activity) {
             return Err(invalid("activity does not match the sealed event"));
         }
@@ -259,6 +272,40 @@ impl ToolsState {
         .await
         .map_err(|_| Problem::new(ProblemCode::Internal, 504, "delivery_timeout"))?
     }
+}
+/// The consumer `caller` holds the key of, which must be `issued_to`, the
+/// consumer a reference was issued to (`None` is the default). A key of
+/// another consumer on the same channel is refused as `consumer_mismatch`:
+/// each consumer acts only on its own events, messages and targets.
+///
+/// Refusals log the channel hash, the tool and the outcome class only, never
+/// a key, hash or reference.
+pub(super) fn owner(
+    caller: AgentCaller,
+    channel: &ResolvedChannel,
+    issued_to: Option<&ConsumerId>,
+    tool: &'static str,
+) -> Result<ConsumerId, Problem> {
+    let refused = |outcome: &'static str| {
+        let channel = crate::telemetry::channel_hash(channel.id.as_str());
+        tracing::warn!(%channel, tool, outcome, "tool call refused");
+    };
+    let matched = caller.consumer(channel).map_err(|error| {
+        refused("forbidden");
+        error.problem()
+    })?;
+    let expected = issued_to
+        .cloned()
+        .unwrap_or_else(ConsumerId::default_consumer);
+    if matched != expected {
+        refused("consumer_mismatch");
+        return Err(Problem::new(
+            ProblemCode::Forbidden,
+            403,
+            "consumer_mismatch",
+        ));
+    }
+    Ok(matched)
 }
 pub(super) fn validate(message: &OutboundMessage) -> Result<(), Problem> {
     message.validate().map_err(|error| {

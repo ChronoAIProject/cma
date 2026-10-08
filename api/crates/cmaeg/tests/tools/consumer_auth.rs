@@ -1,0 +1,124 @@
+//! Per-consumer tool authorization on a routed channel: each consumer's agent
+//! key acts only on the references issued to that consumer.
+use super::{
+    consumer_support::{call, issue, message_ref, reviewer, reviewer_key, routed},
+    support::{problem, App},
+};
+use cmaeg_core::ids::ConsumerId;
+use reqwest::Method;
+use serde_json::{json, Value};
+
+/// Every event tool, as `(method, path, body)` for the event `reference`.
+fn event_tools(app: &App, reference: &str) -> Vec<(Method, String, Option<Value>)> {
+    let activity = serde_json::to_value(&app.activity).unwrap();
+    vec![
+        (Method::GET, format!("/v1/events/{reference}/context"), None),
+        (
+            Method::POST,
+            format!("/v1/events/{reference}/context"),
+            Some(activity),
+        ),
+        (
+            Method::POST,
+            format!("/v1/events/{reference}/replies"),
+            Some(json!({"text": "not yours"})),
+        ),
+        (
+            Method::POST,
+            format!("/v1/events/{reference}/typing"),
+            Some(json!({})),
+        ),
+        (
+            Method::POST,
+            format!("/v1/events/{reference}/reply-target"),
+            Some(json!({})),
+        ),
+        (
+            Method::GET,
+            format!("/v1/events/{reference}/attachments/0"),
+            None,
+        ),
+    ]
+}
+
+async fn mismatched(response: reqwest::Response, what: &str) {
+    let body = problem(response, 403, "forbidden").await;
+    assert_eq!(body["detail"], "consumer_mismatch", "{what}: {body}");
+}
+
+#[tokio::test]
+async fn a_consumer_key_cannot_act_on_another_consumers_event() {
+    let app = routed().await;
+    let theirs = issue(&app, &reviewer(), &reviewer_key(), None).await;
+    for (method, path, body) in event_tools(&app, theirs.as_str()) {
+        let response = call(&app, method.clone(), &path, &app.key, body).await;
+        mismatched(response, &format!("default on reviewer: {method} {path}")).await;
+    }
+    for (method, path, body) in event_tools(&app, app.event_ref.as_str()) {
+        let response = call(&app, method.clone(), &path, &reviewer_key(), body).await;
+        mismatched(response, &format!("reviewer on default: {method} {path}")).await;
+    }
+    assert!(app.requests.lock().unwrap().is_empty(), "nothing was sent");
+}
+
+#[tokio::test]
+async fn a_consumer_key_cannot_update_another_consumers_message() {
+    let app = routed().await;
+    let path = |reference: &str| format!("/v1/messages/{reference}/update");
+    let body = Some(json!({"text": "edited"}));
+    let theirs = message_ref(&app, Some(reviewer()));
+    let response = call(
+        &app,
+        Method::POST,
+        &path(theirs.as_str()),
+        &app.key,
+        body.clone(),
+    )
+    .await;
+    mismatched(response, "default updating the reviewer's message").await;
+    let ours = message_ref(&app, None);
+    let response = call(
+        &app,
+        Method::POST,
+        &path(ours.as_str()),
+        &reviewer_key(),
+        body,
+    )
+    .await;
+    mismatched(response, "reviewer updating the default's message").await;
+    // Through MCP the message is checked as well as the event: the default's
+    // own event does not authorize the reviewer's message.
+    let refused = app
+        .rpc(
+            json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {
+            "name": "updateMessage", "arguments": {"event_ref": app.event_ref.as_str(),
+            "message_ref": theirs.as_str(), "message": {"text": "edited"}}}}),
+        )
+        .await;
+    let refused: Value = refused.json().await.unwrap();
+    assert_eq!(refused["error"]["data"]["detail"], "consumer_mismatch");
+}
+
+#[tokio::test]
+async fn each_consumer_key_is_authorized_for_its_own_references() {
+    let app = routed().await;
+    let default = ConsumerId::default_consumer();
+    for (consumer, key) in [(default, app.key.clone()), (reviewer(), reviewer_key())] {
+        let reference = issue(&app, &consumer, &key, None).await;
+        let path = format!("/v1/events/{}/typing", reference.as_str());
+        let response = call(&app, Method::POST, &path, &key, Some(json!({}))).await;
+        assert_eq!(response.status(), 200, "{consumer}");
+    }
+    let unknown = format!("nyxid_ag_{}", uuid::Uuid::new_v4().simple());
+    let path = format!("/v1/events/{}/typing", app.event_ref.as_str());
+    let refused = problem(
+        call(&app, Method::POST, &path, &unknown, Some(json!({}))).await,
+        403,
+        "forbidden",
+    )
+    .await;
+    assert_eq!(
+        refused["detail"],
+        "agent key does not authorize this channel"
+    );
+}

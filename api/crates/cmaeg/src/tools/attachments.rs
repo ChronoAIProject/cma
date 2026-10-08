@@ -165,7 +165,9 @@ impl ToolsState {
                 "invalid attachment request",
             ));
         }
-        let (channel, event) = self.authorize_event(caller, reference).await?;
+        let (channel, event, _) = self
+            .authorize_event(caller, reference, "readEventAttachment")
+            .await?;
         tracing::Span::current().record(
             "channel_hash",
             telemetry::channel_hash(channel.id.as_str()).as_str(),
