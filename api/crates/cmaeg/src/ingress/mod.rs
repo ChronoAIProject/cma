@@ -5,6 +5,7 @@ pub mod launch;
 pub(crate) mod media_guard;
 pub mod receipts;
 pub mod relay;
+pub(crate) mod routing;
 pub mod telegram;
 
 mod state;

@@ -1,0 +1,17 @@
+//! Routing through real authenticated ingress and the production fan-out decorator.
+#[path = "routing/chat.rs"]
+mod chat;
+#[path = "fake_cma.rs"]
+pub mod fake_cma;
+#[path = "routing/notices.rs"]
+mod notices;
+#[path = "routing/projection.rs"]
+mod projection;
+#[path = "relay/support.rs"]
+pub mod relay_support;
+#[path = "../../cmaeg-core/tests/routing_policy/fixture.rs"]
+pub mod routing_fixture;
+#[path = "relay/signer.rs"]
+pub mod signer;
+#[path = "routing/support.rs"]
+mod support;

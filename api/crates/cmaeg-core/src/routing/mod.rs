@@ -53,7 +53,7 @@ pub enum RouteError {
     /// The offending token, truncated to 64 bytes on a char boundary.
     #[error("target_unknown")]
     TargetUnknown(String),
-    /// The consumer's name.
+    /// The user's token, bounded as for an unknown target, never a hidden name.
     #[error("target_not_mentionable")]
     TargetNotMentionable(String),
     #[error("too_many_targets")]

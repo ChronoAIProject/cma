@@ -166,11 +166,19 @@ impl Native {
         else {
             panic!("fixture must pass native normalization")
         };
+        let ingress = crate::ingress::IngressState::new(
+            self.service.management.resolver.clone(),
+            self.fixture.keys.clone(),
+            Default::default(),
+            Arc::new(crate::ingress::launch::UnavailableLauncher),
+            self.service.tools.delivery.clone(),
+        )
+        .unwrap();
         let built = crate::ingress::telegram::launch(
             self.channel.clone(),
             "77",
             *observed,
-            &self.fixture.keys,
+            &ingress,
             Instant::now(),
             now(),
         )

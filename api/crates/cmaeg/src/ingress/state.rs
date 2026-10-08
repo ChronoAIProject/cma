@@ -12,6 +12,8 @@ pub struct IngressState {
     pub launcher: Arc<dyn TurnLauncher>,
     pub delivery: Arc<dyn crate::delivery::router::DeliverySink>,
     pub config: IngressConfig,
+    pub routing: crate::RoutingConfig,
+    pub observer: Arc<dyn crate::turns::observer::ActivityObserver>,
     pub interactions: Option<Arc<crate::interactions::InteractionStore>>,
     pub inflight: Arc<Semaphore>,
     pub telegram: Option<Arc<crate::telegram::TelegramClient>>,
@@ -20,6 +22,15 @@ pub struct IngressState {
     pub media_enabled: bool,
 }
 impl IngressState {
+    pub fn with_routing(
+        mut self,
+        config: crate::RoutingConfig,
+        observer: Arc<dyn crate::turns::observer::ActivityObserver>,
+    ) -> Self {
+        self.routing = config;
+        self.observer = observer;
+        self
+    }
     pub fn with_media_enabled(mut self, enabled: bool) -> Self {
         self.media_enabled = enabled;
         self
@@ -51,6 +62,8 @@ impl IngressState {
             telegram: None,
             receipt_observer: None,
             media_enabled: false,
+            routing: crate::RoutingConfig::default(),
+            observer: Arc::new(crate::turns::observer::NoopObserver),
             resolver,
             master_keys,
             jwks: Arc::new(JwksCache::new(config.jwks_ttl)?),

@@ -13,7 +13,7 @@ use crate::channels::resolver::ResolvedChannel;
 use cmaeg_core::{
     activity::{Activity, ActivityConversation, ActivityKind, Actor, SourceKind},
     ids::{ConversationId, EventId, IdempotencyKey},
-    seal::{EventRef, EventRefPayload, MasterKeyRing, ReplyAddress},
+    seal::{EventRef, EventRefPayload, ReplyAddress},
 };
 use serde_json::{json, Value};
 use std::{sync::Arc, time::Instant};
@@ -133,10 +133,12 @@ pub(crate) fn launch(
     channel: Arc<ResolvedChannel>,
     bot_id: &str,
     observed: Observed,
-    keys: &MasterKeyRing,
+    state: &super::IngressState,
     received: Instant,
     now: i64,
 ) -> Result<Built, VerificationError> {
+    let keys = &state.master_keys;
+    let callback = observed.facts.callback.is_some();
     let invalid = || VerificationError("telegram_activity_invalid");
     let Observed {
         payload,
@@ -178,11 +180,23 @@ pub(crate) fn launch(
         },
         routing: None,
     };
-    let activity = match media_guard::admit(activity, "telegram") {
+    let mut activity = match media_guard::admit(activity, "telegram") {
         Ok(Admit::Ok(activity)) => *activity,
         Ok(Admit::Refused(reason)) => return Ok(Built::Refused(reason)),
         Err(_) => return Err(invalid()),
     };
+    let reply = ReplyAddress::Telegram {
+        bot_id: bot_id.into(),
+        chat_id: payload.conversation.platform_id,
+        message_id,
+        thread_id: facts.thread_id,
+    };
+    // Routing a click here could pre-empt its card's owner before consume admission.
+    if !callback {
+        if let Err(reason) = super::routing::chat(state, &channel, &mut activity, &reply) {
+            return Ok(Built::Refused(reason));
+        }
+    }
     let partition_key = activity.partition_key(&channel.definition.partition);
     let conversation_id = ConversationId::derive(
         keys,
@@ -200,12 +214,7 @@ pub(crate) fn launch(
             partition_key,
             conversation_id: conversation_id.clone(),
             expires_at: now + 1800,
-            reply: ReplyAddress::Telegram {
-                bot_id: bot_id.into(),
-                chat_id: payload.conversation.platform_id,
-                message_id,
-                thread_id: facts.thread_id,
-            },
+            reply,
             consumer: None,
             lineage: None,
         },

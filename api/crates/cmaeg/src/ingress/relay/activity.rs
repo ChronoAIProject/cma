@@ -11,7 +11,7 @@ use cmaeg_core::{
     activity::{Activity, ActivityConversation, ActivityKind, Actor, SourceKind},
     channel::Platform,
     ids::{ConversationId, EventId, IdempotencyKey, MessageRef},
-    seal::{EventRef, EventRefPayload, MasterKeyRing, ReplyAddress},
+    seal::{EventRef, EventRefPayload, ReplyAddress},
 };
 use std::{sync::Arc, time::Instant};
 /// Build the sealed launch request, or the refusal the media guard chose. The
@@ -22,10 +22,12 @@ pub(crate) fn launch_request(
     platform: Platform,
     verified: VerifiedCallback,
     facts: RelayFacts,
-    keys: &MasterKeyRing,
+    state: &crate::ingress::IngressState,
     received_at: Instant,
     now: i64,
 ) -> Result<Built, &'static str> {
+    let keys = &state.master_keys;
+    let callback = facts.callback.is_some();
     let payload = verified.payload;
     let event_id = EventId::new(if let Some(callback) = &facts.callback {
         use sha2::{Digest, Sha256};
@@ -83,11 +85,24 @@ pub(crate) fn launch_request(
         },
         routing: None,
     };
-    let activity = match media_guard::admit(activity, "nyxid_relay") {
+    let mut activity = match media_guard::admit(activity, "nyxid_relay") {
         Ok(Admit::Ok(activity)) => *activity,
         Ok(Admit::Refused(reason)) => return Ok(Built::Refused(reason)),
         Err(_) => return Err("activity_invalid"),
     };
+    let reply = ReplyAddress::NyxidRelay {
+        message_id: payload.message_id,
+        route_id: payload.conversation.id,
+        platform,
+        reply_token: verified.reply_token,
+        reply_token_expires_at: verified.reply_expires_at,
+    };
+    // Card ownership is admitted by InteractionStore before a click is consumed.
+    if !callback {
+        if let Err(reason) = crate::ingress::routing::chat(state, &channel, &mut activity, &reply) {
+            return Ok(Built::Refused(reason));
+        }
+    }
     let partition_key = activity.partition_key(&channel.definition.partition);
     let conversation_id = ConversationId::derive(
         keys,
@@ -105,13 +120,7 @@ pub(crate) fn launch_request(
             partition_key,
             conversation_id: conversation_id.clone(),
             expires_at: verified.reply_expires_at.min(now.saturating_add(1800)),
-            reply: ReplyAddress::NyxidRelay {
-                message_id: payload.message_id,
-                route_id: payload.conversation.id,
-                platform,
-                reply_token: verified.reply_token,
-                reply_token_expires_at: verified.reply_expires_at,
-            },
+            reply,
             consumer: None,
             lineage: None,
         },

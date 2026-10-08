@@ -22,3 +22,28 @@ pub enum AdmissionStatus {
     Deferred,
     Refused,
 }
+
+impl TryFrom<crate::turns::fanout::ConsumerLaunch> for ConsumerAdmission {
+    type Error = cmaeg_core::ValidationError;
+
+    fn try_from(launch: crate::turns::fanout::ConsumerLaunch) -> Result<Self, Self::Error> {
+        use crate::ingress::launch::LaunchOutcome;
+        let (status, code, provider_code) = match launch.outcome {
+            LaunchOutcome::Accepted { .. } => (AdmissionStatus::Accepted, None, None),
+            LaunchOutcome::Deferred => (AdmissionStatus::Deferred, None, None),
+            LaunchOutcome::Refused(failure) => (
+                AdmissionStatus::Refused,
+                Some(failure.code.to_owned()),
+                crate::delivery::provider_code(failure.provider_code),
+            ),
+        };
+        Ok(Self {
+            consumer_id: launch.id,
+            name: ConsumerName::parse(&launch.name)?,
+            conversation_id: launch.conversation_id,
+            status,
+            code,
+            provider_code,
+        })
+    }
+}

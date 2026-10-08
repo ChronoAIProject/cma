@@ -155,7 +155,7 @@ fn command_targets(
             .named(token)
             .ok_or_else(|| RouteError::TargetUnknown(token_payload(token)))?;
         if !member.view.mentionable {
-            return Err(RouteError::TargetNotMentionable(member.name.to_string()));
+            return Err(RouteError::TargetNotMentionable(token_payload(token)));
         }
         targets.push(member.id())?;
     }
@@ -181,7 +181,7 @@ fn mention_targets(
             break;
         };
         if !member.view.mentionable {
-            return Err(RouteError::TargetNotMentionable(member.name.to_string()));
+            return Err(RouteError::TargetNotMentionable(token_payload(token)));
         }
         targets.push(member.id())?;
         found = true;

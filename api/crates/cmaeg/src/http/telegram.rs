@@ -224,14 +224,8 @@ async fn admit_update(
         .await;
     }
     let now = time::OffsetDateTime::now_utc().unix_timestamp();
-    let request = match telegram::launch(
-        channel,
-        &bot_id,
-        observed,
-        &state.master_keys,
-        timing.received(),
-        now,
-    ) {
+    let request = match telegram::launch(channel, &bot_id, observed, state, timing.received(), now)
+    {
         Ok(Built::Launch(request)) => *request,
         // A 202 refusal, so Telegram does not redeliver the update.
         Ok(Built::Refused(reason)) => return Err(refused(reason)),

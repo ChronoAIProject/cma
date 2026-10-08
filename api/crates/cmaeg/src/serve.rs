@@ -98,6 +98,7 @@ pub(crate) async fn serve(config: Config) -> Result<(), Box<dyn std::error::Erro
             },
         ),
     );
+    let observer = std::sync::Arc::new(turns::observer::NoopObserver);
     let ingress = ingress::IngressState::new(
         state.resolver.clone(),
         state.master_keys.clone(),
@@ -109,13 +110,14 @@ pub(crate) async fn serve(config: Config) -> Result<(), Box<dyn std::error::Erro
             std::sync::Arc::new(turns::capacity::RoutedCapacity::new(config.routed_capacity)),
             tracker.clone(),
             config.turns.turn_timeout,
-            std::sync::Arc::new(turns::observer::NoopObserver),
+            observer.clone(),
         )),
         delivery.clone(),
     )?
     .with_telegram(telegram)
     .with_interactions(interactions)
-    .with_media_enabled(config.media.enabled);
+    .with_media_enabled(config.media.enabled)
+    .with_routing(config.routing.clone(), observer);
     let tools_state = tools::ToolsState {
         resolver: state.resolver.clone(),
         keys: state.master_keys.clone(),

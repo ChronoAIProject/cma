@@ -205,6 +205,19 @@ fn unknown_and_non_mentionable_targets_are_refused() {
 }
 
 #[test]
+fn non_mentionable_refusals_preserve_supplied_ids_and_case_without_revealing_names() {
+    let quiet = channel(|value| value["routing"]["consumers"][0]["mentionable"] = false.into());
+    for token in [REVIEWER, "REVIEWER"] {
+        for text in [format!("/to {token} x"), format!("@{token} x")] {
+            assert_eq!(
+                read(&quiet, &message(telegram(), &text)),
+                Err(RouteError::TargetNotMentionable(token.into()))
+            );
+        }
+    }
+}
+
+#[test]
 fn an_unknown_token_is_cut_to_64_bytes_on_a_char_boundary() {
     let def = routed();
     let token = format!("{}é{}", "a".repeat(63), "b".repeat(10));

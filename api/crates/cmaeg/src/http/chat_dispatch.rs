@@ -1,6 +1,7 @@
 //! Shared admitted chat dispatch for relay and native transports.
 use super::{
     callbacks::{invalid, refused, CallbackResponse},
+    consumer_admission::ConsumerAdmission,
     problems::problem,
 };
 use crate::ingress::{
@@ -99,13 +100,43 @@ pub(crate) async fn dispatch(
     request.timing = Some(timing);
     let event_id = request.activity.event_id.to_string();
     let conversation_id = request.conversation_id.to_string();
-    match state.launcher.launch_holding(request, hold).await {
+    let (outcome, conversation_id, consumers) = if request.activity.routing.is_some() {
+        let launched = state.launcher.launch_routed(request, Some(hold)).await;
+        let consumers = match launched
+            .consumers
+            .into_iter()
+            .map(ConsumerAdmission::try_from)
+            .collect::<Result<Vec<_>, _>>()
+        {
+            Ok(consumers) => consumers,
+            Err(_) => {
+                tracing::error!("launcher returned an invalid consumer admission name");
+                return problem(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    ProblemCode::Internal,
+                    "consumer_admission_invalid",
+                );
+            }
+        };
+        (
+            launched.combined,
+            launched.primary_conversation.to_string(),
+            Some(consumers),
+        )
+    } else {
+        (
+            state.launcher.launch_holding(request, hold).await,
+            conversation_id,
+            None,
+        )
+    };
+    match outcome {
         LaunchOutcome::Accepted { .. } | LaunchOutcome::Deferred => (
             StatusCode::ACCEPTED,
             Json(CallbackResponse::Accepted {
                 event_id,
                 conversation_id,
-                consumers: None,
+                consumers,
             }),
         )
             .into_response(),

@@ -241,7 +241,7 @@ async fn admit_callback(
         platform,
         verified,
         facts,
-        &state.master_keys,
+        state,
         body_received_at,
         now,
     ) {
