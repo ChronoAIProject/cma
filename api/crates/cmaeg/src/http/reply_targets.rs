@@ -1,4 +1,5 @@
 //! Generic durable reply capabilities for provider integrations.
+use super::request_start::{stamp, RequestStart};
 use super::tools::{event_ref, json, result};
 use crate::{
     auth::AgentCaller,
@@ -10,7 +11,7 @@ use axum::{
     http::HeaderMap,
     response::Response,
     routing::post,
-    Json, Router,
+    Extension, Json, Router,
 };
 use cmaeg_core::{
     message::OutboundMessage,
@@ -28,6 +29,7 @@ pub(super) fn routes() -> Router<ToolsState> {
             "/v1/reply-targets/{reply_target_ref}/messages",
             post(reply_to_target),
         )
+        .layer(axum::middleware::from_fn(stamp))
 }
 #[utoipa::path(post,path="/v1/events/{event_ref}/reply-target",operation_id="createReplyTarget",tag="provider integration",
     security(("agentBearer"=[])),params(("event_ref"=String,Path)),request_body=serde_json::Value,
@@ -59,6 +61,7 @@ pub async fn create_reply_target(
     responses((status=200,body=IntentReceipt),(status="default",body=Problem,content_type="application/problem+json")))]
 pub async fn reply_to_target(
     State(state): State<ToolsState>,
+    Extension(start): Extension<RequestStart>,
     caller: AgentCaller,
     Path(reference): Path<String>,
     headers: HeaderMap,
@@ -85,7 +88,7 @@ pub async fn reply_to_target(
             .parse()
             .map_err(|_| Problem::new(ProblemCode::InvalidRequest, 400, "reply_target_invalid"))?;
         state
-            .reply_to_target(caller, &reference, key, message)
+            .reply_to_target(caller, &reference, key, message, start)
             .await
     }
     .await;

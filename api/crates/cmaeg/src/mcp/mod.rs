@@ -5,6 +5,7 @@ pub mod tools;
 use crate::{
     auth::AgentCaller,
     http::problems::{problem, protocol_headers},
+    http::request_start::{stamp, RequestStart},
     media::forward::{forward_bytes, TOOL_BODY_DEADLINE},
     tools::ToolsState,
 };
@@ -14,7 +15,7 @@ use axum::{
     http::{header::CONTENT_TYPE, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     routing::post,
-    Json, Router,
+    Extension, Json, Router,
 };
 use cmaeg_core::problem::{Problem, ProblemCode};
 use results::ToolOutput;
@@ -30,6 +31,7 @@ pub fn router(state: ToolsState) -> Router {
             .with_state(state)
             .layer(axum::middleware::from_fn(protocol_headers)),
     )
+    .layer(axum::middleware::from_fn(stamp))
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -47,15 +49,21 @@ fn rpc_id<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<Va
 async fn invoke(
     State(state): State<ToolsState>,
     caller: AgentCaller,
+    Extension(start): Extension<RequestStart>,
     request: Request,
 ) -> Response {
-    let mut response = accept(&state, caller, request).await;
+    let mut response = accept(&state, caller, request, start).await;
     response
         .headers_mut()
         .insert("mcp-protocol-version", HeaderValue::from_static(VERSION));
     response
 }
-async fn accept(state: &ToolsState, caller: AgentCaller, request: Request) -> Response {
+async fn accept(
+    state: &ToolsState,
+    caller: AgentCaller,
+    request: Request,
+    start: RequestStart,
+) -> Response {
     for (name, expected) in [
         ("origin", state.public_origin.as_str()),
         ("mcp-protocol-version", VERSION),
@@ -162,7 +170,7 @@ async fn accept(state: &ToolsState, caller: AgentCaller, request: Request) -> Re
                 Ok(call) => call,
                 Err(_) => return error(id, -32602, "Invalid tool arguments", None),
             };
-            tools::call(state, caller, &call.name, call.arguments).await
+            tools::call(state, caller, &call.name, call.arguments, start).await
         }
         _ => return error(id, -32601, "Method not found", None),
     };

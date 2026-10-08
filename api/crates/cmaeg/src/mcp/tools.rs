@@ -3,6 +3,7 @@ use super::results::{self, ToolOutput};
 use super::schemas::{RoutedReplyArguments, RoutedSchemas};
 use crate::{
     auth::AgentCaller,
+    http::request_start::RequestStart,
     http::tools::event_ref,
     tools::{valid_request, AttachmentViewKind, ToolsState, BUDGET_ACQUIRE_MAX, TOOL_WAIT},
 };
@@ -208,6 +209,7 @@ pub async fn call(
     caller: AgentCaller,
     name: &str,
     arguments: Value,
+    start: RequestStart,
 ) -> Result<ToolOutput, Problem> {
     let invalid = || Problem::new(ProblemCode::InvalidRequest, 400, "invalid tool arguments");
     if name == ATTACHMENT_TOOL.name {
@@ -224,7 +226,7 @@ pub async fn call(
             };
             serde_json::to_value(
                 state
-                    .reply(caller, &reference, message, destination)
+                    .reply(caller, &reference, message, destination, start)
                     .await?,
             )
         }
@@ -244,7 +246,7 @@ pub async fn call(
             }
             serde_json::to_value(
                 state
-                    .update(caller, &args.message_ref, args.message)
+                    .update(caller, &args.message_ref, args.message, start)
                     .await?,
             )
         }

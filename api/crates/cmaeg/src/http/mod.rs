@@ -16,6 +16,8 @@ pub mod metrics;
 pub mod problems;
 pub mod readiness;
 pub mod reply_targets;
+#[doc(hidden)]
+pub mod request_start;
 pub mod schema;
 pub mod telegram;
 pub mod tools;

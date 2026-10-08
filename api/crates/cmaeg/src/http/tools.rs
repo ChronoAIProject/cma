@@ -1,5 +1,6 @@
 //! Stable REST projections for agent tools.
 use super::problems::{problem, protocol_headers};
+use super::request_start::{stamp, RequestStart};
 use crate::channels::write_gate::MULTI_CONSUMER_DISABLED;
 use crate::{
     auth::AgentCaller,
@@ -18,7 +19,7 @@ use axum::{
     },
     response::{IntoResponse, Response},
     routing::{get, post},
-    Json, Router,
+    Extension, Json, Router,
 };
 use cmaeg_core::{
     channel::ReplyChoice,
@@ -50,6 +51,7 @@ pub fn router(state: ToolsState) -> Router {
             .layer(RequestBodyLimitLayer::new(131072))
             .layer(axum::middleware::from_fn(protocol_headers)),
     )
+    .layer(axum::middleware::from_fn(stamp))
 }
 #[utoipa::path(post,path="/v1/events/{event_ref}/replies",operation_id="replyToEvent",tag="tools",
     security(("agentBearer"=[])),
@@ -59,6 +61,7 @@ pub fn router(state: ToolsState) -> Router {
     responses((status=200,body=IntentReceipt),(status="default",body=Problem,content_type="application/problem+json")))]
 pub async fn reply_to_event(
     State(state): State<ToolsState>,
+    Extension(start): Extension<RequestStart>,
     caller: AgentCaller,
     Path(reference): Path<String>,
     RawQuery(query): RawQuery,
@@ -76,7 +79,11 @@ pub async fn reply_to_event(
         Ok(value) => value,
         Err(error) => return result::<IntentReceipt>(Err(error)),
     };
-    result(state.reply(caller, &reference, message, destination).await)
+    result(
+        state
+            .reply(caller, &reference, message, destination, start)
+            .await,
+    )
 }
 /// The explicit `destination` of a reply. With multi-consumer routing off,
 /// `default` is refused, because delivering a message meant for a private
@@ -118,6 +125,7 @@ fn destination(
     responses((status=200,body=IntentReceipt),(status="default",body=Problem,content_type="application/problem+json")))]
 pub async fn update_message(
     State(state): State<ToolsState>,
+    Extension(start): Extension<RequestStart>,
     caller: AgentCaller,
     Path(reference): Path<String>,
     body: Result<Json<OutboundMessage>, axum::extract::rejection::JsonRejection>,
@@ -136,7 +144,7 @@ pub async fn update_message(
             )))
         }
     };
-    result(state.update(caller, &reference, message).await)
+    result(state.update(caller, &reference, message, start).await)
 }
 #[utoipa::path(post,path="/v1/events/{event_ref}/typing",operation_id="sendTyping",tag="tools",
     security(("agentBearer"=[])),params(("event_ref"=String,Path)),

@@ -1,4 +1,5 @@
 use super::{context::ContextResponse, MediaDownloads};
+use crate::http::request_start::RequestStart;
 use crate::{
     auth::AgentCaller,
     channels::resolver::{ChannelResolver, ResolvedChannel},
@@ -90,6 +91,7 @@ impl ToolsState {
         reference: &EventRef,
         message: OutboundMessage,
         destination: Option<ReplyChoice>,
+        _start: RequestStart,
     ) -> Result<IntentReceipt, Problem> {
         let mut observation = crate::telemetry::operations::Operation::new(
             crate::telemetry::names::TOOL_DURATION,
@@ -139,6 +141,7 @@ impl ToolsState {
         caller: AgentCaller,
         reference: &MessageRef,
         message: OutboundMessage,
+        _start: RequestStart,
     ) -> Result<IntentReceipt, Problem> {
         let mut observation = crate::telemetry::operations::Operation::new(
             crate::telemetry::names::TOOL_DURATION,

@@ -5,6 +5,7 @@ use super::{
     state::{owner, validate},
     ToolsState,
 };
+use crate::http::request_start::RequestStart;
 use crate::{
     auth::AgentCaller,
     channels::resolver::ResolvedChannel,
@@ -103,6 +104,7 @@ impl ToolsState {
         reference: &ReplyTargetRef,
         request_id: &str,
         message: OutboundMessage,
+        _start: RequestStart,
     ) -> Result<IntentReceipt, Problem> {
         validate(&message)?;
         if request_id.is_empty()
