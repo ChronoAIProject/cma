@@ -87,6 +87,7 @@ pub(super) async fn consumer_failed(
         return;
     }
     let (group, at) = groups.join(id, &channel, &payload);
+    group.set_channel(channel);
     if group.consumers[at].terminal {
         tracing::info!(
             channel = %channel_hash,

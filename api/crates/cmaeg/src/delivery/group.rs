@@ -134,8 +134,8 @@ impl EventGroup {
             .position(|delivery| &delivery.consumer == consumer)
     }
 
-    /// Replace the channel snapshot, as a tool reply carrying a newer one
-    /// does, and re-read each consumer's policy from it.
+    /// Restore the admission snapshot for an automatic outcome and re-read
+    /// each consumer's policy. Tool sends use a temporary snapshot instead.
     pub fn set_channel(&mut self, channel: Arc<ResolvedChannel>) {
         for delivery in &mut self.consumers {
             if let Some(policy) = policy_of(&channel, &delivery.consumer) {

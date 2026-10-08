@@ -12,6 +12,8 @@ pub mod default_fixtures;
 pub mod default_relay;
 #[path = "delivery/default_relay_sends.rs"]
 mod default_relay_sends;
+#[path = "delivery/default_snapshots.rs"]
+mod default_snapshots;
 #[path = "delivery/default_tools.rs"]
 mod default_tools;
 #[path = "delivery/engine.rs"]

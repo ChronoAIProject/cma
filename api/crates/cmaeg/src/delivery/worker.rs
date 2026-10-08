@@ -232,7 +232,9 @@ async fn tool_reply(
     }
     let label = active_label(&channel.definition, event.consumer.as_ref(), routed);
     let (group, at) = groups.join(id, &channel, &event);
-    group.set_channel(channel);
+    // A tool uses its call-time snapshot only for this send. The serial
+    // worker cannot observe the temporary replacement from another command.
+    let turn_channel = std::mem::replace(&mut group.channel, channel);
     group.consumers[at].event = event;
     let result = reply(
         sender,
@@ -244,6 +246,7 @@ async fn tool_reply(
         keys.as_ref(),
     )
     .await;
+    group.channel = turn_channel;
     if matches!(
         result.delivery,
         DeliveryOutcome::Confirmed { .. } | DeliveryOutcome::Unknown { .. }
@@ -321,6 +324,9 @@ async fn stream_outcome(
         sender.custom.stream(&opened.payload, &outcome);
     }
     let (group, at) = groups.join(id, &turn.channel, &opened.payload);
+    // A newer tool call may have created the group before this older turn's
+    // first outcome. Automatic outputs always use the admission snapshot.
+    group.set_channel(turn.channel.clone());
     let delivery = &mut group.consumers[at];
     delivery.routed_turn = turn.activity.routing.is_some();
     delivery.tool_replied |= tracker.has_tool_reply(turn.event_ref.as_str(), now());
