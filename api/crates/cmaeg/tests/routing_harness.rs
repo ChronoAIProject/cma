@@ -9,6 +9,8 @@ pub mod fake_provider;
 mod fixture;
 #[path = "golden/kill_switch.rs"]
 mod kill_switch;
+#[path = "routing_harness/latency.rs"]
+mod latency;
 #[path = "routing_harness/logs.rs"]
 mod logs;
 #[path = "routing_harness/peers.rs"]

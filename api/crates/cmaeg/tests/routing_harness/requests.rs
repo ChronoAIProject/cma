@@ -8,6 +8,14 @@ use serde_json::{json, Value};
 
 impl App {
     pub async fn callback(&self, text: &str, id: &str) -> reqwest::Response {
+        self.callback_to(&self.channel, text, id).await
+    }
+    pub async fn callback_to(
+        &self,
+        channel: &ResolvedChannel,
+        text: &str,
+        id: &str,
+    ) -> reqwest::Response {
         let mut envelope = Envelope::new();
         envelope.payload["message_id"] = id.into();
         envelope.callback["message_id"] = id.into();
@@ -16,7 +24,7 @@ impl App {
         envelope.payload["raw_platform_data"]["message"]["text"] = text.into();
         let (body, token) = envelope.signed();
         self.client
-            .post(format!("{}/v1/callbacks/{}", self.base, self.channel.id))
+            .post(format!("{}/v1/callbacks/{}", self.base, channel.id))
             .header("content-type", "application/json")
             .header("x-nyxid-callback-token", token)
             .header("x-nyxid-platform", "telegram")
