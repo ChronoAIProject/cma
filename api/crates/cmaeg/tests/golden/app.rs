@@ -127,6 +127,7 @@ impl GoldenApp {
             keys.clone(),
             Default::default(),
             runner,
+            delivery.clone(),
         )
         .unwrap()
         .with_telegram(Arc::new(telegram));

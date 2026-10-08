@@ -10,6 +10,7 @@ pub struct IngressState {
     pub master_keys: Arc<MasterKeyRing>,
     pub jwks: Arc<JwksCache>,
     pub launcher: Arc<dyn TurnLauncher>,
+    pub delivery: Arc<dyn crate::delivery::router::DeliverySink>,
     pub config: IngressConfig,
     pub interactions: Option<Arc<crate::interactions::InteractionStore>>,
     pub inflight: Arc<Semaphore>,
@@ -43,6 +44,7 @@ impl IngressState {
         master_keys: Arc<MasterKeyRing>,
         config: IngressConfig,
         launcher: Arc<dyn TurnLauncher>,
+        delivery: Arc<dyn crate::delivery::router::DeliverySink>,
     ) -> Result<Self, reqwest::Error> {
         Ok(Self {
             interactions: None,
@@ -53,6 +55,7 @@ impl IngressState {
             master_keys,
             jwks: Arc::new(JwksCache::new(config.jwks_ttl)?),
             launcher,
+            delivery,
             inflight: Arc::new(Semaphore::new(config.max_inflight)),
             config,
         })

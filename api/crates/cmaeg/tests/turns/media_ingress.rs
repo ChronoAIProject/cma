@@ -98,12 +98,18 @@ impl MediaApp {
         let (delivery, mut outcomes) = mpsc::channel(256);
         let sink = tokio::spawn(async move { while outcomes.recv().await.is_some() {} });
         let delivery = Arc::new(cmaeg::delivery::router::ShardedScheduler::new(delivery));
-        let runner = Arc::new(TurnRunner::new(providers, tracker.clone(), delivery, turns));
+        let runner = Arc::new(TurnRunner::new(
+            providers,
+            tracker.clone(),
+            delivery.clone(),
+            turns,
+        ));
         let state = IngressState::new(
             fixture.state.resolver.clone(),
             fixture.state.master_keys.clone(),
             ingress,
             runner.clone(),
+            delivery,
         )
         .unwrap()
         .with_media_enabled(true);

@@ -9,7 +9,7 @@ use super::{
 };
 use crate::{
     delivery::router::DeliverySink,
-    ingress::launch::{LaunchOutcome, LaunchRequest, TurnLauncher},
+    ingress::launch::{LaunchOutcome, LaunchRefusal, LaunchRequest, TurnLauncher},
     media::{
         prepare::{prepare, PrepareConfig, Prepared},
         service::MediaService,
@@ -116,6 +116,7 @@ impl TurnRunner {
         };
         let prepare_deadline = (turn.received_at + self.prepare.budget).min(deadline);
         let mut admitted = Some(sender);
+        let mut rejected = None;
         let result = tokio::time::timeout_at(deadline.into(), async {
             let fenced = ticket.waits();
             // A predecessor may itself prepare for the whole budget before its
@@ -136,11 +137,18 @@ impl TurnRunner {
             // The successor may start once this start has returned, accepted
             // or not; a later failure is this turn's own.
             ticket.release();
-            let stream = started.map_err(|error| match error {
-                ProviderError::Capacity | ProviderError::Busy { .. } => {
-                    (ProblemCode::ProviderBusy, "provider_busy")
+            let stream = started.map_err(|error| {
+                if turn.activity.routing.is_some() {
+                    if let ProviderError::Rejected { code, .. } = &error {
+                        rejected = Some(crate::delivery::provider_code(Some(code.clone())));
+                    }
                 }
-                _ => (ProblemCode::ProviderUnavailable, "provider_unavailable"),
+                match error {
+                    ProviderError::Capacity | ProviderError::Busy { .. } => {
+                        (ProblemCode::ProviderBusy, "provider_busy")
+                    }
+                    _ => (ProblemCode::ProviderUnavailable, "provider_unavailable"),
+                }
             })?;
             consume::consume(
                 stream,
@@ -166,7 +174,12 @@ impl TurnRunner {
         };
         observation.finish(error.1);
         provider_error(&provider, error.1);
-        consume::refuse(&mut admitted, error.0, error.1);
+        let mut refusal = LaunchRefusal::new(Problem::new(error.0, 503, error.1), error.1);
+        if let Some(provider_code) = rejected {
+            refusal.code = "provider_rejected";
+            refusal.provider_code = provider_code;
+        }
+        consume::refuse(&mut admitted, refusal);
         self.delivery.terminal(
             turn,
             TurnOutcome::Failed {
@@ -218,7 +231,13 @@ impl TurnRunner {
             "turn names a consumer its channel does not configure"
         );
         let code = "provider_unavailable";
-        consume::refuse(&mut Some(sender), ProblemCode::ProviderUnavailable, code);
+        consume::refuse(
+            &mut Some(sender),
+            LaunchRefusal::new(
+                Problem::new(ProblemCode::ProviderUnavailable, 503, code),
+                code,
+            ),
+        );
         self.delivery.terminal(
             turn,
             TurnOutcome::Failed {
@@ -323,15 +342,7 @@ impl TurnRunner {
                 runner.execute(pending, sender, ticket).await;
             }) {
                 drop(turn.lease.lock().unwrap().take());
-                return LaunchOutcome::Refused(Problem::new(
-                    if reason == "draining" {
-                        ProblemCode::Draining
-                    } else {
-                        ProblemCode::ProviderBusy
-                    },
-                    503,
-                    reason,
-                ));
+                return LaunchOutcome::Refused(LaunchRefusal::tracker(reason));
             }
             if media || fenced {
                 // Preparation and the order fence may take up to the
@@ -345,10 +356,13 @@ impl TurnRunner {
             }
             match tokio::time::timeout_at(deadline.into(), accepted).await {
                 Ok(Ok(outcome)) => outcome,
-                Ok(Err(_)) => LaunchOutcome::Refused(Problem::new(
-                    ProblemCode::ProviderUnavailable,
-                    503,
-                    "turn stopped before acceptance",
+                Ok(Err(_)) => LaunchOutcome::Refused(LaunchRefusal::new(
+                    Problem::new(
+                        ProblemCode::ProviderUnavailable,
+                        503,
+                        "turn stopped before acceptance",
+                    ),
+                    "stream_lost",
                 )),
                 Err(_) => LaunchOutcome::Deferred,
             }

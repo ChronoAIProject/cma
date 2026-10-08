@@ -22,6 +22,7 @@ use tokio::{net::TcpListener, sync::oneshot, time::sleep};
 #[derive(Debug, Clone)]
 pub struct FakeProviderConfig {
     pub response_delay: Duration,
+    pub reject_response: Option<(u16, String)>,
     pub terminal_delay: Duration,
     pub header_delay: Duration,
     /// A header delay for turns whose input carries an attachment block only,
@@ -47,6 +48,7 @@ impl Default for FakeProviderConfig {
     fn default() -> Self {
         Self {
             response_delay: Duration::ZERO,
+            reject_response: None,
             terminal_delay: Duration::ZERO,
             header_delay: Duration::ZERO,
             attachment_delay: Duration::ZERO,
@@ -265,6 +267,13 @@ async fn responses(
     }
     if attachments && !state.config.attachment_delay.is_zero() {
         sleep(state.config.attachment_delay).await;
+    }
+    if let Some((status, code)) = &state.config.reject_response {
+        return (
+            StatusCode::from_u16(*status).unwrap(),
+            Json(json!({"code":code})),
+        )
+            .into_response();
     }
     if state.missing_turn_once.swap(false, Ordering::SeqCst) {
         return (

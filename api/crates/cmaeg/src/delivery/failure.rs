@@ -33,7 +33,7 @@ pub(super) struct ConsumerFailure {
 
 /// A provider's own failure code, kept only when it is a bounded token. It
 /// is logged and never shown to chat users.
-pub(super) fn provider_code(code: Option<String>) -> Option<String> {
+pub(crate) fn provider_code(code: Option<String>) -> Option<String> {
     code.filter(|code| {
         (1..=64).contains(&code.len())
             && code

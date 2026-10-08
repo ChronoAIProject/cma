@@ -122,7 +122,7 @@ async fn spawn_refusal_releases_capacity_without_starting_a_provider() {
     fixture.tracker.start_draining();
     let outcome = fixture.runner.launch(leased(&fixture, &capacity)).await;
     assert!(
-        matches!(outcome, LaunchOutcome::Refused(problem) if problem.detail.as_deref() == Some("draining"))
+        matches!(outcome, LaunchOutcome::Refused(problem) if problem.problem.detail.as_deref() == Some("draining"))
     );
     assert!(fixture.fake.requests().is_empty());
     available(&fixture, &capacity);

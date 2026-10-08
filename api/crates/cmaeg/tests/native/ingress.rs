@@ -168,6 +168,7 @@ async fn ordinary_chat_and_slash_text_share_provider_and_survive_replica_restart
         app.fixture.state.master_keys.clone(),
         Default::default(),
         app.fixture.recorder.clone(),
+        app.fixture.state.delivery.clone(),
     )
     .unwrap()
     .with_receipt_observer(observer.clone());

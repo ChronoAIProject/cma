@@ -38,3 +38,18 @@ pub mod routing_fixture;
 pub mod signer;
 #[path = "turns/support.rs"]
 mod support;
+
+#[path = "turns/fanout.rs"]
+mod fanout;
+
+#[path = "turns/fanout_support.rs"]
+mod fanout_support;
+
+#[path = "turns/fanout_boundaries.rs"]
+mod fanout_boundaries;
+
+#[path = "turns/fanout_finalizer.rs"]
+mod fanout_finalizer;
+
+#[path = "turns/fanout_providers.rs"]
+mod fanout_providers;

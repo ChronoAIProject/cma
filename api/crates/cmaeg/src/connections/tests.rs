@@ -447,10 +447,13 @@ impl crate::ingress::launch::TurnLauncher for RecordingLauncher {
             requests.push(request);
             let result = match requests.len() {
                 1 => LaunchOutcome::Deferred,
-                2 => LaunchOutcome::Refused(cmaeg_core::problem::Problem::new(
-                    cmaeg_core::problem::ProblemCode::ProviderUnavailable,
-                    503,
-                    "fixture provider refusal",
+                2 => LaunchOutcome::Refused(crate::ingress::launch::LaunchRefusal::new(
+                    cmaeg_core::problem::Problem::new(
+                        cmaeg_core::problem::ProblemCode::ProviderUnavailable,
+                        503,
+                        "fixture provider refusal",
+                    ),
+                    "provider_unavailable",
                 )),
                 _ => LaunchOutcome::Accepted {
                     response_id: "fixture-accepted-turn".into(),

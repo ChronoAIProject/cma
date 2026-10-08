@@ -102,7 +102,16 @@ pub(crate) async fn serve(config: Config) -> Result<(), Box<dyn std::error::Erro
         state.resolver.clone(),
         state.master_keys.clone(),
         config.ingress,
-        runner.clone(),
+        std::sync::Arc::new(turns::fanout::FanoutLauncher::new(
+            runner.clone(),
+            state.master_keys.clone(),
+            delivery.clone(),
+            std::sync::Arc::new(turns::capacity::RoutedCapacity::new(config.routed_capacity)),
+            tracker.clone(),
+            config.turns.turn_timeout,
+            std::sync::Arc::new(turns::observer::NoopObserver),
+        )),
+        delivery.clone(),
     )?
     .with_telegram(telegram)
     .with_interactions(interactions)

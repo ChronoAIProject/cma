@@ -199,7 +199,7 @@ async fn permanent_busy_and_local_capacity_refuse_with_provider_busy() {
     .await;
     let result = fixture.runner.launch(fixture.request("busy")).await;
     assert!(
-        matches!(result,LaunchOutcome::Refused(problem) if problem.code==cmaeg_core::problem::ProblemCode::ProviderBusy)
+        matches!(result,LaunchOutcome::Refused(problem) if problem.problem.code==cmaeg_core::problem::ProblemCode::ProviderBusy)
     );
     fixture.terminal().await;
     fixture.fake.close().await;
@@ -218,7 +218,7 @@ async fn permanent_busy_and_local_capacity_refuse_with_provider_busy() {
     ));
     let started = Instant::now();
     assert!(
-        matches!(fixture.runner.launch(fixture.request("two")).await,LaunchOutcome::Refused(problem) if problem.code==cmaeg_core::problem::ProblemCode::ProviderBusy)
+        matches!(fixture.runner.launch(fixture.request("two")).await,LaunchOutcome::Refused(problem) if problem.problem.code==cmaeg_core::problem::ProblemCode::ProviderBusy)
     );
     assert!(started.elapsed() < Duration::from_millis(50));
     assert_eq!(fixture.fake.requests().len(), 1);
@@ -306,9 +306,12 @@ async fn a_turn_for_an_unconfigured_consumer_fails_before_any_provider_call() {
     let LaunchOutcome::Refused(problem) = fixture.runner.launch(request).await else {
         panic!("a turn without a serving consumer must be refused");
     };
-    assert_eq!(problem.status, 503);
-    assert_eq!(problem.code, ProblemCode::ProviderUnavailable);
-    assert_eq!(problem.detail.as_deref(), Some("provider_unavailable"));
+    assert_eq!(problem.problem.status, 503);
+    assert_eq!(problem.problem.code, ProblemCode::ProviderUnavailable);
+    assert_eq!(
+        problem.problem.detail.as_deref(),
+        Some("provider_unavailable")
+    );
     let outcomes = fixture.terminal().await;
     assert!(
         matches!(outcomes.as_slice(), [TurnOutcome::Failed { code, .. }] if code == "provider_unavailable"),

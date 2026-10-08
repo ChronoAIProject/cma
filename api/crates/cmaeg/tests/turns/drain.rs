@@ -23,7 +23,7 @@ async fn drain_waits_for_consumers_refuses_new_launches_and_fails_readiness() {
     assert!(!fixture.readiness.report().ready);
     assert!(fixture.readiness.report().reasons.contains(&"draining"));
     assert!(
-        matches!(fixture.runner.launch(fixture.request("second")).await,LaunchOutcome::Refused(problem) if problem.code==ProblemCode::Draining && problem.status==503)
+        matches!(fixture.runner.launch(fixture.request("second")).await,LaunchOutcome::Refused(problem) if problem.problem.code==ProblemCode::Draining && problem.problem.status==503)
     );
     let started = Instant::now();
     assert!(

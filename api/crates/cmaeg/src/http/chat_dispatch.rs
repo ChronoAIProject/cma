@@ -109,6 +109,7 @@ pub(crate) async fn dispatch(
         )
             .into_response(),
         LaunchOutcome::Refused(error) => {
+            let error = error.problem;
             let retry = error.code == ProblemCode::ProviderBusy;
             let mut response = problem(
                 StatusCode::from_u16(error.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),

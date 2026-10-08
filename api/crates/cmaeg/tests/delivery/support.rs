@@ -140,6 +140,7 @@ impl App {
             fixture.state.master_keys.clone(),
             Default::default(),
             runner,
+            Arc::new(ShardedScheduler::new(commands.clone())),
         )
         .unwrap();
         let tools = ToolsState {

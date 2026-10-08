@@ -117,6 +117,7 @@ pub async fn receive_event(
     };
     match state.ingress.launcher.launch_holding(turn, permit).await {
         LaunchOutcome::Refused(error) => {
+            let error = error.problem;
             let busy = error.code == ProblemCode::ProviderBusy;
             let mut response = super::tools::result::<()>(Err(error));
             if busy {

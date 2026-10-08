@@ -108,6 +108,7 @@ impl App {
             keys.clone(),
             Default::default(),
             runner,
+            delivery.clone(),
         )
         .unwrap();
         let tools = ToolsState {

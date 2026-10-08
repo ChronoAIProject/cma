@@ -5,6 +5,7 @@ mod default_destination;
 pub mod engine;
 mod event;
 mod failure;
+pub(crate) use failure::provider_code;
 pub mod gate;
 mod group;
 pub mod intents;

@@ -61,8 +61,12 @@ pub const HISTOGRAMS: [&str; 6] = [
     DELIVERY_DURATION,
     TOOL_DURATION,
 ];
-pub const COUNTERS: [&str; 14] = [
+pub const FANOUT_FAILED_DROPPED: &str = "cmaeg_fanout_consumer_failed_dropped_total";
+pub const FANOUT_TURNS: &str = "cmaeg_fanout_turns_total";
+pub const COUNTERS: [&str; 16] = [
     TOOL_SENDS_LATE,
+    FANOUT_FAILED_DROPPED,
+    FANOUT_TURNS,
     EVENTS,
     REFUSALS,
     PROVIDER_ERRORS,

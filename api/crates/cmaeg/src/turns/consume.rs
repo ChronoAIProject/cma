@@ -4,7 +4,7 @@ use super::{
 };
 use crate::{
     delivery::router::DeliverySink,
-    ingress::launch::{LaunchOutcome, LaunchRequest},
+    ingress::launch::{LaunchOutcome, LaunchRefusal, LaunchRequest},
     providers::TurnStream,
 };
 use cmaeg_core::problem::{Problem, ProblemCode};
@@ -41,7 +41,7 @@ pub(super) async fn consume(
                     let terminal = outcome.terminal();
                     let kind = outcome.kind();
                     if terminal && acceptance_pending {
-                        refuse(admitted,ProblemCode::ProviderUnavailable,"provider stream ended before acceptance");
+                        refuse(admitted,LaunchRefusal::new(Problem::new(ProblemCode::ProviderUnavailable,503,"provider stream ended before acceptance"), "stream_lost"));
                     }
                     send(delivery,&turn,outcome).await?;
                     if terminal {return Ok(kind);}
@@ -65,10 +65,9 @@ pub(super) async fn send(
 }
 pub(super) fn refuse(
     admitted: &mut Option<oneshot::Sender<LaunchOutcome>>,
-    code: ProblemCode,
-    detail: &str,
+    refusal: LaunchRefusal,
 ) {
     if let Some(sender) = admitted.take() {
-        let _ = sender.send(LaunchOutcome::Refused(Problem::new(code, 503, detail)));
+        let _ = sender.send(LaunchOutcome::Refused(refusal));
     }
 }

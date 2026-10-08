@@ -115,6 +115,7 @@ impl App {
             fixture.state.master_keys.clone(),
             Default::default(),
             runner,
+            delivery.clone(),
         )
         .unwrap()
         .with_media_enabled(media_enabled);

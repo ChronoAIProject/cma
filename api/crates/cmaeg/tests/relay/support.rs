@@ -68,10 +68,13 @@ impl TurnLauncher for Recorder {
                     self.wait.notified().await;
                     LaunchOutcome::Deferred
                 }
-                3 => LaunchOutcome::Refused(cmaeg_core::problem::Problem::new(
-                    cmaeg_core::problem::ProblemCode::ProviderUnavailable,
-                    503,
-                    "provider offline",
+                3 => LaunchOutcome::Refused(cmaeg::ingress::launch::LaunchRefusal::new(
+                    cmaeg_core::problem::Problem::new(
+                        cmaeg_core::problem::ProblemCode::ProviderUnavailable,
+                        503,
+                        "provider offline",
+                    ),
+                    "provider_unavailable",
                 )),
                 _ => LaunchOutcome::Deferred,
             }
@@ -202,7 +205,9 @@ impl Fixture {
             seal_blob(&keys, definition.to_blob_json().to_string().as_bytes()).unwrap();
         let resolver = ChannelResolver::new(records, keys.clone(), ChannelCacheConfig::default());
         let recorder = Arc::new(Recorder::default());
-        let state = IngressState::new(resolver, keys, config, recorder.clone())
+        let (delivery, _outcomes) = tokio::sync::mpsc::channel(1);
+        let delivery = Arc::new(cmaeg::delivery::router::ShardedScheduler::new(delivery));
+        let state = IngressState::new(resolver, keys, config, recorder.clone(), delivery)
             .unwrap()
             .with_media_enabled(media_enabled);
         let (gateway, app) = serve(callbacks::router(state.clone())).await;
