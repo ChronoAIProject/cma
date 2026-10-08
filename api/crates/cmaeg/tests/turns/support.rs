@@ -73,6 +73,7 @@ impl Fixture {
             pointer,
             definition,
             agent_key_hash: [0; 32],
+            consumer_keys: Vec::new(),
             loaded_at: Instant::now(),
             version: 1,
         });
@@ -111,6 +112,8 @@ impl Fixture {
                 conversation_id: conversation_id.clone(),
                 expires_at: time::OffsetDateTime::now_utc().unix_timestamp() + 1800,
                 reply: ReplyAddress::None,
+                consumer: None,
+                lineage: None,
             },
             &self.keys,
         )

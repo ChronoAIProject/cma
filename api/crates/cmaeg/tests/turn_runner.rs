@@ -26,6 +26,8 @@ mod render;
 mod render_fences;
 #[path = "turns/render_media.rs"]
 mod render_media;
+#[path = "turns/render_sources.rs"]
+mod render_sources;
 #[path = "relay/signer.rs"]
 pub mod signer;
 #[path = "turns/support.rs"]

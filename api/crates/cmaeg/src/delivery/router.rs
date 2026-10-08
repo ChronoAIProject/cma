@@ -123,6 +123,7 @@ mod tests {
             },
             definition,
             agent_key_hash: [0; 32],
+            consumer_keys: Vec::new(),
             loaded_at: std::time::Instant::now(),
             version: 1,
         };
@@ -136,6 +137,8 @@ mod tests {
             conversation_id: "conversation-1".parse().unwrap(),
             expires_at: i64::MAX,
             reply: ReplyAddress::None,
+            consumer: None,
+            lineage: None,
         };
         let (receipt, received) = oneshot::channel();
         let command = DeliveryCommand::Reply {

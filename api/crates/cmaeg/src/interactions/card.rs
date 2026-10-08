@@ -1,6 +1,6 @@
 //! Interaction card records, their click and destination facts, and callback decoding.
 use cmaeg_core::{
-    ids::{ChannelId, EventId, MessageRef},
+    ids::{ChannelId, ConsumerId, EventId, MessageRef},
     message::OutboundMessage,
 };
 use serde::{Deserialize, Serialize};
@@ -23,6 +23,11 @@ pub struct Card {
     pub reference: Option<MessageRef>,
     pub consumed: Option<Click>,
     pub superseded: bool,
+    /// The non-default consumer that owns the card; absent for the default
+    /// consumer, so a default card keeps its exact stored bytes. A card that
+    /// names a consumer is sealed under kind `ic`, never `in`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub consumer: Option<ConsumerId>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Destination {

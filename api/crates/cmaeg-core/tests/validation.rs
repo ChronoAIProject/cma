@@ -99,7 +99,11 @@ fn activity_partition_keys_cover_each_rule() {
         (PartitionKey::PerEvent, "msg-1"),
     ] {
         assert_eq!(
-            activity.partition_key(&PartitionRule { version: 1, key }),
+            activity.partition_key(&PartitionRule {
+                version: 1,
+                key,
+                custom_key: None
+            }),
             expected
         );
     }

@@ -112,7 +112,7 @@ pub async fn record() -> Value {
 
 /// Start one provider turn carrying `event`'s context, so the provider can
 /// answer the interaction store's context lookup for it.
-async fn seed(
+pub async fn seed(
     providers: &ProviderClient,
     keys: &MasterKeyRing,
     channel: &ResolvedChannel,

@@ -20,12 +20,19 @@ pub mod signer;
 #[allow(dead_code)]
 #[path = "tools/support.rs"]
 mod support;
+use base64::Engine as _;
 use cmaeg::{
-    interactions::{Destination, InteractionStore},
+    interactions::{Destination, Error, InteractionStore},
+    providers::{ProviderClient, ProviderRegistry},
     records::RecordClient,
 };
-use cmaeg_core::{ids::EventId, message::OutboundMessage};
+use cmaeg_core::{
+    ids::EventId,
+    message::OutboundMessage,
+    seal::{seal_consumer_interaction, seal_interaction, MasterKeyRing},
+};
 use serde_json::json;
+use std::{sync::Arc, time::Duration};
 
 #[tokio::test]
 async fn callback_authority_survives_restart_and_fences_actor_chat_message_and_revision() {
@@ -140,4 +147,83 @@ async fn callback_authority_survives_restart_and_fences_actor_chat_message_and_r
         assert!(record.blob.starts_with(b"cmaeg1.in."));
         assert!(!String::from_utf8_lossy(&record.blob).contains("Choose owner"));
     }
+}
+
+/// A card store over a fake CMA alone: loading a card needs no provider.
+async fn card_store(keys: Arc<MasterKeyRing>) -> (fake_cma::FakeCma, InteractionStore) {
+    let backend = fake_cma::FakeCma::start(false).await;
+    let providers = ProviderClient::new(
+        ProviderRegistry::default(),
+        Duration::from_secs(1),
+        Duration::from_secs(1),
+        1,
+    )
+    .unwrap();
+    let store = InteractionStore::new(
+        RecordClient::new(&backend.base_url, "cma-service").unwrap(),
+        keys,
+        Arc::new(providers),
+    );
+    (backend, store)
+}
+
+fn card_json(id: &str, consumer: Option<&str>) -> Vec<u8> {
+    let mut card = json!({
+        "id": id, "owner": "nyx-user-1", "channel_id": "cmaeg1.ch.cards",
+        "event_id": "message-1", "route_id": "route-1", "actor": "7", "chat": "42",
+        "thread": null, "expires_at": 4_102_444_800_i64, "revision": 1,
+        "message": {"text": "Choose", "blocks": []}, "destination": null,
+        "reference": null, "consumed": null, "superseded": false
+    });
+    if let Some(consumer) = consumer {
+        card["consumer"] = consumer.into();
+    }
+    serde_json::to_vec(&card).unwrap()
+}
+
+#[tokio::test]
+async fn cards_load_only_when_their_sealed_kind_agrees_with_their_owner() {
+    let keys = Arc::new(
+        MasterKeyRing::parse(&format!(
+            "1:{}",
+            base64::engine::general_purpose::STANDARD.encode([2; 32])
+        ))
+        .unwrap(),
+    );
+    let (backend, store) = card_store(keys.clone()).await;
+    let in_kind = |id: &str, bytes: &[u8]| seal_interaction(&keys, id, bytes).unwrap();
+    let ic_kind = |id: &str, bytes: &[u8]| seal_consumer_interaction(&keys, id, bytes).unwrap();
+    for (name, consumer, consumer_kind, loads) in [
+        ("default card as in", None, false, true),
+        ("consumer card as ic", Some("csm_00000000000a"), true, true),
+        (
+            "consumer card as in",
+            Some("csm_00000000000a"),
+            false,
+            false,
+        ),
+        ("default card as ic", None, true, false),
+        ("card naming default as ic", Some("default"), true, false),
+        ("card naming default as in", Some("default"), false, false),
+    ] {
+        let id = uuid::Uuid::new_v4().to_string();
+        let bytes = card_json(&id, consumer);
+        let blob = if consumer_kind {
+            ic_kind(&id, &bytes)
+        } else {
+            in_kind(&id, &bytes)
+        };
+        backend.seed(&id, "nyx-user-1", blob);
+        let loaded = store.load(&id).await;
+        assert_eq!(loaded.is_ok(), loads, "{name}");
+        match loaded {
+            Ok((card, _)) => assert_eq!(
+                card.consumer.as_ref().map(|consumer| consumer.as_str()),
+                consumer,
+                "{name}"
+            ),
+            Err(error) => assert!(matches!(error, Error::Denied), "{name}"),
+        }
+    }
+    backend.close().await;
 }

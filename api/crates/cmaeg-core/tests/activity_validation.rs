@@ -121,6 +121,7 @@ fn event_partition_uses_subject_then_source_and_preserves_thread_identity() {
     let rule = PartitionRule {
         version: 1,
         key: PartitionKey::EventSubject,
+        custom_key: None,
     };
     let parsed: Activity = serde_json::from_value(value.clone()).unwrap();
     parsed.validate().unwrap();
@@ -136,7 +137,8 @@ fn event_partition_uses_subject_then_source_and_preserves_thread_identity() {
     assert_eq!(
         parsed.partition_key(&PartitionRule {
             version: 1,
-            key: PartitionKey::Thread
+            key: PartitionKey::Thread,
+            custom_key: None,
         }),
         "chat-1\u{1f}thread-1"
     );
@@ -178,4 +180,34 @@ fn album_identity_round_trips_only_on_messages() {
     assert_eq!(serde_json::to_value(&grouped).unwrap(), value);
     value["kind"] = json!({"type":"command","name":"run","args":"","album_id":"1"});
     assert!(serde_json::from_value::<Activity>(value).is_err());
+}
+
+#[test]
+fn a_custom_key_partitions_only_custom_events() {
+    let rule = PartitionRule {
+        version: 1,
+        key: PartitionKey::Conversation,
+        custom_key: Some(PartitionKey::EventSubject),
+    };
+    let chat: Activity = serde_json::from_value(activity()).unwrap();
+    assert_eq!(chat.partition_key(&rule), "chat-1");
+    let mut value = activity();
+    let ce: Value = serde_json::from_str(include_str!("fixtures/cloudevent.json")).unwrap();
+    value["source"] = json!({"type":"custom"});
+    value["kind"] = json!({"type":"event","ce":ce});
+    let event: Activity = serde_json::from_value(value).unwrap();
+    let legacy = PartitionRule {
+        version: 1,
+        key: PartitionKey::EventSubject,
+        custom_key: None,
+    };
+    // The custom event keys exactly as on a legacy event_subject channel.
+    assert_eq!(event.partition_key(&rule), event.partition_key(&legacy));
+    assert_eq!(event.partition_key(&rule), "urn:test:source");
+    // Without a custom key, the chat key applies to custom events too.
+    let chat_only = PartitionRule {
+        custom_key: None,
+        ..rule
+    };
+    assert_eq!(event.partition_key(&chat_only), event.conversation.id);
 }

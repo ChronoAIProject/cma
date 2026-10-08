@@ -26,6 +26,20 @@ pub fn seal_interaction(
     seal_bound_blob(ring, TokenKind::Interaction, id, plaintext)
 }
 
+/// Seal a card owned by a non-default consumer under its own kind, `ic`.
+///
+/// The kind, not only the card's `consumer` field, records the owner: an
+/// image that predates consumers can open only `in`, so after an emergency
+/// rollback a non-default consumer's card is refused rather than opened as a
+/// default card and its click routed to the default consumer.
+pub fn seal_consumer_interaction(
+    ring: &MasterKeyRing,
+    id: &str,
+    plaintext: &[u8],
+) -> Result<Vec<u8>, SealError> {
+    seal_bound_blob(ring, TokenKind::ConsumerInteraction, id, plaintext)
+}
+
 /// Connection data is bound to its namespace and record identity.
 pub fn seal_connection(
     ring: &MasterKeyRing,
@@ -86,6 +100,15 @@ pub fn open_interaction(
     token: &[u8],
 ) -> Result<Opened<Vec<u8>>, OpenError> {
     open_bound_blob(ring, TokenKind::Interaction, id, token)
+}
+
+/// Open a card sealed by [`seal_consumer_interaction`]; an `in` card is refused.
+pub fn open_consumer_interaction(
+    ring: &MasterKeyRing,
+    id: &str,
+    token: &[u8],
+) -> Result<Opened<Vec<u8>>, OpenError> {
+    open_bound_blob(ring, TokenKind::ConsumerInteraction, id, token)
 }
 
 fn open_bound_blob(

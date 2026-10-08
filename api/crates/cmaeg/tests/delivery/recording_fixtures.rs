@@ -46,6 +46,7 @@ fn channel(id: &str, edit: impl FnOnce(&mut Value)) -> Arc<ResolvedChannel> {
         },
         definition,
         agent_key_hash: [0; 32],
+        consumer_keys: Vec::new(),
         loaded_at: std::time::Instant::now(),
         version: 1,
     })
@@ -127,6 +128,8 @@ pub fn event(
         conversation_id: format!("conv_{conversation:032x}").parse().unwrap(),
         expires_at: FAR,
         reply,
+        consumer: None,
+        lineage: None,
     }
 }
 

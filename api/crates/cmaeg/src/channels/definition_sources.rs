@@ -108,6 +108,7 @@ pub(super) fn build_secrets(credentials: &CredentialsRequest) -> ChannelSecrets 
         provider_credential: Some(credentials.agent_key.clone()),
         telegram_bot_token: credentials.telegram_bot_token.clone(),
         telegram_webhook_secret: credentials.telegram_webhook_secret.clone(),
+        consumer_keys: Vec::new(),
     }
 }
 

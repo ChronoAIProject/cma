@@ -172,6 +172,7 @@ impl ConnectionService {
                 },
                 attachments: Vec::new(),
             },
+            routing: None,
         };
         activity.validate().map_err(|_| Error::Unavailable)?;
         if activity.partition_key(&channel.definition.partition)

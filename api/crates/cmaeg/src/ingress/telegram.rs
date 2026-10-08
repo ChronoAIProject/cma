@@ -176,6 +176,7 @@ pub(crate) fn launch(
             platform: cmaeg_core::channel::Platform::Telegram,
             bot_id: bot_id.into(),
         },
+        routing: None,
     };
     let activity = match media_guard::admit(activity, "telegram") {
         Ok(Admit::Ok(activity)) => *activity,
@@ -205,6 +206,8 @@ pub(crate) fn launch(
                 message_id,
                 thread_id: facts.thread_id,
             },
+            consumer: None,
+            lineage: None,
         },
         keys,
     )

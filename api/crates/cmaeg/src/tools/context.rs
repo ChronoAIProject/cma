@@ -4,7 +4,7 @@ use super::{
 };
 use crate::{channels::resolver::ResolvedChannel, media::visual::VisualKind};
 use cmaeg_core::{
-    activity::{Activity, ActivityConversation, ActivityKind, Actor, SourceKind},
+    activity::{Activity, ActivityConversation, ActivityKind, ActivityRouting, Actor, SourceKind},
     channel::{ConsumerView, Platform},
     ids::{ConversationId, EventId},
     problem::{Problem, ProblemCode},
@@ -30,6 +30,9 @@ pub struct PublicActivity {
     pub actor: Actor,
     pub conversation: ActivityConversation,
     pub occurred_at: String,
+    /// The activity's routing decision; absent on every unrouted event.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub routing: Option<ActivityRouting>,
 }
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct Capabilities {
@@ -209,6 +212,7 @@ pub(super) fn project(
             actor: activity.actor,
             conversation: activity.conversation,
             occurred_at: activity.occurred_at,
+            routing: activity.routing,
         },
         capabilities,
     }

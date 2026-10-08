@@ -296,6 +296,8 @@ async fn fresh_father_event_reaches_login_with_verified_durable_context_without_
         conversation_id: conversation.clone(),
         expires_at: expiry,
         reply: ReplyAddress::None,
+        consumer: None,
+        lineage: None,
     };
     let reference = EventRef::seal(&payload, &keys).unwrap();
     assert!(reference.as_str().len() < 4096);

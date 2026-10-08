@@ -12,7 +12,7 @@ use crate::{
     turns::observer::{default_consumer, ActivityObserver, DeliveryStep, Destination},
 };
 use cmaeg_core::{
-    channel::Platform,
+    channel::{ChannelDefinition, Platform, Source},
     ids::MessageRef,
     message::{OutboundMessage, RenderingOutcome, RenderingReport},
     seal::{EventRefPayload, MasterKeyRing, MessageRefPayload, ReplyAddress},
@@ -224,6 +224,7 @@ impl Sender {
                             platform_message_id: id.clone(),
                             route_id: route_id.clone(),
                             interaction_record_id: None,
+                            consumer: None,
                         },
                         &self.keys,
                     )
@@ -275,6 +276,31 @@ pub(super) fn unsupported() -> IntentReceipt {
             blocks: vec![],
         },
         delivery: DeliveryOutcome::Unsupported,
+    }
+}
+
+/// Whether a card sent on `route_id` can be replaced. Only Telegram relays
+/// prepare cards, so the route's own relay must be a Telegram one. The message
+/// reference carries the relay route its card was sent on (`route_id`, copied
+/// from the sealed reply address when the card was bound), so no reply address
+/// is needed. With at most one relay the channel-level check is kept verbatim;
+/// the two agree on every legacy definition, whose only relay is the route's.
+fn replaces_telegram_cards(definition: &ChannelDefinition, route_id: &str) -> bool {
+    let relays = definition
+        .sources
+        .iter()
+        .filter(|source| matches!(source, Source::NyxidRelay { .. }))
+        .count();
+    if relays > 1 {
+        matches!(
+            definition.relay_source_for_route(route_id),
+            Some(Source::NyxidRelay {
+                platform: Platform::Telegram,
+                ..
+            })
+        )
+    } else {
+        definition.relay_platform() == Some(Platform::Telegram)
     }
 }
 
@@ -388,7 +414,7 @@ impl Sender {
             return (unsupported(), effects);
         };
         if reference.interaction_record_id.is_none()
-            || channel.definition.relay_platform() != Some(Platform::Telegram)
+            || !replaces_telegram_cards(&channel.definition, &reference.route_id)
         {
             return (unsupported(), effects);
         }

@@ -1,7 +1,10 @@
 use super::*;
-use cmaeg::channels::definition::{
-    build_definition, build_update, validate_create_request, ChannelCreateRequest,
-    ChannelUpdateRequest,
+use cmaeg::channels::{
+    definition::{
+        build_definition, build_update, validate_create_request, ChannelCreateRequest,
+        ChannelUpdateRequest,
+    },
+    write_gate::WriteFlags,
 };
 use cmaeg_core::{
     channel::{ConformanceLevel, ProviderTarget},
@@ -23,6 +26,7 @@ fn omitted_target_keeps_legacy_profile_contract_and_targets_cannot_change() {
         RecordId::new("record").unwrap(),
         BindingId::new("binding").unwrap(),
         ConformanceLevel::L1,
+        WriteFlags::default(),
     )
     .unwrap();
     assert!(original.to_public_json()["provider"]
@@ -32,7 +36,9 @@ fn omitted_target_keeps_legacy_profile_contract_and_targets_cannot_change() {
     body["provider"]["target"] = json!({"type":"existing_agent","agent_id":"agt_existing"});
     let update: ChannelUpdateRequest = serde_json::from_value(body).unwrap();
     assert_eq!(
-        build_update(&update, &original).unwrap_err().pointer,
+        build_update(&update, &original, WriteFlags::default())
+            .unwrap_err()
+            .pointer,
         "/provider/target"
     );
 }

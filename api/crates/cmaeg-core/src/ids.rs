@@ -81,7 +81,10 @@ pub use message_ref::MessageRef;
 id_type!(BindingId);
 id_type!(ProviderSlug);
 mod consumer;
-pub use consumer::{ConsumerId, DEFAULT_CONSUMER_ID};
+pub use consumer::{
+    compact_partition_key, ConsumerId, ConsumerName, RuleId, DEFAULT_CONSUMER_ID,
+    MAX_SEALED_PARTITION_KEY_BYTES,
+};
 
 /// An encrypted pointer to a CMA channel record.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, ToSchema)]
@@ -237,7 +240,8 @@ impl IdempotencyKey {
     }
 }
 
-fn hex(bytes: &[u8]) -> String {
+/// Lowercase hex of `bytes`, the encoding of every derived identifier.
+pub(crate) fn hex(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     bytes
         .iter()

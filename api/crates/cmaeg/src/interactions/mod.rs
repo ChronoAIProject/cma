@@ -9,8 +9,8 @@ use cmaeg_core::{
     ids::{MessageRef, RecordId},
     message::OutboundMessage,
     seal::{
-        open_interaction, seal_interaction, EventRefPayload, MasterKeyRing, MessageRefPayload,
-        ReplyAddress,
+        open_consumer_interaction, open_interaction, seal_interaction, EventRefPayload,
+        MasterKeyRing, MessageRefPayload, ReplyAddress,
     },
 };
 use keyboard::{actions, keyboard};
@@ -42,6 +42,8 @@ impl InteractionStore {
             providers,
         }
     }
+    /// Every card is written as `in`: cards are the default consumer's until
+    /// a later change issues consumer-owned cards, sealed as `ic`.
     async fn save(&self, card: &Card, version: Option<u64>) -> Result<u64, Error> {
         let bytes = serde_json::to_vec(card).map_err(|_| Error::Unavailable)?;
         let blob =
@@ -66,10 +68,30 @@ impl InteractionStore {
             RecordError::NotFound => Error::Denied,
             _ => Error::Unavailable,
         })?;
-        let bytes = open_interaction(&self.keys, id, &value.blob)
-            .map_err(|_| Error::Denied)?
-            .payload;
+        let (bytes, consumer_kind) = match open_interaction(&self.keys, id, &value.blob) {
+            Ok(opened) => (opened.payload, false),
+            Err(_) => {
+                let opened = open_consumer_interaction(&self.keys, id, &value.blob)
+                    .map_err(|_| Error::Denied)?;
+                (opened.payload, true)
+            }
+        };
         let card: Card = serde_json::from_slice(&bytes).map_err(|_| Error::Denied)?;
+        // The sealed kind and the card's owner must agree: `in` is the
+        // default consumer's and `ic` a named non-default consumer's, so a
+        // card can never be read as belonging to another consumer.
+        let owner_agrees = match &card.consumer {
+            None => !consumer_kind,
+            Some(consumer) => consumer_kind && !consumer.is_default(),
+        };
+        if !owner_agrees {
+            tracing::warn!(
+                card = %id,
+                consumer_kind,
+                "interaction card kind disagrees with its owner; refused"
+            );
+            return Err(Error::Denied);
+        }
         if card.id != id || card.expires_at <= now() {
             return Err(Error::Denied);
         }
@@ -121,6 +143,7 @@ impl InteractionStore {
             reference: None,
             consumed: None,
             superseded: false,
+            consumer: None,
         };
         let markup = keyboard(&card)?;
         let version = self.save(&card, None).await?;
@@ -152,6 +175,7 @@ impl InteractionStore {
                 platform_message_id: destination.platform_id.clone(),
                 route_id: card.route_id.clone(),
                 interaction_record_id: Some(card.id.clone()),
+                consumer: None,
             },
             &self.keys,
         )

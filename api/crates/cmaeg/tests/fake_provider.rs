@@ -39,6 +39,8 @@ pub struct FakeProviderConfig {
     pub text: String,
     pub unknown_event: bool,
     pub in_progress_first: bool,
+    /// Statuses that binding deletions answer instead of 204, by binding ID.
+    pub unbind_status: std::collections::BTreeMap<String, u16>,
 }
 
 impl Default for FakeProviderConfig {
@@ -60,6 +62,7 @@ impl Default for FakeProviderConfig {
             text: "hello".into(),
             unknown_event: false,
             in_progress_first: false,
+            unbind_status: std::collections::BTreeMap::new(),
         }
     }
 }
@@ -202,7 +205,10 @@ async fn unbind(
         headers,
         body,
     );
-    StatusCode::NO_CONTENT.into_response()
+    match state.config.unbind_status.get(&binding_id) {
+        Some(status) => StatusCode::from_u16(*status).unwrap().into_response(),
+        None => StatusCode::NO_CONTENT.into_response(),
+    }
 }
 
 async fn ensure_conversation(

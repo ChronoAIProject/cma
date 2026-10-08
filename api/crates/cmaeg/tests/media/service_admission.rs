@@ -25,7 +25,7 @@ use cmaeg::{
     },
     telegram::TelegramClient,
     ChannelCacheConfig, Config, DeliveryConfig, IngressConfig, ManagementConfig, MediaConfig,
-    MediaToolProviders, SttConfig, TransformerConfig, TurnConfig,
+    MediaToolProviders, RoutingConfig, SttConfig, TransformerConfig, TurnConfig,
 };
 use cmaeg_core::{
     activity::{Activity, ActivityKind, AttachmentKind, SourceKind},
@@ -250,6 +250,7 @@ fn config(media: MediaConfig) -> Config {
         turns: TurnConfig::default(),
         delivery: DeliveryConfig::default(),
         media,
+        routing: RoutingConfig::default(),
         stt: SttConfig::default(),
         transformer: TransformerConfig::default(),
         console: cmaeg::ConsoleConfig::default(),

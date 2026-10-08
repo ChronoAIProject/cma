@@ -11,6 +11,7 @@ mod console;
 mod delivery;
 mod ingress;
 mod media;
+mod routing;
 mod secrets;
 mod service_account;
 mod stt;
@@ -26,6 +27,7 @@ pub use media::{
     CMAEG_MEDIA_MAX_BYTES, CMAEG_MEDIA_MAX_JOBS, CMAEG_MEDIA_PREPARE_BUDGET_MS,
     CMAEG_MEDIA_RATE_PER_MINUTE, CMAEG_MEDIA_RESPONSE_BYTES, CMAEG_MEDIA_TOOL_PROVIDERS,
 };
+pub use routing::{RoutingConfig, CMAEG_NON_HUMAN_PROVIDERS};
 pub use service_account::*;
 pub use stt::*;
 pub use transformer::{TransformerConfig, CMAEG_MEDIA_FFMPEG_DIR, CMAEG_MEDIA_VIDEO_FRAMES};
@@ -70,6 +72,8 @@ pub enum ConfigError {
     MediaTransformer { detail: String },
     /// A console setting was invalid.
     InvalidConsole { detail: String },
+    /// A multi-consumer routing setting was invalid.
+    Routing(String),
 }
 
 impl std::fmt::Display for ConfigError {
@@ -106,6 +110,9 @@ impl std::fmt::Display for ConfigError {
             Self::InvalidConsole { detail } => {
                 write!(formatter, "console configuration is invalid: {detail}")
             }
+            Self::Routing(detail) => {
+                write!(formatter, "routing configuration is invalid: {detail}")
+            }
         }
     }
 }
@@ -134,6 +141,7 @@ pub struct Config {
     pub turns: TurnConfig,
     pub delivery: DeliveryConfig,
     pub media: MediaConfig,
+    pub routing: RoutingConfig,
     pub stt: SttConfig,
     pub transformer: TransformerConfig,
     pub console: ConsoleConfig,
@@ -169,6 +177,7 @@ impl Config {
         let providers = ProviderRegistry::parse(&providers_json)?;
         // Validated against the registry, so it can only follow it.
         let media = media::config_from_env(&providers)?;
+        let routing = routing::config_from_env(&providers)?;
         let stt = stt::config_from_env()?;
         let transformer = transformer::config_from_env()?;
         transformer.check(&media, &stt)?;
@@ -200,6 +209,7 @@ impl Config {
             turns,
             delivery: DeliveryConfig::from_env()?,
             media,
+            routing,
             stt,
             transformer,
             console: ConsoleConfig::from_env()?,

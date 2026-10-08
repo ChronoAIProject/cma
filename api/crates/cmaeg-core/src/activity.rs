@@ -24,6 +24,9 @@ pub use attachment::{
 };
 mod attachment_facts;
 pub use attachment_facts::FactRepairs;
+mod routing;
+pub(crate) use routing::is_root_id;
+pub use routing::{ActivityRouting, Causation, ConsumerTarget, RouteResolution, MAX_HOPS};
 
 pub const ACTIVITY_SCHEMA_VERSION: u16 = 1;
 
@@ -37,6 +40,10 @@ pub struct Activity {
     pub conversation: ActivityConversation,
     pub occurred_at: String,
     pub source: SourceKind,
+    /// The consumers a routed event reaches; absent on every unrouted event,
+    /// so an activity without routing keeps its exact bytes and digest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub routing: Option<ActivityRouting>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
@@ -189,12 +196,17 @@ impl Activity {
                 validate_attachments(attachments, &self.source, "/kind/attachments")?;
             }
         }
+        if let Some(routing) = &self.routing {
+            routing.validate(&self.kind)?;
+        }
         Ok(())
     }
 
-    /// Compute the stable serialized partition key selected by a channel.
+    /// Compute the stable serialized partition key selected by a channel for
+    /// this activity's source: `custom_key` for a custom event when the rule
+    /// carries one, and `key` otherwise.
     pub fn partition_key(&self, rule: &PartitionRule) -> String {
-        match rule.key {
+        match rule.key_for(&self.source) {
             PartitionKey::ConversationAndSender => {
                 format!("{}\u{1f}{}", self.conversation.id, self.actor.id)
             }

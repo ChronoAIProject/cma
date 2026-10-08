@@ -82,6 +82,7 @@ pub fn resolved(edit: impl FnOnce(&mut ChannelDefinition)) -> ResolvedChannel {
         },
         definition,
         agent_key_hash: [0; 32],
+        consumer_keys: Vec::new(),
         loaded_at: StdInstant::now(),
         version: 1,
     }
@@ -98,6 +99,8 @@ pub fn event(reply: ReplyAddress) -> EventRefPayload {
         conversation_id: "conversation-1".parse().unwrap(),
         expires_at: unix_now() + 1_800,
         reply,
+        consumer: None,
+        lineage: None,
     }
 }
 

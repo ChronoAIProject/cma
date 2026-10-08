@@ -12,6 +12,7 @@ use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
 use super::definition_sources::{build_secrets, build_sources, validate_credentials};
 pub use super::requests::*;
+use super::write_gate::{self, WriteFlags};
 
 pub fn build_definition(
     request: &ChannelCreateRequest,
@@ -19,6 +20,7 @@ pub fn build_definition(
     record_id: RecordId,
     binding_id: BindingId,
     level: cmaeg_core::channel::ConformanceLevel,
+    flags: WriteFlags,
 ) -> Result<ChannelDefinition, ValidationError> {
     let credentials = &request.credentials;
     if credentials.agent_key.as_str().is_empty() {
@@ -52,13 +54,14 @@ pub fn build_definition(
         connection_ref: request.connection_ref.clone(),
         partition: request.partition.clone(),
         reply: request.reply.clone(),
+        routing: None,
         secrets: build_secrets(credentials),
         created_at: OffsetDateTime::now_utc()
             .format(&Rfc3339)
             .map_err(|error| ValidationError::new("/created_at", error.to_string()))?,
         version: 0,
     };
-    validate_definition(&definition)?;
+    validate_definition(None, &definition, flags)?;
     Ok(definition)
 }
 
@@ -119,6 +122,7 @@ pub fn validate_update_request(request: &ChannelUpdateRequest) -> Result<(), Val
 pub fn build_update(
     request: &ChannelUpdateRequest,
     current: &ChannelDefinition,
+    flags: WriteFlags,
 ) -> Result<ChannelDefinition, ValidationError> {
     if request.provider.target != current.provider.target {
         return Err(ValidationError::new(
@@ -175,11 +179,14 @@ pub fn build_update(
         connection_ref: request.connection_ref.clone(),
         partition: request.partition.clone(),
         reply: request.reply.clone(),
+        // No request carries routing yet, so a full update keeps the stored
+        // policy, exactly as it keeps the consumer keys in the secrets.
+        routing: current.routing.clone(),
         secrets: credentials,
         created_at: current.created_at.clone(),
         version: current.version,
     };
-    validate_definition(&definition)?;
+    validate_definition(Some(current), &definition, flags)?;
     Ok(definition)
 }
 
@@ -213,7 +220,15 @@ pub fn channel_pointer(
     Ok(pointer)
 }
 
-fn validate_definition(definition: &ChannelDefinition) -> Result<(), ValidationError> {
+/// Validate a definition a management write would store, replacing `current`
+/// (`None` for a create). The write gate runs first, so a write it refuses
+/// reports the legacy error it always has before any check below can answer.
+fn validate_definition(
+    current: Option<&ChannelDefinition>,
+    definition: &ChannelDefinition,
+    flags: WriteFlags,
+) -> Result<(), ValidationError> {
+    write_gate::check(current, definition, flags)?;
     definition.validate()?;
     if definition.profile.metadata.owner.subject != definition.owner.subject {
         return Err(ValidationError::new(
@@ -227,6 +242,8 @@ fn validate_definition(definition: &ChannelDefinition) -> Result<(), ValidationE
             "must match the profile provider",
         ));
     }
+    validate_consumer_owners(definition)?;
+    validate_consumer_keys(definition)?;
     let credentials = CredentialsRequest {
         agent_key: definition
             .secrets
@@ -283,6 +300,51 @@ fn validate_definition(definition: &ChannelDefinition) -> Result<(), ValidationE
     Ok(())
 }
 
+/// Every additional consumer acts for the channel owner, as `default` does.
+fn validate_consumer_owners(definition: &ChannelDefinition) -> Result<(), ValidationError> {
+    let consumers = definition
+        .routing
+        .iter()
+        .flat_map(|routing| &routing.consumers);
+    for (index, consumer) in consumers.enumerate() {
+        if consumer.profile.metadata.owner.subject != definition.owner.subject {
+            return Err(ValidationError::new(
+                format!("/routing/consumers/{index}/profile/metadata/owner/subject"),
+                "must match the authenticated channel owner",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Each additional consumer's sealed key must hash to its public
+/// `agent_key_hash`. Tool calls authenticate a consumer by that hash while
+/// the provider is handed the key, so a mismatched pair would admit one key
+/// and bind another. Readers refuse such a definition as well as writers.
+pub(crate) fn validate_consumer_keys(
+    definition: &ChannelDefinition,
+) -> Result<(), ValidationError> {
+    let consumers = definition
+        .routing
+        .iter()
+        .flat_map(|routing| &routing.consumers);
+    for (index, consumer) in consumers.enumerate() {
+        let matches = definition
+            .secrets
+            .consumer_keys
+            .iter()
+            .find(|(id, _)| id == &consumer.id)
+            .is_some_and(|(_, key)| hash_secret(key.as_str()) == consumer.agent_key_hash);
+        if !matches {
+            return Err(ValidationError::new(
+                format!("/routing/consumers/{index}/agent_key_hash"),
+                "does not match the consumer's agent key",
+            ));
+        }
+    }
+    Ok(())
+}
+
 impl ChannelCreateRequest {
     pub(crate) fn fingerprint(&self) -> String {
         let mut value = serde_json::json!({
@@ -310,3 +372,7 @@ impl ChannelCreateRequest {
         hash_secret(&cmaeg_core::profile::canonical_json(value))
     }
 }
+
+#[cfg(test)]
+#[path = "definition_tests.rs"]
+mod tests;

@@ -3,7 +3,7 @@ use super::binary_support::{assert_no_secrets, curl, free_address, spawn_ready, 
 use super::*;
 use cmaeg_core::{profile::canonical_json, seal::seal_blob};
 
-const USAGE: &str = "usage: cmaeg [--print-openapi | --audit-custom-attachments [--clear] | --media-job <op> <bin-dir> <job-dir> [arg] | --media-sandbox-check | --media-self-test <fixtures-dir>]\n";
+const USAGE: &str = "usage: cmaeg [--print-openapi | --audit-custom-attachments [--clear] | --audit-routing [--clear [--allow-default-widening]] | --media-job <op> <bin-dir> <job-dir> [arg] | --media-sandbox-check | --media-self-test <fixtures-dir>]\n";
 const OWNER: &str = "binary-audit-owner-fixture";
 
 struct Run {

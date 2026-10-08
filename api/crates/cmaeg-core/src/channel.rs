@@ -14,16 +14,31 @@ use crate::{
 
 mod consumer;
 mod custom_attachments;
+mod extensions;
+mod lookup;
 mod partition;
 mod platform;
+mod routing;
+mod routing_validation;
 mod secrets;
+mod source_id;
 mod telegram;
-pub use consumer::ConsumerView;
+pub use consumer::{
+    Consumer, ConsumerReply, ConsumerView, DefaultConsumer, EffectiveReply, PublishPolicy,
+    ReplyChoice,
+};
 pub use custom_attachments::{
     CustomAttachments, DEFAULT_CUSTOM_ATTACHMENT_POINTER, MAX_CUSTOM_ATTACHMENT_ORIGINS,
     MAX_CUSTOM_ATTACHMENT_POINTER_BYTES,
 };
+pub use extensions::Extensions;
+pub use routing::{
+    default_receives_all, ActivityKindName, Addressing, AgentEventPolicy, DefaultReply, Pattern,
+    ReplyLabel, RoutingPolicy, RoutingRule, RuleMatch, MAX_ADDITIONAL_CONSUMERS, MAX_MATCH_ENTRIES,
+    MAX_MATCH_ENTRY_BYTES, MAX_RULES, MAX_TARGETS, ROUTING_POLICY_VERSION,
+};
 pub use secrets::{ChannelSecrets, Secret};
+pub use source_id::{SourceId, AGENT_SOURCE_ID};
 mod sources;
 mod validation;
 pub use platform::Platform;
@@ -32,6 +47,8 @@ use validation::{validate_admission, validate_hash, validate_relay_identity};
 
 pub const CHANNEL_SCHEMA_VERSION: u16 = 1;
 pub const MAX_SOURCES: usize = 4;
+/// The most sources a reader accepts: Telegram, one relay per platform and custom.
+pub const MAX_EXTENDED_SOURCES: usize = 8;
 pub const MAX_ROUTE_IDS: usize = 64;
 pub const MAX_SINKS: usize = 3;
 pub const MAX_PROMPT_TEMPLATE_BYTES: usize = 8 * 1_024;
@@ -189,6 +206,9 @@ pub enum PartitionKey {
 pub struct PartitionRule {
     pub version: u16,
     pub key: PartitionKey,
+    /// The key for custom events on a chat-keyed channel; absent means `key`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_key: Option<PartitionKey>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -226,6 +246,9 @@ pub struct ChannelDefinition {
     pub connection_ref: Option<String>,
     pub partition: PartitionRule,
     pub reply: ReplyPolicy,
+    /// Multi-consumer routing; absent on every legacy channel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub routing: Option<RoutingPolicy>,
     #[serde(default, skip_serializing)]
     pub secrets: ChannelSecrets,
     pub created_at: String,
@@ -243,14 +266,26 @@ pub struct ChannelCreation {
 
 impl ChannelDefinition {
     /// The reader: the rules every definition this image accepts must meet,
-    /// whether restored from storage or admitted by management. It applies
-    /// exactly the legacy rules until readers that understand extended
-    /// routing widen it.
+    /// whether restored from storage or admitted by management. It accepts
+    /// every legacy definition, the extended source and partition shapes
+    /// only where the legacy rules refuse them or `custom_key` is present,
+    /// and a routing policy only when it meets its own rules against the
+    /// rest of the definition. Writes of those shapes are refused
+    /// separately, by the write gate.
     pub fn validate(&self) -> Result<(), ValidationError> {
-        self.validate_legacy()
+        self.validate_head()?;
+        if self.validate_legacy_sources_and_partition().is_err() {
+            sources::validate_extended_sources(&self.sources, &self.secrets)?;
+            self.partition.validate_extended(&self.sources)?;
+        } else if self.partition.custom_key.is_some() {
+            self.partition.validate_extended(&self.sources)?;
+        }
+        self.validate_tail()?;
+        self.validate_routing()
     }
 
-    /// Today's complete validation, kept verbatim. The write gate answers a
+    /// Today's complete validation, kept verbatim; it ignores `routing`,
+    /// which older images cannot read at all. The write gate answers a
     /// write that older images could not read with this error while its flag
     /// is off, so the caller sees the pointer and message it always has.
     pub fn validate_legacy(&self) -> Result<(), ValidationError> {
@@ -307,6 +342,7 @@ impl ChannelDefinition {
                 )?;
             }
         }
+        // Readers accept a channel with no sources; its replies still need one.
         if self
             .reply
             .sinks
@@ -333,7 +369,7 @@ impl ChannelDefinition {
             .as_object()
             .cloned()
             .expect("channel definition is an object");
-        object.insert("secrets".into(), json!({
+        let mut secrets = json!({
             "agent_key_hash": self.secrets.agent_key_hash,
             "channel_key": self.secrets.channel_key.as_ref().map(Secret::as_str),
             "hmac_secrets": self.secrets.hmac_secrets.iter().map(|(key, secret)| {
@@ -342,7 +378,18 @@ impl ChannelDefinition {
             "provider_credential": self.secrets.provider_credential.as_ref().map(Secret::as_str),
             "telegram_bot_token": self.secrets.telegram_bot_token.as_ref().map(Secret::as_str),
             "telegram_webhook_secret": self.secrets.telegram_webhook_secret.as_ref().map(Secret::as_str),
-        }));
+        });
+        // Emitted only when present, so a legacy blob keeps its exact bytes and
+        // an older image, which refuses the unknown key, can still read it.
+        if !self.secrets.consumer_keys.is_empty() {
+            secrets["consumer_keys"] = self
+                .secrets
+                .consumer_keys
+                .iter()
+                .map(|(id, secret)| json!([id, secret.as_str()]))
+                .collect();
+        }
+        object.insert("secrets".into(), secrets);
         Value::Object(object)
     }
 
