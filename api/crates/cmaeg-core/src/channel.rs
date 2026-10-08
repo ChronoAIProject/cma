@@ -14,6 +14,7 @@ use crate::{
 
 mod consumer;
 mod custom_attachments;
+mod extensions;
 mod partition;
 mod platform;
 mod secrets;
@@ -24,6 +25,7 @@ pub use custom_attachments::{
     CustomAttachments, DEFAULT_CUSTOM_ATTACHMENT_POINTER, MAX_CUSTOM_ATTACHMENT_ORIGINS,
     MAX_CUSTOM_ATTACHMENT_POINTER_BYTES,
 };
+pub use extensions::Extensions;
 pub use secrets::{ChannelSecrets, Secret};
 pub use source_id::{SourceId, AGENT_SOURCE_ID};
 mod sources;

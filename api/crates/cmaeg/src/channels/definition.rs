@@ -12,6 +12,7 @@ use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
 use super::definition_sources::{build_secrets, build_sources, validate_credentials};
 pub use super::requests::*;
+use super::write_gate::{self, WriteFlags};
 
 pub fn build_definition(
     request: &ChannelCreateRequest,
@@ -19,6 +20,7 @@ pub fn build_definition(
     record_id: RecordId,
     binding_id: BindingId,
     level: cmaeg_core::channel::ConformanceLevel,
+    flags: WriteFlags,
 ) -> Result<ChannelDefinition, ValidationError> {
     let credentials = &request.credentials;
     if credentials.agent_key.as_str().is_empty() {
@@ -58,7 +60,7 @@ pub fn build_definition(
             .map_err(|error| ValidationError::new("/created_at", error.to_string()))?,
         version: 0,
     };
-    validate_definition(&definition)?;
+    validate_definition(None, &definition, flags)?;
     Ok(definition)
 }
 
@@ -119,6 +121,7 @@ pub fn validate_update_request(request: &ChannelUpdateRequest) -> Result<(), Val
 pub fn build_update(
     request: &ChannelUpdateRequest,
     current: &ChannelDefinition,
+    flags: WriteFlags,
 ) -> Result<ChannelDefinition, ValidationError> {
     if request.provider.target != current.provider.target {
         return Err(ValidationError::new(
@@ -179,7 +182,7 @@ pub fn build_update(
         created_at: current.created_at.clone(),
         version: current.version,
     };
-    validate_definition(&definition)?;
+    validate_definition(Some(current), &definition, flags)?;
     Ok(definition)
 }
 
@@ -213,7 +216,15 @@ pub fn channel_pointer(
     Ok(pointer)
 }
 
-fn validate_definition(definition: &ChannelDefinition) -> Result<(), ValidationError> {
+/// Validate a definition a management write would store, replacing `current`
+/// (`None` for a create). The write gate runs first, so a write it refuses
+/// reports the legacy error it always has before any check below can answer.
+fn validate_definition(
+    current: Option<&ChannelDefinition>,
+    definition: &ChannelDefinition,
+    flags: WriteFlags,
+) -> Result<(), ValidationError> {
+    write_gate::check(current, definition, flags)?;
     definition.validate()?;
     if definition.profile.metadata.owner.subject != definition.owner.subject {
         return Err(ValidationError::new(

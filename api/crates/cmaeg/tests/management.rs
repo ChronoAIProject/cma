@@ -184,3 +184,6 @@ mod custom_attachments;
 
 #[path = "management/audit.rs"]
 mod audit;
+
+#[path = "management/write_gate.rs"]
+mod write_gate;

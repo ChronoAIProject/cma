@@ -12,6 +12,7 @@ mod requests;
 pub mod resolver;
 pub(crate) mod state;
 mod test_turn;
+pub mod write_gate;
 
 pub use definition::{
     ChannelCreateRequest, ChannelUpdateRequest, CredentialPatch, CredentialsRequest,

@@ -45,6 +45,7 @@ pub async fn create(
                 record_id.clone(),
                 binding_id,
                 ConformanceLevel::L1,
+                super::write_gate::WriteFlags::default(),
             )
             .map_err(ManagementError::Invalid)?;
             definition.creation = Some(ChannelCreation {

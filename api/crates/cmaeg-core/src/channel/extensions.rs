@@ -1,0 +1,32 @@
+//! Which stored-shape extensions a channel definition uses.
+use super::ChannelDefinition;
+
+/// Which extensions a definition uses; an older image cannot read either.
+///
+/// Readers of an extension ship before any writer of it, so the write gate
+/// asks this before storing a definition: a legacy-compatible one is exactly
+/// what every deployed image reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Extensions {
+    /// Multi-consumer routing.
+    pub routing: bool,
+    /// Source and partition shapes beyond today's rules.
+    pub sources: bool,
+}
+
+impl Extensions {
+    /// routing: false until the routing field exists (#988 extends it to
+    /// `def.routing.is_some() || !def.secrets.consumer_keys.is_empty()`).
+    /// sources: the legacy source and partition rules refuse the definition.
+    pub fn of(def: &ChannelDefinition) -> Self {
+        Self {
+            routing: false,
+            sources: def.validate_legacy_sources_and_partition().is_err(),
+        }
+    }
+
+    /// Whether an image that predates every extension can read the definition.
+    pub fn legacy_compatible(&self) -> bool {
+        !self.routing && !self.sources
+    }
+}
