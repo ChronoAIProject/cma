@@ -32,6 +32,7 @@ async fn every_tab_renders_the_owners_channel_from_memory() {
     }
     for fact in [
         "<dt>Partition key</dt><dd>per_event</dd>",
+        "<dt>Custom event key</dt><dd>same as the partition key</dd>",
         "<dt>Telegram token</dt><dd>set</dd>",
         "<dt>Telegram webhook secret</dt><dd>set</dd>",
         "<dt>Channel key</dt><dd>set</dd>",

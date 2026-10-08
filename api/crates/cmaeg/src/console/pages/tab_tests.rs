@@ -120,6 +120,33 @@ fn a_routed_channel_whose_definition_is_unreadable_shows_no_policy() {
 }
 
 #[test]
+fn the_overview_names_the_custom_key_and_when_it_is_inert() {
+    let overview = |definition: &cmaeg_core::channel::ChannelDefinition| {
+        let mut summary = readable();
+        summary.detail = Some(ChannelDetail::of(definition));
+        overview::render(&OverviewView {
+            view: &view(summary),
+            public_url: "https://gateway.example",
+            sources: SourceAvailability::Available,
+            multi_consumer: false,
+            unknown_id: "unknown",
+        })
+    };
+    let mut definition = definition(&record(1), "alice", "orders");
+    assert!(overview(&definition)
+        .contains("<dt>Custom event key</dt><dd>same as the partition key</dd>"));
+    definition.partition.key = cmaeg_core::channel::PartitionKey::Conversation;
+    definition.partition.custom_key = Some(cmaeg_core::channel::PartitionKey::EventSubject);
+    let html = overview(&definition);
+    assert!(html.contains("<dt>Partition key</dt><dd>conversation</dd>"));
+    assert!(html.contains("<dt>Custom event key</dt><dd>event_subject</dd>"));
+    definition.sources.clear();
+    assert!(overview(&definition).contains(
+        "<dt>Custom event key</dt><dd>event_subject (inert: no custom source is attached)</dd>"
+    ));
+}
+
+#[test]
 fn connection_managed_and_sourceless_channels_say_so() {
     let mut definition = definition(&record(1), "alice", "orders");
     definition.connection_ref = Some("connection-reference-value".into());

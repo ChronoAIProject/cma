@@ -17,6 +17,11 @@ use super::{mask, routing_view::RoutingView};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ChannelDetail {
     pub partition: &'static str,
+    /// The key custom events are partitioned by, when it differs from
+    /// `partition` (`custom_key`); `custom_key_inert` when no custom source
+    /// is attached to use it.
+    pub custom_key: Option<&'static str>,
+    pub custom_key_inert: bool,
     pub reply: ReplyView,
     pub sources: Vec<SourceView>,
     pub secrets: SecretsView,
@@ -72,6 +77,12 @@ impl ChannelDetail {
         let secrets = &definition.secrets;
         Self {
             partition: partition_label(definition.partition.key),
+            custom_key: definition.partition.custom_key.map(partition_label),
+            custom_key_inert: definition.partition.custom_key.is_some()
+                && !definition
+                    .sources
+                    .iter()
+                    .any(|source| matches!(source, Source::Custom { .. })),
             reply: ReplyView {
                 auto_final: definition.reply.auto_final,
                 ack_after_ms: definition.reply.ack_after_ms,

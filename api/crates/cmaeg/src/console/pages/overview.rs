@@ -145,8 +145,14 @@ fn settings(detail: &ChannelDetail) -> String {
         format!("set for {}", escape(&secrets.hmac_key_ids.join(", ")))
     };
     let mut html = String::from("<h2>Settings</h2>");
+    let custom_key = match (detail.custom_key, detail.custom_key_inert) {
+        (None, _) => "same as the partition key".to_owned(),
+        (Some(key), false) => key.to_owned(),
+        (Some(key), true) => format!("{key} (inert: no custom source is attached)"),
+    };
     html.push_str(&facts(&[
         ("Partition key", detail.partition.to_owned()),
+        ("Custom event key", custom_key),
         (
             "Reply",
             format!(

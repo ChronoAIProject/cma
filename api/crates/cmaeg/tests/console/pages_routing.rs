@@ -144,3 +144,21 @@ async fn the_channel_list_counts_rules_and_marks_pending_consumers() {
     assert_no_secret(&list, "list");
     world.close().await;
 }
+
+#[tokio::test]
+async fn the_overview_shows_the_partition_and_custom_keys() {
+    let world = World::start().await;
+    let routed = super::pages_support::record(1);
+    world.store(
+        routed_support::routed_with(&routed, "alice", "alice-routed", |value| {
+            value["partition"] =
+                serde_json::json!({"version": 1, "key": "conversation", "custom_key": "event_subject"});
+        }),
+        1,
+    );
+    let (sid, _) = world.harness.sign_in("alice", "/console").await;
+    let page = tab(&world, routed.as_str(), "overview", &sid).await;
+    assert!(page.contains("<dt>Partition key</dt><dd>conversation</dd>"));
+    assert!(page.contains("<dt>Custom event key</dt><dd>event_subject</dd>"));
+    world.close().await;
+}
