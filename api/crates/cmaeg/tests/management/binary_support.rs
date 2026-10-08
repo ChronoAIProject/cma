@@ -38,6 +38,10 @@ impl MountedSecrets {
     ) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_cmaeg"));
         command.kill_on_drop(true)
+            .env_remove("CMAEG_AGENT_EVENTS_ENABLED")
+            .env_remove("CMAEG_AGENT_EVENTS_RATE_PER_MINUTE")
+            .env_remove("CMAEG_AGENT_EVENTS_OWNER_RATE_PER_MINUTE")
+            .env_remove("CMAEG_AGENT_EVENTS_ACCEPT_MS")
             .env_remove("CMAEG_ROUTED_CHANNEL_MAX_TURNS")
             .env_remove("CMAEG_ROUTED_OWNER_MAX_TURNS")
             .env_remove("CMAEG_ROUTING_UNKNOWN_TARGET_TEXT")

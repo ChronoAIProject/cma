@@ -8,6 +8,9 @@
 
 use cmaeg::media::transform::MEDIA_ROOT;
 
+#[path = "infra_manifests/agent_events.rs"]
+mod agent_events;
+
 const CONFIGMAP: &str = include_str!("../../../../infra/cmaeg/configmap.yaml");
 const DEPLOYMENT: &str = include_str!("../../../../infra/cmaeg/deployment.yaml");
 const DOCKERFILE: &str = include_str!("../../../../infra/cmaeg/Dockerfile");

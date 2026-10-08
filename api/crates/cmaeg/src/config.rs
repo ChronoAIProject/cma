@@ -6,6 +6,7 @@ use crate::providers::ProviderRegistry;
 use cmaeg_core::{channel::Secret, seal::MasterKeyRing};
 use reqwest::Url;
 
+mod agent_events;
 mod cache;
 mod capacity;
 mod delivery;
@@ -17,6 +18,7 @@ mod service_account;
 mod stt;
 pub mod transformer;
 mod turns;
+pub use agent_events::*;
 pub use cache::*;
 pub use capacity::*;
 pub use delivery::*;
@@ -140,6 +142,7 @@ pub struct Config {
     pub delivery: DeliveryConfig,
     pub media: MediaConfig,
     pub routing: RoutingConfig,
+    pub agent_events: AgentEventsConfig,
     pub routed_capacity: RoutedCapacityConfig,
     pub stt: SttConfig,
     pub transformer: TransformerConfig,
@@ -176,6 +179,7 @@ impl Config {
         // Validated against the registry, so it can only follow it.
         let media = media::config_from_env(&providers)?;
         let routing = routing::config_from_env(&providers)?;
+        let agent_events = AgentEventsConfig::from_env(routing.multi_consumer_enabled)?;
         let routed_capacity = RoutedCapacityConfig::from_env()?;
         let stt = stt::config_from_env()?;
         let transformer = transformer::config_from_env()?;
@@ -213,6 +217,7 @@ impl Config {
             delivery,
             media,
             routing,
+            agent_events,
             routed_capacity,
             stt,
             transformer,

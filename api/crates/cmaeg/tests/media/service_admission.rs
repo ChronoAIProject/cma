@@ -253,6 +253,7 @@ fn config(media: MediaConfig) -> Config {
         delivery: DeliveryConfig::default(),
         media,
         routing: RoutingConfig::default(),
+        agent_events: Default::default(),
         routed_capacity: Default::default(),
         stt: SttConfig::default(),
         transformer: TransformerConfig::default(),
