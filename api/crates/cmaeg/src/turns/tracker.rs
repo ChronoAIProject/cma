@@ -88,6 +88,16 @@ impl TurnTracker {
             tracker: self.clone(),
             key,
         };
+        // Real routed children still hold their lease before execute starts;
+        // the unleased base request tracks a finalizer, not a default turn.
+        let routed_child =
+            request.activity.routing.is_some() && request.lease.lock().unwrap().is_some();
+        let consumer = routed_child.then(|| {
+            request
+                .consumer
+                .as_ref()
+                .map_or("default", cmaeg_core::ids::ConsumerId::as_str)
+        });
         tokio::spawn(
             async move {
                 let _guard = guard;
@@ -95,7 +105,8 @@ impl TurnTracker {
             }
             .instrument(tracing::info_span!("cmaeg.turn",
                 channel = %crate::telemetry::channel_hash(request.channel.id.as_str()),
-                event_id = %request.activity.event_id))
+                event_id = %request.activity.event_id,
+                consumer))
             .with_current_subscriber(),
         );
         Ok(())

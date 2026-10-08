@@ -385,6 +385,7 @@ fn rendered(definition: &serde_json::Value, data: Value, items: Value) -> String
             tools: false,
             downloads: false,
         },
+        None,
     );
     input[0]["content"][0]["text"].as_str().unwrap().to_owned()
 }

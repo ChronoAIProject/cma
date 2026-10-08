@@ -60,6 +60,7 @@ fn rendered(definition: &ChannelDefinition, source: SourceKind, text: &str) -> S
             tools: false,
             downloads: false,
         },
+        None,
     );
     input[0]["content"][0]["text"].as_str().unwrap().to_owned()
 }

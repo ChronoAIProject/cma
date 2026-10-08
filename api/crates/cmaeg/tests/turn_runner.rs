@@ -53,3 +53,9 @@ mod fanout_finalizer;
 
 #[path = "turns/fanout_providers.rs"]
 mod fanout_providers;
+
+#[path = "turns/render_routing.rs"]
+mod render_routing;
+
+#[path = "turns/routed_trace.rs"]
+mod routed_trace;

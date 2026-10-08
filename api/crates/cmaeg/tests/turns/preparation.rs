@@ -51,6 +51,7 @@ fn rendered(
         &request.channel.definition,
         media,
         audience,
+        None,
     )[0]["content"][0]["text"]
         .as_str()
         .unwrap()

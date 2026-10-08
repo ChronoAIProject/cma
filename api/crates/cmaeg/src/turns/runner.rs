@@ -262,7 +262,13 @@ impl TurnRunner {
         let request = TurnRequest {
             timing: turn.timing.clone(),
             conversation_id: turn.conversation_id.clone(),
-            input: render_input::render(&turn.activity, &turn.channel.definition, media, audience),
+            input: render_input::render(
+                &turn.activity,
+                &turn.channel.definition,
+                media,
+                audience,
+                turn.consumer.as_ref(),
+            ),
             idempotency_key: turn.idempotency_key.clone(),
             metadata: metadata::render(turn),
             agent_key: credential.clone(),

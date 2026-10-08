@@ -213,7 +213,8 @@ fn media_only_and_captioned_inputs_carry_the_block() {
     definition.sources = vec![serde_json::from_value(json!({"type":"nyxid_relay","issuer":"https://nyx.example","jwks_url":"https://nyx.example/jwks","key_id":"key","route_ids":["route"],"platform":"telegram","bot_username":"support_bot","admission":{"type":"all"}})).unwrap()];
     let photo = item(json!({"kind":"image","variant":"photo"}));
     let text_of = |activity: &Activity, definition: &ChannelDefinition| {
-        render_input::render(activity, definition, &fenced(), GUARDED)[0]["content"][0]["text"]
+        render_input::render(activity, definition, &fenced(), GUARDED, None)[0]["content"][0]
+            ["text"]
             .as_str()
             .unwrap()
             .to_owned()

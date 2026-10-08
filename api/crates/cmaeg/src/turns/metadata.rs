@@ -26,6 +26,16 @@ pub(super) fn render(request: &LaunchRequest) -> BTreeMap<String, String> {
             },
         ),
     ]);
+    if request.activity.routing.is_some() {
+        values.insert(
+            "cmaeg.consumer".into(),
+            request
+                .consumer
+                .as_ref()
+                .map_or("default", cmaeg_core::ids::ConsumerId::as_str)
+                .to_owned(),
+        );
+    }
     if request.event_ref.as_str().len() <= 512 {
         values.insert(
             "cmaeg.event_ref".into(),

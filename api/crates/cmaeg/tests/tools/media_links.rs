@@ -273,6 +273,7 @@ async fn no_capability_in_logs_prompts_or_context() {
         &channel.definition,
         &RenderMedia::empty(None),
         audience,
+        None,
     )[0]["content"][0]["text"]
         .as_str()
         .unwrap()

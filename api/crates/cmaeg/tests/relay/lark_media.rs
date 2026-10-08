@@ -135,6 +135,7 @@ pub fn rendered(fixture: &Fixture) -> String {
         &request.channel.definition,
         &RenderMedia::empty(None),
         audience,
+        None,
     );
     input[0]["content"][0]["text"].as_str().unwrap().to_owned()
 }

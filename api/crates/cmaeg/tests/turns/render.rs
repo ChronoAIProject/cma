@@ -17,6 +17,7 @@ fn render(activity: &Activity, definition: &ChannelDefinition) -> Vec<ResponsesI
             tools: false,
             downloads: false,
         },
+        None,
     );
     let fenced = render_input::render(
         activity,
@@ -26,6 +27,7 @@ fn render(activity: &Activity, definition: &ChannelDefinition) -> Vec<ResponsesI
             tools: true,
             downloads: true,
         },
+        None,
     );
     assert_eq!(plain, fenced);
     plain
@@ -168,6 +170,7 @@ fn lark_post_placeholders_name_their_embedded_kind() {
             tools: true,
             downloads: false,
         },
+        None,
     );
     assert_eq!(
         input[0]["content"][0]["text"],

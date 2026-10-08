@@ -4,18 +4,20 @@ use crate::ingress::custom::attachments::elided;
 use cmaeg_core::{
     activity::{Activity, ActivityKind, Attachment, AttachmentSource},
     channel::{ChannelDefinition, Source},
+    ids::ConsumerId,
     profile::canonical_json,
 };
 use serde_json::{json, Value};
 pub type ResponsesInputItem = Value;
 /// Render one user message with a single `input_text` part. An activity with
-/// attachments gains the `[Attachments]` block; one without renders exactly
-/// as it did before attachments existed.
+/// attachments gains the `[Attachments]` block. Routed activities strip
+/// resolved addressing and identify the serving target; legacy input is unchanged.
 pub fn render(
     activity: &Activity,
     definition: &ChannelDefinition,
     media: &RenderMedia,
     audience: Audience,
+    consumer: Option<&ConsumerId>,
 ) -> Vec<ResponsesInputItem> {
     let text = match &activity.kind {
         ActivityKind::Message {
@@ -25,6 +27,9 @@ pub fn render(
             reply_to,
             album_id,
         } => {
+            // Routing validation pins an in-range UTF-8 boundary into this
+            // activity. Legacy text has no routing offset.
+            let text = addressed_remainder(text, activity);
             let text = if *mentions_bot {
                 cmaeg_core::chat::strip_address(
                     text,
@@ -32,7 +37,7 @@ pub fn render(
                     addressed_username(definition, activity),
                 )
             } else {
-                text.clone()
+                text.to_owned()
             };
             let text = if reply_to.is_some() {
                 format!("[replying to an earlier message]\n{text}")
@@ -51,6 +56,14 @@ pub fn render(
                 .and_then(Value::as_str)
                 .unwrap_or(&result.action_id);
             format!("The user chose \"{label}\" (block {}).", result.block_id)
+        }
+        ActivityKind::Command { name, args }
+            if name == "to"
+                && activity.routing.as_ref().is_some_and(|routing| {
+                    routing.resolution == cmaeg_core::activity::RouteResolution::Command
+                }) =>
+        {
+            addressed_remainder(args, activity).to_owned()
         }
         ActivityKind::Command { name, args } => format!("/{name} {args}").trim_end().to_owned(),
         ActivityKind::Event { ce, attachments } => {
@@ -84,7 +97,33 @@ pub fn render(
             with_block(text, render_block(attachments, None, media, audience))
         }
     };
+    let text = match &activity.routing {
+        Some(routing) if routing.targets.len() > 1 => {
+            let default = ConsumerId::default_consumer();
+            let serving = consumer.unwrap_or(&default);
+            let name = routing
+                .targets
+                .iter()
+                .find(|target| &target.id == serving)
+                .map_or("unknown", |target| target.name.as_str());
+            let names = routing
+                .targets
+                .iter()
+                .map(|target| format!("@{}", target.name))
+                .collect::<Vec<_>>()
+                .join(" and ");
+            format!("[Routed to {names}; you are @{name}]\n{text}")
+        }
+        _ => text,
+    };
     vec![json!({"role":"user","content":[{"type":"input_text","text":text}]})]
+}
+fn addressed_remainder<'a>(text: &'a str, activity: &Activity) -> &'a str {
+    let offset = activity
+        .routing
+        .as_ref()
+        .map_or(0, |routing| usize::from(routing.addressing_bytes));
+    &text[offset..]
 }
 /// Where an event with attachments listed them: the channel's configured
 /// pointer. An inline locator records the pointer the event was admitted
@@ -121,7 +160,7 @@ fn with_block(text: String, block: Option<String>) -> String {
         Some(block) => format!("{}\n\n{block}", text.trim_end()),
     }
 }
-/// The bot username a chat address names. On a definition with extended
+/// The bot username a chat address names. On routed activities or extended
 /// sources, that is the bot of the source the activity arrived on; a legacy
 /// definition keeps the renderer's original choice, so its provider input
 /// stays byte-identical (invariant I5).
@@ -129,7 +168,7 @@ fn addressed_username<'a>(
     definition: &'a ChannelDefinition,
     activity: &Activity,
 ) -> Option<&'a str> {
-    if definition.has_extended_sources() {
+    if activity.routing.is_some() || definition.has_extended_sources() {
         definition.bot_username_of(&activity.source)
     } else {
         first_bot_username(definition)

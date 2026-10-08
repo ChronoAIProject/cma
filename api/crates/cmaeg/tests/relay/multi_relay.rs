@@ -174,6 +174,7 @@ async fn a_telegram_relay_behind_a_lark_relay_keeps_its_cards_and_its_own_bot() 
             tools: false,
             downloads: false,
         },
+        None,
     );
     assert_eq!(input[0]["content"][0]["text"], "hello");
 }
