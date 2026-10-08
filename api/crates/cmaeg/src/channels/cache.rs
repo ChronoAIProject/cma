@@ -92,11 +92,24 @@ impl ChannelCache {
         metrics::gauge!(crate::telemetry::names::CHANNELS_CACHED)
             .increment(self.entries.len() as f64 - before as f64);
     }
-    pub(crate) fn invalidate(&self, id: &str) {
+    pub(crate) fn invalidate(&self, id: &str) -> usize {
         let _guard = self.insertion.lock().unwrap();
         if self.entries.remove(id).is_some() {
             metrics::gauge!(crate::telemetry::names::CHANNELS_CACHED).decrement(1);
+            1
+        } else {
+            0
         }
+    }
+    /// Management mutations scan the bounded cache instead of maintaining an
+    /// alias index on every insertion, replacement and eviction.
+    pub(crate) fn invalidate_where(&self, mut matches: impl FnMut(&CacheEntry) -> bool) -> usize {
+        let _guard = self.insertion.lock().unwrap();
+        let before = self.entries.len();
+        self.entries.retain(|_, entry| !matches(entry));
+        let removed = before - self.entries.len();
+        metrics::gauge!(crate::telemetry::names::CHANNELS_CACHED).decrement(removed as f64);
+        removed
     }
     pub fn len(&self) -> usize {
         self.entries.len()

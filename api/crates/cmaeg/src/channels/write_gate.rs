@@ -22,10 +22,10 @@ pub const DYNAMIC_SOURCES_DISABLED: &str = "dynamic_sources_disabled";
 /// The refusal of a write that introduces or modifies routing.
 pub const MULTI_CONSUMER_DISABLED: &str = "multi_consumer_disabled";
 
-/// Flags that admit writes of new stored shapes. All false until the flags exist.
+/// Operator switches that admit writes of new stored shapes; off by default.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct WriteFlags {
-    /// Admits routing to several consumers; wired by #998.
+    /// Admits routing to several consumers.
     pub multi_consumer: bool,
     /// Admits extended source and partition shapes; wired by #999.
     pub dynamic_sources: bool,
@@ -54,10 +54,13 @@ pub(crate) fn check(
     if extensions.legacy_compatible() {
         return Ok(());
     }
-    let carried_sources =
-        current.is_some_and(|current| carries_through(current, next, Extension::Sources));
-    let carried_routing =
-        current.is_some_and(|current| carries_through(current, next, Extension::Routing));
+    let carried_sources = current.is_some_and(|current| {
+        carries_through(current, next, Extension::Sources)
+            || removes_inert_key_on_exit(current, next)
+    });
+    let carried_routing = current.is_some_and(|current| {
+        carries_through(current, next, Extension::Routing) || removes_one_consumer(current, next)
+    });
     let sources = !extensions.sources || flags.dynamic_sources || carried_sources;
     let routing = !extensions.routing || flags.multi_consumer || carried_routing;
     if sources && routing {
@@ -95,6 +98,71 @@ pub(crate) fn check(
 enum Extension {
     Sources,
     Routing,
+}
+
+/// A routing exit also strips an unused custom partition key. Remaining
+/// source extensions still carry through exactly; this cannot detach a
+/// source, change its credential or remove a key used by a custom source.
+fn removes_inert_key_on_exit(current: &ChannelDefinition, next: &ChannelDefinition) -> bool {
+    if current.routing.is_none()
+        || next.routing.is_some()
+        || !next.secrets.consumer_keys.is_empty()
+        || current.partition.custom_key.is_none()
+        || next.partition.custom_key.is_some()
+        || current
+            .sources
+            .iter()
+            .any(|source| matches!(source, Source::Custom { .. }))
+    {
+        return false;
+    }
+    let mut partition = current.partition.clone();
+    partition.custom_key = None;
+    let mut before = SourceExtension::of(current);
+    before.partition = &partition;
+    before == SourceExtension::of(next)
+}
+
+/// The switch-off exit removes exactly one additional consumer and its key.
+/// Compare the complete projection so this cannot carry unrelated policy,
+/// credentials or source edits through the routing exemption.
+fn removes_one_consumer(current: &ChannelDefinition, next: &ChannelDefinition) -> bool {
+    let (Some(before), Some(after)) = (&current.routing, &next.routing) else {
+        return false;
+    };
+    if before.consumers.len() != after.consumers.len() + 1 {
+        return false;
+    }
+    let removed: Vec<_> = before
+        .consumers
+        .iter()
+        .filter(|consumer| !after.consumers.iter().any(|kept| kept.id == consumer.id))
+        .collect();
+    let [removed] = removed.as_slice() else {
+        return false;
+    };
+    if current
+        .secrets
+        .consumer_keys
+        .iter()
+        .filter(|(id, _)| id == &removed.id)
+        .count()
+        != 1
+    {
+        return false;
+    }
+    let mut projected = current.clone();
+    projected
+        .routing
+        .as_mut()
+        .unwrap()
+        .consumers
+        .retain(|consumer| consumer.id != removed.id);
+    projected
+        .secrets
+        .consumer_keys
+        .retain(|(id, _)| id != &removed.id);
+    &projected == next
 }
 
 /// Whether `current` uses `extension` and `next` keeps it intact.

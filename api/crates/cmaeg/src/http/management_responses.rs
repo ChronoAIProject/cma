@@ -33,6 +33,11 @@ pub(super) fn channel_response(
             custom_event_url: format!("{}/v1/channels/{}/events", state.public_url, channel_id),
         },
         definition: super::schema::PublicChannelDefinition::new(definition, version),
+        warnings: crate::channels::warnings::for_channel(
+            definition,
+            &state.routing.non_human_providers,
+            &state.media_tool_providers,
+        ),
     })
 }
 
@@ -87,6 +92,16 @@ pub(super) fn management_error(error: ManagementError) -> Response {
         ManagementError::Invalid(error) => (
             StatusCode::BAD_REQUEST,
             ProblemCode::InvalidRequest,
+            error.to_string(),
+        ),
+        ManagementError::InvalidReason(detail) => (
+            StatusCode::BAD_REQUEST,
+            ProblemCode::InvalidRequest,
+            detail.into(),
+        ),
+        error @ ManagementError::ConflictReason { .. } => (
+            StatusCode::CONFLICT,
+            ProblemCode::Conflict,
             error.to_string(),
         ),
         ManagementError::Provider(crate::providers::ProviderError::UnknownProvider(detail))

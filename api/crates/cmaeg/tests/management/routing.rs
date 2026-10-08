@@ -54,6 +54,10 @@ fn consumer(id: &str, name: &str, provider: &str, key: &str, profile: &Value) ->
 
 /// Store the routed channel for alice and return its channel and record ids.
 fn seed(gateway: &Gateway) -> (String, String) {
+    seed_with(gateway, |_| {})
+}
+
+fn seed_with(gateway: &Gateway, edit: impl FnOnce(&mut Value)) -> (String, String) {
     let record_id = uuid::Uuid::new_v4().to_string();
     let mut value: Value = serde_json::from_str(include_str!(
         "../../../cmaeg-core/tests/fixtures/channel.json"
@@ -87,6 +91,7 @@ fn seed(gateway: &Gateway) -> (String, String) {
         "default_reply": {"type": "sinks"}});
     value["reply"]["sinks"] = json!([{"type": "source"},
         {"type": "result_webhook", "url": "https://receiver.example/events", "hmac_key_id": "h1"}]);
+    edit(&mut value);
     let definition: ChannelDefinition = serde_json::from_value(value).unwrap();
     definition.validate().unwrap();
     let keys = key_ring(1);
@@ -114,6 +119,12 @@ fn stored(gateway: &Gateway, record_id: &str) -> ChannelDefinition {
 /// thread-scoped subscriber captures every trace line of both requests.
 #[tokio::test(flavor = "current_thread")]
 async fn a_routed_channel_reads_back_with_only_hashes_and_survives_a_full_put() {
+    for enabled in [false, true] {
+        routed_full_put(enabled).await;
+    }
+}
+
+async fn routed_full_put(enabled: bool) {
     let capture = Capture::default();
     let writer = capture.clone();
     let _logs = tracing::subscriber::set_default(
@@ -123,7 +134,7 @@ async fn a_routed_channel_reads_back_with_only_hashes_and_survives_a_full_put() 
             .with_writer(move || writer.clone())
             .finish(),
     );
-    let gateway = Gateway::start().await;
+    let gateway = Gateway::with_routing(enabled).await;
     let (channel_id, record_id) = seed(&gateway);
     let before = stored(&gateway, &record_id);
 
@@ -173,4 +184,49 @@ async fn a_routed_channel_reads_back_with_only_hashes_and_survives_a_full_put() 
         assert!(!logs.contains(key), "a consumer key reached the logs");
     }
     gateway.close().await;
+}
+
+#[tokio::test]
+async fn a_default_key_collision_is_refused_before_provider_or_record_writes() {
+    for enabled in [false, true] {
+        let gateway = Gateway::with_routing(enabled).await;
+        let (channel_id, record_id) = seed_with(&gateway, |value| {
+            value["routing"]["consumers"][1]["pending"] = true.into();
+        });
+        let before = gateway.cma.records()[&record_id].clone();
+        let definition = stored(&gateway, &record_id);
+        let mut put = create_body();
+        put["expected_version"] = 1.into();
+        put["sources"] = sources();
+        put["partition"] = serde_json::to_value(&definition.partition).unwrap();
+        put["reply"] = serde_json::to_value(&definition.reply).unwrap();
+        let calls = gateway.provider_calls();
+        for (_, key) in KEYS {
+            put["credentials"] = json!({"agent_key": key});
+            let response = gateway.update(&channel_id, &put).await;
+            assert_eq!(response.status(), 400);
+            assert_eq!(response.headers()["cache-control"], "no-store");
+            let problem: Value = response.json().await.unwrap();
+            assert_eq!(problem["code"], "invalid_request");
+            assert_eq!(
+                problem["detail"],
+                "/credentials/agent_key: consumer_key_reused"
+            );
+        }
+        // Dynamic sources are still disabled: their legacy error takes
+        // precedence even when this same request also reuses a consumer key.
+        put["sources"]
+            .as_array_mut()
+            .unwrap()
+            .push(relay_request("slack", "route-4"));
+        let response = gateway.update(&channel_id, &put).await;
+        assert_eq!(response.status(), 400);
+        let problem: Value = response.json().await.unwrap();
+        assert_eq!(problem["detail"], "/sources/4: too many sources");
+        assert_eq!(gateway.provider_calls(), calls);
+        let after = gateway.cma.records()[&record_id].clone();
+        assert_eq!(after.version, before.version);
+        assert_eq!(after.blob, before.blob);
+        gateway.close().await;
+    }
 }

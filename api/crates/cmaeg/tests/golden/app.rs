@@ -59,7 +59,7 @@ pub struct GoldenApp {
     pub client: reqwest::Client,
     tracker: Arc<TurnTracker>,
     engine: Option<DeliveryEngine>,
-    _cma: FakeCma,
+    pub cma: FakeCma,
     identity: Identity,
     tasks: Vec<JoinHandle<()>>,
 }
@@ -162,7 +162,7 @@ impl GoldenApp {
                 .unwrap(),
             tracker,
             engine: Some(engine),
-            _cma: cma,
+            cma,
             identity,
             tasks: vec![telegram_task, server],
         }

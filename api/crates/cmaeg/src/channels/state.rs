@@ -12,6 +12,28 @@ use cmaeg_core::{
 };
 use std::{collections::BTreeMap, fmt, sync::Arc};
 use tokio::sync::Mutex;
+
+/// Bounded management classifications; no caller-controlled metric labels.
+#[derive(Clone, Copy)]
+pub enum InvalidationPath {
+    Rest,
+    Recovery,
+    Rekey,
+    Delete,
+    Console,
+}
+impl InvalidationPath {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Rest => "rest",
+            Self::Recovery => "recovery",
+            Self::Rekey => "rekey",
+            Self::Delete => "delete",
+            Self::Console => "console",
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct ManagementState {
     pub resolver: super::resolver::ChannelResolver,
@@ -28,6 +50,12 @@ pub struct ManagementState {
     /// Inbound media switch. Off, a custom source's attachments setting is
     /// refused, so it is stored only once every replica can parse it.
     pub media_enabled: bool,
+    /// Configured tool-capable providers, independent of runtime media switches.
+    pub media_tool_providers: crate::MediaToolProviders,
+    /// Shared operator routing policy, including the management write switch.
+    pub routing: crate::RoutingConfig,
+    pub routed_capacity: crate::RoutedCapacityConfig,
+    pub index: Arc<dyn super::observer::ChannelIndexObserver>,
     mutations: Arc<[Mutex<()>; 64]>,
     pub(crate) idempotency: Arc<Mutex<BTreeMap<(String, String), CachedResponse>>>,
 }
@@ -40,6 +68,19 @@ pub(crate) struct CachedResponse {
 }
 
 impl ManagementState {
+    /// Count mutation invalidations even when the record has no cached aliases.
+    pub fn invalidate_record(
+        &self,
+        record_id: &RecordId,
+        also_id: Option<&str>,
+        path: InvalidationPath,
+    ) {
+        self.resolver.invalidate_record(record_id, also_id);
+        metrics::counter!(crate::telemetry::names::CHANNEL_INVALIDATIONS,
+            crate::telemetry::names::PATH => path.label())
+        .increment(1);
+    }
+
     pub fn new(
         providers: Arc<ProviderClient>,
         records: Arc<RecordClient>,
@@ -65,8 +106,19 @@ impl ManagementState {
             cma_service_token: config.cma_service_token,
             telegram: None,
             media_enabled: false,
+            media_tool_providers: Default::default(),
+            routing: crate::RoutingConfig::default(),
+            routed_capacity: crate::RoutedCapacityConfig::default(),
+            index: Arc::new(crate::turns::observer::NoopObserver),
             idempotency: Arc::new(Mutex::new(BTreeMap::new())),
             mutations: Arc::new(std::array::from_fn(|_| Mutex::new(()))),
+        }
+    }
+
+    pub(crate) fn write_flags(&self) -> super::write_gate::WriteFlags {
+        super::write_gate::WriteFlags {
+            multi_consumer: self.routing.multi_consumer_enabled,
+            dynamic_sources: false,
         }
     }
 
@@ -89,10 +141,18 @@ impl CreatorAuthState for ManagementState {
 #[derive(Debug)]
 pub enum ManagementError {
     Invalid(ValidationError),
+    InvalidReason(&'static str),
     Provider(ProviderError),
     Record(RecordError),
     NotFound,
-    Conflict { expected: u64, actual: Option<u64> },
+    Conflict {
+        expected: u64,
+        actual: Option<u64>,
+    },
+    ConflictReason {
+        detail: &'static str,
+        pointer: Option<String>,
+    },
     Unauthorized,
     Internal(String),
 }
@@ -101,6 +161,7 @@ impl fmt::Display for ManagementError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Invalid(error) => write!(formatter, "{error}"),
+            Self::InvalidReason(detail) => formatter.write_str(detail),
             Self::Provider(error) => write!(formatter, "{error}"),
             Self::Record(error) => write!(formatter, "{error}"),
             Self::NotFound => formatter.write_str("channel was not found"),
@@ -109,6 +170,12 @@ impl fmt::Display for ManagementError {
                     formatter,
                     "channel version conflict: expected {expected}, actual {actual:?}"
                 )
+            }
+            Self::ConflictReason { detail, pointer } => {
+                if let Some(pointer) = pointer {
+                    write!(formatter, "{pointer}: ")?;
+                }
+                formatter.write_str(detail)
             }
             Self::Unauthorized => formatter.write_str("management service authentication failed"),
             Self::Internal(detail) => formatter.write_str(detail),

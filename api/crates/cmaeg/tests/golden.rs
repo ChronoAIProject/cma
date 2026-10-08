@@ -15,6 +15,8 @@ mod fixture;
 mod identities;
 #[path = "latency/identity.rs"]
 pub mod identity;
+#[path = "golden/invalidation.rs"]
+mod invalidation;
 #[path = "golden/previous_schema.rs"]
 mod previous_schema;
 #[path = "golden/provider_capture.rs"]

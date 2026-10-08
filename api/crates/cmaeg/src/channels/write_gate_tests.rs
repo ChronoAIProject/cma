@@ -2,7 +2,7 @@
 //! carry-through and removal rules are decided from the two definitions alone.
 use super::{check, WriteFlags};
 use cmaeg_core::{
-    channel::{ChannelDefinition, Secret},
+    channel::{ChannelDefinition, Extensions, Secret},
     profile::EventWorkerProfile,
     ValidationError,
 };
@@ -288,4 +288,97 @@ fn both_extensions_carry_through_together() {
     let mut next = current.clone();
     next.name = "renamed".into();
     check(Some(&current), &next, WriteFlags::default()).unwrap();
+}
+
+#[test]
+fn routing_exit_can_remove_only_an_inert_custom_key_from_extended_sources() {
+    use cmaeg_core::channel::{PartitionKey, Sink};
+    for empty in [false, true] {
+        let mut current = routed();
+        current.sources = if empty {
+            Vec::new()
+        } else {
+            vec![
+                serde_json::from_value(relay("lark", "route-lark")).unwrap(),
+                serde_json::from_value(relay("feishu", "route-feishu")).unwrap(),
+            ]
+        };
+        current.reply.sinks = vec![Sink::Sync {}];
+        current.partition.key = PartitionKey::Conversation;
+        current.partition.custom_key = Some(PartitionKey::EventSubject);
+        current.validate().unwrap();
+        let mut next = current.clone();
+        next.routing = None;
+        next.secrets.consumer_keys.clear();
+        next.partition.custom_key = None;
+        next.validate().unwrap();
+        assert!(Extensions::of(&next).sources);
+        check(Some(&current), &next, WriteFlags::default()).unwrap();
+
+        let mut credentials = next.clone();
+        credentials.secrets.channel_key = Some(Secret::new("fixture-changed-key"));
+        let mut partition = next.clone();
+        partition.partition.key = PartitionKey::Thread;
+        let mut not_exiting = next.clone();
+        not_exiting.routing = current.routing.clone();
+        not_exiting.secrets.consumer_keys = current.secrets.consumer_keys.clone();
+        for refused in [credentials, partition, not_exiting] {
+            assert!(check(Some(&current), &refused, WriteFlags::default()).is_err());
+        }
+        if !empty {
+            let mut changed_sources = next.clone();
+            changed_sources.sources.reverse();
+            assert!(check(Some(&current), &changed_sources, WriteFlags::default()).is_err());
+        }
+        let mut already_unrouted = current.clone();
+        already_unrouted.routing = None;
+        already_unrouted.secrets.consumer_keys.clear();
+        assert!(check(Some(&already_unrouted), &next, WriteFlags::default()).is_err());
+    }
+}
+
+#[test]
+fn routing_exit_cannot_remove_a_custom_key_used_by_a_custom_source() {
+    use cmaeg_core::channel::PartitionKey;
+    let mut current = routed();
+    current.partition.key = PartitionKey::Conversation;
+    current.partition.custom_key = Some(PartitionKey::EventSubject);
+    current.validate().unwrap();
+    let mut next = current.clone();
+    next.routing = None;
+    next.secrets.consumer_keys.clear();
+    next.partition.custom_key = None;
+    assert!(check(Some(&current), &next, WriteFlags::default()).is_err());
+}
+
+#[test]
+fn flag_off_consumer_removal_accepts_only_the_exact_projection() {
+    for pending in [false, true] {
+        let mut current = routed();
+        current.routing.as_mut().unwrap().consumers[0].pending = pending;
+        let id = current.routing.as_ref().unwrap().consumers[0].id.clone();
+        let mut next = current.clone();
+        next.routing.as_mut().unwrap().consumers.remove(0);
+        next.secrets
+            .consumer_keys
+            .retain(|(consumer, _)| consumer != &id);
+        check(Some(&current), &next, WriteFlags::default()).unwrap();
+        let mut policy = next.clone();
+        policy.routing.as_mut().unwrap().max_targets = 2;
+        let mut key = next.clone();
+        key.secrets.consumer_keys[0].1 = Secret::new("fixture-changed-key");
+        let mut source = next.clone();
+        source.sources.reverse();
+        let mut name = next.clone();
+        name.name = "unrelated edit".into();
+        for changed in [policy, key, source, name] {
+            assert!(check(Some(&current), &changed, WriteFlags::default()).is_err());
+        }
+        let mut missing_key = current.clone();
+        missing_key
+            .secrets
+            .consumer_keys
+            .retain(|(consumer, _)| consumer != &id);
+        assert!(check(Some(&missing_key), &next, WriteFlags::default()).is_err());
+    }
 }

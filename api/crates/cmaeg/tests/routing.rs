@@ -28,3 +28,10 @@ pub mod fake_provider;
 
 #[path = "routing/privacy.rs"]
 mod privacy;
+
+#[path = "fake_nyxid.rs"]
+pub mod fake_nyxid;
+#[path = "routing/management_support.rs"]
+mod management_support;
+#[path = "routing/management_walkthrough.rs"]
+mod management_walkthrough;

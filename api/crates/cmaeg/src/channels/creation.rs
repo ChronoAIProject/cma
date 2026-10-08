@@ -45,7 +45,7 @@ pub async fn create(
                 record_id.clone(),
                 binding_id,
                 ConformanceLevel::L1,
-                super::write_gate::WriteFlags::default(),
+                state.write_flags(),
             )
             .map_err(ManagementError::Invalid)?;
             definition.creation = Some(ChannelCreation {
@@ -133,7 +133,11 @@ pub async fn create(
         }
         Err(error) => return Err(ManagementError::Record(error)),
     };
-    state.resolver.invalidate(current.channel_id.as_str());
+    state.invalidate_record(
+        &record_id,
+        Some(current.channel_id.as_str()),
+        InvalidationPath::Recovery,
+    );
     Ok(CreatedChannel {
         channel_id: current.channel_id,
         record_id,

@@ -4,19 +4,21 @@ use super::definition::{
     validate_update_request, ChannelCreateRequest, ChannelUpdateRequest, SourceRequest,
 };
 pub use super::lifecycle::{delete, rekey};
-pub use super::state::{CreatedChannel, LoadedChannel, ManagementError, ManagementState};
-pub use super::test_turn::{test_turn, TestResult};
-use super::write_gate::WriteFlags;
+pub use super::state::{
+    CreatedChannel, InvalidationPath, LoadedChannel, ManagementError, ManagementState,
+};
+use super::target::{loaded_id, open_target, ChannelTarget};
+pub use super::test_turn::{test_consumer_turn, test_turn, TestResult};
 use crate::{
     auth::Creator,
     providers::{BindingRequest, ToolsAdvertisement},
     records::{RecordError, RecordValue},
 };
 use cmaeg_core::{
-    channel::{ChannelDefinition, ConformanceLevel},
+    channel::{ChannelDefinition, ConformanceLevel, Extensions},
     ids::{BindingId, ChannelId, RecordId},
     profile::canonical_json,
-    seal::{open_blob, seal_blob, ChannelPointer, MasterKeyRing, OpenError},
+    seal::{open_blob, seal_blob, ChannelPointer, MasterKeyRing, OpenError, MAX_BLOB_BYTES},
     ValidationError,
 };
 use uuid::Uuid;
@@ -57,7 +59,7 @@ pub async fn create(
         record_id.clone(),
         binding_id.clone(),
         ConformanceLevel::L1,
-        WriteFlags::default(),
+        state.write_flags(),
     )
     .map_err(ManagementError::Invalid)?;
     let pointer =
@@ -164,9 +166,9 @@ pub(super) fn custom_attachments_allowed(
 pub async fn load(
     state: &ManagementState,
     creator: &Creator,
-    channel_id: &ChannelId,
+    target: &ChannelTarget,
 ) -> Result<LoadedChannel, ManagementError> {
-    let loaded = load_unowned(state, channel_id).await?;
+    let loaded = load_target(state, target, Some(creator)).await?;
     if loaded.definition.owner.subject != creator.subject {
         return Err(ManagementError::NotFound);
     }
@@ -176,12 +178,12 @@ pub async fn load(
 pub async fn update(
     state: &ManagementState,
     creator: &Creator,
-    channel_id: &ChannelId,
+    target: &ChannelTarget,
     mut request: ChannelUpdateRequest,
 ) -> Result<LoadedChannel, ManagementError> {
-    let pointer = open_pointer(state, channel_id)?;
+    let pointer = open_target(state, target)?;
     let _guard = state.mutation_guard(pointer.record_id.as_str()).await;
-    let current = load(state, creator, channel_id).await?;
+    let current = load(state, creator, target).await?;
     crate::connections::binding::expand_update(
         state,
         creator,
@@ -216,9 +218,13 @@ pub async fn update(
             "cannot change an existing channel provider",
         )));
     }
-    state.resolver.invalidate(channel_id.as_str());
+    state.invalidate_record(
+        &pointer.record_id,
+        Some(current.channel_id.as_str()),
+        InvalidationPath::Rest,
+    );
     // The write gate runs inside the build, before the provider sees anything.
-    let mut definition = build_update(&request, &current.definition, WriteFlags::default())
+    let mut definition = build_update(&request, &current.definition, state.write_flags())
         .map_err(ManagementError::Invalid)?;
     definition.version = current.record.version;
     // Validate the complete definition and its storage bound before the provider sees a mutation.
@@ -249,9 +255,13 @@ pub async fn update(
         )
         .await
         .map_err(ManagementError::Record)?;
-    state.resolver.invalidate(channel_id.as_str());
+    state.invalidate_record(
+        &pointer.record_id,
+        Some(current.channel_id.as_str()),
+        InvalidationPath::Rest,
+    );
     Ok(LoadedChannel {
-        channel_id: channel_id.clone(),
+        channel_id: current.channel_id,
         pointer: current.pointer,
         definition,
         record: RecordValue { blob, version },
@@ -284,9 +294,17 @@ pub(super) fn open_pointer(
 
 pub(super) async fn load_unowned(
     state: &ManagementState,
-    channel_id: &ChannelId,
+    target: &ChannelTarget,
 ) -> Result<LoadedChannel, ManagementError> {
-    let pointer = open_pointer(state, channel_id)?;
+    load_target(state, target, None).await
+}
+
+async fn load_target(
+    state: &ManagementState,
+    target: &ChannelTarget,
+    creator: Option<&Creator>,
+) -> Result<LoadedChannel, ManagementError> {
+    let pointer = open_target(state, target)?;
     let record = state
         .records
         .get(&pointer.record_url)
@@ -305,11 +323,19 @@ pub(super) async fn load_unowned(
     if definition.record_id != pointer.record_id {
         return Err(ManagementError::NotFound);
     }
+    // Record ids are enumerable authority lookups. Verify their owner before
+    // interpreting a private retained identity; keep public Id errors intact.
+    if matches!(target, ChannelTarget::Record(_))
+        && creator.is_some_and(|creator| definition.owner.subject != creator.subject)
+    {
+        return Err(ManagementError::NotFound);
+    }
     definition
         .validate()
         .map_err(|_| ManagementError::Internal("retained channel is invalid".into()))?;
+    let channel_id = loaded_id(state, target, &pointer, &definition)?;
     Ok(LoadedChannel {
-        channel_id: channel_id.clone(),
+        channel_id,
         pointer,
         definition,
         record,
@@ -320,12 +346,19 @@ pub(super) fn seal_definition(
     ring: &MasterKeyRing,
     definition: &ChannelDefinition,
 ) -> Result<Vec<u8>, ManagementError> {
-    let json = definition.to_blob_json();
-    seal_blob(ring, canonical_json(json).as_bytes()).map_err(|error| match error {
-        cmaeg_core::seal::SealError::TooLarge => ManagementError::Invalid(ValidationError::new(
-            "/",
-            "sealed channel exceeds the record size limit",
-        )),
+    let plaintext = canonical_json(definition.to_blob_json());
+    seal_blob(ring, plaintext.as_bytes()).map_err(|error| match error {
+        cmaeg_core::seal::SealError::TooLarge => {
+            let mut detail = "sealed channel exceeds the record size limit".to_owned();
+            if !Extensions::of(definition).legacy_compatible() {
+                // seal_blob checks the canonical plaintext bound before encryption.
+                detail.push_str(&format!(
+                    " bytes={} limit={MAX_BLOB_BYTES}",
+                    plaintext.len()
+                ));
+            }
+            ManagementError::Invalid(ValidationError::new("/", detail))
+        }
         _ => ManagementError::Internal("channel blob cannot be sealed".into()),
     })
 }

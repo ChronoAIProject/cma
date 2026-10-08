@@ -1,12 +1,13 @@
 //! Bounded synthetic turn used to verify a channel's provider binding.
 use super::management::{load, ManagementError, ManagementState};
+use super::target::ChannelTarget;
 use crate::{
     auth::Creator,
     providers::{ProviderError, ResponsesEvent, TurnRequest},
 };
 use cmaeg_core::{
     channel::ConformanceLevel,
-    ids::{ChannelId, ConversationId, IdempotencyKey},
+    ids::{ConsumerId, ConversationId, IdempotencyKey},
 };
 use std::{collections::BTreeMap, time::Duration};
 
@@ -20,35 +21,59 @@ pub struct TestResult {
 pub async fn test_turn(
     state: &ManagementState,
     creator: &Creator,
-    channel_id: &ChannelId,
+    target: &ChannelTarget,
 ) -> Result<TestResult, ManagementError> {
-    tokio::time::timeout(Duration::from_secs(30), run(state, creator, channel_id))
-        .await
-        .map_err(|_| unavailable("test turn timed out"))?
+    test_consumer_turn(state, creator, target, None).await
+}
+
+pub async fn test_consumer_turn(
+    state: &ManagementState,
+    creator: &Creator,
+    target: &ChannelTarget,
+    consumer: Option<&ConsumerId>,
+) -> Result<TestResult, ManagementError> {
+    tokio::time::timeout(
+        Duration::from_secs(30),
+        run(state, creator, target, consumer),
+    )
+    .await
+    .map_err(|_| unavailable("test turn timed out"))?
 }
 
 async fn run(
     state: &ManagementState,
     creator: &Creator,
-    channel_id: &ChannelId,
+    target: &ChannelTarget,
+    id: Option<&ConsumerId>,
 ) -> Result<TestResult, ManagementError> {
-    let current = load(state, creator, channel_id).await?;
+    let current = load(state, creator, target).await?;
     let definition = current.definition;
-    // The test turn verifies the binding management created: the default
-    // consumer's.
-    let consumer = definition
-        .consumer(None)
-        .ok_or_else(|| unavailable("channel consumer is not configured"))?;
+    if id.is_some_and(|id| !id.is_default()) && !state.routing.multi_consumer_enabled {
+        return Err(ManagementError::InvalidReason(
+            super::write_gate::MULTI_CONSUMER_DISABLED,
+        ));
+    }
+    let consumer = definition.consumer(id).ok_or(ManagementError::NotFound)?;
     let provider = consumer.provider;
     let credential = consumer
         .credential
         .ok_or_else(|| unavailable("channel provider credential is unavailable"))?;
-    let conversation_id = ConversationId::derive(
-        &state.master_keys,
-        channel_id,
-        definition.partition.version,
-        "test",
-    );
+    let conversation_id = if consumer.id.is_default() {
+        ConversationId::derive(
+            &state.master_keys,
+            &current.channel_id,
+            definition.partition.version,
+            "test",
+        )
+    } else {
+        ConversationId::derive_for_consumer(
+            &state.master_keys,
+            &current.channel_id,
+            definition.partition.version,
+            consumer.id,
+            "test",
+        )
+    };
     state
         .providers
         .ensure_conversation(

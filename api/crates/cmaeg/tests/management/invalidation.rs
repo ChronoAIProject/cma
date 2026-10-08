@@ -11,8 +11,16 @@ async fn update_rekey_and_delete_invalidate_the_local_resolver() {
     let client = Client::new();
     let initial = created(&client, &base).await;
     let id = initial["channel_id"].as_str().unwrap();
+    let alias = cmaeg_core::ids::ChannelId::new(id)
+        .unwrap()
+        .open(&key_ring(1))
+        .unwrap()
+        .payload
+        .seal_id(&key_ring(1))
+        .unwrap();
     let url = format!("{base}/v1/channels/{id}");
     assert_eq!(resolver.resolve(id).await.unwrap().version, 1);
+    assert_eq!(resolver.resolve(alias.as_str()).await.unwrap().version, 1);
     let mut update = create_body();
     update["expected_version"] = 1.into();
     update["name"] = "new-name".into();
@@ -32,6 +40,7 @@ async fn update_rekey_and_delete_invalidate_the_local_resolver() {
         resolver.resolve(id).await.unwrap().definition.name,
         "new-name"
     );
+    assert_eq!(resolver.resolve(alias.as_str()).await.unwrap().version, 2);
     assert_eq!(
         client
             .post(format!("{url}/rekey"))
@@ -44,6 +53,7 @@ async fn update_rekey_and_delete_invalidate_the_local_resolver() {
     );
     assert_eq!(resolver.cache_len(), 0);
     assert_eq!(resolver.resolve(id).await.unwrap().version, 3);
+    assert_eq!(resolver.resolve(alias.as_str()).await.unwrap().version, 3);
     assert_eq!(
         client
             .delete(format!("{url}?expected_version=3"))

@@ -1009,7 +1009,17 @@
         "slug": "fixture"
       },
       "record_id": "fixture",
-      "version": 1
+      "version": 1,
+      "warnings": [
+        {
+          "pointer": "/routing/default_consumer/publish/enabled",
+          "reason": "publish_tools_unavailable"
+        },
+        {
+          "pointer": "/routing/consumers/0/publish/enabled",
+          "reason": "publish_tools_unavailable"
+        }
+      ]
     },
     {
       "channel_id": "fixture",
@@ -1282,7 +1292,17 @@
         "slug": "fixture"
       },
       "record_id": "fixture",
-      "version": 1
+      "version": 1,
+      "warnings": [
+        {
+          "pointer": "/routing/default_consumer/publish/enabled",
+          "reason": "publish_tools_unavailable"
+        },
+        {
+          "pointer": "/routing/consumers/0/publish/enabled",
+          "reason": "publish_tools_unavailable"
+        }
+      ]
     }
   ],
   "ChannelUpdateRequest": [
@@ -1418,6 +1438,72 @@
     "l3",
     "l4",
     "l5"
+  ],
+  "ConsumerUpdateRequest": [
+    {
+      "credentials": {
+        "agent_key": "fixture"
+      },
+      "expected_version": 12,
+      "label": "Reviewer",
+      "mentionable": true,
+      "name": "reviewer",
+      "non_human": false,
+      "profile": {
+        "context": {
+          "mcp_servers": [
+            {
+              "auth": {
+                "type": "none"
+              },
+              "url": "fixture"
+            }
+          ],
+          "skills": [
+            {
+              "id": "fixture",
+              "source": "ornn",
+              "version": "fixture"
+            }
+          ],
+          "system_prompt": "fixture"
+        },
+        "environment": true,
+        "metadata": {
+          "description": "fixture",
+          "name": "fixture",
+          "owner": {
+            "kind": "human",
+            "subject": "fixture"
+          },
+          "provider": "fixture"
+        },
+        "model": {
+          "access": "managed",
+          "api_type": "responses",
+          "model": "fixture",
+          "service": "fixture",
+          "thinking_effort": "minimal"
+        },
+        "permission": {
+          "action_mode": "guarded",
+          "service_scope": [
+            "fixture"
+          ]
+        },
+        "schema_version": 1
+      },
+      "publish": {
+        "enabled": true,
+        "targets": [
+          "default"
+        ]
+      },
+      "reply": {
+        "auto_final": false,
+        "destination": "default"
+      }
+    }
   ],
   "ContextConfig": [
     {
@@ -3045,6 +3131,404 @@
       "created_at": "fixture"
     }
   ],
+  "ConsumerChannelResponse": [
+    {
+      "channel": {
+        "channel_id": "fixture",
+        "definition": {
+          "connection_ref": "fixture",
+          "created_at": "fixture",
+          "creation": {
+            "channel_id": "fixture",
+            "fingerprint": "fixture",
+            "ready": true
+          },
+          "name": "fixture",
+          "owner": {
+            "kind": "human",
+            "subject": "fixture"
+          },
+          "partition": {
+            "custom_key": "event_subject",
+            "key": "conversation_and_sender",
+            "version": 1
+          },
+          "profile": {
+            "context": {
+              "mcp_servers": [
+                {
+                  "auth": {
+                    "type": "none"
+                  },
+                  "url": "fixture"
+                }
+              ],
+              "skills": [
+                {
+                  "id": "fixture",
+                  "source": "ornn",
+                  "version": "fixture"
+                }
+              ],
+              "system_prompt": "fixture"
+            },
+            "environment": true,
+            "metadata": {
+              "description": "fixture",
+              "name": "fixture",
+              "owner": {
+                "kind": "human",
+                "subject": "fixture"
+              },
+              "provider": "fixture"
+            },
+            "model": {
+              "access": "managed",
+              "api_type": "responses",
+              "model": "fixture",
+              "service": "fixture",
+              "thinking_effort": "minimal"
+            },
+            "permission": {
+              "action_mode": "guarded",
+              "service_scope": [
+                "fixture"
+              ]
+            },
+            "schema_version": 1
+          },
+          "profile_digest": "fixture",
+          "provider": {
+            "binding_id": "fixture",
+            "level": "l1",
+            "slug": "fixture",
+            "target": {
+              "agent_id": "agt_existing",
+              "type": "existing_agent"
+            }
+          },
+          "record_id": "fixture",
+          "reply": {
+            "ack_after_ms": 1,
+            "auto_final": true,
+            "sinks": [
+              {
+                "type": "source"
+              }
+            ]
+          },
+          "routing": {
+            "addressing": {
+              "command": false,
+              "event_field": false,
+              "mentions": true,
+              "unknown_target_notice": true
+            },
+            "agent_events": {
+              "max_hops": 3,
+              "per_channel_per_minute": 20,
+              "per_consumer_per_minute": 5
+            },
+            "consumers": [
+              {
+                "agent_key_hash": "fixture",
+                "created_at": "fixture",
+                "id": "csm_00000000000a",
+                "label": "Reviewer",
+                "mentionable": false,
+                "name": "reviewer",
+                "non_human": true,
+                "pending": true,
+                "profile": {
+                  "context": {
+                    "mcp_servers": [
+                      {
+                        "auth": {
+                          "type": "none"
+                        },
+                        "url": "fixture"
+                      }
+                    ],
+                    "skills": [
+                      {
+                        "id": "fixture",
+                        "source": "ornn",
+                        "version": "fixture"
+                      }
+                    ],
+                    "system_prompt": "fixture"
+                  },
+                  "environment": true,
+                  "metadata": {
+                    "description": "fixture",
+                    "name": "fixture",
+                    "owner": {
+                      "kind": "human",
+                      "subject": "fixture"
+                    },
+                    "provider": "fixture"
+                  },
+                  "model": {
+                    "access": "managed",
+                    "api_type": "responses",
+                    "model": "fixture",
+                    "service": "fixture",
+                    "thinking_effort": "minimal"
+                  },
+                  "permission": {
+                    "action_mode": "guarded",
+                    "service_scope": [
+                      "fixture"
+                    ]
+                  },
+                  "schema_version": 1
+                },
+                "profile_digest": "fixture",
+                "provider": {
+                  "binding_id": "fixture",
+                  "level": "l2",
+                  "slug": "fixture",
+                  "target": {
+                    "type": "profile"
+                  }
+                },
+                "publish": {
+                  "enabled": true,
+                  "targets": [
+                    "default"
+                  ]
+                },
+                "reply": {
+                  "auto_final": false,
+                  "destination": "default"
+                }
+              }
+            ],
+            "default_consumer": {
+              "label": "Lead",
+              "mentionable": false,
+              "name": "lead",
+              "non_human": true,
+              "publish": {
+                "enabled": true,
+                "targets": [
+                  "csm_00000000000a"
+                ]
+              },
+              "reply": {
+                "auto_final": true,
+                "destination": "origin"
+              }
+            },
+            "default_reply": {
+              "chat_id": "-100",
+              "source_id": "telegram",
+              "thread_id": "7",
+              "type": "telegram_chat"
+            },
+            "default_targets": [
+              "default"
+            ],
+            "max_targets": 2,
+            "reply_label": "always",
+            "rules": [
+              {
+                "id": "lark-ops",
+                "targets": [
+                  "default",
+                  "csm_00000000000a"
+                ],
+                "when": {
+                  "chats": [
+                    "fixture"
+                  ],
+                  "event_sources": [
+                    "urn:fixture"
+                  ],
+                  "event_types": [
+                    "com.example.*"
+                  ],
+                  "kinds": [
+                    "message",
+                    "event"
+                  ],
+                  "senders": [
+                    "fixture"
+                  ],
+                  "sources": [
+                    "relay_lark"
+                  ]
+                }
+              }
+            ],
+            "version": 1
+          },
+          "schema_version": 1,
+          "secrets": {
+            "agent_key_hash": "fixture"
+          },
+          "sources": [
+            {
+              "admission": {
+                "type": "all"
+              },
+              "bot_id": "fixture",
+              "bot_username": "fixture",
+              "issuer": "fixture",
+              "jwks_url": "fixture",
+              "key_id": "fixture",
+              "platform": "telegram",
+              "route_ids": [
+                "fixture"
+              ],
+              "trust_normalized": false,
+              "type": "nyxid_relay"
+            }
+          ],
+          "version": 1
+        },
+        "endpoints": {
+          "custom_event_url": "fixture",
+          "nyxid_callback_url": "fixture",
+          "telegram_webhook_url": "fixture"
+        },
+        "provider": {
+          "binding_id": "fixture",
+          "honoured": [
+            "fixture"
+          ],
+          "level": "l1",
+          "refused": [
+            {
+              "field": "fixture",
+              "reason": "fixture"
+            }
+          ],
+          "slug": "fixture"
+        },
+        "record_id": "fixture",
+        "version": 1,
+        "warnings": [
+          {
+            "pointer": "/routing/default_consumer/publish/enabled",
+            "reason": "publish_tools_unavailable"
+          },
+          {
+            "pointer": "/routing/consumers/0/publish/enabled",
+            "reason": "publish_tools_unavailable"
+          }
+        ]
+      },
+      "consumer": {
+        "agent_key_hash": "fixture",
+        "binding_id": "fixture",
+        "honoured": [
+          "fixture"
+        ],
+        "id": "csm_00000000000a",
+        "label": "Reviewer",
+        "level": "l1",
+        "name": "reviewer",
+        "non_human": false,
+        "non_human_effective": false,
+        "pending": false,
+        "profile_digest": "fixture",
+        "refused": [
+          {
+            "field": "fixture",
+            "reason": "fixture"
+          }
+        ],
+        "slug": "cma_codex",
+        "target": {
+          "type": "profile"
+        }
+      }
+    }
+  ],
+  "ConsumerCreateRequest": [
+    {
+      "credentials": {
+        "agent_key": "fixture"
+      },
+      "expected_version": 12,
+      "label": "Reviewer",
+      "mentionable": true,
+      "name": "reviewer",
+      "non_human": false,
+      "profile": {
+        "context": {
+          "mcp_servers": [
+            {
+              "auth": {
+                "type": "none"
+              },
+              "url": "fixture"
+            }
+          ],
+          "skills": [
+            {
+              "id": "fixture",
+              "source": "ornn",
+              "version": "fixture"
+            }
+          ],
+          "system_prompt": "fixture"
+        },
+        "environment": true,
+        "metadata": {
+          "description": "fixture",
+          "name": "fixture",
+          "owner": {
+            "kind": "human",
+            "subject": "fixture"
+          },
+          "provider": "fixture"
+        },
+        "model": {
+          "access": "managed",
+          "api_type": "responses",
+          "model": "fixture",
+          "service": "fixture",
+          "thinking_effort": "minimal"
+        },
+        "permission": {
+          "action_mode": "guarded",
+          "service_scope": [
+            "fixture"
+          ]
+        },
+        "schema_version": 1
+      },
+      "provider": {
+        "slug": "fixture",
+        "target": {
+          "agent_id": "agt_existing",
+          "type": "existing_agent"
+        }
+      },
+      "publish": {
+        "enabled": true,
+        "targets": [
+          "default"
+        ]
+      },
+      "reply": {
+        "auto_final": false,
+        "destination": "default"
+      }
+    }
+  ],
+  "ConsumerCredentialPatch": [
+    {
+      "agent_key": "fixture"
+    }
+  ],
+  "ConsumerCredentials": [
+    {
+      "agent_key": "fixture"
+    }
+  ],
   "ConsumerId": [
     "default",
     "csm_00000000000a"
@@ -3657,6 +4141,33 @@
       "name": "assistant"
     }
   ],
+  "ConsumerResponse": [
+    {
+      "agent_key_hash": "fixture",
+      "binding_id": "fixture",
+      "honoured": [
+        "fixture"
+      ],
+      "id": "csm_00000000000a",
+      "label": "Reviewer",
+      "level": "l1",
+      "name": "reviewer",
+      "non_human": false,
+      "non_human_effective": false,
+      "pending": false,
+      "profile_digest": "fixture",
+      "refused": [
+        {
+          "field": "fixture",
+          "reason": "fixture"
+        }
+      ],
+      "slug": "cma_codex",
+      "target": {
+        "type": "profile"
+      }
+    }
+  ],
   "ConsumerSummary": [
     {
       "id": "csm_00000000000a",
@@ -3692,5 +4203,112 @@
       "provider_code": "policy_denied",
       "status": "refused"
     }
+  ],
+  "RoutingPutRequest": [
+    {
+      "default_consumer": {
+        "name": "lead",
+        "label": "Lead",
+        "mentionable": false,
+        "non_human": true,
+        "reply": {
+          "auto_final": true,
+          "destination": "origin"
+        },
+        "publish": {
+          "enabled": true,
+          "targets": [
+            "csm_00000000000a"
+          ]
+        }
+      },
+      "rules": [
+        {
+          "id": "lark-ops",
+          "when": {
+            "sources": [
+              "relay_lark"
+            ],
+            "kinds": [
+              "message",
+              "event"
+            ],
+            "chats": [
+              "fixture"
+            ],
+            "senders": [
+              "fixture"
+            ],
+            "event_types": [
+              "com.example.*"
+            ],
+            "event_sources": [
+              "urn:fixture"
+            ]
+          },
+          "targets": [
+            "default",
+            "csm_00000000000a"
+          ]
+        }
+      ],
+      "default_targets": [
+        "default"
+      ],
+      "addressing": {
+        "mentions": true,
+        "command": false,
+        "event_field": false,
+        "unknown_target_notice": true
+      },
+      "max_targets": 2,
+      "reply_label": "always",
+      "default_reply": {
+        "type": "telegram_chat",
+        "source_id": "telegram",
+        "chat_id": "-100",
+        "thread_id": "7"
+      },
+      "agent_events": {
+        "max_hops": 3,
+        "per_consumer_per_minute": 5,
+        "per_channel_per_minute": 20
+      },
+      "expected_version": 9
+    }
+  ],
+  "Warning": [
+    {
+      "pointer": "/routing/default_targets/1",
+      "reason": "target_ignores_custom_events"
+    },
+    {
+      "pointer": "/routing/default_consumer/publish/targets/0",
+      "reason": "publish_target_ignores_agent_events"
+    },
+    {
+      "pointer": "/routing/default_consumer/publish/enabled",
+      "reason": "publish_tools_unavailable"
+    },
+    {
+      "pointer": "/routing/default_consumer/mentionable",
+      "reason": "mentionable_bypasses_rules"
+    },
+    {
+      "pointer": "/routing/default_targets",
+      "reason": "fanout_requires_stream_all"
+    },
+    {
+      "pointer": "/routing/default_targets",
+      "reason": "fanout_outputs_undeliverable"
+    }
+  ],
+  "WarningReason": [
+    "target_ignores_custom_events",
+    "publish_target_ignores_agent_events",
+    "publish_tools_unavailable",
+    "mentionable_bypasses_rules",
+    "fanout_requires_stream_all",
+    "fanout_outputs_undeliverable"
   ]
 }

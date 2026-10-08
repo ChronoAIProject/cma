@@ -33,6 +33,12 @@ struct StateData {
     pub gets: Arc<AtomicU64>,
     put_conflicts: Arc<AtomicU64>,
     lists: Arc<AtomicU64>,
+    get_gate: Arc<Mutex<Option<GetGate>>>,
+}
+
+struct GetGate {
+    captured: oneshot::Sender<()>,
+    release: oneshot::Receiver<()>,
 }
 
 pub struct FakeCma {
@@ -60,6 +66,7 @@ impl FakeCma {
             gets: Arc::default(),
             put_conflicts: Arc::default(),
             lists: Arc::default(),
+            get_gate: Arc::default(),
         };
         let router = Router::new()
             .route("/api/v1/gateway/channel-records", get(list_records))
@@ -115,6 +122,19 @@ impl FakeCma {
                 version: 1,
             },
         );
+    }
+
+    /// Pause exactly one GET after it snapshots the record, so a concurrent
+    /// write can finish before that GET returns the old bytes to its caller.
+    pub fn pause_next_get(&self) -> (oneshot::Receiver<()>, oneshot::Sender<()>) {
+        let (captured, snapshot) = oneshot::channel();
+        let (release, paused) = oneshot::channel();
+        let previous = self.state.get_gate.lock().unwrap().replace(GetGate {
+            captured,
+            release: paused,
+        });
+        assert!(previous.is_none(), "a GET gate is already armed");
+        (snapshot, release)
     }
 
     pub fn records(&self) -> BTreeMap<String, StoredView> {
@@ -226,8 +246,16 @@ async fn get_record(State(state): State<StateData>, Path(record_id): Path<String
         state.get_delay_ms.load(Ordering::SeqCst),
     ))
     .await;
-    let records = state.records.lock().unwrap();
-    let Some(record) = records.get(&record_id) else {
+    let record = state.records.lock().unwrap().get(&record_id).cloned();
+    let gate = state.get_gate.lock().unwrap().take();
+    if let Some(gate) = gate {
+        // Both the record and gate locks have been released before signalling.
+        gate.captured
+            .send(())
+            .expect("snapshot waiter remains alive");
+        gate.release.await.expect("snapshot gate is released");
+    }
+    let Some(record) = record else {
         return StatusCode::NOT_FOUND.into_response();
     };
     Json(RecordResponse {

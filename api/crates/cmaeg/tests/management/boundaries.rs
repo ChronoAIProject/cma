@@ -258,13 +258,18 @@ async fn http_errors_and_openapi_share_the_management_contract() {
     assert_eq!(
         operations,
         [
+            "addChannelConsumer",
             "createChannel",
             "deleteChannel",
             "getChannel",
+            "putChannelRouting",
             "recoverChannel",
             "rekeyChannel",
+            "removeChannelConsumer",
+            "removeChannelRouting",
             "testChannel",
-            "updateChannel"
+            "updateChannel",
+            "updateChannelConsumer"
         ]
     );
     stop.send(()).unwrap();

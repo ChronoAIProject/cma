@@ -1543,6 +1543,12 @@
             "format": "int64",
             "minimum": 0,
             "type": "integer"
+          },
+          "warnings": {
+            "items": {
+              "$ref": "#/components/schemas/Warning"
+            },
+            "type": "array"
           }
         },
         "required": [
@@ -1865,6 +1871,100 @@
         ],
         "type": "object"
       },
+      "ConsumerChannelResponse": {
+        "properties": {
+          "channel": {
+            "$ref": "#/components/schemas/ChannelResponse"
+          },
+          "consumer": {
+            "$ref": "#/components/schemas/ConsumerResponse"
+          }
+        },
+        "required": [
+          "channel",
+          "consumer"
+        ],
+        "type": "object"
+      },
+      "ConsumerCreateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "credentials": {
+            "$ref": "#/components/schemas/ConsumerCredentials"
+          },
+          "expected_version": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "mentionable": {
+            "type": "boolean"
+          },
+          "name": {
+            "$ref": "#/components/schemas/ConsumerName"
+          },
+          "non_human": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "profile": {
+            "$ref": "#/components/schemas/EventWorkerProfile"
+          },
+          "provider": {
+            "$ref": "#/components/schemas/ProviderRequest"
+          },
+          "publish": {
+            "$ref": "#/components/schemas/PublishPolicy"
+          },
+          "reply": {
+            "$ref": "#/components/schemas/ConsumerReply"
+          }
+        },
+        "required": [
+          "expected_version",
+          "name",
+          "provider",
+          "profile",
+          "credentials"
+        ],
+        "type": "object"
+      },
+      "ConsumerCredentialPatch": {
+        "additionalProperties": false,
+        "properties": {
+          "agent_key": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Secret"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "ConsumerCredentials": {
+        "additionalProperties": false,
+        "properties": {
+          "agent_key": {
+            "$ref": "#/components/schemas/Secret"
+          }
+        },
+        "required": [
+          "agent_key"
+        ],
+        "type": "object"
+      },
       "ConsumerId": {
         "description": "A channel consumer's stable identifier: \"default\" or \"csm_\" + 12 lowercase hex.\nAssigned by the gateway and never reused within a channel.\n\nThe grammar admits no `\\x1f`, the separator of the gateway's identity\nderivations, so an identifier can be joined into one unambiguously.",
         "pattern": "^(default|csm_[0-9a-f]{12})$",
@@ -1891,6 +1991,78 @@
             "description": "Where automatic outputs go."
           }
         },
+        "type": "object"
+      },
+      "ConsumerResponse": {
+        "properties": {
+          "agent_key_hash": {
+            "type": "string"
+          },
+          "binding_id": {
+            "$ref": "#/components/schemas/BindingId"
+          },
+          "honoured": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "id": {
+            "$ref": "#/components/schemas/ConsumerId"
+          },
+          "label": {
+            "description": "Effective label: the stored label, otherwise the consumer name.",
+            "type": "string"
+          },
+          "level": {
+            "$ref": "#/components/schemas/ConformanceLevel"
+          },
+          "name": {
+            "type": "string"
+          },
+          "non_human": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "non_human_effective": {
+            "type": "boolean"
+          },
+          "pending": {
+            "type": "boolean"
+          },
+          "profile_digest": {
+            "type": "string"
+          },
+          "refused": {
+            "items": {
+              "$ref": "#/components/schemas/FieldRefusal"
+            },
+            "type": "array"
+          },
+          "slug": {
+            "$ref": "#/components/schemas/ProviderSlug"
+          },
+          "target": {
+            "$ref": "#/components/schemas/ProviderTarget"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "label",
+          "slug",
+          "target",
+          "binding_id",
+          "level",
+          "profile_digest",
+          "agent_key_hash",
+          "pending",
+          "non_human_effective",
+          "honoured",
+          "refused"
+        ],
         "type": "object"
       },
       "ConsumerSummary": {
@@ -1927,6 +2099,86 @@
         },
         "required": [
           "id",
+          "name"
+        ],
+        "type": "object"
+      },
+      "ConsumerUpdateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "credentials": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ConsumerCredentialPatch",
+                "description": "Additional consumers only. A supplied null is invalid."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expected_version": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "label": {
+            "description": "Omitted retains the label; null clears it.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "mentionable": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "name": {
+            "$ref": "#/components/schemas/ConsumerName"
+          },
+          "non_human": {
+            "description": "Omitted retains the override; null restores the provider default.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "profile": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/EventWorkerProfile",
+                "description": "Additional consumers only. A supplied null is invalid."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "publish": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PublishPolicy"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reply": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ConsumerReply"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "expected_version",
           "name"
         ],
         "type": "object"
@@ -3807,6 +4059,66 @@
         ],
         "type": "object"
       },
+      "RoutingPutRequest": {
+        "additionalProperties": false,
+        "description": "Full replacement of routing policy; consumer bindings are managed separately.",
+        "properties": {
+          "addressing": {
+            "$ref": "#/components/schemas/Addressing"
+          },
+          "agent_events": {
+            "$ref": "#/components/schemas/AgentEventPolicy"
+          },
+          "default_consumer": {
+            "$ref": "#/components/schemas/DefaultConsumer"
+          },
+          "default_reply": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DefaultReply"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "default_targets": {
+            "items": {
+              "$ref": "#/components/schemas/ConsumerId"
+            },
+            "type": "array"
+          },
+          "expected_version": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_targets": {
+            "description": "Defaults to 4 and cannot exceed the gateway's routed channel turn cap.",
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "reply_label": {
+            "$ref": "#/components/schemas/ReplyLabel"
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/components/schemas/RoutingRule"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "expected_version",
+          "default_consumer",
+          "default_targets"
+        ],
+        "type": "object"
+      },
       "RoutingRule": {
         "additionalProperties": false,
         "description": "A rule: events matching `when` target `targets`.",
@@ -4344,6 +4656,32 @@
           "none",
           "platform_thumbnail",
           "keyframes"
+        ],
+        "type": "string"
+      },
+      "Warning": {
+        "properties": {
+          "pointer": {
+            "type": "string"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/WarningReason"
+          }
+        },
+        "required": [
+          "pointer",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "WarningReason": {
+        "enum": [
+          "target_ignores_custom_events",
+          "publish_target_ignores_agent_events",
+          "publish_tools_unavailable",
+          "mentionable_bypasses_rules",
+          "fanout_requires_stream_all",
+          "fanout_outputs_undeliverable"
         ],
         "type": "string"
       }
@@ -5034,6 +5372,221 @@
         ]
       }
     },
+    "/channels/{channel_id}/consumers": {
+      "post": {
+        "operationId": "addChannelConsumer",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "channel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization owner UUID; caller must be an authorized NyxID organization administrator",
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConsumerCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsumerChannelResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "channels"
+        ]
+      }
+    },
+    "/channels/{channel_id}/consumers/{consumer_id}": {
+      "delete": {
+        "operationId": "removeChannelConsumer",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "channel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "consumer_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization owner UUID; caller must be an authorized NyxID organization administrator",
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "expected_version",
+            "required": true,
+            "schema": {
+              "format": "int64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "channels"
+        ]
+      },
+      "put": {
+        "operationId": "updateChannelConsumer",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "channel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "consumer_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization owner UUID; caller must be an authorized NyxID organization administrator",
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConsumerUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsumerChannelResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "channels"
+        ]
+      }
+    },
     "/channels/{channel_id}/events": {
       "post": {
         "operationId": "receiveCustomEvent",
@@ -5300,6 +5853,146 @@
         ]
       }
     },
+    "/channels/{channel_id}/routing": {
+      "delete": {
+        "operationId": "removeChannelRouting",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "channel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization owner UUID; caller must be an authorized NyxID organization administrator",
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "expected_version",
+            "required": true,
+            "schema": {
+              "format": "int64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cascade",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "channels"
+        ]
+      },
+      "put": {
+        "operationId": "putChannelRouting",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "channel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Organization owner UUID; caller must be an authorized NyxID organization administrator",
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RoutingPutRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "channels"
+        ]
+      }
+    },
     "/channels/{channel_id}/test": {
       "post": {
         "operationId": "testChannel",
@@ -5322,6 +6015,14 @@
             "required": true,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "consumer",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ConsumerId"
             }
           }
         ],

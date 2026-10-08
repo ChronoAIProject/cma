@@ -2,6 +2,70 @@
 use super::*;
 
 #[tokio::test]
+async fn record_addressed_delete_retires_the_retained_connection_identity() {
+    use crate::{
+        channels::{management, ChannelTarget},
+        providers::{ProviderClient, ProviderRegistry},
+    };
+    let app = Native::new().await;
+    let (mut definition, channel_id) = app.reserve_child().await;
+    definition.creation = Some(cmaeg_core::channel::ChannelCreation {
+        channel_id: channel_id.clone(),
+        fingerprint: crate::channels::definition::hash_secret("fixture-creation"),
+        ready: true,
+    });
+    definition.secrets.provider_credential =
+        Some(cmaeg_core::channel::Secret::new("fixture-agent-key"));
+    definition.secrets.agent_key_hash =
+        crate::channels::definition::hash_secret("fixture-agent-key");
+    app.fixture.retain_channel(&definition);
+    binding::activate(&app.service.management, &definition, &channel_id)
+        .await
+        .unwrap();
+    assert_eq!(
+        *app.peer.webhook.lock().unwrap(),
+        format!("https://gateway.example/v1/telegram/{channel_id}")
+    );
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let provider = Router::new().route(
+        "/bindings/{id}",
+        axum::routing::delete(|| async { axum::http::StatusCode::NO_CONTENT }),
+    );
+    let server = tokio::spawn(async move { axum::serve(listener, provider).await.unwrap() });
+    let registry = ProviderRegistry::parse(&json!([{
+        "slug":"cma_codex", "base_url":base, "kind":"responses_http",
+        "paths":{"agent_card":"/card","binding":"/bindings/{binding_id}",
+            "conversation":"/bindings/{binding_id}/conversations/{conversation_id}", "responses":"/responses"},
+        "max_inflight":1
+    }]).to_string()).unwrap();
+    let mut state = app.service.management.clone();
+    state.providers = Arc::new(
+        ProviderClient::new(registry, Duration::from_secs(1), Duration::from_secs(1), 1).unwrap(),
+    );
+    management::delete(
+        &state,
+        &owner("alice", false),
+        &ChannelTarget::Record(definition.record_id.clone()),
+        1,
+    )
+    .await
+    .unwrap();
+    let (retired, _) = app.stored().await;
+    assert!(retired.channel_id.is_none());
+    assert!(retired.channel_record.is_none());
+    assert!(!retired.webhook_retiring);
+    assert!(app.peer.webhook.lock().unwrap().is_empty());
+    let pointer = channel_id.open(&app.fixture.keys).unwrap().payload;
+    assert!(matches!(
+        state.records.get(&pointer.record_url).await,
+        Err(crate::records::RecordError::NotFound)
+    ));
+    server.abort();
+}
+
+#[tokio::test]
 async fn managed_creation_reserves_before_button_then_verifies_exact_child_and_keeps_token_private()
 {
     let app = Native::new().await;

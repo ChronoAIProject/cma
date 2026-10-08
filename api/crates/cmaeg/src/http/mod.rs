@@ -6,6 +6,7 @@ pub(crate) mod connection_browser;
 pub mod connections;
 pub(crate) mod connections_ui;
 pub mod consumer_admission;
+pub mod consumers;
 pub mod creation;
 pub(crate) mod docs;
 pub mod events;
@@ -19,6 +20,7 @@ pub mod readiness;
 pub mod reply_targets;
 #[doc(hidden)]
 pub mod request_start;
+pub mod routing;
 pub mod schema;
 pub mod telegram;
 pub mod tools;

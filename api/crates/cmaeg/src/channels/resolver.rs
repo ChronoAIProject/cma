@@ -9,7 +9,7 @@ use crate::{
 };
 use cmaeg_core::{
     channel::ChannelDefinition,
-    ids::{ChannelId, ConsumerId},
+    ids::{ChannelId, ConsumerId, RecordId},
     problem::{Problem, ProblemCode},
     seal::{open_blob, ChannelPointer, MasterKeyRing, OpenError},
 };
@@ -82,13 +82,15 @@ impl std::fmt::Display for ResolveError {
 impl std::error::Error for ResolveError {}
 
 struct Flight {
+    record_id: RecordId,
     notify: Notify,
     result: Mutex<Option<Result<Arc<ResolvedChannel>, ResolveError>>>,
     invalidated: std::sync::atomic::AtomicBool,
 }
 impl Flight {
-    fn new() -> Self {
+    fn new(record_id: RecordId) -> Self {
         Self {
+            record_id,
             notify: Notify::new(),
             result: Mutex::new(None),
             invalidated: false.into(),
@@ -191,6 +193,38 @@ impl ChannelResolver {
                 .store(true, std::sync::atomic::Ordering::Release);
         }
     }
+    /// Remove all aliases and fence every restore of a mutated record. The
+    /// explicit request id is also removed when it holds a negative entry.
+    pub fn invalidate_record(&self, record_id: &RecordId, also_id: Option<&str>) {
+        let started = Instant::now();
+        let (entries_removed, flights_flagged) = {
+            let _guard = self.inner.publication.lock().unwrap();
+            let mut removed = self.inner.cache.invalidate_where(|entry| {
+                matches!(entry, CacheEntry::Present(channel, _) if channel.pointer.record_id == *record_id)
+            });
+            if let Some(id) = also_id {
+                removed += self.inner.cache.invalidate(id);
+            }
+            let mut flagged = 0;
+            for flight in &self.inner.flights {
+                if flight.record_id == *record_id
+                    && !flight
+                        .invalidated
+                        .swap(true, std::sync::atomic::Ordering::AcqRel)
+                {
+                    flagged += 1;
+                }
+            }
+            (removed, flagged)
+        };
+        tracing::debug!(
+            record_hash = %crate::telemetry::channel_hash(record_id.as_str()),
+            entries_removed,
+            flights_flagged,
+            duration_seconds = started.elapsed().as_secs_f64(),
+            "channel record aliases invalidated"
+        );
+    }
     pub async fn resolve(&self, raw_id: &str) -> Result<Arc<ResolvedChannel>, ResolveError> {
         self.resolve_observed(raw_id, None).await
     }
@@ -237,7 +271,7 @@ impl ChannelResolver {
                         if let Some(timing) = timing {
                             timing.triggered_restore();
                         }
-                        let flight = Arc::new(Flight::new());
+                        let flight = Arc::new(Flight::new(pointer.record_id.clone()));
                         entry.insert(flight.clone());
                         let resolver = self.clone();
                         let pending = flight.clone();
@@ -419,3 +453,7 @@ fn negative_error(problem: &Problem) -> ResolveError {
         ResolveError::InvalidDefinition
     }
 }
+
+#[cfg(test)]
+#[path = "invalidation_tests.rs"]
+mod invalidation_tests;

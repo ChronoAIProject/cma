@@ -223,12 +223,25 @@ pub fn channel_pointer(
 /// Validate a definition a management write would store, replacing `current`
 /// (`None` for a create). The write gate runs first, so a write it refuses
 /// reports the legacy error it always has before any check below can answer.
-fn validate_definition(
+pub(super) fn validate_definition(
     current: Option<&ChannelDefinition>,
     definition: &ChannelDefinition,
     flags: WriteFlags,
 ) -> Result<(), ValidationError> {
     write_gate::check(current, definition, flags)?;
+    if current
+        .is_some_and(|current| current.secrets.agent_key_hash != definition.secrets.agent_key_hash)
+        && definition
+            .routing
+            .iter()
+            .flat_map(|routing| &routing.consumers)
+            .any(|consumer| consumer.agent_key_hash == definition.secrets.agent_key_hash)
+    {
+        return Err(ValidationError::new(
+            "/credentials/agent_key",
+            "consumer_key_reused",
+        ));
+    }
     definition.validate()?;
     if definition.profile.metadata.owner.subject != definition.owner.subject {
         return Err(ValidationError::new(
