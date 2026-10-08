@@ -1,7 +1,7 @@
 //! Per-event delivery steps over an event's group and one of its consumers.
 use super::{
     address::{
-        count_unavailable, output_address as resolve_output, routing_send, EffectiveAddress,
+        count_unavailable, deliverable, effective, requested, routing_send, EffectiveAddress,
         SendKind, DEFAULT_REPLY_UNAVAILABLE,
     },
     gate::Ungated,
@@ -150,18 +150,25 @@ fn output_label(group: &EventGroup, at: usize, multi_consumer_enabled: bool) -> 
     )
 }
 
-/// Where consumer `at`'s automatic outputs go.
+/// Where consumer `at`'s automatic outputs go, resolved now from the
+/// group's snapshot and the origin's current reply capability.
 pub(super) fn output_address(
+    sender: &Sender,
     group: &EventGroup,
     at: usize,
     multi_consumer_enabled: bool,
 ) -> EffectiveAddress {
     let delivery = &group.consumers[at];
-    resolve_output(
+    deliverable(effective(
+        &group.channel.definition,
         &delivery.event,
-        delivery.policy.destination,
-        output_routing(group, at, multi_consumer_enabled),
-    )
+        requested(delivery.policy.destination, &delivery.event),
+        sender.custom.sync_registered(&delivery.event.reply),
+        multi_consumer_enabled,
+        SendKind::Output {
+            routed_turn: delivery.routed_turn,
+        },
+    ))
 }
 
 /// Record a rejected automatic output: nothing is sent, and the consumer is
@@ -223,7 +230,7 @@ async fn send_output(
     config: &DeliveryConfig,
 ) -> bool {
     let flag = config.multi_consumer_enabled;
-    if let EffectiveAddress::Rejected { reason } = output_address(group, at, flag) {
+    if let EffectiveAddress::Rejected { reason } = output_address(sender, group, at, flag) {
         reject_output(group, at, reason);
         return false;
     }

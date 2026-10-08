@@ -103,6 +103,12 @@ impl SyncRegistry {
         }
         sent
     }
+    /// Whether `waiter` can still take frames. A terminal frame, a failed
+    /// emit or a disconnected client removes it, so a later reply cannot
+    /// reach it.
+    pub fn registered(&self, waiter: &str) -> bool {
+        self.waiters.lock().unwrap().contains_key(waiter)
+    }
     pub fn len(&self) -> usize {
         self.waiters.lock().unwrap().len()
     }

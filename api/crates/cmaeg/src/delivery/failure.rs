@@ -97,7 +97,7 @@ pub(super) async fn consumer_failed(
     }
     // A fan-out child is a routed turn by construction.
     group.consumers[at].routed_turn = true;
-    let address = output_address(group, at, config.multi_consumer_enabled);
+    let address = output_address(sender, group, at, config.multi_consumer_enabled);
     let class = address
         .class()
         .unwrap_or_else(|| AddressClass::of(&group.consumers[at].event.reply));

@@ -120,86 +120,6 @@ fn routing_send_for_message_truth_table() {
     }
 }
 
-fn rejected(address: &EffectiveAddress) -> Option<&'static str> {
-    match address {
-        EffectiveAddress::Rejected { reason } => Some(reason),
-        EffectiveAddress::Origin(_) => None,
-    }
-}
-
-fn deferred(reply: ReplyChoice) -> EventRefPayload {
-    let mut event = payload(true, true);
-    event.lineage.as_mut().unwrap().reply = reply;
-    event
-}
-
-#[test]
-fn outputs_resolve_the_consumer_destination_then_the_lineage_then_the_origin() {
-    let unavailable = Some(DEFAULT_REPLY_UNAVAILABLE);
-    // Unrouted, every output is today's: the origin.
-    for destination in [ReplyChoice::Origin, ReplyChoice::Default] {
-        assert_eq!(
-            rejected(&output_address(
-                &deferred(ReplyChoice::Default),
-                destination,
-                false
-            )),
-            None
-        );
-    }
-    let plain = payload(true, false);
-    assert_eq!(
-        rejected(&output_address(&plain, ReplyChoice::Origin, true)),
-        None
-    );
-    assert_eq!(
-        rejected(&output_address(&plain, ReplyChoice::Default, true)),
-        unavailable
-    );
-    assert_eq!(
-        rejected(&output_address(
-            &deferred(ReplyChoice::Default),
-            ReplyChoice::Origin,
-            true
-        )),
-        unavailable
-    );
-    assert_eq!(
-        rejected(&output_address(
-            &deferred(ReplyChoice::Origin),
-            ReplyChoice::Default,
-            true
-        )),
-        unavailable,
-        "the consumer's own destination comes first"
-    );
-    assert_eq!(
-        rejected(&output_address(
-            &deferred(ReplyChoice::Origin),
-            ReplyChoice::Origin,
-            true
-        )),
-        None
-    );
-}
-
-#[test]
-fn tool_sends_follow_the_lineage_only() {
-    assert_eq!(rejected(&tool_address(&payload(true, false), true)), None);
-    assert_eq!(
-        rejected(&tool_address(&deferred(ReplyChoice::Origin), true)),
-        None
-    );
-    assert_eq!(
-        rejected(&tool_address(&deferred(ReplyChoice::Default), true)),
-        Some(DEFAULT_REPLY_UNAVAILABLE)
-    );
-    assert_eq!(
-        rejected(&tool_address(&deferred(ReplyChoice::Default), false)),
-        None
-    );
-}
-
 #[test]
 fn chat_addresses_class_as_chat_and_sinks_as_custom() {
     let relay = ReplyAddress::NyxidRelay {
@@ -241,6 +161,23 @@ fn chat_addresses_class_as_chat_and_sinks_as_custom() {
         reason: DEFAULT_REPLY_UNAVAILABLE,
     };
     assert_eq!(rejected.class(), None);
+    // A default chat is a chat whatever the origin; default sinks are custom.
+    let default_chat = EffectiveAddress::DefaultTelegramChat {
+        bot_id: "77".into(),
+        chat_id: "42".into(),
+        thread_id: None,
+    };
+    let default_relay = EffectiveAddress::DefaultRelayConversation {
+        platform: cmaeg_core::channel::Platform::Lark,
+        route_id: "route-1".into(),
+    };
+    for address in [default_chat, default_relay] {
+        assert_eq!(address.class(), Some(AddressClass::Chat));
+    }
+    assert_eq!(
+        EffectiveAddress::DefaultSinks.class(),
+        Some(AddressClass::Custom)
+    );
 }
 
 #[test]

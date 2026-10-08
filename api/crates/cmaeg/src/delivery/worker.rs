@@ -2,8 +2,9 @@
 //! order and drives their timers.
 use super::{
     address::{
-        count_unavailable, routing_send, routing_send_for_message, tool_address, AddressClass,
-        EffectiveAddress, SendKind, DEFAULT_REPLY_UNAVAILABLE,
+        count_unavailable, deliverable, effective, requested, routing_send,
+        routing_send_for_message, AddressClass, EffectiveAddress, SendKind,
+        DEFAULT_REPLY_UNAVAILABLE,
     },
     event::{key, now},
     failure::{consumer_failed, ConsumerFailure},
@@ -21,7 +22,7 @@ use crate::{
     turns::{outcomes::TurnOutcome, TurnTracker},
     DeliveryConfig,
 };
-use cmaeg_core::{message::OutboundMessage, seal::EventRefPayload};
+use cmaeg_core::{channel::ReplyChoice, message::OutboundMessage, seal::EventRefPayload};
 use std::{sync::Arc, time::Duration};
 use tokio::{
     sync::{mpsc, oneshot},
@@ -192,7 +193,17 @@ async fn tool_reply(
         config.multi_consumer_enabled,
         SendKind::Tool,
     );
-    if let EffectiveAddress::Rejected { reason } = tool_address(&event, routed) {
+    // The handler resolved this snapshot at the call, so a default
+    // destination changed or detached since applies to later calls only.
+    let address = deliverable(effective(
+        &channel.definition,
+        &event,
+        requested(ReplyChoice::Origin, &event),
+        sender.custom.sync_registered(&event.reply),
+        config.multi_consumer_enabled,
+        SendKind::Tool,
+    ));
+    if let EffectiveAddress::Rejected { reason } = address {
         if reason == DEFAULT_REPLY_UNAVAILABLE {
             count_unavailable(&channel.definition);
         }
@@ -283,7 +294,7 @@ async fn stream_outcome(
     if delivery.terminal {
         return;
     }
-    let address = output_address(group, at, config.multi_consumer_enabled);
+    let address = output_address(sender, group, at, config.multi_consumer_enabled);
     // An unrouted activity keeps today's branch on its source verbatim. A
     // routed one takes its consumer's effective address's branch; a
     // rejected address keeps its origin's, where its outputs are refused.

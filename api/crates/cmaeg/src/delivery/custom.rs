@@ -122,6 +122,11 @@ impl CustomDelivery {
             );
         }
     }
+    /// Whether `address` is a Sync origin whose waiter can still take a
+    /// frame; `false` for every other address.
+    pub fn sync_registered(&self, address: &ReplyAddress) -> bool {
+        matches!(address, ReplyAddress::Sync { waiter } if self.waiters.registered(waiter))
+    }
     fn emit(
         &self,
         event: &EventRefPayload,
