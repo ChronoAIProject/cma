@@ -42,6 +42,14 @@ Agent configuration and skills live in per-Agent homes, not globally.
 | `infra/` | Fixed Dockerfile and Kubernetes manifest inventory; kept aligned with code. |
 | `docs/` | Public contracts, design authority, operations and evidence. |
 
+The proposed three-service refactor is recorded in
+[CMA Service Split](./docs/CMA_Service_Split.md), with separate
+[NyxID, database, and frontend boundaries](./docs/CMA_Service_Isolation.md),
+[Agent Manager API](./docs/CMA_Agent_Manager_API.md), and
+[Sandbox Manager API](./docs/CMA_Sandbox_Manager_API.md).
+These are design drafts; the architecture and interfaces described above remain
+the currently implemented system.
+
 ## Local Development
 
 Backend commands run from `api/`; frontend commands run from `web/`. The
