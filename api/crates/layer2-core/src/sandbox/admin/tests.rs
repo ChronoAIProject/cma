@@ -229,6 +229,7 @@ fn agent_profile_content() -> AgentProfileContent {
 
 fn agent_profile(id: &str, owner: &str, visibility: ProfileVisibility) -> AgentProfile {
     AgentProfile {
+        internal: false,
         id: crate::AgentProfileId(id.into()),
         owner: SubjectId::new(owner),
         name: format!("profile-{id}"),

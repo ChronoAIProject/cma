@@ -14,6 +14,7 @@ mod reference_tests;
 
 fn agent_profile(id: &str, owner: &str, visibility: ProfileVisibility) -> AgentProfile {
     AgentProfile {
+        internal: false,
         id: AgentProfileId(id.into()),
         owner: SubjectId(owner.into()),
         name: "Research agent".into(),
@@ -38,6 +39,7 @@ fn agent_profile(id: &str, owner: &str, visibility: ProfileVisibility) -> AgentP
 
 fn workspace_profile(id: &str, owner: &str, agent: AgentProfileRef) -> WorkspaceProfile {
     WorkspaceProfile {
+        internal: false,
         id: WorkspaceProfileId(id.into()),
         owner: SubjectId(owner.into()),
         name: "Research workspace".into(),
@@ -63,6 +65,7 @@ fn workspace_profile(id: &str, owner: &str, agent: AgentProfileRef) -> Workspace
 
 fn sandbox_profile(id: &str, owner: &str, workspace: WorkspaceProfileRef) -> SandboxProfile {
     SandboxProfile {
+        internal: false,
         availability: Default::default(),
         id: SandboxProfileId(id.into()),
         owner: SubjectId(owner.into()),

@@ -690,6 +690,7 @@ async fn publish_profiles(
     let agent_id = AgentProfileId("agp_route_agent".into());
     profiles
         .create_agent_profile(AgentProfile {
+            internal: false,
             id: agent_id.clone(),
             owner: SubjectId::new(OWNER),
             name: "Route Agent".into(),
@@ -725,6 +726,7 @@ async fn publish_profiles(
     let workspace_id = WorkspaceProfileId("wkp_route_workspace".into());
     profiles
         .create_workspace_profile(WorkspaceProfile {
+            internal: false,
             id: workspace_id.clone(),
             owner: SubjectId::new(OWNER),
             name: "Route Workspace".into(),
@@ -756,6 +758,7 @@ async fn publish_profiles(
     let sandbox_id = SandboxProfileId("sbp_route_sandbox".into());
     profiles
         .create_sandbox_profile(SandboxProfile {
+            internal: false,
             availability: Default::default(),
             id: sandbox_id.clone(),
             owner: SubjectId::new(OWNER),

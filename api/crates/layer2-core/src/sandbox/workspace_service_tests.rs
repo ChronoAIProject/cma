@@ -189,6 +189,7 @@ fn profile(
     setup_commands: Vec<String>,
 ) -> WorkspaceProfile {
     WorkspaceProfile {
+        internal: false,
         id: WorkspaceProfileId(id.into()),
         owner: SubjectId(owner.into()),
         name: format!("{name} profile"),

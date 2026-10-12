@@ -1728,6 +1728,7 @@ async fn fixture_with_workspace_configuration(
 
 async fn publish_agent(profiles: &InMemoryProfileStore) -> AgentProfileRef {
     let profile = AgentProfile {
+        internal: false,
         id: crate::AgentProfileId("agp_launch_agent".into()),
         owner: SubjectId::new(PUBLISHER),
         name: "Launch Agent".into(),
@@ -1780,6 +1781,7 @@ async fn publish_workspace(
         )
     };
     let profile = WorkspaceProfile {
+        internal: false,
         id: crate::WorkspaceProfileId("wkp_launch_workspace".into()),
         owner: SubjectId::new(PUBLISHER),
         name: "Launch Workspace".into(),
@@ -1819,6 +1821,7 @@ async fn publish_sandbox(
     workspace_nested: bool,
 ) -> SandboxProfileRef {
     let profile = SandboxProfile {
+        internal: false,
         availability: Default::default(),
         id: crate::SandboxProfileId("sbp_launch_sandbox".into()),
         owner: SubjectId::new(owner),

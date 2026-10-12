@@ -58,6 +58,7 @@ pub(super) async fn seeded(prefix: &str) -> Seeded {
     let workspace_id = WorkspaceProfileId("wkp_trigger_test".into());
     let sandbox_id = SandboxProfileId("sbp_trigger_test".into());
     let agent = AgentProfile {
+        internal: false,
         id: agent_id.clone(),
         owner: owner.clone(),
         name: "Trigger agent".into(),
@@ -84,6 +85,7 @@ pub(super) async fn seeded(prefix: &str) -> Seeded {
         .await
         .unwrap();
     let workspace = WorkspaceProfile {
+        internal: false,
         id: workspace_id.clone(),
         owner: owner.clone(),
         name: "Trigger workspace".into(),
@@ -110,6 +112,7 @@ pub(super) async fn seeded(prefix: &str) -> Seeded {
         .await
         .unwrap();
     let sandbox = SandboxProfile {
+        internal: false,
         availability: Default::default(),
         id: sandbox_id.clone(),
         owner: owner.clone(),

@@ -13,8 +13,7 @@ use layer2_core::{Capability, SubjectId};
 
 use super::idempotency::{IdempotencyKey, RequestBody};
 use super::profiles::{
-    execute_command, execute_empty_command, generated_id_is_valid, internal_inline_profile,
-    profile_page, ProfilesState,
+    execute_command, execute_empty_command, generated_id_is_valid, profile_page, ProfilesState,
 };
 use super::profiles_openapi_shapes::*;
 use super::profiles_problem::ProfileProblem;
@@ -59,9 +58,7 @@ async fn owned(
         .agent_profile(&layer2_core::AgentProfileId(id.to_owned()))
         .await
         .map_err(|error| ProfileProblem::from_store(error, "content"))?
-        .filter(|profile| {
-            &profile.owner == owner && !internal_inline_profile(&profile.name, &profile.description)
-        })
+        .filter(|profile| &profile.owner == owner && !profile.internal)
         .ok_or(ProfileProblem::NotFound)
 }
 
@@ -126,6 +123,7 @@ pub(super) async fn create(
         move |body| async move {
             let now = layer2_core::now_rfc3339();
             let profile = AgentProfile {
+                internal: false,
                 id: layer2_core::AgentProfileId::generate(),
                 owner,
                 name: body.name,
@@ -176,9 +174,7 @@ pub(super) async fn list(
         .map_err(|error| ProfileProblem::from_store(error, "content"))?;
     let mut items = Vec::with_capacity(stored.items.len());
     for profile in stored.items {
-        if !internal_inline_profile(&profile.name, &profile.description) {
-            items.push(view(&state, profile).await?);
-        }
+        items.push(view(&state, profile).await?);
     }
     Ok(Json(AgentProfilePageView {
         items,
@@ -338,7 +334,7 @@ pub(super) async fn read_revision(
         .await
         .map_err(|error| ProfileProblem::from_store(error, "content"))?
         .filter(|profile| {
-            !internal_inline_profile(&profile.name, &profile.description)
+            !profile.internal
                 && super::profiles::revision_visible(
                     &caller,
                     &profile.owner,
