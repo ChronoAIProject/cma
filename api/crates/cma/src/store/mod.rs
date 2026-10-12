@@ -10,6 +10,7 @@ mod agent_control_receipt;
 mod agent_control_store;
 mod agent_control_transaction;
 mod agent_conversation_store;
+mod agent_lifecycle_operations;
 mod agent_log;
 mod agent_log_integrity;
 mod agent_profiles;
@@ -110,6 +111,9 @@ mod workspaces;
 mod worktrees;
 
 pub use activity::MongoActivityStore;
+pub(crate) use agent_lifecycle_operations::{
+    CreateResult, LifecycleInput, MongoAgentLifecycleStore,
+};
 pub use auth::MongoAuthStore;
 pub(crate) use bindings::{MongoBindingCredentials, MongoProviderToolSource};
 pub use checkpoint_objects::MongoCheckpointObjectStore;

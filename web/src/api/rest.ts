@@ -3,6 +3,7 @@ import { AgentLifecycleCreateError } from './client';
 import type {
   AgentLifecycleConnectionRequired,
   AgentLifecycleCreateInput,
+  AgentLifecycleOperationView,
   CmaWebClient,
   ReadOptions,
 } from './client';
@@ -109,6 +110,27 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
         id: value.id,
         status: typeof value.status === 'string' ? value.status : undefined,
       };
+    },
+    readAgentLifecycle: async (operationId: string, options): Promise<AgentLifecycleOperationView> => {
+      const response = await fetch(
+        `/api/agent-manager/v1/agent-lifecycle/${encodeURIComponent(operationId)}`,
+        {
+          credentials: 'same-origin',
+          cache: 'no-store',
+          signal: options?.signal,
+        },
+      );
+      if (!response.ok)
+        throw new ProtocolError(`Agent lifecycle status failed (${String(response.status)}).`);
+      const value = (await response.json()) as AgentLifecycleOperationView;
+      if (
+        typeof value.id !== 'string' ||
+        typeof value.status !== 'string' ||
+        typeof value.phase !== 'string' ||
+        !Array.isArray(value.events)
+      )
+        throw new ProtocolError('Agent Manager returned an invalid lifecycle operation.');
+      return value;
     },
     botViews: sdk,
     listSandboxes: async (options) => {
