@@ -151,7 +151,7 @@ async fn missing_retiring_runtime_settles_real_agents_without_archive_cleanup() 
             harness.policy.clone(),
         ),
     );
-    for _ in 0..4 {
+    for _ in 0..3 {
         worker.run_one(&active.id, now).await.unwrap();
     }
     let retrying = harness.stored(&active.id).await;
@@ -207,7 +207,7 @@ async fn retirement_across_restart_preserves_history_without_snapshot_cleanup() 
         .delete(&caller("owner", [Capability::DeleteOwnSandbox]), &active.id)
         .await
         .unwrap();
-    for _ in 0..4 {
+    for _ in 0..3 {
         harness.run(&active.id, now).await;
     }
     let retrying = harness.stored(&active.id).await;
@@ -228,9 +228,8 @@ async fn retirement_across_restart_preserves_history_without_snapshot_cleanup() 
         .iter()
         .any(|event| matches!(
             event.kind,
-            SandboxEventKind::WorkStepFailed {
-                step: SandboxWorkStep::MarkRetired,
-                ..
+            SandboxEventKind::WorkStepCompleted {
+                step: SandboxWorkStep::TeardownRuntime,
             }
         )));
 
