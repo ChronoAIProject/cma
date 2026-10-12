@@ -22,6 +22,7 @@ interface WizardProps {
   readonly forceSubscription?: boolean;
   readonly expectedOwner?: string;
   readonly presentation?: 'inline' | 'dialog';
+  readonly dialogTitle?: string;
   readonly client?: ConnectionClient;
 }
 
@@ -44,6 +45,7 @@ function ConnectionSequence({
   forceSubscription = false,
   expectedOwner,
   presentation = 'inline',
+  dialogTitle = 'Connect required services',
   client = connectionClient,
 }: WizardProps & { readonly onRetry: () => void }) {
   const key = JSON.stringify(target);
@@ -397,7 +399,7 @@ function ConnectionSequence({
         (error !== undefined ||
           (report !== undefined && (!report.ready || forceSubscription || handoff !== undefined)))
       }
-      title="Connect required services"
+      title={dialogTitle}
       onClose={cancel}
     >
       {content}
