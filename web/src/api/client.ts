@@ -7,6 +7,7 @@ import type {
   AgentUsage,
   ConfiguredSandboxCapacity,
   CreateAgentInput,
+  CreateInlineWorkspaceInput,
   CreateSandboxInput,
   CreateWorkspaceInput,
   ProfileReference,
@@ -146,6 +147,11 @@ export interface CmaWebClient {
     input: CreateWorkspaceInput,
     options: CommandOptions,
   ): Promise<WorkspaceDetail>;
+  createInlineWorkspace(
+    sandboxId: string,
+    input: CreateInlineWorkspaceInput,
+    options: CommandOptions,
+  ): Promise<WorkspaceDetail>;
   createAgent(
     workspaceId: string,
     input: CreateAgentInput,
@@ -191,6 +197,7 @@ export const unavailableClient: CmaWebClient = {
   runAgent: unavailable,
   createSandbox: unavailable,
   createWorkspace: unavailable,
+  createInlineWorkspace: unavailable,
   createAgent: unavailable,
   pauseSandbox: unavailable,
   reviveSandbox: unavailable,

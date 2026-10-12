@@ -9,10 +9,12 @@ use serde::{Deserialize, Serialize};
 use crate::profiles::store::{ProfileStoreError, ProfileUseRecorder, WorkspaceProfileStore};
 use crate::profiles::{
     content_digest, require_trust_confirmation, MarketplaceError, MarketplaceLocator,
-    ProfileVisibility, WorkspaceLocation, WorkspaceProfileRef, WorkspaceProfileRevision,
-    WorkspaceProfileSnapshot,
+    ProfileVisibility, WorkspaceLocation, WorkspaceProfileContent, WorkspaceProfileRef,
+    WorkspaceProfileRevision, WorkspaceProfileSnapshot,
 };
-use crate::{now_rfc3339, Caller, Capability, SandboxId, SubjectId, WorkspaceId};
+use crate::{
+    now_rfc3339, Caller, Capability, SandboxId, SubjectId, WorkspaceId, WorkspaceProfileId,
+};
 
 use super::service_trust::{validate_workspace_profile, validate_workspace_revision};
 use super::store::{
@@ -30,6 +32,30 @@ pub struct CreateWorkspace {
     pub profile: WorkspaceProfileRef,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub confirmed_digest: Option<String>,
+}
+
+/// A workspace request admitted directly by Agent Manager.
+///
+/// This is deliberately independent of the user-facing Workspace Profile
+/// catalog. The resulting immutable snapshot is stored on the Workspace so
+/// the agent-sandbox worker receives the exact source selected by the caller.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CreateInlineWorkspace {
+    pub source: InlineWorkspaceSource,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum InlineWorkspaceSource {
+    GitRepository {
+        url: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reference: Option<String>,
+    },
+    Empty,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -154,6 +180,60 @@ impl WorkspaceService {
             request.confirmed_digest.as_deref(),
         )
         .map_err(trust_error)?;
+        self.admit(
+            &sandbox,
+            &revision,
+            WorkspaceOrigin::Manual,
+            WorkspaceAdmissionKind::Manual,
+        )
+        .await
+    }
+
+    /// Admit one workspace from an inline source and hand it to the normal
+    /// agent-sandbox workspace worker. No Workspace Profile is read or
+    /// published on this path.
+    pub async fn create_inline(
+        &self,
+        caller: &Caller,
+        sandbox_id: &SandboxId,
+        request: CreateInlineWorkspace,
+    ) -> Result<Workspace, WorkspaceServiceError> {
+        require(caller)?;
+        let sandbox = self.owned_sandbox(caller, sandbox_id).await?;
+        self.connections.check_sandbox(&sandbox).await?;
+        if !sandbox.accepts_creation_admission() {
+            return Err(WorkspaceServiceError::SandboxNotReady);
+        }
+        let (location, default_name) = match request.source {
+            InlineWorkspaceSource::GitRepository { url, reference } => (
+                WorkspaceLocation::GitRepository { url, reference },
+                String::new(),
+            ),
+            InlineWorkspaceSource::Empty => (
+                WorkspaceLocation::Directory {
+                    name: request.name.clone().unwrap_or_else(|| "workspace".into()),
+                },
+                request.name.clone().unwrap_or_else(|| "workspace".into()),
+            ),
+        };
+        let content = WorkspaceProfileContent {
+            location,
+            name: request.name.unwrap_or(default_name),
+            setup_commands: Vec::new(),
+            agent_profiles: Vec::new(),
+        };
+        let published_at = now_rfc3339();
+        content
+            .validate()
+            .map_err(|error| WorkspaceServiceError::InvalidProfile(error.to_string()))?;
+        let revision = WorkspaceProfileRevision {
+            profile_id: WorkspaceProfileId::generate(),
+            revision: 1,
+            digest: content_digest(&content)
+                .map_err(|error| WorkspaceServiceError::InvalidProfile(error.to_string()))?,
+            content,
+            published_at,
+        };
         self.admit(
             &sandbox,
             &revision,
