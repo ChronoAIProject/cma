@@ -66,8 +66,10 @@ it.each(cases)(
       </CmaClientProvider>,
     );
     expect(await screen.findByRole('heading', { name: heading, level: 1 })).toBeInTheDocument();
-    if (route.kind === 'marketplace_profile')
-      expect(screen.getByRole('button', { name: 'Use' })).toBeDisabled();
+    if (route.kind === 'marketplace_profile') {
+      expect(screen.queryByRole('button', { name: 'Use' })).not.toBeInTheDocument();
+      expect(screen.getByText(/Profile based creation is retired/)).toBeInTheDocument();
+    }
     expect(clients.fetch.mock.calls.every(([url]) => String(url).startsWith('/api/v1/'))).toBe(
       true,
     );
