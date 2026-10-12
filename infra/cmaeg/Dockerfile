@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM --platform=$BUILDPLATFORM golang:1.26.8-alpine3.23@sha256:33ce311e5eecedee48ec1b84419c1306e9fbd71009f0d5c3f2a6904b579c1ecc AS secret-scanner-build
+FROM --platform=$BUILDPLATFORM golang:1.26.9-alpine3.23@sha256:6750308561953d451210ed1a8086d36c8c8bdcbf672d38d9d0d424b8a7a0216c AS secret-scanner-build
 ARG TARGETOS
 ARG TARGETARCH
 ENV GOTOOLCHAIN=local GOENV=off GOTELEMETRY=off \
@@ -13,7 +13,7 @@ case "${TARGETOS}/${TARGETARCH}" in
   linux/amd64|linux/arm64) ;;
   *) echo 'unsupported secret-scanner platform' >&2; exit 1 ;;
 esac
-test "$(go env GOVERSION)" = 'go1.26.8'
+test "$(go env GOVERSION)" = 'go1.26.9'
 export GOOS="${TARGETOS}" GOARCH="${TARGETARCH}"
 apk add --no-cache ca-certificates curl
 curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
@@ -37,7 +37,7 @@ printf '%s\n' \
   'source=https://github.com/gitleaks/gitleaks' \
   'revision=83d9cd684c87d95d656c1458ef04895a7f1cbd8e' \
   'archive.sha256=6b2638a733b85619dc80bdf28e84e4fed7e526a761ab5c148fbf67695aea2115' \
-  'builder=golang:1.26.8-alpine3.23@sha256:33ce311e5eecedee48ec1b84419c1306e9fbd71009f0d5c3f2a6904b579c1ecc' \
+  'builder=golang:1.26.9-alpine3.23@sha256:6750308561953d451210ed1a8086d36c8c8bdcbf672d38d9d0d424b8a7a0216c' \
   > /usr/local/share/gitleaks/source.txt
 PREPARE_SCANNER
 
