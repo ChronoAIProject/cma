@@ -304,6 +304,19 @@ jobs:
         # Retain the complete corpus and two bounded fixtures on slower runners.
         timeout-minutes: 75
         run: bash ../.github/scripts/mongo-contract-tests.sh
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24.15.0
+      - name: Prepare compiled gateway browser contract
+        working-directory: .
+        run: |
+          npm ci --prefix web
+          npm ci --prefix sdk/typescript --omit=dev --ignore-scripts
+          npm run build --prefix web
+      - name: Install gateway contract browser
+        timeout-minutes: 10
+        working-directory: web
+        run: npx --no-install playwright install --with-deps chromium
       - name: Image Manager authenticated Mongo isolation
         timeout-minutes: 10
         run: bash ../.github/scripts/image-manager-mongo-contract.sh
