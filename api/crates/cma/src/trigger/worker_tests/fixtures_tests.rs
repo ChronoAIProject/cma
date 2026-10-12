@@ -873,6 +873,7 @@ pub(super) fn frozen_inputs(
             sandbox_profile: sandbox_ref,
             workspace_profile: workspace_ref,
             agent_profile: agent_ref,
+            inline: None,
         },
         reuse: ReusePolicy {
             sandbox: SandboxReusePolicy::AlwaysNew,

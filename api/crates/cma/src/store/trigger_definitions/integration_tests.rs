@@ -165,6 +165,7 @@ pub(super) async fn seeded(prefix: &str) -> Seeded {
             sandbox_profile: SandboxProfileRef::new(sandbox_id, 1),
             workspace_profile: WorkspaceProfileRef::new(workspace_id, 1),
             agent_profile: AgentProfileRef::new(agent_id, 1),
+            inline: None,
         },
     }
 }

@@ -65,6 +65,19 @@ pub trait TriggerProfileResolver: TriggerProfileReader {
     ) -> Result<ResolvedTriggerProfiles, TriggerReferenceError>;
 }
 
+/// Converts an Agent Manager inline Trigger target into the retained immutable
+/// profile references used by the launch workers.  The generated profiles are
+/// an internal persistence detail; callers continue to author only the inline
+/// target.
+#[async_trait]
+pub trait TriggerInlineTargetMaterializer: Send + Sync {
+    async fn materialize(
+        &self,
+        owner: &SubjectId,
+        target: &TriggerTarget,
+    ) -> Result<TriggerTarget, TriggerReferenceError>;
+}
+
 #[async_trait]
 impl TriggerProfileReader for InMemoryProfileStore {
     async fn read_trigger_profiles(
@@ -131,6 +144,7 @@ impl TriggerProfileResolver for InMemoryProfileStore {
             sandbox_profile.visibility,
             sandbox_profile.retired_at.as_deref(),
             sandbox_field,
+            target.inline.is_some(),
         )?;
 
         let workspace_profile = find_workspace(self, target.workspace_profile.id.as_str()).await?;
@@ -140,6 +154,7 @@ impl TriggerProfileResolver for InMemoryProfileStore {
             workspace_profile.visibility,
             workspace_profile.retired_at.as_deref(),
             workspace_field,
+            target.inline.is_some(),
         )?;
 
         let agent_profile = find_agent(self, target.agent_profile.id.as_str()).await?;
@@ -149,6 +164,7 @@ impl TriggerProfileResolver for InMemoryProfileStore {
             agent_profile.visibility,
             agent_profile.retired_at.as_deref(),
             agent_field,
+            target.inline.is_some(),
         )?;
 
         self.read_trigger_profiles(target).await
@@ -161,14 +177,20 @@ fn require_public(
     visibility: ProfileVisibility,
     retired_at: Option<&str>,
     field: &'static str,
+    allow_owned_inline: bool,
 ) -> Result<(), TriggerReferenceError> {
-    if retired_at.is_some()
-        || (visibility == ProfileVisibility::Private && trigger_owner != profile_owner)
-    {
+    if retired_at.is_some() {
         return Err(unavailable(field));
     }
     if visibility == ProfileVisibility::Private {
-        return Err(TriggerReferenceError::NotPublic { field });
+        if !allow_owned_inline {
+            return Err(TriggerReferenceError::NotPublic { field });
+        }
+        if trigger_owner != profile_owner {
+            // An inline target may use private generated snapshots only when the
+            // snapshot belongs to the publisher. Keep foreign private rows opaque.
+            return Err(unavailable(field));
+        }
     }
     Ok(())
 }

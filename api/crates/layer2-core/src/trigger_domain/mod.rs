@@ -44,8 +44,9 @@ pub use connections::{
 };
 pub use content::{
     AgentReusePolicy, ButtonLabel, Presentation, ReusePolicy, SandboxReusePolicy, Theme,
-    TriggerConsent, TriggerContent, TriggerQuickMessage, TriggerTarget, WorkspaceReusePolicy,
-    MAX_FIRST_MESSAGE_BYTES, MAX_QUICK_MESSAGES,
+    TriggerConsent, TriggerContent, TriggerImage, TriggerInlineAgent, TriggerInlineTarget,
+    TriggerInlineWorkspace, TriggerQuickMessage, TriggerRepository, TriggerTarget,
+    WorkspaceReusePolicy, MAX_FIRST_MESSAGE_BYTES, MAX_QUICK_MESSAGES,
 };
 pub use launch::{
     Launch, LaunchAuthorityClass, LaunchBlockedReason, LaunchConfirmation, LaunchConsentSurface,
@@ -73,7 +74,8 @@ pub use preview::{
     TriggerTrustPreviewDisclosure,
 };
 pub use reference::{
-    ResolvedTriggerProfiles, TriggerProfileReader, TriggerProfileResolver, TriggerReferenceError,
+    ResolvedTriggerProfiles, TriggerInlineTargetMaterializer, TriggerProfileReader,
+    TriggerProfileResolver, TriggerReferenceError,
 };
 pub use requirements::{
     RequirementsSnapshot, ReviewNeed, ReviewRequirements, ServiceConnectionMetadata,

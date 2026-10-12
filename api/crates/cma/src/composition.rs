@@ -179,7 +179,7 @@ impl ControlPlaneComposition {
             stores.sandbox_profiles.clone(),
             image_resolver,
             authoring_bounds,
-            profile_scanner,
+            profile_scanner.clone(),
             stores.agent_lifecycle.clone(),
         );
         inline_lifecycle.resume_pending();
@@ -286,6 +286,8 @@ impl ControlPlaneComposition {
             rate_limiters: Arc::clone(&limits),
             public_origin: config.public_url.clone(),
             worker_holder: worker_holder.clone(),
+            profile_bounds: authoring_bounds,
+            profile_scanner: profile_scanner.clone(),
         })?;
         let (trigger_routes, launch_scheduler) = trigger.into_parts();
         let context = AgentContextService::new(
