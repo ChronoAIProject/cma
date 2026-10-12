@@ -35,6 +35,7 @@ mod agent_reads;
 mod agent_shared_shapes;
 mod agent_source;
 pub use agent_provenance::agent_provenance_router;
+mod agent_history;
 mod agent_lifecycle;
 #[cfg(test)]
 mod agent_provenance_tests;
@@ -125,6 +126,7 @@ mod triggers;
 mod workspaces;
 mod worktrees;
 
+pub use agent_history::{AgentHistoryExportError, AgentHistoryExporter};
 pub use agent_lifecycle::{
     AgentLifecycleCreateReceipt, AgentLifecycleCreateRequest, AgentLifecycleImageReference,
     AgentLifecyclePermissions, AgentLifecycleProfile, AgentLifecycleProvisioner,

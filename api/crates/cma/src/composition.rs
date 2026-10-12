@@ -24,7 +24,7 @@ use crate::{
     config::Config,
     profile_authoring::CmaProfileAuthoringSource,
     profile_policy::profile_route_policy,
-    projections::{AdapterSandboxResources, AgentProjectionServices},
+    projections::{AdapterAgentHistoryExporter, AdapterSandboxResources, AgentProjectionServices},
     rate_limit::RateLimiters,
     sandbox::{
         runtime_capabilities, DurableCheckpointObjectPurger, LiveAgentRegistry, LiveSandboxPolicy,
@@ -179,7 +179,10 @@ impl ControlPlaneComposition {
             runtime_capabilities(adapter.capabilities()),
         )
         .with_connections(connection_prerequisite.clone())
-        .with_resource_access(resource_access.clone());
+        .with_resource_access(resource_access.clone())
+        .with_history_exporter(Arc::new(AdapterAgentHistoryExporter::new(Arc::clone(
+            &adapter,
+        ))));
         let image_resolver = crate::agent_lifecycle::ImageManagerResolver::new(
             config.image_manager_base_url.clone(),
         )

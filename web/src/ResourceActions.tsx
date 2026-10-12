@@ -60,8 +60,8 @@ export function useResourceActions(
           await client.deleteAgent(action.agentId, options);
           break;
         case 'export_history': {
-          const transcript = await client.readAgentTranscript(action.agentId);
-          downloadAgentHistory(action.agentId, transcript);
+          const history = await client.exportAgentHistory(action.agentId);
+          downloadAgentHistory(action.agentId, history);
           break;
         }
       }
