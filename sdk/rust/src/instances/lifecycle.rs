@@ -66,18 +66,6 @@ pub struct SandboxBackgroundSave {
     pub epoch: u64,
 }
 
-/// Latest completed whole-home snapshot.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct SandboxCompletedSnapshot {
-    /// Monotonic checkpoint epoch.
-    #[serde(deserialize_with = "crate::resources::deserialize_positive")]
-    pub epoch: u64,
-    /// Recorded completion time.
-    pub saved_at: String,
-    /// Owner-authenticated relative archive download URL.
-    pub download_url: String,
-}
-
 /// Safe projection of the currently admitted lifecycle operation.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(tag = "purpose", rename_all = "snake_case")]
@@ -116,8 +104,6 @@ pub struct SandboxLifecycle {
     pub checkpoint: Option<SandboxCheckpoint>,
     /// Offline export progress, independent of live writer availability.
     pub background_save: Option<SandboxBackgroundSave>,
-    /// Latest completed snapshot, absent before the first successful save.
-    pub latest_snapshot: Option<SandboxCompletedSnapshot>,
     /// Admitted lifecycle operation, when present.
     pub operation: Option<SandboxLifecycleOperation>,
 }

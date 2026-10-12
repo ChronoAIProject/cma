@@ -307,7 +307,6 @@ of the public contract.
 | `POST /api/v1/sandboxes/{id}/pause` |
 | `POST /api/v1/sandboxes/{id}/revive` |
 | `POST /api/v1/sandboxes/{id}/service-access` |
-| `GET /api/v1/sandboxes/{id}/snapshots/{epoch}/download` |
 
 ### service connections
 

@@ -1283,7 +1283,8 @@ buffering; revoked/expired access prevents later downloads. Download filenames
 in HTTP headers are generated from the content hash, with `nosniff` and
 `private, no-store`. SDK downloads return bytes; the web verifies size/hash and
 current permission before creating its local file. Previously downloaded copies
-cannot be recalled. Existing full Sandbox snapshot exports remain owner-only.
+cannot be recalled. Sandbox state is persisted by the attached Agent Sandbox
+volume; CMA does not expose a Sandbox snapshot archive endpoint.
 
 ### Sandboxes
 
@@ -1292,7 +1293,6 @@ cannot be recalled. Existing full Sandbox snapshot exports remain owner-only.
 | `GET /api/v1/sandboxes` | - | organization, shared, status, cursor, limit | 200 AccessibleSandboxPageView |
 | `POST /api/v1/sandboxes` | CreateSandboxRequest; key | - | 201 SandboxView |
 | `GET /api/v1/sandboxes/{id}` | - | - | 200 AccessibleSandboxDetailView |
-| `GET /api/v1/sandboxes/{id}/snapshots/{epoch}/download` | - | - | 200 application/octet-stream attachment; owner-authenticated latest completed snapshot |
 | `DELETE /api/v1/sandboxes/{id}` | -; key | - | 202 SandboxView |
 | `GET /api/v1/sandboxes/{id}/events` | - | after, limit | 200 array<SandboxEventView> |
 | `POST /api/v1/sandboxes/{id}/pause` | -; key | - | 202 SandboxView |

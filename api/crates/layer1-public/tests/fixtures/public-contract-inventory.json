@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 180,
+  "openapi_operations": 179,
   "operations": {
     "GET /api/v1/organizations": {
       "classification": "openapi",
@@ -613,16 +613,6 @@
         "forbidden",
         "hierarchy_service_unavailable",
         "invalid_page",
-        "not_authenticated",
-        "sandbox_not_found"
-      ]
-    },
-    "GET /api/v1/sandboxes/{id}/snapshots/{epoch}/download": {
-      "classification": "openapi",
-      "source": "api/crates/layer1-public/src/rest/sandboxes.rs# Owner authentication and current snapshot epoch gate streamed archive downloads.",
-      "required_problems": [
-        "forbidden",
-        "hierarchy_service_unavailable",
         "not_authenticated",
         "sandbox_not_found"
       ]

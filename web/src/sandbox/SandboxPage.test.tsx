@@ -129,14 +129,7 @@ it('explains persistent PV storage in Advanced and exposes no snapshot controls'
   const sandbox = savingSandbox('capture');
   lifecyclePage(async () => ({
     ...sandbox,
-    lifecycle: {
-      ...sandbox.lifecycle!,
-      latestSnapshot: {
-        epoch: 6,
-        savedAt: '2026-09-07T23:30:00Z',
-        downloadUrl: '/api/v1/sandboxes/sbx_1/snapshots/6/download',
-      },
-    },
+    lifecycle: sandbox.lifecycle,
   }));
   await act(async () => {});
   expect(screen.queryByText('Latest snapshot')).not.toBeInTheDocument();

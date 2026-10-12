@@ -31,13 +31,6 @@ pub struct SandboxCheckpointView {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
-pub struct SandboxCompletedSnapshotView {
-    pub epoch: u64,
-    pub saved_at: String,
-    pub download_url: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 pub struct SandboxBackgroundSaveView {
     pub phase: String,
     pub started_at: String,
@@ -95,8 +88,6 @@ pub struct SandboxLifecycleView {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub background_save: Option<SandboxBackgroundSaveView>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub latest_snapshot: Option<SandboxCompletedSnapshotView>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub operation: Option<SandboxLifecycleOperationView>,
 }
 
@@ -120,19 +111,6 @@ impl From<&Sandbox> for SandboxLifecycleView {
                             .and_then(|snapshot| snapshot.captured_at.clone()),
                         epoch: capture.plan.snapshot.epoch,
                     }
-                }),
-            latest_snapshot: value
-                .lifecycle
-                .checkpoints
-                .latest
-                .as_ref()
-                .map(|checkpoint| SandboxCompletedSnapshotView {
-                    epoch: checkpoint.epoch,
-                    saved_at: checkpoint.sealed_at.clone(),
-                    download_url: format!(
-                        "/api/v1/sandboxes/{}/snapshots/{}/download",
-                        value.id, checkpoint.epoch
-                    ),
                 }),
             checkpoint: value.lifecycle.checkpoint_capture.as_ref().map(|capture| {
                 SandboxCheckpointView {

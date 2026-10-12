@@ -79,7 +79,6 @@ export const sandboxLifecycle = object({
       epoch: positiveInteger,
     }),
   ),
-  latest_snapshot: optional(object({ epoch: positiveInteger, saved_at: text, download_url: text })),
   operation: optional(operation),
 });
 export type SandboxLifecycle = Output<typeof sandboxLifecycle>;
