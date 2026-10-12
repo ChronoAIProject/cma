@@ -7,7 +7,7 @@ import type {
 } from '../api/client';
 import { AgentLifecycleCreateError } from '../api/client';
 import { ConnectionWizard } from '../connections/ConnectionWizard';
-import type { ConnectionReport, ConnectionTarget } from '../connections/client';
+import type { ConnectionTarget } from '../connections/client';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { Modal } from '../ui/Modal';
@@ -369,7 +369,7 @@ export function AgentLifecycleCard({ client, onClose, onCreated }: AgentLifecycl
             </ul>
             <ConnectionWizard
               target={connectionRequest.target}
-              onReady={(_report: ConnectionReport) => {
+              onReady={() => {
                 setConnectionRequest(undefined);
                 submit();
               }}
