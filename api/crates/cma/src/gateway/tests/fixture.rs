@@ -212,7 +212,7 @@ async fn respond(
 }
 
 #[path = "../../../../cmaeg/tests/support/database.rs"]
-mod database;
+pub(super) mod database;
 
 pub(super) struct Gateway {
     database: database::DatabaseFixture,
@@ -250,7 +250,7 @@ impl Gateway {
         gateway.ready().await;
         gateway
     }
-    fn binary() -> std::path::PathBuf {
+    pub(super) fn binary() -> std::path::PathBuf {
         std::env::var_os("CMAEG_TEST_BINARY")
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|| {

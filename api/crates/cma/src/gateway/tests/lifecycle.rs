@@ -20,6 +20,9 @@ impl BotProfileResolver for Profiles {
     }
 }
 pub(super) fn external(server: &Server, gateway: &Gateway) -> Arc<GatewayBots> {
+    external_at(server, &gateway.base, &gateway.base)
+}
+pub(super) fn external_at(server: &Server, base: &str, public: &str) -> Arc<GatewayBots> {
     let http = reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
         .redirect(reqwest::redirect::Policy::none())
@@ -31,8 +34,8 @@ pub(super) fn external(server: &Server, gateway: &Gateway) -> Arc<GatewayBots> {
         gateway: client::GatewayClient::new(
             http.clone(),
             &GatewayConfig {
-                base_url: gateway.base.clone(),
-                public_url: gateway.base.clone(),
+                base_url: base.into(),
+                public_url: public.into(),
             },
             "https://nyx.example".into(),
         )
@@ -41,14 +44,9 @@ pub(super) fn external(server: &Server, gateway: &Gateway) -> Arc<GatewayBots> {
             http: http.clone(),
             base: server.base.clone(),
         },
-        connections: connections::ChannelConnections::new(
-            http.clone(),
-            &gateway.base,
-            &gateway.base,
-        )
-        .unwrap(),
+        connections: connections::ChannelConnections::new(http.clone(), base, public).unwrap(),
         issuer: KeyIssuer::new(http, &server.base, "test"),
-        public: gateway.base.clone(),
+        public: public.into(),
     })
 }
 fn owner() -> layer2_core::Caller {

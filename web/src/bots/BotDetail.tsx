@@ -94,15 +94,17 @@ export function BotDetail({
   return (
     <section aria-labelledby="bot-detail-title">
       <header className="bots__header">
-        <Button onClick={() => onNavigate({ kind: 'bots' })}>All Bots</Button>
+        <Button onClick={() => onNavigate({ kind: 'bots' })}>All consumers</Button>
         <h1 id="bot-detail-title">{bot?.name ?? 'Bot'}</h1>
         <Button onClick={current.reload}>Refresh status</Button>
       </header>
       <div className="bots__body">
         {current.error === undefined ? null : <p role="alert">{current.error}</p>}
-        {bot === undefined && current.error === undefined ? <p role="status">Loading Bot</p> : null}
+        {bot === undefined && current.error === undefined ? (
+          <p role="status">Loading consumer</p>
+        ) : null}
         {bot !== null ? null : (
-          <p role="status">Bot deleted. Its connection, routes and access have been removed.</p>
+          <p role="status">Consumer deleted. Its channel and Agent access have been removed.</p>
         )}
         {bot == null ? null : (
           <>
@@ -131,7 +133,15 @@ export function BotDetail({
                   : new Date(bot.credentials_expire_at).toLocaleString()}
               </dd>
             </dl>
-            {bot.channel === null ? null : (
+            {bot.connection_ref ? (
+              <div>
+                <h2>Event Gateway connection</h2>
+                <p>The Gateway manages the channel connection and message delivery.</p>
+                <Button onClick={() => onNavigate({ kind: 'event_gateway' })}>
+                  Open Event Gateway
+                </Button>
+              </div>
+            ) : bot.channel === null ? null : (
               <div>
                 <h2>Callback URL</h2>
                 <code className="bots__callback">{bot.channel.callback_url}</code>
@@ -150,7 +160,7 @@ export function BotDetail({
                 disabled={!available || !['active', 'disabled'].includes(bot.state)}
                 onClick={() => void run(bot.state === 'disabled' ? 'enable' : 'disable')}
               >
-                {bot.state === 'disabled' ? 'Enable Bot' : 'Disable Bot'}
+                {bot.state === 'disabled' ? 'Enable consumer' : 'Disable consumer'}
               </Button>
               <Button
                 disabled={!available || !['active', 'disabled'].includes(bot.state)}
@@ -159,7 +169,7 @@ export function BotDetail({
                 Rotate keys
               </Button>
               <Button variant="danger" disabled={!available} onClick={() => setConfirm('delete')}>
-                Delete Bot
+                Delete consumer
               </Button>
             </div>
             {bot.operation === null ? null : (

@@ -27,7 +27,6 @@ interface ProfileMenuProps {
   readonly onSignOut: () => void;
   readonly onNavigate?: (route: AppRoute) => void;
   readonly collapsed?: boolean;
-  readonly canManageBridges?: boolean;
   readonly bots?: boolean;
 }
 
@@ -37,7 +36,6 @@ const MENU_ROUTES: Readonly<Record<string, AppRoute>> = {
   triggers: { kind: 'triggers' },
   developer: { kind: 'developer' },
   operations: { kind: 'operations' },
-  bridges: { kind: 'event_gateway' },
 };
 
 export function initialsFor(user: Pick<User, 'displayName' | 'email' | 'handle'>): string {
@@ -61,24 +59,21 @@ export function ProfileMenu({
   onSignOut,
   onNavigate,
   collapsed = false,
-  canManageBridges = false,
   bots = false,
 }: ProfileMenuProps) {
   const [open, setOpen] = useState(false);
   const [appearance, setLocalAppearance] = useState<Appearance>(() => storedAppearance());
   const [avatarBroken, setAvatarBroken] = useState(false);
   const canOperate = canOpenOperations(user.capabilities);
-  const showBridges = canManageBridges && !user.visitor;
   const items: MenuEntry[] = [
     ...(user.capabilities.includes('use_own_sandboxes')
       ? [{ id: 'inventory', icon: <IconBrowseOutline16 />, label: 'Agents' }]
       : []),
-    ...(bots ? [{ id: 'bots', icon: <IconSettingsOutline16 />, label: 'Bot settings' }] : []),
+    ...(bots && !user.visitor
+      ? [{ id: 'bots', icon: <IconCodeOutline16 />, label: 'Event Gateway consumers' }]
+      : []),
     ...(!user.visitor && user.capabilities.includes('publish_triggers')
       ? [{ id: 'triggers', icon: <IconGoalOutline16 />, label: 'CMA Trigger' }]
-      : []),
-    ...(showBridges
-      ? [{ id: 'bridges', icon: <IconCodeOutline16 />, label: 'Event Gateway consumers' }]
       : []),
     { type: 'separator', id: 'before-platform' },
     { id: 'developer', icon: <IconCodeOutline16 />, label: 'Developer' },
