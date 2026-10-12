@@ -109,6 +109,9 @@ pub(super) async fn set_profile_visibility(
             tokio::task::yield_now().await;
         }
         let (document, profile) = owned_profile(target, locator.as_str(), owner).await?;
+        if profile.internal() {
+            return Err(MarketplaceError::NotFound);
+        }
         let publication = publication_metadata(&document)?;
         if visibility == ProfileVisibility::Public {
             validate_revisions(

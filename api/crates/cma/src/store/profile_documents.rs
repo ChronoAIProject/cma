@@ -119,6 +119,8 @@ pub(super) async fn save_draft<T: Serialize>(
     for name in ["id", "owner", "visibility", "uses_count", "created_at"] {
         filter.insert(format!("record.{name}"), required_field(&record, name)?);
     }
+    // Missing marks legacy user profiles; a draft cannot change its origin.
+    filter.insert("record.internal", optional_field(&record, "internal"));
     filter.insert("record.forked_from", optional_field(&record, "forked_from"));
     filter.insert("record.retired_at", Bson::Null);
 

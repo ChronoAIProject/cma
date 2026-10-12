@@ -28,11 +28,9 @@ impl MarketplaceStore for InMemoryProfileStore {
             .filter(|text| !text.is_empty());
         let mut rows = Vec::new();
         if query.kind.is_none_or(|kind| kind == MarketplaceKind::Agent) {
-            for profile in state
-                .agents
-                .values()
-                .filter(|profile| visible(profile.visibility, &profile.retired_at))
-            {
+            for profile in state.agents.values().filter(|profile| {
+                !profile.internal && visible(profile.visibility, &profile.retired_at)
+            }) {
                 if matches_query(&profile.name, &profile.description, needle) {
                     if let Some(revision) = latest_agent_revision(&state, &profile.id) {
                         rows.push(summary(
@@ -53,11 +51,9 @@ impl MarketplaceStore for InMemoryProfileStore {
             .kind
             .is_none_or(|kind| kind == MarketplaceKind::Workspace)
         {
-            for profile in state
-                .workspaces
-                .values()
-                .filter(|profile| visible(profile.visibility, &profile.retired_at))
-            {
+            for profile in state.workspaces.values().filter(|profile| {
+                !profile.internal && visible(profile.visibility, &profile.retired_at)
+            }) {
                 if matches_query(&profile.name, &profile.description, needle) {
                     if let Some(revision) = latest_workspace_revision(&state, &profile.id) {
                         rows.push(summary(
@@ -78,11 +74,9 @@ impl MarketplaceStore for InMemoryProfileStore {
             .kind
             .is_none_or(|kind| kind == MarketplaceKind::Sandbox)
         {
-            for profile in state
-                .sandboxes
-                .values()
-                .filter(|profile| visible(profile.visibility, &profile.retired_at))
-            {
+            for profile in state.sandboxes.values().filter(|profile| {
+                !profile.internal && visible(profile.visibility, &profile.retired_at)
+            }) {
                 if matches_query(&profile.name, &profile.description, needle) {
                     if let Some(revision) = latest_sandbox_revision(&state, &profile.id) {
                         rows.push(summary(
@@ -129,7 +123,9 @@ impl MarketplaceStore for InMemoryProfileStore {
                 let profile = state
                     .agents
                     .get(id)
-                    .filter(|profile| visible(profile.visibility, &profile.retired_at))
+                    .filter(|profile| {
+                        !profile.internal && visible(profile.visibility, &profile.retired_at)
+                    })
                     .ok_or(MarketplaceError::NotFound)?;
                 let revision =
                     latest_agent_revision(&state, id).ok_or(MarketplaceError::NotFound)?;
@@ -154,7 +150,9 @@ impl MarketplaceStore for InMemoryProfileStore {
                 let profile = state
                     .workspaces
                     .get(id)
-                    .filter(|profile| visible(profile.visibility, &profile.retired_at))
+                    .filter(|profile| {
+                        !profile.internal && visible(profile.visibility, &profile.retired_at)
+                    })
                     .ok_or(MarketplaceError::NotFound)?;
                 let revision =
                     latest_workspace_revision(&state, id).ok_or(MarketplaceError::NotFound)?;
@@ -189,7 +187,9 @@ impl MarketplaceStore for InMemoryProfileStore {
                 let profile = state
                     .sandboxes
                     .get(id)
-                    .filter(|profile| visible(profile.visibility, &profile.retired_at))
+                    .filter(|profile| {
+                        !profile.internal && visible(profile.visibility, &profile.retired_at)
+                    })
                     .ok_or(MarketplaceError::NotFound)?;
                 let revision =
                     latest_sandbox_revision(&state, id).ok_or(MarketplaceError::NotFound)?;
@@ -257,7 +257,7 @@ impl MarketplaceStore for InMemoryProfileStore {
                 let profile = state
                     .agents
                     .get_mut(id)
-                    .filter(|profile| &profile.owner == owner)
+                    .filter(|profile| !profile.internal && &profile.owner == owner)
                     .ok_or(MarketplaceError::NotFound)?;
                 profile.visibility = visibility;
                 profile.updated_at = updated_at;
@@ -275,7 +275,7 @@ impl MarketplaceStore for InMemoryProfileStore {
                 let profile = state
                     .workspaces
                     .get_mut(id)
-                    .filter(|profile| &profile.owner == owner)
+                    .filter(|profile| !profile.internal && &profile.owner == owner)
                     .ok_or(MarketplaceError::NotFound)?;
                 profile.visibility = visibility;
                 profile.updated_at = updated_at;
@@ -293,7 +293,7 @@ impl MarketplaceStore for InMemoryProfileStore {
                 let profile = state
                     .sandboxes
                     .get_mut(id)
-                    .filter(|profile| &profile.owner == owner)
+                    .filter(|profile| !profile.internal && &profile.owner == owner)
                     .ok_or(MarketplaceError::NotFound)?;
                 if visibility != ProfileVisibility::Public {
                     profile.availability.warmup_enabled = false;
@@ -318,7 +318,9 @@ impl MarketplaceStore for InMemoryProfileStore {
                 let source = state
                     .agents
                     .get(id)
-                    .filter(|profile| visible(profile.visibility, &profile.retired_at))
+                    .filter(|profile| {
+                        !profile.internal && visible(profile.visibility, &profile.retired_at)
+                    })
                     .ok_or(MarketplaceError::NotFound)?
                     .clone();
                 let revision = state
@@ -327,6 +329,7 @@ impl MarketplaceStore for InMemoryProfileStore {
                     .ok_or(MarketplaceError::NotFound)?
                     .clone();
                 let profile = AgentProfile {
+                    internal: false,
                     id: AgentProfileId::generate(),
                     owner: owner.clone(),
                     name: fork_name(&source.name),
@@ -350,7 +353,9 @@ impl MarketplaceStore for InMemoryProfileStore {
                 let source = state
                     .workspaces
                     .get(id)
-                    .filter(|profile| visible(profile.visibility, &profile.retired_at))
+                    .filter(|profile| {
+                        !profile.internal && visible(profile.visibility, &profile.retired_at)
+                    })
                     .ok_or(MarketplaceError::NotFound)?
                     .clone();
                 let revision = state
@@ -359,6 +364,7 @@ impl MarketplaceStore for InMemoryProfileStore {
                     .ok_or(MarketplaceError::NotFound)?
                     .clone();
                 let profile = WorkspaceProfile {
+                    internal: false,
                     id: WorkspaceProfileId::generate(),
                     owner: owner.clone(),
                     name: fork_name(&source.name),
@@ -382,7 +388,9 @@ impl MarketplaceStore for InMemoryProfileStore {
                 let source = state
                     .sandboxes
                     .get(id)
-                    .filter(|profile| visible(profile.visibility, &profile.retired_at))
+                    .filter(|profile| {
+                        !profile.internal && visible(profile.visibility, &profile.retired_at)
+                    })
                     .ok_or(MarketplaceError::NotFound)?
                     .clone();
                 let revision = state
@@ -391,6 +399,7 @@ impl MarketplaceStore for InMemoryProfileStore {
                     .ok_or(MarketplaceError::NotFound)?
                     .clone();
                 let profile = SandboxProfile {
+                    internal: false,
                     availability: Default::default(),
                     id: SandboxProfileId::generate(),
                     owner: owner.clone(),

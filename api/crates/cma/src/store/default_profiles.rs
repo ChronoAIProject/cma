@@ -49,6 +49,7 @@ impl DefaultProfileSpec {
     ) -> Result<DefaultProfileRecords, StoreError> {
         let owner = SubjectId::new(SYSTEM_OWNER);
         let agent = AgentProfile {
+            internal: false,
             id: AgentProfileId(DEFAULT_AGENT_PROFILE_ID.into()),
             owner: owner.clone(),
             name: "Default agent".into(),
@@ -73,6 +74,7 @@ impl DefaultProfileSpec {
             .publish(DEFAULT_PROFILE_REVISION, SEEDED_AT.into())
             .map_err(profile_invalid)?;
         let workspace = WorkspaceProfile {
+            internal: false,
             id: WorkspaceProfileId(DEFAULT_WORKSPACE_PROFILE_ID.into()),
             owner: owner.clone(),
             name: "Default workspace".into(),
@@ -100,6 +102,7 @@ impl DefaultProfileSpec {
             .publish(DEFAULT_PROFILE_REVISION, SEEDED_AT.into())
             .map_err(profile_invalid)?;
         let sandbox = SandboxProfile {
+            internal: false,
             availability: Default::default(),
             id: SandboxProfileId(DEFAULT_SANDBOX_PROFILE_ID.into()),
             owner,

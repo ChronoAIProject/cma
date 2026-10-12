@@ -349,6 +349,7 @@ async fn profile_creation_resumes_an_inserted_private_draft_and_preserves_keep_a
     let now = crate::now_rfc3339();
     store
         .create_agent_profile(AgentProfile {
+            internal: false,
             id: id.clone(),
             owner: owner.owner_subject().clone(),
             name: "Agent".into(),

@@ -20,6 +20,7 @@ async fn create_agent_fork(
     now: String,
 ) -> Result<ForkedProfile, MarketplaceError> {
     let profile = AgentProfile {
+        internal: false,
         id: AgentProfileId::generate(),
         owner: owner.clone(),
         name: fork_name(&source.name),
@@ -52,6 +53,7 @@ async fn create_workspace_fork(
     now: String,
 ) -> Result<ForkedProfile, MarketplaceError> {
     let profile = WorkspaceProfile {
+        internal: false,
         id: WorkspaceProfileId::generate(),
         owner: owner.clone(),
         name: fork_name(&source.name),
@@ -84,6 +86,7 @@ async fn create_sandbox_fork(
     now: String,
 ) -> Result<ForkedProfile, MarketplaceError> {
     let profile = SandboxProfile {
+        internal: false,
         availability: Default::default(),
         id: SandboxProfileId::generate(),
         owner: owner.clone(),

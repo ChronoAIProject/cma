@@ -74,14 +74,6 @@ pub(super) fn generated_id_is_valid(value: &str, prefix: &str) -> bool {
     })
 }
 
-/// Inline Trigger targets use private immutable profile snapshots behind the
-/// existing launch worker. They are implementation details and must never
-/// appear in the user-facing profile library or be manageable by ID.
-pub(super) fn internal_inline_profile(name: &str, description: &str) -> bool {
-    name.starts_with("Inline Trigger ")
-        && description.starts_with("Internal Agent Manager Trigger ")
-}
-
 pub(super) fn require_revision_read(caller: &Caller) -> Result<(), ProfileProblem> {
     if caller.authorization.allows(Capability::ManageOwnProfiles)
         || caller.authorization.allows(Capability::UseOwnSandboxes)
@@ -190,29 +182,4 @@ pub fn profiles_router(state: ProfilesState) -> Router {
             axum::routing::get(super::defaults::read),
         )
         .with_state(state)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::internal_inline_profile;
-
-    #[test]
-    fn only_inline_trigger_snapshots_are_hidden() {
-        assert!(internal_inline_profile(
-            "Inline Trigger Agent",
-            "Internal Agent Manager Trigger configuration"
-        ));
-        assert!(internal_inline_profile(
-            "Inline Trigger Sandbox",
-            "Internal Agent Manager Trigger sandbox configuration"
-        ));
-        assert!(!internal_inline_profile(
-            "Research Agent",
-            "Internal Agent Manager Trigger configuration"
-        ));
-        assert!(!internal_inline_profile(
-            "Inline Trigger Agent",
-            "User supplied configuration"
-        ));
-    }
 }

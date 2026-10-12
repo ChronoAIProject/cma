@@ -25,6 +25,8 @@ use crate::AuthenticatedSubject;
 mod availability_tests;
 #[path = "defaults_tests.rs"]
 mod defaults_tests;
+#[path = "profiles_internal_tests.rs"]
+mod internal_tests;
 #[path = "public_revision_tests.rs"]
 mod public_revision_tests;
 #[path = "profiles_public_values_tests.rs"]

@@ -214,6 +214,7 @@ pub(super) async fn publish_sandbox_profile(
     let id = SandboxProfileId(id.into());
     profiles
         .create_sandbox_profile(SandboxProfile {
+            internal: false,
             availability: Default::default(),
             id: id.clone(),
             owner: SubjectId::new(owner),
@@ -252,6 +253,7 @@ pub(super) async fn publish_workspace_profile(
     let id = WorkspaceProfileId(id.into());
     profiles
         .create_workspace_profile(WorkspaceProfile {
+            internal: false,
             id: id.clone(),
             owner: SubjectId::new(owner),
             name: format!("Workspace {id}"),

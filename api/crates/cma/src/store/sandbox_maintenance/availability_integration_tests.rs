@@ -17,6 +17,7 @@ async fn profile_fixture(
 ) -> (MongoProfileStore, SandboxProfile) {
     let profiles = MongoProfileStore::open(client, name).await.unwrap();
     let profile = SandboxProfile {
+        internal: false,
         availability: Default::default(),
         id: sandbox.profile.id.clone(),
         owner: sandbox.owner.clone(),
