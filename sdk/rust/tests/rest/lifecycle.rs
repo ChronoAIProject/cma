@@ -16,7 +16,6 @@ fn sandbox_lifecycle_retains_eligibility_and_recorded_checkpoint_phases() {
             "pause": {"allowed":false,"reason":"checkpoint_in_progress"},
             "revive": {"allowed":false,"reason":"not_paused"},
             "checkpoint": {"phase":phase,"started_at":"2026-09-08T00:00:00Z","epoch":6}
-            ,"latest_snapshot": {"epoch":5,"saved_at":"2026-09-07T23:30:00Z","download_url":"/api/v1/sandboxes/sbx_1/snapshots/5/download"}
         });
         let parsed: Sandbox = serde_json::from_value(value).unwrap();
         let lifecycle = parsed.lifecycle.unwrap();
@@ -30,7 +29,6 @@ fn sandbox_lifecycle_retains_eligibility_and_recorded_checkpoint_phases() {
         assert_eq!(checkpoint.epoch, 6);
         assert_eq!(checkpoint.started_at, "2026-09-08T00:00:00Z");
         assert!(lifecycle.operation.is_none());
-        assert_eq!(lifecycle.latest_snapshot.unwrap().epoch, 5);
     }
     let parsed: Sandbox = serde_json::from_value(sandbox()).unwrap();
     assert!(parsed.lifecycle.is_none());

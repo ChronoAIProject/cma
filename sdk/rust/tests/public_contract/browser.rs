@@ -5,12 +5,6 @@ use cma_sdk::{
 };
 
 pub const BROWSER_CASES: &[&str] = &[
-    "snapshot-download-owner",
-    "snapshot-download-forbidden",
-    "snapshot-download-anonymous",
-    "snapshot-download-foreign",
-    "snapshot-download-obsolete",
-    "snapshot-download-unavailable",
     "auth-trusted-login-return",
     "auth-trusted-register-return",
     "auth-trusted-callback",
@@ -48,25 +42,6 @@ pub fn owns(case: &Case) -> bool {
 // shared response models and navigation helpers without issuing a replacement request.
 pub fn verify(c: &Context<'_>) {
     match c.case.operation.as_str() {
-        "GET /api/v1/sandboxes/{id}/snapshots/{epoch}/download" => {
-            assert!(c.case.request.path.starts_with("/api/v1/sandboxes/"));
-            assert!(c.case.request.path.ends_with("/download"));
-            if c.case.response.status == 200 {
-                assert_eq!(
-                    c.case.response.headers["content-type"],
-                    "application/octet-stream"
-                );
-                assert_eq!(
-                    c.case.response.headers["cache-control"],
-                    "private, no-store"
-                );
-                assert!(c.case.response.headers["content-disposition"].contains("attachment;"));
-                assert_eq!(
-                    c.case.response.body.as_str(),
-                    Some("snapshot transport fixture")
-                );
-            }
-        }
         "GET /api/v1/triggers/public/{public_id}/open/{placement_id}" => {
             assert_eq!(c.case.response.status, 303);
             assert_eq!(
