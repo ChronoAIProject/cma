@@ -45,9 +45,12 @@ mod default_profiles;
 pub mod directory;
 mod durability;
 mod encryption;
+// Retain legacy persistence contracts for migration verification; production
+// Gateway records belong to the independently deployed Event Gateway.
+#[cfg(test)]
 mod gateway_interactions;
+#[cfg(test)]
 mod gateway_records;
-pub(crate) use gateway_interactions::MongoGatewayInteractionStore;
 #[cfg(test)]
 mod gateway_records_mongo_integration_tests;
 mod hierarchy;
@@ -123,7 +126,6 @@ pub(crate) use codex_subscriptions::MongoSubscriptionStore;
 pub(crate) use default_profiles::DefaultProfileSpec;
 pub use directory::MongoUserDirectoryStore;
 pub(crate) use encryption::AuthEncryptionKey;
-pub(crate) use gateway_records::MongoGatewayRecordStore;
 pub use mongo::MongoStores;
 pub use operation::MongoOperationStore;
 pub(crate) use sandbox_credentials::MongoSandboxCredentialStore;

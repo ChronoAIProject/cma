@@ -25,6 +25,8 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     "auth_login_attempts",
     "auth_subjects",
     "binding_conversations",
+    "bot_setups",
+    "bot_setup_contexts",
     "bots",
     "bridge_allocation_heads",
     "bridge_allocations",
@@ -83,6 +85,8 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     "checkpoint_objects",
     "checkpoints",
     "codex_subscription_connections",
+    "event_worker_profiles",
+    "event_worker_profile_revisions",
     "command_authorization_audits",
     "operation_claims",
     "owned_workspace_cleanup_audits_v1",
@@ -248,6 +252,40 @@ mod tests {
         let isolated = runtime.database(&name);
         verify(&isolated).await.unwrap();
         assert!(verify(&db).await.is_err());
+        let key = crate::store::AuthEncryptionKey::from_base64(&base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            [7_u8; 32],
+        ))
+        .unwrap();
+        let before = db.list_collection_names().await.unwrap();
+        let broad = crate::store::MongoStores::connect(
+            &uri,
+            &name,
+            "refused-bootstrap",
+            &key,
+            std::time::Duration::from_secs(86_400),
+            super::super::checkpoint_storage::test_storage(&name),
+            ("runtime-isolation-contract", None),
+        )
+        .await;
+        assert!(
+            matches!(broad, Err(StoreError::Unavailable(ref detail)) if detail.contains("not isolated"))
+        );
+        assert_eq!(db.list_collection_names().await.unwrap(), before);
+        for _ in 0..2 {
+            let stores = crate::store::MongoStores::open(
+                runtime.clone(),
+                &name,
+                "isolated-bootstrap",
+                &key,
+                std::time::Duration::from_secs(86_400),
+                super::super::checkpoint_storage::test_storage(&name),
+                ("runtime-isolation-contract", None),
+            )
+            .await
+            .expect("the complete production store assembly must initialize with runtime grants");
+            stores.ping().await.unwrap();
+        }
         use layer3_adapter::hosted::RuntimeRoutingStore;
         let routing =
             super::super::runtime_routing::MongoRuntimeRouting::open(&isolated, "fixture", true)
@@ -268,6 +306,8 @@ mod tests {
 
         for foreign in [
             "gateway_channel_records",
+            "gateway_connection_records",
+            "gateway_interaction_records",
             "eg_channel_records",
             "eg_auth_sessions",
             "im_images",
