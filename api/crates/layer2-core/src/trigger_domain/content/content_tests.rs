@@ -102,12 +102,12 @@ mod inline_target_tests {
             "target": {
                 "inline": {
                     "image": {
-                        "id": "private-codex",
+                        "id": "private-agent",
                         "version": "v3",
-                        "reference": "registry.example/codex@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                        "reference": "registry.example/agent@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
                     },
                     "agent": {
-                        "model": "gpt-5-codex",
+                        "model": "gpt-5-agent",
                         "reasoning_effort": "high",
                         "permission_mode": "guarded",
                         "skills": [{"source": "ornn", "id": "repo-search"}],
@@ -147,7 +147,7 @@ mod inline_target_tests {
             .image
             .as_mut()
             .expect("image")
-            .reference = Some("registry.example/codex:latest".into());
+            .reference = Some("registry.example/agent:latest".into());
         let error = content
             .validate()
             .expect_err("mutable image must be rejected");
