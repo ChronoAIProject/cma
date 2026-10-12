@@ -224,7 +224,7 @@ impl AgentService {
             .map_err(|error| AgentServiceError::InvalidRequest(error.to_string()))?;
         let admission = AgentAdmission {
             binding: None,
-            created_by: Some(attribution.actor),
+            created_by: attribution.actor,
             owner: caller.subject.clone(),
             workspace_id: workspace.id,
             agent_id,

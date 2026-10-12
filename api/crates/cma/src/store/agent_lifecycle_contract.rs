@@ -15,6 +15,10 @@ pub(super) async fn verify(db: &Database) {
     }))
     .unwrap();
     let input = LifecycleInput {
+        actor: Some(layer2_core::resource_access::ResourceActor::Api {
+            subject: owner.clone(),
+            delegation_id: Some("original-grant".into()),
+        }),
         request: request.clone(),
         resolved_image: Some("pinned-first".into()),
         capabilities: vec![Capability::UseOwnSandboxes],
@@ -31,6 +35,7 @@ pub(super) async fn verify(db: &Database) {
     let mut changed = input.clone();
     changed.resolved_image = Some("latest-now-points-elsewhere".into());
     changed.capabilities.clear();
+    changed.actor = None;
     let CreateResult::Existing(replayed) =
         store.create(&owner, "exact-intent", changed).await.unwrap()
     else {
@@ -39,6 +44,7 @@ pub(super) async fn verify(db: &Database) {
     assert_eq!(replayed.id, id);
     assert_eq!(replayed.input.resolved_image, input.resolved_image);
     assert_eq!(replayed.input.capabilities, input.capabilities);
+    assert_eq!(replayed.input.actor, input.actor);
     assert_eq!(
         store
             .replay(&owner, "exact-intent", &request)
@@ -165,6 +171,48 @@ pub(super) async fn verify(db: &Database) {
     assert_eq!(finished.agent_id.as_deref(), Some("original-agent"));
     assert!(finished.lease_token.is_none());
     assert!(!restarted.pending().await.unwrap().contains(&id));
+
+    let CreateResult::Created(retry_id) = store
+        .create(&owner, "transient-retry", input.clone())
+        .await
+        .unwrap()
+    else {
+        panic!("new retry intent")
+    };
+    let claimed = store.claim(&retry_id).await.unwrap().unwrap();
+    assert_eq!(claimed.attempts, 1);
+    let lease = claimed.lease().unwrap();
+    store.mark_sandbox(&lease, "stable-sandbox").await.unwrap();
+    store.mark_agent(&lease, "stable-agent").await.unwrap();
+    store.retry(&lease, claimed.attempts).await.unwrap();
+    assert!(store.fail(&lease, "stale outcome").await.is_err());
+    assert!(store.claim(&retry_id).await.unwrap().is_none());
+    assert!(!store.pending().await.unwrap().contains(&retry_id));
+    let queued = store
+        .read_for_owner(&owner, &retry_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(queued.status, "queued");
+    assert!(queued.retry_at.unwrap() > DateTime::now());
+    db.collection::<Document>(COLLECTION)
+        .update_one(
+            doc! {"_id": &retry_id},
+            doc! {"$set":{"retry_at":DateTime::from_millis(0)}},
+        )
+        .await
+        .unwrap();
+    let resumed_store = MongoAgentLifecycleStore::open(db).await.unwrap();
+    assert!(resumed_store.pending().await.unwrap().contains(&retry_id));
+    let next = resumed_store.claim(&retry_id).await.unwrap().unwrap();
+    assert_eq!(next.attempts, 2);
+    assert_eq!(next.sandbox_id.as_deref(), Some("stable-sandbox"));
+    assert_eq!(next.agent_id.as_deref(), Some("stable-agent"));
+    assert_eq!(next.input.actor, input.actor);
+    resumed_store
+        .succeed(&next.lease().unwrap(), "stable-agent")
+        .await
+        .unwrap();
 
     let CreateResult::Created(waiting_id) = store
         .create(&owner, "connect-intent", input.clone())

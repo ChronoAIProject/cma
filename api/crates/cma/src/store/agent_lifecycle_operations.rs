@@ -39,6 +39,9 @@ pub(crate) struct LifecycleInput {
     pub resolved_image: Option<String>,
     #[serde(default)]
     pub capabilities: Vec<Capability>,
+    /// Original authenticated actor; old records retain unknown attribution.
+    #[serde(default)]
+    pub actor: Option<layer2_core::resource_access::ResourceActor>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -70,6 +73,10 @@ pub(crate) struct LifecycleRecord {
     pub lease_expires_at: Option<DateTime>,
     #[serde(default)]
     pub lease_token: Option<String>,
+    #[serde(default)]
+    pub attempts: u32,
+    #[serde(default)]
+    pub retry_at: Option<DateTime>,
     pub created_at: DateTime,
     pub updated_at: DateTime,
     pub document_schema_version: i64,
@@ -120,6 +127,14 @@ impl MongoAgentLifecycleStore {
             )
             .await
             .map_err(driver)?;
+        operations
+            .create_index(
+                IndexModel::builder()
+                    .keys(doc! { "status": 1, "retry_at": 1, "created_at": 1 })
+                    .build(),
+            )
+            .await
+            .map_err(driver)?;
         Ok(Self { operations })
     }
 
@@ -166,6 +181,8 @@ impl MongoAgentLifecycleStore {
             connection: None,
             lease_expires_at: None,
             lease_token: None,
+            attempts: 0,
+            retry_at: None,
             created_at: now,
             updated_at: now,
             document_schema_version: DOCUMENT_SCHEMA_VERSION,
@@ -205,7 +222,10 @@ impl MongoAgentLifecycleStore {
             "_id": id,
             "document_schema_version": DOCUMENT_SCHEMA_VERSION,
             "$or": [
-                { "status": "queued" },
+                { "status": "queued", "$or": [
+                    { "retry_at": Bson::Null },
+                    { "retry_at": { "$lte": DateTime::from_system_time(now) } },
+                ] },
                 { "status": { "$in": ["running", "ready"] }, "$or": [
                     { "lease_expires_at": { "$exists": false } },
                     { "lease_expires_at": Bson::Null },
@@ -219,7 +239,9 @@ impl MongoAgentLifecycleStore {
                 "updated_at": DateTime::now(),
                 "lease_expires_at": DateTime::from_system_time(deadline),
                 "lease_token": uuid::Uuid::new_v4().to_string(),
-            }
+                "retry_at": Bson::Null,
+            },
+            "$inc": { "attempts": 1 },
         };
         self.operations
             .find_one_and_update(filter, update)
@@ -235,7 +257,10 @@ impl MongoAgentLifecycleStore {
             .find(doc! {
                 "document_schema_version": DOCUMENT_SCHEMA_VERSION,
                 "$or": [
-                    { "status": "queued" },
+                    { "status": "queued", "$or": [
+                        { "retry_at": Bson::Null },
+                        { "retry_at": { "$lte": now } },
+                    ] },
                     { "status": { "$in": ["running", "ready"] }, "$or": [
                         { "lease_expires_at": { "$exists": false } },
                         { "lease_expires_at": Bson::Null },

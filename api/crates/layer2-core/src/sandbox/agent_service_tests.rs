@@ -2,6 +2,7 @@ mod context;
 mod control;
 mod delegation;
 mod fixtures;
+mod lifecycle;
 mod profile_provisioning;
 
 use crate::profiles::store::AgentProfileStore;

@@ -3,6 +3,41 @@ use super::*;
 use crate::resource_access::{CallerContext, ResourceActor};
 
 impl AgentService {
+    /// Trusted durable lifecycle continuation. The operation captured this actor
+    /// only after validating its original CallerContext. Actor attribution does
+    /// not grant authority; the captured caller capabilities are checked here.
+    pub async fn create_for_lifecycle(
+        &self,
+        caller: &Caller,
+        actor: Option<&ResourceActor>,
+        workspace_id: &WorkspaceId,
+        request: CreateAgent,
+    ) -> Result<Agent, AgentServiceError> {
+        require(caller)?;
+        if !caller.authorization.allows(Capability::CreateSandbox)
+            || actor.is_some_and(|actor| actor.ordinary_subject() != Some(&caller.subject))
+        {
+            return Err(AgentServiceError::Forbidden);
+        }
+        if !matches!(request.origin, AgentOrigin::Lifecycle { .. }) {
+            return Err(AgentServiceError::InvalidRequest(
+                "lifecycle admission requires operation origin".into(),
+            ));
+        }
+        self.create_with_profile(
+            caller,
+            workspace_id,
+            request,
+            true,
+            false,
+            CreationAttribution {
+                actor: actor.cloned(),
+                initiation: None,
+            },
+        )
+        .await
+    }
+
     pub async fn create(
         &self,
         caller: &Caller,

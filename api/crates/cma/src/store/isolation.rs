@@ -20,6 +20,7 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     "agent_reuse_bindings",
     "agents",
     "auth_api_bearers",
+    "auth_actor_links",
     "auth_browser_logins",
     "auth_login_attempts",
     "auth_subjects",
@@ -90,6 +91,7 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     "owned_workspace_cleanup_tombstones_v1",
     "platform_settings",
     "provider_bindings",
+    "provider_tool_opens",
     "resource_policies",
     "resource_share_commands",
     "resource_shares",
@@ -100,6 +102,7 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     "sandbox_events",
     "sandbox_profile_revisions",
     "sandbox_profiles",
+    "sandbox_retained_availability",
     "sandboxes",
     "service_connection_handoffs",
     "trigger_definition_revisions",
@@ -130,7 +133,13 @@ const ACTIONS: &[&str] = &[
 pub(crate) fn role(database: &str) -> Document {
     let mut grants: Vec<_> = COLLECTIONS
         .iter()
-        .map(|name| doc! {"resource":{"db":database,"collection":*name},"actions":ACTIONS})
+        .map(|name| {
+            let mut actions = ACTIONS.to_vec();
+            if *name == "binding_conversations" {
+                actions.push("dropIndex");
+            }
+            doc! {"resource":{"db":database,"collection":*name},"actions":actions}
+        })
         .collect();
     grants.push(doc! {"resource":{"db":database,"collection":""},"actions":["listCollections"]});
     doc! {"createRole":"cma_am_runtime","privileges":grants,"roles":[]}
@@ -170,6 +179,7 @@ pub(crate) fn validate(status: &Document, database: &str) -> Result<(), StoreErr
                 action == "listCollections"
             } else {
                 ACTIONS.contains(&action)
+                    || (collection == "binding_conversations" && action == "dropIndex")
             }) {
                 return Err(denied());
             }
@@ -183,7 +193,10 @@ pub(crate) fn validate(status: &Document, database: &str) -> Result<(), StoreErr
         ACTIONS
             .iter()
             .all(|action| grants.get(*name).is_some_and(|s| s.contains(*action)))
-    }) {
+    }) || !grants
+        .get("binding_conversations")
+        .is_some_and(|actions| actions.contains("dropIndex"))
+    {
         return Err(denied());
     }
     Ok(())
@@ -200,6 +213,9 @@ pub(crate) async fn verify(database: &Database) -> Result<(), StoreError> {
 #[cfg(test)]
 #[path = "agent_lifecycle_contract.rs"]
 mod agent_lifecycle_contract;
+#[cfg(test)]
+#[path = "lifecycle_children_contract.rs"]
+mod lifecycle_children_contract;
 #[cfg(test)]
 #[path = "profile_internal_contract.rs"]
 mod profile_internal_contract;
@@ -248,6 +264,7 @@ mod tests {
 
         profile_internal_contract::verify(&runtime, &name).await;
         agent_lifecycle_contract::verify(&isolated).await;
+        lifecycle_children_contract::verify(&runtime, &name).await;
 
         for foreign in [
             "gateway_channel_records",
@@ -289,5 +306,29 @@ mod tests {
             );
             assert!(validate(&doc!{"authInfo":{"authenticatedUsers":[{"user":"agent-manager"}],"authenticatedUserPrivileges":changed}},"cma").is_err());
         }
+    }
+
+    #[test]
+    fn index_removal_is_confined_to_the_binding_migration() {
+        let grants = role("cma").get_array("privileges").unwrap().clone();
+        for collection in ["sandboxes", "agents", ""] {
+            let mut changed = grants.clone();
+            changed.push(
+                doc! {"resource":{"db":"cma","collection":collection},"actions":["dropIndex"]}
+                    .into(),
+            );
+            let status = doc! {"authInfo":{"authenticatedUsers":[{"user":"agent-manager"}],"authenticatedUserPrivileges":changed}};
+            assert!(validate(&status, "cma").is_err());
+        }
+        let mut missing = grants;
+        for grant in &mut missing {
+            let grant = grant.as_document_mut().unwrap();
+            grant
+                .get_array_mut("actions")
+                .unwrap()
+                .retain(|action| action.as_str() != Some("dropIndex"));
+        }
+        let status = doc! {"authInfo":{"authenticatedUsers":[{"user":"agent-manager"}],"authenticatedUserPrivileges":missing}};
+        assert!(validate(&status, "cma").is_err());
     }
 }

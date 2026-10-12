@@ -8,7 +8,7 @@ use layer2_core::sandbox::store::{
     allocated_sandbox_name, SandboxAdmission, SandboxAdmissionName, SandboxAdmissionReplay,
     SandboxAdmissionResult, SandboxAdmissionStore, SandboxStoreError,
 };
-use layer2_core::sandbox::{Sandbox, SandboxEvent, SandboxEventKind};
+use layer2_core::sandbox::{Sandbox, SandboxEvent, SandboxEventKind, SandboxOrigin};
 use mongodb::bson::{doc, Bson};
 
 use super::sandbox_events::{event_document, read_event};
@@ -51,9 +51,9 @@ impl SandboxAdmissionStore for MongoSandboxStore {
     async fn sandbox_admission_replay(
         &self,
         owner: &SubjectId,
-        launch_id: &str,
+        origin: &SandboxOrigin,
     ) -> Result<Option<SandboxAdmissionReplay>, SandboxStoreError> {
-        durable_origin_replay(self, owner, launch_id).await
+        durable_origin_replay(self, owner, origin).await
     }
 
     async fn admit_sandbox(
@@ -229,7 +229,7 @@ async fn replay_in_transaction(
     admission: &SandboxAdmission,
     session: &mut mongodb::ClientSession,
 ) -> Result<Option<Sandbox>, AdmissionError> {
-    let Some(filter) = trigger_filter(admission) else {
+    let Some(filter) = admission_filter(admission) else {
         return Ok(None);
     };
     let mut cursor = store
@@ -254,10 +254,10 @@ async fn durable_replay(
     store: &MongoSandboxStore,
     admission: &SandboxAdmission,
 ) -> Result<Option<Sandbox>, SandboxStoreError> {
-    let Some(launch_id) = admission.trigger_launch_id() else {
+    let Some(_) = admission.origin_key() else {
         return Ok(None);
     };
-    durable_origin_replay(store, &admission.sandbox.owner, launch_id)
+    durable_origin_replay(store, &admission.sandbox.owner, &admission.sandbox.origin)
         .await?
         .map(|replay| classify_replay_record(admission, replay))
         .transpose()
@@ -266,11 +266,13 @@ async fn durable_replay(
 async fn durable_origin_replay(
     store: &MongoSandboxStore,
     owner: &SubjectId,
-    launch_id: &str,
+    origin: &SandboxOrigin,
 ) -> Result<Option<SandboxAdmissionReplay>, SandboxStoreError> {
     let mut cursor = store
         .sandboxes
-        .find(origin_filter(owner.as_str(), launch_id))
+        .find(origin_filter(owner.as_str(), origin).ok_or(
+            SandboxStoreError::InvalidTransaction("manual origin has no replay identity"),
+        )?)
         .limit(REPLAY_CANDIDATE_LIMIT)
         .await
         .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
@@ -285,27 +287,23 @@ async fn durable_origin_replay(
     unique_origin_replay(documents)
 }
 
-fn trigger_filter(admission: &SandboxAdmission) -> Option<mongodb::bson::Document> {
-    admission
-        .trigger_launch_id()
-        .map(|launch_id| origin_filter(admission.sandbox.owner.as_str(), launch_id))
+fn admission_filter(admission: &SandboxAdmission) -> Option<mongodb::bson::Document> {
+    origin_filter(admission.sandbox.owner.as_str(), &admission.sandbox.origin)
 }
 
-fn origin_filter(owner: &str, launch_id: &str) -> mongodb::bson::Document {
-    doc! {
+fn origin_filter(owner: &str, origin: &SandboxOrigin) -> Option<mongodb::bson::Document> {
+    let (kind, id) = origin.replay_key()?;
+    let (query_field, record_field) = match origin {
+        SandboxOrigin::Trigger { .. } => ("origin_launch_id", "record.origin.launch_id"),
+        SandboxOrigin::Lifecycle { .. } => ("origin_operation_id", "record.origin.operation_id"),
+        SandboxOrigin::Manual => return None,
+    };
+    Some(doc! {
         "$or": [
-            {
-                "owner": owner,
-                "origin_type": "trigger",
-                "origin_launch_id": launch_id,
-            },
-            {
-                "record.owner": owner,
-                "record.origin.type": "trigger",
-                "record.origin.launch_id": launch_id,
-            },
+            { "owner": owner, "origin_type": kind, query_field: id },
+            { "record.owner": owner, "record.origin.type": kind, record_field: id },
         ],
-    }
+    })
 }
 
 fn unique_origin_replay(
@@ -313,7 +311,7 @@ fn unique_origin_replay(
 ) -> Result<Option<SandboxAdmissionReplay>, SandboxStoreError> {
     if documents.len() > 1 {
         return Err(SandboxStoreError::Corrupt(
-            "multiple sandboxes claim one trigger launch origin".into(),
+            "multiple sandboxes claim one admission origin".into(),
         ));
     }
     documents
@@ -438,59 +436,5 @@ async fn reconcile(
 }
 
 #[cfg(test)]
-mod tests {
-    use std::time::Duration;
-
-    use layer2_core::sandbox::store::SandboxStoreError;
-    use mongodb::bson::doc;
-
-    use super::{admission_retry_delay, origin_filter, suffixed, unique_origin_replay};
-
-    #[test]
-    fn retry_delay_is_exponential_and_bounded() {
-        let delays = (1..=8).map(admission_retry_delay).collect::<Vec<_>>();
-        assert_eq!(
-            delays,
-            [1, 2, 4, 8, 16, 32, 32, 32].map(Duration::from_millis)
-        );
-        assert_eq!(admission_retry_delay(usize::MAX), Duration::from_millis(32));
-    }
-
-    #[test]
-    fn allocated_suffixes_preserve_the_name_limit_and_utf8() {
-        assert_eq!(suffixed("research", 1), "research");
-        assert_eq!(suffixed("research", 2), "research-2");
-        let value = suffixed(&"é".repeat(32), 12);
-        assert!(value.len() <= 64);
-        assert!(value.ends_with("-12"));
-    }
-
-    #[test]
-    fn replay_discovery_covers_query_and_embedded_origin_fields() {
-        assert_eq!(
-            origin_filter("owner", "launch-one"),
-            doc! {
-                "$or": [
-                    {
-                        "owner": "owner",
-                        "origin_type": "trigger",
-                        "origin_launch_id": "launch-one",
-                    },
-                    {
-                        "record.owner": "owner",
-                        "record.origin.type": "trigger",
-                        "record.origin.launch_id": "launch-one",
-                    },
-                ],
-            }
-        );
-    }
-
-    #[test]
-    fn replay_discovery_rejects_multiple_candidates_before_decoding() {
-        assert!(matches!(
-            unique_origin_replay(vec![doc! {}, doc! {}]),
-            Err(SandboxStoreError::Corrupt(_))
-        ));
-    }
-}
+#[path = "sandbox_admission_tests.rs"]
+mod tests;
