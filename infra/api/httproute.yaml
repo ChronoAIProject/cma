@@ -52,6 +52,54 @@ spec:
   hostnames:
     - bot.chrono-ai.fun
   rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api/event-gateway
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /
+      backendRefs:
+        - group: ""
+          kind: Service
+          name: cmaeg
+          port: 80
+          weight: 1
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api/image-manager
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /
+      backendRefs:
+        - group: ""
+          kind: Service
+          name: cma-image-manager
+          port: 80
+          weight: 1
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api/agent-manager
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /api
+      backendRefs:
+        - group: ""
+          kind: Service
+          name: cma-api
+          port: 80
+          weight: 1
     # Keep the browser on one origin without placing the web pod in the API's
     # trusted-proxy chain. API, auth, and exact discovery matches win over `/`,
     # so GFE forwards the original client chain straight to the control plane.

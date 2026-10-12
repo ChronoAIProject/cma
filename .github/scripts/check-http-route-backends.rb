@@ -18,7 +18,6 @@ end
 
 def ownership(route)
   route.dig("spec", "rules").each_with_object({}) do |rule, paths|
-    abort("#{route.dig('metadata', 'name')} path rule carries filters") if rule.key?("filters")
     backends = rule.fetch("backendRefs")
     rule.fetch("matches").each do |match|
       abort("route match has constraints beyond its path") unless match.keys == ["path"]
@@ -26,7 +25,7 @@ def ownership(route)
       abort("route path has unexpected fields") unless path.keys.sort == %w[type value]
       key = [path.fetch("type"), path.fetch("value")]
       abort("duplicate route match #{key.inspect}") if paths.key?(key)
-      paths[key] = backends
+      paths[key] = { "backends" => backends, "filters" => rule.fetch("filters", []) }
     end
   end
 end
@@ -51,6 +50,19 @@ expected_web = {
   ["Exact", "/.well-known/agent-card.json"] => api_backend,
   ["PathPrefix", "/"] => web_backend,
 }
+
+expected_api.transform_values! { |backend| { "backends" => backend, "filters" => [] } }
+expected_web.transform_values! { |backend| { "backends" => backend, "filters" => [] } }
+{
+  "/api/event-gateway" => ["cmaeg", "/"],
+  "/api/image-manager" => ["cma-image-manager", "/"],
+  "/api/agent-manager" => ["cma-api", "/api"],
+}.each do |prefix, (service, replacement)|
+  expected_web[["PathPrefix", prefix]] = {
+    "backends" => [{ "group" => "", "kind" => "Service", "name" => service, "port" => 80, "weight" => 1 }],
+    "filters" => [{ "type" => "URLRewrite", "urlRewrite" => { "path" => { "type" => "ReplacePrefixMatch", "replacePrefixMatch" => replacement } } }],
+  }
+end
 
 abort("unexpected API route ownership: #{api.inspect}") unless api == expected_api
 abort("unexpected app route ownership: #{web.inspect}") unless web == expected_web
