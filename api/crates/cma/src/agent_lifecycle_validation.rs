@@ -6,7 +6,6 @@ use layer2_core::profiles::{
     AgentProfileContent, PermissionLevel, SkillRef, SkillSource, ThinkingEffort, WorkspaceLocation,
 };
 use layer2_core::sandbox::{AgentServiceError, SandboxServiceError, WorkspaceServiceError};
-use serde_json::json;
 use url::Url;
 
 pub(super) fn validate_request(
@@ -15,6 +14,7 @@ pub(super) fn validate_request(
     if request.name.trim() != request.name
         || request.name.is_empty()
         || request.name.len() > 80
+        || request.name.chars().count() > 64
         || request.name.chars().any(char::is_control)
     {
         return Err(AgentLifecycleProvisioningError::Invalid(
@@ -148,21 +148,6 @@ pub(super) fn repository_location(
 pub(super) fn sandbox_error(error: SandboxServiceError) -> AgentLifecycleProvisioningError {
     match error {
         SandboxServiceError::Forbidden => AgentLifecycleProvisioningError::Forbidden,
-        SandboxServiceError::ConnectionsRequired { services } => {
-            AgentLifecycleProvisioningError::ConnectionRequired {
-                services: services
-                    .into_iter()
-                    .map(|service| service.to_string())
-                    .collect(),
-                connection_target: json!({"type":"sandbox_profile"}),
-            }
-        }
-        SandboxServiceError::CredentialSetupRequired => {
-            AgentLifecycleProvisioningError::ConnectionRequired {
-                services: vec!["cma-credentials".into()],
-                connection_target: json!({"type":"sandbox_profile"}),
-            }
-        }
         SandboxServiceError::NameConflict | SandboxServiceError::SandboxOriginConflict => {
             AgentLifecycleProvisioningError::Conflict(error.to_string())
         }
@@ -180,7 +165,7 @@ pub(super) fn sandbox_error(error: SandboxServiceError) -> AgentLifecycleProvisi
 pub(super) fn workspace_error(error: WorkspaceServiceError) -> AgentLifecycleProvisioningError {
     match error {
         WorkspaceServiceError::Forbidden => AgentLifecycleProvisioningError::Forbidden,
-        WorkspaceServiceError::Connection(error) => connection_error(error),
+        WorkspaceServiceError::Connection(_) => AgentLifecycleProvisioningError::Unavailable,
         WorkspaceServiceError::ProfileNotFound
         | WorkspaceServiceError::InvalidProfile(_)
         | WorkspaceServiceError::InvalidOrigin => {
@@ -192,6 +177,7 @@ pub(super) fn workspace_error(error: WorkspaceServiceError) -> AgentLifecyclePro
 
 pub(super) fn connection_error(
     error: layer2_core::sandbox::SandboxCredentialPrerequisiteError,
+    target: serde_json::Value,
 ) -> AgentLifecycleProvisioningError {
     match error {
         layer2_core::sandbox::SandboxCredentialPrerequisiteError::ConnectionsRequired {
@@ -201,12 +187,12 @@ pub(super) fn connection_error(
                 .into_iter()
                 .map(|service| service.to_string())
                 .collect(),
-            connection_target: json!({"type":"sandbox_profile"}),
+            connection_target: target,
         },
         layer2_core::sandbox::SandboxCredentialPrerequisiteError::SetupRequired => {
             AgentLifecycleProvisioningError::ConnectionRequired {
                 services: vec!["cma-credentials".into()],
-                connection_target: json!({"type":"sandbox_profile"}),
+                connection_target: target,
             }
         }
         layer2_core::sandbox::SandboxCredentialPrerequisiteError::Unavailable(_) => {
@@ -218,10 +204,6 @@ pub(super) fn connection_error(
 pub(super) fn agent_error(error: AgentServiceError) -> AgentLifecycleProvisioningError {
     match error {
         AgentServiceError::Forbidden => AgentLifecycleProvisioningError::Forbidden,
-        AgentServiceError::Connection(_) => AgentLifecycleProvisioningError::ConnectionRequired {
-            services: vec!["agent-services".into()],
-            connection_target: json!({"type":"agent"}),
-        },
         AgentServiceError::InvalidRequest(detail) => {
             AgentLifecycleProvisioningError::Invalid(detail)
         }
@@ -234,4 +216,23 @@ pub(super) fn agent_error(error: AgentServiceError) -> AgentLifecycleProvisionin
         }
         _ => AgentLifecycleProvisioningError::Unavailable,
     }
+}
+
+pub(super) fn operation_error(error: layer2_core::StoreError) -> AgentLifecycleProvisioningError {
+    match error {
+        layer2_core::StoreError::RevisionConflict { .. } => {
+            AgentLifecycleProvisioningError::Conflict(
+                "idempotency key was already used for a different lifecycle request".into(),
+            )
+        }
+        _ => AgentLifecycleProvisioningError::Unavailable,
+    }
+}
+
+pub(super) fn sandbox_name(agent_name: &str) -> String {
+    let mut end = agent_name.len().min(56);
+    while !agent_name.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{} sandbox", &agent_name[..end])
 }

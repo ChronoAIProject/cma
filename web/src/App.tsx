@@ -162,6 +162,7 @@ function AgentApp({ router }: { readonly router: AppRouter }) {
           <Suspense fallback={null}>
             <CreationFlow
               key={state.user.id}
+              viewerId={state.user.id}
               request={request.value}
               client={client}
               catalog={creation}

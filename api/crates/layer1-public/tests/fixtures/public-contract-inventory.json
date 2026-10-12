@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 187,
+  "openapi_operations": 191,
   "operations": {
     "GET /api/v1/organizations": {
       "classification": "openapi",
@@ -2575,6 +2575,42 @@
         "invalid_json",
         "not_authenticated",
         "store_failed"
+      ]
+    },
+    "POST /api/v1/agents": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agents.rs# Typed lifecycle migration handlers preserve authenticated admission and owner-visible recovery.",
+      "required_problems": [
+        "connection_required",
+        "forbidden",
+        "not_authenticated",
+        "temporarily_unavailable"
+      ]
+    },
+    "GET /api/v1/agent-lifecycle/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agents.rs# Typed lifecycle migration handlers preserve authenticated admission and owner-visible recovery.",
+      "required_problems": [
+        "not_authenticated",
+        "not_found",
+        "temporarily_unavailable"
+      ]
+    },
+    "GET /api/v1/bots/connections": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bots/mod.rs# Typed lifecycle migration handlers preserve authenticated admission and owner-visible recovery.",
+      "required_problems": [
+        "bot_forbidden",
+        "bot_unavailable",
+        "not_authenticated"
+      ]
+    },
+    "POST /api/v1/sandboxes/{id}/workspaces/inline": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/workspaces.rs# Typed lifecycle migration handlers preserve authenticated admission and owner-visible recovery.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated"
       ]
     }
   }

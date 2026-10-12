@@ -2,16 +2,18 @@ import { useEffect, useMemo, useState } from 'react';
 import type {
   AgentLifecycleCreateInput,
   AgentLifecycleCreateReceipt,
-  AgentLifecycleOperationView,
   CmaWebClient,
-  CommandOptions,
 } from '../api/client';
-import { AgentLifecycleCreateError } from '../api/client';
 import { ConnectionWizard } from '../connections/ConnectionWizard';
-import type { ConnectionTarget } from '../connections/client';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { Modal } from '../ui/Modal';
+import { useProfileViewsClient } from '../api/context';
+import { ServicePicker } from '../profiles/pickers/ServicePicker';
+import { SkillPicker } from '../profiles/pickers/SkillPicker';
+import type { SkillReference } from '../profiles/client';
+import { useLifecycleIntent } from './lifecycleIntent';
+import { AgentProvisioningProgress } from './AgentProvisioningProgress';
 import { listAgentImages, type AgentImageChoice } from './imageCatalog';
 import './Create.css';
 import './AgentLifecycleCard.css';
@@ -21,20 +23,27 @@ const SYSTEM_IMAGE: AgentImageChoice = {
   name: 'System default image',
   description: 'Maintained by Agent Manager and kept compatible with the default runtime.',
 };
-const SCOPE_CHOICES = ['github', 'slack', 'linear', 'storage'] as const;
-const SKILL_CHOICES = ['git', 'code-review', 'test-runner'] as const;
-const MODEL_CHOICES = ['provider-default', 'gpt-5', 'gpt-5-mini'] as const;
 const EFFORT_CHOICES = ['minimal', 'low', 'medium', 'high', 'x_high'] as const;
 
 type Step = 'image' | 'profile' | 'review';
 
 interface AgentLifecycleCardProps {
   readonly client: CmaWebClient;
+  readonly viewerId?: string;
   readonly onClose: () => void;
   readonly onCreated: (receipt: AgentLifecycleCreateReceipt) => void;
 }
 
-export function AgentLifecycleCard({ client, onClose, onCreated }: AgentLifecycleCardProps) {
+export function AgentLifecycleCard({
+  client,
+  viewerId,
+  onClose,
+  onCreated,
+}: AgentLifecycleCardProps) {
+  const catalog = useProfileViewsClient()?.authoring;
+  const lifecycle = useLifecycleIntent(client, viewerId);
+  const { pending, failure, operation, connection: connectionRequest } = lifecycle;
+  const createdReceipt = lifecycle.intent?.receipt;
   const [step, setStep] = useState<Step>('image');
   const [images, setImages] = useState<readonly AgentImageChoice[]>([SYSTEM_IMAGE]);
   const [selectedImage, setSelectedImage] = useState(SYSTEM_IMAGE.id);
@@ -42,20 +51,12 @@ export function AgentLifecycleCard({ client, onClose, onCreated }: AgentLifecycl
   const [imagesError, setImagesError] = useState<string>();
   const [name, setName] = useState('');
   const [repository, setRepository] = useState('');
-  const [model, setModel] = useState<(typeof MODEL_CHOICES)[number]>('provider-default');
+  const [model, setModel] = useState('');
   const [effort, setEffort] = useState<(typeof EFFORT_CHOICES)[number]>('medium');
   const [permission, setPermission] = useState<'guarded' | 'autonomous'>('guarded');
   const [systemPrompt, setSystemPrompt] = useState('');
   const [scopes, setScopes] = useState<readonly string[]>([]);
-  const [skills, setSkills] = useState<readonly string[]>([]);
-  const [pending, setPending] = useState(false);
-  const [failure, setFailure] = useState<string>();
-  const [connectionRequest, setConnectionRequest] = useState<{
-    readonly services: readonly string[];
-    readonly target: ConnectionTarget;
-  }>();
-  const [createdReceipt, setCreatedReceipt] = useState<AgentLifecycleCreateReceipt>();
-  const [operation, setOperation] = useState<AgentLifecycleOperationView>();
+  const [skills, setSkills] = useState<readonly SkillReference[]>([]);
   const selected = useMemo(
     () => images.find((image) => image.id === selectedImage) ?? SYSTEM_IMAGE,
     [images, selectedImage],
@@ -79,87 +80,67 @@ export function AgentLifecycleCard({ client, onClose, onCreated }: AgentLifecycl
       });
     return () => request.abort();
   }, []);
-  useEffect(() => {
-    if (createdReceipt === undefined || client.readAgentLifecycle === undefined) return;
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const poll = async () => {
-      try {
-        const value = await client.readAgentLifecycle!(createdReceipt.id);
-        if (cancelled) return;
-        setOperation(value);
-        if (value.status === 'queued' || value.status === 'running') {
-          timer = setTimeout(() => void poll(), 1000);
-        }
-      } catch (error: unknown) {
-        if (!cancelled) setFailure(error instanceof Error ? error.message : 'Status unavailable.');
-      }
-    };
-    void poll();
-    return () => {
-      cancelled = true;
-      if (timer !== undefined) clearTimeout(timer);
-    };
-  }, [client, createdReceipt]);
-  const toggle = (values: readonly string[], value: string) =>
-    values.includes(value) ? values.filter((item) => item !== value) : [...values, value];
   const submit = () => {
-    if (client.createAgentLifecycle === undefined || !name.trim() || pending) return;
-    setPending(true);
-    setFailure(undefined);
     const input: AgentLifecycleCreateInput = {
       name: name.trim(),
       ...(selected.id === SYSTEM_IMAGE.id ? {} : { image: { id: selected.id } }),
       ...(repository.trim() === '' ? {} : { repository: { url: repository.trim() } }),
       profile: {
-        model: model === 'provider-default' ? undefined : model,
+        model: model.trim() || undefined,
         reasoning_effort: effort,
         permission_mode: permission,
         system_prompt: systemPrompt,
-        skills: skills.map((id) => ({ id })),
+        skills: skills.map(({ id, version }) => ({ id, version })),
         permissions: { services: scopes },
       },
     };
-    void client
-      .createAgentLifecycle(input, {
-        idempotencyKey: crypto.randomUUID(),
-      } satisfies CommandOptions)
-      .then(setCreatedReceipt)
-      .catch((error: unknown) => {
-        const lifecycleError = error instanceof AgentLifecycleCreateError ? error : undefined;
-        const message = error instanceof Error ? error.message : 'Agent creation failed.';
-        if (lifecycleError?.connection !== undefined)
-          setConnectionRequest({
-            services: lifecycleError.connection.services,
-            target: lifecycleError.connection.target,
-          });
-        else setFailure(message);
-      })
-      .finally(() => setPending(false));
+    void lifecycle.submit(input);
   };
-  const validName = name.trim().length > 0 && name.trim().length <= 80;
+  const validName =
+    name.trim().length > 0 &&
+    [...name.trim()].length <= 64 &&
+    new TextEncoder().encode(name.trim()).length <= 80 &&
+    ![...name].some(
+      (value) =>
+        value.charCodeAt(0) < 32 || (value.charCodeAt(0) >= 127 && value.charCodeAt(0) <= 159),
+    );
   return (
     <>
       <Modal
-        open
+        open={connectionRequest === undefined}
         title="New agent"
         description="Agent Manager provisions the sandbox, workspace and runtime from this request."
-        onClose={onClose}
+        onClose={() => {
+          if (operation?.status === 'succeeded' || operation?.status === 'failed')
+            lifecycle.clear();
+          onClose();
+        }}
         dismissible={!pending}
         placement="modal--wide"
         footer={
           <>
             {createdReceipt !== undefined ? (
               <>
-                <Button onClick={onClose}>Close</Button>
+                <Button
+                  onClick={() => {
+                    if (operation?.status === 'succeeded' || operation?.status === 'failed')
+                      lifecycle.clear();
+                    onClose();
+                  }}
+                >
+                  Close
+                </Button>
                 <Button
                   variant="primary"
-                  disabled={operation?.agent_id === undefined}
-                  onClick={() =>
-                    operation?.agent_id === undefined
-                      ? undefined
-                      : onCreated({ ...createdReceipt, id: operation.agent_id, status: 'ready' })
-                  }
+                  disabled={operation?.status !== 'succeeded' || operation.agent_id === undefined}
+                  onClick={() => {
+                    if (
+                      operation?.status === 'succeeded' &&
+                      operation.agent_id &&
+                      lifecycle.clear()
+                    )
+                      onCreated({ ...createdReceipt, id: operation.agent_id, status: 'ready' });
+                  }}
                 >
                   Open agent
                 </Button>
@@ -167,21 +148,29 @@ export function AgentLifecycleCard({ client, onClose, onCreated }: AgentLifecycl
             ) : (
               <>
                 <Button
-                  disabled={pending}
+                  disabled={pending || lifecycle.intent !== undefined}
                   onClick={() =>
                     step === 'image' ? onClose() : setStep(step === 'review' ? 'profile' : 'image')
                   }
                 >
                   Back
                 </Button>
-                {step === 'review' ? (
-                  <Button variant="primary" disabled={pending || !validName} onClick={submit}>
-                    {pending ? 'Starting provisioning…' : 'Create agent'}
+                {step === 'review' || lifecycle.intent !== undefined ? (
+                  <Button
+                    variant="primary"
+                    disabled={pending || lifecycle.blocked || (!lifecycle.intent && !validName)}
+                    onClick={submit}
+                  >
+                    {pending
+                      ? 'Starting provisioning…'
+                      : lifecycle.intent
+                        ? 'Recover creation'
+                        : 'Create agent'}
                   </Button>
                 ) : (
                   <Button
                     variant="primary"
-                    disabled={step === 'image' ? imagesLoading : !validName}
+                    disabled={lifecycle.blocked || (step === 'image' ? !validName : false)}
                     onClick={() => setStep(step === 'image' ? 'profile' : 'review')}
                   >
                     Continue
@@ -195,7 +184,7 @@ export function AgentLifecycleCard({ client, onClose, onCreated }: AgentLifecycl
         {createdReceipt !== undefined ? (
           <AgentProvisioningProgress receipt={createdReceipt} operation={operation} />
         ) : null}
-        {createdReceipt === undefined ? (
+        {createdReceipt === undefined && lifecycle.intent === undefined ? (
           <ol className="agent-lifecycle-steps" aria-label="Agent provisioning steps">
             {(['image', 'profile', 'review'] as const).map((item, index) => (
               <li key={item} aria-current={step === item ? 'step' : undefined}>
@@ -205,7 +194,7 @@ export function AgentLifecycleCard({ client, onClose, onCreated }: AgentLifecycl
             ))}
           </ol>
         ) : null}
-        {createdReceipt === undefined && step === 'image' ? (
+        {createdReceipt === undefined && lifecycle.intent === undefined && step === 'image' ? (
           <div className="agent-lifecycle-step">
             <div className="create-form__field">
               <label htmlFor="agent-name">Agent name</label>
@@ -213,7 +202,7 @@ export function AgentLifecycleCard({ client, onClose, onCreated }: AgentLifecycl
                 id="agent-name"
                 value={name}
                 onChange={(event) => setName(event.target.value)}
-                maxLength={80}
+                maxLength={64}
                 aria-invalid={!validName || undefined}
               />
               <p className="profile-field__help">
@@ -253,7 +242,7 @@ export function AgentLifecycleCard({ client, onClose, onCreated }: AgentLifecycl
             </fieldset>
           </div>
         ) : null}
-        {createdReceipt === undefined && step === 'profile' ? (
+        {createdReceipt === undefined && lifecycle.intent === undefined && step === 'profile' ? (
           <div className="agent-lifecycle-step">
             <div className="create-form__field">
               <label htmlFor="agent-repository">GitHub repository workspace (optional)</label>
@@ -272,16 +261,14 @@ export function AgentLifecycleCard({ client, onClose, onCreated }: AgentLifecycl
             <div className="agent-lifecycle-grid">
               <label>
                 Model
-                <select
+                <Input
+                  aria-label="Model"
                   value={model}
-                  onChange={(event) => setModel(event.target.value as typeof model)}
-                >
-                  {MODEL_CHOICES.map((value) => (
-                    <option key={value} value={value}>
-                      {value === 'provider-default' ? 'System default' : value}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(event) => setModel(event.target.value)}
+                  placeholder="System default"
+                  maxLength={128}
+                />
+                <small>Leave empty to use the system default model.</small>
               </label>
               <label>
                 Reasoning effort
@@ -320,33 +307,25 @@ export function AgentLifecycleCard({ client, onClose, onCreated }: AgentLifecycl
             </label>
             <fieldset className="agent-lifecycle-checks">
               <legend>Agent key scope</legend>
-              {SCOPE_CHOICES.map((value) => (
-                <label key={value}>
-                  <input
-                    type="checkbox"
-                    checked={scopes.includes(value)}
-                    onChange={() => setScopes(toggle(scopes, value))}
-                  />
-                  {value}
-                </label>
-              ))}
+              <ServicePicker
+                catalog={catalog}
+                value={scopes}
+                onChange={setScopes}
+                disabled={pending}
+              />
             </fieldset>
             <fieldset className="agent-lifecycle-checks">
               <legend>Skills</legend>
-              {SKILL_CHOICES.map((value) => (
-                <label key={value}>
-                  <input
-                    type="checkbox"
-                    checked={skills.includes(value)}
-                    onChange={() => setSkills(toggle(skills, value))}
-                  />
-                  {value}
-                </label>
-              ))}
+              <SkillPicker
+                catalog={catalog}
+                value={skills}
+                onChange={setSkills}
+                disabled={pending}
+              />
             </fieldset>
           </div>
         ) : null}
-        {createdReceipt === undefined && step === 'review' ? (
+        {createdReceipt === undefined && lifecycle.intent === undefined && step === 'review' ? (
           <div className="agent-lifecycle-step agent-lifecycle-review">
             <h3>Ready to provision</h3>
             <dl>
@@ -361,8 +340,7 @@ export function AgentLifecycleCard({ client, onClose, onCreated }: AgentLifecycl
               <div>
                 <dt>Agent setup</dt>
                 <dd>
-                  {model === 'provider-default' ? 'System default' : model} · {effort} ·{' '}
-                  {permission}
+                  {model || 'System default'} · {effort} · {permission}
                 </dd>
               </div>
               <div>
@@ -371,91 +349,51 @@ export function AgentLifecycleCard({ client, onClose, onCreated }: AgentLifecycl
               </div>
               <div>
                 <dt>Skills</dt>
-                <dd>{skills.length === 0 ? 'None selected' : skills.join(', ')}</dd>
+                <dd>
+                  {skills.length === 0
+                    ? 'None selected'
+                    : skills.map((skill) => skill.id).join(', ')}
+                </dd>
               </div>
             </dl>
             <p className="profile-field__help">
               Provisioning has three observable phases: Sandbox ready, workspace and runtime ready,
               then Agent key scope ready.
             </p>
-            {failure ? (
-              <p className="create-error" role="alert">
-                {failure}
-              </p>
-            ) : null}
           </div>
         ) : null}
+        {lifecycle.intent && !createdReceipt ? (
+          <p role="status">
+            Creation of “{lifecycle.intent.body.name}” has not been confirmed. Recover this request
+            to continue.
+          </p>
+        ) : null}
+        {failure ? (
+          <p className="create-error" role="alert">
+            {failure}
+          </p>
+        ) : null}
+        {createdReceipt && failure ? (
+          <Button onClick={lifecycle.retryStatus}>Retry status</Button>
+        ) : null}
+        {operation?.status === 'waiting_for_connection' && !connectionRequest ? (
+          <Button onClick={() => lifecycle.setConnection(operation.connection)}>
+            Connect services
+          </Button>
+        ) : null}
       </Modal>
-      <Modal
-        open={connectionRequest !== undefined}
-        title="Connect required services"
-        description="The selected Agent key scope includes services that are not connected yet. CMA will verify the connection before retrying."
-        onClose={() => setConnectionRequest(undefined)}
-      >
-        {connectionRequest === undefined ? null : (
-          <>
-            <ul className="agent-lifecycle-connection-list">
-              {connectionRequest.services.map((service) => (
-                <li key={service}>{service}</li>
-              ))}
-            </ul>
-            <ConnectionWizard
-              target={connectionRequest.target}
-              onReady={() => {
-                setConnectionRequest(undefined);
-                submit();
-              }}
-              onCancel={() => setConnectionRequest(undefined)}
-            />
-          </>
-        )}
-      </Modal>
+      {connectionRequest === undefined ? null : (
+        <ConnectionWizard
+          target={connectionRequest.target}
+          expectedOwner={viewerId}
+          presentation="dialog"
+          onReady={() => {
+            lifecycle.setConnection(undefined);
+            void lifecycle.submit();
+          }}
+          onCancel={() => lifecycle.setConnection(undefined)}
+        />
+      )}
     </>
-  );
-}
-
-function AgentProvisioningProgress({
-  receipt,
-  operation,
-}: {
-  readonly receipt: AgentLifecycleCreateReceipt;
-  readonly operation?: AgentLifecycleOperationView;
-}) {
-  const status = operation?.status ?? receipt.status ?? 'queued';
-  const readyPhases = new Set(
-    operation?.events.filter((event) => event.status === 'ready').map((event) => event.phase),
-  );
-  const sandboxReady = readyPhases.has('sandbox_ready');
-  const runtimeReady = readyPhases.has('workspace_runtime');
-  const keyScopeReady = readyPhases.has('key_scope_ready') || status === 'succeeded';
-  const state = (done: boolean, previous: boolean) =>
-    done ? 'Ready' : previous ? 'In progress' : 'Waiting';
-  return (
-    <section className="agent-lifecycle-provisioning" aria-label="Agent provisioning progress">
-      <h3>{status === 'failed' ? 'Agent provisioning needs attention' : 'Agent accepted'}</h3>
-      <p>
-        {status === 'failed'
-          ? (operation?.error ?? 'Agent provisioning failed.')
-          : 'Agent Manager is provisioning the Agent Sandbox and will continue asynchronously. This page follows its durable status.'}
-      </p>
-      <ol>
-        <li data-state={state(sandboxReady, true)}>
-          <strong>Sandbox ready</strong>
-          <span>{state(sandboxReady, true)}</span>
-        </li>
-        <li data-state={state(runtimeReady, sandboxReady)}>
-          <strong>
-            Workspace + skills + model + reasoning effort + system prompt + permission level setup
-            ready
-          </strong>
-          <span>{state(runtimeReady, sandboxReady)}</span>
-        </li>
-        <li data-state={state(keyScopeReady, runtimeReady)}>
-          <strong>Agent key scope configuration ready</strong>
-          <span>{state(keyScopeReady, runtimeReady)}</span>
-        </li>
-      </ol>
-      <code>{receipt.id}</code>
-    </section>
   );
 }
