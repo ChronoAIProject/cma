@@ -141,11 +141,13 @@ async fn curl(
 }
 
 #[tokio::test]
+#[ignore = "requires authenticated disposable service Mongo fixture"]
 async fn compiled_binary_loads_mounted_secrets_and_serves_curl_without_leaking_credentials() {
     binary_journey(false).await;
 }
 
 #[tokio::test]
+#[ignore = "requires authenticated disposable service Mongo fixture"]
 async fn compiled_binary_renews_cma_auth_from_secret_environment_without_restart() {
     binary_journey(true).await;
 }
@@ -167,6 +169,12 @@ async fn binary_journey(renewable: bool) {
     let log_path = files.dir.join("trace.log");
     let log = fs::File::create(&log_path).unwrap();
     let mut command = files.command(&address, &cma, &nyxid, &provider);
+    let database =
+        database::DatabaseFixture::new(std::path::Path::new(env!("CARGO_BIN_EXE_cmaeg"))).await;
+    database.configure(&mut command);
+    // Gateway records live in Mongo; the CMA origin now identifies the provider
+    // whose management calls may receive the renewable service credential.
+    command.env("CMAEG_CMA_BASE_URL", provider.base_url());
     if renewable {
         command
             .env_remove("CMAEG_MASTER_KEYS_FILE")
@@ -218,15 +226,6 @@ async fn binary_journey(renewable: bool) {
         tokio::time::sleep(Duration::from_millis(3100)).await;
     }
     let read = curl("GET", &format!("{base}/v1/channels/{id}"), None, 200).await;
-    if renewable {
-        assert!(
-            nyxid
-                .service_tokens
-                .calls
-                .load(std::sync::atomic::Ordering::SeqCst)
-                >= 2
-        );
-    }
     assert_eq!(read["definition"]["name"], "support-bot");
     let document = curl("GET", &format!("{base}/openapi.json"), None, 200).await;
     assert!(document["paths"].get("/telegram/{channel_id}").is_some());
@@ -285,11 +284,22 @@ async fn binary_journey(renewable: bool) {
         204,
     )
     .await;
-    assert!(cma.records().is_empty());
-    assert!(provider
-        .requests()
-        .iter()
-        .any(|request| request.method == "DELETE"));
+    curl("GET", &format!("{base}/v1/channels/{id}"), None, 404).await;
+    // Reads now use Gateway Mongo. Provider teardown requires a fresh service
+    // credential and proves renewal after the original credential expires.
+    if renewable {
+        assert!(
+            nyxid
+                .service_tokens
+                .calls
+                .load(std::sync::atomic::Ordering::SeqCst)
+                >= 2
+        );
+    }
+
+    assert!(provider.requests().iter().any(|request| {
+        request.method == "DELETE" && request.authorization.as_deref() == Some("Bearer cma-service")
+    }));
     child.kill().await.unwrap();
     child.wait().await.unwrap();
     let logs = fs::read_to_string(log_path).unwrap();
