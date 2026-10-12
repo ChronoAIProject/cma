@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '../ui/Button';
 import { ServiceError, serviceRequest, type Service } from './client';
 export interface Page<T> {
@@ -90,6 +90,7 @@ export interface Field {
   type?: string;
   control?: 'input' | 'textarea';
   accept?: string;
+  maxBytes?: number;
 }
 export function WriteForm({
   service,
@@ -113,9 +114,8 @@ export function WriteForm({
   const [pending, setPending] = useState<{ key: string; body: string }>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  const submitting = useRef(false);
   async function send(request: { key: string; body: string }) {
-    setBusy(true);
-    setError(undefined);
     try {
       await serviceRequest(service, path, {
         method,
@@ -133,8 +133,6 @@ export function WriteForm({
         if ([401, 403].includes(e.status)) denied();
       }
       setError(e instanceof Error ? e.message : 'The outcome is unknown. Retry this request.');
-    } finally {
-      setBusy(false);
     }
   }
   return (
@@ -142,12 +140,25 @@ export function WriteForm({
       className="service-form"
       onSubmit={async (event) => {
         event.preventDefault();
-        const request = pending ?? {
-          key: crypto.randomUUID(),
-          body: await formBody(event.currentTarget),
-        };
-        setPending(request);
-        void send(request);
+        if (submitting.current) return;
+        submitting.current = true;
+        setBusy(true);
+        setError(undefined);
+        try {
+          const request = pending ?? {
+            key: crypto.randomUUID(),
+            body: await formBody(event.currentTarget, fields),
+          };
+          setPending(request);
+          await send(request);
+        } catch (cause) {
+          setError(
+            cause instanceof Error ? cause.message : 'The file could not be read. Try again.',
+          );
+        } finally {
+          submitting.current = false;
+          setBusy(false);
+        }
       }}
     >
       {fields.map((field) => (
@@ -159,7 +170,7 @@ export function WriteForm({
               defaultValue={field.initial ?? ''}
               required={field.required}
               maxLength={field.maxLength}
-              disabled={pending !== undefined}
+              disabled={busy || pending !== undefined}
             />
           ) : (
             <input
@@ -170,7 +181,7 @@ export function WriteForm({
               required={field.required}
               pattern={field.pattern}
               maxLength={field.maxLength}
-              disabled={pending !== undefined}
+              disabled={busy || pending !== undefined}
             />
           )}
         </label>
@@ -190,15 +201,37 @@ export function WriteForm({
   );
 }
 
-async function formBody(form: HTMLFormElement): Promise<string> {
+async function formBody(form: HTMLFormElement, fields: readonly Field[]): Promise<string> {
   const entries: [string, string][] = [];
   for (const [name, value] of new FormData(form).entries()) {
     if (value instanceof File) {
-      if (value.size === 0) continue;
-      entries.push([name, await value.text()]);
+      if (value.name === '' && value.size === 0) continue;
+      const field = fields.find((field) => field.name === name);
+      const limit = field?.maxBytes ?? 16 * 1024;
+      if (value.size === 0 || value.size > limit)
+        throw new Error(`${field?.label ?? 'File'} must contain 1–${String(limit)} bytes.`);
+      const content = await readTextFile(value);
+      if (content.includes('\0')) throw new Error('The file must contain plain UTF-8 text.');
+      entries.push([name, content]);
     } else {
       entries.push([name, value]);
     }
   }
   return JSON.stringify(Object.fromEntries(entries));
+}
+
+function readTextFile(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('The file could not be read. Choose it again.'));
+    reader.onabort = reader.onerror;
+    reader.onload = () => {
+      try {
+        resolve(new TextDecoder('utf-8', { fatal: true }).decode(reader.result as ArrayBuffer));
+      } catch {
+        reject(new Error('The file must contain plain UTF-8 text.'));
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  });
 }
