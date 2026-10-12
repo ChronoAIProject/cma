@@ -14,6 +14,33 @@ sponsorship or terminal-attachment APIs in this release. Resource management
 uses Sandbox, Workspace, Worktree and Agent ids. A resource's readable name is
 not an id or a concurrency fence.
 
+## Inline Agent creation
+
+`POST /api/v1/agents` accepts a name, an optional Image Manager reference,
+optional GitHub repository, and inline Agent settings. The browser's Agent
+Manager proxy exposes this at `/api/agent-manager/v1/agents`. `Idempotency-Key`
+is required. A `202` receipt contains an **operation** ID; read
+`GET /api/v1/agent-lifecycle/{id}` until `status` is `succeeded` and then use its
+`agent_id` to open the Agent. A phase event marked `ready` does not complete the
+operation. Workspace/runtime readiness is reported only after Agent preparation.
+
+The permanent operation ledger binds a key to one owner's submitted request.
+Retries keep that exact body and key, including after a lost HTTP response.
+The originally resolved image digest and captured settings remain pinned even
+if the image catalogue advances. A different request under that key is refused.
+
+`waiting_for_connection` carries `connection.services` and `connection.target`
+for the connection wizard. After verifying the same owner's connections, repeat
+the original POST with the same body and key to resume that operation. Saved
+child identities are retained. This lifecycle ledger handles replay directly;
+the generic 24-hour HTTP response cache does not intercept resumption. The
+browser retains the pending request and receipt in owner-scoped session storage.
+
+Workers discover eligible operations every 10 seconds, process at most 16 per
+replica, and renew a 90-second claim every 20 seconds. Every status/event/child
+write checks the current claim token and expiry. Stage events are replay-safe.
+The Agent Manager's restricted database role includes `agent_lifecycle_operations`.
+
 ## Authentication And HTTP
 
 Use `Authorization: Bearer <credential>` for backend calls, or the same-origin
@@ -1056,6 +1083,8 @@ returns 409, including changing an omitted default into an explicit reference.
 
 | Operation | Body / Key | Query | Response |
 |---|---|---|---|
+| `POST /api/v1/agents` | AgentLifecycleCreateRequest; key | - | 202 AgentLifecycleCreateReceipt |
+| `GET /api/v1/agent-lifecycle/{id}` | - | - | 200 AgentLifecycleOperationView |
 | `GET /api/v1/agents` | - | organization, sandbox, workspace, status, cursor, limit | 200 AccessibleAgentPageView |
 | `GET /api/v1/agents/{id}` | - | - | 200 AccessibleAgentView |
 | `DELETE /api/v1/agents/{id}` | -; key | - | 202 empty |
@@ -1265,6 +1294,7 @@ SDKs expose this scope through their accessible Sandbox list method.
 | Operation | Body / Key | Query | Response |
 |---|---|---|---|
 | `GET /api/v1/sandboxes/{id}/workspaces` | - | - | 200 AccessibleWorkspaceListView |
+| `POST /api/v1/sandboxes/{id}/workspaces/inline` | CreateInlineWorkspaceRequest; key | - | 201 WorkspaceView |
 | `POST /api/v1/sandboxes/{id}/workspaces` | CreateWorkspaceRequest; key | - | 201 WorkspaceView |
 | `GET /api/v1/workspaces/{id}` | - | - | 200 AccessibleWorkspaceDetailView |
 | `DELETE /api/v1/workspaces/{id}` | -; key | - | 202 WorkspaceView |

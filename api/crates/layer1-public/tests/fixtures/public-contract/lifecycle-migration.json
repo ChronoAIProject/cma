@@ -1,0 +1,526 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "lifecycle-create-owner",
+      "operation": "POST /api/v1/agents",
+      "scenario": "lifecycle_contract_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "lifecycle-key"
+        },
+        "body": {
+          "name": "Research",
+          "image": {
+            "id": "image-contract",
+            "version": "release-1"
+          },
+          "repository": {
+            "url": "https://github.com/example/research",
+            "ref": "main"
+          },
+          "profile": {
+            "model": "configured-model",
+            "reasoning_effort": "high",
+            "permission_mode": "guarded",
+            "system_prompt": "Review the repository.",
+            "skills": [
+              {
+                "id": "ornn-review",
+                "version": "v1"
+              }
+            ],
+            "permissions": {
+              "services": [
+                "api-github"
+              ]
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "operation-contract",
+          "status": "provisioning"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "lifecycle-create-anonymous",
+      "operation": "POST /api/v1/agents",
+      "scenario": "lifecycle_contract_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "lifecycle-key"
+        },
+        "body": {
+          "name": "Research"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "lifecycle-create-forbidden",
+      "operation": "POST /api/v1/agents",
+      "scenario": "lifecycle_contract_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "lifecycle-key"
+        },
+        "body": {
+          "name": "Research"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/sandbox-use-forbidden",
+          "title": "sandbox use forbidden",
+          "status": 403,
+          "detail": "This operation requires authority to use the caller's sandboxes.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "lifecycle-create-unavailable",
+      "operation": "POST /api/v1/agents",
+      "scenario": "lifecycle_contract_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "lifecycle-key"
+        },
+        "body": {
+          "name": "Research"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-manager-unavailable",
+          "title": "agent manager unavailable",
+          "status": 503,
+          "detail": "the Agent Manager lifecycle implementation is unavailable",
+          "code": "temporarily_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "lifecycle-create-connection",
+      "operation": "POST /api/v1/agents",
+      "scenario": "lifecycle_contract_connection",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "lifecycle-key"
+        },
+        "body": {
+          "name": "Research"
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-manager-connection-required",
+          "title": "agent manager connection required",
+          "status": 422,
+          "detail": "the selected services need to be connected before provisioning",
+          "code": "connection_required",
+          "services": [
+            "api-github"
+          ],
+          "connection_target": {
+            "type": "workspace",
+            "id": "workspace-contract"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "lifecycle-read-owner",
+      "operation": "GET /api/v1/agent-lifecycle/{id}",
+      "scenario": "lifecycle_contract_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agent-lifecycle/operation-contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "operation-contract",
+          "status": "waiting_for_connection",
+          "phase": "sandbox_ready",
+          "events": [
+            {
+              "sequence": 2,
+              "phase": "sandbox_ready",
+              "status": "ready",
+              "message": "Sandbox ready",
+              "occurred_at": "2026-10-13T00:00:00Z"
+            }
+          ],
+          "connection": {
+            "services": [
+              "api-github"
+            ],
+            "target": {
+              "type": "sandbox_profile",
+              "profile": {
+                "id": "internal-sandbox",
+                "revision": 1
+              }
+            }
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "lifecycle-read-anonymous",
+      "operation": "GET /api/v1/agent-lifecycle/{id}",
+      "scenario": "lifecycle_contract_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agent-lifecycle/operation-contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "lifecycle-read-foreign",
+      "operation": "GET /api/v1/agent-lifecycle/{id}",
+      "scenario": "lifecycle_contract_foreign",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agent-lifecycle/operation-contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-lifecycle-operation-not-found",
+          "title": "agent lifecycle operation not found",
+          "status": 404,
+          "detail": "the Agent lifecycle operation does not exist",
+          "code": "not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "lifecycle-read-unavailable",
+      "operation": "GET /api/v1/agent-lifecycle/{id}",
+      "scenario": "lifecycle_contract_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agent-lifecycle/operation-contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-lifecycle-operation-unavailable",
+          "title": "agent lifecycle operation unavailable",
+          "status": 503,
+          "detail": "the Agent lifecycle operation store is unavailable",
+          "code": "temporarily_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "consumer-connections-owner",
+      "operation": "GET /api/v1/bots/connections",
+      "scenario": "bot_contract_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/bots/connections",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/json"
+        },
+        "body": [
+          {
+            "connection_ref": "external-bot",
+            "label": "Example bot"
+          }
+        ],
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "consumer-connections-anonymous",
+      "operation": "GET /api/v1/bots/connections",
+      "scenario": "bot_contract_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/bots/connections",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "consumer-connections-forbidden",
+      "operation": "GET /api/v1/bots/connections",
+      "scenario": "bot_contract_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/bots/connections",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/bot_forbidden",
+          "title": "bot_forbidden",
+          "status": 403,
+          "detail": "bot management is forbidden",
+          "code": "bot_forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "consumer-connections-unavailable",
+      "operation": "GET /api/v1/bots/connections",
+      "scenario": "bot_contract_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/bots/connections",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/bot_unavailable",
+          "title": "bot_unavailable",
+          "status": 503,
+          "detail": "bot dependency is unavailable",
+          "code": "bot_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "inline-workspace-owner",
+      "operation": "POST /api/v1/sandboxes/{id}/workspaces/inline",
+      "scenario": "instances_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/workspaces/inline",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "inline-workspace-key"
+        },
+        "body": {
+          "source": {
+            "type": "empty"
+          },
+          "name": "inline-workspace"
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "wks_inline_contract",
+          "sandbox_id": "sbx_route",
+          "name": "inline-workspace",
+          "path": "/home/cma/inline-workspace",
+          "source": {
+            "type": "empty"
+          },
+          "status": "preparing",
+          "profile": {
+            "id": "wkp_inline_contract",
+            "revision": 1
+          },
+          "created_at": "2026-09-05T00:00:00Z",
+          "revision": 1
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "inline_profile_id": "/profile/id",
+        "inline_workspace_id": "/id",
+        "inline_workspace_time": "/created_at"
+      }
+    },
+    {
+      "id": "inline-workspace-anonymous",
+      "operation": "POST /api/v1/sandboxes/{id}/workspaces/inline",
+      "scenario": "instances_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/workspaces/inline",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "inline-workspace-key"
+        },
+        "body": {
+          "source": {
+            "type": "empty"
+          },
+          "name": "inline-workspace"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "inline-workspace-forbidden",
+      "operation": "POST /api/v1/sandboxes/{id}/workspaces/inline",
+      "scenario": "instances_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/workspaces/inline",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "inline-workspace-key"
+        },
+        "body": {
+          "source": {
+            "type": "empty"
+          },
+          "name": "inline-workspace"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to use this resource.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

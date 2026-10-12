@@ -3,6 +3,12 @@ import type { AgentProvenanceInventoryOptions } from '../../src/agents.js';
 import type { AccessibleSandboxListOptions } from '../../src/sandboxes.js';
 
 export const resourceDispatch: Record<string, Dispatch> = {
+  'POST /api/v1/agents': ({ client, body, command }) =>
+    client.agents.createLifecycle(body, command),
+  'GET /api/v1/agent-lifecycle/{id}': ({ client, param }) =>
+    client.agents.readLifecycle(param('id')),
+  'POST /api/v1/sandboxes/{id}/workspaces/inline': ({ client, param, body, command }) =>
+    client.workspaces.createInline(param('id'), body, command),
   'PUT /api/v1/cmaeg/bindings/{binding_id}': ({ client, param, body }) =>
     client.providerBindings.put(param('binding_id'), body),
   'GET /api/v1/cmaeg/bindings/{binding_id}': ({ client, param }) =>

@@ -2,6 +2,34 @@
 
 <!-- nav: 5 Agents -->
 
+Use `agents().create_lifecycle` for Image Manager selections and inline Agent
+configuration. Omit the image to use the deployment default. Persist the exact
+request and key before submission so an uncertain result can be retried safely.
+
+```rust,no_run
+use cma_sdk::{Client, IdempotencyKey};
+use cma_sdk::agents::{AgentLifecycleCreateRequest, AgentLifecycleStatus};
+# async fn provision(client: Client) -> Result<(), Box<dyn std::error::Error>> {
+let key = IdempotencyKey::new(std::env::var("CMA_CREATE_KEY")?)?;
+let request = AgentLifecycleCreateRequest {
+    name: "Research".into(), image: None, repository: None, profile: None,
+};
+let receipt = client.agents().create_lifecycle(&request, &key).await?;
+let operation = client.agents().read_lifecycle(&receipt.id).await?;
+if operation.status == AgentLifecycleStatus::Succeeded {
+    // Only now is operation.agent_id ready to open.
+}
+# Ok(())
+# }
+```
+
+The receipt acknowledges durable admission. Poll `read_lifecycle` until global
+success; a phase event's `ready` state is only one gate. `WaitingForConnection`
+supplies missing services and an owner-bound connection target. After the owner
+verifies those connections, repeat `create_lifecycle` with the original request
+and key to resume the same operation. `Failed` is terminal and includes a safe
+error when available.
+
 One Agent belongs to one allocated Worktree in an owned Workspace and Sandbox.
 Its frozen Agent profile controls model, reasoning effort, permissions, and
 skills. An Agent's conversation is shared by REST, AG-UI, and Responses.

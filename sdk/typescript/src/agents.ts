@@ -37,6 +37,12 @@ import {
   type AgentCreationCategory,
 } from './agents/provenance.js';
 import { agentEvent } from './agents/events.js';
+import {
+  agentLifecycleCreateReceipt,
+  agentLifecycleCreateRequest,
+  agentLifecycleOperation,
+  type AgentLifecycleCreateRequest,
+} from './agents/lifecycle.js';
 import { accessibleAgent, accessibleAgentSource, accessibleAgentSummary } from './agents/shared.js';
 import { requireRefusal } from './unsupported.js';
 import { readAgentChannelUsage, listAgentChannelUsageHistory } from './agents/channel-usage.js';
@@ -73,6 +79,26 @@ export interface AgentProvenanceInventoryOptions extends AccessibleAgentListOpti
 /** Public Agent REST commands and durable read projections. */
 export class Agents {
   constructor(private readonly config: ResolvedConfig) {}
+
+  /** Admit or resume the exact same inline request with its original idempotency key. */
+  createLifecycle(body: AgentLifecycleCreateRequest, options: CommandOptions) {
+    return read(this.config, '/api/v1/agents', agentLifecycleCreateReceipt, {
+      ...command(options),
+      method: 'POST',
+      body: input(agentLifecycleCreateRequest, body),
+      expectedStatus: 202,
+    });
+  }
+
+  /** Read owner-visible provisioning progress; succeeded means the Agent is ready. */
+  readLifecycle(id: string, options: OperationOptions = {}) {
+    return read(
+      this.config,
+      `/api/v1/agent-lifecycle/${segment(id)}`,
+      identity(agentLifecycleOperation, id),
+      options,
+    );
+  }
 
   /** Explicit active/historical channel facts under current resource visibility. */
   channelUsage(id: string, options: OperationOptions = {}) {

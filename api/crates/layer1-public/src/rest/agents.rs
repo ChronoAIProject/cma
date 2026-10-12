@@ -133,39 +133,33 @@ pub(crate) async fn create_lifecycle(
     key: IdempotencyKey,
     body: Result<RequestBody<AgentLifecycleCreateRequest>, BodyProblem>,
 ) -> Response {
+    if let Err(problem) = require_use(&caller) {
+        return problem.into_response();
+    }
     let Some(provisioner) = state.lifecycle.clone() else {
         return AgentLifecycleProvisioningError::Unavailable.into_response();
     };
-    let profile_key = key
-        .value()
-        .map(str::to_owned)
-        .unwrap_or_else(|| "unkeyed".into());
-    let operation_caller = caller.clone();
-    let delegated_credential = credential
-        .as_ref()
-        .map(|Extension(value)| value.value().to_owned());
-    execute_command_raw(
-        &state,
-        &caller,
-        key,
-        "agent-manager:create".into(),
-        body,
-        move |body| async move {
-            let context = context.map(|Extension(value)| value);
-            provisioner
-                .create(
-                    &operation_caller,
-                    context.as_ref(),
-                    delegated_credential.as_deref(),
-                    body,
-                    &profile_key,
-                )
-                .await
-                .map(|receipt| (StatusCode::ACCEPTED, Json(receipt)).into_response())
-                .map_err(IntoResponse::into_response)
-        },
-    )
-    .await
+    // The lifecycle's permanent owner/key ledger owns admission and resumption.
+    // An outer cached 202 would suppress requeue after connecting services.
+    let key = match key.into_required_value() {
+        Ok(key) => key,
+        Err(error) => return error.into_response(),
+    };
+    let request = match body.and_then(|body| body.into_parts().0) {
+        Ok(body) => body,
+        Err(error) => return error.into_response(),
+    };
+    provisioner
+        .create(
+            &caller,
+            context.as_ref().map(|Extension(value)| value),
+            credential.as_ref().map(|Extension(value)| value.value()),
+            request,
+            &key,
+        )
+        .await
+        .map(|receipt| (StatusCode::ACCEPTED, Json(receipt)).into_response())
+        .unwrap_or_else(IntoResponse::into_response)
 }
 
 /// Compose all owner-facing Agent routes against one shared service set.
@@ -400,43 +394,6 @@ where
     };
     let result: Result<Response, Response> = match body {
         Ok(body) => execute(body).await.map_err(IntoResponse::into_response),
-        Err(error) => Err(error.into_response()),
-    };
-    guard.finish(result).await
-}
-
-/// Idempotency wrapper for commands whose domain error already owns its HTTP
-/// projection (used by the new lifecycle facade).
-pub(super) async fn execute_command_raw<T, F, Fut>(
-    state: &AgentRoutesState,
-    caller: &Caller,
-    key: IdempotencyKey,
-    operation: String,
-    body: Result<RequestBody<T>, BodyProblem>,
-    execute: F,
-) -> Response
-where
-    T: serde::de::DeserializeOwned,
-    F: FnOnce(T) -> Fut,
-    Fut: Future<Output = Result<Response, Response>>,
-{
-    if let Err(problem) = require_use(caller) {
-        return problem.into_response();
-    }
-    let (guard, body, _) = match idempotency::required_command(
-        key,
-        Arc::clone(&state.operation_records),
-        caller,
-        operation,
-        body,
-    )
-    .await
-    {
-        Ok(parts) => parts,
-        Err(response) => return response,
-    };
-    let result = match body {
-        Ok(body) => execute(body).await,
         Err(error) => Err(error.into_response()),
     };
     guard.finish(result).await

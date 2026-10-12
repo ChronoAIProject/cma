@@ -94,6 +94,12 @@ pub struct AgentLifecycleEventView {
     pub occurred_at: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct AgentLifecycleConnectionRequired {
+    pub services: Vec<String>,
+    pub target: Value,
+}
+
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct AgentLifecycleOperationView {
     pub id: String,
@@ -104,6 +110,8 @@ pub struct AgentLifecycleOperationView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     pub events: Vec<AgentLifecycleEventView>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection: Option<AgentLifecycleConnectionRequired>,
 }
 
 #[derive(Debug, Error)]

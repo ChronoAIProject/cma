@@ -127,10 +127,18 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
         throw new ProtocolError(`Agent lifecycle status failed (${String(response.status)}).`);
       const value = (await response.json()) as AgentLifecycleOperationView;
       if (
-        typeof value.id !== 'string' ||
-        typeof value.status !== 'string' ||
+        value.id !== operationId ||
+        !['queued', 'running', 'waiting_for_connection', 'succeeded', 'failed'].includes(
+          value.status,
+        ) ||
         typeof value.phase !== 'string' ||
-        !Array.isArray(value.events)
+        !Array.isArray(value.events) ||
+        (value.connection !== undefined &&
+          (!Array.isArray(value.connection.services) ||
+            !value.connection.services.every((service) => typeof service === 'string') ||
+            !isConnectionTarget(value.connection.target))) ||
+        (value.status === 'waiting_for_connection' && value.connection === undefined) ||
+        (value.status === 'succeeded' && (typeof value.agent_id !== 'string' || !value.agent_id))
       )
         throw new ProtocolError('Agent Manager returned an invalid lifecycle operation.');
       return value;
@@ -320,7 +328,12 @@ function isConnectionTarget(value: unknown): value is ConnectionTarget {
     candidate.id.length > 0
   )
     return true;
-  if (candidate.type !== 'sandbox_profile' || typeof candidate.profile !== 'object') return false;
+  if (
+    candidate.type !== 'sandbox_profile' ||
+    typeof candidate.profile !== 'object' ||
+    candidate.profile === null
+  )
+    return false;
   const profile = candidate.profile as { id?: unknown; revision?: unknown };
   return (
     typeof profile.id === 'string' &&

@@ -14,6 +14,7 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     "agent_commands",
     "agent_creation_provenance",
     "agent_log",
+    "agent_lifecycle_operations",
     "agent_profile_revisions",
     "agent_profiles",
     "agent_reuse_bindings",
@@ -197,6 +198,9 @@ pub(crate) async fn verify(database: &Database) -> Result<(), StoreError> {
     validate(&status, database.name())
 }
 #[cfg(test)]
+#[path = "agent_lifecycle_contract.rs"]
+mod agent_lifecycle_contract;
+#[cfg(test)]
 #[path = "profile_internal_contract.rs"]
 mod profile_internal_contract;
 #[cfg(test)]
@@ -243,6 +247,7 @@ mod tests {
         assert!(restarted.select("overflow", u64::MAX, true).await.is_err());
 
         profile_internal_contract::verify(&runtime, &name).await;
+        agent_lifecycle_contract::verify(&isolated).await;
 
         for foreign in [
             "gateway_channel_records",
