@@ -5,9 +5,9 @@ use crate::{now_rfc3339, Caller, Capability, StoreError, SubjectId, UserDirector
 
 use super::{
     LaunchPlacementStats, LaunchStore, LaunchStoreError, Placement, PlacementId, PublicTrigger,
-    PublicTriggerId, Trigger, TriggerContent, TriggerError, TriggerId, TriggerPage,
-    TriggerPageRequest, TriggerPreview, TriggerReferenceError, TriggerRevision, TriggerStats,
-    TriggerStore, TriggerStoreError,
+    PublicTriggerId, Trigger, TriggerContent, TriggerError, TriggerId,
+    TriggerInlineTargetMaterializer, TriggerPage, TriggerPageRequest, TriggerPreview,
+    TriggerReferenceError, TriggerRevision, TriggerStats, TriggerStore, TriggerStoreError,
 };
 
 const PUBLISHER_FALLBACK: &str = "CMA publisher";
@@ -81,6 +81,7 @@ pub struct TriggerService {
     pub(super) definitions: Arc<dyn TriggerStore>,
     pub(super) launches: Arc<dyn LaunchStore>,
     directory: Arc<UserDirectory>,
+    inline_materializer: Option<Arc<dyn TriggerInlineTargetMaterializer>>,
 }
 
 impl TriggerService {
@@ -97,6 +98,26 @@ impl TriggerService {
             definitions,
             launches,
             directory,
+            inline_materializer: None,
+        })
+    }
+
+    pub fn new_with_inline_materializer<T, L, M>(
+        definitions: Arc<T>,
+        launches: Arc<L>,
+        directory: Arc<UserDirectory>,
+        inline_materializer: Arc<M>,
+    ) -> Arc<Self>
+    where
+        T: TriggerStore + 'static,
+        L: LaunchStore + 'static,
+        M: TriggerInlineTargetMaterializer + 'static,
+    {
+        Arc::new(Self {
+            definitions,
+            launches,
+            directory,
+            inline_materializer: Some(inline_materializer),
         })
     }
 
@@ -106,6 +127,7 @@ impl TriggerService {
         draft: TriggerContent,
     ) -> Result<Trigger, TriggerServiceError> {
         require_publisher(caller)?;
+        let draft = self.materialize_inline(caller, draft).await?;
         let trigger = Trigger::new(
             TriggerId::generate(),
             caller.subject.clone(),
@@ -148,6 +170,10 @@ impl TriggerService {
         expected_draft_version: u64,
         draft: TriggerContent,
     ) -> Result<Trigger, TriggerServiceError> {
+        // Verify ownership before materializing inline profiles so a rejected update
+        // cannot leave private internal profile rows behind.
+        self.owned(id, &caller.subject).await?;
+        let draft = self.materialize_inline(caller, draft).await?;
         self.definitions
             .save_draft(
                 id,
@@ -297,6 +323,21 @@ impl TriggerService {
             .await
             .map_err(TriggerServiceError::from)?
             .ok_or(TriggerServiceError::NotFound)
+    }
+
+    async fn materialize_inline(
+        &self,
+        caller: &Caller,
+        draft: TriggerContent,
+    ) -> Result<TriggerContent, TriggerServiceError> {
+        let Some(materializer) = &self.inline_materializer else {
+            return Ok(draft);
+        };
+        let target = materializer
+            .materialize(&caller.subject, &draft.target)
+            .await
+            .map_err(TriggerServiceError::Reference)?;
+        Ok(TriggerContent { target, ..draft })
     }
 }
 

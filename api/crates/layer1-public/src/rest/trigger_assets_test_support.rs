@@ -126,6 +126,7 @@ fn content() -> TriggerContent {
                 1,
             ),
             agent_profile: AgentProfileRef::new(AgentProfileId("agp_example".into()), 1),
+            inline: None,
         },
         reuse: ReusePolicy {
             sandbox: SandboxReusePolicy::ReuseExisting,
