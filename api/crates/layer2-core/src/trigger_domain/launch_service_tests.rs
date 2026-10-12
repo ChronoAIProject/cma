@@ -1654,6 +1654,7 @@ async fn fixture_with_workspace_configuration(
         sandbox_profile: sandbox_reference,
         workspace_profile: workspace_reference,
         agent_profile: agent_reference,
+        inline: None,
     };
     let resolver: Arc<dyn TriggerProfileResolver> = profiles.clone();
     let definitions = Arc::new(InMemoryTriggerStore::new(resolver));

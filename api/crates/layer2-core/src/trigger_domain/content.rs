@@ -1,6 +1,10 @@
 use serde::{Deserialize, Serialize};
 
-use crate::profiles::{AgentProfileRef, SandboxProfileRef, WorkspaceProfileRef};
+use crate::profiles::{
+    AgentProfileRef, PermissionLevel, SandboxProfileRef, SkillRef, ThinkingEffort,
+    WorkspaceProfileRef,
+};
+use crate::ServiceId;
 
 use super::TriggerError;
 
@@ -66,14 +70,222 @@ impl Presentation {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct TriggerImage {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    /// The immutable OCI reference supplied by Image Manager when a catalog image
+    /// is selected. Keeping this alongside the catalog id pins the exact runtime
+    /// image without making an Image Manager credential part of a durable Trigger
+    /// revision. The field is absent only when the system default image is used
+    /// (that case has no `TriggerImage` object).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference: Option<String>,
+}
+
+impl TriggerImage {
+    fn validate(&self) -> Result<(), TriggerError> {
+        if self.id.trim().is_empty() || self.id.len() > 256 {
+            return Err(TriggerError::new("invalid_image", "target.inline.image.id"));
+        }
+        if self
+            .version
+            .as_ref()
+            .is_some_and(|version| version.is_empty() || version.len() > 256)
+        {
+            return Err(TriggerError::new(
+                "invalid_image_version",
+                "target.inline.image.version",
+            ));
+        }
+        let Some(reference) = &self.reference else {
+            return Err(TriggerError::new(
+                "invalid_image_reference",
+                "target.inline.image.reference",
+            ));
+        };
+        if !valid_immutable_image(reference) {
+            return Err(TriggerError::new(
+                "invalid_image_reference",
+                "target.inline.image.reference",
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TriggerRepository {
+    pub url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference: Option<String>,
+}
+
+impl TriggerRepository {
+    fn validate(&self) -> Result<(), TriggerError> {
+        let parsed = url::Url::parse(&self.url)
+            .map_err(|_| TriggerError::new("invalid_repository", "target.inline.workspace"))?;
+        if parsed.scheme() != "https"
+            || parsed.host_str() != Some("github.com")
+            || !parsed.username().is_empty()
+            || parsed.password().is_some()
+            || parsed.port().is_some()
+            || parsed.query().is_some()
+            || parsed.fragment().is_some()
+            || parsed
+                .path_segments()
+                .into_iter()
+                .flatten()
+                .filter(|part| !part.is_empty())
+                .count()
+                != 2
+        {
+            return Err(TriggerError::new(
+                "invalid_repository",
+                "target.inline.workspace",
+            ));
+        }
+        if self.reference.as_ref().is_some_and(|reference| {
+            reference.is_empty() || reference.len() > 255 || reference.chars().any(char::is_control)
+        }) {
+            return Err(TriggerError::new(
+                "invalid_repository_reference",
+                "target.inline.workspace.reference",
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TriggerInlineWorkspace {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository: Option<TriggerRepository>,
+}
+
+impl TriggerInlineWorkspace {
+    fn validate(&self) -> Result<(), TriggerError> {
+        if let Some(repository) = &self.repository {
+            repository.validate()?
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TriggerInlineAgent {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    pub reasoning_effort: ThinkingEffort,
+    pub permission_mode: PermissionLevel,
+    #[serde(default)]
+    pub skills: Vec<SkillRef>,
+    #[serde(default)]
+    pub system_prompt: String,
+    #[serde(default)]
+    pub services: Vec<ServiceId>,
+}
+
+impl TriggerInlineAgent {
+    fn validate(&self) -> Result<(), TriggerError> {
+        if self
+            .model
+            .as_ref()
+            .is_some_and(|model| model.trim().is_empty())
+        {
+            return Err(TriggerError::new(
+                "invalid_model",
+                "target.inline.agent.model",
+            ));
+        }
+        if self.skills.len() > 32 {
+            return Err(TriggerError::new(
+                "too_many_skills",
+                "target.inline.agent.skills",
+            ));
+        }
+        if self.system_prompt.len() > 32 * 1_024 {
+            return Err(TriggerError::new(
+                "system_prompt_too_long",
+                "target.inline.agent.system_prompt",
+            ));
+        }
+        if self.skills.iter().any(|skill| skill.id.as_str().is_empty()) {
+            return Err(TriggerError::new(
+                "invalid_skill",
+                "target.inline.agent.skills",
+            ));
+        }
+        if self.services.len() > 64
+            || self
+                .services
+                .iter()
+                .any(|service| service.as_str().is_empty())
+        {
+            return Err(TriggerError::new(
+                "invalid_service",
+                "target.inline.agent.services",
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TriggerInlineTarget {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<TriggerImage>,
+    pub agent: TriggerInlineAgent,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<TriggerInlineWorkspace>,
+}
+
+impl TriggerInlineTarget {
+    /// Validates the inline authoring payload before an adapter materializes it.
+    pub fn validate(&self) -> Result<(), TriggerError> {
+        if let Some(image) = &self.image {
+            image.validate()?
+        }
+        self.agent.validate()?;
+        if let Some(workspace) = &self.workspace {
+            workspace.validate()?
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TriggerTarget {
+    #[serde(
+        default = "empty_sandbox_profile",
+        skip_serializing_if = "is_empty_sandbox_profile"
+    )]
     pub sandbox_profile: SandboxProfileRef,
+    #[serde(
+        default = "empty_workspace_profile",
+        skip_serializing_if = "is_empty_workspace_profile"
+    )]
     pub workspace_profile: WorkspaceProfileRef,
+    #[serde(
+        default = "empty_agent_profile",
+        skip_serializing_if = "is_empty_agent_profile"
+    )]
     pub agent_profile: AgentProfileRef,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inline: Option<TriggerInlineTarget>,
 }
 
 impl TriggerTarget {
     fn validate(&self) -> Result<(), TriggerError> {
+        if let Some(inline) = &self.inline {
+            inline.validate()?;
+            return Ok(());
+        }
         validate_reference(
             self.sandbox_profile.id.as_str(),
             self.sandbox_profile.revision,
@@ -93,6 +305,50 @@ impl TriggerTarget {
             "target.agent_profile",
         )
     }
+}
+
+fn empty_sandbox_profile() -> SandboxProfileRef {
+    SandboxProfileRef::new(crate::SandboxProfileId(String::new()), 0)
+}
+
+fn empty_workspace_profile() -> WorkspaceProfileRef {
+    WorkspaceProfileRef::new(crate::WorkspaceProfileId(String::new()), 0)
+}
+
+fn empty_agent_profile() -> AgentProfileRef {
+    AgentProfileRef::new(crate::AgentProfileId(String::new()), 0)
+}
+
+fn is_empty_sandbox_profile(value: &SandboxProfileRef) -> bool {
+    value.id.as_str().is_empty() && value.revision == 0
+}
+
+fn is_empty_workspace_profile(value: &WorkspaceProfileRef) -> bool {
+    value.id.as_str().is_empty() && value.revision == 0
+}
+
+fn is_empty_agent_profile(value: &AgentProfileRef) -> bool {
+    value.id.as_str().is_empty() && value.revision == 0
+}
+
+fn valid_immutable_image(value: &str) -> bool {
+    let Some((name, digest)) = value.rsplit_once("@sha256:") else {
+        return false;
+    };
+    !name.is_empty()
+        && name.len() <= 2_048
+        && !name.contains('@')
+        && !name.contains("://")
+        && !name.starts_with(['.', '-', '_', '/', ':'])
+        && !name.ends_with(['.', '-', '_', '/', ':'])
+        && !name.contains("//")
+        && name.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-' | b'/' | b':')
+        })
+        && digest.len() == 64
+        && digest
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -332,5 +588,74 @@ mod quick_message_tests {
             content.validate().unwrap_err().code,
             "too_many_quick_messages"
         );
+    }
+}
+
+#[cfg(test)]
+mod inline_target_tests {
+    use super::*;
+
+    fn inline_content() -> TriggerContent {
+        serde_json::from_value(serde_json::json!({
+            "presentation": {
+                "title": "Inline Trigger",
+                "description": "",
+                "button_label": "try_it",
+                "theme": "dark"
+            },
+            "target": {
+                "inline": {
+                    "image": {
+                        "id": "private-codex",
+                        "version": "v3",
+                        "reference": "registry.example/codex@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                    },
+                    "agent": {
+                        "model": "gpt-5-codex",
+                        "reasoning_effort": "high",
+                        "permission_mode": "guarded",
+                        "skills": [{"source": "ornn", "id": "repo-search"}],
+                        "system_prompt": "Keep changes small.",
+                        "services": ["api-github"]
+                    },
+                    "workspace": {
+                        "repository": {
+                            "url": "https://github.com/chronoai/project",
+                            "reference": "main"
+                        }
+                    }
+                }
+            },
+            "reuse": {"sandbox": "always_new", "workspace": "always_new", "agent": "always_new"},
+            "first_message": "Inspect the repository",
+            "consent": {"always_review": true}
+        }))
+        .expect("inline trigger JSON should decode")
+    }
+
+    #[test]
+    fn inline_target_validates_without_profile_references() {
+        inline_content()
+            .validate()
+            .expect("inline target should validate without legacy profiles");
+    }
+
+    #[test]
+    fn inline_target_rejects_mutable_image_reference() {
+        let mut content = inline_content();
+        content
+            .target
+            .inline
+            .as_mut()
+            .expect("inline target")
+            .image
+            .as_mut()
+            .expect("image")
+            .reference = Some("registry.example/codex:latest".into());
+        let error = content
+            .validate()
+            .expect_err("mutable image must be rejected");
+        assert_eq!(error.code, "invalid_image_reference");
+        assert_eq!(error.field, "target.inline.image.reference");
     }
 }

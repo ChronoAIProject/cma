@@ -95,6 +95,15 @@ export function TriggerWizard({
     activeProfile.current?.abort();
     activeProfile.current = request;
     const target = JSON.parse(targetsKey) as TriggerContent['target'];
+    if (target.inline !== undefined) {
+      queueMicrotask(() => {
+        if (request.signal.aborted) return;
+        setProfiles({});
+        setProfileErrors({});
+        setProfilesKey(profileRequestKey);
+      });
+      return () => request.abort();
+    }
     void Promise.all(
       (['sandbox', 'workspace', 'agent'] as const).map(async (kind) => {
         const reference = target[`${kind}_profile`];
@@ -247,9 +256,11 @@ export function TriggerWizard({
         <>
           <TargetStep
             client={client}
+            value={content}
             profiles={profiles}
             errors={fieldErrors}
             disabled={locked || unavailable}
+            onChange={update}
             onSelect={select}
           />
           {Object.keys(profileErrors).length === 0 ? null : (
