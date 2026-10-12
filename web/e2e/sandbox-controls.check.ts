@@ -64,6 +64,7 @@ test('LOCAL shared Sandbox commands recover uncertain admission and clear on acc
       return reply({ code: 'resource_not_found', detail: 'Shared access removed.' }, 404);
     if (path === '/api/v1/resource-access/sandbox/sbx_shared')
       return reply({
+        owner: { kind: 'organization', organization_id: 'org_research' },
         capabilities: ['view_details', 'manage_sandbox'],
         policy_revision: 1,
         revalidate_at: new Date(Date.now() + 50_000).toISOString(),
@@ -94,16 +95,14 @@ test('LOCAL shared Sandbox commands recover uncertain admission and clear on acc
   await page.getByRole('button', { name: 'Navigation scope', exact: true }).click();
   await page.getByRole('menuitemradio', { name: 'Research', exact: true }).click();
   const navigation = page.locator('.scoped-navigation');
-  await expect(
-    navigation.getByRole('link', { name: 'Open Sandbox details', exact: true }),
-  ).toBeVisible();
+  await expect(navigation.locator('a[href="/sandboxes/sbx_shared"]')).toBeVisible();
   expect(await composer.evaluate((node, original) => node === original, originalComposer)).toBe(
     true,
   );
   await expect(composer).toHaveValue('Keep this personal draft');
   await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled();
-  await navigation.getByRole('link', { name: 'Open Sandbox details', exact: true }).click();
-  const content = page.locator('.shared-hierarchy');
+  await navigation.locator('a[href="/sandboxes/sbx_shared"]').click();
+  const content = page.locator('.console__surface .sandbox-page');
   await expect(content.getByRole('button', { name: 'Pause Sandbox' })).toBeVisible();
   await expect(content.getByRole('button', { name: 'Retire Sandbox' })).toHaveCount(0);
   for (const theme of ['light', 'dark']) {

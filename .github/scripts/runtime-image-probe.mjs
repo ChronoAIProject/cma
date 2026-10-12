@@ -36,6 +36,23 @@ export const diagnosticStages = [
 ];
 export const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 
+export async function waitForWriterProgress(read, { timeoutMs = 5000, intervalMs = 25 } = {}) {
+  const deadline = performance.now() + timeoutMs;
+  let first;
+  while (performance.now() < deadline) {
+    let value;
+    try { value = read(); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
+    if (typeof value === 'string' && /^[1-9][0-9]*$/.test(value)) {
+      const count = BigInt(value);
+      if (first !== undefined && count > first) return value;
+      first ??= count;
+    }
+    await delay(intervalMs);
+  }
+  assert.fail('background writer did not advance before the deadline');
+}
+
 function homeSnapshot(root) {
   const entries = [];
   const visit = (relative) => {
@@ -184,7 +201,8 @@ export async function probe(onStage = () => {}) {
     'import os,time', 'pid=os.fork()', 'if pid: os._exit(0)', 'os.setsid()',
     'pid=os.fork()', 'if pid: os._exit(0)', 'n=0',
     'while True:', ' n+=1',
-    ' with open("/home/cma/ci-writer", "w") as f: f.write(str(n))',
+    ' with open("/home/cma/ci-writer-next", "w") as f: f.write(str(n))',
+    ' os.replace("/home/cma/ci-writer-next", "/home/cma/ci-writer")',
     ' time.sleep(0.02)',
   ].join('\n');
   const request = installRequest([
@@ -203,10 +221,7 @@ export async function probe(onStage = () => {}) {
   await githubProxyProbe(secret);
   complete('github-api-proxy');
   const counter = () => readFileSync('/home/cma/ci-writer', 'utf8');
-  await delay(100);
-  const before = counter();
-  await delay(100);
-  assert.notEqual(counter(), before);
+  await waitForWriterProgress(counter);
   complete('daemon-writer-active');
   const agentHome = '/home/cma/.cma/agents/ci-agent/home';
   const retained = [
@@ -243,9 +258,7 @@ export async function probe(onStage = () => {}) {
   complete('agent-shell-inherited-path');
   const rejectedHold = { t: 'checkpoint_for_teardown', checkpoint: { epoch: 1, exclusions: [] }, writer_resume_token: '0'.repeat(64) };
   assert.equal((await control(rejectedHold)).code, 'checkpoint_symlink_escape');
-  const afterRefusal = counter();
-  await delay(150);
-  assert.notEqual(counter(), afterRefusal);
+  await waitForWriterProgress(counter);
   complete('escaping-helper-refused');
   const hold = { t: 'checkpoint_for_teardown', checkpoint: { epoch: 1, exclusions: ['.cma/agents/ci-agent/home/tmp/arg0'] }, writer_resume_token: 'a'.repeat(64) };
   onStage('checkpoint-request');
@@ -271,8 +284,7 @@ export async function probe(onStage = () => {}) {
   complete('checkpoint-download-digest');
   const resume = { t: 'resume_checkpoint_writers', writer_resume_token: hold.writer_resume_token };
   assert.equal((await control(resume)).writers_resumed, true);
-  await delay(150);
-  assert.notEqual(counter(), heldCounter);
+  assert.ok(BigInt(await waitForWriterProgress(counter)) > BigInt(heldCounter));
   complete('writer-resumed');
   const archiveUrl = `http://127.0.0.1:9090/runtime/checkpoints/${receipt.checkpoint.object_reference}`;
   const archivePath = join(tmpdir(), 'cma-checkpoints', receipt.checkpoint.object_reference);

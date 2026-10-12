@@ -9,7 +9,7 @@ use std::{
 use cmaeg_core::{
     channel::{ConformanceLevel, Secret},
     ids::{BindingId, ConversationId, IdempotencyKey},
-    profile::AgentProfileSnapshot,
+    profile::EventWorkerProfile,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -63,7 +63,8 @@ impl std::error::Error for ProviderError {}
 #[derive(Debug, Clone)]
 pub struct BindingRequest {
     pub schema_version: u16,
-    pub profile: AgentProfileSnapshot,
+    pub target: cmaeg_core::channel::ProviderTarget,
+    pub profile: EventWorkerProfile,
     pub profile_digest: String,
     pub agent_key: Secret,
     pub tools: ToolsAdvertisement,

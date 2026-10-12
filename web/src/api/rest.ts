@@ -57,7 +57,6 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
   return {
     agentTransport: transport === undefined ? undefined : createAgentTransport(sdk, transport),
     resourceViews: sdk,
-    bridgeViews: sdk,
     createAgentLifecycle: async (input: AgentLifecycleCreateInput, options) => {
       const response = await fetch('/api/agent-manager/v1/agents', {
         method: 'POST',
@@ -111,6 +110,7 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
         status: typeof value.status === 'string' ? value.status : undefined,
       };
     },
+    botViews: sdk,
     listSandboxes: async (options) => {
       const page = await sdk.sandboxes.list(options);
       return { items: page.items.map(sandboxSummary), next: page.next };

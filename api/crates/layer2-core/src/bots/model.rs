@@ -1,7 +1,8 @@
 //! Owner-managed external channels with durable resource and credential identities.
 use crate::{
     profiles::{
-        AgentProfileRef, AgentProfileRevision, SandboxProfileRevision, WorkspaceProfileRevision,
+        AgentProfileRef, AgentProfileRevision, SandboxProfileRef, SandboxProfileRevision,
+        WorkspaceProfileRef, WorkspaceProfileRevision,
     },
     SubjectId,
 };
@@ -50,14 +51,26 @@ pub struct BotReply {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CreateBot {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_worker_profile: Option<crate::event_workers::EventWorkerProfileRef>,
     pub name: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub external_bot_id: String,
+    /// Opaque gateway-owned channel connection. Mutually exclusive with legacy external_bot_id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection_ref: Option<String>,
     pub profile: AgentProfileRef,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sandbox_profile: Option<SandboxProfileRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_profile: Option<WorkspaceProfileRef>,
     pub admission: BotAdmission,
     pub reply: BotReply,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BotProfiles {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_worker_profile: Option<crate::event_workers::EventWorkerProfilePin>,
     pub resolved_model: String,
     pub agent: AgentProfileRevision,
     pub sandbox: SandboxProfileRevision,
@@ -127,6 +140,8 @@ pub struct BotTestResult {
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Bot {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ownership: Option<super::BotOwnership>,
     pub bot_id: String,
     pub owner: SubjectId,
     pub request: CreateBot,
@@ -149,13 +164,32 @@ impl CreateBot {
         if self.name.trim().is_empty()
             || self.name.len() > 80
             || self.name.chars().any(char::is_control)
-            || self.external_bot_id.is_empty()
+            || (self.external_bot_id.is_empty() == self.connection_ref.is_none())
+            || self.connection_ref.as_ref().is_some_and(|value| {
+                value.is_empty() || value.len() > 4096 || value.chars().any(char::is_control)
+            })
             || self.external_bot_id.len() > 512
             || self.external_bot_id.chars().any(char::is_control)
             || self.profile.revision == 0
+            || self
+                .sandbox_profile
+                .as_ref()
+                .is_some_and(|p| p.revision == 0)
+            || self
+                .workspace_profile
+                .as_ref()
+                .is_some_and(|p| p.revision == 0)
             || self.reply.ack_after_ms > 60_000
         {
             return Err(super::BotError::Invalid("invalid bot configuration".into()));
+        }
+        if let Some(reference) = &self.event_worker_profile {
+            crate::event_workers::validate_id(&reference.id)?;
+            if reference.revision == 0 {
+                return Err(super::BotError::Invalid(
+                    "worker revision must be positive".into(),
+                ));
+            }
         }
         let validate = |ids: &[String]| {
             if ids.is_empty()
@@ -187,6 +221,29 @@ impl CreateBot {
     }
 }
 impl Bot {
+    pub fn resource_owner(&self) -> crate::resource_access::ResourceOwner {
+        self.ownership
+            .as_ref()
+            .map(|value| value.owner.clone())
+            .unwrap_or_else(|| crate::resource_access::ResourceOwner::Person {
+                subject: self.owner.clone(),
+            })
+    }
+    pub fn credential_subject(&self) -> &SubjectId {
+        self.ownership
+            .as_ref()
+            .map_or(&self.owner, |value| &value.credential_subject)
+    }
+    pub fn credential_incarnation(&self) -> Option<&str> {
+        self.ownership
+            .as_ref()
+            .and_then(|value| value.credential_incarnation.as_deref())
+    }
+    pub fn authorization_grant_id(&self) -> Option<&str> {
+        self.ownership
+            .as_ref()
+            .and_then(|value| value.authorization_grant_id.as_deref())
+    }
     pub fn validate_replacement(&self, previous: &Self) -> Result<(), super::BotError> {
         self.validate()?;
         if self.revision
@@ -196,6 +253,7 @@ impl Bot {
                 .ok_or(super::BotError::Conflict)?
             || self.bot_id != previous.bot_id
             || self.owner != previous.owner
+            || self.ownership != previous.ownership
             || self.request != previous.request
             || self.profiles != previous.profiles
             || self.provider != previous.provider
@@ -212,6 +270,56 @@ impl Bot {
     }
     pub fn validate(&self) -> Result<(), super::BotError> {
         self.request.validate()?;
+        if let Some(ownership) = &self.ownership {
+            ownership.validate()?;
+            if super::authority::owner_subject(&ownership.owner) != &self.owner {
+                return Err(super::BotError::Forbidden);
+            }
+        }
+        match (
+            &self.request.event_worker_profile,
+            &self.profiles.event_worker_profile,
+        ) {
+            (None, None) => {}
+            (Some(reference), Some(pin)) if reference == &pin.reference => {
+                crate::event_workers::validate_id(&reference.id)?;
+                let name = pin.snapshot["metadata"]["name"]
+                    .as_str()
+                    .ok_or(super::BotError::Unavailable)?;
+                let mut projected = crate::event_workers::projection::snapshot_for_owner(
+                    &crate::event_workers::projection::WorkerProjection {
+                        name,
+                        owner: &self.owner,
+                        provider: &self.provider,
+                        profiles: &self.profiles,
+                    },
+                    &self.resource_owner(),
+                )?;
+                projected["metadata"]["description"] =
+                    pin.snapshot["metadata"]["description"].clone();
+                if projected != pin.snapshot
+                    || reference.revision == 0
+                    || pin.snapshot["metadata"]["owner"]["subject"].as_str()
+                        != Some(self.owner.as_str())
+                    || pin.snapshot["metadata"]["provider"].as_str() != Some(self.provider.as_str())
+                    || pin.digest
+                        != format!(
+                            "sha256:{}",
+                            crate::profiles::content_digest(&pin.snapshot)
+                                .map_err(|_| super::BotError::Unavailable)?
+                        )
+                {
+                    return Err(super::BotError::Invalid(
+                        "invalid Event Worker Profile pin".into(),
+                    ));
+                }
+            }
+            _ => {
+                return Err(super::BotError::Invalid(
+                    "Event Worker Profile pin differs from request".into(),
+                ))
+            }
+        }
         if self.profiles.resolved_model.trim().is_empty()
             || crate::profiles::content_digest(&self.profiles.agent.content)
                 .map_err(|_| super::BotError::Unavailable)?
@@ -245,6 +353,14 @@ impl Bot {
             || !hash(&self.request_fingerprint)
             || self.profiles.agent.profile_id != self.request.profile.id
             || self.profiles.agent.revision != self.request.profile.revision
+            || self.request.sandbox_profile.as_ref().is_some_and(|p| {
+                p.id != self.profiles.sandbox.profile_id
+                    || p.revision != self.profiles.sandbox.revision
+            })
+            || self.request.workspace_profile.as_ref().is_some_and(|p| {
+                p.id != self.profiles.workspace.profile_id
+                    || p.revision != self.profiles.workspace.revision
+            })
         {
             return Err(super::BotError::Invalid("invalid bot record".into()));
         }

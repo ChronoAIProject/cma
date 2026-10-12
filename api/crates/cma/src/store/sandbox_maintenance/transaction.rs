@@ -130,7 +130,7 @@ pub(super) async fn apply(
         } => (expected_revision, *sandbox, event),
     };
     if store
-        .channel_reuse_blocks_quiescence(&current, &sandbox, session)
+        .legacy_reuse_blocks_quiescence(&current, &sandbox, session)
         .await
         .map_err(ApplyError::Driver)?
     {
@@ -184,6 +184,15 @@ async fn keep_alive_and_fence_policy(
     sandbox: &Sandbox,
     session: &mut ClientSession,
 ) -> Result<bool, ApplyError> {
+    if store
+        .bindings
+        .keep_alive(sandbox, session)
+        .await
+        .map_err(ApplyError::Domain)?
+        == Some(true)
+    {
+        return Ok(true);
+    }
     let Some(document) = store
         .sandbox_profiles
         .find_one(doc! { "_id": sandbox.profile.id.as_str() })
@@ -191,7 +200,7 @@ async fn keep_alive_and_fence_policy(
         .await
         .map_err(ApplyError::Driver)?
     else {
-        return Ok(false);
+        return super::retained_availability::keep_alive(store, sandbox, session).await;
     };
     let profile = super::super::sandbox_profiles::read_profile(&document)
         .map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error.to_string())))?;

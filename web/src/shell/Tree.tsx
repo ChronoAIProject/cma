@@ -1,10 +1,8 @@
 import { Presence } from '../ui/Presence';
 import { useId, useState } from 'react';
-import type { KeyboardEvent, ReactNode } from 'react';
-import type { AgentStatus, SandboxStatus } from '../api/types';
 import { sandboxChildrenAvailable, sandboxLifecycleLabel } from '../sandbox/lifecycle';
 import type { AppRoute } from '../routing/routes';
-import { StateDot, type StateDotState } from '../ui/StateDot';
+import { StateDot } from '../ui/StateDot';
 import {
   IconAgentPresetOutline16,
   IconBranchOutline16,
@@ -17,25 +15,13 @@ import {
 import type { NavigationSandbox } from './navigation';
 import { TreeRow } from './TreeRow';
 import { agentActions, sandboxActions, workspaceActions } from './treeActions';
-import {
-  CreationBadge,
-  filterTreeCreation,
-  TreeCreationFilter,
-  useTreeCreation,
-  type CreationFilter,
-} from './treeCreation';
+import { CreationBadge, useTreeCreation } from './treeCreation';
 import './Tree.css';
 import { statusLabel } from '../vocabulary/status';
+import { dotFor, stateMeta, keyboardNavigation } from './treePresentation';
 import type { ResourceViewsClient } from '../resources/client';
 import { useChannelFacts } from '../resources/useChannelFacts';
-import type { ChannelFilter } from '../resources/channelLabels';
-import {
-  ChannelBadge,
-  TreeFactsSummary,
-  TreeChannelFilter,
-  filterTreeChannel,
-  treeAgentIds,
-} from './treeChannel';
+import { ChannelBadge, TreeFactsSummary, treeAgentIds } from './treeChannel';
 
 export interface TreePermissions {
   readonly createWorkspace: boolean;
@@ -88,39 +74,6 @@ function restored(viewerId: string): Set<string> {
   }
 }
 
-function dotFor(status: string): StateDotState {
-  if (status === 'failed' || status === 'deleted' || status === 'retired') return 'error';
-  if (status === 'paused' || status === 'waiting_approval') return 'warning';
-  if (
-    [
-      'working',
-      'starting',
-      'provisioning',
-      'installing',
-      'pausing',
-      'reviving',
-      'rotating',
-      'credential_rotating',
-      'retiring',
-      'removing',
-    ].includes(status)
-  )
-    return 'ongoing';
-  return 'done';
-}
-
-function stateMeta(status: SandboxStatus | AgentStatus, extra?: ReactNode) {
-  return (
-    <>
-      <span className="tree-row__state">
-        <StateDot state={dotFor(status)} size={8} />
-        {statusLabel(status)}
-      </span>
-      {extra}
-    </>
-  );
-}
-
 export function activityLabel(value: string, now = Date.now()): string {
   const elapsed = Math.max(0, now - Date.parse(value));
   if (!Number.isFinite(elapsed)) return 'Unknown activity';
@@ -128,43 +81,6 @@ export function activityLabel(value: string, now = Date.now()): string {
   if (elapsed < 3_600_000) return `${String(Math.floor(elapsed / 60_000))}m`;
   if (elapsed < 86_400_000) return `${String(Math.floor(elapsed / 3_600_000))}h`;
   return `${String(Math.floor(elapsed / 86_400_000))}d`;
-}
-
-function visibleRows(tree: HTMLElement): HTMLElement[] {
-  return [...tree.querySelectorAll<HTMLElement>('[role="treeitem"]')];
-}
-
-function keyboardNavigation(event: KeyboardEvent<HTMLDivElement>) {
-  if (!(event.target instanceof HTMLElement) || event.target.getAttribute('role') !== 'treeitem')
-    return;
-  const row = event.target;
-  const tree = event.currentTarget;
-  const rows = visibleRows(tree);
-  const at = rows.indexOf(row);
-  const move = (index: number) => {
-    event.preventDefault();
-    rows[index]?.focus();
-  };
-  if (event.key === 'ArrowDown') move(at + 1);
-  else if (event.key === 'ArrowUp') move(at - 1);
-  else if (event.key === 'Home') move(0);
-  else if (event.key === 'End') move(rows.length - 1);
-  else if (event.key === 'ArrowRight') {
-    const disclosure = row.querySelector<HTMLButtonElement>('.tree-row__disclosure');
-    if (row.getAttribute('aria-expanded') === 'false') disclosure?.click();
-    else rows.find((candidate) => candidate.dataset.parentId === row.dataset.nodeId)?.focus();
-    event.preventDefault();
-  } else if (event.key === 'ArrowLeft') {
-    if (row.getAttribute('aria-expanded') === 'true') {
-      row.querySelector<HTMLButtonElement>('.tree-row__disclosure')?.click();
-    } else {
-      rows.find((candidate) => candidate.dataset.nodeId === row.dataset.parentId)?.focus();
-    }
-    event.preventDefault();
-  } else if (event.key === 'Enter' || event.key === ' ') {
-    row.querySelector<HTMLElement>('.tree-row__label')?.click();
-    event.preventDefault();
-  }
 }
 
 export function Tree({
@@ -186,18 +102,7 @@ export function Tree({
     refreshError === undefined,
     viewerId,
   );
-  const [channelSelection, setChannelSelection] = useState({
-    viewerId,
-    value: 'all' as ChannelFilter,
-  });
-  const channelFilter = channelSelection.viewerId === viewerId ? channelSelection.value : 'all';
-  const [selection, setSelection] = useState({ viewerId, value: 'all' as CreationFilter });
-  const filter = selection.viewerId === viewerId ? selection.value : 'all';
-  const visibleItems = filterTreeChannel(
-    filterTreeCreation(items, facts, filter),
-    channelFacts,
-    channelFilter,
-  ).filter(({ sandbox }) => sandbox.status !== 'retired');
+  const visibleItems = items.filter(({ sandbox }) => sandbox.status !== 'retired');
   const groupId = useId();
   const groups = [
     {
@@ -224,20 +129,6 @@ export function Tree({
 
   return (
     <div className="resource-tree">
-      <TreeCreationFilter
-        items={items}
-        facts={facts}
-        value={filter}
-        onChange={(value) => setSelection({ viewerId, value })}
-      />
-      {resourceClient === undefined ? null : (
-        <TreeChannelFilter
-          ids={channelIds}
-          facts={channelFacts}
-          value={channelFilter}
-          onChange={(value) => setChannelSelection({ viewerId, value })}
-        />
-      )}
       <Presence>
         {refreshError === undefined ? null : (
           <p className="resource-tree__notice" role="alert">
@@ -474,13 +365,7 @@ export function Tree({
           </section>
         );
       })}
-      {visibleItems.length === 0 ? (
-        <p className="resource-tree__empty">
-          {filter === 'all' && channelFilter === 'all'
-            ? 'No Sandboxes'
-            : 'No matching Agents in this tree'}
-        </p>
-      ) : null}
+      {visibleItems.length === 0 ? <p className="resource-tree__empty">No Sandboxes</p> : null}
     </div>
   );
 }

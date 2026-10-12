@@ -3,6 +3,16 @@ use crate::{seconds_from_rfc3339, AgentId, SandboxId, SubjectId, WorkspaceId, Wo
 use serde::{Deserialize, Serialize};
 
 pub const BINDING_CONFORMANCE_LEVEL: u8 = 2;
+pub const EXISTING_AGENT_CONVERSATION: &str = "existing_agent";
+
+/// Borrowed hierarchy is validated by CMA; channel retirement only revokes this
+/// association and never owns the existing Agent's resource lifecycle.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExistingBindingAgent {
+    pub agent_id: AgentId,
+    pub worktree_id: WorktreeId,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
@@ -44,6 +54,8 @@ pub struct PreviousBindingEnvironment {
 #[serde(deny_unknown_fields)]
 pub struct ProviderBinding {
     pub binding_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub existing_agent: Option<ExistingBindingAgent>,
     /// The management principal is independent of the resource owner.
     pub manager: SubjectId,
     pub owner: SubjectId,
@@ -56,6 +68,8 @@ pub struct ProviderBinding {
     pub refused: Vec<BindingFieldRefusal>,
     pub profile: BindingProfilePlan,
     pub key_sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_endpoint: Option<String>,
     pub generation: u64,
     pub work: BindingWork,
     pub previous: Option<PreviousBindingEnvironment>,
@@ -72,6 +86,17 @@ impl ProviderBinding {
         key_sha256: String,
         at: String,
     ) -> Result<Self, String> {
+        Self::new_with_tool_endpoint(binding_id, manager, profile, key_sha256, None, at)
+    }
+
+    pub fn new_with_tool_endpoint(
+        binding_id: String,
+        manager: SubjectId,
+        profile: BindingProfilePlan,
+        key_sha256: String,
+        tool_endpoint: Option<String>,
+        at: String,
+    ) -> Result<Self, String> {
         let (state, work) = if profile.environment.is_some() {
             (BindingState::Provisioning, BindingWork::AwaitingCredential)
         } else {
@@ -84,6 +109,7 @@ impl ProviderBinding {
         };
         let result = Self {
             binding_id,
+            existing_agent: None,
             manager,
             owner: profile.owner.clone(),
             profile_digest: profile.profile_digest.clone(),
@@ -95,6 +121,7 @@ impl ProviderBinding {
             refused: profile.refused.clone(),
             profile,
             key_sha256,
+            tool_endpoint,
             generation: 1,
             work,
             previous: None,
@@ -117,6 +144,10 @@ impl ProviderBinding {
                 .strip_prefix("sha256:")
                 .is_some_and(valid_sha256)
             || !valid_sha256(&self.key_sha256)
+            || self
+                .tool_endpoint
+                .as_deref()
+                .is_some_and(|value| !super::valid_tool_endpoint(value))
             || self.revision == 0
             || self.generation == 0
             || !(1..=BINDING_CONFORMANCE_LEVEL).contains(&self.level)
@@ -124,6 +155,17 @@ impl ProviderBinding {
             || self.refused != self.profile.refused
             || self.sandbox_id.as_str().is_empty()
             || self.workspace_id.as_str().is_empty()
+            || self.existing_agent.as_ref().is_some_and(|agent| {
+                agent.agent_id.as_str().is_empty()
+                    || agent.worktree_id.as_str().is_empty()
+                    || self.previous.is_some()
+                    || !matches!(self.state, BindingState::Ready | BindingState::Retired)
+                    || !matches!(
+                        self.work,
+                        BindingWork::Idle | BindingWork::RetireCurrentConversations
+                    )
+                    || self.level != 1
+            })
             || seconds_from_rfc3339(&self.created_at)
                 .zip(seconds_from_rfc3339(&self.updated_at))
                 .is_none_or(|(created, updated)| updated < created)
@@ -141,6 +183,13 @@ impl ProviderBinding {
         Ok(())
     }
 
+    pub fn credential_source(&self) -> crate::sandbox::SandboxCredentialSource {
+        crate::sandbox::SandboxCredentialSource::Binding {
+            binding_id: self.binding_id.clone(),
+            tool_endpoint: self.tool_endpoint.clone(),
+        }
+    }
+
     /// A reconfiguration waits for prior admission work to settle. Its retained
     /// cleanup reference prevents losing old resources when new provisioning fails.
     pub fn reconfigure(
@@ -149,10 +198,12 @@ impl ProviderBinding {
         key_sha256: String,
         at: String,
     ) -> Result<Self, String> {
-        if self.state == BindingState::Retired
+        if self.existing_agent.is_some()
+            || self.state == BindingState::Retired
             || self.work != BindingWork::Idle
             || self.previous.is_some()
             || self.owner != profile.owner
+            || self.profile.organization_owned != profile.organization_owned
         {
             return Err("binding is retired, busy, or has another owner".into());
         }
@@ -223,6 +274,8 @@ pub enum BindingConversationState {
 #[serde(deny_unknown_fields)]
 pub struct BindingConversation {
     pub binding_id: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub borrowed: bool,
     pub generation: u64,
     pub conversation_id: String,
     pub owner: SubjectId,
@@ -247,14 +300,29 @@ impl BindingConversation {
         }
         let result = Self {
             binding_id: binding.binding_id.clone(),
+            borrowed: binding.existing_agent.is_some(),
             generation: binding.generation,
-            conversation_id,
+            conversation_id: if binding.existing_agent.is_some() {
+                EXISTING_AGENT_CONVERSATION.into()
+            } else {
+                conversation_id
+            },
             owner: binding.owner.clone(),
             sandbox_id: binding.sandbox_id.clone(),
             workspace_id: binding.workspace_id.clone(),
-            agent_id: AgentId::generate(),
-            worktree_id: WorktreeId::generate(),
-            state: BindingConversationState::Provisioning,
+            agent_id: binding
+                .existing_agent
+                .as_ref()
+                .map_or_else(AgentId::generate, |a| a.agent_id.clone()),
+            worktree_id: binding
+                .existing_agent
+                .as_ref()
+                .map_or_else(WorktreeId::generate, |a| a.worktree_id.clone()),
+            state: if binding.existing_agent.is_some() {
+                BindingConversationState::Ready
+            } else {
+                BindingConversationState::Provisioning
+            },
             created_at: at.clone(),
             updated_at: at,
             revision: 1,
@@ -295,4 +363,62 @@ fn valid_sha256(value: &str) -> bool {
         && value
             .bytes()
             .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+}
+
+impl ProviderBinding {
+    /// Owner kind is part of retained binding authority, independently of the
+    /// subject string carried by a binding credential.
+    pub fn resource_owner(&self) -> crate::resource_access::ResourceOwner {
+        use crate::resource_access::ResourceOwner;
+        if self.profile.organization_owned {
+            ResourceOwner::Organization {
+                subject: self.owner.clone(),
+            }
+        } else {
+            ResourceOwner::Person {
+                subject: self.owner.clone(),
+            }
+        }
+    }
+
+    /// The authenticated binding manager attests the owner kind after verifying
+    /// the creator with NyxID. Persist this evidence with new sandbox admission.
+    pub fn sandbox_resource_policy(
+        &self,
+        sandbox: &crate::sandbox::Sandbox,
+    ) -> Result<
+        Option<crate::resource_access::ResourcePolicyRecord>,
+        crate::sandbox::store::SandboxStoreError,
+    > {
+        use crate::resource_access::{
+            OrganizationOwnershipEvidence, ResourceActor, ResourcePolicyRecord,
+        };
+        if self.sandbox_id != sandbox.id || self.owner != sandbox.owner {
+            return Err(crate::sandbox::store::SandboxStoreError::Conflict);
+        }
+        if !self.profile.organization_owned {
+            return Ok(None);
+        }
+        let policy = ResourcePolicyRecord {
+            sandbox_id: sandbox.id.clone(),
+            sandbox_created_at: sandbox.created_at.clone(),
+            owner: self.resource_owner(),
+            organization_evidence: Some(OrganizationOwnershipEvidence {
+                issuer: "cma:authenticated-provider-binding-manager".into(),
+                organization: self.owner.clone(),
+                admitted_by: ResourceActor::Api {
+                    subject: self.manager.clone(),
+                    delegation_id: None,
+                },
+                verified_at: self.created_at.clone(),
+            }),
+            revision: 1,
+        };
+        policy.validate().map_err(|_| {
+            crate::sandbox::store::SandboxStoreError::Corrupt(
+                "invalid binding ownership evidence".into(),
+            )
+        })?;
+        Ok(Some(policy))
+    }
 }

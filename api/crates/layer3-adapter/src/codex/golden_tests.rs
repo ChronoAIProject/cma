@@ -14,6 +14,7 @@ fn options(
         reasoning_effort: effort,
         permission,
         own_credential,
+        isolated_agent: false,
         working_directory: "/home/cma/repo/.worktrees/wt-7".into(),
         home_directory: "/home/cma/.cma/agents/agent-7/home".into(),
         slot: AgentSlot("agent-7".into()),
@@ -325,6 +326,58 @@ fn managed_launch_placeholder_does_not_change_the_pinned_sandbox_environment() {
         );
         assert!(deployment.render(&overridden).is_err());
     }
+}
+
+#[test]
+fn isolated_agent_uses_a_trusted_outer_boundary_without_shared_auth() {
+    let mut choices = options(false, PermissionLevel::Autonomous, ReasoningEffort::High);
+    choices.isolated_agent = true;
+    let home = AgentHomeRequest::new("isolated-home", choices.clone(), "private prompt", vec![]);
+    let plan = render_agent_home(&home, &CodexConfig::default()).unwrap();
+    assert!(!plan.symlinks.iter().any(|link| link.path == "auth.json"));
+    assert!(plan.symlinks.iter().any(|link| link.path == "skills/nyxid"));
+    let launch = render_launch(&AgentOpenRequest::new(
+        "isolated-open",
+        choices.clone(),
+        None,
+    ))
+    .unwrap();
+    assert_eq!(launch.program, "/usr/bin/python3");
+    assert_eq!(&launch.args[..2], ["-I", "-c"]);
+    assert_eq!(launch.args[2], include_str!("isolate_agent.py"));
+    assert_eq!(launch.args[3], "outer");
+    assert_eq!(launch.args[4], choices.home_directory);
+    assert_eq!(launch.args[5], choices.working_directory);
+
+    choices.own_credential = true;
+    assert!(render_launch(&AgentOpenRequest::new(
+        "invalid-open",
+        choices.clone(),
+        None
+    ))
+    .is_err());
+    assert!(render_agent_home(
+        &AgentHomeRequest::new("invalid-home", choices, "", vec![]),
+        &CodexConfig::default(),
+    )
+    .is_err());
+}
+
+#[test]
+fn isolated_agent_relay_and_namespace_regressions() {
+    let result = std::process::Command::new("python3")
+        .args(["-I", "-B"])
+        .arg(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/codex/isolate_agent_test.py"
+        ))
+        .output()
+        .expect("python3 runs isolated agent boundary regressions");
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
 }
 
 #[test]

@@ -17,6 +17,8 @@ use crate::{
 #[serde(deny_unknown_fields)]
 pub struct EventRefPayload {
     pub v: u8,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activity_sha256: Option<String>,
     pub channel_id: ChannelId,
     pub record_id: RecordId,
     pub event_id: EventId,
@@ -28,6 +30,13 @@ pub struct EventRefPayload {
 
 #[derive(Clone, PartialEq, Eq, ToSchema)]
 pub enum ReplyAddress {
+    Telegram {
+        bot_id: String,
+        chat_id: String,
+        message_id: String,
+        thread_id: Option<String>,
+    },
+
     NyxidRelay {
         message_id: String,
         route_id: String,
@@ -62,6 +71,18 @@ impl fmt::Debug for ReplyAddress {
                 .field("reply_token", &"[redacted]")
                 .field("reply_token_expires_at", reply_token_expires_at)
                 .finish(),
+            Self::Telegram {
+                bot_id,
+                chat_id,
+                message_id,
+                thread_id,
+            } => formatter
+                .debug_struct("Telegram")
+                .field("bot_id", bot_id)
+                .field("chat_id", chat_id)
+                .field("message_id", message_id)
+                .field("thread_id", thread_id)
+                .finish(),
             Self::ResultWebhook { url, hmac_key_id } => formatter
                 .debug_struct("ResultWebhook")
                 .field("url", url)
@@ -79,6 +100,14 @@ impl fmt::Debug for ReplyAddress {
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 enum ReplyAddressWire {
+    Telegram {
+        bot_id: String,
+        chat_id: String,
+        message_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        thread_id: Option<String>,
+    },
+
     NyxidRelay {
         message_id: String,
         route_id: String,
@@ -115,6 +144,17 @@ impl Serialize for ReplyAddress {
                 reply_token: reply_token.as_str().to_owned(),
                 reply_token_expires_at: *reply_token_expires_at,
             },
+            Self::Telegram {
+                bot_id,
+                chat_id,
+                message_id,
+                thread_id,
+            } => ReplyAddressWire::Telegram {
+                bot_id: bot_id.clone(),
+                chat_id: chat_id.clone(),
+                message_id: message_id.clone(),
+                thread_id: thread_id.clone(),
+            },
             Self::ResultWebhook { url, hmac_key_id } => ReplyAddressWire::ResultWebhook {
                 url: url.clone(),
                 hmac_key_id: hmac_key_id.clone(),
@@ -146,6 +186,17 @@ impl<'de> Deserialize<'de> for ReplyAddress {
                 platform,
                 reply_token: Secret::new(reply_token),
                 reply_token_expires_at,
+            },
+            ReplyAddressWire::Telegram {
+                bot_id,
+                chat_id,
+                message_id,
+                thread_id,
+            } => Self::Telegram {
+                bot_id,
+                chat_id,
+                message_id,
+                thread_id,
             },
             ReplyAddressWire::ResultWebhook { url, hmac_key_id } => {
                 Self::ResultWebhook { url, hmac_key_id }
@@ -223,8 +274,37 @@ impl<'de> Deserialize<'de> for EventRef {
     }
 }
 
+pub fn activity_digest(activity: &crate::activity::Activity) -> String {
+    let digest = ring::digest::digest(
+        &ring::digest::SHA256,
+        crate::profile::canonical_json(
+            serde_json::to_value(activity).expect("Activity serialization is infallible"),
+        )
+        .as_bytes(),
+    );
+    digest
+        .as_ref()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
 impl EventRefPayload {
+    pub fn verifies_activity(&self, activity: &crate::activity::Activity) -> bool {
+        self.activity_sha256
+            .as_ref()
+            .is_some_and(|digest| *digest == activity_digest(activity))
+            && self.event_id == activity.event_id
+    }
+
     pub fn validate(&self) -> Result<(), ValidationError> {
+        if self.activity_sha256.as_ref().is_some_and(|d| {
+            d.len() != 64
+                || !d
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        }) {
+            return Err(ValidationError::new("/activity_sha256", "invalid digest"));
+        }
         if self.v != 1 {
             return Err(ValidationError::new("/v", "unsupported event ref version"));
         }
@@ -245,6 +325,36 @@ impl EventRefPayload {
                     return Err(ValidationError::new(
                         "/reply/reply_token_expires_at",
                         "must be positive",
+                    ));
+                }
+            }
+            ReplyAddress::Telegram {
+                bot_id,
+                chat_id,
+                message_id,
+                thread_id,
+            } => {
+                for (field, id, positive) in [
+                    ("bot_id", bot_id.as_str(), true),
+                    ("chat_id", chat_id.as_str(), false),
+                    ("message_id", message_id.as_str(), true),
+                ] {
+                    if !id.parse::<i64>().is_ok_and(|n| {
+                        (if positive { n > 0 } else { n != 0 }) && n.to_string() == id
+                    }) {
+                        return Err(ValidationError::new(
+                            format!("/reply/{field}"),
+                            "invalid Telegram identity",
+                        ));
+                    }
+                }
+                if thread_id.as_ref().is_some_and(|id| {
+                    !id.parse::<i64>()
+                        .is_ok_and(|n| n > 0 && n.to_string() == *id)
+                }) {
+                    return Err(ValidationError::new(
+                        "/reply/thread_id",
+                        "invalid Telegram thread",
                     ));
                 }
             }

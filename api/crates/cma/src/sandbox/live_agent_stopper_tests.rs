@@ -525,6 +525,7 @@ fn live_agent(sandbox: &Sandbox, index: usize) -> Agent {
             revision: 1,
             digest: "c".repeat(64),
             content: AgentProfileContent {
+                isolated_agent: false,
                 model: Some("test-model".into()),
                 thinking_effort: ThinkingEffort::High,
                 permission_level: PermissionLevel::Autonomous,

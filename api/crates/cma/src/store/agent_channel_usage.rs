@@ -21,14 +21,6 @@ use mongodb::{
     ClientSession,
 };
 
-pub(in crate::store) mod bridge_append;
-pub(in crate::store) mod bridge_detach;
-pub(in crate::store) mod bridge_historical;
-pub(in crate::store) fn read_usage_event(
-    document: &Document,
-) -> Result<ChannelUsageEvent, SandboxStoreError> {
-    records::read_event(document)
-}
 mod records;
 pub(super) use records::ensure_indexes;
 pub(super) use records::read_snapshot as read_inventory_snapshot;

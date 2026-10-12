@@ -112,6 +112,10 @@ pub enum ConversationKind {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 pub enum SourceKind {
+    Telegram {
+        platform: Platform,
+        bot_id: String,
+    },
     NyxidRelay {
         platform: Platform,
         route_id: String,
@@ -131,6 +135,18 @@ pub struct InteractionResult {
 impl Activity {
     /// Validate the bounded neutral event representation.
     pub fn validate(&self) -> Result<(), ValidationError> {
+        if let SourceKind::Telegram { platform, bot_id } = &self.source {
+            if *platform != Platform::Telegram
+                || !bot_id
+                    .parse::<i64>()
+                    .is_ok_and(|id| id > 0 && id.to_string() == *bot_id)
+            {
+                return Err(ValidationError::new(
+                    "/source",
+                    "native Telegram requires its positive bot ID and telegram platform",
+                ));
+            }
+        }
         if self.schema_version != ACTIVITY_SCHEMA_VERSION {
             return Err(ValidationError::new(
                 "/schema_version",

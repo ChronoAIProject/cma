@@ -3,14 +3,18 @@
 pub mod auth;
 pub mod channels;
 mod config;
+pub mod connections;
 pub mod delivery;
 pub mod http;
 pub mod ingress;
+pub mod interactions;
 pub mod mcp;
 pub mod openapi;
 pub mod providers;
 pub mod records;
+pub mod runtime;
 mod service_auth;
+pub mod telegram;
 pub mod telemetry;
 pub mod tools;
 pub mod turns;
@@ -20,7 +24,7 @@ use std::{future::IntoFuture, net::SocketAddr, time::Instant};
 use axum::{routing::get, Json, Router};
 use serde::Serialize;
 use tokio::sync::oneshot;
-use tower_http::limit::RequestBodyLimitLayer;
+use tower_http::{catch_panic::CatchPanicLayer, limit::RequestBodyLimitLayer};
 use utoipa::OpenApi;
 
 pub use config::{
@@ -30,11 +34,10 @@ pub use config::{
     CMAEG_CHANNEL_NEGATIVE_TTL_MS, CMAEG_CMA_BASE_URL, CMAEG_CMA_SERVICE_TOKEN_FILE,
     CMAEG_DRAIN_SECONDS, CMAEG_FAILURE_TEXT, CMAEG_HEARTBEAT_MS, CMAEG_INGRESS_INFLIGHT,
     CMAEG_INGRESS_MAX_BODY, CMAEG_JWKS_TTL_MS, CMAEG_LISTEN, CMAEG_MASTER_KEYS_FILE,
-    CMAEG_METRICS_LISTEN, CMAEG_MONGODB_DATABASE, CMAEG_MONGODB_URI, CMAEG_NYXID_BASE_URL,
-    CMAEG_NYXID_REPLY_TIMEOUT_MS, CMAEG_PROVIDERS, CMAEG_PROVIDER_CONNECT_TIMEOUT_MS,
-    CMAEG_PROVIDER_MAX_INFLIGHT, CMAEG_PROVIDER_REQUEST_TIMEOUT_MS, CMAEG_PUBLIC_URL,
-    CMAEG_RESTORE_RATE_PER_MINUTE, CMAEG_RESTORE_TIMEOUT_MS, CMAEG_TOOLS_NYXID_SLUG,
-    CMAEG_TURN_TIMEOUT_MS,
+    CMAEG_METRICS_LISTEN, CMAEG_NYXID_BASE_URL, CMAEG_NYXID_REPLY_TIMEOUT_MS, CMAEG_PROVIDERS,
+    CMAEG_PROVIDER_CONNECT_TIMEOUT_MS, CMAEG_PROVIDER_MAX_INFLIGHT,
+    CMAEG_PROVIDER_REQUEST_TIMEOUT_MS, CMAEG_PUBLIC_URL, CMAEG_RESTORE_RATE_PER_MINUTE,
+    CMAEG_RESTORE_TIMEOUT_MS, CMAEG_TOOLS_NYXID_SLUG, CMAEG_TURN_TIMEOUT_MS,
 };
 
 const REQUEST_BODY_LIMIT_BYTES: usize = 1024 * 1024;
@@ -57,9 +60,12 @@ pub fn router() -> Router {
                 get(http::readiness::readyz).with_state(http::readiness::Readiness::default()),
             )
             .route("/openapi.json", get(openapi))
+            .merge(http::docs::router())
             .layer(RequestBodyLimitLayer::new(REQUEST_BODY_LIMIT_BYTES))
             .layer(axum::middleware::from_fn(http::problems::protocol_headers)),
     )
+    // Outermost backstop: a panic in any middleware is answered too.
+    .layer(CatchPanicLayer::custom(http::problems::panic_response))
 }
 
 /// Build the complete stateful router used by the running service.
@@ -73,9 +79,12 @@ pub fn router_with_state(state: http::ManagementState) -> Router {
                 get(http::readiness::readyz).with_state(readiness),
             )
             .route("/openapi.json", get(openapi))
+            .merge(http::docs::router())
             .layer(RequestBodyLimitLayer::new(REQUEST_BODY_LIMIT_BYTES))
             .layer(axum::middleware::from_fn(http::problems::protocol_headers)),
     )
+    // Outermost backstop: a panic in any middleware is answered too.
+    .layer(CatchPanicLayer::custom(http::problems::panic_response))
 }
 
 async fn healthz() -> Json<StatusResponse> {
@@ -95,57 +104,44 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let providers = std::sync::Arc::new(
         providers::ProviderClient::from_config(&config)?.with_service_auth(service_auth.clone()),
     );
-    let mongo_uri =
-        std::env::var(config::CMAEG_MONGODB_URI).map_err(|_| "CMAEG_MONGODB_URI is required")?;
-    let database_name = std::env::var(config::CMAEG_MONGODB_DATABASE)
-        .map_err(|_| "CMAEG_MONGODB_DATABASE is required")?;
-    let mongo = mongodb::Client::with_uri_str(mongo_uri).await?;
-    let database_handle = mongo.database(&database_name);
-    let database = records::mongo::MongoRecords::open(database_handle.clone()).await?;
-    let service_identity = cma_service_auth::NyxIdAuth::new(
-        &config.management.nyxid_base_url,
-        cma_service_auth::Service::EventGateway,
-        &std::env::var(config::CMAEG_NYXID_CLIENT_ID)?,
-        std::env::var(config::CMAEG_NYXID_CLIENT_SECRET)?,
-    )?;
-    let browser = std::sync::Arc::new(cma_service_auth::browser::BrowserAuth::new(
-        service_identity.clone(),
-        &database_handle,
-        records::mongo::SESSIONS,
-        &std::env::var(config::CMAEG_WEB_ORIGIN)?,
-        "/api/event-gateway",
-        "/event-gateway",
-        &std::fs::read(std::env::var(config::CMAEG_COOKIE_KEY_FILE)?)?,
-    )?);
     let records = std::sync::Arc::new(
         records::RecordClient::new(
             &config.management.cma_base_url,
             config.management.cma_service_token.as_str(),
         )?
-        .with_database(database),
+        .with_service_auth(service_auth),
     );
-    let creator_auth = std::sync::Arc::new(
-        auth::CreatorAuthenticator::new(&config.management.nyxid_base_url)?
-            .with_service(service_identity),
-    );
-    let state = http::ManagementState::new(
+    let creator_auth = std::sync::Arc::new(auth::CreatorAuthenticator::new(
+        &config.management.nyxid_base_url,
+    )?);
+    let mut state = http::ManagementState::new(
         providers.clone(),
         records,
         creator_auth,
         config.management.clone(),
         config.channel_cache,
     );
+    let telegram = std::sync::Arc::new(telegram::TelegramClient::production(
+        config.delivery.reply_timeout,
+    )?);
+    state.telegram = Some(telegram.clone());
     let _reachability_probe = state.readiness.start_probe(state.records.clone());
     let tracker = turns::TurnTracker::new(state.readiness.clone());
     let (delivery, outcomes) = tokio::sync::mpsc::channel(256);
     let waiters = std::sync::Arc::new(delivery::sync::SyncRegistry::default());
+    let interactions = std::sync::Arc::new(interactions::InteractionStore::new(
+        (*state.records).clone(),
+        state.master_keys.clone(),
+        providers.clone(),
+    ));
     let delivery_engine = delivery::engine::DeliveryEngine::start(
         outcomes,
         state.master_keys.clone(),
         delivery::relay_client::RelayClient::new(
             &config.management.nyxid_base_url,
             config.delivery.reply_timeout,
-        )?,
+        )?
+        .with_interactions(interactions.clone()),
         config.delivery.clone(),
         tracker.clone(),
         delivery::custom::CustomDelivery::new(
@@ -163,8 +159,10 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         state.resolver.clone(),
         state.master_keys.clone(),
         config.ingress,
-        runner,
-    )?;
+        runner.clone(),
+    )?
+    .with_telegram(telegram)
+    .with_interactions(interactions);
     let tools_state = tools::ToolsState {
         resolver: state.resolver.clone(),
         keys: state.master_keys.clone(),
@@ -173,6 +171,9 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         tracker: tracker.clone(),
         public_origin: config.management.public_url.clone(),
     };
+    let connections = connections::ConnectionService::new(state.clone(), tools_state.clone());
+    let ingress = ingress.with_receipt_observer(std::sync::Arc::new(connections.clone()));
+    let _connection_worker = connections.start_completion_worker(runner);
     let listener = tokio::net::TcpListener::bind(config.listen).await?;
     let _metrics =
         http::metrics::MetricsServer::start(config.metrics_listen, telemetry::install()?).await?;
@@ -181,18 +182,19 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let (shutdown_started, shutdown_signal) = oneshot::channel();
     let server = axum::serve(
         listener,
-        browser
-            .protect(
-                router_with_state(state)
-                    .merge(http::events::router(http::events::CustomIngressState {
-                        ingress: ingress.clone(),
-                        waiters,
-                    }))
-                    .merge(http::callbacks::router(ingress))
-                    .merge(http::tools::router(tools_state.clone()))
-                    .merge(mcp::router(tools_state))
-                    .merge(browser.routes()),
-            )
+        router_with_state(state)
+            .merge(http::events::router(http::events::CustomIngressState {
+                ingress: ingress.clone(),
+                waiters,
+            }))
+            .merge(http::connections::router(connections.clone()))
+            .merge(http::connection_browser::router(connections))
+            .merge(http::telegram::router(ingress.clone()))
+            .merge(http::callbacks::router(ingress))
+            .merge(http::tools::router(tools_state.clone()))
+            .merge(mcp::router(tools_state))
+            .layer(RequestBodyLimitLayer::new(REQUEST_BODY_LIMIT_BYTES))
+            .layer(CatchPanicLayer::custom(http::problems::panic_response))
             .into_make_service_with_connect_info::<SocketAddr>(),
     )
     .with_graceful_shutdown(async move {
@@ -248,6 +250,20 @@ async fn wait_for_shutdown_signal() {
     {
         let _ = tokio::signal::ctrl_c().await;
     }
+}
+
+/// Replace Rust's default panic hook, which prints the panic payload to
+/// stderr. A payload can carry request data, so only the location is logged.
+pub fn install_panic_hook() {
+    std::panic::set_hook(Box::new(|info| {
+        let location = info
+            .location()
+            .map(|location| format!("{}:{}", location.file(), location.line()));
+        tracing::error!(
+            location = %location.as_deref().unwrap_or("unknown"),
+            "panic"
+        );
+    }));
 }
 
 /// Initialize the container logger with the service's stable default filter.

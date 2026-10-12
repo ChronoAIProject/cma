@@ -1,13 +1,23 @@
-use layer2_core::{bots::*, profiles::AgentProfileRef, AgentProfileId};
+use layer2_core::{
+    bots::*,
+    profiles::{AgentProfileRef, SandboxProfileRef, WorkspaceProfileRef},
+    AgentProfileId, SandboxProfileId, WorkspaceProfileId,
+};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 #[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CreateBotBody {
+    pub event_worker_profile: Option<ProfileRef>,
     pub name: String,
+    #[serde(default)]
     pub nyxid_bot_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub connection_ref: Option<String>,
     pub profile: ProfileRef,
+    pub sandbox_profile: Option<ProfileRef>,
+    pub workspace_profile: Option<ProfileRef>,
     pub admission: Admission,
     pub reply: Reply,
 }
@@ -55,12 +65,25 @@ pub struct Reply {
 impl CreateBotBody {
     pub fn into_core(self) -> Result<CreateBot, BotError> {
         Ok(CreateBot {
+            event_worker_profile: self.event_worker_profile.map(|p| {
+                layer2_core::event_workers::EventWorkerProfileRef {
+                    id: p.id,
+                    revision: p.revision,
+                }
+            }),
             name: self.name,
             external_bot_id: self.nyxid_bot_id,
+            connection_ref: self.connection_ref,
             profile: AgentProfileRef {
                 id: AgentProfileId(self.profile.id),
                 revision: self.profile.revision,
             },
+            sandbox_profile: self
+                .sandbox_profile
+                .map(|p| SandboxProfileRef::new(SandboxProfileId(p.id), p.revision)),
+            workspace_profile: self
+                .workspace_profile
+                .map(|p| WorkspaceProfileRef::new(WorkspaceProfileId(p.id), p.revision)),
             admission: serde_json::from_value(
                 serde_json::to_value(self.admission).map_err(|_| BotError::Unavailable)?,
             )
@@ -74,11 +97,22 @@ impl CreateBotBody {
 }
 #[derive(Serialize, ToSchema)]
 pub struct BotView {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) resource_owner: Option<super::super::resource_access_shapes::ResourceOwnerView>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) created_by: Option<super::super::resource_access_shapes::ResourceActorView>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event_worker_profile: Option<ProfileRef>,
     pub bot_id: String,
     pub owner: String,
     pub name: String,
+    #[serde(default)]
     pub nyxid_bot_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub connection_ref: Option<String>,
     pub profile: ProfileRef,
+    pub sandbox_profile: ProfileRef,
+    pub workspace_profile: ProfileRef,
     pub provider: String,
     pub state: String,
     pub failure: Option<String>,
@@ -143,13 +177,38 @@ impl From<Bot> for BotView {
             BotState::Deleted => ("deleted", None),
         };
         Self {
+            resource_owner: bot
+                .ownership
+                .as_ref()
+                .map(|value| value.owner.clone().into()),
+            created_by: bot
+                .ownership
+                .as_ref()
+                .map(|value| value.created_by.clone().into()),
+            event_worker_profile: bot
+                .profiles
+                .event_worker_profile
+                .as_ref()
+                .map(|p| ProfileRef {
+                    id: p.reference.id.clone(),
+                    revision: p.reference.revision,
+                }),
             bot_id: bot.bot_id,
             owner: bot.owner.to_string(),
             name: bot.request.name,
             nyxid_bot_id: bot.request.external_bot_id,
+            connection_ref: bot.request.connection_ref,
             profile: ProfileRef {
                 id: bot.request.profile.id.0,
                 revision: bot.request.profile.revision,
+            },
+            sandbox_profile: ProfileRef {
+                id: bot.profiles.sandbox.profile_id.0,
+                revision: bot.profiles.sandbox.revision,
+            },
+            workspace_profile: ProfileRef {
+                id: bot.profiles.workspace.profile_id.0,
+                revision: bot.profiles.workspace.revision,
             },
             provider: bot.provider,
             state: state.into(),

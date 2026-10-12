@@ -14,7 +14,7 @@ pub(super) struct ApiBearerDoc {
     pub(super) subject: String,
     pub(super) credential_id: String,
     pub(super) access_token: CipherEnvelope,
-    pub(super) expires_at: DateTime,
+    pub(super) expires_at: Option<DateTime>,
 }
 
 fn binding(
@@ -22,14 +22,14 @@ fn binding(
     issuer: &str,
     subject: &str,
     credential_id: &str,
-    expires_at: DateTime,
+    expires_at: Option<DateTime>,
 ) -> Result<Vec<u8>, StoreError> {
     serde_json::to_vec(&(
         &id.bytes,
         issuer,
         subject,
         credential_id,
-        expires_at.timestamp_millis(),
+        expires_at.map(|value| value.timestamp_millis()),
     ))
     .map_err(|_| StoreError::Malformed("API bearer custody binding is invalid".into()))
 }
@@ -41,7 +41,7 @@ impl MongoAuthStore {
     ) -> Result<ApiBearerDoc, StoreError> {
         custody.validate()?;
         let id = binary(*custody.id.as_bytes());
-        let expires_at = DateTime::from_system_time(custody.expires_at);
+        let expires_at = custody.expires_at.map(DateTime::from_system_time);
         let aad = binding(
             &id,
             &custody.issuer,
@@ -89,7 +89,7 @@ impl MongoAuthStore {
                 "access_token",
                 document.access_token,
             )?),
-            expires_at: document.expires_at.to_system_time(),
+            expires_at: document.expires_at.map(|value| value.to_system_time()),
         };
         custody.validate()?;
         Ok(custody)

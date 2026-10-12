@@ -59,7 +59,6 @@ pub(super) fn service() -> Arc<BindingService> {
     };
     BindingService::new(
         store,
-        profiles,
         resources,
         Arc::new(Custody),
         BindingPolicy {

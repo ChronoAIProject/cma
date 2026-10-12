@@ -4,12 +4,11 @@ use axum::{
     extract::{Path, State},
     http::{header, StatusCode},
     response::{IntoResponse, Response},
-    Json,
+    Extension, Json,
 };
 use layer2_core::{
     resource_access::CredentialSource,
     sandbox::agent_io::{CommandAdmissionError, CommandLedgerError, ExternalEventContext},
-    AgentId,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -43,6 +42,7 @@ pub(super) fn parse(payload: Value) -> Result<ExternalEventContext, Box<Response
         .ok_or_else(invalid)?
         .to_owned();
     let context = ExternalEventContext {
+        provider_conversation_id: None,
         source_id: wire.channel_id,
         conversation_id: wire.conversation_id,
         event_id,
@@ -60,6 +60,7 @@ pub(super) async fn retrieve(
     State(state): State<ResponsesV2State>,
     auth: Result<AuthenticatedResourceCaller, crate::auth::NotAuthenticated>,
     Path((binding, conversation, event)): Path<(String, String, String)>,
+    setups: Option<Extension<std::sync::Arc<layer2_core::bot_setups::BotSetupService>>>,
 ) -> Response {
     let Ok(auth) = auth else {
         return error::unauthenticated();
@@ -72,19 +73,38 @@ pub(super) async fn retrieve(
             None,
         );
     }
-    let agent = match state
-        .resolve_conversation(&auth, &AgentId(conversation.clone()))
-        .await
-    {
-        Ok(agent) => agent,
-        Err(error) => return *error,
-    };
+    if let (Some(Extension(setups)), Some(credential)) = (setups, auth.credential.as_ref()) {
+        match setups
+            .context(&binding, credential.value(), &conversation, &event)
+            .await
+        {
+            Ok(Some(context)) => {
+                return ([(header::CACHE_CONTROL, "no-store")], Json(context)).into_response()
+            }
+            Ok(None) => {}
+            Err(layer2_core::bots::BotError::Forbidden) => {
+                return error::error(
+                    StatusCode::FORBIDDEN,
+                    "binding_key_required",
+                    "Event context requires a current binding key.",
+                    None,
+                )
+            }
+            Err(_) => {
+                return error::error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "event_context_unavailable",
+                    "Event context is temporarily unavailable.",
+                    None,
+                )
+            }
+        }
+    }
     let result = state
         .commands
-        .external_event_context(
+        .external_event_context_for_source(
             &auth.context,
             auth.credential.as_ref().map(|value| value.value()),
-            &agent,
             &binding,
             &conversation,
             &event,

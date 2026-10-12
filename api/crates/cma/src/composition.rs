@@ -3,7 +3,8 @@ use std::sync::Arc;
 mod adapter;
 mod bindings;
 mod bots;
-mod bridge;
+mod credentials;
+mod event_routing;
 mod profiles;
 use adapter::production_adapter;
 use axum::{extract::DefaultBodyLimit, Router};
@@ -20,7 +21,7 @@ use layer2_core::{
 use crate::{
     activity::ActivityRecorder,
     auth::{AuthMode, AuthState, SignInRecords},
-    config::{bridge_flags::BridgeFlag::TriggerCommandAdmission, Config},
+    config::Config,
     profile_authoring::CmaProfileAuthoringSource,
     profile_policy::profile_route_policy,
     projections::{AdapterSandboxResources, AgentProjectionServices},
@@ -38,21 +39,13 @@ pub(crate) struct ControlPlaneComposition {
     pub router: Router,
     pub bindings: bindings::BindingComposition,
     pub bots: Option<bots::BotComposition>,
-    #[allow(dead_code)]
-    pub bridge_definitions: layer2_core::bridge::BridgeService,
-    #[allow(dead_code)]
-    pub bridge_credentials: Option<Arc<crate::bridge::ManagedBridgeCredentials>>,
-    #[allow(dead_code)] // Trusted channel admission consumes these retained services next.
-    pub bridge_invokes: layer2_core::bridge::invoke::BridgeInvokeService,
-    #[allow(dead_code)]
-    pub bridge_allocations: Arc<crate::store::MongoBridgeAllocationStore>,
+    pub actor_continuations: Option<Arc<crate::bot_setups::ActorContinuationWorker>>,
+    pub auth: Arc<AuthState>,
     pub launch_scheduler: super::trigger::LaunchScheduler,
     pub provenance_backfill: crate::sandbox::AgentProvenanceBackfill,
     pub command_scheduler: super::commands::CommandScheduler,
     pub sandbox_control_scheduler: super::commands::SandboxControlScheduler,
     pub sandbox_lifecycle: SandboxLifecycleComposition,
-    pub channel_schedulers: Vec<crate::bridge::channel_scheduler::ChannelScheduler>,
-    pub bridge_outbox: Option<crate::bridge::outbox_scheduler::BridgeOutboxScheduler>,
 }
 
 impl ControlPlaneComposition {
@@ -101,16 +94,6 @@ impl ControlPlaneComposition {
         ));
         let subscriptions =
             crate::connections::CodexSubscriptions::new(stores.codex_subscriptions.clone());
-        let channel_tools = Arc::new(
-            crate::store::MongoChannelToolStore::open(
-                stores.sandbox_model.clone(),
-                &config.deployment_id,
-                &config.auth_encryption_key,
-                &config.public_url,
-            )
-            .await
-            .map_err(|error| format!("channel tool storage is not usable: {error}"))?,
-        );
         let adapter = production_adapter(
             config,
             Arc::clone(&stores.checkpoint_objects),
@@ -118,7 +101,7 @@ impl ControlPlaneComposition {
                 stores.sandbox_model.clone(),
                 subscriptions.clone(),
             ),
-            channel_tools.clone(),
+            crate::store::MongoProviderToolSource::new(stores.sandbox_model.clone()),
         )
         .await?;
         let checkpoint_export = if config.runtime.home_policy.is_some() {
@@ -145,31 +128,19 @@ impl ControlPlaneComposition {
             stores.auth.clone(),
             config.nyxid_public_url.clone(),
         )
-        .with_binding_store(stores.sandbox_model.clone());
-        let key_issuer = bridge::key_issuer(config);
-        let bridge_provisioning = bridge::provisioning(
-            config,
-            &stores,
-            sandbox_policy.clone(),
-            adapter.clone(),
-            authoring_bounds,
-            key_issuer.clone(),
-            auth.clone(),
+        .with_agent_key_service(config.nyxid_service_id.clone())
+        .with_binding_store(stores.sandbox_model.clone())
+        .with_bot_father_username(
+            config
+                .bot_father
+                .as_ref()
+                .map(|father| father.username.clone()),
         )?;
-        let (bridge_definitions, bridge_credentials) = crate::bridge::service(
-            &config.auth_mode,
-            stores.bridge_definitions.clone(),
-            auth.clone(),
-            stores.sandbox_model.clone(),
-            stores.bridge_credentials.clone(),
-            bridge_provisioning,
-            config.bridge_flags,
-        )
-        .map_err(|error| format!("bridge verifier is not usable: {error}"))?;
         let broker = Arc::new(
-            CmaServiceConnectionBroker::from_auth_config(
+            CmaServiceConnectionBroker::from_auth_config_with_callback(
                 &config.auth_mode,
                 config.nyxid_public_url.as_deref(),
+                Some(config.public_url.as_str()),
                 Arc::clone(&auth),
             )
             .map_err(|error| format!("service connection broker is not usable: {error}"))?
@@ -245,24 +216,7 @@ impl ControlPlaneComposition {
             authoring_bounds,
             CmaProfileAuthoringSource::production(config, Arc::clone(&auth))?,
         );
-        let bridge = crate::bridge::composition::BridgeComposition::build(
-            config,
-            &stores,
-            bridge_definitions.clone(),
-            bridge_credentials.clone(),
-            resource_access.clone(),
-            live_agents.clone(),
-        )
-        .await?;
-        let sandbox_credentials = bridge::sandbox_credentials(
-            key_issuer,
-            auth.clone(),
-            &stores,
-            &bridge,
-            &bridge_definitions,
-            bridge_credentials.clone(),
-            adapter.clone(),
-        );
+        let sandbox_credentials = credentials::sandbox_credentials(config, auth.clone(), &stores);
         if !auth.requires_credential() {
             tracing::warn!(
                 "running with a trusted fixed subject; this mode is for local development only"
@@ -316,7 +270,7 @@ impl ControlPlaneComposition {
             },
         );
         let trigger = TriggerComposition::new(TriggerCompositionDependencies {
-            common_first_messages: config.bridge_flags.enabled(TriggerCommandAdmission),
+            common_first_messages: config.features.trigger_command_admission,
             agent_reads: projections.reads(),
             credentials: connection_prerequisite.clone(),
             stores: Arc::clone(&stores),
@@ -343,21 +297,12 @@ impl ControlPlaneComposition {
             stores.sandbox_model.clone(),
             crate::commands::ResourceCommandExecution::production(
                 crate::commands::ProductionCommandDependencies {
-                    channel_revival: crate::commands::ChannelCommandRevival::configured(
-                        &bridge,
-                        &bridge_definitions,
-                        bridge_credentials.clone(),
-                    ),
                     authority: auth.clone(),
                     access: resource_access.clone(),
                     store: stores.sandbox_model.clone(),
                     operations: projections.operations(),
                     context: context.clone(),
-                    channel: bridge.channel.clone(),
                 },
-                bridge.invoke_store.clone(),
-                bridge.invokes.clone(),
-                bridge_definitions.connection_validator(),
             ),
             worker_holder,
         )
@@ -382,24 +327,28 @@ impl ControlPlaneComposition {
             auth.clone(),
         );
         let projections = projections.with_commands(command_service.clone());
-        let responses_v2 = bindings::responses(&stores, command_service, projections.reads());
+        let responses_v2 = bindings::responses(
+            &stores,
+            command_service.clone(),
+            projections.reads(),
+            &bindings,
+            config.gateway.as_ref(),
+        )?;
         let provenance = layer2_core::sandbox::AgentProvenanceService::new(
             stores.sandbox_model.clone(),
             resource_access.clone(),
         );
-        let channel_schedulers = bridge::channel_schedulers(
-            config,
-            &stores,
-            &bridge,
-            &bridge_definitions,
-            bridge_credentials.clone(),
-            adapter,
-            live_agents.clone(),
-        )
-        .await?;
-        let channel_tools = bridge.channel_tools_router(channel_tools, &config.public_url);
+        let event_workers = layer2_core::event_workers::EventWorkerProfileService::new(
+            stores.event_workers.clone(),
+            layer2_core::bots::PublishedBotProfiles::new(
+                stores.sandbox_profiles.clone(),
+                settings.clone(),
+                config.default_profiles.agent_model.clone(),
+            ),
+            "cma_codex".into(),
+        );
         let resource_routes = rest::profiles_router(profiles)
-            .merge(bridge.management)
+            .merge(rest::event_workers::router(event_workers.clone()))
             .merge(layer1_public::rest::agent_artifacts_router(
                 layer2_core::sandbox::agent_artifacts::AgentArtifactService::new(
                     stores.sandbox_model.clone(),
@@ -432,15 +381,45 @@ impl ControlPlaneComposition {
                 &config.public_url,
             ))
             .merge(responses_v2)
-            .merge(
-                projections.agent_events_router(config.bridge_flags, sandbox_lifecycle.updates()),
-            )
+            .merge(projections.agent_events_router(config.features, sandbox_lifecycle.updates()))
             .merge(trigger_routes)
             .merge(layer1_public::rest::admin::router(admin));
-        let resource_routes = resource_routes.merge(bindings.router());
+        let resource_routes = resource_routes.merge(bindings.router(
+            &stores,
+            activity.clone(),
+            config.gateway.as_ref(),
+        )?);
         let (bot_routes, bots) =
-            bots::BotComposition::build(config, &stores, auth.clone(), settings)?;
+            bots::BotComposition::build(config, &stores, auth.clone(), event_workers)?;
         let resource_routes = resource_routes.merge(bot_routes);
+        let mut actor_continuations = None;
+        let resource_routes = if config.bot_father.is_some() {
+            let bot_service = bots
+                .as_ref()
+                .ok_or("Bot Father requires Bot management")?
+                .service
+                .clone();
+            let dependencies = crate::bot_setups::SetupDependencies::build(
+                config,
+                stores.clone(),
+                auth.clone(),
+                settings.clone(),
+                bot_service,
+            )?;
+            let service = dependencies.service();
+            actor_continuations = Some(crate::bot_setups::ActorContinuationWorker::new(
+                dependencies.clone(),
+                command_service,
+                resource_routes.clone(),
+            ));
+            let delegation_routes = dependencies.delegation_router(resource_routes.clone());
+            resource_routes
+                .merge(rest::bot_setup_router(service.clone()))
+                .merge(delegation_routes)
+                .layer(axum::Extension(service))
+        } else {
+            resource_routes
+        };
         let public = super::rest_router(resource_routes)
             .merge(crate::connections::router(browser_connections))
             .merge(crate::auth::router(Arc::clone(&auth)))
@@ -453,25 +432,13 @@ impl ControlPlaneComposition {
                 crate::rate_limit::enforce,
             ))
             .layer(axum::middleware::from_fn_with_state(
-                auth,
+                auth.clone(),
                 crate::auth::attach_subject,
             ));
         let provenance_backfill =
             crate::sandbox::AgentProvenanceBackfill::new(stores.sandbox_model.clone());
-        let bridge_outbox = bridge_credentials.as_ref().map(|credentials| {
-            crate::bridge::outbox_scheduler::BridgeOutboxScheduler::new(
-                bridge.replies.clone(),
-                Arc::new(crate::bridge::outbox_delivery::NyxOutboxDelivery::new(
-                    bridge.replies.clone(),
-                    credentials.clone(),
-                )),
-                format!("{}:reply:{}", config.deployment_id, uuid::Uuid::new_v4()),
-            )
-        });
         let router = Router::new()
             .merge(public)
-            .merge(bridge.callbacks)
-            .merge(channel_tools)
             .merge(crate::health::router(stores))
             .layer(axum::middleware::from_fn_with_state(
                 limits,
@@ -481,19 +448,15 @@ impl ControlPlaneComposition {
 
         Ok(Self {
             router,
+            auth,
             bindings,
             bots,
-            bridge_definitions,
-            bridge_credentials,
-            bridge_invokes: bridge.invokes,
-            bridge_allocations: bridge.allocations,
+            actor_continuations,
             provenance_backfill,
             launch_scheduler,
             command_scheduler,
             sandbox_control_scheduler,
             sandbox_lifecycle,
-            bridge_outbox,
-            channel_schedulers,
         })
     }
 }

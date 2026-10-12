@@ -311,6 +311,20 @@ fn broker(provider: &Provider, tokens: Arc<Tokens>) -> NyxidServiceConnectionBro
     .expect("broker configuration is valid")
 }
 
+fn broker_with_callback(provider: &Provider, tokens: Arc<Tokens>) -> NyxidServiceConnectionBroker {
+    NyxidServiceConnectionBroker::new_with_callback(
+        reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .expect("HTTP client builds"),
+        format!("{}/", provider.base_url),
+        "https://nyx.example",
+        Some("https://cma.example"),
+        tokens,
+    )
+    .expect("broker configuration is valid")
+}
+
 fn link_reply(status: &str) -> Reply {
     Reply::json(json!({
         "id": "link-one",
@@ -891,6 +905,28 @@ async fn handoff_creation_is_visitor_scoped_callback_free_and_exactly_fifteen_mi
         json!({ "service_slug": "github", "expires_in": 900 })
     );
     assert!(creates[0].body.get("callback_url").is_none());
+}
+
+#[tokio::test]
+async fn handoff_creation_adds_a_cma_return_callback_when_configured() {
+    let provider = Provider::start().await;
+    broker_with_callback(&provider, Tokens::available())
+        .create_handoff(
+            &SubjectId::new("visitor-one"),
+            &ServiceId::new("github"),
+            "intent-one",
+        )
+        .await
+        .expect("handoff is created");
+    let creates = provider.state.creates.lock().expect("create requests lock");
+    assert_eq!(
+        creates[0].body,
+        json!({
+            "service_slug": "github",
+            "expires_in": 900,
+            "callback_url": "https://cma.example/connection-return?cma_connection=intent-one"
+        })
+    );
 }
 
 #[tokio::test]

@@ -77,9 +77,24 @@ pub struct MongoGatewayRecordStore {
 
 impl MongoGatewayRecordStore {
     pub(crate) async fn open(client: &Client, database: &str) -> Result<Self, StoreError> {
+        Self::open_namespace(client, database, GATEWAY_CHANNEL_RECORDS).await
+    }
+
+    pub(crate) async fn open_connections(
+        client: &Client,
+        database: &str,
+    ) -> Result<Self, StoreError> {
+        Self::open_namespace(client, database, "gateway_connection_records").await
+    }
+
+    async fn open_namespace(
+        client: &Client,
+        database: &str,
+        collection: &str,
+    ) -> Result<Self, StoreError> {
         let database = client.database(database);
-        schema::initialize_collections(&database, &[GATEWAY_CHANNEL_RECORDS]).await?;
-        let records = majority_collection(&database, GATEWAY_CHANNEL_RECORDS);
+        schema::initialize_collections(&database, &[collection]).await?;
+        let records = majority_collection(&database, collection);
         records
             .create_index(
                 IndexModel::builder()

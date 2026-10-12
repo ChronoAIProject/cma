@@ -27,6 +27,7 @@ pub(super) fn profile_runtime_options(
     worktree_path: &str,
 ) -> RuntimeOptions {
     RuntimeOptions {
+        isolated_agent: agent.isolated_agent,
         model: agent.model.clone(),
         reasoning_effort: match agent.thinking_effort {
             ThinkingEffort::Minimal => layer3_adapter::ReasoningEffort::Minimal,
@@ -69,6 +70,11 @@ pub(super) fn sandbox_spec(sandbox: &Sandbox, deployment_id: &str) -> SandboxSpe
         &sandbox.credential.effective_reaches(),
         deployment_id,
     );
+    if let layer2_core::sandbox::SandboxCredentialSource::Binding { tool_endpoint, .. } =
+        &sandbox.credential.source
+    {
+        spec.tool_proxy_url = tool_endpoint.clone();
+    }
     spec.home_volume = sandbox
         .lifecycle
         .home

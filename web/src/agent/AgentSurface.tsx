@@ -3,19 +3,17 @@ import { useEffect, useRef, useState } from 'react';
 import { ConnectionWizard } from '../connections/ConnectionWizard';
 import { useConnectionGate } from '../connections/useConnectionGate';
 import { subscriptionService, type ConnectionReport } from '../connections/client';
-import type { AgentStatus } from '../api/types';
 import type { AppRoute } from '../routing/routes';
 import { routePath } from '../routing/routes';
 import { Button } from '../ui/Button';
-import { StateDot, type StateDotState } from '../ui/StateDot';
-import { IconCloseOutline16, IconInspectOutline12 } from '../ui/icons';
+import { IconCloseOutline16 } from '../ui/icons';
 import type { AgentController, AgentResourceState } from './controller';
 import { Composer } from './Composer';
 import type { AgentDraft } from './draft';
 import { MessageStream } from './MessageStream';
 import { ActiveThinking } from './ActiveThinking';
 import './Agent.css';
-import { statusLabel } from '../vocabulary/status';
+import { AgentHeader } from './AgentHeader';
 import { ProvisioningProgress } from '../sandbox/ProvisioningProgress';
 import { agentProgress } from '../sandbox/progress';
 import { Resources } from './Resources';
@@ -24,7 +22,6 @@ import { LifecycleProgress } from '../sandbox/LifecycleProgress';
 import { AgentSourceLabel, useAgentSource } from './source';
 import { useAgentProvenance } from './provenance';
 import { QueuedMessageNotice } from './QueuedMessageNotice';
-import { ChannelPendingMessages } from './ChannelPendingMessages';
 
 interface AgentSurfaceProps {
   readonly draft?: AgentDraft;
@@ -34,13 +31,6 @@ interface AgentSurfaceProps {
   readonly detailsOpen: boolean;
   readonly onDetailsOpenChange: (open: boolean) => void;
   readonly onNavigate: (route: AppRoute) => void;
-}
-
-function statusDot(status: AgentStatus): StateDotState {
-  if (status === 'failed' || status === 'deleted') return 'error';
-  if (status === 'paused' || status === 'waiting_approval') return 'warning';
-  if (status === 'working' || status === 'starting') return 'ongoing';
-  return 'done';
 }
 
 function SandboxLink({
@@ -162,34 +152,26 @@ export function AgentSurface({
   return (
     <section className="agent-surface">
       {connections.dialog}
-      <header className="agent-header">
-        <nav className="agent-header__lineage" aria-label="Agent location">
-          <SandboxLink id={detail.sandbox.id} name={detail.sandbox.name} onNavigate={onNavigate} />
-          <span aria-hidden="true">/</span>
-          <span>{detail.workspace.name}</span>
-          <span aria-hidden="true">/</span>
-          <span>Agent</span>
-        </nav>
-        <div className="agent-header__title">
-          <div>
-            <h1 ref={headingRef} tabIndex={-1}>
-              {title}
-            </h1>
-            <span className="agent-header__status">
-              <StateDot state={statusDot(status)} size={9} />
-              {statusLabel(status)}
-            </span>
-          </div>
-          <Button
-            size="sm"
-            variant="toolbar"
-            icon={<IconInspectOutline12 />}
-            aria-label={detailsOpen ? 'Hide Agent details' : 'Show Agent details'}
-            title={detailsOpen ? 'Hide Agent details' : 'Show Agent details'}
-            aria-pressed={detailsOpen}
-            onClick={() => onDetailsOpenChange(!detailsOpen)}
-          />
-        </div>
+      <AgentHeader
+        title={title}
+        status={status}
+        headingRef={headingRef}
+        detailsOpen={detailsOpen}
+        onDetailsOpenChange={onDetailsOpenChange}
+        lineage={
+          <>
+            <SandboxLink
+              id={detail.sandbox.id}
+              name={detail.sandbox.name}
+              onNavigate={onNavigate}
+            />
+            <span aria-hidden="true">/</span>
+            <span>{detail.workspace.name}</span>
+            <span aria-hidden="true">/</span>
+            <span>Agent</span>
+          </>
+        }
+      >
         <AgentSourceLabel source={source} provenance={provenance} />
         {verified?.services.some((service) => service.service === subscriptionService) ? (
           <Button
@@ -207,7 +189,7 @@ export function AgentSurface({
             Re-login with Codex subscription
           </Button>
         ) : null}
-      </header>
+      </AgentHeader>
 
       <Presence>
         {issue === undefined ? null : (
@@ -252,13 +234,6 @@ export function AgentSurface({
       )}
 
       <QueuedMessageNotice control={controller.queuedMessage} readOnly={readOnly} />
-      <ChannelPendingMessages
-        agentId={agentId}
-        viewerId={viewerId}
-        provenance={provenance}
-        cursor={conversation.cursor}
-        enabled={!readOnly && !historyIncomplete}
-      />
 
       <div className="agent-surface__conversation">
         {status === 'starting' ||

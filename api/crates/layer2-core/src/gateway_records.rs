@@ -169,7 +169,7 @@ fn authorize(caller: &Caller) -> Result<(), CoreError> {
     caller.require(Capability::ManageGatewayRecords)
 }
 
-fn validate_record_id(record_id: &str) -> Result<(), CoreError> {
+pub(super) fn validate_record_id(record_id: &str) -> Result<(), CoreError> {
     let uuid = uuid::Uuid::parse_str(record_id)
         .map_err(|_| CoreError::InvalidRequest("record_id must be a UUID v4".into()))?;
     if uuid.get_version_num() != 4 || uuid.hyphenated().to_string() != record_id {
@@ -180,7 +180,7 @@ fn validate_record_id(record_id: &str) -> Result<(), CoreError> {
     Ok(())
 }
 
-fn validate_blob(blob: &[u8]) -> Result<(), CoreError> {
+pub(super) fn validate_blob(blob: &[u8]) -> Result<(), CoreError> {
     if !(MIN_GATEWAY_RECORD_BLOB_BYTES..=MAX_GATEWAY_RECORD_BLOB_BYTES).contains(&blob.len()) {
         return Err(CoreError::InvalidRequest(format!(
             "gateway record blob must be between {MIN_GATEWAY_RECORD_BLOB_BYTES} and {MAX_GATEWAY_RECORD_BLOB_BYTES} bytes"
@@ -189,7 +189,7 @@ fn validate_blob(blob: &[u8]) -> Result<(), CoreError> {
     Ok(())
 }
 
-fn store_failed(error: StoreError) -> CoreError {
+pub(super) fn store_failed(error: StoreError) -> CoreError {
     match error {
         StoreError::RevisionConflict { expected, actual } => CoreError::InvalidState(format!(
             "gateway record version conflict: expected {expected}, found {actual}"

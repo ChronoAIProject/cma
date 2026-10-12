@@ -8,6 +8,9 @@ pub(super) fn validate(request: &RequestFrame, response: &ResponseFrame) -> crat
         (RequestFrame::CacheSkillArchive(request), ResponseFrame::CacheSkillArchive { sha256 }) => {
             sha256 == &request.sha256
         }
+        (RequestFrame::ToolProxyStatus(request), ResponseFrame::ToolProxyStatus(receipt)) => {
+            receipt.validate_for(request).is_ok()
+        }
         (RequestFrame::RuntimeStatus(request), ResponseFrame::RuntimeStatus(receipt)) => {
             receipt.validate_for(request).is_ok()
         }

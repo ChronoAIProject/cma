@@ -408,6 +408,7 @@ fn agent_profile(skills: Vec<SkillRef>) -> AgentProfileSnapshot {
         revision: 1,
         digest: "d".repeat(64),
         content: AgentProfileContent {
+            isolated_agent: false,
             model: Some("gpt-test".into()),
             thinking_effort: ThinkingEffort::High,
             permission_level: PermissionLevel::Autonomous,
@@ -898,8 +899,6 @@ async fn worker_does_not_resend_a_first_message_fenced_by_the_same_lease() {
         .commit_agent_conversation(AgentConversationMutation {
             command_claim: None,
             execution_fence: None,
-            channel_control_execution_fence: None,
-            channel_execution_fence: None,
             trigger_execution_fence: None,
             admission_guard: Some(layer2_core::sandbox::store::SandboxMutationGuard::capture(
                 &parent,

@@ -84,10 +84,14 @@ pub(super) fn permits_personal_authority(token: &str) -> bool {
 }
 
 /// Negative restriction for independently retained API authority. NyxID agent
-/// keys and opaque tokens cannot prove an ordinary access-token shape. JWT
+/// keys require separate service-bound introspection. Other opaque tokens cannot
+/// prove an ordinary access-token shape. JWT
 /// content only restricts eligibility; provider introspection authenticates
 /// the exact token, current permissions, subject and expiry separately.
 pub(super) fn permits_independent_commands(token: &str) -> bool {
+    if super::agent_keys::is_agent_key(token) {
+        return token.len() <= 64 * 1024;
+    }
     if !permits_personal_authority(token) {
         return false;
     }

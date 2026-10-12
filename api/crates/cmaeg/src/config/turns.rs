@@ -20,7 +20,7 @@ impl Default for TurnConfig {
             accept_budget: Duration::from_secs(20),
             turn_timeout: Duration::from_secs(600),
             drain: Duration::from_secs(600),
-            busy_retry_max: Duration::from_secs(15),
+            busy_retry_max: Duration::from_secs(180),
         }
     }
 }
@@ -43,7 +43,7 @@ impl TurnConfig {
             accept_budget: positive_duration(CMAEG_ACCEPT_BUDGET_MS, 20000)?,
             turn_timeout: positive_duration(CMAEG_TURN_TIMEOUT_MS, 600000)?,
             drain: Duration::from_secs(seconds),
-            busy_retry_max: positive_duration(CMAEG_BUSY_RETRY_MAX_MS, 15000)?,
+            busy_retry_max: positive_duration(CMAEG_BUSY_RETRY_MAX_MS, 180000)?,
         })
     }
 }

@@ -180,6 +180,15 @@ impl SandboxReconciler {
             .runtime_inventory()
             .await
             .map_err(provider_error)?;
+        if sandbox.status == SandboxStatus::Retiring
+            && fresh.iter().any(|item| {
+                item.handle.0 == binding.runtime_id || item.sandbox_id == sandbox.id.as_str()
+            })
+        {
+            // An unhealthy or terminating runtime can still own processes and
+            // writers. Retirement may settle them only after provider absence.
+            return Ok(());
+        }
         if let Some(observation) = fresh
             .iter()
             .find(|item| item.handle.0 == binding.runtime_id)

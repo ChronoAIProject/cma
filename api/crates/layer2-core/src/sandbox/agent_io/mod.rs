@@ -10,9 +10,6 @@ mod authorization;
 mod authorization_audit;
 mod binding;
 mod capabilities;
-mod channel;
-mod channel_claimed_service;
-pub(in crate::sandbox) mod channel_control;
 mod claimed_service;
 mod command;
 mod event;
@@ -53,17 +50,6 @@ pub use authorization_audit::{
 };
 pub use binding::bind_command_dispatch;
 pub use capabilities::AgentInterfaceCapabilities;
-pub use channel::{
-    ChannelAgentCommandService, ChannelCommandAdmissionError, ChannelCommandExecutionSource,
-    ChannelCommandHold, ChannelCommandReservation, ChannelCommandSidecar, ChannelCommandStore,
-    ChannelExecutionAuthorization, ChannelExecutionFence, ChannelExecutionHandoff,
-    ChannelHoldRefusal, ChannelHoldRefusalReason,
-};
-pub use channel_control::{
-    ChannelControlExecutionAuthorization, ChannelControlExecutionFence,
-    ChannelControlExecutionService, ChannelControlExecutionSnapshot, ChannelControlExecutionStore,
-    ChannelControlRefusalSnapshot,
-};
 pub use command::{AgentCommand, AgentInputOrder};
 pub use event::{
     AgentEphemeralEvent, AgentEvent, AgentEventKind, AgentMessageRole, AGENT_IO_SCHEMA_VERSION,

@@ -11,10 +11,22 @@ pub(super) struct Symbols {
 impl Default for Symbols {
     fn default() -> Self {
         Self {
-            current: BTreeMap::from([(
-                "ephemeral_credential".into(),
-                Value::String(uuid::Uuid::new_v4().simple().to_string()),
-            )]),
+            current: BTreeMap::from([
+                (
+                    "ephemeral_credential".into(),
+                    Value::String(uuid::Uuid::new_v4().simple().to_string()),
+                ),
+                (
+                    "interaction_expiry".into(),
+                    Value::from(
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap()
+                            .as_secs()
+                            + 3600,
+                    ),
+                ),
+            ]),
             captured: Vec::new(),
             pending_seeds: BTreeSet::new(),
         }

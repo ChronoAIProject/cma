@@ -131,50 +131,62 @@ async fn tls_verifies_certificates_and_h1_terminal_tail_reuses_the_connection() 
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn cancellation_clears_http2_observations_and_preserves_other_streams() {
-    let server = Server::start(true, false, Duration::from_millis(100)).await;
-    let transport = server.client(true);
-    let cancelled = (0..64).map(|index| {
-        let transport = &transport;
-        async move {
+    let (server, responses) = Server::start_gated().await;
+    let transport = Arc::new(server.client(true));
+    let mut cancelled = tokio::task::JoinSet::new();
+    for index in 0..64 {
+        let transport = transport.clone();
+        cancelled.spawn(async move {
             let id = format!("cancelled-{index}");
-            let call = transport.send(
-                transport.origin.join("responses").unwrap(),
-                "runtime-provider",
-                &id,
-                vec![b'x'; 50_000],
-                None,
-            );
-            assert!(tokio::time::timeout(Duration::from_millis(40), call)
+            transport
+                .send(
+                    transport.origin.join("responses").unwrap(),
+                    "runtime-provider",
+                    &id,
+                    vec![b'x'; 50_000],
+                    None,
+                )
                 .await
-                .is_err());
+        });
+    }
+    let survivor = tokio::spawn({
+        let transport = transport.clone();
+        async move {
+            transport
+                .send(
+                    transport.origin.join("responses").unwrap(),
+                    "runtime-provider",
+                    "survivor",
+                    b"{}".to_vec(),
+                    None,
+                )
+                .await
         }
     });
-    tokio::time::timeout(
-        Duration::from_secs(5),
-        futures_util::future::join_all(cancelled),
-    )
-    .await
-    .unwrap();
-    let response = transport
-        .send(
-            transport.origin.join("responses").unwrap(),
-            "runtime-provider",
-            "survivor",
-            b"{}".to_vec(),
-            None,
-        )
-        .await
-        .unwrap();
-    response.response.bytes().await.unwrap();
-    assert_eq!(server.connections.load(Ordering::SeqCst), 1);
-    assert!(transport
+    // Cancel accepted streams, with one live stream sharing their connection.
+    // A timer can instead cancel before acceptance and trip h2's reset-flood limit.
+    server.wait_for_requests(65).await;
+    let pending = transport
         .multiplexed
         .lock()
         .await
         .as_ref()
         .unwrap()
         .pending
-        .lock()
+        .clone();
+    cancelled.abort_all();
+    while let Some(result) = cancelled.join_next().await {
+        assert!(matches!(result, Err(error) if error.is_cancelled()));
+    }
+    assert!(pending.lock().unwrap().is_empty());
+    assert!(!survivor.is_finished());
+    responses.add_permits(65);
+    let response = tokio::time::timeout(Duration::from_secs(5), survivor)
+        .await
         .unwrap()
-        .is_empty());
+        .unwrap()
+        .unwrap();
+    response.response.bytes().await.unwrap();
+    assert_eq!(server.connections.load(Ordering::SeqCst), 1);
+    assert!(pending.lock().unwrap().is_empty());
 }

@@ -1,0 +1,47 @@
+:root { color-scheme: light dark; font-family: system-ui, sans-serif; color: #211b12; background: #fffbf2; --line: #d9ccb5; --accent: #493922; --selected: #f3e9d7; }
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; }
+a { color: var(--accent); overflow-wrap: anywhere; }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+.skip { position: absolute; left: 16px; top: -100px; padding: 12px; background: var(--selected); }
+.skip:focus { top: 12px; }
+header { position: sticky; top: 0; z-index: 2; background: #fffbf2; display: flex; flex-wrap: wrap; align-items: center; gap: 16px 32px; min-height: 64px; padding: 16px 24px; border-bottom: 1px solid var(--line); }
+header .brand { font-size: 20px; font-weight: 650; text-decoration: none; }
+.layout { display: grid; grid-template-columns: 244px minmax(0, 1100px); justify-content: center; align-items: start; gap: 32px; padding: 32px 24px 64px; }
+nav { position: sticky; top: 96px; max-height: calc(100dvh - 120px); overflow-y: auto; overscroll-behavior: contain; font-size: 13px; line-height: 20px; display: flex; flex-direction: column; gap: 4px; }
+nav a { display: flex; align-items: center; min-height: 32px; padding: 6px 12px; border-left: 2px solid transparent; border-radius: 8px; text-decoration: none; }
+nav a[aria-current] { background: var(--selected); border-left-color: var(--accent); font-weight: 650; }
+main { min-width: 0; font-size: 16px; line-height: 28px; overflow-wrap: anywhere; }
+h1 { margin: 0 0 24px; font-size: 32px; line-height: 40px; }
+h2 { margin: 32px 0 16px; font-size: 22px; line-height: 32px; }
+h3, h4, h5, h6 { margin: 24px 0 12px; font-size: 16px; line-height: 28px; }
+p, ul, ol, pre { margin: 0 0 16px; }
+li + li { margin-top: 6px; }
+code { font-family: ui-monospace, monospace; font-size: 13px; }
+:not(pre) > code { padding: 2px 5px; background: var(--selected); border-radius: 4px; }
+pre { max-width: 100%; overflow: auto; overflow-wrap: normal; padding: 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--selected); line-height: 22px; }
+.table { max-width: 100%; overflow: auto; margin-bottom: 16px; }
+table { border-collapse: collapse; min-width: 100%; font-size: 14px; line-height: 24px; }
+th, td { padding: 8px 12px; border: 1px solid var(--line); text-align: left; min-width: 120px; }
+blockquote { margin: 16px 0; padding-left: 16px; border-left: 2px solid var(--line); }
+:is(h1, h2, h3, h4, h5, h6) { scroll-margin-top: 104px; }
+header .download { margin-left: auto; display: inline-flex; align-items: center; gap: 16px; padding: 10px 16px; border: 1px solid var(--line); border-radius: 8px; text-decoration: none; font-size: 14px; font-weight: 600; background: var(--selected); }
+nav a:hover, nav a:focus-visible { background: var(--selected); }
+nav .section-title { margin-top: 12px; font-size: 14px; font-weight: 650; }
+.nav-label { margin: 0 12px 8px; font-size: 11px; letter-spacing: .12em; opacity: .65; }
+.lead { font-size: 18px; line-height: 30px; opacity: .8; margin-bottom: 48px; }
+section { scroll-margin-top: 104px; padding-top: 16px; }
+section + section { border-top: 1px solid var(--line); margin-top: 56px; padding-top: 32px; }
+section > h2:first-child { margin-top: 0; font-size: 28px; line-height: 36px; }
+section h3 { font-size: 21px; line-height: 30px; }
+section h4 { font-size: 17px; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+@media print { header, nav, .skip { display: none; } .layout { display: block; padding: 0; } pre { white-space: pre-wrap; } }
+@media (max-width: 48rem) { nav { position: static; max-height: 240px; border-bottom: 1px solid var(--line); padding-bottom: 16px; } header span:not(.download span) { display: none; } header .brand { font-size: 16px; } header .download { padding: 8px 10px; font-size: 12px; gap: 8px; } .layout { grid-template-columns: minmax(0, 1fr); gap: 16px; padding: 16px 16px 48px; } header { padding: 16px; } }
+@media (prefers-color-scheme: dark) { :root { color: #f5f3e9; background: #0c0d0a; --line: #404333; --accent: #d3ed74; --selected: #1b1e15; } header { background: #0c0d0a; } }
+
+.diagram { margin: 24px 0; padding: 16px; border: 1px solid var(--line); border-radius: 10px; background: #fffbf2; overflow-x: auto; }
+.diagram img { display: block; width: 100%; min-width: 640px; height: auto; }
+.diagram a { display: block; }
+.diagram figcaption { margin-top: 12px; color: #716248; font-size: 12px; }

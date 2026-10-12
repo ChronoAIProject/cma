@@ -16,6 +16,7 @@ import { Presence } from './ui/Presence';
 import { useCmaClient, useCreationClient, usePublicClient } from './api/context';
 import type { CreationRequest } from './create/CreationFlow';
 import { ReferenceProvider } from './profiles/ReferenceLink';
+import { retainFatherDraftForSignIn } from './bots/fatherDraft';
 
 const CreationFlow = lazy(() =>
   import('./create/CreationFlow').then((module) => ({ default: module.CreationFlow })),
@@ -88,6 +89,14 @@ function AgentApp({ router }: { readonly router: AppRouter }) {
   }>();
   const [hierarchyRevision, setHierarchyRevision] = useState(0);
 
+  // NyxID hosted connection links redirect their popup here after the
+  // credential is saved. The main CMA window is already polling the durable
+  // connection state. Keep its child window available for the next service;
+  // the main window closes it only after the entire sequence is verified.
+  if (window.location.pathname === '/connection-return') {
+    return <ConnectionReturnPage />;
+  }
+
   if (
     (router.route.kind === 'public_trigger' || router.route.kind === 'launch') &&
     publicClient !== undefined &&
@@ -117,7 +126,14 @@ function AgentApp({ router }: { readonly router: AppRouter }) {
     );
   }
   if (state.status === 'anonymous') {
-    return <SignInLanding onSignIn={() => signIn(window.location.pathname)} />;
+    return (
+      <SignInLanding
+        onSignIn={async () => {
+          retainFatherDraftForSignIn();
+          await signIn(window.location.pathname);
+        }}
+      />
+    );
   }
   return (
     <ReferenceProvider key={state.user.id} onNavigate={router.navigate}>
@@ -168,5 +184,20 @@ function AgentApp({ router }: { readonly router: AppRouter }) {
         )}
       </Presence>
     </ReferenceProvider>
+  );
+}
+
+function ConnectionReturnPage() {
+  return (
+    <main className="app-error">
+      <p className="app-error__what">Returning to CMA</p>
+      <p className="app-error__next">
+        CMA is checking your connection. Your next sign-in will open here, or this window will close
+        when all services are ready. If nothing happens, return to the CMA window to continue.
+      </p>
+      <button type="button" onClick={() => window.close()}>
+        Close this window
+      </button>
+    </main>
   );
 }

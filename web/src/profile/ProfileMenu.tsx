@@ -29,16 +29,17 @@ interface ProfileMenuProps {
   readonly onNavigate?: (route: AppRoute) => void;
   readonly collapsed?: boolean;
   readonly canManageBridges?: boolean;
+  readonly bots?: boolean;
 }
 
 const MENU_ROUTES: Readonly<Record<string, AppRoute>> = {
   inventory: { kind: 'inventory' },
   profiles: { kind: 'profiles' },
-  marketplace: { kind: 'marketplace' },
+  bots: { kind: 'bots' },
   triggers: { kind: 'triggers' },
   developer: { kind: 'developer' },
   operations: { kind: 'operations' },
-  bridges: { kind: 'bridges' },
+  bridges: { kind: 'event_gateway' },
 };
 
 export function initialsFor(user: Pick<User, 'displayName' | 'email' | 'handle'>): string {
@@ -63,6 +64,7 @@ export function ProfileMenu({
   onNavigate,
   collapsed = false,
   canManageBridges = false,
+  bots = false,
 }: ProfileMenuProps) {
   const [open, setOpen] = useState(false);
   const [appearance, setLocalAppearance] = useState<Appearance>(() => storedAppearance());
@@ -74,7 +76,7 @@ export function ProfileMenu({
       ? [{ id: 'inventory', icon: <IconBrowseOutline16 />, label: 'Agents' }]
       : []),
     { id: 'profiles', icon: <IconPersonalizationOutline16 />, label: 'Profiles' },
-    { id: 'marketplace', icon: <IconBrowseOutline16 />, label: 'Marketplace' },
+    ...(bots ? [{ id: 'bots', icon: <IconSettingsOutline16 />, label: 'Bot settings' }] : []),
     ...(!user.visitor && user.capabilities.includes('publish_triggers')
       ? [{ id: 'triggers', icon: <IconGoalOutline16 />, label: 'CMA Trigger' }]
       : []),

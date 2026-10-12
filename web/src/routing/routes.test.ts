@@ -4,15 +4,13 @@ import { parseRoute, routePath, useAppRouter, type AppRoute } from './routes';
 
 const ROUTES: readonly AppRoute[] = [
   { kind: 'home' },
+  { kind: 'bots' },
+  { kind: 'bot_new' },
+  { kind: 'bot', botId: 'bot_123' },
   { kind: 'sandbox', sandboxId: 'sbx_123' },
   { kind: 'workspace', workspaceId: 'wks_123' },
   { kind: 'agent', agentId: 'agt_123' },
   { kind: 'inventory' },
-  { kind: 'bridges' },
-  { kind: 'bridges', organization: 'org_123' },
-  { kind: 'bridge_new' },
-  { kind: 'bridge_new', organization: 'org_123' },
-  { kind: 'bridge', bridgeId: 'brg_123' },
   { kind: 'inventory', shared: true },
   { kind: 'inventory', organization: 'org_123' },
   { kind: 'profiles' },

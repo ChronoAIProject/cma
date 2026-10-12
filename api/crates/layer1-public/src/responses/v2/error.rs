@@ -58,6 +58,26 @@ pub(super) fn unauthenticated() -> Response {
 pub(super) fn unavailable() -> Response {
     error(StatusCode::SERVICE_UNAVAILABLE, "response_unavailable", "The response cannot be observed right now. Retry with the same idempotency key or retrieve the admitted response.", None)
 }
+
+pub(super) fn binding_admission(value: CommandAdmissionError) -> Response {
+    // A concurrent Agent/lifecycle write invalidates the reservation snapshot.
+    // Binding clients retry 429 with the same event and key under their bounded
+    // provider retry policy; permanent input and admissibility refusals remain
+    // distinct and must not be reclassified as capacity.
+    if matches!(
+        value,
+        CommandAdmissionError::Ledger(CommandLedgerError::Conflict)
+    ) {
+        error(
+            StatusCode::TOO_MANY_REQUESTS,
+            "agent_command_admission_conflict",
+            "The Agent changed while admitting this event. Retry the same request and idempotency key.",
+            None,
+        )
+    } else {
+        admission(value)
+    }
+}
 pub(super) fn read(error: AgentReadError) -> Response {
     tracing::debug!(error = %error, "Responses v2 history read refused");
     match error {

@@ -50,7 +50,7 @@ pub(in crate::store) async fn apply(
     if matches!(
         request.envelope.command,
         layer2_core::sandbox::agent_io::AgentCommand::Message { .. }
-    ) && agent_row.contains_key(crate::sandbox::channel_reuse_cleanup::CLEANUP_ADMISSION_FIELD)
+    ) && agent_row.contains_key("channel_reuse_cleanup_admission")
     {
         return Err(CommandLedgerError::NotAdmissible.into());
     }

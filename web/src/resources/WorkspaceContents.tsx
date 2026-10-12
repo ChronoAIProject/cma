@@ -10,6 +10,8 @@ import { ResourceLink } from './ResourceLink';
 import { statusLabel } from '../vocabulary/status';
 import { resourceCount } from '../vocabulary/count';
 import { IconChevronDownOutline14, IconChevronRightOutline14 } from '../ui/icons';
+import '../sandbox/SandboxPage.css';
+import './SharedHierarchy.css';
 import { Button } from '../ui/Button';
 import { useChannelFacts } from './useChannelFacts';
 import { channelLabel } from './channelLabels';
@@ -31,15 +33,23 @@ export function WorkspaceBranch({
 }) {
   const [open, setOpen] = useState(false);
   return (
-    <li className="shared-hierarchy__workspace">
-      <Button
-        size="sm"
-        icon={open ? <IconChevronDownOutline14 /> : <IconChevronRightOutline14 />}
-        aria-expanded={open}
-        onClick={() => setOpen((value) => !value)}
-      >
-        {name}
-      </Button>
+    <li className="sandbox-page__workspace">
+      <div className="sandbox-page__header">
+        <h3>
+          <ResourceLink route={{ kind: 'workspace', workspaceId: id }} onNavigate={onNavigate}>
+            {name}
+          </ResourceLink>
+        </h3>
+        <Button
+          size="sm"
+          icon={open ? <IconChevronDownOutline14 /> : <IconChevronRightOutline14 />}
+          aria-label={`${open ? 'Hide' : 'Show'} Agents in ${name}`}
+          aria-expanded={open}
+          onClick={() => setOpen((value) => !value)}
+        >
+          {open ? 'Hide Agents' : 'Show Agents'}
+        </Button>
+      </div>
       {open ? (
         <WorkspaceContents
           client={client}
@@ -107,40 +117,68 @@ export function WorkspaceContents({
       </div>
     );
   const workspace = current.state.value.detail;
-  return (
-    <div>
-      {sandboxId === undefined ? <h2>{workspace.name}</h2> : null}
-      <ResourceAccessDetails client={client} access={current.state.value.access} />
-      <p>
-        {statusLabel(workspace.status)} · {resourceCount(workspace.worktree_count, 'Worktree')} ·{' '}
-        {resourceCount(workspace.agent_count, 'Agent')}
-      </p>
-      {sandboxId === undefined ? null : (
-        <ResourceLink route={{ kind: 'workspace', workspaceId: id }} onNavigate={onNavigate}>
-          Open Workspace details
-        </ResourceLink>
-      )}
-      <ul className="shared-hierarchy__agents">
+  const agents = (
+    <>
+      <ul className="sandbox-page__agents">
         {workspace.agents.map((agent) => (
           <li key={agent.id}>
-            <ResourceLink route={{ kind: 'agent', agentId: agent.id }} onNavigate={onNavigate}>
-              {agent.title?.trim() || 'Untitled agent'}
-            </ResourceLink>
+            <div className="sandbox-page__header">
+              <h3>
+                <ResourceLink route={{ kind: 'agent', agentId: agent.id }} onNavigate={onNavigate}>
+                  {agent.title?.trim() || 'Untitled agent'}
+                </ResourceLink>
+              </h3>
+              <span>{statusLabel(agent.status)}</span>
+            </div>
             <ResourceAccessSummary value={accessSummaries.get(agent.id)} />
-            <span>{statusLabel(agent.status)}</span>
-            <span>{channelLabel(channelFacts.get(agent.id))}</span>
+            <p>{channelLabel(channelFacts.get(agent.id))}</p>
           </li>
         ))}
       </ul>
       {workspace.agents.length === 0 ? <p>No authorized Agents in this Workspace.</p> : null}
-      <ul className="shared-hierarchy__worktrees" aria-label="Workspace Worktrees">
-        {workspace.worktrees.map((worktree) => (
-          <li key={worktree.id}>
-            <span>{worktree.name}</span>
-            <span>{statusLabel(worktree.status)}</span>
-          </li>
-        ))}
-      </ul>
-    </div>
+    </>
+  );
+  const worktrees = (
+    <ul className="shared-hierarchy__worktrees" aria-label="Workspace Worktrees">
+      {workspace.worktrees.map((worktree) => (
+        <li key={worktree.id}>
+          <span>{worktree.name}</span>
+          <span>{statusLabel(worktree.status)}</span>
+        </li>
+      ))}
+    </ul>
+  );
+  if (sandboxId !== undefined)
+    return (
+      <div>
+        <ResourceAccessDetails client={client} access={current.state.value.access} />
+        <p>
+          {statusLabel(workspace.status)} · {resourceCount(workspace.agent_count, 'Agent')}
+        </p>
+        {agents}
+        {worktrees}
+      </div>
+    );
+  return (
+    <section className="sandbox-page">
+      <header className="sandbox-page__header">
+        <div>
+          <h1>{workspace.name}</h1>
+          <p role="status">{statusLabel(workspace.status)}</p>
+          <ResourceAccessDetails client={client} access={current.state.value.access} />
+        </div>
+        <div className="sandbox-page__actions">
+          <Button onClick={current.reload}>Refresh Workspace access</Button>
+        </div>
+      </header>
+      <section className="sandbox-page__band">
+        <h2>Agents</h2>
+        {agents}
+      </section>
+      <section className="sandbox-page__band">
+        <h2>Worktrees</h2>
+        {worktrees}
+      </section>
+    </section>
   );
 }

@@ -15,6 +15,9 @@ pub enum SandboxCredentialSource {
     /// Stable supplied-key authority; each custody generation pins its own hash.
     Binding {
         binding_id: String,
+        /// The immutable destination allowed to receive this supplied credential.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tool_endpoint: Option<String>,
     },
 }
 
@@ -26,7 +29,15 @@ impl SandboxCredentialSource {
     pub fn validate(&self) -> bool {
         match self {
             Self::Managed => true,
-            Self::Binding { binding_id } => super::binding::valid_binding_id(binding_id),
+            Self::Binding {
+                binding_id,
+                tool_endpoint,
+            } => {
+                super::binding::valid_binding_id(binding_id)
+                    && tool_endpoint
+                        .as_deref()
+                        .is_none_or(super::binding::valid_tool_endpoint)
+            }
             Self::Provided { key_sha256 } => {
                 key_sha256.len() == 64
                     && key_sha256

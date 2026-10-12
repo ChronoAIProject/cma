@@ -1,6 +1,6 @@
 use super::{
     Agent, AgentLogKind, AgentOperationFailure, AgentStatus, AgentStopReason, AgentWorkStep,
-    FirstMessageDelivery, QueuedMessageState, Sandbox, SandboxModelError,
+    FirstMessageDelivery, QueuedMessageState, Sandbox, SandboxModelError, SandboxStatus,
 };
 
 /// Derive one recovery mutation without replacing any durable conversation log.
@@ -10,11 +10,13 @@ pub(super) fn recover_agent(
     at: &str,
 ) -> Result<(Agent, Vec<AgentLogKind>), SandboxModelError> {
     current.validate_conversation()?;
-    let retained_home = sandbox
-        .lifecycle
-        .home
-        .as_ref()
-        .is_some_and(|home| home.attachment().is_some())
+    let retiring = sandbox.status == SandboxStatus::Retiring;
+    let retained_home = !retiring
+        && sandbox
+            .lifecycle
+            .home
+            .as_ref()
+            .is_some_and(|home| home.attachment().is_some())
         && sandbox.credential.current.is_some();
     // Preserve unfinished creation and explicit cleanup. The new runtime generation
     // invalidates process receipts, while filesystem intents remain authoritative.
@@ -50,7 +52,8 @@ pub(super) fn recover_agent(
         next.validate_conversation()?;
         return Ok((next, logs));
     }
-    let covered = current.status != AgentStatus::Starting
+    let covered = !retiring
+        && current.status != AgentStatus::Starting
         && current.requested_stop_reason.is_none()
         && (retained_home && current.conversation.conversation_id.is_some()
             || sandbox
@@ -97,6 +100,21 @@ pub(super) fn recover_agent(
     next.conversation
         .queued_messages
         .retain(|message| message.state == QueuedMessageState::Queued);
+    if retiring {
+        // No message may be replayed into an environment the owner deleted.
+        // Existing owner logs and conversation identity remain available.
+        next.conversation.queued_messages.clear();
+        if let Some(previous_generation) = current.conversation.runtime_generation {
+            let runtime_generation = previous_generation
+                .checked_add(1)
+                .ok_or_else(invalid_sequence)?;
+            next.conversation.runtime_generation = Some(runtime_generation);
+            logs.push(AgentLogKind::RuntimeGenerationRetired {
+                previous_generation,
+                runtime_generation,
+            });
+        }
+    }
     if covered {
         let previous_generation = current
             .conversation
@@ -114,10 +132,11 @@ pub(super) fn recover_agent(
             next.transition(AgentStatus::Paused, at.into(), None)?;
         }
     } else {
-        let reason = next
-            .requested_stop_reason
-            .clone()
-            .unwrap_or(AgentStopReason::RuntimeLost);
+        let reason = next.requested_stop_reason.clone().unwrap_or(if retiring {
+            AgentStopReason::SandboxRetired
+        } else {
+            AgentStopReason::RuntimeLost
+        });
         next.transition(AgentStatus::Stopped, at.into(), Some(reason.clone()))?;
         logs.push(AgentLogKind::Stopped {
             reason: reason.as_str().into(),

@@ -2,7 +2,7 @@
 
 mod activity;
 mod auth;
-mod bridge;
+mod bot_setups;
 mod commands;
 mod composition;
 mod config;
@@ -102,19 +102,21 @@ async fn serve() -> Result<(), String> {
         "CMA listening"
     );
     let mut shutdown = ShutdownCoordinator::new();
+    shutdown.push(
+        composition
+            .auth
+            .spawn_actor_link_renewal(shutdown.subscribe()),
+    );
     shutdown.push(composition.bindings.spawn(shutdown.subscribe()));
     if let Some(bots) = composition.bots {
         shutdown.push(bots.spawn(shutdown.subscribe()));
     }
+    if let Some(continuations) = composition.actor_continuations {
+        shutdown.push(continuations.spawn(shutdown.subscribe()));
+    }
     let worker_signal = shutdown.subscribe();
     shutdown.push(composition.launch_scheduler.spawn(worker_signal));
     shutdown.push(composition.command_scheduler.spawn(shutdown.subscribe()));
-    for scheduler in composition.channel_schedulers {
-        shutdown.push(scheduler.spawn(shutdown.subscribe()));
-    }
-    if let Some(outbox) = composition.bridge_outbox {
-        shutdown.push(outbox.spawn(shutdown.subscribe()));
-    }
     shutdown.push(
         composition
             .sandbox_control_scheduler

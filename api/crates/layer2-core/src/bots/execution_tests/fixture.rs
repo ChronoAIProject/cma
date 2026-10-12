@@ -11,6 +11,7 @@ pub(super) struct Remote {
     pub calls: Vec<String>,
     pub failure: Option<(&'static str, bool)>,
     pub partial_binding: bool,
+    pub enabled: bool,
 }
 impl Remote {
     fn visit(&mut self, step: &'static str, after: bool) -> Result<(), BotError> {
@@ -100,7 +101,12 @@ impl BotExternal for External {
                 event_url: "https://gateway.example/events".into(),
             },
             agent_key_hash: secrets.agent.sha256(),
-            route_key_id: bot.resources.credentials.route_key_id.clone().unwrap(),
+            route_key_id: bot
+                .resources
+                .credentials
+                .route_key_id
+                .clone()
+                .unwrap_or_default(),
             route_ids: vec![],
         };
         remote.channel = Some(observation.clone());
@@ -137,13 +143,14 @@ impl BotExternal for External {
         );
         next.channel.version += 1;
         next.agent_key_hash = keys.agent_key_hash.clone().unwrap();
-        next.route_key_id = keys.route_key_id.clone().unwrap();
+        next.route_key_id = keys.route_key_id.clone().unwrap_or_default();
         next.route_ids = bot.resources.route_id.iter().cloned().collect();
         remote.provider_hash = Some(next.agent_key_hash.clone());
         if std::mem::take(&mut remote.partial_binding) {
             return Err(BotError::Unavailable);
         }
         remote.channel = Some(next.clone());
+        remote.enabled = enabled;
         remote.visit(
             if enabled {
                 "configure_enabled"
@@ -178,9 +185,16 @@ impl BotExternal for External {
     async fn set_route_key(&self, _: &Bot, route: &str, key: &str) -> Result<(), BotError> {
         let mut remote = self.0.lock().unwrap();
         remote.visit("set_route_key", false)?;
-        assert_eq!(route, remote.route.as_ref().unwrap().0);
+        if remote.route.as_ref().is_none_or(|(id, _)| id != route) {
+            return Err(BotError::Unavailable);
+        }
         remote.route = Some((route.into(), key.into()));
         remote.visit("set_route_key", true)
+    }
+    async fn active_route_key(&self, _: &Bot) -> Result<Option<String>, BotError> {
+        let mut remote = self.0.lock().unwrap();
+        remote.visit("active_route_key", false)?;
+        Ok(remote.route.as_ref().map(|(_, key)| key.clone()))
     }
     async fn delete_routes(&self, _: &Bot, keys: &[String]) -> Result<(), BotError> {
         let mut remote = self.0.lock().unwrap();
@@ -205,6 +219,9 @@ pub(super) struct Fixture {
 }
 impl Fixture {
     pub async fn new() -> Self {
+        Self::with_request(tests::input()).await
+    }
+    pub async fn with_request(request: CreateBot) -> Self {
         let store = Arc::new(InMemoryBotStore::default());
         let service = BotService::new(
             store.clone(),
@@ -214,7 +231,7 @@ impl Fixture {
         let external = Arc::new(External::default());
         let worker = BotWorker::new(service.clone(), external.clone(), "worker".into());
         let bot = service
-            .create(&tests::caller("owner"), "creation", tests::input())
+            .create(&tests::caller("owner"), "creation", request)
             .await
             .unwrap();
         Self {
@@ -233,6 +250,15 @@ impl Fixture {
         let revision = bot.revision;
         bot.revision += 1;
         bot.work.as_mut().unwrap().expires_at = Some(crate::rfc3339_at(SystemTime::UNIX_EPOCH));
+        self.store.replace(revision, &bot).await.unwrap();
+    }
+    pub async fn renewal_due(&self) {
+        let mut bot = self.bot().await;
+        let revision = bot.revision;
+        bot.revision += 1;
+        bot.resources.credentials.expires_at = Some(crate::rfc3339_at(
+            SystemTime::now() + Duration::from_secs(86400),
+        ));
         self.store.replace(revision, &bot).await.unwrap();
     }
     pub async fn admit(&self, operation: BotOperation) {

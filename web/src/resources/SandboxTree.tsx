@@ -1,69 +1,26 @@
 import { useAccessSummaries } from './useAccessSummaries';
-import { ResourceAccessSummary } from './ResourceAccessSummary';
-import { useMemo, useState } from 'react';
-import {
-  ApiError,
-  type AccessibleSandboxSummary,
-  type AgentCreationCategory,
-} from '@chronoai/cma-sdk';
+import { useCallback, useMemo, useState } from 'react';
+import { type AccessibleSandboxSummary } from '@chronoai/cma-sdk';
 import type { ResourceViewsClient } from './client';
 import type { AppRoute } from '../routing/routes';
 import { Button } from '../ui/Button';
 import { useAuthorizedRead } from './useAuthorizedRead';
-import { loadSandbox } from './loadHierarchy';
-import { WorkspaceBranch } from './WorkspaceContents';
-import { ResourceLink } from './ResourceLink';
-import { statusLabel } from '../vocabulary/status';
-import { resourceCount } from '../vocabulary/count';
 import { IconChevronDownOutline14, IconChevronRightOutline14 } from '../ui/icons';
-import { Picker } from '../ui/Picker';
-import { creationLabels } from '../agent/provenance';
-import { channelFilters, type ChannelFilter } from './channelLabels';
 import { scopeValue } from './scope';
-import { SandboxTreeAgents, type SandboxAgentFilters } from './SandboxTreeAgents';
+import { SandboxBranch, type TreeExpansion } from './HierarchyTree';
+import { keyboardNavigation } from '../shell/treePresentation';
+import '../shell/Tree.css';
 
 interface Props {
   readonly client: ResourceViewsClient;
+  readonly route?: AppRoute;
   readonly organization?: string;
   readonly shared?: boolean;
   readonly onNavigate: (route: AppRoute) => void;
 }
 
-const categories = [
-  { value: 'all' as const, label: 'All creation origins' },
-  ...Object.entries(creationLabels).map(([value, label]) => ({
-    value: value as AgentCreationCategory,
-    label,
-  })),
-];
-
 export function SandboxTree(props: Props) {
-  return <ScopedSandboxTree key={scopeValue(props.organization, props.shared)} {...props} />;
-}
-
-function ScopedSandboxTree(props: Props) {
-  const [creation, setCreation] = useState<SandboxAgentFilters['creation']>('all');
-  const [channel, setChannel] = useState<ChannelFilter>('all');
-  return (
-    <>
-      <Picker
-        label="Sandbox Agent creation"
-        value={creation}
-        options={categories}
-        onChange={setCreation}
-      />
-      <Picker
-        label="Sandbox Agent channel activity"
-        value={channel}
-        options={channelFilters}
-        onChange={setChannel}
-      />
-      {creation === 'all' && channel === 'all' ? null : (
-        <p>Expand a Sandbox to browse Agents matching these filters.</p>
-      )}
-      <SandboxTreePage key={`${creation}:${channel}`} {...props} filters={{ creation, channel }} />
-    </>
-  );
+  return <SandboxTreePage key={scopeValue(props.organization, props.shared)} {...props} />;
 }
 
 function SandboxTreePage({
@@ -71,8 +28,24 @@ function SandboxTreePage({
   organization,
   shared,
   onNavigate,
-  filters,
-}: Props & { readonly filters: SandboxAgentFilters }) {
+  route = { kind: 'home' },
+}: Props) {
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
+  const toggle = useCallback(
+    (id: string) =>
+      setCollapsed((previous) => {
+        const next = new Set(previous);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        return next;
+      }),
+    [],
+  );
+  const collapse = useCallback(
+    (id: string) => setCollapsed((previous) => new Set([...previous, id])),
+    [],
+  );
+  const expansion = { collapsed, toggle, collapse };
   const [cursors, setCursors] = useState<readonly (string | undefined)[]>([undefined]);
   const cursor = cursors.at(-1);
   const read = useMemo(
@@ -107,7 +80,7 @@ function SandboxTreePage({
     scopeValue(organization, shared),
   );
   return (
-    <div className="scoped-navigation__tree">
+    <div className="scoped-navigation__tree resource-tree">
       <Button size="sm" onClick={current.reload}>
         {shared === true ? 'Refresh shared Sandboxes' : 'Refresh organization'}
       </Button>
@@ -126,21 +99,29 @@ function SandboxTreePage({
                 : 'No authorized Sandboxes on this page. Agent-only grants appear in the Agent inventory.'}
             </p>
           ) : (
-            <ul aria-label={shared === true ? 'Shared Sandboxes' : 'Organization Sandboxes'}>
-              {current.state.value.items.map((sandbox) => (
-                <SandboxBranch
-                  key={sandbox.id}
+            <div>
+              {['Live', 'Paused'].map((label) => (
+                <SandboxGroup
+                  key={label}
+                  label={label}
+                  items={
+                    current.state.status === 'ready'
+                      ? current.state.value.items.filter(
+                          (sandbox) =>
+                            sandbox.status !== 'retired' &&
+                            (sandbox.status === 'paused') === (label === 'Paused'),
+                        )
+                      : []
+                  }
                   client={client}
-                  sandbox={sandbox}
-                  accessSummary={accessSummaries.get(sandbox.id)}
+                  expansion={expansion}
+                  route={route}
                   onNavigate={onNavigate}
+                  accessSummaries={accessSummaries}
                   onAccessChanged={current.reload}
-                  organization={organization}
-                  shared={shared}
-                  filters={filters}
                 />
               ))}
-            </ul>
+            </div>
           )}
           <div className="scoped-navigation__pages">
             <Button
@@ -169,113 +150,59 @@ function SandboxTreePage({
   );
 }
 
-function SandboxBranch({
+function SandboxGroup({
+  label,
+  expansion,
+  items,
   client,
-  sandbox,
-  accessSummary,
+  route,
+  accessSummaries,
   onNavigate,
   onAccessChanged,
-  organization,
-  shared,
-  filters,
 }: {
+  readonly label: string;
+  readonly expansion: TreeExpansion;
+  readonly items: readonly AccessibleSandboxSummary[];
   readonly client: ResourceViewsClient;
-  readonly sandbox: AccessibleSandboxSummary;
-  readonly accessSummary?: import('./accessSummary').AccessSummary;
+  readonly route: AppRoute;
+  readonly accessSummaries: ReadonlyMap<string, import('./accessSummary').AccessSummary>;
   readonly onNavigate: (route: AppRoute) => void;
   readonly onAccessChanged: () => void;
-  readonly organization?: string;
-  readonly shared?: boolean;
-  readonly filters: SandboxAgentFilters;
 }) {
-  const [open, setOpen] = useState(false);
+  const node = `group:${label}`;
+  const open = !expansion.collapsed.has(node);
   return (
-    <li>
-      <Button
-        size="sm"
-        icon={open ? <IconChevronDownOutline14 /> : <IconChevronRightOutline14 />}
+    <section className="resource-tree__section" aria-label={`${label} sandboxes`}>
+      <button
+        type="button"
+        className="resource-tree__heading"
         aria-expanded={open}
-        onClick={() => setOpen((value) => !value)}
+        aria-label={`${open ? 'Collapse' : 'Expand'} ${label} sandboxes`}
+        onClick={() => expansion.toggle(node)}
       >
-        {sandbox.name}
-      </Button>
-      <p>
-        {statusLabel(sandbox.status)} · {resourceCount(sandbox.agent_count, 'Agent')}
-      </p>
-      <ResourceAccessSummary value={accessSummary} />
-      <ResourceLink route={{ kind: 'sandbox', sandboxId: sandbox.id }} onNavigate={onNavigate}>
-        Open Sandbox details
-      </ResourceLink>
-      {open && (filters.creation !== 'all' || filters.channel !== 'all') ? (
-        <SandboxTreeAgents
-          client={client}
-          sandboxId={sandbox.id}
-          organization={organization}
-          shared={shared}
-          filters={filters}
-          onNavigate={onNavigate}
-          onAccessChanged={onAccessChanged}
-        />
-      ) : open ? (
-        <SandboxContents
-          client={client}
-          id={sandbox.id}
-          onNavigate={onNavigate}
-          onAccessChanged={onAccessChanged}
-        />
+        {open ? <IconChevronDownOutline14 /> : <IconChevronRightOutline14 />}
+        <span>{label}</span>
+        <span className="resource-tree__count">{items.length}</span>
+      </button>
+      {open ? (
+        <div role="tree" aria-label={`${label} sandboxes`} onKeyDown={keyboardNavigation}>
+          {items.map((sandbox) => (
+            <SandboxBranch
+              key={sandbox.id}
+              client={client}
+              sandbox={sandbox}
+              expansion={expansion}
+              route={route}
+              accessSummary={accessSummaries.get(sandbox.id)}
+              onNavigate={onNavigate}
+              onAccessChanged={onAccessChanged}
+            />
+          ))}
+          {items.length === 0 ? (
+            <p className="resource-tree__empty">No {label.toLowerCase()} sandboxes</p>
+          ) : null}
+        </div>
       ) : null}
-    </li>
-  );
-}
-
-function SandboxContents({
-  client,
-  id,
-  onNavigate,
-  onAccessChanged,
-}: {
-  readonly client: ResourceViewsClient;
-  readonly id: string;
-  readonly onNavigate: (route: AppRoute) => void;
-  readonly onAccessChanged: () => void;
-}) {
-  const read = useMemo(
-    () => async (signal: AbortSignal) => {
-      try {
-        return await loadSandbox(client, id, signal);
-      } catch (error) {
-        if (
-          !signal.aborted &&
-          error instanceof ApiError &&
-          [401, 403, 404, 409].includes(error.status)
-        )
-          onAccessChanged();
-        throw error;
-      }
-    },
-    [client, id, onAccessChanged],
-  );
-  const current = useAuthorizedRead(read);
-  return current.state.status === 'loading' ? (
-    <p role="status">Loading authorized Workspaces</p>
-  ) : current.state.status === 'error' ? (
-    <p role="alert">{current.state.message}</p>
-  ) : (
-    <ul>
-      {current.state.value.detail.workspaces.map((workspace) => (
-        <WorkspaceBranch
-          key={workspace.id}
-          client={client}
-          id={workspace.id}
-          sandboxId={id}
-          name={workspace.name}
-          onNavigate={onNavigate}
-          onAccessChanged={current.reload}
-        />
-      ))}
-      {current.state.value.detail.workspaces.length === 0 ? (
-        <li>No authorized Workspaces.</li>
-      ) : null}
-    </ul>
+    </section>
   );
 }

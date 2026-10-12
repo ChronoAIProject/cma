@@ -1,0 +1,1805 @@
+{
+  "AcceptedStatus": [
+    "accepted"
+  ],
+  "ActionMode": [
+    "guarded",
+    "autonomous"
+  ],
+  "Activity": [
+    {
+      "actor": {
+        "display_name": "fixture",
+        "id": "fixture",
+        "kind": "human"
+      },
+      "conversation": {
+        "id": "fixture",
+        "kind": "private",
+        "thread_id": "fixture"
+      },
+      "event_id": "fixture",
+      "kind": {
+        "attachments": [
+          {
+            "filename": "fixture",
+            "kind": "image",
+            "mime_type": "fixture",
+            "reference": "fixture",
+            "size_bytes": 1
+          }
+        ],
+        "mentions_bot": true,
+        "reply_to": "fixture",
+        "text": "fixture",
+        "type": "message"
+      },
+      "occurred_at": "fixture",
+      "schema_version": 1,
+      "source": {
+        "platform": "telegram",
+        "route_id": "fixture",
+        "type": "nyxid_relay"
+      }
+    }
+  ],
+  "ActivityConversation": [
+    {
+      "id": "fixture",
+      "kind": "private",
+      "thread_id": "fixture"
+    }
+  ],
+  "ActivityKind": [
+    {
+      "attachments": [
+        {
+          "filename": "fixture",
+          "kind": "image",
+          "mime_type": "fixture",
+          "reference": "fixture",
+          "size_bytes": 1
+        }
+      ],
+      "mentions_bot": true,
+      "reply_to": "fixture",
+      "text": "fixture",
+      "type": "message"
+    },
+    {
+      "action_id": "fixture",
+      "block_id": "fixture",
+      "values": {
+        "exampleextension": true
+      },
+      "type": "interaction"
+    },
+    {
+      "args": "fixture",
+      "name": "fixture",
+      "type": "command"
+    },
+    {
+      "ce": {
+        "data": true,
+        "datacontenttype": "fixture",
+        "dataschema": "fixture",
+        "id": "fixture",
+        "source": "fixture",
+        "specversion": "fixture",
+        "subject": "fixture",
+        "time": "fixture",
+        "type": "fixture",
+        "exampleextension": true
+      },
+      "type": "event"
+    }
+  ],
+  "Actor": [
+    {
+      "display_name": "fixture",
+      "id": "fixture",
+      "kind": "human"
+    }
+  ],
+  "ActorKind": [
+    "human",
+    "bot",
+    "system",
+    "unknown"
+  ],
+  "AdmissionPolicy": [
+    {
+      "type": "all"
+    },
+    {
+      "sender_ids": [
+        "fixture"
+      ],
+      "type": "allowlist"
+    },
+    {
+      "chats": {
+        "type": "deny"
+      },
+      "groups": "deny",
+      "senders": {
+        "type": "deny"
+      },
+      "type": "scoped"
+    }
+  ],
+  "AgentProfileSnapshot": [
+    {
+      "context": {
+        "mcp_servers": [
+          {
+            "auth": {
+              "type": "none"
+            },
+            "url": "fixture"
+          }
+        ],
+        "skills": [
+          {
+            "id": "fixture",
+            "source": "ornn",
+            "version": "fixture"
+          }
+        ],
+        "system_prompt": "fixture"
+      },
+      "environment": true,
+      "metadata": {
+        "description": "fixture",
+        "name": "fixture",
+        "owner": {
+          "kind": "human",
+          "subject": "fixture"
+        },
+        "provider": "fixture"
+      },
+      "model": {
+        "access": "managed",
+        "api_type": "responses",
+        "model": "fixture",
+        "service": "fixture",
+        "thinking_effort": "minimal"
+      },
+      "permission": {
+        "action_mode": "guarded",
+        "service_scope": [
+          "fixture"
+        ]
+      },
+      "schema_version": 1
+    }
+  ],
+  "ApiType": [
+    "responses",
+    "chat_completions"
+  ],
+  "Attachment": [
+    {
+      "filename": "fixture",
+      "kind": "image",
+      "mime_type": "fixture",
+      "reference": "fixture",
+      "size_bytes": 1
+    }
+  ],
+  "AttachmentKind": [
+    "image",
+    "file",
+    "audio",
+    "video",
+    "other"
+  ],
+  "BindingId": [
+    "fixture"
+  ],
+  "Block": [
+    {
+      "text": "fixture",
+      "type": "text"
+    },
+    {
+      "body": "fixture",
+      "fields": [
+        {
+          "label": "fixture",
+          "value": "fixture"
+        }
+      ],
+      "image": "fixture",
+      "title": "fixture",
+      "type": "card"
+    },
+    {
+      "id": "fixture",
+      "options": [
+        {
+          "id": "fixture",
+          "label": "fixture",
+          "selected": true,
+          "style": "default"
+        }
+      ],
+      "type": "buttons"
+    },
+    {
+      "id": "fixture",
+      "multi": true,
+      "options": [
+        {
+          "id": "fixture",
+          "label": "fixture",
+          "selected": true,
+          "style": "default"
+        }
+      ],
+      "prompt": "fixture",
+      "type": "choice"
+    },
+    {
+      "fields": [
+        {
+          "id": "fixture",
+          "kind": {
+            "type": "text"
+          },
+          "label": "fixture",
+          "required": true
+        }
+      ],
+      "id": "fixture",
+      "type": "form"
+    },
+    {
+      "caption": "fixture",
+      "kind": "image",
+      "reference": "fixture",
+      "type": "attachment"
+    },
+    {
+      "label": "fixture",
+      "type": "link",
+      "url": "fixture"
+    }
+  ],
+  "BlockRendering": [
+    {
+      "index": 1,
+      "outcome": {
+        "type": "exact"
+      }
+    }
+  ],
+  "BlockRenderingOutcome": [
+    {
+      "type": "exact"
+    },
+    {
+      "how": "fixture",
+      "type": "degraded"
+    },
+    {
+      "type": "dropped",
+      "why": "fixture"
+    }
+  ],
+  "CallbackPayload": [
+    {
+      "activity": {
+        "fixture": "fixture"
+      },
+      "agent": {
+        "api_key_id": "fixture",
+        "name": "fixture"
+      },
+      "content": {
+        "attachments": [
+          {
+            "content_type": "fixture",
+            "download_url": "fixture",
+            "file_key": "fixture",
+            "filename": "fixture",
+            "image_key": "fixture",
+            "mime_type": "fixture",
+            "platform_message_id": "fixture",
+            "size_bytes": 1,
+            "url": "fixture"
+          }
+        ],
+        "text": "fixture",
+        "type": "fixture"
+      },
+      "conversation": {
+        "id": "fixture",
+        "platform_id": "fixture",
+        "type": "fixture"
+      },
+      "correlation_id": "fixture",
+      "message_id": "fixture",
+      "platform": "fixture",
+      "raw_platform_data": true,
+      "reply_to_message_id": "fixture",
+      "reply_to_platform_message_id": "fixture",
+      "reply_token": "fixture",
+      "sender": {
+        "display_name": "fixture",
+        "platform_id": "fixture"
+      },
+      "thread_context": {
+        "fixture": "fixture"
+      },
+      "thread_id": "fixture",
+      "timestamp": "fixture"
+    }
+  ],
+  "CallbackResponse": [
+    {
+      "conversation_id": "fixture",
+      "event_id": "fixture",
+      "status": "accepted"
+    },
+    {
+      "reason": "bot_sender",
+      "status": "refused"
+    }
+  ],
+  "Capabilities": [
+    {
+      "attachments": "fixture",
+      "buttons": "fixture",
+      "cards": "fixture",
+      "edit": true,
+      "max_text_chars": 1,
+      "typing": true
+    }
+  ],
+  "ChannelCreateRequest": [
+    {
+      "credentials": {
+        "agent_key": "fixture",
+        "channel_key": "fixture",
+        "hmac_secrets": [
+          {
+            "key_id": "fixture",
+            "secret": "fixture"
+          }
+        ],
+        "telegram_bot_token": "fixture",
+        "telegram_webhook_secret": "fixture"
+      },
+      "name": "fixture",
+      "partition": {
+        "key": "conversation_and_sender",
+        "version": 1
+      },
+      "profile": {
+        "context": {
+          "mcp_servers": [
+            {
+              "auth": {
+                "type": "none"
+              },
+              "url": "fixture"
+            }
+          ],
+          "skills": [
+            {
+              "id": "fixture",
+              "source": "ornn",
+              "version": "fixture"
+            }
+          ],
+          "system_prompt": "fixture"
+        },
+        "environment": true,
+        "metadata": {
+          "description": "fixture",
+          "name": "fixture",
+          "owner": {
+            "kind": "human",
+            "subject": "fixture"
+          },
+          "provider": "fixture"
+        },
+        "model": {
+          "access": "managed",
+          "api_type": "responses",
+          "model": "fixture",
+          "service": "fixture",
+          "thinking_effort": "minimal"
+        },
+        "permission": {
+          "action_mode": "guarded",
+          "service_scope": [
+            "fixture"
+          ]
+        },
+        "schema_version": 1
+      },
+      "provider": {
+        "slug": "fixture",
+        "target": {
+          "type": "existing_agent",
+          "agent_id": "agt_existing"
+        }
+      },
+      "record_id": "fixture",
+      "reply": {
+        "ack_after_ms": 1,
+        "auto_final": true,
+        "sinks": [
+          {
+            "type": "source"
+          }
+        ]
+      },
+      "schema_version": 1,
+      "sources": [
+        {
+          "admission": {
+            "type": "all"
+          },
+          "bot_id": "fixture",
+          "bot_username": "fixture",
+          "issuer": "fixture",
+          "key_id": "fixture",
+          "platform": "telegram",
+          "route_ids": [
+            "fixture"
+          ],
+          "trust_normalized": false,
+          "type": "nyxid_relay"
+        }
+      ],
+      "connection_admission": {
+        "type": "all"
+      },
+      "connection_ref": "fixture"
+    }
+  ],
+  "ChannelCreation": [
+    {
+      "channel_id": "fixture",
+      "fingerprint": "fixture",
+      "ready": true
+    }
+  ],
+  "ChannelId": [
+    "fixture"
+  ],
+  "ChannelResponse": [
+    {
+      "channel_id": "fixture",
+      "definition": {
+        "created_at": "fixture",
+        "creation": {
+          "channel_id": "fixture",
+          "fingerprint": "fixture",
+          "ready": true
+        },
+        "name": "fixture",
+        "owner": {
+          "kind": "human",
+          "subject": "fixture"
+        },
+        "partition": {
+          "key": "conversation_and_sender",
+          "version": 1
+        },
+        "profile": {
+          "context": {
+            "mcp_servers": [
+              {
+                "auth": {
+                  "type": "none"
+                },
+                "url": "fixture"
+              }
+            ],
+            "skills": [
+              {
+                "id": "fixture",
+                "source": "ornn",
+                "version": "fixture"
+              }
+            ],
+            "system_prompt": "fixture"
+          },
+          "environment": true,
+          "metadata": {
+            "description": "fixture",
+            "name": "fixture",
+            "owner": {
+              "kind": "human",
+              "subject": "fixture"
+            },
+            "provider": "fixture"
+          },
+          "model": {
+            "access": "managed",
+            "api_type": "responses",
+            "model": "fixture",
+            "service": "fixture",
+            "thinking_effort": "minimal"
+          },
+          "permission": {
+            "action_mode": "guarded",
+            "service_scope": [
+              "fixture"
+            ]
+          },
+          "schema_version": 1
+        },
+        "profile_digest": "fixture",
+        "provider": {
+          "binding_id": "fixture",
+          "level": "l1",
+          "slug": "fixture",
+          "target": {
+            "type": "existing_agent",
+            "agent_id": "agt_existing"
+          }
+        },
+        "record_id": "fixture",
+        "reply": {
+          "ack_after_ms": 1,
+          "auto_final": true,
+          "sinks": [
+            {
+              "type": "source"
+            }
+          ]
+        },
+        "schema_version": 1,
+        "secrets": {
+          "agent_key_hash": "fixture"
+        },
+        "sources": [
+          {
+            "admission": {
+              "type": "all"
+            },
+            "bot_id": "fixture",
+            "bot_username": "fixture",
+            "issuer": "fixture",
+            "jwks_url": "fixture",
+            "key_id": "fixture",
+            "platform": "telegram",
+            "route_ids": [
+              "fixture"
+            ],
+            "trust_normalized": false,
+            "type": "nyxid_relay"
+          }
+        ],
+        "version": 1,
+        "connection_ref": "fixture"
+      },
+      "endpoints": {
+        "custom_event_url": "fixture",
+        "nyxid_callback_url": "fixture",
+        "telegram_webhook_url": "fixture"
+      },
+      "provider": {
+        "binding_id": "fixture",
+        "honoured": [
+          "fixture"
+        ],
+        "level": "l1",
+        "refused": [
+          {
+            "field": "fixture",
+            "reason": "fixture"
+          }
+        ],
+        "slug": "fixture"
+      },
+      "record_id": "fixture",
+      "version": 1
+    }
+  ],
+  "ChannelUpdateRequest": [
+    {
+      "credentials": {
+        "agent_key": "fixture",
+        "channel_key": "fixture",
+        "hmac_secrets": [
+          {
+            "key_id": "fixture",
+            "secret": "fixture"
+          }
+        ],
+        "telegram_bot_token": "fixture",
+        "telegram_webhook_secret": "fixture"
+      },
+      "expected_version": 1,
+      "name": "fixture",
+      "partition": {
+        "key": "conversation_and_sender",
+        "version": 1
+      },
+      "profile": {
+        "context": {
+          "mcp_servers": [
+            {
+              "auth": {
+                "type": "none"
+              },
+              "url": "fixture"
+            }
+          ],
+          "skills": [
+            {
+              "id": "fixture",
+              "source": "ornn",
+              "version": "fixture"
+            }
+          ],
+          "system_prompt": "fixture"
+        },
+        "environment": true,
+        "metadata": {
+          "description": "fixture",
+          "name": "fixture",
+          "owner": {
+            "kind": "human",
+            "subject": "fixture"
+          },
+          "provider": "fixture"
+        },
+        "model": {
+          "access": "managed",
+          "api_type": "responses",
+          "model": "fixture",
+          "service": "fixture",
+          "thinking_effort": "minimal"
+        },
+        "permission": {
+          "action_mode": "guarded",
+          "service_scope": [
+            "fixture"
+          ]
+        },
+        "schema_version": 1
+      },
+      "provider": {
+        "slug": "fixture",
+        "target": {
+          "type": "existing_agent",
+          "agent_id": "agt_existing"
+        }
+      },
+      "reply": {
+        "ack_after_ms": 1,
+        "auto_final": true,
+        "sinks": [
+          {
+            "type": "source"
+          }
+        ]
+      },
+      "schema_version": 1,
+      "sources": [
+        {
+          "admission": {
+            "type": "all"
+          },
+          "bot_id": "fixture",
+          "bot_username": "fixture",
+          "issuer": "fixture",
+          "key_id": "fixture",
+          "platform": "telegram",
+          "route_ids": [
+            "fixture"
+          ],
+          "trust_normalized": false,
+          "type": "nyxid_relay"
+        }
+      ],
+      "connection_admission": {
+        "type": "all"
+      },
+      "connection_ref": "fixture"
+    }
+  ],
+  "ChoiceOption": [
+    {
+      "id": "fixture",
+      "label": "fixture",
+      "selected": true,
+      "style": "default"
+    }
+  ],
+  "CloudEvent": [
+    {
+      "data": true,
+      "datacontenttype": "fixture",
+      "dataschema": "fixture",
+      "id": "fixture",
+      "source": "fixture",
+      "specversion": "fixture",
+      "subject": "fixture",
+      "time": "fixture",
+      "type": "fixture",
+      "exampleextension": true
+    }
+  ],
+  "ConformanceLevel": [
+    "l1",
+    "l2",
+    "l3",
+    "l4",
+    "l5"
+  ],
+  "ContextConfig": [
+    {
+      "mcp_servers": [
+        {
+          "auth": {
+            "type": "none"
+          },
+          "url": "fixture"
+        }
+      ],
+      "skills": [
+        {
+          "id": "fixture",
+          "source": "ornn",
+          "version": "fixture"
+        }
+      ],
+      "system_prompt": "fixture"
+    }
+  ],
+  "ContextResponse": [
+    {
+      "activity": {
+        "actor": {
+          "display_name": "fixture",
+          "id": "fixture",
+          "kind": "human"
+        },
+        "conversation": {
+          "id": "fixture",
+          "kind": "private",
+          "thread_id": "fixture"
+        },
+        "kind": {
+          "attachments": [
+            {
+              "filename": "fixture",
+              "kind": "image",
+              "mime_type": "fixture",
+              "reference": "fixture",
+              "size_bytes": 1
+            }
+          ],
+          "mentions_bot": true,
+          "reply_to": "fixture",
+          "text": "fixture",
+          "type": "message"
+        },
+        "occurred_at": "fixture"
+      },
+      "activity_verified": true,
+      "capabilities": {
+        "attachments": "fixture",
+        "buttons": "fixture",
+        "cards": "fixture",
+        "edit": true,
+        "max_text_chars": 1,
+        "typing": true
+      },
+      "channel_id": "fixture",
+      "conversation_id": "fixture",
+      "event_id": "fixture",
+      "provider_binding_id": "fixture",
+      "source": {
+        "type": "custom"
+      },
+      "expires_at": 1
+    }
+  ],
+  "ConversationId": [
+    "fixture"
+  ],
+  "ConversationKind": [
+    "private",
+    "group",
+    "channel",
+    "thread",
+    "custom"
+  ],
+  "CredentialPatch": [
+    {
+      "agent_key": "fixture",
+      "channel_key": "fixture",
+      "hmac_secrets": [
+        {
+          "key_id": "fixture",
+          "secret": "fixture"
+        }
+      ],
+      "telegram_bot_token": "fixture",
+      "telegram_webhook_secret": "fixture"
+    }
+  ],
+  "CredentialsRequest": [
+    {
+      "agent_key": "fixture",
+      "channel_key": "fixture",
+      "hmac_secrets": [
+        {
+          "key_id": "fixture",
+          "secret": "fixture"
+        }
+      ],
+      "telegram_bot_token": "fixture",
+      "telegram_webhook_secret": "fixture"
+    }
+  ],
+  "CustomAuth": [
+    {
+      "key_id": "fixture",
+      "type": "hmac"
+    },
+    {
+      "key_hashes": [
+        "fixture"
+      ],
+      "type": "nyxid_key"
+    }
+  ],
+  "DeliveryOutcome": [
+    {
+      "outcome": "confirmed",
+      "platform_message_id": "fixture"
+    },
+    {
+      "outcome": "rejected",
+      "reason": "fixture"
+    },
+    {
+      "outcome": "rate_limited",
+      "retry_after": 1
+    },
+    {
+      "outcome": "unknown",
+      "reason": "fixture"
+    },
+    {
+      "outcome": "unsupported"
+    }
+  ],
+  "EndpointResponse": [
+    {
+      "custom_event_url": "fixture",
+      "nyxid_callback_url": "fixture",
+      "telegram_webhook_url": "fixture"
+    }
+  ],
+  "EventAccepted": [
+    {
+      "conversation_id": "fixture",
+      "event_id": "fixture",
+      "status": "accepted"
+    }
+  ],
+  "EventContextSnapshot": [
+    {
+      "activity": {
+        "actor": {
+          "display_name": "fixture",
+          "id": "fixture",
+          "kind": "human"
+        },
+        "conversation": {
+          "id": "fixture",
+          "kind": "private",
+          "thread_id": "fixture"
+        },
+        "event_id": "fixture",
+        "kind": {
+          "attachments": [
+            {
+              "filename": "fixture",
+              "kind": "image",
+              "mime_type": "fixture",
+              "reference": "fixture",
+              "size_bytes": 1
+            }
+          ],
+          "mentions_bot": true,
+          "reply_to": "fixture",
+          "text": "fixture",
+          "type": "message"
+        },
+        "occurred_at": "fixture",
+        "schema_version": 1,
+        "source": {
+          "platform": "telegram",
+          "route_id": "fixture",
+          "type": "nyxid_relay"
+        }
+      },
+      "channel_id": "fixture",
+      "conversation_id": "fixture",
+      "event_ref": "fixture",
+      "schema_version": 1
+    }
+  ],
+  "EventId": [
+    "fixture"
+  ],
+  "EventRef": [
+    "fixture"
+  ],
+  "Field": [
+    {
+      "label": "fixture",
+      "value": "fixture"
+    }
+  ],
+  "FieldRefusal": [
+    {
+      "field": "fixture",
+      "reason": "fixture"
+    }
+  ],
+  "FormField": [
+    {
+      "id": "fixture",
+      "kind": {
+        "type": "text"
+      },
+      "label": "fixture",
+      "required": true
+    }
+  ],
+  "FormFieldKind": [
+    {
+      "type": "text"
+    },
+    {
+      "type": "number"
+    },
+    {
+      "options": [
+        {
+          "id": "fixture",
+          "label": "fixture",
+          "selected": true,
+          "style": "default"
+        }
+      ],
+      "type": "choice"
+    },
+    {
+      "type": "date"
+    }
+  ],
+  "GroupAdmission": [
+    "deny",
+    "all",
+    "mention",
+    "reply_to_bot",
+    "mention_or_reply_to_bot"
+  ],
+  "HmacSecretRequest": [
+    {
+      "key_id": "fixture",
+      "secret": "fixture"
+    }
+  ],
+  "IdentityAdmission": [
+    {
+      "type": "deny"
+    },
+    {
+      "type": "open"
+    },
+    {
+      "ids": [
+        "fixture"
+      ],
+      "type": "allowlist"
+    }
+  ],
+  "IntentReceipt": [
+    {
+      "delivery": {
+        "outcome": "confirmed",
+        "platform_message_id": "fixture"
+      },
+      "message_ref": "fixture",
+      "rendering": {
+        "blocks": [
+          {
+            "index": 1,
+            "outcome": {
+              "type": "exact"
+            }
+          }
+        ],
+        "outcome": "rendered"
+      }
+    }
+  ],
+  "InteractionResult": [
+    {
+      "action_id": "fixture",
+      "block_id": "fixture",
+      "values": {
+        "exampleextension": true
+      }
+    }
+  ],
+  "McpAuth": [
+    {
+      "type": "none"
+    },
+    {
+      "slug": "fixture",
+      "type": "nyxid_service"
+    }
+  ],
+  "McpServerRef": [
+    {
+      "auth": {
+        "type": "none"
+      },
+      "url": "fixture"
+    }
+  ],
+  "MessageRef": [
+    "fixture"
+  ],
+  "ModelAccess": [
+    "managed",
+    "custom"
+  ],
+  "ModelConfig": [
+    {
+      "access": "managed",
+      "api_type": "responses",
+      "model": "fixture",
+      "service": "fixture",
+      "thinking_effort": "minimal"
+    }
+  ],
+  "NyxIdIdentity": [
+    {
+      "kind": "human",
+      "subject": "fixture"
+    }
+  ],
+  "NyxIdIdentityKind": [
+    "human",
+    "service_account",
+    "agent_key"
+  ],
+  "OptionStyle": [
+    "default",
+    "primary",
+    "danger"
+  ],
+  "OutboundMessage": [
+    {
+      "blocks": [
+        {
+          "text": "fixture",
+          "type": "text"
+        }
+      ],
+      "reply_to": "fixture",
+      "text": "fixture"
+    }
+  ],
+  "PartitionKey": [
+    "conversation_and_sender",
+    "conversation",
+    "thread",
+    "fixed",
+    "event_subject",
+    "per_event"
+  ],
+  "PartitionRule": [
+    {
+      "key": "conversation_and_sender",
+      "version": 1
+    }
+  ],
+  "PermissionConfig": [
+    {
+      "action_mode": "guarded",
+      "service_scope": [
+        "fixture"
+      ]
+    }
+  ],
+  "Platform": [
+    "telegram",
+    "lark",
+    "feishu",
+    "discord",
+    "slack",
+    "whatsapp"
+  ],
+  "Problem": [
+    {
+      "code": "invalid_request",
+      "detail": "fixture",
+      "instance": "fixture",
+      "status": 1,
+      "title": "fixture",
+      "type": "fixture"
+    }
+  ],
+  "ProblemCode": [
+    "invalid_request",
+    "not_authenticated",
+    "forbidden",
+    "channel_not_found",
+    "channel_restore_unavailable",
+    "channel_invalid",
+    "provider_unavailable",
+    "provider_rejected",
+    "provider_busy",
+    "draining",
+    "event_ref_invalid",
+    "event_ref_expired",
+    "callback_invalid",
+    "admission_refused",
+    "rate_limited",
+    "conflict",
+    "payload_too_large",
+    "unsupported_media_type",
+    "internal"
+  ],
+  "ProfileMetadata": [
+    {
+      "description": "fixture",
+      "name": "fixture",
+      "owner": {
+        "kind": "human",
+        "subject": "fixture"
+      },
+      "provider": "fixture"
+    }
+  ],
+  "ProviderBinding": [
+    {
+      "binding_id": "fixture",
+      "level": "l1",
+      "slug": "fixture",
+      "target": {
+        "type": "existing_agent",
+        "agent_id": "agt_existing"
+      }
+    },
+    {
+      "binding_id": "fixture",
+      "level": "l1",
+      "slug": "fixture",
+      "target": {
+        "type": "profile"
+      }
+    }
+  ],
+  "ProviderRequest": [
+    {
+      "slug": "fixture",
+      "target": {
+        "type": "existing_agent",
+        "agent_id": "agt_existing"
+      }
+    },
+    {
+      "slug": "fixture",
+      "target": {
+        "type": "profile"
+      }
+    }
+  ],
+  "ProviderResponse": [
+    {
+      "binding_id": "fixture",
+      "honoured": [
+        "fixture"
+      ],
+      "level": "l1",
+      "refused": [
+        {
+          "field": "fixture",
+          "reason": "fixture"
+        }
+      ],
+      "slug": "fixture"
+    }
+  ],
+  "ProviderSlug": [
+    "fixture"
+  ],
+  "PublicActivity": [
+    {
+      "actor": {
+        "display_name": "fixture",
+        "id": "fixture",
+        "kind": "human"
+      },
+      "conversation": {
+        "id": "fixture",
+        "kind": "private",
+        "thread_id": "fixture"
+      },
+      "kind": {
+        "attachments": [
+          {
+            "filename": "fixture",
+            "kind": "image",
+            "mime_type": "fixture",
+            "reference": "fixture",
+            "size_bytes": 1
+          }
+        ],
+        "mentions_bot": true,
+        "reply_to": "fixture",
+        "text": "fixture",
+        "type": "message"
+      },
+      "occurred_at": "fixture"
+    }
+  ],
+  "PublicChannelDefinition": [
+    {
+      "created_at": "fixture",
+      "creation": {
+        "channel_id": "fixture",
+        "fingerprint": "fixture",
+        "ready": true
+      },
+      "name": "fixture",
+      "owner": {
+        "kind": "human",
+        "subject": "fixture"
+      },
+      "partition": {
+        "key": "conversation_and_sender",
+        "version": 1
+      },
+      "profile": {
+        "context": {
+          "mcp_servers": [
+            {
+              "auth": {
+                "type": "none"
+              },
+              "url": "fixture"
+            }
+          ],
+          "skills": [
+            {
+              "id": "fixture",
+              "source": "ornn",
+              "version": "fixture"
+            }
+          ],
+          "system_prompt": "fixture"
+        },
+        "environment": true,
+        "metadata": {
+          "description": "fixture",
+          "name": "fixture",
+          "owner": {
+            "kind": "human",
+            "subject": "fixture"
+          },
+          "provider": "fixture"
+        },
+        "model": {
+          "access": "managed",
+          "api_type": "responses",
+          "model": "fixture",
+          "service": "fixture",
+          "thinking_effort": "minimal"
+        },
+        "permission": {
+          "action_mode": "guarded",
+          "service_scope": [
+            "fixture"
+          ]
+        },
+        "schema_version": 1
+      },
+      "profile_digest": "fixture",
+      "provider": {
+        "binding_id": "fixture",
+        "level": "l1",
+        "slug": "fixture",
+        "target": {
+          "type": "existing_agent",
+          "agent_id": "agt_existing"
+        }
+      },
+      "record_id": "fixture",
+      "reply": {
+        "ack_after_ms": 1,
+        "auto_final": true,
+        "sinks": [
+          {
+            "type": "source"
+          }
+        ]
+      },
+      "schema_version": 1,
+      "secrets": {
+        "agent_key_hash": "fixture"
+      },
+      "sources": [
+        {
+          "admission": {
+            "type": "all"
+          },
+          "bot_id": "fixture",
+          "bot_username": "fixture",
+          "issuer": "fixture",
+          "jwks_url": "fixture",
+          "key_id": "fixture",
+          "platform": "telegram",
+          "route_ids": [
+            "fixture"
+          ],
+          "trust_normalized": false,
+          "type": "nyxid_relay"
+        }
+      ],
+      "version": 1,
+      "connection_ref": "fixture"
+    }
+  ],
+  "PublicSecrets": [
+    {
+      "agent_key_hash": "fixture"
+    }
+  ],
+  "RecordId": [
+    "fixture"
+  ],
+  "Refusal": [
+    "bot_sender",
+    "system_sender",
+    "unknown_sender",
+    "message_edit",
+    "interactive_action_unsupported",
+    "interaction_expired_or_invalid",
+    "system_event",
+    "content_unsupported",
+    "attachment_unsupported",
+    "sender_denied",
+    "chat_denied",
+    "group_denied",
+    "group_not_addressed",
+    "addressing_evidence_unavailable",
+    "thread_evidence_unavailable",
+    "platform_verifier_unavailable"
+  ],
+  "RekeyResponse": [
+    {
+      "kid": 1
+    }
+  ],
+  "RelayAgent": [
+    {
+      "api_key_id": "fixture",
+      "name": "fixture"
+    }
+  ],
+  "RelayAttachment": [
+    {
+      "content_type": "fixture",
+      "download_url": "fixture",
+      "file_key": "fixture",
+      "filename": "fixture",
+      "image_key": "fixture",
+      "mime_type": "fixture",
+      "platform_message_id": "fixture",
+      "size_bytes": 1,
+      "url": "fixture"
+    }
+  ],
+  "RelayContent": [
+    {
+      "attachments": [
+        {
+          "content_type": "fixture",
+          "download_url": "fixture",
+          "file_key": "fixture",
+          "filename": "fixture",
+          "image_key": "fixture",
+          "mime_type": "fixture",
+          "platform_message_id": "fixture",
+          "size_bytes": 1,
+          "url": "fixture"
+        }
+      ],
+      "text": "fixture",
+      "type": "fixture"
+    }
+  ],
+  "RelayConversation": [
+    {
+      "id": "fixture",
+      "platform_id": "fixture",
+      "type": "fixture"
+    }
+  ],
+  "RelaySender": [
+    {
+      "display_name": "fixture",
+      "platform_id": "fixture"
+    }
+  ],
+  "RenderingOutcome": [
+    "rendered",
+    "degraded",
+    "unsupported"
+  ],
+  "RenderingReport": [
+    {
+      "blocks": [
+        {
+          "index": 1,
+          "outcome": {
+            "type": "exact"
+          }
+        }
+      ],
+      "outcome": "rendered"
+    }
+  ],
+  "ReplyPolicy": [
+    {
+      "ack_after_ms": 1,
+      "auto_final": true,
+      "sinks": [
+        {
+          "type": "source"
+        }
+      ]
+    }
+  ],
+  "ReplyTargetRef": [
+    "fixture"
+  ],
+  "ReplyTargetResponse": [
+    {
+      "expires_at": 1,
+      "reply_target_ref": "fixture"
+    }
+  ],
+  "Secret": [
+    "fixture"
+  ],
+  "Sink": [
+    {
+      "type": "source"
+    },
+    {
+      "hmac_key_id": "fixture",
+      "type": "result_webhook",
+      "url": "fixture"
+    },
+    {
+      "type": "sync"
+    }
+  ],
+  "SkillRef": [
+    {
+      "id": "fixture",
+      "source": "ornn",
+      "version": "fixture"
+    }
+  ],
+  "SkillSource": [
+    "ornn"
+  ],
+  "Source": [
+    {
+      "admission": {
+        "type": "all"
+      },
+      "bot_id": "fixture",
+      "bot_username": "fixture",
+      "issuer": "fixture",
+      "jwks_url": "fixture",
+      "key_id": "fixture",
+      "platform": "telegram",
+      "route_ids": [
+        "fixture"
+      ],
+      "trust_normalized": false,
+      "type": "nyxid_relay"
+    },
+    {
+      "admission": {
+        "type": "all"
+      },
+      "bot_id": "ou_fixture",
+      "bot_username": "fixture",
+      "issuer": "fixture",
+      "jwks_url": "fixture",
+      "key_id": "fixture",
+      "platform": "lark",
+      "route_ids": [
+        "fixture"
+      ],
+      "trust_normalized": false,
+      "type": "nyxid_relay"
+    },
+    {
+      "admission": {
+        "type": "all"
+      },
+      "bot_id": "fixture",
+      "bot_username": "fixture",
+      "issuer": "fixture",
+      "jwks_url": "fixture",
+      "key_id": "fixture",
+      "platform": "slack",
+      "route_ids": [
+        "fixture"
+      ],
+      "trust_normalized": true,
+      "type": "nyxid_relay"
+    },
+    {
+      "auth": {
+        "key_id": "fixture",
+        "type": "hmac"
+      },
+      "prompt_template": "fixture",
+      "schema": true,
+      "type": "custom"
+    },
+    {
+      "admission": {
+        "type": "all"
+      },
+      "bot_id": "12345678",
+      "bot_username": "fixture_bot",
+      "type": "telegram"
+    }
+  ],
+  "SourceKind": [
+    {
+      "platform": "telegram",
+      "route_id": "fixture",
+      "type": "nyxid_relay"
+    },
+    {
+      "platform": "lark",
+      "route_id": "fixture",
+      "type": "nyxid_relay"
+    },
+    {
+      "type": "custom"
+    },
+    {
+      "type": "telegram",
+      "platform": "telegram",
+      "bot_id": "12345678"
+    }
+  ],
+  "SourceRequest": [
+    {
+      "admission": {
+        "type": "all"
+      },
+      "bot_id": "fixture",
+      "bot_username": "fixture",
+      "issuer": "fixture",
+      "key_id": "fixture",
+      "platform": "telegram",
+      "route_ids": [
+        "fixture"
+      ],
+      "trust_normalized": false,
+      "type": "nyxid_relay"
+    },
+    {
+      "admission": {
+        "type": "all"
+      },
+      "bot_id": "ou_fixture",
+      "bot_username": "fixture",
+      "issuer": "fixture",
+      "key_id": "fixture",
+      "platform": "lark",
+      "route_ids": [
+        "fixture"
+      ],
+      "trust_normalized": false,
+      "type": "nyxid_relay"
+    },
+    {
+      "admission": {
+        "type": "all"
+      },
+      "bot_id": "fixture",
+      "bot_username": "fixture",
+      "issuer": "fixture",
+      "key_id": "fixture",
+      "platform": "slack",
+      "route_ids": [
+        "fixture"
+      ],
+      "trust_normalized": true,
+      "type": "nyxid_relay"
+    },
+    {
+      "auth": {
+        "key_id": "fixture",
+        "type": "hmac"
+      },
+      "prompt_template": "fixture",
+      "schema": true,
+      "type": "custom"
+    },
+    {
+      "admission": {
+        "type": "all"
+      },
+      "bot_id": "12345678",
+      "bot_username": "fixture_bot",
+      "type": "telegram"
+    }
+  ],
+  "TestChannelResponse": [
+    {
+      "accepted_after_ms": 1,
+      "first_text": "fixture",
+      "level": "l1"
+    }
+  ],
+  "ThinkingEffort": [
+    "minimal",
+    "low",
+    "medium",
+    "high",
+    "very_high"
+  ],
+  "TypingOutcome": [
+    "sent",
+    "unsupported"
+  ],
+  "TypingReceipt": [
+    {
+      "outcome": "sent"
+    }
+  ],
+  "EventWorkerProfile": [
+    {
+      "context": {
+        "mcp_servers": [
+          {
+            "auth": {
+              "type": "none"
+            },
+            "url": "fixture"
+          }
+        ],
+        "skills": [
+          {
+            "id": "fixture",
+            "source": "ornn",
+            "version": "fixture"
+          }
+        ],
+        "system_prompt": "fixture"
+      },
+      "environment": true,
+      "metadata": {
+        "description": "fixture",
+        "name": "fixture",
+        "owner": {
+          "kind": "human",
+          "subject": "fixture"
+        },
+        "provider": "fixture"
+      },
+      "model": {
+        "access": "managed",
+        "api_type": "responses",
+        "model": "fixture",
+        "service": "fixture",
+        "thinking_effort": "minimal"
+      },
+      "permission": {
+        "action_mode": "guarded",
+        "service_scope": [
+          "fixture"
+        ]
+      },
+      "schema_version": 1
+    }
+  ],
+  "ProviderTarget": [
+    {
+      "type": "profile"
+    },
+    {
+      "type": "existing_agent",
+      "agent_id": "agt_existing"
+    }
+  ],
+  "CapabilityView": [
+    {
+      "platforms": [
+        {
+          "connection_methods": [
+            "fixture"
+          ],
+          "id": "fixture",
+          "label": "fixture",
+          "optional_capabilities": [
+            "fixture"
+          ]
+        }
+      ]
+    }
+  ],
+  "ConnectionPage": [
+    {
+      "items": [
+        {
+          "connection_ref": "fixture",
+          "label": "fixture",
+          "setup_url": "fixture",
+          "status": "draft",
+          "url": "fixture"
+        }
+      ],
+      "next_after": "fixture"
+    }
+  ],
+  "ConnectionView": [
+    {
+      "connection_ref": "fixture",
+      "label": "fixture",
+      "setup_url": "fixture",
+      "status": "draft",
+      "url": "fixture"
+    }
+  ],
+  "CreateConnection": [
+    {
+      "event_ref": "fixture",
+      "record_id": "fixture",
+      "suggested_name": "fixture"
+    }
+  ],
+  "PlatformCapability": [
+    {
+      "connection_methods": [
+        "fixture"
+      ],
+      "id": "fixture",
+      "label": "fixture",
+      "optional_capabilities": [
+        "fixture"
+      ]
+    }
+  ],
+  "Status": [
+    "draft",
+    "awaiting_platform",
+    "ready",
+    "cancelled",
+    "expired"
+  ]
+}

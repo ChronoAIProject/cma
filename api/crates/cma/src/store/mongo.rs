@@ -7,13 +7,16 @@ use mongodb::{bson::doc, Client};
 
 use super::{
     AuthEncryptionKey, MongoActivityStore, MongoAuthStore, MongoCheckpointObjectStore,
-    MongoOperationStore, MongoPlatformSettingsStore, MongoProfileStore,
+    MongoGatewayRecordStore, MongoOperationStore, MongoPlatformSettingsStore, MongoProfileStore,
     MongoSandboxCredentialStore, MongoSandboxStore, MongoTriggerDefinitionStore,
     MongoUserDirectoryStore,
 };
 
 /// Aggregate-neutral stores opened atomically at process startup.
 pub struct MongoStores {
+    pub(crate) event_workers: Arc<super::event_workers::MongoEventWorkerProfileStore>,
+    pub(crate) bot_setups: Arc<super::bot_setups::MongoBotSetupStore>,
+    pub(crate) bot_setup_contexts: Arc<super::bot_setup_contexts::MongoBotSetupContextStore>,
     pub(crate) bots: Arc<super::bots::MongoBotStore>,
     /// Sandbox -> Workspace -> Worktree -> Agent aggregates and logs.
     pub sandbox_model: Arc<MongoSandboxStore>,
@@ -26,19 +29,15 @@ pub struct MongoStores {
     /// Versioned Trigger definitions, placements, and immutable revisions.
     #[allow(dead_code)] // Opened and validated here; #824 composes the public routes.
     pub trigger_definitions: Arc<MongoTriggerDefinitionStore>,
-    /// Durable bridge configuration; public connection/dispatch adapters compose separately.
-    #[allow(dead_code)]
-    pub bridge_definitions: Arc<super::MongoBridgeStore>,
-    pub(crate) bridge_credentials: Arc<super::MongoBridgeCredentialStore>,
-    /// Ingress is closed until selected-key custody and a pinned callback route compose.
-    #[allow(dead_code)]
-    pub(crate) bridge_callback_inbox: Arc<super::MongoCallbackInbox>,
     pub auth: Arc<MongoAuthStore>,
     pub(crate) codex_subscriptions: Arc<super::MongoSubscriptionStore>,
     pub activity: Arc<MongoActivityStore>,
     pub users: Arc<MongoUserDirectoryStore>,
     pub settings: Arc<MongoPlatformSettingsStore>,
     pub operations: Arc<MongoOperationStore>,
+    pub gateway_records: Arc<MongoGatewayRecordStore>,
+    pub(crate) gateway_connections: Arc<MongoGatewayRecordStore>,
+    pub(crate) gateway_interactions: Arc<super::MongoGatewayInteractionStore>,
     client: Client,
     database: String,
 }
@@ -56,7 +55,6 @@ impl MongoStores {
         let client = Client::with_uri_str(uri)
             .await
             .map_err(|error| StoreError::Unavailable(format!("connect to MongoDB: {error}")))?;
-        super::isolation::verify(&client.database(database)).await?;
         let mut sandbox_model =
             MongoSandboxStore::open_with_storage(&client, database, checkpoint_storage).await?;
         sandbox_model.warm_runtime_version = Some(runtime.0.to_owned());
@@ -72,20 +70,6 @@ impl MongoStores {
             MongoTriggerDefinitionStore::open(&client, database, Arc::clone(&sandbox_profiles))
                 .await?,
         );
-        let bridge_definitions = Arc::new(
-            super::MongoBridgeStore::open(&client, database, deployment, auth_encryption_key)
-                .await?,
-        );
-        let bridge_credentials = bridge_definitions.credentials();
-        let bridge_callback_inbox = Arc::new(
-            super::MongoCallbackInbox::open(
-                &bridge_definitions,
-                database,
-                deployment,
-                auth_encryption_key,
-            )
-            .await?,
-        );
         let auth = Arc::new(
             MongoAuthStore::open(&client, database, deployment, auth_encryption_key).await?,
         );
@@ -98,27 +82,58 @@ impl MongoStores {
         let users = Arc::new(MongoUserDirectoryStore::open(&client, database).await?);
         let settings = Arc::new(MongoPlatformSettingsStore::open(&client, database).await?);
         let operations = Arc::new(MongoOperationStore::open(&client, database).await?);
+        let gateway_records = Arc::new(MongoGatewayRecordStore::open(&client, database).await?);
+        let gateway_connections =
+            Arc::new(MongoGatewayRecordStore::open_connections(&client, database).await?);
+        let gateway_interactions =
+            Arc::new(super::MongoGatewayInteractionStore::open(&client, database).await?);
+        let bot_setups = Arc::new(
+            super::bot_setups::MongoBotSetupStore::open(
+                &client,
+                database,
+                deployment,
+                auth_encryption_key,
+            )
+            .await?,
+        );
         let bots = Arc::new(
             super::bots::MongoBotStore::open(&client, database)
                 .await
                 .map_err(|_| StoreError::Unavailable("open bot store".into()))?,
         );
+        let bot_setup_contexts = Arc::new(
+            super::bot_setup_contexts::MongoBotSetupContextStore::open(
+                &client,
+                database,
+                deployment,
+                auth_encryption_key,
+            )
+            .await?,
+        );
+        let event_workers = Arc::new(
+            super::event_workers::MongoEventWorkerProfileStore::open(&client, database)
+                .await
+                .map_err(|_| StoreError::Unavailable("open event worker profiles".into()))?,
+        );
         let stores = Self {
+            event_workers,
+            bot_setups,
+            bot_setup_contexts,
             bots,
             sandbox_model,
             sandbox_profiles,
             sandbox_credentials,
             checkpoint_objects,
             trigger_definitions,
-            bridge_definitions,
-            bridge_credentials,
-            bridge_callback_inbox,
             auth,
             codex_subscriptions,
             activity,
             users,
             settings,
             operations,
+            gateway_records,
+            gateway_connections,
+            gateway_interactions,
             client,
             database: database.to_owned(),
         };

@@ -1,9 +1,15 @@
-//! NyxID relay authentication and Telegram event normalization.
+//! NyxID relay authentication and per-platform event normalization.
 pub mod activity;
+pub mod attachments;
+mod envelope_errors;
+pub mod facts;
+mod generic;
 pub mod jwks;
 mod jwt;
+mod lark;
 pub mod payload;
-pub mod telegram;
+pub(crate) mod telegram;
+mod telegram_managed;
 pub mod verify;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

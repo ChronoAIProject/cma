@@ -1,5 +1,4 @@
 import { act, render, renderHook, screen, waitFor, within } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
 import type { AgentCreationCategory, AgentProvenance } from '@chronoai/cma-sdk';
@@ -7,7 +6,7 @@ import { CmaClientProvider } from '../api/context';
 import { unavailableClient } from '../api/client';
 import { navigationFixture, workspaceFixture } from '../test/hierarchy';
 import { Tree } from './Tree';
-import { CreationSummary, filterTreeCreation, useTreeCreation } from './treeCreation';
+import { CreationSummary, useTreeCreation } from './treeCreation';
 
 function fixture(count = 6) {
   const workspace = workspaceFixture();
@@ -151,28 +150,20 @@ it('does not replay pending reads or re-fetch when only Agent activity changes',
   expect(readAgentProvenance).toHaveBeenCalledOnce();
 });
 
-it('filters only proven categories and hides an incomplete child summary', () => {
-  const items = fixture(4);
+it('hides an incomplete child summary', () => {
   const categories = new Map<string, AgentCreationCategory | 'unavailable'>([
     ['agt_0', 'manual'],
     ['agt_1', 'trigger'],
     ['agt_2', 'legacy_unknown'],
     ['agt_3', 'unavailable'],
   ]);
-  expect(filterTreeCreation(items, categories, 'all')).toBe(items);
-  expect(
-    filterTreeCreation(items, categories, 'legacy_unknown')[0]?.workspaces[0]?.agents.map(
-      (agent) => agent.id,
-    ),
-  ).toEqual(['agt_2']);
-  expect(filterTreeCreation(items, categories, 'channel_bridge')).toEqual([]);
   const { rerender } = render(<CreationSummary ids={['agt_0', 'agt_3']} facts={categories} />);
   expect(screen.queryByTitle(/Agent creation/)).not.toBeInTheDocument();
   rerender(<CreationSummary ids={['agt_0', 'agt_1']} facts={categories} />);
   expect(screen.getByTitle('Agent creation origins: 1 manual, 1 trigger')).toBeVisible();
 });
 
-it('shows distinct sibling badges and preserves whole-parent summaries while filtering the tree', async () => {
+it('shows distinct sibling badges and preserves whole-parent summaries without tree filters', async () => {
   const readAgentProvenance = vi.fn((id: string) =>
     Promise.resolve(facts(id, id === 'agt_0' ? 'manual' : 'trigger')),
   );
@@ -203,10 +194,8 @@ it('shows distinct sibling badges and preserves whole-parent summaries while fil
   expect(screen.getByTitle('Created by Trigger')).toBeVisible();
   const manualRow = screen.getByRole('treeitem', { name: /Agent 0/ });
   expect(within(manualRow).queryByTitle('Created by Trigger')).not.toBeInTheDocument();
-  await userEvent
-    .setup()
-    .selectOptions(screen.getByRole('combobox', { name: 'Agent creation' }), 'trigger');
-  expect(screen.queryByText('Agent 0')).not.toBeInTheDocument();
+  expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+  expect(screen.getByText('Agent 0')).toBeVisible();
   expect(screen.getByText('Agent 1')).toBeVisible();
   expect(screen.getAllByTitle('Agent creation origins: 1 manual, 1 trigger')).toHaveLength(2);
   expect(screen.queryByText('private-subject')).not.toBeInTheDocument();

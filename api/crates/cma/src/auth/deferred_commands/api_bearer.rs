@@ -10,7 +10,7 @@ use crate::auth::{
 use layer2_core::resource_access::{CallerContext, CredentialSource};
 
 impl AuthState {
-    pub(super) async fn independent_command_authority(
+    pub(in crate::auth) async fn independent_command_authority(
         &self,
         context: &CallerContext,
         credential: &str,
@@ -30,10 +30,7 @@ impl AuthState {
         if request.credential_source != context.credential_source {
             return Err(CommandAuthorizationError::Revoked);
         }
-        let CredentialSource::Independent {
-            expires_at: Some(expires_at),
-        } = request.credential_source
-        else {
+        let CredentialSource::Independent { expires_at } = request.credential_source else {
             return Err(CommandAuthorizationError::Revoked);
         };
         let record = ApiBearerCustody::new(
@@ -52,7 +49,7 @@ impl AuthState {
         api_authority(&record)
     }
 
-    pub(super) async fn retained_api_custody(
+    pub(in crate::auth) async fn retained_api_custody(
         &self,
         subject: &layer2_core::SubjectId,
         authority: &AgentAuthorizationRevision,
@@ -74,14 +71,16 @@ impl AuthState {
                 .is_none_or(|context| {
                     context.issuer != record.issuer || context.credential_id != record.credential_id
                 })
-            || record.expires_at <= SystemTime::now()
+            || record
+                .expires_at
+                .is_some_and(|expiry| expiry <= SystemTime::now())
         {
             return Err(CommandAuthorizationError::Revoked);
         }
         Ok(record)
     }
 
-    pub(super) async fn verify_api_custody(
+    pub(in crate::auth) async fn verify_api_custody(
         &self,
         record: &ApiBearerCustody,
     ) -> Result<RequestAuth, CommandAuthorizationError> {
@@ -91,7 +90,7 @@ impl AuthState {
             .await?;
         if request.credential_source
             != (CredentialSource::Independent {
-                expires_at: Some(record.expires_at),
+                expires_at: record.expires_at,
             })
         {
             return Err(CommandAuthorizationError::Revoked);
@@ -100,11 +99,14 @@ impl AuthState {
         Ok(request)
     }
 
-    pub(super) async fn require_api_custody(
+    pub(in crate::auth) async fn require_api_custody(
         &self,
         record: &ApiBearerCustody,
     ) -> Result<(), CommandAuthorizationError> {
-        if record.expires_at <= SystemTime::now() {
+        if record
+            .expires_at
+            .is_some_and(|expiry| expiry <= SystemTime::now())
+        {
             return Err(CommandAuthorizationError::Revoked);
         }
         let current = self
@@ -112,7 +114,11 @@ impl AuthState {
             .api_bearer(&record.id)
             .await
             .map_err(|_| CommandAuthorizationError::Unavailable)?;
-        if current.as_ref() != Some(record) || record.expires_at <= SystemTime::now() {
+        if current.as_ref() != Some(record)
+            || record
+                .expires_at
+                .is_some_and(|expiry| expiry <= SystemTime::now())
+        {
             return Err(CommandAuthorizationError::Revoked);
         }
         Ok(())
@@ -136,10 +142,14 @@ impl AuthState {
         let PermissionEvidence::Active(permissions) = &verified.permissions else {
             return Err(CommandAuthorizationError::Revoked);
         };
-        let expires_at = verified
-            .api_expires_at
-            .filter(|expiry| *expiry > SystemTime::now())
-            .ok_or(CommandAuthorizationError::Revoked)?;
+        if !verified.independent_commands
+            || verified
+                .api_expires_at
+                .is_some_and(|expiry| expiry <= SystemTime::now())
+        {
+            return Err(CommandAuthorizationError::Revoked);
+        }
+        let expires_at = verified.api_expires_at;
         let authorization =
             crate::permissions::capabilities_from_permissions(permissions.iter().cloned());
         if verified.subject != *subject || !authorization.allows(Capability::UseOwnSandboxes) {
@@ -147,9 +157,7 @@ impl AuthState {
         }
         Ok(RequestAuth {
             binding: None,
-            credential_source: CredentialSource::Independent {
-                expires_at: Some(expires_at),
-            },
+            credential_source: CredentialSource::Independent { expires_at },
             subject: verified.subject.clone(),
             authorization,
             profile: verified.profile.clone(),
@@ -163,9 +171,14 @@ fn api_authority(
 ) -> Result<AgentAuthorizationRevision, CommandAuthorizationError> {
     let expiry = record
         .expires_at
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map_err(|_| CommandAuthorizationError::Revoked)?
-        .as_secs();
+        .map(|expiry| {
+            expiry
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .map(|value| value.as_secs().to_string())
+                .map_err(|_| CommandAuthorizationError::Revoked)
+        })
+        .transpose()?
+        .unwrap_or_else(|| "none".into());
     let id: String = record
         .id
         .as_bytes()

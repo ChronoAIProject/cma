@@ -247,8 +247,6 @@ async fn unrelated_semantic_write_advances_private_anchor_without_public_message
         .commit_agent_conversation(AgentConversationMutation {
             command_claim: None,
             execution_fence: None,
-            channel_execution_fence: None,
-            channel_control_execution_fence: None,
             trigger_execution_fence: None,
             admission_guard: None,
             expected_agent_revision: working.revision,
@@ -351,8 +349,6 @@ impl AgentConversationStore for LostCommitReply {
                 .commit_agent_conversation(AgentConversationMutation {
                     command_claim: None,
                     execution_fence: None,
-                    channel_execution_fence: None,
-                    channel_control_execution_fence: None,
                     trigger_execution_fence: None,
                     admission_guard: None,
                     expected_agent_revision: current.revision,

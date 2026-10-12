@@ -13,6 +13,7 @@ pub struct HostedAgentOpenSettings {
     pub permission_mode: Option<String>,
     pub own_credential: bool,
     pub channel_tool: Option<super::HostedChannelToolBinding>,
+    pub provider_tool: Option<super::HostedProviderToolBinding>,
     /// Control-plane correlation for an already admitted turn; not launch data.
     pub recovered_prompt: Option<crate::PromptIdentity>,
 }
@@ -27,6 +28,7 @@ pub trait HostedAgentRuntime: Send + Sync {
             permission_mode: None,
             own_credential: request.options.own_credential,
             channel_tool: None,
+            provider_tool: None,
             recovered_prompt: None,
         })
     }

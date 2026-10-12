@@ -70,6 +70,9 @@ async fn users_me(headers: HeaderMap) -> impl IntoResponse {
     match value {
         "Bearer token-alice" => Json(serde_json::json!({"subject":"alice"})).into_response(),
         "Bearer token-bob" => Json(serde_json::json!({"subject":"bob"})).into_response(),
+        "Bearer token-org-a" => {
+            Json(serde_json::json!({"subject":"org-a","user_type":"org"})).into_response()
+        }
         _ => (StatusCode::UNAUTHORIZED, Json(serde_json::json!({}))).into_response(),
     }
 }

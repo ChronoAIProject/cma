@@ -65,6 +65,7 @@ test('LOCAL shared aggregate preserves personal work and supports filtered pages
   const branchReads: string[] = [];
   await page.route('**/api/v1/resource-access/agent/*', (route) => {
     const id = new URL(route.request().url()).pathname.split('/').at(-1);
+    if (id === 'agt_contract') return route.fallback();
     return route.fulfill(
       revoked
         ? {
@@ -200,15 +201,20 @@ test('LOCAL shared aggregate preserves personal work and supports filtered pages
   await page.getByRole('menuitemradio', { name: 'Shared with me', exact: true }).click();
   const navigation = page.locator('.scoped-navigation');
   await expect(navigation.getByRole('link', { name: rows[0].title })).toBeVisible();
-  await expect(
-    navigation.getByText('Owner: Personal owner · Your access: View only'),
-  ).toBeVisible();
+  await expect(navigation.getByText('Owner: Personal owner · Your access: View only')).toHaveCount(
+    1,
+  );
   await expect(navigation.getByText(/No shared Sandboxes on this page/)).toBeVisible();
   expect(branchReads).toEqual([]);
   await navigation.getByRole('button', { name: 'Next Sandboxes', exact: true }).click();
-  await navigation.getByRole('button', { name: sandbox.name, exact: true }).click();
-  expect(branchReads.includes('workspaces/wks_shared')).toBe(false);
-  await navigation.getByRole('button', { name: workspace.name, exact: true }).click();
+  await expect(navigation.getByRole('link', { name: /^Research Sandbox/ })).toHaveAttribute(
+    'href',
+    '/sandboxes/sbx_shared',
+  );
+  await expect(navigation.getByRole('link', { name: /^Review Workspace/ })).toHaveAttribute(
+    'href',
+    '/workspaces/wks_shared',
+  );
   await expect(
     navigation.getByRole('link', { name: 'Authorized branch conversation' }),
   ).toHaveAttribute('href', '/agents/agt_branch');
@@ -216,7 +222,7 @@ test('LOCAL shared aggregate preserves personal work and supports filtered pages
   await expect(navigation.getByRole('button', { name: 'Next shared Agents' })).toBeDisabled();
   await expect(
     navigation.getByText('Owner: Research · Your access: View only').first(),
-  ).toBeVisible();
+  ).toHaveCount(1);
   for (const theme of ['light', 'dark']) {
     await page.evaluate((value) => {
       document.body.toggleAttribute('data-ds-dark-theme', value === 'dark');
@@ -236,8 +242,6 @@ test('LOCAL shared aggregate preserves personal work and supports filtered pages
         if (await show.isVisible()) {
           await show.click();
           await navigation.getByRole('button', { name: 'Next Sandboxes', exact: true }).click();
-          await navigation.getByRole('button', { name: sandbox.name, exact: true }).click();
-          await navigation.getByRole('button', { name: workspace.name, exact: true }).click();
         }
       }
       await expect(

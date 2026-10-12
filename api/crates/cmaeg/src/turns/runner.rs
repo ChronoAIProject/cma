@@ -47,8 +47,8 @@ impl TurnRunner {
         };
         let provider = turn.channel.definition.provider.slug.to_string();
         let mut observation = Operation::new(names::TURN_DURATION, names::PROVIDER, &provider);
-        let mut admitted = Some(sender);
         let deadline = turn.received_at + self.config.turn_timeout;
+        let mut admitted = Some(sender);
         let result = tokio::time::timeout_at(deadline.into(), async {
             let stream = self.start(&turn).await.map_err(|error| match error {
                 ProviderError::Capacity | ProviderError::Busy { .. } => {
@@ -138,11 +138,14 @@ impl TurnRunner {
                     if remaining.is_zero() {
                         return Err(ProviderError::Busy { retry_after });
                     }
-                    let limit = retry_after
+                    let minimum = retry_after
                         .unwrap_or(Duration::from_millis(500))
+                        .max(Duration::from_millis(1));
+                    // Retry-After is a minimum, including while a cold conversation
+                    // is preparing. Add jitter without probing before that time.
+                    let delay = minimum
+                        .saturating_add(jitter(minimum.min(Duration::from_millis(500))))
                         .min(remaining);
-                    // A zero Retry-After still yields a bounded delay instead of hot-looping.
-                    let delay = jitter(limit.max(Duration::from_millis(1))).min(remaining);
                     tokio::time::sleep(delay).await;
                     if Instant::now() >= retry_deadline {
                         return Err(ProviderError::Busy { retry_after });
