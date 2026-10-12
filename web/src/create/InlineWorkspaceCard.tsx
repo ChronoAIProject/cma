@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import type { CreateInlineWorkspaceRequest } from '@chronoai/cma-sdk';
 import type { CmaWebClient } from '../api/client';
 import type { WorkspaceDetail } from '../api/types';
 import { Button } from '../ui/Button';
@@ -7,6 +8,10 @@ import { Presence } from '../ui/Presence';
 import { useConnectionGate } from '../connections/useConnectionGate';
 import { useCreationCommand } from './transaction';
 import './Create.css';
+
+type InlineSourceType = CreateInlineWorkspaceRequest['source']['type'];
+const EMPTY_SOURCE = 'empty' as const;
+const GIT_SOURCE = 'git_repository' as const;
 
 /** Direct Agent Manager workspace admission without a Workspace Profile picker. */
 export function InlineWorkspaceCard({
@@ -20,22 +25,22 @@ export function InlineWorkspaceCard({
   readonly onCreated: (workspace: WorkspaceDetail) => void;
   readonly onClose: () => void;
 }) {
-  const [sourceType, setSourceType] = useState<'empty' | 'git_repository'>('empty');
+  const [sourceType, setSourceType] = useState<InlineSourceType>(EMPTY_SOURCE);
   const [name, setName] = useState('workspace');
   const [url, setUrl] = useState('');
   const [reference, setReference] = useState('');
   const command = useCreationCommand(onCreated);
   const connections = useConnectionGate();
-  const repositoryReady = sourceType === 'empty' || url.trim().length > 0;
-  const ready = repositoryReady && (sourceType === 'git_repository' || name.trim().length > 0);
+  const repositoryReady = sourceType === EMPTY_SOURCE || url.trim().length > 0;
+  const ready = repositoryReady && (sourceType === GIT_SOURCE || name.trim().length > 0);
 
   const submit = () => {
     if (!ready) return;
     const source =
-      sourceType === 'empty'
+      sourceType === EMPTY_SOURCE
         ? ({ type: 'empty' } as const)
         : {
-            type: 'git_repository' as const,
+            type: GIT_SOURCE,
             url: url.trim(),
             ...(reference.trim() === '' ? {} : { reference: reference.trim() }),
           };
@@ -92,10 +97,10 @@ export function InlineWorkspaceCard({
             id="inline-workspace-source"
             value={sourceType}
             disabled={command.locked}
-            onChange={(event) => setSourceType(event.target.value as 'empty' | 'git_repository')}
+            onChange={(event) => setSourceType(event.target.value as InlineSourceType)}
           >
-            <option value="empty">Empty workspace</option>
-            <option value="git_repository">Clone a GitHub repository</option>
+            <option value={EMPTY_SOURCE}>Empty workspace</option>
+            <option value={GIT_SOURCE}>Clone a GitHub repository</option>
           </select>
         </div>
         <div className="create-form__field">
@@ -108,7 +113,7 @@ export function InlineWorkspaceCard({
             placeholder="workspace"
           />
         </div>
-        {sourceType === 'git_repository' ? (
+        {sourceType === GIT_SOURCE ? (
           <>
             <div className="create-form__field">
               <label htmlFor="inline-workspace-url">GitHub repository URL</label>
