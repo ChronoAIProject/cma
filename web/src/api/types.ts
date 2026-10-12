@@ -313,6 +313,15 @@ export interface CreateWorkspaceInput {
   readonly commandsDigest?: string;
 }
 
+export type InlineWorkspaceSource =
+  | { readonly type: 'git_repository'; readonly url: string; readonly reference?: string }
+  | { readonly type: 'empty' };
+
+export interface CreateInlineWorkspaceInput {
+  readonly source: InlineWorkspaceSource;
+  readonly name?: string;
+}
+
 export interface CreateAgentInput {
   readonly agentProfile: ProfileSelection;
   readonly title?: string;
