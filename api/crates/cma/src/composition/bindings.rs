@@ -30,8 +30,6 @@ impl BindingComposition {
     }
     pub(super) fn router(
         &self,
-        stores: &MongoStores,
-        activity: Arc<ActivityService>,
         gateway: Option<&crate::config::GatewayConfig>,
     ) -> Result<Router, String> {
         let routes = match gateway {
@@ -41,24 +39,7 @@ impl BindingComposition {
             )?,
             None => rest::binding_router(self.service.clone()),
         };
-        Ok(routes
-            .merge(rest::gateway_record_router(
-                layer2_core::GatewayRecordService::new(
-                    stores.gateway_records.clone(),
-                    activity.clone(),
-                ),
-            ))
-            .merge(rest::gateway_connection_record_router(
-                layer2_core::GatewayRecordService::new(
-                    stores.gateway_connections.clone(),
-                    activity,
-                ),
-            ))
-            .merge(rest::gateway_interaction_router(
-                layer2_core::gateway_interactions::GatewayInteractionService::new(
-                    stores.gateway_interactions.clone(),
-                ),
-            )))
+        Ok(routes)
     }
     pub(crate) fn spawn(
         self,

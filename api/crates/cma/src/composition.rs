@@ -388,11 +388,7 @@ impl ControlPlaneComposition {
             .merge(projections.agent_events_router(config.features, sandbox_lifecycle.updates()))
             .merge(trigger_routes)
             .merge(layer1_public::rest::admin::router(admin));
-        let resource_routes = resource_routes.merge(bindings.router(
-            &stores,
-            activity.clone(),
-            config.gateway.as_ref(),
-        )?);
+        let resource_routes = resource_routes.merge(bindings.router(config.gateway.as_ref())?);
         let (bot_routes, bots) =
             bots::BotComposition::build(config, &stores, auth.clone(), event_workers)?;
         let resource_routes = resource_routes.merge(bot_routes);
