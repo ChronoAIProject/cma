@@ -39,7 +39,6 @@ mod shared_agent_cases;
 mod shared_hierarchy_cases;
 mod shared_source_cases;
 mod shared_stream_cases;
-mod snapshot_cases;
 mod source_cases;
 mod state_cases;
 mod symbols;
@@ -209,9 +208,6 @@ async fn scenario(name: &str) -> Scenario {
         return scenario;
     }
     if let Some(scenario) = source_cases::scenario(name).await {
-        return scenario;
-    }
-    if let Some(scenario) = snapshot_cases::scenario(name).await {
         return scenario;
     }
     if let Some(scenario) = credential_cases::scenario(name).await {

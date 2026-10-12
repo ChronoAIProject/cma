@@ -64,11 +64,6 @@ export interface SandboxLifecycle {
     readonly startedAt: string;
     readonly epoch: number;
   };
-  readonly latestSnapshot?: {
-    readonly epoch: number;
-    readonly savedAt: string;
-    readonly downloadUrl: string;
-  };
   readonly backgroundSave?: {
     readonly phase:
       | 'capturing'
