@@ -1310,13 +1310,22 @@ async fn failed_retirement_revocation_is_durable_debt_and_retried() {
         SandboxWorkStep::RetryRetiredRevocations
     );
     assert_eq!(retired_with_debt.credential.revoke_debt.len(), 1);
+    assert_eq!(
+        harness.actions.snapshot(),
+        ["mint:1", "stop-agents", "revoke:provider-key-1"]
+    );
     harness.run(&created.id, now).await;
     let settled = harness.stored(&created.id).await;
     assert!(settled.credential.revoke_debt.is_empty());
     assert_eq!(settled.work.step, SandboxWorkStep::WaitForPurge);
     assert_eq!(
         harness.actions.snapshot(),
-        ["mint:1", "stop-agents", "revoke:provider-key-1"]
+        [
+            "mint:1",
+            "stop-agents",
+            "revoke:provider-key-1",
+            "revoke:provider-key-1"
+        ]
     );
 }
 
