@@ -367,6 +367,50 @@ async fn manual_admission_requires_the_current_digest_and_records_use_once() {
 }
 
 #[tokio::test]
+async fn inline_admission_does_not_read_or_record_a_workspace_profile() {
+    let profiles = Arc::new(InMemoryProfileStore::default());
+    let store = Arc::new(InMemorySandboxStore::default());
+    let parent = sandbox("sbx_inline_workspace", SandboxStatus::Active, Vec::new(), 4);
+    store.create_sandbox(parent.clone()).await.unwrap();
+    let service = WorkspaceService::new(store, profiles.clone());
+
+    let workspace = service
+        .create_inline(
+            &caller("consumer"),
+            &parent.id,
+            CreateInlineWorkspace {
+                source: InlineWorkspaceSource::GitRepository {
+                    url: "https://github.com/ChronoAIProject/cma".into(),
+                    reference: Some("develop".into()),
+                },
+                name: None,
+            },
+        )
+        .await
+        .unwrap();
+
+    assert!(workspace.profile.id.as_str().starts_with("wkp_"));
+    assert_eq!(workspace.profile.revision, 1);
+    assert_eq!(workspace.name, "cma");
+    assert_eq!(
+        workspace.source,
+        WorkspaceSource::GitRepository {
+            url: "https://github.com/ChronoAIProject/cma".into(),
+            reference: Some("develop".into()),
+        }
+    );
+    assert_eq!(
+        profiles
+            .list_workspace_profiles(None, false, &ProfilePageRequest::default())
+            .await
+            .unwrap()
+            .items
+            .len(),
+        0
+    );
+}
+
+#[tokio::test]
 async fn paused_manual_creation_checks_trust_before_durable_revival() {
     let profiles = Arc::new(InMemoryProfileStore::default());
     let reference = publish(

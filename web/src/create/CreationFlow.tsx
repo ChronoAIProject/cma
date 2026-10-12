@@ -8,6 +8,7 @@ import { NewAgentCard } from './NewAgentCard';
 import { NewSandboxCard } from './NewSandboxCard';
 import { NewWorkspaceCard } from './NewWorkspaceCard';
 import { AgentLifecycleCard } from './AgentLifecycleCard';
+import { InlineWorkspaceCard } from './InlineWorkspaceCard';
 
 export type CreationRequest =
   CreateAction | { readonly kind: 'profile_use'; readonly selection: ProfileUse };
@@ -47,13 +48,22 @@ export function CreationFlow({
         onCreated={(sandbox) => onCreated({ kind: 'sandbox', sandboxId: sandbox.id })}
       />
     );
-  if (request.kind === 'new_workspace' || initial?.kind === 'workspace')
+  if (request.kind === 'new_workspace')
+    return (
+      <InlineWorkspaceCard
+        client={client}
+        sandboxId={request.sandboxId}
+        onClose={onClose}
+        onCreated={(workspace) => onCreated({ kind: 'sandbox', sandboxId: workspace.sandboxId })}
+      />
+    );
+  if (initial?.kind === 'workspace')
     return (
       <NewWorkspaceCard
         {...props}
         canCreateSandbox={canCreateSandbox}
         onChanged={onChanged}
-        sandboxId={request.kind === 'new_workspace' ? request.sandboxId : undefined}
+        sandboxId={undefined}
         onCreated={(workspace) => onCreated({ kind: 'sandbox', sandboxId: workspace.sandboxId })}
       />
     );
