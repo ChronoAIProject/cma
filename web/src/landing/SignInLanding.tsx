@@ -2,10 +2,7 @@ import { Presence } from '../ui/Presence';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { LandingCharacter } from './LandingCharacter';
 import { Button } from '../ui/Button';
-import markMarkup from '../assets/brand/cma-mark.svg?raw';
 import './SignInLanding.css';
-
-const SERVICES = ['Agent Manager', 'Image Manager', 'Event Gateway'] as const;
 
 export function SignInLanding({ onSignIn }: { readonly onSignIn: () => Promise<void> }) {
   const [entering, setEntering] = useState(false);
@@ -39,23 +36,6 @@ export function SignInLanding({ onSignIn }: { readonly onSignIn: () => Promise<v
       className={`auth-gate sign-in-landing${entering ? ' sign-in-landing--entering' : ''}`}
       aria-busy={entering}
     >
-      <header className="sign-in-landing__topbar">
-        <a className="sign-in-landing__brandmark" href="/" aria-label="CMA home">
-          <span
-            className="sign-in-landing__brandmark-icon"
-            aria-hidden="true"
-            dangerouslySetInnerHTML={{ __html: markMarkup }}
-          />
-          <span>CMA</span>
-        </a>
-        <nav className="sign-in-landing__tabs" aria-label="CMA services">
-          {SERVICES.map((service) => (
-            <span key={service} role="tab" aria-selected="false">
-              {service}
-            </span>
-          ))}
-        </nav>
-      </header>
       <div className="sign-in-landing__layout">
         <div className="brand-home sign-in-landing__brand">
           <LandingCharacter key={String(failed)} onActivate={activate} />

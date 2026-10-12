@@ -213,6 +213,8 @@ export function SandboxPage({
       {needsConnections ? (
         <ConnectionWizard
           target={{ type: 'sandbox', id: sandboxId }}
+          presentation="dialog"
+          expectedOwner={viewerId}
           onReady={() => setConnectionsReady(true)}
           onCancel={() => onNavigate({ kind: 'home' })}
         />
