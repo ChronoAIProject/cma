@@ -13,6 +13,10 @@ impl Client {
     }
 }
 impl Bots<'_> {
+    /// List owned Event Gateway connections that can supply a consumer.
+    pub async fn connections(&self) -> Result<Vec<ConsumerConnection>> {
+        self.0.get(&["bots", "connections"], &[]).await
+    }
     /// Admit creation with a durable owner-scoped idempotency key.
     pub async fn create(&self, body: &CreateBot, key: &IdempotencyKey) -> Result<Bot> {
         self.0

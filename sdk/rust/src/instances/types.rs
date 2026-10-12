@@ -260,6 +260,16 @@ pub struct CreateWorkspaceRequest {
     pub commands_digest: Option<String>,
 }
 
+/// Prepare a Workspace directly from an inline source.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CreateInlineWorkspaceRequest {
+    /// Empty directory or GitHub repository.
+    pub source: WorkspaceSource,
+    /// Optional directory name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
 /// Explicit owner authorization for additional services on a fully paused Sandbox.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GrantSandboxServiceAccessRequest {

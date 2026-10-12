@@ -21,7 +21,9 @@ export function CreationFlow({
   onCreated,
   onChanged,
   canCreateSandbox,
+  viewerId,
 }: {
+  readonly viewerId?: string;
   readonly request: CreationRequest;
   readonly client: CmaWebClient;
   readonly catalog: CreationClient;
@@ -35,6 +37,7 @@ export function CreationFlow({
     return (
       <AgentLifecycleCard
         client={client}
+        viewerId={viewerId}
         onClose={onClose}
         onCreated={(receipt) => onCreated({ kind: 'agent', agentId: receipt.id })}
       />

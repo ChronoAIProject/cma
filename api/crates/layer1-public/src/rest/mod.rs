@@ -128,11 +128,11 @@ mod worktrees;
 
 pub use agent_history::{AgentHistoryExportError, AgentHistoryExporter};
 pub use agent_lifecycle::{
-    AgentLifecycleCreateReceipt, AgentLifecycleCreateRequest, AgentLifecycleEventView,
-    AgentLifecycleImageReference, AgentLifecycleOperationReadError, AgentLifecycleOperationReader,
-    AgentLifecycleOperationView, AgentLifecyclePermissions, AgentLifecycleProfile,
-    AgentLifecycleProvisioner, AgentLifecycleProvisioningError, AgentLifecycleRepository,
-    AgentLifecycleSkill,
+    AgentLifecycleConnectionRequired, AgentLifecycleCreateReceipt, AgentLifecycleCreateRequest,
+    AgentLifecycleEventView, AgentLifecycleImageReference, AgentLifecycleOperationReadError,
+    AgentLifecycleOperationReader, AgentLifecycleOperationView, AgentLifecyclePermissions,
+    AgentLifecycleProfile, AgentLifecycleProvisioner, AgentLifecycleProvisioningError,
+    AgentLifecycleRepository, AgentLifecycleSkill,
 };
 pub use agent_source::agent_source_router;
 pub use agents::{agent_router, AgentRoutesState};

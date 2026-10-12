@@ -5,6 +5,7 @@ use std::{
 
 mod conversation_fixtures;
 mod creation_delegation;
+mod lifecycle;
 pub(crate) use conversation_fixtures::{conversation_fixture, conversation_fixture_with_registry};
 
 use async_trait::async_trait;
@@ -564,6 +565,7 @@ fn openapi_contains_every_agent_route() {
     let mut operation_ids = std::collections::HashSet::new();
     for path in [
         "/api/v1/workspaces/{id}/agents",
+        "/api/v1/agent-lifecycle/{id}",
         "/api/v1/agents",
         "/api/v1/agents/{id}",
         "/api/v1/agents/{id}/input",
@@ -589,7 +591,7 @@ fn openapi_contains_every_agent_route() {
             assert_eq!(operation.security.as_ref().map(Vec::len), Some(2));
         }
     }
-    assert_eq!(operation_ids.len(), 13);
+    assert_eq!(operation_ids.len(), 15);
 
     let schemas = serde_json::to_value(document).unwrap();
     let item_ref =

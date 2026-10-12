@@ -2,6 +2,32 @@
 
 <!-- nav: 5 Agents -->
 
+Use `agents.createLifecycle` to create an Agent from an Image Manager selection
+and inline configuration. Omit `image` for the deployment default. Persist the
+exact request and idempotency key before sending it; an uncertain response must
+be retried with the same body and key.
+
+```ts
+import type { Cma, AgentLifecycleCreateRequest } from '@chronoai/cma-sdk';
+
+export async function provisionAgent(client: Cma, idempotencyKey: string) {
+  const request: AgentLifecycleCreateRequest = {
+    name: 'Research',
+    profile: { permission_mode: 'guarded', reasoning_effort: 'medium' },
+  };
+  const receipt = await client.agents.createLifecycle(request, { idempotencyKey });
+  return client.agents.readLifecycle(receipt.id);
+}
+```
+
+The receipt acknowledges durable admission. Poll `readLifecycle(receipt.id)`
+until the global `status` is `succeeded` before opening `agent_id`. A phase event
+whose status is `ready` is only one gate. `waiting_for_connection` includes the
+missing services and an owner-bound target for the connection flow. After the
+owner verifies those connections, repeat the original `createLifecycle` call
+with its exact request and key to resume the same operation and child resources.
+`failed` is terminal; surface its safe error to the caller.
+
 One Agent belongs to one Worktree in a Workspace and Sandbox. Its REST,
 AG-UI and Responses interfaces project the same conversation, not separate chats.
 REST detail, transcript, events and usage also support current organization or

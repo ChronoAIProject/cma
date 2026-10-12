@@ -31,6 +31,21 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
         };
     }
     match op {
+        "POST /api/v1/agents" => c.check(
+            client
+                .agents()
+                .create_lifecycle(&c.body()?, &c.key()?)
+                .await,
+        ),
+        "GET /api/v1/agent-lifecycle/{id}" => {
+            c.check(client.agents().read_lifecycle(c.param("id")).await)
+        }
+        "POST /api/v1/sandboxes/{id}/workspaces/inline" => c.check(
+            client
+                .workspaces()
+                .create_inline(c.param("id"), &c.body()?, &c.key()?)
+                .await,
+        ),
         "PUT /api/v1/gateway/channel-records/{record_id}" => c.check(
             client
                 .gateway_records()

@@ -1,0 +1,225 @@
+//! Actual restricted Mongo proves recovery, ownership and stale-worker fences.
+use crate::store::{agent_lifecycle_operations::COLLECTION, *};
+use layer1_public::rest::AgentLifecycleCreateRequest;
+use layer2_core::{Capability, SubjectId};
+use mongodb::{
+    bson::{doc, DateTime, Document},
+    Database,
+};
+
+pub(super) async fn verify(db: &Database) {
+    let store = MongoAgentLifecycleStore::open(db).await.unwrap();
+    let owner = SubjectId::new("lifecycle-owner");
+    let request: AgentLifecycleCreateRequest = serde_json::from_value(serde_json::json!({
+        "name": "Research", "image": {"id": "latest-image"}
+    }))
+    .unwrap();
+    let input = LifecycleInput {
+        request: request.clone(),
+        resolved_image: Some("pinned-first".into()),
+        capabilities: vec![Capability::UseOwnSandboxes],
+    };
+    let CreateResult::Created(id) = store
+        .create(&owner, "exact-intent", input.clone())
+        .await
+        .unwrap()
+    else {
+        panic!("new operation")
+    };
+    // Replay is based on the submitted request, never new catalog resolutions
+    // or the ordering/content of capabilities captured by another HTTP attempt.
+    let mut changed = input.clone();
+    changed.resolved_image = Some("latest-now-points-elsewhere".into());
+    changed.capabilities.clear();
+    let CreateResult::Existing(replayed) =
+        store.create(&owner, "exact-intent", changed).await.unwrap()
+    else {
+        panic!("same intent")
+    };
+    assert_eq!(replayed.id, id);
+    assert_eq!(replayed.input.resolved_image, input.resolved_image);
+    assert_eq!(replayed.input.capabilities, input.capabilities);
+    assert_eq!(
+        store
+            .replay(&owner, "exact-intent", &request)
+            .await
+            .unwrap()
+            .unwrap()
+            .id,
+        id
+    );
+    let mut other_request = request.clone();
+    other_request.name = "Different".into();
+    assert!(store
+        .replay(&owner, "exact-intent", &other_request)
+        .await
+        .is_err());
+    let other_owner = SubjectId::new("another-owner");
+    assert!(store
+        .read_for_owner(&other_owner, &id)
+        .await
+        .unwrap()
+        .is_none());
+    assert!(store
+        .replay(&other_owner, "exact-intent", &request)
+        .await
+        .unwrap()
+        .is_none());
+
+    let first = store.claim(&id).await.unwrap().unwrap().lease().unwrap();
+    assert!(store.claim(&id).await.unwrap().is_none());
+    assert!(!store.pending().await.unwrap().contains(&id));
+    store
+        .append_event(&first, 1, "sandbox_ready", "running", "Creating Sandbox")
+        .await
+        .unwrap();
+    store
+        .mark_sandbox(&first, "original-sandbox")
+        .await
+        .unwrap();
+    store
+        .append_event(&first, 2, "sandbox_ready", "ready", "Sandbox ready")
+        .await
+        .unwrap();
+    let phase = store.read_for_owner(&owner, &id).await.unwrap().unwrap();
+    assert_eq!(
+        phase.status, "running",
+        "phase ready is not operation completion"
+    );
+    assert_eq!(phase.events[1].status, "ready");
+    assert!(phase.agent_id.is_none());
+
+    let rows = db.collection::<Document>(COLLECTION);
+    rows.update_one(
+        doc! {"_id": &id},
+        doc! {"$set": {"lease_expires_at": DateTime::from_millis(i64::MAX / 2)}},
+    )
+    .await
+    .unwrap();
+    store.renew(&first).await.unwrap();
+    let renewed = store.read_for_owner(&owner, &id).await.unwrap().unwrap();
+    assert!(
+        renewed.lease_expires_at.unwrap().timestamp_millis()
+            < DateTime::now().timestamp_millis() + 100_000
+    );
+
+    // A restarted process initially observes a live lease. Later scans reclaim
+    // it after expiry without another process restart or client resubmission.
+    let restarted = MongoAgentLifecycleStore::open(db).await.unwrap();
+    assert!(!restarted.pending().await.unwrap().contains(&id));
+    rows.update_one(
+        doc! {"_id": &id},
+        doc! {"$set": {"status": "ready", "lease_expires_at": DateTime::from_millis(0)}},
+    )
+    .await
+    .unwrap();
+    assert!(
+        store.renew(&first).await.is_err(),
+        "expired owners cannot revive a claim"
+    );
+    assert!(restarted.pending().await.unwrap().contains(&id));
+    let second_record = restarted.claim(&id).await.unwrap().unwrap();
+    let second = second_record.lease().unwrap();
+    assert_ne!(first.token, second.token);
+    assert_eq!(
+        second_record.sandbox_id.as_deref(),
+        Some("original-sandbox")
+    );
+    assert!(store
+        .append_event(&first, 3, "failed", "failed", "stale")
+        .await
+        .is_err());
+    assert!(store.mark_sandbox(&first, "wrong-sandbox").await.is_err());
+    assert!(store.mark_agent(&first, "wrong-agent").await.is_err());
+    assert!(store.fail(&first, "stale failure").await.is_err());
+    assert!(store.succeed(&first, "wrong-agent").await.is_err());
+    assert!(store.renew(&first).await.is_err());
+    restarted
+        .append_event(&second, 1, "sandbox_ready", "running", "replay")
+        .await
+        .unwrap();
+    let replayed = restarted
+        .read_for_owner(&owner, &id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        replayed.events.len(),
+        2,
+        "completed phase gates are not duplicated"
+    );
+    assert_eq!(replayed.events[1].status, "ready");
+    restarted
+        .mark_agent(&second, "original-agent")
+        .await
+        .unwrap();
+    restarted.succeed(&second, "original-agent").await.unwrap();
+    assert!(restarted.claim(&id).await.unwrap().is_none());
+    assert!(restarted.fail(&second, "late failure").await.is_err());
+    let finished = restarted
+        .read_for_owner(&owner, &id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(finished.status, "succeeded");
+    assert_eq!(finished.agent_id.as_deref(), Some("original-agent"));
+    assert!(finished.lease_token.is_none());
+    assert!(!restarted.pending().await.unwrap().contains(&id));
+
+    let CreateResult::Created(waiting_id) = store
+        .create(&owner, "connect-intent", input.clone())
+        .await
+        .unwrap()
+    else {
+        panic!("new connection intent")
+    };
+    let waiting_lease = store
+        .claim(&waiting_id)
+        .await
+        .unwrap()
+        .unwrap()
+        .lease()
+        .unwrap();
+    store
+        .mark_sandbox(&waiting_lease, "retained-sandbox")
+        .await
+        .unwrap();
+    let target = serde_json::json!({"type":"workspace","id":"owned-workspace"});
+    store
+        .wait_for_connection(&waiting_lease, vec!["api-github".into()], target.clone())
+        .await
+        .unwrap();
+    let waiting = store
+        .read_for_owner(&owner, &waiting_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(waiting.status, "waiting_for_connection");
+    assert_eq!(waiting.view().connection.unwrap().target, target);
+    assert_eq!(waiting.connection.unwrap().services, vec!["api-github"]);
+    assert!(!store.pending().await.unwrap().contains(&waiting_id));
+    assert!(store.claim(&waiting_id).await.unwrap().is_none());
+    store
+        .resume_connection(&other_owner, &waiting_id)
+        .await
+        .unwrap();
+    assert!(store.claim(&waiting_id).await.unwrap().is_none());
+    store.resume_connection(&owner, &waiting_id).await.unwrap();
+    let resumed = store.claim(&waiting_id).await.unwrap().unwrap();
+    assert_eq!(resumed.sandbox_id.as_deref(), Some("retained-sandbox"));
+    assert!(resumed.connection.is_none());
+    assert_eq!(resumed.input.resolved_image, input.resolved_image);
+    store
+        .succeed(&resumed.lease().unwrap(), "connected-agent")
+        .await
+        .unwrap();
+
+    // Discovery never materializes an unbounded backlog into worker tasks.
+    for index in 0..20 {
+        store
+            .create(&owner, &format!("backlog-{index}"), input.clone())
+            .await
+            .unwrap();
+    }
+    assert_eq!(store.pending().await.unwrap().len(), DISCOVERY_BATCH);
+}

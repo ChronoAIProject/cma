@@ -1,5 +1,14 @@
 use serde::{Deserialize, Serialize};
 
+/// Owner-visible Event Gateway connection available for a consumer.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct ConsumerConnection {
+    /// Opaque owned connection reference.
+    pub connection_ref: String,
+    /// Human-readable connection label.
+    pub label: String,
+}
+
 /// Published profile pinned by Bot creation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BotProfileRef {

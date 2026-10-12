@@ -32,6 +32,7 @@ export * from './agui/index.js';
 export * from './launch/index.js';
 export type { CommandOptions, EventOptions, PageOptions, ResourcePage } from './resources.js';
 export type * from './agents/types.js';
+export type * from './agents/lifecycle.js';
 export type * from './agents/shared.js';
 export type * from './agents/provenance.js';
 export type * from './agents/artifacts.js';
