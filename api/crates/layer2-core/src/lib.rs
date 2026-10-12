@@ -9,8 +9,8 @@ pub mod activity;
 pub mod activity_detail;
 pub mod activity_service;
 pub mod authz;
+pub mod bot_setups;
 pub mod bots;
-pub mod bridge;
 pub mod capabilities;
 pub mod capacity_bounds;
 pub mod clock;
@@ -19,6 +19,7 @@ pub mod directory;
 pub mod error;
 pub mod event;
 mod event_kinds;
+pub mod gateway_interactions;
 pub mod gateway_records;
 pub mod ids;
 pub mod inventory;
@@ -81,3 +82,5 @@ pub use pressure::{
 };
 pub use pressure_service::{PressureEdges, PressureMonitor};
 pub use sequence::Sequences;
+
+pub mod event_workers;

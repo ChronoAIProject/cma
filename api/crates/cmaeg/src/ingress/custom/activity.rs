@@ -59,6 +59,7 @@ pub fn launch_request(
     let event_ref = EventRef::seal(
         &EventRefPayload {
             v: 1,
+            activity_sha256: Some(cmaeg_core::seal::event_ref::activity_digest(&activity)),
             channel_id: channel.id.clone(),
             record_id: channel.pointer.record_id.clone(),
             event_id: event_id.clone(),

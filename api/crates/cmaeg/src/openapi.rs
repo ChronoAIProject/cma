@@ -7,9 +7,14 @@ use utoipa::OpenApi;
 #[openapi(
     info(title = "CMA Event Gateway", version = "1.0"),
     servers((url = "/v1")),
-    modifiers(&ManagementSecurity, &ProtocolBase),
-    components(schemas(crate::providers::EventContextSnapshot)),
+    modifiers(&ManagementSecurity, &ProfileCompatibility, &ProtocolBase),
+    components(schemas(crate::providers::EventContextSnapshot, cmaeg_core::channel::ProviderTarget)),
     paths(
+        http::connections::capabilities,
+        http::connections::create,
+        http::connections::list,
+        http::connections::read,
+        http::connections::cancel,
         http::management::create_channel,
         http::management::list_channels,
         http::management::permission_catalog,
@@ -20,11 +25,15 @@ use utoipa::OpenApi;
         http::management::test_channel,
         http::management::rekey_channel,
         http::callbacks::callback,
+        http::telegram::callback,
         http::events::receive_event,
         http::tools::reply_to_event,
         http::tools::update_message,
         http::tools::send_typing,
         http::tools::read_event_context,
+        http::tools::verify_event_context,
+        http::reply_targets::create_reply_target,
+        http::reply_targets::reply_to_target,
     )
 )]
 pub struct ApiDoc;
@@ -89,5 +98,21 @@ fn sort(value: &mut serde_json::Value) {
             }
         }
         _ => {}
+    }
+}
+
+// Keep the original v1 schema name available to generated clients.
+struct ProfileCompatibility;
+impl utoipa::Modify for ProfileCompatibility {
+    fn modify(&self, document: &mut utoipa::openapi::OpenApi) {
+        let components = document.components.as_mut().expect("protocol schemas");
+        let profile = components
+            .schemas
+            .get("EventWorkerProfile")
+            .expect("profile schema")
+            .clone();
+        components
+            .schemas
+            .insert("AgentProfileSnapshot".into(), profile);
     }
 }

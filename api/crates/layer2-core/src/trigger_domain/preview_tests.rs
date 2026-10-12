@@ -88,6 +88,7 @@ fn fixture(
         published_at: PUBLISHED.into(),
     };
     let agent_content = AgentProfileContent {
+        isolated_agent: false,
         model: Some("gpt-5".into()),
         thinking_effort: ThinkingEffort::High,
         permission_level: PermissionLevel::Guarded,

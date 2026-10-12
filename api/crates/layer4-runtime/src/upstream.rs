@@ -25,6 +25,7 @@ struct Credential {
 #[derive(Clone, Default)]
 pub(crate) struct CredentialHolder {
     inner: Arc<RwLock<Option<Credential>>>,
+    pub(crate) tool_proxy_serving: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl CredentialHolder {
@@ -87,6 +88,22 @@ impl CredentialHolder {
     async fn get(&self) -> Option<Credential> {
         self.inner.read().await.clone()
     }
+
+    pub(crate) async fn tool_proxy_generation(&self) -> Option<u64> {
+        if !self
+            .tool_proxy_serving
+            .load(std::sync::atomic::Ordering::Acquire)
+        {
+            return None;
+        }
+        self.get().await.and_then(|value| value.generation)
+    }
+
+    pub(crate) async fn current(&self) -> Option<layer3_adapter::RuntimeCredential> {
+        self.get()
+            .await
+            .map(|value| layer3_adapter::RuntimeCredential::new(value.value))
+    }
 }
 
 #[derive(Clone)]
@@ -107,6 +124,7 @@ struct PreparedProxy {
 pub(crate) struct PreparedProxies {
     proxies: Vec<PreparedProxy>,
     github: Option<crate::github_proxy::PreparedGithubProxy>,
+    tools: Option<crate::tool_proxy::PreparedToolProxy>,
 }
 
 impl PreparedProxies {
@@ -122,10 +140,21 @@ impl PreparedProxies {
             Some(config) => Some(crate::github_proxy::PreparedGithubProxy::bind(config).await?),
             None => None,
         };
-        Ok(Self { proxies, github })
+        let tools = match &config.tool_proxy {
+            Some(config) => Some(crate::tool_proxy::PreparedToolProxy::bind(config).await?),
+            None => None,
+        };
+        Ok(Self {
+            proxies,
+            github,
+            tools,
+        })
     }
 
     pub(crate) fn start(self, credential: CredentialHolder) {
+        if let Some(tools) = self.tools {
+            tools.start(credential.clone());
+        }
         if let Some(github) = self.github {
             github.start(credential.clone());
         }
@@ -276,7 +305,7 @@ fn allowed_request_host(request: &Request, host: &str) -> bool {
             .is_none_or(|authority| matches(authority.as_str()))
 }
 
-fn copy_request_headers(source: &HeaderMap, target: &mut HeaderMap) {
+pub(crate) fn copy_request_headers(source: &HeaderMap, target: &mut HeaderMap) {
     for (name, value) in source {
         if !owned_header(name.as_str()) {
             target.insert(name, value.clone());
@@ -288,7 +317,7 @@ fn copy_request_headers(source: &HeaderMap, target: &mut HeaderMap) {
     );
 }
 
-fn copy_response_headers(source: &HeaderMap, target: &mut HeaderMap) {
+pub(crate) fn copy_response_headers(source: &HeaderMap, target: &mut HeaderMap) {
     for (name, value) in source {
         if !hop_header(name.as_str()) && name != header::CONTENT_LENGTH {
             target.insert(name, value.clone());
@@ -328,13 +357,13 @@ fn hop_header(name: &str) -> bool {
     )
 }
 
-fn encoded(headers: &HeaderMap) -> bool {
+pub(crate) fn encoded(headers: &HeaderMap) -> bool {
     headers
         .get(header::CONTENT_ENCODING)
         .is_some_and(|value| value.as_bytes() != b"identity")
 }
 
-fn headers_contain(headers: &HeaderMap, credential: &[u8]) -> bool {
+pub(crate) fn headers_contain(headers: &HeaderMap, credential: &[u8]) -> bool {
     headers.iter().any(|(name, value)| {
         crate::upstream_guard::contains(name.as_str().as_bytes(), credential)
             || crate::upstream_guard::contains(value.as_bytes(), credential)

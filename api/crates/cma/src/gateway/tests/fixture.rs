@@ -142,12 +142,13 @@ async fn bind(
     // Exercise the actual negotiation for each request. Runtime allocation and
     // credential custody remain fake; provider_keys below retains their effects.
     let plan = super::provider_fixture::service()
-        .put(
+        .put_with_tool_endpoint(
             &manager,
             &id,
             body["profile"].clone(),
             body["profile_digest"].as_str().unwrap(),
             &ProvidedCredential::new(body["agent_key"].as_str().unwrap().into()).unwrap(),
+            Some(body["tools"]["native_mcp_url"].as_str().unwrap().into()),
         )
         .await
         .unwrap();
@@ -304,8 +305,9 @@ pub(super) async fn bot() -> Bot {
         async fn resolve(
             &self,
             _: &SubjectId,
-            reference: &layer2_core::profiles::AgentProfileRef,
+            request: &CreateBot,
         ) -> Result<BotProfiles, BotError> {
+            let reference = &request.profile;
             use layer2_core::profiles::*;
             let agent = json!({"model":"fixture-model","thinking_effort":"x_high","permission_level":"guarded","skills":[],"system_prompt":"Reply to the event"});
             let sandbox = json!({"cpu_millis":1500,"memory_mib":2048,"nyxid_services":["ornn-api"],"agent_provider":"codex","model_access":"chronoai_managed",

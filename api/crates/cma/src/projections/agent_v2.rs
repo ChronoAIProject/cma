@@ -3,7 +3,7 @@ use super::*;
 impl AgentProjectionServices {
     pub(crate) fn agent_events_router(
         &self,
-        flags: crate::config::BridgeFeatureFlags,
+        flags: crate::config::FeatureFlags,
         updates: Arc<dyn AgentUpdateRecorder>,
     ) -> Router {
         let Some(commands) = &self.commands else {
@@ -13,7 +13,7 @@ impl AgentProjectionServices {
             layer1_public::agent_v2::AgentV2State::new(self.reads(), commands.clone())
                 .with_updates(updates)
                 .with_ui_transport(
-                    flags.enabled(crate::config::bridge_flags::BridgeFlag::V2UiTransport),
+                    flags.v2_ui_transport,
                     layer1_public::agent_v2::UiTransportDependencies {
                         responses: true,
                         controls: true,

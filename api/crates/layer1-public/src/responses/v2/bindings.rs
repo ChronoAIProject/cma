@@ -42,12 +42,23 @@ fn not_found() -> Box<Response> {
 fn binding_error(error: BindingError) -> Box<Response> {
     match error {
         BindingError::NotFound | BindingError::Forbidden => not_found(),
-        BindingError::Conflict => Box::new(super::error::error(
-            StatusCode::CONFLICT,
-            "conversation_not_ready",
-            "The binding conversation is not ready.",
-            Some("conversation"),
-        )),
+        // A reserved conversation is not admissible until its Agent is ready.
+        // Use the provider contract's retryable capacity response so a gateway
+        // keeps the original event and idempotency key during preparation.
+        BindingError::Conflict => {
+            let mut response = super::error::error(
+                StatusCode::TOO_MANY_REQUESTS,
+                "conversation_not_ready",
+                "The binding conversation is not ready.",
+                Some("conversation"),
+            );
+            // Worktree checkout and provider startup may take over a minute.
+            // Pace readiness retries within the default create-request budget.
+            response
+                .headers_mut()
+                .insert("retry-after", axum::http::HeaderValue::from_static("6"));
+            Box::new(response)
+        }
         _ => Box::new(super::error::unavailable()),
     }
 }

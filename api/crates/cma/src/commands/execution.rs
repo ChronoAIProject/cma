@@ -1,5 +1,3 @@
-use super::channel_control_execution::is_channel_control;
-use super::channel_execution::is_channel;
 use std::sync::Arc;
 
 use layer2_core::now_rfc3339;
@@ -12,10 +10,6 @@ use layer2_core::sandbox::{
 };
 
 pub(crate) struct ResourceCommandExecution {
-    pub channel_controls: Option<Arc<ChannelControlExecutionService>>,
-    pub channel_revival: Option<Arc<super::ChannelCommandRevival>>,
-    pub channel: Option<Arc<ChannelAgentCommandService>>,
-    pub invokes: Option<Arc<layer2_core::bridge::invoke::BridgeInvokeService>>,
     pub authority: Arc<dyn AgentCommandAuthorizer>,
     pub access: Arc<ResourceAccessService>,
     pub store: Arc<dyn AgentCommandWorkerStore>,
@@ -76,77 +70,9 @@ impl ResourceCommandExecution {
 
 #[async_trait::async_trait]
 impl AgentCommandExecution for ResourceCommandExecution {
-    async fn release_held(&self, command: &AdmittedAgentCommand) {
-        let _ = self.release_held_for_attempt(command).await;
-    }
-
-    async fn release_held_for_attempt(
-        &self,
-        command: &AdmittedAgentCommand,
-    ) -> Option<ChannelExecutionHandoff> {
-        if is_channel_control(command) {
-            if let Some(service) = &self.channel_controls {
-                let _ = service.release_held(command, &self.operations).await;
-            }
-            return None;
-        }
-        if !is_channel(command) {
-            return None;
-        }
-        let (Some(channel), Some(invokes)) = (&self.channel, &self.invokes) else {
-            return None;
-        };
-        if command.queue_expired(&now_rfc3339()) {
-            let _ = channel
-                .refuse_execution_hold(command, ChannelHoldRefusalReason::QueueTimeout)
-                .await;
-            return None;
-        }
-        match channel.authorize_execution(invokes, command).await {
-            Ok(authority) => {
-                let _ = self
-                    .operations
-                    .interrupt_channel_for_input(&authority, command)
-                    .await;
-                if channel
-                    .release_execution_hold(&authority, command)
-                    .await
-                    .is_ok()
-                {
-                    return channel.idle_execution_handoff(authority, command);
-                }
-            }
-            Err(ChannelCommandAdmissionError::Invoke(
-                layer2_core::bridge::invoke::BridgeInvokeError::Revoked,
-            )) => {
-                let _ = channel
-                    .refuse_execution_hold(command, ChannelHoldRefusalReason::GrantRevoked)
-                    .await;
-            }
-            Err(ChannelCommandAdmissionError::Invoke(
-                layer2_core::bridge::invoke::BridgeInvokeError::NotFound,
-            )) => {
-                // The authorization lookup does not identify which retained
-                // source disappeared. The refusal store independently proves
-                // each exact absence alongside the unchanged command write.
-                for reason in [
-                    ChannelHoldRefusalReason::TargetMissing,
-                    ChannelHoldRefusalReason::BridgeMissing,
-                    ChannelHoldRefusalReason::GrantMissing,
-                ] {
-                    if channel.refuse_execution_hold(command, reason).await.is_ok() {
-                        break;
-                    }
-                }
-            }
-            Err(_) => {}
-        }
-        None
-    }
-
     async fn check_queued(&self, command: &AdmittedAgentCommand) -> CommandReadiness {
-        if is_channel_control(command) {
-            return self.check_channel_control(command).await;
+        if matches!(command.receipt.envelope.actor, AgentActor::Channel { .. }) {
+            return CommandReadiness::Reject(CommandFailureCode::AuthorityRevoked);
         }
         if super::trigger_execution::is_trigger(command) {
             return self
@@ -159,9 +85,6 @@ impl AgentCommandExecution for ResourceCommandExecution {
                     _ => CommandReadiness::Retry,
                 });
         }
-        if is_channel(command) {
-            return self.observe_channel_readiness(command).await;
-        }
         match self.checked(command).await {
             Ok(_) => CommandReadiness::Ready,
             Err(readiness) => readiness,
@@ -169,31 +92,10 @@ impl AgentCommandExecution for ResourceCommandExecution {
     }
 
     async fn prepare_queued(&self, command: &AdmittedAgentCommand) {
-        if is_channel_control(command) {
+        if matches!(command.receipt.envelope.actor, AgentActor::Channel { .. }) {
             return;
         }
         if super::trigger_execution::is_trigger(command) {
-            return;
-        }
-        if is_channel(command) {
-            if let Ok(authority) = self.channel_checked(command).await {
-                if authority
-                    .fence()
-                    .proof()
-                    .resources()
-                    .lineage
-                    .agent
-                    .as_ref()
-                    .is_some_and(|agent| agent.conversation.active_turn.is_some())
-                {
-                    let _ = self
-                        .operations
-                        .interrupt_channel_for_input(&authority, command)
-                        .await;
-                } else if let Some(revival) = &self.channel_revival {
-                    revival.prepare(command, &authority).await;
-                }
-            }
             return;
         }
         if !matches!(
@@ -232,17 +134,14 @@ impl AgentCommandExecution for ResourceCommandExecution {
     }
 
     async fn execute(&self, command: &AdmittedAgentCommand) -> CommandAttempt {
-        if is_channel_control(command) {
-            return self.execute_channel_control(command).await;
+        if matches!(command.receipt.envelope.actor, AgentActor::Channel { .. }) {
+            return CommandAttempt::Reject(CommandFailureCode::AuthorityRevoked);
         }
         if super::trigger_execution::is_trigger(command) {
             return match self.operations.execute_trigger_claim(command).await {
                 Ok(_) => CommandAttempt::Finished,
                 Err(error) => classify(error),
             };
-        }
-        if is_channel(command) {
-            return self.execute_channel(command).await;
         }
         let authority = match self.checked(command).await {
             Ok(authority) => authority,
@@ -283,30 +182,6 @@ impl AgentCommandExecution for ResourceCommandExecution {
             }
             Err(error) => classify(error),
         }
-    }
-
-    async fn execute_with_handoff(
-        &self,
-        command: &AdmittedAgentCommand,
-        handoff: Option<ChannelExecutionHandoff>,
-    ) -> CommandAttempt {
-        if let (Some(handoff), Some(channel)) = (handoff, &self.channel) {
-            let started = tokio::time::Instant::now();
-            let resumed = channel.resume_idle_execution(handoff, command).await;
-            tracing::info!(
-                event = "channel_operation",
-                operation = "command_execution",
-                stage = "idle_handoff",
-                command_id = %command.receipt.envelope.command_id,
-                outcome = if resumed.is_ok() { "retained" } else { "full_authorization" },
-                elapsed_ms = started.elapsed().as_millis() as u64,
-                "Channel idle authorization handoff checked"
-            );
-            if let Ok(authority) = resumed {
-                return self.execute_channel_authorized(command, authority).await;
-            }
-        }
-        self.execute(command).await
     }
 }
 

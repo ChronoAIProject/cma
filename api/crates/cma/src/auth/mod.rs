@@ -9,12 +9,12 @@ use axum::http::HeaderMap;
 use layer2_core::{Authorization, Capability, StoreError, SubjectId};
 use tokio::sync::RwLock;
 
+pub mod actor_links;
+mod agent_keys;
 pub mod bearer;
 mod bearer_authorization;
 mod binding;
 mod bots;
-pub(crate) mod bridge_control_plane;
-pub(crate) mod channel_metadata;
 mod cookie_authorization;
 pub mod deferred_commands;
 pub mod entitlements;
@@ -35,6 +35,8 @@ mod refresh;
 mod sandbox_prerequisite;
 mod session_routes;
 mod signup_options;
+#[cfg(test)]
+pub(crate) mod test_resources;
 mod token;
 mod tokens;
 mod verification_error;
@@ -91,6 +93,8 @@ impl std::fmt::Debug for AuthMode {
 }
 
 pub struct AuthState {
+    bot_father_username: Option<String>,
+    agent_key_service_id: Option<String>,
     bindings: Option<Arc<layer2_core::sandbox::binding::BindingAccessService>>,
     pub(super) mode: AuthMode,
     /// Browser-facing NyxID origin used for registration handoffs.
@@ -147,7 +151,9 @@ impl AuthState {
             (AuthMode::Trusted { .. }, _) => String::new(),
         };
         Arc::new(Self {
+            bot_father_username: None,
             bindings: None,
+            agent_key_service_id: None,
             mode,
             nyxid_public_url,
             records,
@@ -211,11 +217,20 @@ impl AuthState {
         &self,
         headers: &HeaderMap,
     ) -> Result<Option<RequestAuth>, StoreError> {
-        if self.bindings.is_some() {
-            if let Some(token) = bearer::bearer_token(headers) {
-                if token.starts_with("nyx_") || token.starts_with("nyxid_ag_") {
-                    return self.binding_request(token).await;
+        if let Some(token) = bearer::bearer_token(headers) {
+            if agent_keys::is_agent_key(&token) {
+                if self.bindings.is_some() {
+                    if let Some(request) = self.binding_request(token.clone()).await? {
+                        return Ok(Some(request));
+                    }
+                    if self.is_known_binding_key(&token).await? {
+                        return Ok(None);
+                    }
                 }
+                if self.agent_key_service_id.is_none() {
+                    return Ok(None);
+                }
+                return identity::request_for_bearer(self, token).await;
             }
         }
         match &self.mode {

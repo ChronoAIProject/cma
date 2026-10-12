@@ -18,6 +18,10 @@ use super::model::{sha256_hex, ArchiveIdentity, ManifestDoc};
 use super::MongoCheckpointObjectStore;
 #[path = "channel_retention_tests.rs"]
 mod channel_retention;
+#[path = "deletion_fence_tests.rs"]
+mod deletion_fence_tests;
+#[path = "legacy_history_tests.rs"]
+mod legacy_history_tests;
 
 struct FailedDeleteStore {
     delegate: std::sync::Arc<dyn crate::store::CheckpointBlobStore>,

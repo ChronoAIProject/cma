@@ -72,7 +72,26 @@ pub fn router(auth: Arc<AuthState>) -> Router {
         .route("/auth/session", get(read))
         .route("/auth/signup-options", get(signup_options))
         .route("/auth/logout", get(logout))
+        .merge(super::actor_links::routes())
         .with_state(auth)
+}
+
+/// Reuse the established browser-bound PKCE flow for an opaque actor-link intent.
+pub(super) async fn actor_login(auth: Arc<AuthState>, link_id: &str) -> Response {
+    if !opaque_path_segment(link_id) || link_id.len() > 100 {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let intent = match auth.actor_login_intent(link_id).await {
+        Ok(intent) => intent,
+        Err(_) => return StatusCode::GONE.into_response(),
+    };
+    begin_login_with_intent(
+        auth,
+        Some(format!("/auth/bot-father/link/{link_id}/complete")),
+        None,
+        intent,
+    )
+    .await
 }
 
 async fn login(State(auth): State<Arc<AuthState>>, Query(params): Query<LoginParams>) -> Response {
@@ -100,6 +119,15 @@ async fn begin_login(
     return_to: Option<String>,
     screen: Option<LoginScreen>,
 ) -> Response {
+    begin_login_with_intent(auth, return_to, screen, None).await
+}
+
+async fn begin_login_with_intent(
+    auth: Arc<AuthState>,
+    return_to: Option<String>,
+    screen: Option<LoginScreen>,
+    actor_link_intent: Option<super::actor_links::ActorLoginIntent>,
+) -> Response {
     let AuthMode::Provider {
         client_id,
         public_url,
@@ -121,6 +149,7 @@ async fn begin_login(
         browser_binding: SecretDigest::identify(BINDING_DOMAIN, &browser_binding),
         verifier: SecretValue::new(verifier.clone()),
         return_to,
+        actor_link_intent,
         expires_at: SystemTime::now() + ATTEMPT_LIFETIME,
     };
     if let Err(error) = auth.store.put_login_attempt(attempt).await {
@@ -302,13 +331,24 @@ async fn callback(
         return store_failure();
     }
     auth.note_sign_in(&subject, &profile).await;
-    let browser_login = match auth.issue_browser_login(subject).await {
+    let browser_login = match auth.issue_browser_login(subject.clone()).await {
         Ok(value) => value,
         Err(error) => {
             tracing::error!(error = %error, "could not persist browser login");
             return store_failure();
         }
     };
+    if auth
+        .retain_actor_login_completion(&attempt, &browser_login, &subject)
+        .await
+        .is_err()
+    {
+        return login_failure(
+            StatusCode::FORBIDDEN,
+            "actor_login_intent_expired",
+            Some((&cookie_name, auth.secure_cookies())),
+        );
+    }
     let mut response = Redirect::to(attempt.return_to.as_deref().unwrap_or("/")).into_response();
     response.headers_mut().append(
         header::SET_COOKIE,
@@ -355,6 +395,9 @@ fn app_return_target(value: &str) -> Result<String, ()> {
         ["triggers", "manage", trigger_id, "embed"] if opaque_path_segment(trigger_id) => {}
         ["agents", agent_id] if opaque_path_segment(agent_id) => {}
         ["sandboxes", sandbox_id] if opaque_path_segment(sandbox_id) => {}
+        ["bots"] => {}
+        ["bots", bot_id] if opaque_path_segment(bot_id) => {}
+        ["auth", "bot-father", "link", intent, "complete"] if opaque_path_segment(intent) => {}
         ["profiles"] | ["marketplace"] => {}
         ["profiles" | "marketplace", kind, profile_id]
             if matches!(*kind, "agent" | "workspace" | "sandbox")
@@ -414,44 +457,8 @@ fn login_failure(
 }
 
 #[cfg(test)]
-mod tests {
-    use axum::{body::Body, http::Request};
-    use tower::ServiceExt as _;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn trusted_mode_keeps_the_browser_auth_routes_available() {
-        let auth = AuthState::in_memory(
-            AuthMode::Trusted {
-                subject: "developer".into(),
-            },
-            None,
-        );
-        let app = router(auth.clone()).layer(axum::middleware::from_fn_with_state(
-            auth,
-            crate::auth::attach_subject,
-        ));
-        let login = app
-            .clone()
-            .oneshot(Request::get("/auth/login").body(Body::empty()).unwrap())
-            .await
-            .unwrap();
-        assert_eq!(login.status(), StatusCode::SEE_OTHER);
-        let current = app
-            .oneshot(Request::get("/auth/session").body(Body::empty()).unwrap())
-            .await
-            .unwrap();
-        assert_eq!(current.status(), StatusCode::OK);
-    }
-
-    #[test]
-    fn pkce_challenges_and_query_values_are_url_safe() {
-        let challenge = code_challenge("verifier");
-        assert!(!challenge.contains('='));
-        assert_eq!(urlencode("a/b"), "a%2Fb");
-    }
-}
+#[path = "flow_tests.rs"]
+mod tests;
 
 #[cfg(test)]
 #[path = "flow_registration_tests.rs"]

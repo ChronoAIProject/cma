@@ -1,63 +1,53 @@
-#[tokio::main]
-async fn main() {
-    let arguments: Vec<_> = std::env::args().skip(1).collect();
-    if arguments.first().map(String::as_str) == Some("--import-legacy-records")
-        && arguments.len() == 2
-    {
-        if let Err(error) = import_records(&arguments[1]).await {
-            eprintln!("{error}");
-            std::process::exit(1);
-        }
-        return;
-    }
+use std::ffi::OsString;
+
+const USAGE: &str = "usage: cmaeg [--print-openapi]";
+
+fn main() {
+    // `args_os` never panics: `args` aborts with exit 101 on a non-UTF-8
+    // argument before any usage handling could run.
+    let arguments: Vec<OsString> = std::env::args_os().skip(1).collect();
+    // Modes that need no runtime are matched on the raw arguments first, so
+    // they run before one exists.
     if arguments == ["--print-openapi"] {
         print!("{}", cmaeg::openapi::snapshot());
         return;
     }
-    if matches!(
-        arguments.first().map(String::as_str),
-        Some("--migrate" | "--print-runtime-role" | "--print-migration-role")
-    ) && arguments.len() == 1
-    {
-        if let Err(error) = database_command(&arguments[0]).await {
-            eprintln!("{error}");
+    let Some(arguments) = arguments
+        .iter()
+        .map(|argument| argument.to_str())
+        .collect::<Option<Vec<_>>>()
+    else {
+        usage();
+    };
+    if !arguments.is_empty() {
+        usage();
+    }
+    serve();
+}
+
+fn usage() -> ! {
+    eprintln!("{USAGE}");
+    std::process::exit(2);
+}
+
+fn serve() {
+    cmaeg::init_logging();
+    cmaeg::install_panic_hook();
+    // Both failures exit through `process::exit`: threads a failed prewarm
+    // left parked on its barrier end with the process, before any listener binds.
+    let runtime = match cmaeg::runtime::build() {
+        Ok(runtime) => runtime,
+        Err(cmaeg::runtime::RuntimeError::Prewarm) => {
+            tracing::error!("CMAEG blocking pool prewarm failed");
             std::process::exit(1);
         }
-        return;
-    }
-    if !arguments.is_empty() {
-        eprintln!(
-            "usage: cmaeg [--print-openapi|--migrate|--print-runtime-role|--print-migration-role]"
-        );
-        std::process::exit(2);
-    }
-    cmaeg::init_logging();
-    if let Err(error) = cmaeg::run().await {
+        Err(error) => {
+            tracing::error!(%error, "CMAEG runtime unavailable");
+            std::process::exit(1);
+        }
+    };
+    if let Err(error) = runtime.block_on(cmaeg::run()) {
         tracing::error!(%error, "CMAEG stopped");
         std::process::exit(1);
     }
-}
-
-async fn database_command(command: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let database = std::env::var(cmaeg::CMAEG_MONGODB_DATABASE)?;
-    if command != "--migrate" {
-        println!(
-            "{}",
-            cmaeg::records::mongo::role(&database, command == "--print-migration-role")
-        );
-        return Ok(());
-    }
-    let client = mongodb::Client::with_uri_str(std::env::var(cmaeg::CMAEG_MONGODB_URI)?).await?;
-    cmaeg::records::mongo::migrate(&client.database(&database)).await?;
-    Ok(())
-}
-
-async fn import_records(path: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let database = std::env::var(cmaeg::CMAEG_MONGODB_DATABASE)?;
-    let client = mongodb::Client::with_uri_str(std::env::var(cmaeg::CMAEG_MONGODB_URI)?).await?;
-    let count =
-        cmaeg::records::import::import(&client.database(&database), std::path::Path::new(path))
-            .await?;
-    println!("Imported and verified {count} sealed records");
-    Ok(())
 }

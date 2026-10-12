@@ -6,7 +6,9 @@ import { CmaClientProvider } from './api/context';
 import { Console } from './Console';
 import { agentClient } from './test/agent';
 import { sandboxFixture } from './test/hierarchy';
-import { ApiError } from '@chronoai/cma-sdk';
+import { ApiError, createClient } from '@chronoai/cma-sdk';
+import { WIRE_AGENT } from './test/rest';
+import { chooseOption } from './test/select';
 
 const OWNER: User = {
   id: 'owner',
@@ -93,5 +95,66 @@ it('hides creation controls for visitors while retaining their trigger-created h
   );
   expect(screen.queryByRole('button', { name: 'New agent' })).not.toBeInTheDocument();
   expect(screen.getByRole('heading', { name: 'Welcome to CMA' })).toBeInTheDocument();
+});
+
+it('hides personal creation in organization scope without replacing the open conversation or draft', async () => {
+  const fetch = vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(String(input));
+    if (url.pathname === '/api/v1/organizations')
+      return Response.json({
+        items: [{ id: 'org_research', role: 'admin', display_name: 'Research' }],
+      });
+    if (url.pathname === '/api/v1/agents/agt_1')
+      return Response.json({ ...WIRE_AGENT, id: 'agt_1' });
+    if (url.pathname.includes('/resource-access/'))
+      return Response.json({
+        owner: { kind: 'person', is_current_person: true },
+        capabilities: ['view_details'],
+        policy_revision: 1,
+        revalidate_at: null,
+      });
+    if (url.pathname === '/api/v1/sandboxes') {
+      expect(url.searchParams.get('organization')).toBe('org_research');
+      return Response.json({ items: [] });
+    }
+    if (url.pathname.endsWith('/channel-usage'))
+      return Response.json({
+        agent_id: 'agt_1',
+        channel_usage: {
+          active: false,
+          has_history: false,
+          first_used_at: null,
+          last_used_at: null,
+        },
+      });
+    throw new Error('Unexpected scope-test path: ' + url.pathname);
+  });
+  const resourceViews = createClient({ baseUrl: 'https://fixture.invalid', fetch });
+  const create = vi.fn();
+  render(
+    <CmaClientProvider client={agentClient({ resourceViews })}>
+      <Console
+        user={OWNER}
+        route={{ kind: 'agent', agentId: 'agt_1' }}
+        onNavigate={vi.fn()}
+        onSignOut={vi.fn()}
+        onCreate={create}
+      />
+    </CmaClientProvider>,
+  );
+  const actor = userEvent.setup();
+  const composer = await screen.findByRole('textbox', { name: 'Message' });
+  await actor.type(composer, 'Retain my personal draft');
+  expect(await screen.findByRole('button', { name: 'New agent' })).toBeInTheDocument();
+  await chooseOption(actor, 'Navigation scope', 'Research');
+  await waitFor(() =>
+    expect(screen.queryByRole('button', { name: 'New agent' })).not.toBeInTheDocument(),
+  );
+  expect(screen.getByRole('textbox', { name: 'Message' })).toBe(composer);
+  expect(composer).toHaveValue('Retain my personal draft');
+  expect(create).not.toHaveBeenCalled();
+  await chooseOption(actor, 'Navigation scope', 'Personal');
+  expect(screen.getByRole('button', { name: 'New agent' })).toBeInTheDocument();
+  expect(screen.getByRole('textbox', { name: 'Message' })).toBe(composer);
 });
 import './test/connectedAccounts';

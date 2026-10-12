@@ -2,12 +2,6 @@
 
 <!-- nav: 11 Reference -->
 
-`bridges` exposes `list`, `read`, `choices`, `creationTarget`, `configuration`, `create`, `update`,
-`control`, `validate`, `importKey` and `revokeKey` for bridge setup. Its explicit
-consent methods are `listInvokeGrants`, `readInvokeGrant`, `invokeReadiness`,
-`issueInvokeGrant` and `revokeInvokeGrant`. See [Bridge setup](bridges.md) for
-exact target consent, current authority, revision and cancellation semantics.
-
 `createClient(config)` returns a `Cma` with the following public resources:
 
 | Resource                                                | Methods                                                                                                                                                                                                                                           |
@@ -415,34 +409,71 @@ explicit `delete` and `cancel` helpers preserve the server's
 `responses_field_unsupported` problem as `ApiError`; neither operation is
 advertised as a supported Agent action.
 
-`bridges.listAllocations`, `readChildCleanup` and `requestChildCleanup` expose
-explicit child removal. `BridgeCleanupAllocationPage` has a nullable opaque
-`next_cursor`, including on empty or short filtered pages. The cleanup request
-pins both observed revisions and `remove_child`; HTTP 202 returns an immutable
-`BridgeChildCleanupReceipt` within current `BridgeChildCleanupStatus`. Retain the
-exact request and 200-character-bounded key after uncertain responses. Capacity
-is released only at `complete`, with Workspace and history retained. See
-[Bridge setup](bridges.md#explicit-child-cleanup) for consent and replay examples.
-
-### Separate owned Workspace cleanup
-
-`bridges.readWorkspaceCleanup` reads `BridgeWorkspaceCleanupStatus` for one allocation;
-`bridges.requestWorkspaceCleanup` submits the independent `BridgeWorkspaceCleanupRequest`.
-The request pins three revisions and the completed child receipt, with only
-`BridgeWorkspaceCleanupAction`'s `remove_owned_workspace` action.
-`BridgeWorkspaceCleanupReceipt`, `BridgeWorkspaceCleanupProgress`, and
-`BridgeWorkspaceCleanupHold` keep acceptance, current eligibility and permanent
-completion distinct. Both methods use the separate `workspace-cleanup` route;
-child `remove_child` retains its original Workspace-preserving scope. See
-[Bridge management](bridges.md#separate-owned-workspace-cleanup).
-
-## Source-control consent
-
-`bridges.readSourceControls(grantId, options?)` and `bridges.setSourceControls(grantId, request, command)` observe and record separate original-sender consent. Types: `BridgeSourceControlAction`, `BridgeSourceControlRequest`, `BridgeSourceControlPolicy`, `BridgeSourceControlState`, `BridgeSourceControlReceipt`, `BridgeSourceControlScope`, and `BridgeSourceControlApprovalMode`. Read absence is required null. PUT returns exactly 200. Consent never demonstrates runtime control support. See [Bridges](bridges.md) for revision bounds and exact-request recovery.
-
 Encrypted gateway records are available through `client.gatewayRecords.put/get/list/delete`. These operations require gateway management authority. `blob` is base64 ciphertext; creation uses `expected_version: null`, and replacement supplies the retained version. They use version preconditions without an Idempotency-Key header.
 
 Provider binding management uses `client.providerBindings.put/get/delete/ensureConversation/deleteConversation`. Supply the complete profile snapshot and digest for PUT. These gateway-only operations require both management capabilities; use the scoped binding credential for Responses and immutable event-context reads. Binding responses never contain the supplied credential.
+
+## CMA Event Gateway
+
+`Cmaeg` is an independent client configured with the gateway origin, without a
+`/v1` suffix. Its operations are `createChannel`, `getChannel`, `recoverChannel`,
+`updateChannel`, `deleteChannel`, `testChannel`, `rekeyChannel`, `postEvent`,
+`streamEvent`, `replyToEvent`, `updateMessage`, `sendTyping` and `readEventContext`.
+Gateway wire types and `signWebhook` are exported under `cmaeg`.
+
+Connection setup uses `getChannelCapabilities`, `createChannelConnection`,
+`listChannelConnections`, `getChannelConnection`, and `cancelChannelConnection`.
+Use the creator-token client and supply `{agentKey, owner?}` to creation: the
+separate agent key must authorize the originating `event_ref`. Reserve the
+request's `record_id` before creation and retain it for retries. Owner selection
+is per operation; omit `owner` for personal resources. Listing accepts `after`
+and returns one page; follow `next_after` even when `items` is empty. Channel
+creation/update accepts `connection_ref` and `connection_admission`. Native
+Telegram source, credential and webhook endpoint fields are typed as well.
+
+```ts
+import { Cmaeg, type cmaeg } from '@chronoai/cma-sdk';
+
+export async function reply(
+  gatewayOrigin: string,
+  agentKey: string,
+  eventRef: string,
+  text: string,
+) {
+  const gateway = new Cmaeg({ baseUrl: gatewayOrigin, credential: () => agentKey });
+  const message: cmaeg.OutboundMessage = { text };
+  return gateway.replyToEvent(eventRef, message);
+}
+```
+
+Use a separate creator-token client for management. `createChannel` accepts an
+optional `{idempotencyKey}`; reserve `record_id` in its body for recovery across
+replicas. Keep the complete request after uncertainty and reconcile with
+`recoverChannel(recordId)`. `updateChannel` replaces the complete policy and
+requires `expected_version`; `deleteChannel(id, expectedVersion)` sends that
+version in the query. Omitted/null update credentials retain their current values.
+A stale mutation throws `ApiError` with `code === 'conflict'`.
+
+`postEvent` and `streamEvent` accept a structured `cmaeg.CloudEvent` plus optional
+`{webhook:{secret,id,timestamp}}`. The timestamp is decimal Unix seconds; the
+configured base64 secret string is used as UTF-8 without decoding it. The client
+snapshots the event before signing and sends those exact JSON bytes. HMAC requests
+omit creator credentials and cookies. `cmaeg.signWebhook(secret,id,timestamp,body)`
+returns the three Standard Webhooks headers for caller-owned exact body bytes.
+
+`streamEvent` is an async iterator of `GatewayStreamEvent`. It preserves delta,
+message, completed, failed and terminal `sync_backpressure` outcomes, validates
+stable event/conversation identity, and treats EOF before completion as uncertain.
+`timeoutMs` bounds the complete stream, and `signal` cancels observation. Neither
+cancellation nor early iterator return cancels the admitted provider turn. Streams
+have no Last-Event-ID replay and are never automatically retried or reconnected.
+
+Replies and updates return delivery/rendering receipts; inspect `delivery.outcome`
+and `rendering` before claiming delivery or native UI support. Typing can return
+`unsupported`. Event context contains the full persisted activity. Channel, event
+and message references remain opaque and must not be logged. No redirect or
+automatic mutation retry is performed. Unknown response properties are ignored;
+CloudEvents extension attributes are retained.
 
 ## Owner Bots
 
@@ -450,10 +481,17 @@ Provider binding management uses `client.providerBindings.put/get/delete/ensureC
 `enable`, `rotateKeys` and `delete`. Use the current renewable CMA sign-in with
 `cma:bot:manage`; independent agent keys cannot borrow the owner's stored login.
 The owner must already have registered a personal Telegram bot in NyxID and
-connected the profile/model services plus the `cmaeg` tools service.
+connected the profile's explicit services and managed model service. CMA attaches
+CMAEG tools natively with the Bot's own agent key; no separate tools catalogue
+connection is required.
 
 Creation takes a name, `nyxid_bot_id`, a published Agent profile reference, an
-admission policy and a reply policy. Retain the creation idempotency key across
+admission policy and a reply policy. Optional `sandbox_profile` and
+`workspace_profile` references select personally owned published environments;
+each omitted reference pins its platform default. Bot responses include the
+pinned environment references (older servers may omit them). Custom profiles
+preserve installed software, service access, repository and setup commands.
+Retain the creation idempotency key across
 uncertain outcomes. HTTP 201 returns the durable Bot in `creating`; poll `get`
 for `active` or `failed` and inspect `operation.step` for cleanup progress.
 Other mutations return 202 with progress. A deleted Bot becomes 404 only after
@@ -462,3 +500,32 @@ The `test` method runs a synthetic provider turn and sends no Telegram message.
 
 Bot responses contain no credential bytes. Preserve channel IDs and callback
 URLs exactly; never decode, reconstruct or log opaque gateway references.
+
+## Bot Father operations
+
+`client.botSetups.advance` reads an attested source event and returns the current
+setup view. `client.botSetups.act` lets the conversational Agent select a typed
+`view`, `draft`, `choose`, `customize`, or `confirm` operation. Both require the
+configured Bot Father binding credential and the original opaque `event_ref`.
+Operations carry `request.request_id` for replay protection; every operation
+except `view` also needs `request.expected` with the latest `setup_id` and
+`revision`. Preserve the same request ID and content when retrying an uncertain
+result. A changed revision requires reading the current view and making a new
+decision.
+
+The view's `confirmation_digest` identifies the exact reviewed plan. Send that
+digest in a `confirm` action only after the user has confirmed that plan. CMA
+independently checks the attested user confirmation; an Agent-selected action
+cannot replace consent, establish a user identity, or borrow a different user's
+credentials. Ordinary chat does not require calling either setup operation.
+
+## Agent-delegated operations
+
+`client.agentDelegations.identity({ event_ref })` resolves a signed-in source
+actor or returns CMA's browser-consent URL. `client.agentDelegations.operate()`
+accepts the same event capability, a canonical local `path`, `method`, optional
+`body` and optional resource `owner`. Mutations require `idempotency_key`.
+These methods require the configured Bot Father binding credential; they do not
+accept a user token or claimed grant ID. The operation result is `{ status, body }`;
+inspect the inner status before treating a mutation as successful. A CMA callback
+continuation is accepted only by CMA APIs, never gateway reply tools.

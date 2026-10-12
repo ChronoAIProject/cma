@@ -805,6 +805,7 @@ pub(super) fn frozen_inputs(
     let workspace_id = layer2_core::WorkspaceProfileId(format!("wkp_{suffix}"));
     let sandbox_id = layer2_core::SandboxProfileId(format!("sbp_{suffix}"));
     let agent_content = AgentProfileContent {
+        isolated_agent: false,
         model: Some(format!("model-{suffix}")),
         thinking_effort: ThinkingEffort::Medium,
         permission_level: PermissionLevel::Guarded,

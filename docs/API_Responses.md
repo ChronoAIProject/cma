@@ -40,7 +40,11 @@ For these callers, `conversation` may name the external conversation ID or its
 mapped `agt_` ID. The Agent URL alias and body may use different IDs when both
 resolve to the same mapped Agent. Missing and foreign mappings return
 `404 conversation_not_found`; a provisioning mapping returns
-`409 conversation_not_ready`. Conversation GET routes accept the same aliases.
+`429 conversation_not_ready` with `Retry-After: 1`. A concurrent reservation
+snapshot change returns `429 agent_command_admission_conflict` with the same
+retry hint. Retry the exact request and idempotency key; changed input still
+returns `409 agent_command_key_conflict`, and non-admissible Agent states remain
+409. Conversation GET routes accept the same aliases.
 Responses retain the mapped Agent ID as their conversation identity.
 
 Binding command receipts retain the binding identity and environment generation,

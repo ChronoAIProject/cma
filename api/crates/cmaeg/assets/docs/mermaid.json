@@ -1,0 +1,1 @@
+{"theme": "neutral", "securityLevel": "strict", "themeVariables": {"fontFamily": "system-ui, sans-serif", "fontSize": "16px", "primaryColor": "#f3e9d7", "primaryBorderColor": "#9b8055", "lineColor": "#716248", "primaryTextColor": "#211b12"}, "flowchart": {"htmlLabels": false}, "sequence": {"useMaxWidth": false, "actorFontSize": 16, "messageFontSize": 16, "noteFontSize": 15}}

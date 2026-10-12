@@ -222,8 +222,6 @@ async fn quiet_reattachment_durably_repairs_anchor_before_another_semantic_commi
         .commit_agent_conversation(AgentConversationMutation {
             command_claim: None,
             execution_fence: None,
-            channel_execution_fence: None,
-            channel_control_execution_fence: None,
             trigger_execution_fence: None,
             admission_guard: None,
             expected_agent_revision: current.revision,
@@ -349,8 +347,6 @@ async fn lost_receipt_replay_after_publication_restores_prefix_without_duplicate
         .commit_agent_conversation(AgentConversationMutation {
             command_claim: None,
             execution_fence: None,
-            channel_execution_fence: None,
-            channel_control_execution_fence: None,
             trigger_execution_fence: None,
             admission_guard: None,
             expected_agent_revision: current.revision,

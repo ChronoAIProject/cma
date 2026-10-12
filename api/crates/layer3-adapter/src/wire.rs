@@ -129,6 +129,7 @@ pub struct AgentHomeRemoveReceipt {
 pub enum WireOperation {
     CacheSkillArchive,
     RuntimeStatus,
+    ToolProxyStatus,
     WorkspaceRemovalSupport,
     ReconcileWorkspaceRemoval,
     Install,
@@ -187,6 +188,7 @@ pub enum CheckpointUploadResponse {
 pub enum RequestFrame {
     CacheSkillArchive(crate::SkillArchive),
     RuntimeStatus(crate::RuntimeStatusRequest),
+    ToolProxyStatus(crate::ToolProxyRequest),
     WorkspaceRemovalSupport(crate::RuntimeStatusRequest),
     ReconcileWorkspaceRemoval(crate::WorkspaceRemovalRequest),
     Install(InstallRequest),
@@ -214,6 +216,7 @@ impl RequestFrame {
         match self {
             Self::CacheSkillArchive(_) => WireOperation::CacheSkillArchive,
             Self::RuntimeStatus(_) => WireOperation::RuntimeStatus,
+            Self::ToolProxyStatus(_) => WireOperation::ToolProxyStatus,
             Self::WorkspaceRemovalSupport(_) => WireOperation::WorkspaceRemovalSupport,
             Self::ReconcileWorkspaceRemoval(_) => WireOperation::ReconcileWorkspaceRemoval,
             Self::Install(_) => WireOperation::Install,
@@ -244,6 +247,7 @@ impl RequestFrame {
 pub enum ResponseFrame {
     CacheSkillArchive { sha256: String },
     RuntimeStatus(crate::RuntimeStatus),
+    ToolProxyStatus(crate::ToolProxyStatus),
     WorkspaceRemovalSupport(crate::WorkspaceRemovalSupport),
     ReconcileWorkspaceRemoval(crate::WorkspaceRemovalObservation),
     Install(InstallReceipt),

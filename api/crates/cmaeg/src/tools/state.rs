@@ -191,7 +191,24 @@ impl ToolsState {
         observation.finish(if result.is_ok() { "success" } else { "error" });
         result
     }
-    async fn deliver<T>(
+    /// Verify an ingress snapshot before any provider command exists. No local
+    /// cache or provider read participates in this cryptographic attestation.
+    pub async fn verify_context(
+        &self,
+        caller: AgentCaller,
+        reference: &EventRef,
+        activity: cmaeg_core::activity::Activity,
+    ) -> Result<ContextResponse, Problem> {
+        activity
+            .validate()
+            .map_err(|_| invalid("invalid activity"))?;
+        let (channel, event) = self.authorize_event(caller, reference).await?;
+        if !event.verifies_activity(&activity) {
+            return Err(invalid("activity does not match the sealed event"));
+        }
+        Ok(super::context::project(&channel, &event, activity, true))
+    }
+    pub(super) async fn deliver<T>(
         &self,
         command: DeliveryCommand,
         received: oneshot::Receiver<T>,
@@ -227,7 +244,7 @@ impl ToolsState {
         .map_err(|_| Problem::new(ProblemCode::Internal, 504, "delivery_timeout"))?
     }
 }
-fn validate(message: &OutboundMessage) -> Result<(), Problem> {
+pub(super) fn validate(message: &OutboundMessage) -> Result<(), Problem> {
     message.validate().map_err(|error| {
         Problem::new(
             if error.message.contains("32768") {

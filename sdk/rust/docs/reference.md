@@ -22,8 +22,6 @@ returns `Conformance`, containing `service`, `status`, and the currently exposed
 | `worktrees()` | `list`, `read` |
 | `agents()` | `list`, `read`, `create`, `input`, `steer`, `interrupt`, `answer_approval`, `stop`, `delete`, `events`, `transcript`, `usage`, `resources` |
 | `auth()` | `read_session`, anonymous `read_signup_options`, navigation-only `login_url`, `logout_url` |
-| `bridges()` | `list`, `read`, `choices`, `configuration`, `create`, `update`, `control`, `validate`, `import_key`, `revoke_key` |
-| `bridges()` explicit consent | `list_invoke_grants`, `read_invoke_grant`, `invoke_readiness`, `issue_invoke_grant`, `revoke_invoke_grant` |
 | `triggers()` | `list`, `read`, `create`, `save`, `delete`, `publish`, `retire`, `list_revisions`, `list_placements`, `create_placement`, `retire_placement`, `embed`, `stats` |
 | `launches()` | `create_or_resume`, `list`, `read`, `start`, `cancel`, `requirements`, `events`, `stream`, `create_connection`, `read_connection` |
 | `agui()` | `read_capabilities`, `read_sandbox`, `run`, `events` |
@@ -52,13 +50,6 @@ marketplace results return `ResourcePage<T>`, whose `next` is the exclusive
 cursor for the next call. Child Workspace and Worktree lists return
 `ResourceList<T>`. `SandboxListOptions` and `AgentListOptions` add typed filters;
 `MarketplaceListOptions` adds search text.
-
-`BridgeListOptions` adds current organization scope. Bridge inventory returns
-`BridgePage::next_cursor`, preserves strict identity ordering and validates the
-requested owner scope. Bridge management keys have a 200-byte bound. Selected
-key import uses a borrowed `ImportBridgeKeyRequest` with redacted Debug; the
-client retains no bot-key value. See [Bridge setup](bridges.md) for configuration,
-explicit context sharing, current custody and accepted-work controls.
 
 `EventOptions` holds an exclusive durable sequence `after` and optional `limit`.
 Sandbox events return `Vec<SandboxEvent>`; Agent events return
@@ -124,33 +115,6 @@ Chronological transcript `messages` are required typed entries with sequence,
 user/assistant role, content, and append timestamp; preserve this order rather
 than concatenating the owner/Agent summary fields.
 
-
-`bridges().list_allocations`, `read_child_cleanup` and `request_child_cleanup`
-expose explicit child removal. `BridgeCleanupAllocationPage::next_cursor` stays
-opaque and may be present on empty or short filtered pages. The cleanup request
-pins both observed revisions and `RemoveChild`; HTTP 202 returns an immutable
-`BridgeChildCleanupReceipt` within current `BridgeChildCleanupStatus`. Retain the
-exact request and 200-byte-bounded key after uncertain responses. Capacity is
-released only at `Complete`, with Workspace and history retained. See
-[Bridge setup](bridges.md#explicit-child-cleanup) for consent and replay examples.
-
-
-### Separate owned Workspace cleanup
-
-`bridges.read_workspace_cleanup` reads `BridgeWorkspaceCleanupStatus` for one allocation;
-`bridges.request_workspace_cleanup` submits the independent `BridgeWorkspaceCleanupRequest`.
-The request pins three revisions and the completed child receipt, with only
-`BridgeWorkspaceCleanupAction`'s `remove_owned_workspace` action.
-`BridgeWorkspaceCleanupReceipt`, `BridgeWorkspaceCleanupProgress`, and
-`BridgeWorkspaceCleanupHold` keep acceptance, current eligibility and permanent
-completion distinct. Both methods use the separate `workspace-cleanup` route;
-child `remove_child` retains its original Workspace-preserving scope. See
-[Bridge management](bridges.md#separate-owned-workspace-cleanup).
-
-## Source-control consent
-
-`bridges().read_source_controls(grant_id)` and `bridges().set_source_controls(grant_id, &request, &key)` observe and record separate original-sender consent. Types: `BridgeSourceControlAction`, `BridgeSourceControlRequest`, `BridgeSourceControlPolicy`, `BridgeSourceControlState`, `BridgeSourceControlReceipt`, `BridgeSourceControlScope`, and `BridgeSourceControlApprovalMode`. Read absence is required null. PUT returns exactly 200. Consent never demonstrates runtime control support. See [Bridges](bridges.md) for revision bounds and exact-request recovery.
-
 `read_agent_card()` reads typed public provider discovery without credentials.
 `unsupported().agent_card()` remains a compatibility alias and returns the same
 card; older servers' named refusals remain typed API errors.
@@ -159,6 +123,66 @@ Encrypted gateway records are available through `client.gateway_records().put/ge
 
 Provider binding management uses `client.provider_bindings().put/get/delete/ensure_conversation/delete_conversation`. Supply the complete profile snapshot and digest for PUT. These gateway-only operations require both management capabilities; use the scoped binding credential for Responses and immutable event-context reads. Binding responses never contain the supplied credential.
 
+## CMA Event Gateway
+
+`cma_sdk::cmaeg::Cmaeg` is an independent client configured with the gateway origin,
+without `/v1`. Methods are `create_channel`, `get_channel`, `recover_channel`,
+`update_channel`, `delete_channel`, `test_channel`, `rekey_channel`, `post_event`,
+`stream_event`, `reply_to_event`, `update_message`, `send_typing` and
+`read_event_context`. Wire types live in `cma_sdk::cmaeg::types`.
+
+Connection setup uses `get_channel_capabilities`, `create_channel_connection`,
+`list_channel_connections`, `get_channel_connection`, and
+`cancel_channel_connection`. Use the creator-token client and pass the separate
+originating channel agent key to creation. `ConnectionOptions { owner: Some(id) }`
+selects an organization for one operation; the default selects the creator.
+Reserve and retain the request's `record_id` for durable retries. Listing returns
+one page; follow `next_after` even when `items` is empty. Channel creation/update
+includes optional `connection_ref` and `connection_admission`. Native Telegram
+source, credential and webhook endpoint fields are available in the wire types.
+
+```rust
+use cma_sdk::cmaeg::{Cmaeg, types::OutboundMessage};
+
+async fn reply(origin: &str, agent_key: &str, event_ref: &str) -> cma_sdk::Result<()> {
+    let gateway = Cmaeg::builder(origin)?.bearer_token(agent_key)?.build()?;
+    let receipt = gateway.reply_to_event(event_ref, &OutboundMessage {
+        text: Some("Received".into()), blocks: None, reply_to: None,
+    }).await?;
+    // Inspect receipt.delivery and receipt.rendering before claiming delivery.
+    let _ = receipt;
+    Ok(())
+}
+```
+
+Configure a separate creator-token client for management, and a dedicated CMA
+service-token client for `rekey_channel`. Channel requests contain a redacted
+`Secret` wrapper for credential strings. Other gateway documents omit `Debug`
+because they can contain opaque channel, event or message references. Never log
+those references or credentials.
+
+`create_channel(&body, Option<&str>)` accepts a replica-local idempotency key;
+reserve `record_id` in the body for durable creation recovery. After an uncertain
+response, retain the complete request and reconcile with `recover_channel`.
+Updates require the complete policy and `expected_version`; deletes require the
+observed `u64` version. Omitted update credentials retain their values. HTTP
+problems use `Error::Api`, preserving `code`, status and retry metadata.
+
+Custom events use structured CloudEvents. `EventOptions::default()` uses the
+configured source-key bearer; `EventOptions { webhook: Some(WebhookAuth { ... }) }`
+signs the exact serialized event and omits that bearer. `sign_webhook` uses the
+UTF-8 secret string directly, never base64-decodes it. The SDK adds a direct
+reference to the already-pinned `ring` dependency for HMAC-SHA256.
+
+`GatewayStream::next()` returns `Option<Result<GatewayEvent>>` and checks event
+and conversation identity. The stream retains typed terminal failures and the
+separate `Backpressure` outcome. EOF before a terminal frame returns a transport
+error. Dropping the reader ends observation without cancelling the provider turn;
+there is no automatic reconnect or Last-Event-ID replay. The configured request
+timeout covers the complete stream. Requests do not follow redirects or retry
+uncertain mutations. Context reads retain the full persisted activity; typing and
+message-update receipts explicitly report unsupported transports.
+
 
 ## Owner Bots
 
@@ -166,10 +190,17 @@ Provider binding management uses `client.provider_bindings().put/get/delete/ensu
 `enable`, `rotate_keys` and `delete`. Use the current renewable CMA sign-in with
 `cma:bot:manage`; independent agent keys cannot borrow the owner's stored login.
 The owner must already have registered a personal Telegram bot in NyxID and
-connected the profile/model services plus the `cmaeg` tools service.
+connected the profile's explicit services and managed model service. CMA attaches
+CMAEG tools natively with the Bot's own agent key; no separate tools catalogue
+connection is required.
 
 Creation takes a name, `nyxid_bot_id`, a published Agent profile reference, an
-admission policy and a reply policy. Retain the creation idempotency key across
+admission policy and a reply policy. Optional `sandbox_profile` and
+`workspace_profile` references select personally owned published environments;
+each omitted reference pins its platform default. Bot responses include the
+pinned environment references (older servers may omit them). Custom profiles
+preserve installed software, service access, repository and setup commands.
+Retain the creation idempotency key across
 uncertain outcomes. HTTP 201 returns the durable Bot in `creating`; poll `get`
 for `active` or `failed` and inspect `operation.step` for cleanup progress.
 Other mutations return 202 with progress. A deleted Bot becomes 404 only after
@@ -178,3 +209,29 @@ The `test` method runs a synthetic provider turn and sends no Telegram message.
 
 Bot responses contain no credential bytes. Preserve channel IDs and callback
 URLs exactly; never decode, reconstruct or log opaque gateway references.
+
+## Bot Father operations
+
+`client.bot_setups().advance` observes the authenticated source event.
+`client.bot_setups().act` accepts `AgentSetupAction`, whose
+`BotSetupActionRequest` selects `BotSetupAction::View`, `Draft`, `Choose`,
+`Customize`, or `Confirm`. Both operations require the configured Father binding
+credential and the original opaque event reference. Retain `request_id` and
+unchanged request content across an uncertain retry. Every operation except
+`View` also supplies `BotSetupExpected` with the latest setup ID and revision.
+
+`BotSetupView::confirmation_digest` identifies the exact reviewed plan. A
+`Confirm` operation forwards that digest; CMA still verifies an attested user
+confirmation for that plan. These operations cannot establish a user identity,
+replace consent, or borrow another user's credentials. The conversational Agent
+chooses when setup help is relevant; ordinary chat needs no setup API call.
+
+## Agent-delegated operations
+
+`client.agent_delegations().identity(&request)` resolves a source actor's linked
+identity or browser-consent URL. `operate(&request)` uses that actor's consent for
+an allowlisted ordinary CMA operation. Requests carry the current `event_ref` or
+CMA callback continuation, local path/method, optional body/owner, and a required
+`idempotency_key` for mutations. Inspect `AgentDelegationOperationResult.status`
+before treating the inner operation as successful. These provider APIs require
+the configured Bot Father binding; they never accept or return user credentials.

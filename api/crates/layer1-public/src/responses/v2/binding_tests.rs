@@ -9,14 +9,25 @@ use layer2_core::profiles::{content_digest, AgentProvider, ProfileCapacityBounds
 use layer2_core::sandbox::binding::*;
 use layer2_core::{
     resource_access::*,
-    sandbox::{agent_io::*, store::InMemorySandboxStore, AgentStatus},
+    sandbox::{
+        agent_io::*,
+        store::{AgentStore, InMemorySandboxStore, SandboxStore},
+        AgentStatus,
+    },
     Caller, SubjectId,
 };
 use serde_json::{json, Value};
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use tower::ServiceExt;
 
-struct BindingAuthority(Arc<BindingAccessService>);
+struct BindingAuthority {
+    bindings: Arc<BindingAccessService>,
+    admission_race: Option<Arc<InMemorySandboxStore>>,
+    changed: AtomicBool,
+}
 #[async_trait]
 impl AgentCommandAdmissionAuthority for BindingAuthority {
     async fn command_admission_authority(
@@ -26,17 +37,24 @@ impl AgentCommandAdmissionAuthority for BindingAuthority {
         owner: &AgentOwner,
     ) -> Result<AgentAuthorizationRevision, CommandAuthorizationError> {
         let principal = self
-            .0
+            .bindings
             .authenticate(&context.credential.credential_id)
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(
-            *owner,
-            AgentOwner::Person {
-                subject: principal.owner().clone()
+        assert_eq!(owner, principal.resource_owner());
+        if let Some(store) = &self.admission_race {
+            if !self.changed.swap(true, Ordering::SeqCst) {
+                let mut agent = store
+                    .get_agent(&layer2_core::AgentId("agt_fixture".into()))
+                    .await
+                    .unwrap()
+                    .unwrap();
+                let revision = agent.revision;
+                agent.revision += 1;
+                store.save_agent(revision, agent).await.unwrap();
             }
-        );
+        }
         Ok(principal.command_authority())
     }
 }
@@ -59,8 +77,12 @@ impl OrganizationAuthority for BindingAuthority {
     }
 }
 fn binding(id: &str, hash: &str) -> ProviderBinding {
+    binding_with_owner(id, hash, "human")
+}
+
+fn binding_with_owner(id: &str, hash: &str, owner_kind: &str) -> ProviderBinding {
     let value = json!({"schema_version":1,
-        "metadata":{"name":"responses", "owner":{"kind":"human","subject":"owner-a"},"provider":"registered"},
+        "metadata":{"name":"responses", "owner":{"kind":owner_kind,"subject":"owner-a"},"provider":"registered"},
         "model":{"access":"managed","service":AgentProvider::default().connection_services().managed,"api_type":"responses","model":"test","thinking_effort":"medium"},
         "permission":{"action_mode":"guarded"},"context":{},"environment":{"size":{"cpu_cores":1,"memory_gib":2},"workspace":{"type":"directory","name":"project"}}});
     let digest = format!("sha256:{}", content_digest(&value).unwrap());
@@ -125,13 +147,80 @@ pub(crate) async fn fixture() -> (
     Arc<BindingAccessService>,
     BindingPrincipal,
 ) {
+    fixture_with_conversation_state(BindingConversationState::Ready).await
+}
+
+async fn fixture_with_conversation_state(
+    conversation_state: BindingConversationState,
+) -> (
+    axum::Router,
+    Arc<InMemorySandboxStore>,
+    Arc<BindingAccessService>,
+    BindingPrincipal,
+) {
+    fixture_with_state_and_race(conversation_state, false).await
+}
+
+pub(crate) async fn fixture_with_admission_race() -> (
+    axum::Router,
+    Arc<InMemorySandboxStore>,
+    Arc<BindingAccessService>,
+    BindingPrincipal,
+) {
+    fixture_with_state_and_race(BindingConversationState::Ready, true).await
+}
+
+async fn fixture_with_state_and_race(
+    conversation_state: BindingConversationState,
+    admission_race: bool,
+) -> (
+    axum::Router,
+    Arc<InMemorySandboxStore>,
+    Arc<BindingAccessService>,
+    BindingPrincipal,
+) {
+    fixture_for_owner(conversation_state, admission_race, "human").await
+}
+
+pub(crate) async fn fixture_for_owner(
+    conversation_state: BindingConversationState,
+    admission_race: bool,
+    owner_kind: &str,
+) -> (
+    axum::Router,
+    Arc<InMemorySandboxStore>,
+    Arc<BindingAccessService>,
+    BindingPrincipal,
+) {
+    fixture_for_owner_with_router(conversation_state, admission_race, owner_kind, None).await
+}
+
+pub(crate) async fn fixture_for_owner_with_router(
+    conversation_state: BindingConversationState,
+    admission_race: bool,
+    owner_kind: &str,
+    router: Option<Arc<dyn super::BindingEventRouter>>,
+) -> (
+    axum::Router,
+    Arc<InMemorySandboxStore>,
+    Arc<BindingAccessService>,
+    BindingPrincipal,
+) {
     let (state, store) = fixtures::conversation_fixture().await;
     let agent = fixtures::seeded_agent("agt_fixture", AgentStatus::Ready, 2, None);
     fixtures::insert_agent(&store, agent.clone(), vec![]).await;
-    let mut reserved = binding("binding-responses", &"a".repeat(64));
+    let mut reserved = binding_with_owner("binding-responses", &"a".repeat(64), owner_kind);
     reserved.sandbox_id = agent.sandbox_id.clone();
     reserved.workspace_id = agent.workspace_id.clone();
     let binding = ready(&store, reserved).await;
+    let sandbox = store
+        .get_sandbox(&binding.sandbox_id)
+        .await
+        .unwrap()
+        .unwrap();
+    if let Some(policy) = binding.sandbox_resource_policy(&sandbox).unwrap() {
+        store.set_resource_policy_for_test(policy);
+    }
     let mut conversation = BindingConversation::new(
         &binding,
         "conversation-external".into(),
@@ -144,7 +233,7 @@ pub(crate) async fn fixture() -> (
         .save_binding_conversation(binding.revision, None, conversation.clone())
         .await
         .unwrap();
-    conversation.state = BindingConversationState::Ready;
+    conversation.state = conversation_state;
     conversation.revision += 1;
     store
         .save_binding_conversation(binding.revision, Some(1), conversation)
@@ -156,17 +245,80 @@ pub(crate) async fn fixture() -> (
         .await
         .unwrap()
         .unwrap();
-    let authority = Arc::new(BindingAuthority(bindings.clone()));
+    let authority = Arc::new(BindingAuthority {
+        bindings: bindings.clone(),
+        admission_race: admission_race.then(|| store.clone()),
+        changed: AtomicBool::new(false),
+    });
     let access = Arc::new(
         ResourceAccessService::new(store.clone(), authority.clone())
             .with_bindings(bindings.clone()),
     );
     let commands = AgentCommandService::new(store.clone(), access.clone(), authority);
-    let app = super::router(
+    let mut state =
         super::ResponsesV2State::new(commands, state.reads.with_resource_access(access))
-            .with_bindings(bindings.clone()),
-    );
+            .with_bindings(bindings.clone());
+    if let Some(router) = router {
+        state = state.with_event_router(router);
+    }
+    let app = super::router(state);
     (app, store, bindings, principal)
+}
+
+#[tokio::test]
+async fn provisioning_conversation_is_retryable_then_admits_the_same_turn_once() {
+    let (app, store, _, principal) =
+        fixture_with_conversation_state(BindingConversationState::Provisioning).await;
+    let body = json!({"conversation":"conversation-external","stream":true,"input":"First event"});
+    let response = app
+        .clone()
+        .oneshot(request("/api/v2/responses", &principal, body.clone()))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(response.headers()["retry-after"], "6");
+    assert!(response.headers().get("x-cma-response-id").is_none());
+    let bytes = axum::body::to_bytes(response.into_body(), 4096)
+        .await
+        .unwrap();
+    let problem: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(problem["error"]["code"], "conversation_not_ready");
+
+    let binding = store
+        .binding(principal.binding_id())
+        .await
+        .unwrap()
+        .unwrap();
+    let mut conversation = store
+        .binding_conversation(
+            principal.binding_id(),
+            principal.generation(),
+            "conversation-external",
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    let prior_revision = conversation.revision;
+    conversation.state = BindingConversationState::Ready;
+    conversation.revision += 1;
+    store
+        .save_binding_conversation(binding.revision, Some(prior_revision), conversation)
+        .await
+        .unwrap();
+    let mut response_id = None;
+    for _ in 0..2 {
+        let response = app
+            .clone()
+            .oneshot(request("/api/v2/responses", &principal, body.clone()))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let id = response.headers()["x-cma-response-id"]
+            .to_str()
+            .unwrap()
+            .to_owned();
+        assert_eq!(response_id.get_or_insert(id.clone()), &id);
+    }
 }
 #[tokio::test]
 async fn binding_aliases_and_agent_ids_share_receipts_and_conceal_foreign_conversations() {

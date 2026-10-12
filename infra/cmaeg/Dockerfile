@@ -86,6 +86,7 @@ FROM rust:1.96.1-alpine AS build
 RUN apk add --no-cache musl-dev
 WORKDIR /build
 COPY api/ ./
+COPY docs/CMAEG_Integration.md docs/CMAEG_Architecture.md docs/CMAEG_Protocol.md /docs/
 ARG TARGETARCH
 ARG CHRONO_BUILD=development
 ARG CHRONO_BUILD_SHA=development

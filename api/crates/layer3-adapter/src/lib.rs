@@ -23,6 +23,7 @@ mod provider_finality;
 mod runtime;
 mod runtime_output;
 mod runtime_status;
+mod tool_proxy;
 mod workspace;
 mod workspace_removal;
 
@@ -96,6 +97,7 @@ pub use runtime::{
 };
 pub use runtime_output::{RuntimeOutputReceipt, RuntimeOutputSource};
 pub use runtime_status::{valid_home_identity, RuntimeStatus, RuntimeStatusRequest};
+pub use tool_proxy::{ToolProxyRequest, ToolProxyStatus, LOCAL_TOOL_PROXY_URL};
 pub use workspace::{
     SetupReceipt, WorkspaceReceipt, WorkspaceRemoveReceipt, WorkspaceRemoveRequest,
     WorkspaceRequest, WorkspaceSetupRequest, WorkspaceSource, WorktreeReceipt, WorktreeRef,

@@ -12,6 +12,8 @@ pub struct MessageRefPayload {
     pub event_id: EventId,
     pub platform_message_id: String,
     pub route_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interaction_record_id: Option<String>,
 }
 impl MessageRefPayload {
     pub fn validate(&self) -> Result<(), ValidationError> {

@@ -97,6 +97,26 @@ describe.each(['agent', 'workspace', 'sandbox'] as const)('%s profiles', (kind) 
 });
 
 describe('profile response boundaries', () => {
+  it('preserves Agent isolation when reading and saving a profile', async () => {
+    const test = transport();
+    const document = {
+      ...profile('agent'),
+      draft: { ...contents.agent, isolated_agent: true },
+    };
+    test.answer(document);
+    const read = await test.client.agentProfiles.read(document.id);
+    expect(read.draft.isolated_agent).toBe(true);
+    await test.client.agentProfiles.save(
+      read.id,
+      { content: read.draft, draft_version: read.draft_version },
+      command,
+    );
+    expect(JSON.parse(String(test.calls.at(-1)?.init.body)).content.isolated_agent).toBe(true);
+    test.answer(profile('agent'));
+    expect(
+      (await test.client.agentProfiles.read(document.id)).draft.isolated_agent,
+    ).toBeUndefined();
+  });
   it('preserves Sandbox availability in reads, creates and saves and validates the pool bound', async () => {
     const test = transport();
     const availability = { warmup_enabled: true, warmup_count: 5, always_keep_alive: true };

@@ -19,6 +19,7 @@ mod memory;
 mod provider_backend;
 mod provider_endpoint;
 mod provider_http;
+mod provider_tools;
 mod provider_transport;
 mod reply;
 mod subscriptions;
@@ -37,6 +38,9 @@ pub use deployment::{
 };
 pub use memory::{InMemoryHostedBackend, InMemoryRuntimeSnapshot};
 pub use provider_backend::{HostedControlTransport, ProviderHostedBackend};
+pub use provider_tools::{
+    HostedProviderToolBinding, HostedProviderToolSource, HostedToolOpenReceipt,
+};
 pub use provider_transport::ProviderHostedControlTransport;
 pub use subscriptions::{HostedSubscriptionCredential, HostedSubscriptionSource};
 

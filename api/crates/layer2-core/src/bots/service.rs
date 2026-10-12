@@ -11,8 +11,16 @@ pub trait BotProfileResolver: Send + Sync {
     async fn resolve(
         &self,
         owner: &SubjectId,
-        reference: &crate::profiles::AgentProfileRef,
+        request: &CreateBot,
     ) -> Result<BotProfiles, BotError>;
+    async fn resolve_for_owner(
+        &self,
+        owner: &crate::resource_access::ResourceOwner,
+        request: &CreateBot,
+    ) -> Result<BotProfiles, BotError> {
+        self.resolve(super::authority::owner_subject(owner), request)
+            .await
+    }
 }
 pub struct BotService {
     pub(super) store: Arc<dyn BotStore>,
@@ -38,24 +46,57 @@ impl BotService {
         request: CreateBot,
     ) -> Result<Bot, BotError> {
         require(caller)?;
+        self.create_owned(&caller.subject, None, key, request).await
+    }
+    pub async fn create_for_owner(
+        &self,
+        authority: &BotOwnerAuthority,
+        key: &str,
+        request: CreateBot,
+    ) -> Result<Bot, BotError> {
+        authority.require(Capability::ManageOwnBots)?;
+        self.create_owned(authority.owner_subject(), Some(authority), key, request)
+            .await
+    }
+    async fn create_owned(
+        &self,
+        owner: &SubjectId,
+        authority: Option<&BotOwnerAuthority>,
+        key: &str,
+        request: CreateBot,
+    ) -> Result<Bot, BotError> {
         request.validate()?;
         if key.is_empty() || key.len() > 256 || key.chars().any(char::is_control) {
             return Err(BotError::Invalid("an idempotency key is required".into()));
         }
-        let key_hash = hash(key.as_bytes());
+        let key_hash = if let Some(authority) = authority {
+            hash(
+                &serde_json::to_vec(&("owned-bot-create-v1", authority.owner(), key))
+                    .map_err(|_| BotError::Unavailable)?,
+            )
+        } else {
+            hash(key.as_bytes())
+        };
         let fingerprint = crate::profiles::content_digest(&request)
             .map_err(|_| BotError::Invalid("invalid bot request".into()))?;
-        if let Some(current) = self.store.creation(&caller.subject, &key_hash).await? {
-            return replay(current, &fingerprint);
+        if let Some(current) = self.store.creation(owner, &key_hash).await? {
+            return replay_owned(current, &fingerprint, authority);
         }
-        let profiles = self
-            .profiles
-            .resolve(&caller.subject, &request.profile)
-            .await?;
+        let profiles = if let Some(authority) = authority {
+            self.profiles
+                .resolve_for_owner(authority.owner(), &request)
+                .await?
+        } else {
+            self.profiles.resolve(owner, &request).await?
+        };
+        if let Some(authority) = authority {
+            authority.require(Capability::ManageOwnBots)?;
+        }
         let now = crate::now_rfc3339();
         let bot = Bot {
+            ownership: authority.map(|authority| authority.ownership().clone()),
             bot_id: format!("bot_{}", uuid::Uuid::new_v4().simple()),
-            owner: caller.subject.clone(),
+            owner: owner.clone(),
             request,
             profiles,
             provider: self.provider.clone(),
@@ -71,24 +112,64 @@ impl BotService {
             updated_at: now,
             last_test: None,
         };
+        bot.validate()?;
         match self.store.insert(&bot).await {
             Ok(()) => Ok(bot),
-            Err(BotError::Conflict) => replay(
+            Err(BotError::Conflict) => replay_owned(
                 self.store
-                    .creation(&caller.subject, &key_hash)
+                    .creation(owner, &key_hash)
                     .await?
                     .ok_or(BotError::Conflict)?,
                 &fingerprint,
+                authority,
             ),
             Err(error) => Err(error),
         }
+    }
+    pub async fn get_for_owner(
+        &self,
+        authority: &BotOwnerAuthority,
+        id: &str,
+    ) -> Result<Bot, BotError> {
+        authority.require(Capability::ManageOwnBots)?;
+        let bot = self
+            .store
+            .get(id)
+            .await?
+            .filter(|row| {
+                &row.resource_owner() == authority.owner() && row.state != BotState::Deleted
+            })
+            .ok_or(BotError::NotFound)?;
+        authority.require(Capability::ManageOwnBots)?;
+        bot.validate()?;
+        Ok(bot)
+    }
+    pub async fn list_for_owner(
+        &self,
+        authority: &BotOwnerAuthority,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<Bot>, BotError> {
+        authority.require(Capability::ManageOwnBots)?;
+        if !(1..=200).contains(&limit) {
+            return Err(BotError::Invalid("limit must be between 1 and 200".into()));
+        }
+        let bots = self.list_owned(authority.owner(), after, limit).await?;
+        authority.require(Capability::ManageOwnBots)?;
+        Ok(bots)
     }
     pub async fn get(&self, caller: &Caller, id: &str) -> Result<Bot, BotError> {
         require(caller)?;
         self.store
             .get(id)
             .await?
-            .filter(|row| row.owner == caller.subject && row.state != BotState::Deleted)
+            .filter(|row| {
+                row.resource_owner()
+                    == crate::resource_access::ResourceOwner::Person {
+                        subject: caller.subject.clone(),
+                    }
+                    && row.state != BotState::Deleted
+            })
             .ok_or(BotError::NotFound)
     }
     pub async fn list(
@@ -101,7 +182,51 @@ impl BotService {
         if !(1..=200).contains(&limit) {
             return Err(BotError::Invalid("limit must be between 1 and 200".into()));
         }
-        self.store.list(&caller.subject, after, limit).await
+        self.list_owned(
+            &crate::resource_access::ResourceOwner::Person {
+                subject: caller.subject.clone(),
+            },
+            after,
+            limit,
+        )
+        .await
+    }
+    async fn list_owned(
+        &self,
+        owner: &crate::resource_access::ResourceOwner,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<Bot>, BotError> {
+        let mut cursor = after.map(str::to_owned);
+        let mut result = Vec::new();
+        loop {
+            let rows = self
+                .store
+                .list(
+                    super::authority::owner_subject(owner),
+                    cursor.as_deref(),
+                    200,
+                )
+                .await?;
+            let complete = rows.len() < 200;
+            if let Some(last) = rows.last() {
+                if cursor
+                    .as_ref()
+                    .is_some_and(|previous| &last.bot_id <= previous)
+                {
+                    return Err(BotError::Unavailable);
+                }
+                cursor = Some(last.bot_id.clone());
+            }
+            result.extend(
+                rows.into_iter()
+                    .filter(|row| &row.resource_owner() == owner),
+            );
+            if result.len() >= limit || complete {
+                result.truncate(limit);
+                return Ok(result);
+            }
+        }
     }
     pub async fn admit(
         &self,
@@ -213,10 +338,16 @@ impl BotService {
             )
             | (BotOperation::Disable | BotOperation::Rotate, BotState::Disabled) => {
                 bot.resources.channel.is_some()
-                    && bot.resources.route_id.is_some()
                     && bot.resources.credentials.agent_key_id.is_some()
-                    && bot.resources.credentials.route_key_id.is_some()
                     && bot.resources.credentials.expires_at.is_some()
+                    && if bot.request.connection_ref.is_some() {
+                        bot.resources.route_id.is_none()
+                            && bot.resources.credentials.route_key_id.is_none()
+                            && bot.resources.credentials.route_key_hash.is_none()
+                    } else {
+                        bot.resources.route_id.is_some()
+                            && bot.resources.credentials.route_key_id.is_some()
+                    }
             }
             (BotOperation::Delete, BotState::Deleted) => bot.resources == BotResources::default(),
             (_, BotState::Failed { .. }) => bot.resources == BotResources::default(),
@@ -313,4 +444,18 @@ fn live(work: &BotWork) -> bool {
         .is_some_and(|expires| {
             expires > crate::seconds_from_rfc3339(&crate::now_rfc3339()).unwrap_or(u64::MAX)
         })
+}
+
+fn replay_owned(
+    bot: Bot,
+    fingerprint: &str,
+    authority: Option<&BotOwnerAuthority>,
+) -> Result<Bot, BotError> {
+    if let Some(authority) = authority {
+        authority.require(Capability::ManageOwnBots)?;
+    }
+    if bot.ownership.as_ref() != authority.map(BotOwnerAuthority::ownership) {
+        return Err(BotError::Conflict);
+    }
+    replay(bot, fingerprint)
 }

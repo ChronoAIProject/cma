@@ -3,7 +3,7 @@ use crate::{ids::AgentResponseId, AgentId};
 
 use super::super::admission_service::bounded;
 use super::super::{
-    AgentActor, AgentCommandService, CommandAdmissionError, CommandLedgerError, CommandStatusView,
+    AgentCommandService, CommandAdmissionError, CommandLedgerError, CommandStatusView,
 };
 use super::{queued_cancellation_eligible, QueuedCancellationObservation};
 
@@ -17,16 +17,7 @@ impl AgentCommandService {
         agent_id: &AgentId,
         response_id: &AgentResponseId,
     ) -> Result<QueuedCancellationObservation, CommandAdmissionError> {
-        if !context.validate_principal()
-            || !matches!(
-                context.actor,
-                AgentActor::Human { .. }
-                    | AgentActor::Api {
-                        delegation_id: None,
-                        ..
-                    }
-            )
-        {
+        if !context.validate_principal() || context.actor.ordinary_subject().is_none() {
             return Err(CommandLedgerError::NotFound.into());
         }
         let target = ResourceTarget::Agent {

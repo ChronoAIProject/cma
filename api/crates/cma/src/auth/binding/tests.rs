@@ -15,7 +15,11 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use tower::ServiceExt;
 
 pub(super) fn reserved(key: &ProvidedCredential) -> ProviderBinding {
-    let profile = json!({"schema_version":1,"metadata":{"name":"authentication","owner":{"kind":"human","subject":"owner"},"provider":"registered"},
+    reserved_with_owner(key, "human")
+}
+
+pub(super) fn reserved_with_owner(key: &ProvidedCredential, owner_kind: &str) -> ProviderBinding {
+    let profile = json!({"schema_version":1,"metadata":{"name":"authentication","owner":{"kind":owner_kind,"subject":"owner"},"provider":"registered"},
         "model":{"access":"managed","service":AgentProvider::default().connection_services().managed,"api_type":"responses","model":"test","thinking_effort":"medium"},
         "permission":{"action_mode":"guarded"},"context":{},"environment":{"size":{"cpu_cores":1,"memory_gib":2},"workspace":{"type":"directory","name":"project"}}});
     let digest = format!("sha256:{}", content_digest(&profile).unwrap());
@@ -90,6 +94,7 @@ async fn binding_key_bypasses_nyxid_and_cookie_custody_and_never_inherits_owner_
         None,
         auth_store,
     )
+    .with_agent_key_service(Some("cma-service".into()))
     .with_binding_store(store.clone());
     let original = key();
     let mut binding = reserved(&original);
@@ -149,11 +154,11 @@ async fn binding_key_bypasses_nyxid_and_cookie_custody_and_never_inherits_owner_
         );
     }
 
-    assert!(auth
-        .resolve_request(&headers(&key()))
-        .await
-        .unwrap()
-        .is_none());
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    // Only an unknown key may reach the ordinary service verifier.
+    assert!(auth.resolve_request(&headers(&key())).await.is_err());
+    let unknown_calls = calls.load(Ordering::SeqCst);
+    assert!(unknown_calls > 0);
     binding.state = BindingState::Ready;
     binding.work = BindingWork::Idle;
     binding
@@ -193,13 +198,38 @@ async fn binding_key_bypasses_nyxid_and_cookie_custody_and_never_inherits_owner_
         .await
         .unwrap()
         .is_none());
-    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert_eq!(calls.load(Ordering::SeqCst), unknown_calls);
     server.abort();
 }
 
 #[test]
 fn binding_request_paths_exclude_management_and_foreign_event_context() {
     use axum::http::Method;
+    assert!(permits_request(
+        &Method::POST,
+        "/api/v1/bot-setups/actions",
+        "binding-auth"
+    ));
+    assert!(!permits_request(
+        &Method::GET,
+        "/api/v1/bot-setups/actions",
+        "binding-auth"
+    ));
+    assert!(permits_request(
+        &Method::POST,
+        "/api/v1/bot-setups/advance",
+        "binding-auth"
+    ));
+    assert!(!permits_request(
+        &Method::GET,
+        "/api/v1/bot-setups/advance",
+        "binding-auth"
+    ));
+    assert!(!permits_request(
+        &Method::POST,
+        "/api/v1/bots",
+        "binding-auth"
+    ));
     for path in [
         "/api/v1/agents",
         "/api/v1/sandboxes",

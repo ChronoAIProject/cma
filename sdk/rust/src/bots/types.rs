@@ -1,9 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-/// Published Agent profile pinned by Bot creation.
+/// Published profile pinned by Bot creation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BotProfileRef {
-    /// Agent profile identifier.
+    /// Profile identifier.
     pub id: String,
     /// Published immutable revision.
     pub revision: u32,
@@ -75,6 +75,15 @@ pub struct CreateBot {
     pub nyxid_bot_id: String,
     /// Published Agent profile.
     pub profile: BotProfileRef,
+    /// Personally owned Sandbox profile; omit to pin the platform default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sandbox_profile: Option<BotProfileRef>,
+    /// Personally owned Workspace profile; omit to pin the platform default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_profile: Option<BotProfileRef>,
+    /// Complete worker revision; the three source references must match it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_worker_profile: Option<BotProfileRef>,
     /// Source admission rules.
     pub admission: BotAdmission,
     /// Automatic reply and progress settings.
@@ -151,6 +160,13 @@ pub struct Bot {
     pub nyxid_bot_id: String,
     /// Pinned Agent profile reference.
     pub profile: BotProfileRef,
+    /// Pinned Sandbox profile; absent on servers predating environment selection.
+    pub sandbox_profile: Option<BotProfileRef>,
+    /// Pinned Workspace profile; absent on servers predating environment selection.
+    pub workspace_profile: Option<BotProfileRef>,
+    /// Complete worker revision, when selected at creation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_worker_profile: Option<BotProfileRef>,
     /// Provider slug.
     pub provider: String,
     /// Durable lifecycle state.

@@ -75,16 +75,7 @@ impl AgentCommandService {
         agent_id: &AgentId,
         command: &AgentCommand,
     ) -> Result<(), CommandAdmissionError> {
-        if !context.validate_principal()
-            || !matches!(
-                &context.actor,
-                AgentActor::Human { .. }
-                    | AgentActor::Api {
-                        delegation_id: None,
-                        ..
-                    }
-            )
-        {
+        if !context.validate_principal() || context.actor.ordinary_subject().is_none() {
             return Err(ResourceAccessError::Access(AccessError::NotFound).into());
         }
         let target = ResourceTarget::Agent {
@@ -180,15 +171,16 @@ impl AgentCommandService {
         submission: CommandSubmission,
     ) -> Result<(AuthorizedResource, CommandReservation), CommandAdmissionError> {
         let started_at = SystemTime::now();
-        if !context.validate_principal()
-            || !matches!(
-                &context.actor,
-                AgentActor::Human { .. }
-                    | AgentActor::Api {
-                        delegation_id: None,
-                        ..
-                    }
-            )
+        if !context.validate_principal() || context.actor.ordinary_subject().is_none() {
+            return Err(ResourceAccessError::Access(AccessError::NotFound).into());
+        }
+        if matches!(
+            &context.actor,
+            AgentActor::Api {
+                delegation_id: Some(_),
+                ..
+            }
+        ) && !matches!(source, CommandSubmissionSource::Api)
         {
             return Err(ResourceAccessError::Access(AccessError::NotFound).into());
         }

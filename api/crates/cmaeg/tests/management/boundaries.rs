@@ -1,5 +1,106 @@
 use super::*;
 
+#[tokio::test]
+async fn worker_ownership_is_bound_to_the_authenticated_creator_before_side_effects() {
+    let provider = FakeProvider::start(FakeProviderConfig::default()).await;
+    let cma = FakeCma::start(false).await;
+    let nyxid = FakeNyxid::start().await;
+    let (base, stop, task) = app(&provider, &cma, &nyxid).await;
+    let client = Client::new();
+    let url = format!("{base}/v1/channels");
+    for reserved in [false, true] {
+        for (token, kind, subject) in [
+            ("token-alice", "human", "bob"),
+            ("token-alice", "organization", "alice"),
+            ("token-org-a", "organization", "org-b"),
+            ("token-org-a", "human", "org-a"),
+        ] {
+            let mut body = create_body();
+            body["profile"]["metadata"]["owner"] = json!({"kind": kind, "subject": subject});
+            if reserved {
+                body["record_id"] = uuid::Uuid::new_v4().to_string().into();
+            }
+            expect_problem(
+                client
+                    .post(&url)
+                    .bearer_auth(token)
+                    .json(&body)
+                    .send()
+                    .await
+                    .unwrap(),
+                400,
+            )
+            .await;
+            assert!(provider.requests().is_empty());
+            assert!(cma.records().is_empty());
+        }
+    }
+    for (token, kind, subject) in [
+        ("token-alice", "human", "alice"),
+        ("token-org-a", "organization", "org-a"),
+    ] {
+        let mut body = create_body();
+        body["profile"]["metadata"]["owner"] = json!({"kind": kind, "subject": subject});
+        let response = client
+            .post(&url)
+            .bearer_auth(token)
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 201);
+        let created: serde_json::Value = response.json().await.unwrap();
+        let id = created["channel_id"].as_str().unwrap();
+        let record_id = created["record_id"].as_str().unwrap();
+        let retained = cma.records().remove(record_id).unwrap();
+        let calls = provider.requests().len();
+        body.as_object_mut().unwrap().remove("credentials");
+        body["expected_version"] = created["version"].clone();
+        for replacement in [
+            json!({"kind":kind,"subject":"another-owner"}),
+            json!({"kind": if kind == "human" { "organization" } else { "human" }, "subject": subject}),
+        ] {
+            body["profile"]["metadata"]["owner"] = replacement;
+            expect_problem(
+                client
+                    .put(format!("{url}/{id}"))
+                    .bearer_auth(token)
+                    .json(&body)
+                    .send()
+                    .await
+                    .unwrap(),
+                400,
+            )
+            .await;
+            assert_eq!(provider.requests().len(), calls);
+            let after = cma.records().remove(record_id).unwrap();
+            assert_eq!(after.version, retained.version);
+            assert_eq!(after.blob, retained.blob);
+        }
+        if kind == "human" {
+            for personal_kind in ["service_account", "agent_key", "human"] {
+                body["profile"]["metadata"]["owner"] =
+                    json!({"kind": personal_kind, "subject": subject});
+                let updated = client
+                    .put(format!("{url}/{id}"))
+                    .bearer_auth(token)
+                    .json(&body)
+                    .send()
+                    .await
+                    .unwrap();
+                assert_eq!(updated.status(), 200);
+                let updated: serde_json::Value = updated.json().await.unwrap();
+                body["expected_version"] = updated["version"].clone();
+            }
+        }
+    }
+    stop.send(()).unwrap();
+    task.await.unwrap();
+    provider.close().await;
+    cma.close().await;
+    nyxid.close().await;
+}
+
 async fn expect_problem(response: reqwest::Response, status: u16) {
     assert_eq!(response.status(), status);
     assert_eq!(response.headers()["cmaeg-protocol-version"], "1");

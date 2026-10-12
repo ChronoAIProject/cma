@@ -82,7 +82,6 @@ fn service(h: &Harness, profiles: Arc<InMemoryProfileStore>) -> Arc<BindingServi
     let prerequisite = Arc::new(FixedSandboxCredentialPrerequisite::SetupRequired);
     BindingService::new(
         h.store.clone(),
-        profiles.clone(),
         BindingResources {
             sandboxes: SandboxService::new(
                 h.store.clone(),

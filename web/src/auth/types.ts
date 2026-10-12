@@ -4,6 +4,7 @@ export type Capability =
   | 'create_sandbox'
   | 'use_own_sandboxes'
   | 'delete_own_sandbox'
+  | 'manage_own_bots'
   | 'manage_own_profiles'
   | 'publish_triggers'
   | 'launch_triggers'
@@ -19,6 +20,7 @@ const CAPABILITIES: readonly Capability[] = [
   'create_sandbox',
   'use_own_sandboxes',
   'delete_own_sandbox',
+  'manage_own_bots',
   'manage_own_profiles',
   'publish_triggers',
   'launch_triggers',

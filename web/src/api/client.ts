@@ -19,7 +19,7 @@ import type {
 } from './types';
 import type { AccessibleAgentSource, AgentProvenance, AgentResources } from '@chronoai/cma-sdk';
 import type { ResourceViewsClient } from '../resources/client';
-import type { BridgeViewsClient } from '../bridges/client';
+import type { BotClient } from '../bots/model';
 import type { createAgentTransport } from '../agent/transport/client';
 import type { ConnectionTarget } from '../connections/client';
 
@@ -88,12 +88,12 @@ export class AgentLifecycleCreateError extends Error {
 export interface CmaWebClient {
   readonly agentTransport?: ReturnType<typeof createAgentTransport>;
   readonly resourceViews?: ResourceViewsClient;
-  readonly bridgeViews?: BridgeViewsClient;
   /** New Agent Manager lifecycle facade; absent in compatibility-only clients. */
   readonly createAgentLifecycle?: (
     input: AgentLifecycleCreateInput,
     options: CommandOptions,
   ) => Promise<AgentLifecycleCreateReceipt>;
+  readonly botViews?: BotClient;
   listSandboxes(options?: PageOptions): Promise<ResourcePage<SandboxSummary>>;
   readSandbox(id: string, options?: ReadOptions): Promise<SandboxDetail>;
   readWorkspace(id: string, options?: ReadOptions): Promise<WorkspaceDetail>;

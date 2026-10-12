@@ -13,7 +13,6 @@ const expectedRustDocuments = [
   'README.md',
   'agents.md',
   'authentication.md',
-  'bridges.md',
   'errors.md',
   'operations.md',
   'profiles.md',

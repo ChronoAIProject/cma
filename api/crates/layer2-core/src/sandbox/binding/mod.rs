@@ -2,6 +2,7 @@
 mod access;
 mod commands;
 mod credential;
+mod existing;
 pub use access::{BindingAccessService, BindingConversationAuthority, BindingPrincipal};
 mod fence;
 mod model;
@@ -15,10 +16,13 @@ pub mod store;
 pub use credential::{BindingCredentialCustody, ProvidedCredential};
 pub use fence::{BindingAdmissionFence, BindingConversationFence};
 pub use model::{
-    BindingConversation, BindingConversationState, BindingState, BindingWork,
+    BindingConversation, BindingConversationState, BindingState, BindingWork, ExistingBindingAgent,
     PreviousBindingEnvironment, ProviderBinding, BINDING_CONFORMANCE_LEVEL,
+    EXISTING_AGENT_CONVERSATION,
 };
-pub use profile::{map_profile, BindingEnvironmentPlan, BindingFieldRefusal, BindingProfilePlan};
+pub use profile::{
+    map_profile, BindingEnvironmentPlan, BindingFieldRefusal, BindingProfilePlan, SessionAffinity,
+};
 pub use store::BindingStore;
 
 #[cfg(test)]
@@ -26,7 +30,6 @@ mod model_tests;
 #[cfg(test)]
 mod profile_tests;
 
-pub use profiles::BindingProfileStore;
 pub use service::{
     BindingError, BindingPolicy, BindingResources, BindingService, BindingServiceStore,
 };
@@ -36,4 +39,13 @@ mod service_tests;
 
 pub(super) fn valid_binding_id(id: &str) -> bool {
     model::valid_id(id, 1)
+}
+
+// Transport parsing belongs to the interface and adapter. Retained authority
+// still requires one bounded, nonempty destination without control characters.
+pub(super) fn valid_tool_endpoint(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 4096
+        && !value.chars().any(char::is_whitespace)
+        && !value.chars().any(char::is_control)
 }

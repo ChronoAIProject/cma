@@ -3,6 +3,195 @@ use layer2_core::sandbox::store::{AgentLogStore, AgentStore};
 use layer2_core::sandbox::{AgentLogKind, AgentWorkStep};
 
 #[tokio::test]
+async fn missing_retiring_runtime_settles_real_agents_and_retries_archive_cleanup() {
+    use crate::sandbox::checkpoint_maintenance::SandboxCheckpointMaintenance;
+    use crate::sandbox::live_agent_stopper::DurableLiveAgentStopper;
+    use crate::sandbox::reconciliation::SandboxReconciler;
+    use layer2_core::sandbox::{AgentStatus, AgentStopReason, SANDBOX_CHECKPOINT_INTERVAL_SECONDS};
+
+    let harness = Harness::new(Vec::new(), 0, Duration::from_secs(3600)).await;
+    let created = harness.create().await;
+    let started = start_time(&created);
+    let active = harness.drive_active(&created.id, started).await;
+    let now = started + Duration::from_secs(SANDBOX_CHECKPOINT_INTERVAL_SECONDS + 1);
+    let maintenance = SandboxCheckpointMaintenance::new(
+        harness.store.clone(),
+        harness.adapter.clone(),
+        "test".into(),
+        "capture".into(),
+    );
+    maintenance.run_once(now).await.unwrap();
+    maintenance.run_once(now).await.unwrap();
+    let published = harness.stored(&active.id).await;
+    assert!(published.lifecycle.checkpoints.latest.is_some());
+    assert!(published.lifecycle.checkpoint_capture.is_some());
+    let mut agent = lifecycle_queue_tests::ready_agent(&active, now);
+    agent.conversation.last_seq = 1;
+    harness.store.create_agent(agent.clone()).await.unwrap();
+    harness
+        .store
+        .append_agent_log(
+            &agent.id,
+            rfc3339_at(now),
+            AgentLogKind::OwnerMessage {
+                content: "retained owner history".into(),
+            },
+        )
+        .await
+        .unwrap();
+    let history = harness.store.agent_log(&agent.id, 0, 100).await.unwrap();
+    let mut retiring = published.clone();
+    retiring.begin_retirement(rfc3339_at(now)).unwrap();
+    harness
+        .store
+        .save_sandbox(published.revision, retiring.clone())
+        .await
+        .unwrap();
+
+    // An empty stale scan followed by the actual runtime must preserve authority.
+    let stale = Arc::new(CodexAdapter::with_backend(
+        super::reconciliation_tests::InventoryProbe::new(
+            harness.backend.clone(),
+            vec![Ok(Vec::new())],
+        ),
+        CodexSandboxSpec::default(),
+    ));
+    SandboxReconciler::new(
+        harness.store.clone(),
+        stale,
+        Arc::new(harness.policy.clone()),
+        "test".into(),
+    )
+    .initialize(now)
+    .await
+    .unwrap();
+    assert_eq!(harness.stored(&active.id).await, retiring);
+    assert_eq!(
+        harness.store.get_agent(&agent.id).await.unwrap(),
+        Some(agent.clone())
+    );
+
+    let runtime = RuntimeHandle(retiring.runtime.as_ref().unwrap().runtime_id.clone());
+    harness.adapter.teardown(&runtime).await.unwrap();
+    let unavailable = Arc::new(CodexAdapter::with_backend(
+        super::reconciliation_tests::InventoryProbe::new(
+            harness.backend.clone(),
+            vec![
+                Ok(Vec::new()),
+                Err(layer3_adapter::AdapterError::Unavailable(
+                    "inventory unavailable".into(),
+                )),
+            ],
+        ),
+        CodexSandboxSpec::default(),
+    ));
+    assert!(SandboxReconciler::new(
+        harness.store.clone(),
+        unavailable,
+        Arc::new(harness.policy.clone()),
+        "test".into()
+    )
+    .initialize(now)
+    .await
+    .is_err());
+    assert_eq!(harness.stored(&active.id).await, retiring);
+    assert_eq!(
+        harness.store.get_agent(&agent.id).await.unwrap(),
+        Some(agent.clone())
+    );
+
+    SandboxReconciler::new(
+        harness.store.clone(),
+        harness.adapter.clone(),
+        Arc::new(harness.policy.clone()),
+        "test".into(),
+    )
+    .initialize(now)
+    .await
+    .unwrap();
+    let reconciled = harness.stored(&active.id).await;
+    assert_eq!(reconciled.status, SandboxStatus::Retiring);
+    assert!(reconciled.runtime.is_none());
+    assert!(reconciled.lifecycle.checkpoint_capture.is_none());
+    assert_eq!(
+        reconciled.lifecycle.checkpoints,
+        published.lifecycle.checkpoints
+    );
+    let stopped = harness.store.get_agent(&agent.id).await.unwrap().unwrap();
+    assert_eq!(stopped.status, AgentStatus::Stopped);
+    assert_eq!(stopped.stop_reason, Some(AgentStopReason::SandboxRetired));
+    assert_eq!(
+        stopped.conversation.conversation_id,
+        agent.conversation.conversation_id
+    );
+    let logs = harness.store.agent_log(&agent.id, 0, 100).await.unwrap();
+    assert_eq!(&logs[..history.len()], history.as_slice());
+
+    // Exercise the production stopper, not the harness's unconditional recorder.
+    let worker = SandboxWorker::new(
+        SandboxWorkerDependencies {
+            store: harness.store.clone(),
+            adapter: harness.adapter.clone(),
+            credentials: harness.credentials.clone(),
+            workspaces: Arc::new(WorkspaceRecorder {
+                actions: harness.actions.clone(),
+            }),
+            agents: Arc::new(DurableLiveAgentStopper::new(
+                harness.store.clone(),
+                harness.registry.clone(),
+            )),
+            checkpoints: Arc::new(CheckpointPurgeRecorder {
+                actions: harness.actions.clone(),
+                failures: harness.checkpoint_failures.clone(),
+            }),
+            registry: harness.registry.clone(),
+            updates: DurableAgentUpdateRecorder::new(harness.store.clone()),
+            operations: AgentOperationService::new(harness.store.clone(), harness.registry.clone()),
+        },
+        SandboxWorkerConfig::new(
+            "retirement",
+            "test",
+            runtime_image(),
+            harness.policy.clone(),
+        ),
+    );
+    harness.checkpoint_failures.store(1, Ordering::SeqCst);
+    for _ in 0..4 {
+        worker.run_one(&active.id, now).await.unwrap();
+    }
+    let retrying = harness.stored(&active.id).await;
+    assert_eq!(retrying.status, SandboxStatus::Retiring);
+    assert_eq!(retrying.work.step, SandboxWorkStep::MarkRetired);
+    assert!(retrying.credential.current.is_none());
+    worker
+        .run_one(&active.id, now + Duration::from_secs(60))
+        .await
+        .unwrap();
+    let retired = harness.stored(&active.id).await;
+    assert_eq!(retired.status, SandboxStatus::Retired);
+    assert_eq!(retired.work.step, SandboxWorkStep::WaitForPurge);
+    assert_eq!(
+        harness.store.agent_log(&agent.id, 0, 100).await.unwrap(),
+        logs
+    );
+    assert!(harness
+        .adapter
+        .runtime_inventory()
+        .await
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        harness
+            .actions
+            .snapshot()
+            .iter()
+            .filter(|action| action.as_str() == "purge-checkpoints")
+            .count(),
+        2
+    );
+}
+
+#[tokio::test]
 async fn retirement_retries_snapshot_cleanup_across_restart_without_removing_history() {
     let harness = Harness::new(Vec::new(), 0, Duration::from_secs(3600)).await;
     let created = harness.create().await;

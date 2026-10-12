@@ -29,6 +29,28 @@ pub(super) struct Key {
     #[serde(default)]
     pub bindings_count: u64,
 }
+pub(super) fn matches_expiry(observed: Option<&str>, requested: &str) -> bool {
+    let Some(observed) = observed else {
+        return false;
+    };
+    // Bot creation sends whole seconds. Refuse any fractional change before
+    // BSON's millisecond parser can truncate it, but accept equivalent offsets.
+    if observed.split_once('.').is_some_and(|(_, fraction)| {
+        fraction
+            .bytes()
+            .take_while(u8::is_ascii_digit)
+            .any(|digit| digit != b'0')
+    }) {
+        return false;
+    }
+    match (
+        mongodb::bson::DateTime::parse_rfc3339_str(observed),
+        mongodb::bson::DateTime::parse_rfc3339_str(requested),
+    ) {
+        (Ok(observed), Ok(requested)) => observed == requested,
+        _ => false,
+    }
+}
 pub(super) fn name(bot: &Bot, role: BotKeyRole) -> String {
     format!(
         "cma:bot:{}:{}:{}",
@@ -57,7 +79,7 @@ impl Key {
     fn require(&self, bot: &Bot) -> Result<BotKeyRole, BotError> {
         identifier(&self.id)?;
         let role = role(bot, &self.name).ok_or(BotError::Forbidden)?;
-        if self.credential_source != json!({"type":"personal"})
+        if !crate::auth::keys::owner_matches(&self.credential_source, &bot.resource_owner())
             || self.scopes != "proxy read"
             || self.allow_all_services
             || self.allow_all_nodes
@@ -68,7 +90,7 @@ impl Key {
             || self.bindings_count != 0
             || (role == BotKeyRole::Route
                 && (!self.allowed_service_ids.is_empty()
-                    || self.platform.as_deref() != Some("telegram")))
+                    || self.platform.as_deref() != Some("generic")))
         {
             return Err(BotError::Forbidden);
         }
@@ -77,9 +99,14 @@ impl Key {
 }
 impl NyxidClient {
     pub async fn owned_keys(&self, token: &str, bot: &Bot) -> Result<Vec<BotKeyRef>, BotError> {
-        let result: Keys = self
-            .json(token, Method::GET, "/api/v1/api-keys", None)
-            .await?;
+        let path = match bot.resource_owner() {
+            layer2_core::resource_access::ResourceOwner::Organization { subject } => {
+                identifier(subject.as_str())?;
+                format!("/api/v1/api-keys?org_id={subject}")
+            }
+            _ => "/api/v1/api-keys".into(),
+        };
+        let result: Keys = self.json(token, Method::GET, &path, None).await?;
         complete(
             result.keys.len() as u64,
             result.keys.iter().map(|k| k.id.as_str()),
@@ -118,7 +145,7 @@ impl NyxidClient {
         }
         self.owned_key(token, bot, id).await?;
         if self
-            .routes(token)
+            .routes_for_bot(token, bot)
             .await?
             .iter()
             .any(|r| r.agent_api_key_id == id)
@@ -141,7 +168,7 @@ impl NyxidClient {
         let updated: Key = self
             .json(
                 token,
-                Method::PATCH,
+                Method::PUT,
                 &format!("/api/v1/api-keys/{id}"),
                 Some(json!({"callback_url":url})),
             )

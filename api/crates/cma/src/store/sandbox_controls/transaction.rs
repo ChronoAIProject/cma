@@ -35,7 +35,7 @@ pub(super) async fn apply(
             let plan = plan_sandbox_control(record, &snapshot.lineage.sandbox, &at)?;
             let plan = if let SandboxControlPlan::Transition { sandbox, .. } = &plan {
                 if store
-                    .channel_reuse_blocks_quiescence(&snapshot.lineage.sandbox, sandbox, session)
+                    .legacy_reuse_blocks_quiescence(&snapshot.lineage.sandbox, sandbox, session)
                     .await?
                 {
                     SandboxControlPlan::Reject(SandboxControlFailure::NotEligible)

@@ -41,6 +41,25 @@ impl SandboxMaintenanceStore for InMemorySandboxStore {
             .get(&request.sandbox_id)
             .cloned()
             .ok_or(SandboxStoreError::NotFound)?;
+        if let crate::sandbox::SandboxCredentialSource::Binding { binding_id, .. } =
+            &current.credential.source
+        {
+            let binding = state
+                .bindings
+                .get(binding_id)
+                .ok_or(SandboxStoreError::NotFound)?;
+            if binding.sandbox_id != current.id || binding.owner != current.owner {
+                return Err(SandboxStoreError::Conflict);
+            }
+            if binding
+                .profile
+                .environment
+                .as_ref()
+                .is_some_and(|environment| environment.always_keep_alive)
+            {
+                return Ok(SandboxMaintenanceOutcome::NotEligible);
+            }
+        }
         let activities = live_agent_activities(&state, &current.id)?;
         self.profiles
             .with_sandbox_availability(&current.profile.id, |availability| {

@@ -20,6 +20,162 @@ fn retained(cursor: u64, update: Option<ConversationUpdate>) -> ConversationUpda
 }
 
 #[tokio::test]
+async fn idle_resume_history_advances_output_cursor_without_reopening_a_completed_turn() {
+    let (store, working, recorder) = working_agent().await;
+    let mut assembly = AgentMessageAssembly::default();
+    recorder
+        .record_update(
+            &working.id,
+            1,
+            &mut assembly,
+            message_chunk("reply", "saved answer"),
+            NOW.into(),
+        )
+        .await
+        .unwrap();
+    recorder
+        .record_update(&working.id, 1, &mut assembly, turn_ended(), NOW.into())
+        .await
+        .unwrap();
+    let ready = store.get_agent(&working.id).await.unwrap().unwrap();
+    let history = store.agent_log(&working.id, 0, 200).await.unwrap();
+    assert_eq!(ready.status, AgentStatus::Ready);
+
+    // Loading the retained conversation emits its history on a new runtime
+    // output stream. These are new receipts, but carry no current prompt.
+    let replay = [
+        message_chunk("reply", "saved answer").without_prompt_evidence(),
+        ConversationUpdate::Said(SessionUpdate::ToolCall(layer3_adapter::ToolCall::new(
+            "old-call",
+            "Earlier work",
+        )))
+        .without_prompt_evidence(),
+        turn_ended().without_prompt_evidence(),
+    ];
+    for (index, update) in replay.into_iter().enumerate() {
+        let outcome = recorder
+            .record_update(
+                &working.id,
+                1,
+                &mut assembly,
+                retained(index as u64 + 1, Some(update)),
+                NOW.into(),
+            )
+            .await
+            .expect("idle history must not break the restored connection");
+        assert!(outcome.appended.is_empty());
+        assert!(!outcome.turn_closed);
+    }
+    assert!(assembly.is_empty());
+    assert_eq!(
+        store.get_agent(&working.id).await.unwrap(),
+        Some(ready.clone())
+    );
+    assert_eq!(store.agent_log(&working.id, 0, 200).await.unwrap(), history);
+    let checkpoint = store
+        .agent_message_checkpoint(&working.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(checkpoint.output.unwrap().cursor, 3);
+
+    assert!(matches!(
+        recorder
+            .record_update(
+                &working.id,
+                1,
+                &mut assembly,
+                message_chunk("unexpected", "no admitted turn"),
+                NOW.into()
+            )
+            .await,
+        Err(AgentConversationError::InvalidState("no turn is active"))
+    ));
+
+    // A new recorder can acknowledge the same output again, then accept a real
+    // next turn without duplicating the loaded history or losing new output.
+    let replacement = DurableAgentUpdateRecorder::new(Arc::new(store.clone()));
+    let mut fresh = AgentMessageAssembly::default();
+    replacement
+        .record_update(&working.id, 1, &mut fresh, retained(3, None), NOW.into())
+        .await
+        .unwrap();
+    store
+        .commit_agent_conversation(begin_turn(&store, ready))
+        .await
+        .unwrap();
+    for update in [
+        retained(4, Some(message_chunk("next", "new answer"))),
+        retained(5, Some(turn_ended())),
+    ] {
+        replacement
+            .record_update(&working.id, 1, &mut fresh, update, NOW.into())
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        messages(&store.agent_log(&working.id, 0, 200).await.unwrap()),
+        ["saved answer", "new answer"]
+    );
+}
+
+#[tokio::test]
+async fn recovered_active_turn_keeps_output_without_new_prompt_evidence() {
+    let (store, working, recorder) = working_agent().await;
+    let mut assembly = AgentMessageAssembly::default();
+    for update in [
+        retained(
+            1,
+            Some(message_chunk("reply", "recovered answer").without_prompt_evidence()),
+        ),
+        retained(2, Some(turn_ended().without_prompt_evidence())),
+    ] {
+        recorder
+            .record_update(&working.id, 1, &mut assembly, update, NOW.into())
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        messages(&store.agent_log(&working.id, 0, 200).await.unwrap()),
+        ["recovered answer"]
+    );
+    assert_eq!(
+        store.get_agent(&working.id).await.unwrap().unwrap().status,
+        AgentStatus::Ready
+    );
+}
+
+#[tokio::test]
+async fn idle_resume_keeps_conversation_metadata() {
+    let (store, ready) = ready_agent(None).await;
+    let recorder = DurableAgentUpdateRecorder::new(Arc::new(store.clone()));
+    let update = ConversationUpdate::Said(
+        serde_json::from_value(serde_json::json!({
+            "sessionUpdate": "current_mode_update", "currentModeId": "read-only"
+        }))
+        .unwrap(),
+    )
+    .without_prompt_evidence();
+    let outcome = recorder
+        .record_update(
+            &ready.id,
+            1,
+            &mut AgentMessageAssembly::default(),
+            retained(1, Some(update)),
+            NOW.into(),
+        )
+        .await
+        .unwrap();
+    assert!(
+        matches!(outcome.appended.as_slice(), [AgentLogEntry { kind: AgentLogKind::ModeChanged { mode }, .. }] if mode == "read-only")
+    );
+    assert_eq!(
+        store.get_agent(&ready.id).await.unwrap().unwrap().status,
+        AgentStatus::Ready
+    );
+}
+
+#[tokio::test]
 async fn lost_ack_replays_prefix_and_terminal_once_across_replacement_and_next_turn() {
     let (store, working, recorder) = working_agent().await;
     let mut assembly = AgentMessageAssembly::default();

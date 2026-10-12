@@ -14,7 +14,7 @@ use std::{
     },
     time::Duration,
 };
-use tokio::{net::TcpListener, task::JoinSet};
+use tokio::{net::TcpListener, sync::Semaphore, task::JoinSet};
 
 pub struct Server {
     pub address: SocketAddr,
@@ -30,6 +30,19 @@ impl Drop for Server {
 }
 impl Server {
     pub async fn start(h2: bool, tls: bool, delay: Duration) -> Self {
+        Self::start_inner(h2, tls, delay, None).await
+    }
+    pub async fn start_gated() -> (Self, Arc<Semaphore>) {
+        let gate = Arc::new(Semaphore::new(0));
+        let server = Self::start_inner(true, false, Duration::ZERO, Some(gate.clone())).await;
+        (server, gate)
+    }
+    async fn start_inner(
+        h2: bool,
+        tls: bool,
+        delay: Duration,
+        gate: Option<Arc<Semaphore>>,
+    ) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let connections = Arc::new(AtomicUsize::new(0));
@@ -55,6 +68,7 @@ impl Server {
                         count.fetch_add(1, Ordering::SeqCst);
                         let recording = recording.clone();
                         let acceptor = acceptor.clone();
+                        let gate = gate.clone();
                         tasks.spawn(async move {
                             let io: BoxIo = match acceptor {
                                 Some(acceptor) => match acceptor.accept(tcp).await {
@@ -64,12 +78,16 @@ impl Server {
                             };
                             let service = service_fn(move |request: Request<Incoming>| {
                                 let recording = recording.clone();
+                                let gate = gate.clone();
                                 async move {
                                     assert_eq!(request.method(), "POST");
                                     assert_eq!(request.uri().path(), "/responses");
                                     let id = request.headers()["idempotency-key"].to_str().unwrap().to_owned();
                                     let bytes = request.into_body().collect().await.unwrap().to_bytes();
                                     recording.lock().unwrap().push((id, bytes.len()));
+                                    if let Some(gate) = gate {
+                                        gate.acquire().await.unwrap().forget();
+                                    }
                                     tokio::time::sleep(delay).await;
                                     Ok::<_, Infallible>(Response::builder().header("content-type", "text/event-stream")
                                         .body(Full::new(Bytes::from_static(b"data: {\"type\":\"response.completed\"}\n\n"))).unwrap())
@@ -95,6 +113,15 @@ impl Server {
             tls: client_tls,
             task,
         }
+    }
+    pub async fn wait_for_requests(&self, count: usize) {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while self.requests.lock().unwrap().len() < count {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("server did not receive the expected request bodies");
     }
     pub fn client(&self, h2: bool) -> ResponseTransport {
         let origin = if self.tls.is_some() {

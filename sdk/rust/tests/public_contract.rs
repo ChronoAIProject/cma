@@ -4,10 +4,10 @@ mod agent_events_v2;
 mod bindings;
 #[path = "public_contract/bots.rs"]
 mod bots;
-#[path = "public_contract/bridges.rs"]
-mod bridges;
 #[path = "public_contract/context.rs"]
 mod context;
+#[path = "public_contract/event_workers.rs"]
+mod event_workers;
 #[path = "public_contract/experience.rs"]
 mod experience;
 #[path = "public_contract/operator.rs"]
@@ -26,16 +26,16 @@ use context::{Case, Context};
 
 async fn dispatch(c: &Context<'_>) -> Result<()> {
     let op = c.case.operation.as_str();
-    if op.contains("/api/v1/bots") {
+    if op.contains("/event-worker-profiles") {
+        event_workers::dispatch(c).await
+    } else if op.contains("/api/v1/bots")
+        || op.contains("/api/v1/bot-setups")
+        || op.contains("/api/v1/agent-delegations")
+        || op.contains("/gateway/interaction-records")
+    {
         bots::dispatch(c).await
     } else if op.contains("/cmaeg/bindings") {
         bindings::dispatch(c).await
-    } else if op.contains("/bridges")
-        || op.contains("/bridge-connectors")
-        || op.contains("/bridge-creation-target")
-        || op.contains("/bridge-invoke-grants")
-    {
-        bridges::dispatch(c).await
     } else if op == "GET /api/v2/ui/transport"
         || op == "GET /api/v2/agents/{agent_id}/events"
         || op == "GET /api/v2/agents/{agent_id}/events/snapshot"
@@ -191,7 +191,21 @@ async fn shared_backend_corpus_replays_through_typed_sdk_methods() {
         }
         server.expect(context::wire(&case));
         let result = dispatch(&c).await;
-        if case.response.status >= 400
+        if case.response.status >= 400 && case.response.body_kind == "empty" {
+            let error = result.expect_err(&case.id);
+            assert!(
+                matches!(error, Error::Protocol { .. }),
+                "{}: {error:?}",
+                case.id
+            );
+            server.assert_drained();
+            assert_eq!(
+                server.request_count(),
+                1,
+                "{} must use exactly one typed HTTP request",
+                case.id
+            );
+        } else if case.response.status >= 400
             && !(case.operation == "GET /auth/session" && case.response.status == 401)
         {
             check_error(&case, result.expect_err(&case.id));

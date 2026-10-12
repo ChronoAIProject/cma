@@ -11,7 +11,9 @@ use cmaeg::{
     },
     http,
     ingress::{launch::LaunchRequest, IngressState},
+    interactions::InteractionStore,
     providers::{ProviderClient, ProviderRegistry},
+    records::RecordClient,
     tools::ToolsState,
     turns::{outcomes::TurnOutcome, TurnRunner, TurnTracker},
     DeliveryConfig, TurnConfig,
@@ -52,9 +54,34 @@ impl App {
         config: DeliveryConfig,
         provider_config: FakeProviderConfig,
     ) -> Self {
+        Self::build("telegram", false, replies, ack_ms, config, provider_config).await
+    }
+    /// A relay channel on `platform`. With `interactive`, the relay client holds an
+    /// interaction store whose record service is unreachable, so any attempt to
+    /// send native controls is visible as a rejection.
+    pub async fn on(platform: &str, interactive: bool) -> Self {
+        Self::build(
+            platform,
+            interactive,
+            vec![],
+            0,
+            DeliveryConfig::default(),
+            FakeProviderConfig::default(),
+        )
+        .await
+    }
+    async fn build(
+        platform: &str,
+        interactive: bool,
+        replies: Vec<Reply>,
+        ack_ms: u32,
+        config: DeliveryConfig,
+        provider_config: FakeProviderConfig,
+    ) -> Self {
         let fake = FakeReply::start(replies).await;
         let key = format!("nyx_{}", uuid::Uuid::new_v4().simple());
-        let mut fixture = Fixture::new(
+        let mut fixture = Fixture::on(
+            platform,
             |value| {
                 value["reply"]["ack_after_ms"] = ack_ms.into();
                 value["secrets"]["agent_key_hash"] =
@@ -65,7 +92,7 @@ impl App {
             Default::default(),
         )
         .await;
-        assert_eq!(fixture.send(&Envelope::new()).await.status(), 202);
+        assert_eq!(fixture.send(&Envelope::on(platform)).await.status(), 202);
         let turn = Arc::new(fixture.recorder.requests.lock().unwrap().pop().unwrap());
         let event = turn
             .event_ref
@@ -74,22 +101,31 @@ impl App {
             .payload;
         let tracker = TurnTracker::new(http::readiness::Readiness::initialized());
         let (commands, receiver) = mpsc::channel(256);
+        let provider = FakeProvider::start(provider_config).await;
+        let registry=ProviderRegistry::parse(&json!([{"slug":"cma_codex","base_url":provider.base_url(),"kind":"responses_http","paths":{"agent_card":"/.well-known/agent-card.json","binding":"/api/v1/cmaeg/bindings/{binding_id}","conversation":"/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}","responses":"/api/v2/responses"},"max_inflight":8}]).to_string()).unwrap();
+        let providers = Arc::new(
+            ProviderClient::new(registry, Duration::from_secs(1), Duration::from_secs(2), 8)
+                .unwrap(),
+        );
+        let mut relay = RelayClient::new(&fake.base, config.reply_timeout).unwrap();
+        if interactive {
+            let records = RecordClient::new("http://127.0.0.1:9", "unused-service-bearer").unwrap();
+            relay = relay.with_interactions(Arc::new(InteractionStore::new(
+                records,
+                fixture.state.master_keys.clone(),
+                providers.clone(),
+            )));
+        }
         let engine = DeliveryEngine::start(
             receiver,
             fixture.state.master_keys.clone(),
-            RelayClient::new(&fake.base, config.reply_timeout).unwrap(),
+            relay,
             config,
             tracker.clone(),
             cmaeg::delivery::custom::CustomDelivery::new(
                 "https://gateway.example".into(),
                 Arc::default(),
             ),
-        );
-        let provider = FakeProvider::start(provider_config).await;
-        let registry=ProviderRegistry::parse(&json!([{"slug":"cma_codex","base_url":provider.base_url(),"kind":"responses_http","paths":{"agent_card":"/.well-known/agent-card.json","binding":"/api/v1/cmaeg/bindings/{binding_id}","conversation":"/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}","responses":"/api/v2/responses"},"max_inflight":8}]).to_string()).unwrap();
-        let providers = Arc::new(
-            ProviderClient::new(registry, Duration::from_secs(1), Duration::from_secs(2), 8)
-                .unwrap(),
         );
         let runner = Arc::new(TurnRunner::new(
             providers.clone(),

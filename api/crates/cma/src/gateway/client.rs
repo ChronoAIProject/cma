@@ -26,11 +26,17 @@ impl GatewayClient {
     async fn request<T: Serialize + ?Sized>(
         &self,
         token: &str,
+        bot: &Bot,
         method: Method,
         url: Url,
         body: Option<&T>,
     ) -> Result<Response, BotError> {
-        let request = self.http.request(method, url).bearer_auth(token);
+        let mut request = self.http.request(method, url).bearer_auth(token);
+        if let layer2_core::resource_access::ResourceOwner::Organization { subject } =
+            bot.resource_owner()
+        {
+            request = request.header("X-CMAEG-Owner", subject.as_str());
+        }
         let request = if let Some(body) = body {
             request.json(body)
         } else {
@@ -62,23 +68,33 @@ impl GatewayClient {
             provider: ProviderRequest {
                 slug: bot.provider.clone(),
             },
-            sources: vec![SourceRequest {
-                kind: "nyxid_relay",
-                issuer: self.issuer.clone(),
-                key_id: key.into(),
-                route_ids: routes,
-                platform: "telegram",
-                bot_username: username,
-                admission: if enabled {
-                    bot.request.admission.clone()
-                } else {
-                    BotAdmission::Scoped {
-                        senders: IdentityAdmission::Deny,
-                        chats: IdentityAdmission::Deny,
-                        groups: GroupAdmission::Deny,
-                    }
-                },
-            }],
+            connection_ref: bot.request.connection_ref.clone(),
+            connection_admission: bot
+                .request
+                .connection_ref
+                .as_ref()
+                .map(|_| admission(bot, enabled)),
+            sources: if bot.request.connection_ref.is_some() {
+                vec![]
+            } else {
+                vec![SourceRequest {
+                    kind: "nyxid_relay",
+                    issuer: self.issuer.clone(),
+                    key_id: key.into(),
+                    route_ids: routes,
+                    platform: "telegram",
+                    bot_username: username,
+                    admission: if enabled {
+                        bot.request.admission.clone()
+                    } else {
+                        BotAdmission::Scoped {
+                            senders: IdentityAdmission::Deny,
+                            chats: IdentityAdmission::Deny,
+                            groups: GroupAdmission::Deny,
+                        }
+                    },
+                }]
+            },
             partition: json!({"version":1,"key":"conversation_and_sender"}),
             reply: reply(&bot.request.reply),
         })
@@ -90,12 +106,7 @@ impl GatewayClient {
         secrets: &BotSecrets,
         username: Option<String>,
     ) -> Result<BotChannelObservation, BotError> {
-        let key = bot
-            .resources
-            .credentials
-            .route_key_id
-            .as_deref()
-            .ok_or(BotError::Unavailable)?;
+        let key = route_key(bot, &bot.resources.credentials)?;
         let body = Create {
             policy: self.policy(bot, key, vec![], username, true)?,
             record_id: &bot.record_id,
@@ -104,6 +115,7 @@ impl GatewayClient {
         let response = self
             .request(
                 token,
+                bot,
                 Method::POST,
                 self.url("channels", None)?,
                 Some(&body),
@@ -120,11 +132,7 @@ impl GatewayClient {
             .creation
             .as_ref()
             .is_none_or(|c| !c.ready)
-            || channel.provider.refused.iter().any(|refusal| {
-                // This integration grants the NyxID tools service instead of
-                // installing the advertised optional native MCP endpoint.
-                refusal.field != "tools.native_mcp_url"
-            })
+            || !channel.provider.refused.is_empty()
         {
             return Err(BotError::Invalid(
                 "gateway provider refused the requested profile".into(),
@@ -136,6 +144,7 @@ impl GatewayClient {
         let response = self
             .request::<()>(
                 token,
+                bot,
                 Method::GET,
                 self.url("channel-records", Some(&bot.record_id))?,
                 None,
@@ -178,7 +187,7 @@ impl GatewayClient {
         if observed.channel != current.channel {
             return Err(BotError::Unavailable);
         }
-        let key = keys.route_key_id.as_deref().ok_or(BotError::Unavailable)?;
+        let key = route_key(bot, keys)?;
         let body = Update {
             policy: self.policy(
                 bot,
@@ -193,6 +202,7 @@ impl GatewayClient {
         let response = self
             .request(
                 token,
+                bot,
                 Method::PUT,
                 self.url("channels", Some(&current.channel.channel_id))?,
                 Some(&body),
@@ -201,12 +211,7 @@ impl GatewayClient {
         let channel: Channel = read_json(response)
             .await
             .map_err(|_| BotError::Unavailable)?;
-        if channel
-            .provider
-            .refused
-            .iter()
-            .any(|refusal| refusal.field != "tools.native_mcp_url")
-        {
+        if !channel.provider.refused.is_empty() {
             return Err(BotError::Invalid(
                 "gateway provider refused the requested profile".into(),
             ));
@@ -220,15 +225,34 @@ impl GatewayClient {
         }
         Ok(updated)
     }
+    #[allow(dead_code)] // Retained for Bot cleanup retries after a failed setup.
     pub async fn delete(
         &self,
         token: &str,
         current: &BotChannelObservation,
     ) -> Result<(), BotError> {
+        self.delete_with_bot(token, None, current).await
+    }
+    pub async fn delete_with_bot(
+        &self,
+        token: &str,
+        bot: Option<&Bot>,
+        current: &BotChannelObservation,
+    ) -> Result<(), BotError> {
         let mut url = self.url("channels", Some(&current.channel.channel_id))?;
         url.query_pairs_mut()
             .append_pair("expected_version", &current.channel.version.to_string());
-        let response = self.request::<()>(token, Method::DELETE, url, None).await?;
+        let response = if let Some(bot) = bot {
+            self.request::<()>(token, bot, Method::DELETE, url, None)
+                .await?
+        } else {
+            self.http
+                .delete(url)
+                .bearer_auth(token)
+                .send()
+                .await
+                .map_err(|_| BotError::Unavailable)?
+        };
         if response.status() == 204 || response.status() == 404 {
             Ok(())
         } else {
@@ -243,7 +267,9 @@ impl GatewayClient {
             Some(&channel.channel_id),
             Some("test"),
         )?;
-        let response = self.request::<()>(token, Method::POST, url, None).await?;
+        let response = self
+            .request::<()>(token, bot, Method::POST, url, None)
+            .await?;
         let result: Test = read_json(response)
             .await
             .map_err(|_| BotError::Unavailable)?;
@@ -262,26 +288,42 @@ impl GatewayClient {
         if channel.record_id != bot.record_id
             || def.record_id != bot.record_id
             || def.owner.subject != bot.owner.as_str()
+            || def.owner.kind
+                != match bot.resource_owner() {
+                    layer2_core::resource_access::ResourceOwner::Person { .. } => "human",
+                    layer2_core::resource_access::ResourceOwner::Organization { .. } => {
+                        "organization"
+                    }
+                }
             || channel.provider.slug != bot.provider
             || !level(&channel.provider.level)
             || channel.version == 0
             || channel.channel_id.is_empty()
             || channel.channel_id.len() > 512
-            || def.sources.len() != 1
+            || (bot.request.connection_ref.is_none() && def.sources.len() != 1)
+            || def.connection_ref != bot.request.connection_ref
             || def.profile != profile::snapshot(bot)?
         {
             return Err(BotError::Unavailable);
         }
-        let source = def
-            .sources
-            .into_iter()
-            .next()
-            .ok_or(BotError::Unavailable)?;
-        if source.kind != "nyxid_relay"
-            || source.issuer != self.issuer
-            || source.platform != "telegram"
-            || channel.endpoints.nyxid_callback_url
-                != endpoint(&self.public, "callbacks", Some(&channel.channel_id), None)?.as_str()
+        let (route_key_id, route_ids) = if bot.request.connection_ref.is_some() {
+            (String::new(), vec![])
+        } else {
+            let source = def
+                .sources
+                .into_iter()
+                .next()
+                .ok_or(BotError::Unavailable)?;
+            if source.kind != "nyxid_relay"
+                || source.issuer != self.issuer
+                || !matches!(source.platform.as_str(), "telegram" | "telegram-new")
+            {
+                return Err(BotError::Unavailable);
+            }
+            (source.key_id, source.route_ids)
+        };
+        if channel.endpoints.nyxid_callback_url
+            != endpoint(&self.public, "callbacks", Some(&channel.channel_id), None)?.as_str()
             || channel.endpoints.custom_event_url
                 != endpoint(
                     &self.public,
@@ -309,15 +351,25 @@ impl GatewayClient {
                 .strip_prefix("sha256:")
                 .ok_or(BotError::Unavailable)?
                 .to_owned(),
-            route_key_id: source.key_id,
-            route_ids: source.route_ids,
+            route_key_id,
+            route_ids,
         })
     }
 }
 fn credentials(secrets: &BotSecrets) -> Credentials<'_> {
     Credentials {
         agent_key: secrets.agent.expose(),
-        channel_key: secrets.route.expose(),
+        channel_key: secrets.route.as_ref().map(|value| value.expose()),
+    }
+}
+fn route_key<'a>(bot: &Bot, keys: &'a BotCredentialSet) -> Result<&'a str, BotError> {
+    if bot.request.connection_ref.is_some() {
+        if keys.route_key_id.is_some() || keys.route_key_hash.is_some() {
+            return Err(BotError::Conflict);
+        }
+        Ok("")
+    } else {
+        keys.route_key_id.as_deref().ok_or(BotError::Unavailable)
     }
 }
 fn level(value: &str) -> bool {
@@ -344,4 +396,16 @@ fn endpoint(
         }
     }
     Ok(url)
+}
+
+fn admission(bot: &Bot, enabled: bool) -> BotAdmission {
+    if enabled {
+        bot.request.admission.clone()
+    } else {
+        BotAdmission::Scoped {
+            senders: IdentityAdmission::Deny,
+            chats: IdentityAdmission::Deny,
+            groups: GroupAdmission::Deny,
+        }
+    }
 }

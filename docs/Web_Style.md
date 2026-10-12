@@ -19,13 +19,12 @@ The changelog at the end is **append-only**. Entries are never edited or deleted
 | Home | The owner's Sandbox -> Workspace -> Agent tree and creation state appropriate to their capabilities. |
 | Sandbox | Runtime state, pinned profile facts, Workspaces and recorded preparation. |
 | Agent | One conversation in one Worktree, with approvals, tools, usage and durable history. |
-| Profiles | Draft and published Sandbox, Workspace and Agent Profiles. |
-| Marketplace | Public profile discovery, full revision inspection, use and fork. |
+| Profiles | One library for personal Sandbox, Workspace and Agent Profiles, public Marketplace discovery, and versioned Event Worker Profiles. |
 | CMA Trigger | Signed-in authoring, publication, placements and integration snippets. |
 | Public Trigger | A visitor's landing, consent, review, connection assistance and progress. |
 | Operations | Capability-gated inventory, Profiles, activity and settings. |
 | Developer | Public TypeScript and Rust SDK guides bundled with the frontend. |
-| Bridges | Personal and organization channel connections, explicit context permission, configuration and lifecycle controls. |
+| Bots | Owner Bot configuration and lifecycle through CMAEG, opened from the account menu. |
 
 Each view has a canonical route. Refresh and browser history restore it without
 admitting work. The terminal plane, separate Chat model, session list, canvas
@@ -420,10 +419,17 @@ The grid transitions its tracks, except while dragging, where the transition wou
 ## 10. The sidebar
 
 The brand row, browser tree, and account foot retain the established shell
-dimensions. The mark and wordmark link to Home and close Agent details. A separate
-New agent icon button follows the build badge, never sharing the brand hit area.
-The badge sits beside CMA using existing layer-2 ground, secondary ink and border,
-11px code type, 2px/4px padding and 4px radius; it truncates within 11ch and exposes
+dimensions. The mark and wordmark link to Home and close Agent details. The
+navigation scope Picker sits between the build badge and the separate
+New agent icon button, which has its own hit area. When the Picker is available,
+the brand shows its mark without the wordmark, the header gap is 4px, the badge
+truncates within 8ch and the collapse control is 32px wide. The Picker fills the
+remaining width with a 60px minimum, 12px type and 4px inline padding; long names
+truncate while its menu shows the full choice. Collapsing hides the Picker and
+preserves its selected scope.
+The badge uses existing layer-2 ground, secondary ink and border,
+11px code type, 2px/4px padding and 4px radius; without the Picker it truncates
+within 11ch and exposes
 the complete build identity on hover. The standalone tool is 32px wide and 36px
 high; mobile header controls retain at least 44px height. Collapsing keeps the
 mark, separate creation tool and panel control. The browser region alone scrolls
@@ -438,12 +444,10 @@ signed-in viewer and survives route changes.
 
 Agent metadata also shows its authorized immutable creation category in the
 existing secondary text style: Manual, Trigger, Channel, or Unknown origin.
-Parent summaries count each child's category and remain complete when the tree
-is filtered; an unavailable child fact suppresses the summary. An existing
-native select labeled Agent creation filters the current tree by category.
-Loading and refused facts never become the Unknown origin category. The filter
-reports incomplete reads and does not imply that archived or other inventories
-were searched. No private actor or external source references appear in rows.
+Parent summaries count each child's category; an unavailable child fact
+suppresses the summary. The sidebar has no Agent creation or Agent channel
+activity filters. Loading and refused facts never become the Unknown origin
+category. No private actor or external source references appear in rows.
 
 Expansion and navigation are separate keyboard-operable commands, with named
 `aria-expanded` state. A collapsed group retains its count. Paused or reviving
@@ -459,9 +463,10 @@ from the authenticated public snapshot, not inferred from a role label.
 
 The account row is the only foot content: avatar, name, and email. Long identity
 lines truncate within the fixed seat. Its upward-opening menu contains Profiles,
-Marketplace, CMA Trigger, Developer, capability-gated Operations, appearance,
+capability-gated Bot settings, CMA Trigger, Developer, capability-gated Operations, appearance,
 and sign out. Profiles, Marketplace, publisher, Operations, and Developer use
-their canonical routes and work with refresh and browser history.
+their canonical routes and work with refresh and browser history. Bot settings
+opens `/bots` from this menu; it is not a separate sidebar navigation row.
 
 There is no Chat/Agent switch, session group, pricing control, or terminal plane
 choice. Selecting an Agent opens its conversation; selecting a Sandbox opens
@@ -852,32 +857,6 @@ figure. Context-summary boundaries use neutral metadata, not failure colour.
 
 ### Organization inventory and shared Agent views
 
-The scoped navigation's **Bridges** entry opens `/bridges` or
-`/organizations/{organization}/bridges`. Creation uses the corresponding `/new`
-route and saved details use `/bridges/{bridge_id}`. Use existing Button, Picker,
-Input, fieldset, confirmation and surface tokens. Forms use the existing
-24/16/12/8px spacing, with capacity fields and inventory rows stacking on narrow
-screens. Personal and organization scope is explicit; only current owners or
-organization admins load management settings, bot/key/route choices or grants.
-
-Bridge setup starts disabled with separate Sandbox placement and sender-in-chat
-context. Explain resource ownership, CMA visibility, context sharing and where
-group replies appear before the user's exposure acknowledgment. Retained Agents
-need separate explicit permission to use their existing history and execution
-context. Show unsupported placement and platform controls as disabled choices
-with reasons. Saving settings, validating the connection, recording permission,
-enabling the bridge and observing successful execution/delivery are distinct.
-Never claim processing is available from a settings or connection result alone.
-
-Show the exact callback for manual NyxID configuration. Import the selected key
-through a password input without browser storage; clear it on submission and
-never display raw provider failure text. Retain nonsecret edited settings across
-ordinary access refreshes, clear protected choices while access is unavailable,
-and retain the exact command and key for uncertain-result recovery. Changing
-viewer, client or owner resets that management context. Retirement uses the
-existing risk confirmation and explicitly preserves retained resources/history;
-key and invocation-grant revocation use inline confirmation.
-
 The account menu's **Agents** entry opens `/agents`; an organization selection
 uses `/organizations/{organization}/agents` so reload and deep links retain the
 scope. Named organization choices use the existing Picker. The inventory keeps
@@ -911,9 +890,9 @@ that exceeds 15 seconds loses its display authority. Foreground, scope/client
 changes and denied access clear old shared values and cancel streams/exports.
 Channel-use presentation remains subsequent work.
 
-The sidebar's existing Picker chooses Personal, a named Organization or Shared
-with me without
-changing the current conversation. Keep selection through sidebar collapse and
+The sidebar header Picker chooses Personal, a named Organization or Shared
+with me without changing the current conversation. Keep selection through sidebar
+collapse and
 preserve the personal composer/draft during organization browsing and access
 loss. Organization and shared Sandboxes page independently; expanding a named Sandbox or
 Workspace reads that authorized branch. The Agent inventory link includes narrow
@@ -1342,12 +1321,25 @@ disabled until allowed. Failure stays beside its controls and preserves history.
 
 ## 18. Profiles and Marketplace
 
+The account menu has one Profiles entry. Its shared library navigation contains
+My profiles (`/profiles`), Marketplace (`/marketplace`), and Event workers
+(`/profiles/event-workers`). Navigation uses semantic links with `aria-current`,
+existing brand focus/selection tokens, 12px by 16px link padding, a 2px selected
+underline, and 16px by 24px container padding. It wraps on narrow screens.
+
 Profiles home at `/profiles` has Sandbox, Workspace and Agent tabs. Cards show
 name, latest published revision, visibility and update time, with New profile
 for the active kind. Editors use
 `/profiles/{agent-profiles|workspace-profiles|sandbox-profiles}/{id}`.
 Marketplace uses `/marketplace` and `/marketplace/{kind}/{id}`, with short
 kinds `agent`, `workspace` and `sandbox`.
+
+Event Worker Profile management uses existing Profile cards and editor bands.
+Creation/editing at `/profiles/event-workers/{id}` selects three owned, published
+CMA profiles with the existing ProfilePicker and names the resulting complete
+configuration. Each save creates an immutable revision; existing Bots keep their
+selected snapshot. Retirement requires an inline confirmation and preserves
+existing Bot configurations. Uncertain saves retain their request and key.
 
 ### Editor geometry and controls
 
@@ -1945,16 +1937,38 @@ Append-only. Never edit or delete an entry.
 | 2026-09-16 | Offer ordinary queued input beside Stop response in Responses v2 tabs, with distinct accessible labels, existing composer controls and draft-preserving admission recovery. |
 | 2026-09-16 | Keep Queue message and Stop response aligned beside the input at every supported viewport, using explicit composer grid columns and existing control sizes and gaps. |
 | 2026-09-17 | Dismiss an open menu before its enclosing dialog on Escape from a row or trigger, preserving the selected value and returning focus to the trigger. |
+| 2026-09-23 | Moved Bot settings into the bottom-left account menu, retaining capability checks and the canonical `/bots` route. |
+| 2026-09-23 | Move the navigation scope Picker between the header build badge and New agent, keep the compact mark and usable controls at narrow sidebar widths, and remove both sidebar Agent filters while retaining resource facts. |
+| 2026-09-23 | Remove the same two sidebar filters from Organization and Shared with me trees, preserving authorized hierarchy expansion and pagination. |
+| 2026-09-23 | Retire the old bridge management routes and pending bridge-message panel; Bot settings remains the supported channel-management entry in the account menu. |
+| 2026-09-25 | Reuse Personal hierarchy rows, page bands, Agent header and Details for organization/shared resources. Restore scope from authorized ownership on deep links, retain drafts during explicit scope changes, and omit unsupported personal creation in organization scope. |
 
-| 2026-10-12 | Add independent Event Gateway, Agent Manager and Image Manager navigation and service-local authentication, catalog/build/sharing, and channel inventory patterns using existing design tokens and controls. |
+### Organization and shared navigation
 
-| 2026-10-12 | Extend the Gateway page with explicit create/edit configuration forms, stable reserved record recovery, and confirmation before disconnecting a channel. Revalidate service identity on focus and clear private service views when authorization changes. |
+Organization and Shared with me use the Personal tree row, status dot, keyboard
+navigation, canonical resource links and selected-row treatment. Organization
+Sandboxes use the same Live/Paused groups and expose independently authorized
+Workspace and Agent children. Collapsing a branch survives access refreshes;
+revoked children disappear without reopening a denied branch automatically.
+Compact access metadata uses the existing tree truncation treatment.
+
+Sandbox and Workspace pages reuse the Personal page header and information
+bands. Agent conversations reuse the Personal header, message stream, Thinking
+dock, composer and right-side Details panel, including the compact overlay and
+focus restoration. Details contains access, channel activity and authorized
+artifacts. An Agent-only share never fetches private ancestry to fill a breadcrumb.
+Current capabilities decide the available actions. Personal creation controls
+are absent in organization/shared scope while organization creation is unsupported.
+
+Resource deep links and reloads derive their navigation scope from current
+authorized ownership. Explicit scope selection preserves the open conversation
+and its draft. Changing viewers discards scope state.
 
 ### Approved Agent artifacts
 
 Personal Agent Details offers **Artifacts** under current artifact visibility;
 current sharing managers may publish a selected file after explicit exposure
-acknowledgment. Shared Agents offer lazy artifact browsing alongside history.
+acknowledgment. Shared Agents offer the same lazy artifact entry in Details.
 No parent, repository, credential or runtime files are requested by this view.
 Use the standard Modal and Button primitives, safe display names, byte counts,
 independent paging and clear empty/denied states. Downloads recheck access before
@@ -1971,9 +1985,8 @@ and existing downloads cannot be recalled.
 
 ### Channel activity and management history
 
-Show channel activity independently of immutable creation origin. Agent Details
-and shared Agent headers distinguish current linkage, past linkage and absent
-history. Inventory and personal tree filters combine creation origin with current linkage,
+Show channel activity independently of immutable creation origin. Personal and
+shared Agent Details distinguish current linkage, past linkage and absent history. Inventory and personal tree filters combine creation origin with current linkage,
 any history, detached history or no history. Tree facts use at most four optional
 reads concurrently and expire under the existing bounded read policy. Sandbox
 and Workspace channel counts require facts for every represented child; an
@@ -1992,42 +2005,8 @@ the initial authority deadline. Changed scope, revoked authority or an expired
 read clears private history. Viewing history preserves the personal composer and
 draft. Summary readers never receive the management history control.
 
+| 2026-09-23 | Merge the Profiles and Marketplace account entries into one Profile library, with My profiles, Marketplace and Event workers navigation. Add versioned Event Worker Profile composition, retirement and Bot selection using existing fields, pickers, cards and editor bands. |
 
-### CMA service navigation
+| 2026-09-23 | Retain Event Worker Profile save requests in owner-scoped browser session storage across reloads, require explicit same-request retry, and keep saved workers readable and retireable when source catalogue entries are removed. |
 
-The signed-in operational application has three persistent service links across
-its top: **Event Gateway**, **Agent Manager**, **Image Manager**. This deliberately
-extends the §9 frame with a 44px service navigation band; the Agent Manager's
-existing three columns fill the remaining height. Public Trigger journeys retain
-their existing frame. Use the established base background, level-1 border,
-primary/secondary ink, 14px text, 8px/16px spacing and standard focus ring. Mark
-the selected service with a primary-ink bottom border and `aria-current="page"`.
-At narrow widths the service band scrolls horizontally without shrinking labels.
-Service links are real URLs supporting browser back/forward and new tabs.
-
-Image and Gateway pages use the established page header, form field, Button,
-status band and bordered list patterns, with 24px desktop / 16px mobile padding,
-16px gaps and a 1000px content maximum. Forms use explicit labels and native
-inputs; versions and digests wrap inside the page. Each service owns its login,
-permissions, loading, access-denied and unavailable states. A failed service never
-blocks navigation to the other two. Sign-in is an explicit NyxID action; tokens
-never enter JavaScript or browser storage. Sign-out is scoped and labelled with
-the service name. Switching services preserves the mounted Agent conversation
-and draft when it has already been opened, without sending a lifecycle command.
-
-Image Manager exposes a catalog with name/description, immutable build source,
-build progress, successful versions, sharing with a NyxID account and retirement.
-Only explicit submission starts a build. Unknown write outcomes retain the same
-request key and body for retry; changed content requires deliberate dismissal.
-Retirement explains that existing Agents keep their images. Gateway lists actual
-owned channels with provider, version and source, and offers a current-definition
-view and explicit test action. Test dispatch is never automatic. Access loss
-clears private lists; temporary failures retain a clear retry path. Standard
-controls enforce the service's current permissions and the backend rechecks them.
-
-Gateway channel configuration uses a labelled multiline JSON field for the
-published channel policy, with credentials in a separate password field for
-creation. Editing starts from the current public policy and retains credentials.
-Keep a reserved record UUID and identical body while a creation result is unknown;
-provide explicit recovery and never automatically create another record. Confirm
-channel deletion with the channel name and explain that incoming delivery stops.
+| 2026-09-23 | Align the view inventory with the unified Profile library and owner Bots; remove the retired Bridge setup specification while preserving historical changelog entries and Agent provenance vocabulary. |

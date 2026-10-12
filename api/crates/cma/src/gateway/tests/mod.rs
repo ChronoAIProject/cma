@@ -1,16 +1,22 @@
 use super::*;
 use serde_json::{json, Value};
+mod connection_channels;
 mod fixture;
+mod key_expiry;
 mod lifecycle;
 mod nyxid_fixture;
 mod provider_fixture;
 mod rest;
+mod route_inventory;
+mod web;
 use fixture::*;
 
 fn secrets() -> BotSecrets {
     BotSecrets {
         agent: ProvidedCredential::new(format!("nyx_{}", uuid::Uuid::new_v4().simple())).unwrap(),
-        route: ProvidedCredential::new(format!("nyx_{}", uuid::Uuid::new_v4().simple())).unwrap(),
+        route: Some(
+            ProvidedCredential::new(format!("nyx_{}", uuid::Uuid::new_v4().simple())).unwrap(),
+        ),
     }
 }
 fn keys(secrets: &BotSecrets, suffix: &str) -> BotCredentialSet {
@@ -18,7 +24,7 @@ fn keys(secrets: &BotSecrets, suffix: &str) -> BotCredentialSet {
         agent_key_id: Some(format!("agent-{suffix}")),
         agent_key_hash: Some(secrets.agent.sha256()),
         route_key_id: Some(format!("route-{suffix}")),
-        route_key_hash: Some(secrets.route.sha256()),
+        route_key_hash: Some(secrets.route.as_ref().unwrap().sha256()),
         expires_at: Some(layer2_core::rfc3339_at(
             std::time::SystemTime::now() + Duration::from_secs(30 * 86400),
         )),
@@ -61,7 +67,7 @@ async fn compiled_gateway_accepts_cma_profiles_and_full_lifecycle_after_restart(
     assert_eq!(profile["environment"]["size"]["cpu_cores"], 1.5);
     assert_eq!(
         profile["permission"]["service_scope"],
-        json!(["chrono-llm-public", "cmaeg", "ornn-api"])
+        json!(["chrono-llm-public", "ornn-api"])
     );
     bot.resources.channel = Some(created.channel.clone());
     bot.resources.route_id = Some("exact-route".into());
