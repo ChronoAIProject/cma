@@ -83,7 +83,7 @@ fi
 awk '
   {
     remaining = $0
-    while (match(remaining, /"(CHRONO|CMAEG)_[A-Z0-9_]+"/)) {
+    while (match(remaining, /"(CHRONO|CMAEG|CMA_IM)_[A-Z0-9_]+"/)) {
       print substr(remaining, RSTART + 1, RLENGTH - 2)
       remaining = substr(remaining, RSTART + RLENGTH)
     }
@@ -102,7 +102,7 @@ if ! awk '
     next
   }
   in_data && /^[^[:space:]#]/ { in_data = 0 }
-  in_data && match($0, /^  (CHRONO|CMAEG)_[A-Z0-9_]+:/) {
+  in_data && match($0, /^  (CHRONO|CMAEG|CMA_IM)_[A-Z0-9_]+:/) {
     print substr($0, 3, RLENGTH - 3)
   }
   END {
@@ -122,7 +122,7 @@ awk '
   {
     reference = $0
     if (sub(/^#   /, "", reference) && \
-        match(reference, /^(CHRONO|CMAEG)_[A-Z0-9_]+([[:space:]]|$)/)) {
+        match(reference, /^(CHRONO|CMAEG|CMA_IM)_[A-Z0-9_]+([[:space:]]|$)/)) {
       key = substr(reference, RSTART, RLENGTH)
       sub(/[[:space:]]$/, "", key)
       print key
@@ -171,4 +171,8 @@ printf 'Configuration key check passed: %d code key(s) match %d manifest key(s).
 check_project cma api
 if [[ -e "${repository_root}/infra/cmaeg/configmap.yaml" || -L "${repository_root}/infra/cmaeg/configmap.yaml" ]]; then
   check_project cmaeg cmaeg
+fi
+
+if [[ -e "${repository_root}/infra/image-manager/configmap.yaml" || -L "${repository_root}/infra/image-manager/configmap.yaml" ]]; then
+  check_project cma-image-manager image-manager
 fi
