@@ -1,7 +1,7 @@
 //! Process argument dispatch: unknown arguments are a usage error, never a panic.
 use std::{ffi::OsStr, process::Output};
 
-const USAGE: &str = "usage: cmaeg [--print-openapi]\n";
+const USAGE: &str = "usage: cmaeg [--print-openapi|--migrate|--print-runtime-role|--print-migration-role|--import-legacy-records PATH]\n";
 
 fn run(arguments: &[&OsStr]) -> Output {
     std::process::Command::new(env!("CARGO_BIN_EXE_cmaeg"))
@@ -21,6 +21,19 @@ fn assert_usage(output: &Output) {
 fn unknown_arguments_print_the_usage_line_and_exit_two() {
     assert_usage(&run(&[OsStr::new("--serve")]));
     assert_usage(&run(&[OsStr::new("--print-openapi"), OsStr::new("extra")]));
+    for command in [
+        "--migrate",
+        "--print-runtime-role",
+        "--print-migration-role",
+    ] {
+        assert_usage(&run(&[OsStr::new(command), OsStr::new("extra")]));
+    }
+    assert_usage(&run(&[OsStr::new("--import-legacy-records")]));
+    assert_usage(&run(&[
+        OsStr::new("--import-legacy-records"),
+        OsStr::new("input.json"),
+        OsStr::new("extra"),
+    ]));
 }
 
 #[cfg(unix)]

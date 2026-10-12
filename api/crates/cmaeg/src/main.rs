@@ -31,6 +31,9 @@ fn main() {
         run_import(arguments[1]);
         return;
     }
+    if !arguments.is_empty() {
+        usage();
+    }
     serve();
 }
 
