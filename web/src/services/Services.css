@@ -41,6 +41,7 @@
 .service-tabs__divider {
   width: 1px;
   height: 22px;
+  align-self: center;
   flex: none;
   background: var(--dsw-alias-border-l1);
 }
@@ -174,10 +175,12 @@
     padding: 16px;
   }
   .service-tabs {
-    padding-inline: 8px;
+    gap: 0;
+    padding-inline: 4px;
   }
   .service-tabs a {
-    padding-inline: 8px;
+    padding-inline: 7px;
+    font-size: 12px;
   }
   .service-tabs__description {
     display: none;
@@ -186,6 +189,12 @@
     display: none;
   }
   .service-tabs__divider {
-    margin-inline: 2px;
+    display: none;
+  }
+}
+@media (max-width: 360px) {
+  .service-tabs a {
+    padding-inline: 4px;
+    font-size: 11px;
   }
 }
