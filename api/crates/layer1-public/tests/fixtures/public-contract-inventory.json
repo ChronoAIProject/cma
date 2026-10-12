@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 191,
+  "openapi_operations": 180,
   "operations": {
     "GET /api/v1/organizations": {
       "classification": "openapi",
@@ -1949,22 +1949,22 @@
       ]
     },
     "GET /api/v1/gateway/channel-records": {
-      "classification": "openapi",
+      "classification": "legacy_gateway",
       "source": "api/crates/layer1-public/src/rest/gateway_records.rs# Capability-gated opaque record listing is exercised by the gateway contract fixture.",
       "required_problems": []
     },
     "PUT /api/v1/gateway/channel-records/{record_id}": {
-      "classification": "openapi",
+      "classification": "legacy_gateway",
       "source": "api/crates/layer1-public/src/rest/gateway_records.rs# Opaque record creation and compare-and-set updates are exercised by the gateway contract fixture.",
       "required_problems": []
     },
     "GET /api/v1/gateway/channel-records/{record_id}": {
-      "classification": "openapi",
+      "classification": "legacy_gateway",
       "source": "api/crates/layer1-public/src/rest/gateway_records.rs# Opaque record reads are exercised by the gateway contract fixture.",
       "required_problems": []
     },
     "DELETE /api/v1/gateway/channel-records/{record_id}": {
-      "classification": "openapi",
+      "classification": "legacy_gateway",
       "source": "api/crates/layer1-public/src/rest/gateway_records.rs# Compare-and-set record deletion is exercised by the gateway contract fixture.",
       "required_problems": []
     },
@@ -2455,7 +2455,7 @@
       "required_problems": []
     },
     "PUT /api/v1/gateway/interaction-records/{record_id}": {
-      "classification": "openapi",
+      "classification": "legacy_gateway",
       "source": "api/crates/layer1-public/src/rest/gateway_interactions.rs# Real REST fixtures exercise opaque records, permission checks, expiry admission, optimistic concurrency and store failures.",
       "required_problems": [
         "not_authenticated",
@@ -2467,7 +2467,7 @@
       ]
     },
     "GET /api/v1/gateway/interaction-records/{record_id}": {
-      "classification": "openapi",
+      "classification": "legacy_gateway",
       "source": "api/crates/layer1-public/src/rest/gateway_interactions.rs# Real REST fixtures exercise opaque records, permission checks, expiry admission, optimistic concurrency and store failures.",
       "required_problems": [
         "not_authenticated",
@@ -2480,7 +2480,7 @@
       }
     },
     "DELETE /api/v1/gateway/interaction-records/{record_id}": {
-      "classification": "openapi",
+      "classification": "legacy_gateway",
       "source": "api/crates/layer1-public/src/rest/gateway_interactions.rs# Real REST fixtures exercise opaque records, permission checks, expiry admission, optimistic concurrency and store failures.",
       "required_problems": [
         "not_authenticated",
@@ -2530,7 +2530,7 @@
       ]
     },
     "DELETE /api/v1/gateway/connection-records/{record_id}": {
-      "classification": "openapi",
+      "classification": "legacy_gateway",
       "source": "api/crates/layer1-public/src/rest/gateway_connections.rs# Connection records reuse capability-gated record handlers with an independent namespace; the executable gateway-connections corpus covers success, authority, validation, storage and CAS outcomes.",
       "required_problems": [
         "conflict",
@@ -2543,7 +2543,7 @@
       ]
     },
     "GET /api/v1/gateway/connection-records": {
-      "classification": "openapi",
+      "classification": "legacy_gateway",
       "source": "api/crates/layer1-public/src/rest/gateway_connections.rs# Connection records reuse capability-gated record handlers with an independent namespace; the executable gateway-connections corpus covers success, authority, validation, storage and CAS outcomes.",
       "required_problems": [
         "forbidden",
@@ -2554,7 +2554,7 @@
       ]
     },
     "GET /api/v1/gateway/connection-records/{record_id}": {
-      "classification": "openapi",
+      "classification": "legacy_gateway",
       "source": "api/crates/layer1-public/src/rest/gateway_connections.rs# Connection records reuse capability-gated record handlers with an independent namespace; the executable gateway-connections corpus covers success, authority, validation, storage and CAS outcomes.",
       "required_problems": [
         "forbidden",
@@ -2565,7 +2565,7 @@
       ]
     },
     "PUT /api/v1/gateway/connection-records/{record_id}": {
-      "classification": "openapi",
+      "classification": "legacy_gateway",
       "source": "api/crates/layer1-public/src/rest/gateway_connections.rs# Connection records reuse capability-gated record handlers with an independent namespace; the executable gateway-connections corpus covers success, authority, validation, storage and CAS outcomes.",
       "required_problems": [
         "conflict",

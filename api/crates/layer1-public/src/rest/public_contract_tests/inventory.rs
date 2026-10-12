@@ -38,6 +38,7 @@ enum Classification {
     Openapi,
     SupplementalAuth,
     SupplementalAsset,
+    LegacyGateway,
 }
 
 #[test]
@@ -61,7 +62,7 @@ fn every_documented_operation_and_named_problem_has_exact_contract_coverage() {
     let path = super::directory().with_file_name("public-contract-inventory.json");
     let inventory: Inventory = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
     assert_eq!(inventory.version, 1);
-    assert_eq!(inventory.openapi_operations, 191);
+    assert_eq!(inventory.openapi_operations, 180);
     assert_eq!(
         openapi.len(),
         inventory.openapi_operations,
@@ -74,6 +75,19 @@ fn every_documented_operation_and_named_problem_has_exact_contract_coverage() {
         .map(|(operation, _)| operation.clone())
         .collect();
     assert_eq!(openapi, declared, "OpenAPI operation inventory differs");
+    for (operation, entry) in &inventory.operations {
+        if entry.classification == Classification::LegacyGateway {
+            assert!(operation
+                .split_once(' ')
+                .unwrap()
+                .1
+                .starts_with("/api/v1/gateway/"));
+            assert!(
+                !openapi.contains(operation),
+                "retired Gateway storage must not be advertised by Agent Manager"
+            );
+        }
+    }
     let mut ids = BTreeSet::new();
     let mut covered: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut protocol_failures: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();

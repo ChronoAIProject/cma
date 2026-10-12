@@ -7,7 +7,7 @@ use mongodb::{bson::doc, Client};
 
 use super::{
     AuthEncryptionKey, MongoActivityStore, MongoAuthStore, MongoCheckpointObjectStore,
-    MongoGatewayRecordStore, MongoOperationStore, MongoPlatformSettingsStore, MongoProfileStore,
+    MongoOperationStore, MongoPlatformSettingsStore, MongoProfileStore,
     MongoSandboxCredentialStore, MongoSandboxStore, MongoTriggerDefinitionStore,
     MongoUserDirectoryStore,
 };
@@ -36,9 +36,6 @@ pub struct MongoStores {
     pub settings: Arc<MongoPlatformSettingsStore>,
     pub operations: Arc<MongoOperationStore>,
     pub(crate) agent_lifecycle: Arc<super::MongoAgentLifecycleStore>,
-    pub gateway_records: Arc<MongoGatewayRecordStore>,
-    pub(crate) gateway_connections: Arc<MongoGatewayRecordStore>,
-    pub(crate) gateway_interactions: Arc<super::MongoGatewayInteractionStore>,
     client: Client,
     database: String,
 }
@@ -56,6 +53,28 @@ impl MongoStores {
         let client = Client::with_uri_str(uri)
             .await
             .map_err(|error| StoreError::Unavailable(format!("connect to MongoDB: {error}")))?;
+        super::isolation::verify(&client.database(database)).await?;
+        Self::open(
+            client,
+            database,
+            deployment,
+            auth_encryption_key,
+            activity_retention,
+            checkpoint_storage,
+            runtime,
+        )
+        .await
+    }
+
+    pub(super) async fn open(
+        client: Client,
+        database: &str,
+        deployment: &str,
+        auth_encryption_key: &AuthEncryptionKey,
+        activity_retention: Duration,
+        checkpoint_storage: Arc<dyn super::CheckpointBlobStore>,
+        runtime: (&str, Option<&layer3_adapter::HomeVolumePolicy>),
+    ) -> Result<Self, StoreError> {
         let mut sandbox_model =
             MongoSandboxStore::open_with_storage(&client, database, checkpoint_storage).await?;
         sandbox_model.warm_runtime_version = Some(runtime.0.to_owned());
@@ -85,11 +104,6 @@ impl MongoStores {
         let operations = Arc::new(MongoOperationStore::open(&client, database).await?);
         let agent_lifecycle =
             Arc::new(super::MongoAgentLifecycleStore::open(&client.database(database)).await?);
-        let gateway_records = Arc::new(MongoGatewayRecordStore::open(&client, database).await?);
-        let gateway_connections =
-            Arc::new(MongoGatewayRecordStore::open_connections(&client, database).await?);
-        let gateway_interactions =
-            Arc::new(super::MongoGatewayInteractionStore::open(&client, database).await?);
         let bot_setups = Arc::new(
             super::bot_setups::MongoBotSetupStore::open(
                 &client,
@@ -135,9 +149,6 @@ impl MongoStores {
             settings,
             operations,
             agent_lifecycle,
-            gateway_records,
-            gateway_connections,
-            gateway_interactions,
             client,
             database: database.to_owned(),
         };
