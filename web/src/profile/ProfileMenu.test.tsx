@@ -19,7 +19,7 @@ describe('account menu', () => {
     const actor = userEvent.setup();
     render(<ProfileMenu user={user} bots onSignOut={onSignOut} onNavigate={onNavigate} />);
     await actor.click(screen.getByRole('button', { name: /account menu/i }));
-    for (const name of ['Profiles', 'Bot settings', 'Developer']) {
+    for (const name of ['Bot settings', 'Developer']) {
       expect(screen.getByRole('menuitem', { name })).toBeInTheDocument();
     }
     expect(screen.queryByRole('menuitem', { name: 'Marketplace' })).not.toBeInTheDocument();
@@ -27,9 +27,6 @@ describe('account menu', () => {
     expect(screen.queryByRole('menuitem', { name: 'CMA Trigger' })).not.toBeInTheDocument();
     expect(screen.getByRole('menuitem', { name: /appearance/i })).toBeInTheDocument();
 
-    await actor.click(screen.getByRole('menuitem', { name: 'Profiles' }));
-    expect(onNavigate).toHaveBeenCalledWith({ kind: 'profiles' });
-    await actor.click(screen.getByRole('button', { name: /account menu/i }));
     await actor.click(screen.getByRole('menuitem', { name: 'Bot settings' }));
     expect(onNavigate).toHaveBeenCalledWith({ kind: 'bots' });
     await actor.click(screen.getByRole('button', { name: /account menu/i }));
