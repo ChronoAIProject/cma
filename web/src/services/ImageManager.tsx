@@ -183,6 +183,12 @@ function ImageDetails({
                 required: true,
               },
               { name: 'context', label: 'Build context directory', initial: '.', required: true },
+              {
+                name: 'dockerfile_content',
+                label: 'Import Dockerfile (optional)',
+                type: 'file',
+                accept: '.dockerfile,Dockerfile,text/plain',
+              },
             ]}
           />
         </details>
