@@ -8,7 +8,8 @@ members = [
     "crates/cma",
     "crates/cmaeg-core",
     "crates/cmaeg",
-    "crates/cma-sandbox-manager",
+    "crates/cma-image-manager",
+    "crates/cma-service-auth",
 ]
 
 [workspace.package]

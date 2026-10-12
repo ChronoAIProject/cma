@@ -11,7 +11,7 @@ use axum::{
     routing::post,
     Form, Json, Router,
 };
-use cma_sandbox_manager::{
+use cma_image_manager::{
     auth::{AuthError, NyxIdAuth},
     permissions,
 };
@@ -20,7 +20,7 @@ use cma_sandbox_manager::{
 async fn authorization_observes_revocation_and_uses_this_services_client() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let issuer = format!("http://{}", listener.local_addr().unwrap());
-    let resource = format!("{issuer}/api/v1/proxy/s/cma-sandbox-manager");
+    let resource = format!("{issuer}/api/v1/proxy/s/cma-image-manager");
     let auth = NyxIdAuth::new(&issuer, &resource, "sandbox-client", "unused".into()).unwrap();
     let calls = Arc::new(AtomicUsize::new(0));
     let observations = calls.clone();
@@ -72,7 +72,7 @@ async fn introspection_redirects_never_forward_client_credentials() {
     let issuer = format!("http://{}", listener.local_addr().unwrap());
     let auth = NyxIdAuth::new(
         &issuer,
-        &format!("{issuer}/api/v1/proxy/s/cma-sandbox-manager"),
+        &format!("{issuer}/api/v1/proxy/s/cma-image-manager"),
         "sandbox-client",
         "unused".into(),
     )
