@@ -229,7 +229,10 @@ pub use title_store::{
     AgentTitleStoreError, InMemoryAgentTitleStore, SetAgentTitleOutcome, StoredAgentTitle,
 };
 pub use workspace::{Workspace, WorkspaceOrigin, WorkspaceSource};
-pub use workspace_service::{CreateWorkspace, WorkspaceService, WorkspaceServiceError};
+pub use workspace_service::{
+    CreateInlineWorkspace, CreateWorkspace, InlineWorkspaceSource, WorkspaceService,
+    WorkspaceServiceError,
+};
 pub use workspace_work::{WorkspaceWorkLease, WorkspaceWorkState, WorkspaceWorkStep};
 pub use worktree::Worktree;
 

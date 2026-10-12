@@ -18,8 +18,8 @@ use super::admin::{ActivityPageView, ActivityView, RuntimeEntryView, RuntimeInve
 use super::agent_openapi_shapes::*;
 use super::agent_shared_shapes::*;
 use super::instances_openapi_shapes::{
-    CreateSandboxRequest, CreateWorkspaceRequest, FailureView, OwnerAgentSummaryView,
-    OwnerSandboxDetailView, OwnerSandboxPageView, OwnerSandboxSummaryView,
+    CreateInlineWorkspaceRequest, CreateSandboxRequest, CreateWorkspaceRequest, FailureView,
+    OwnerAgentSummaryView, OwnerSandboxDetailView, OwnerSandboxPageView, OwnerSandboxSummaryView,
     OwnerWorkspaceSummaryView, ProfileReferenceView, SandboxEventView, SandboxLimitsView,
     SandboxView, WorkspaceDetailView, WorkspaceListView, WorkspaceSourceView, WorkspaceView,
     WorktreeListView, WorktreeView,
@@ -158,6 +158,7 @@ use super::trigger_openapi_shapes::*;
         super::sandbox_service_access::grant,
         super::sandboxes::events,
         super::workspaces::create,
+        super::workspaces::create_inline,
         super::workspaces::list,
         super::workspaces::read,
         super::workspaces::remove,
@@ -367,6 +368,7 @@ use super::trigger_openapi_shapes::*;
         super::sandbox_commands::shapes::SandboxCommandFailureView,
         super::instances_openapi_shapes::GrantSandboxServiceAccessRequest,
         CreateWorkspaceRequest,
+        CreateInlineWorkspaceRequest,
         FailureView,
         SandboxLimitsView,
         super::instances_openapi_shapes::SandboxLifecycleView,

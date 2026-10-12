@@ -122,10 +122,9 @@ export function Console({
   const canCreateInScope = canCreate && navigationScope === '' && scopeReady;
   const permissions: TreePermissions = {
     createAgent: canCreate,
-    // Workspace creation is being moved to the Agent Manager/agent-sandbox
-    // boundary. Keep the compatibility card available to tests and recovery,
-    // but do not expose the profile-driven command in the user navigation.
-    createWorkspace: false,
+    // Workspace creation is an inline Agent Manager operation. The legacy
+    // profile picker remains available only to compatibility handoffs.
+    createWorkspace: canCreate,
     pauseSandbox: canUse,
     removeWorkspace: canUse,
     stopAgent: canUse,

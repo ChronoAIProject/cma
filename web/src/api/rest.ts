@@ -8,7 +8,7 @@ import type {
   ReadOptions,
 } from './client';
 import type { ConnectionTarget } from '../connections/client';
-import type { ProfileReference } from './types';
+import type { CreateInlineWorkspaceInput, ProfileReference } from './types';
 import { agentDetail, sandboxDetail, sandboxSummary, workspaceDetail } from './rest/hierarchy';
 import { createAgentTransport, type AgentTransportOptions } from '../agent/transport/client';
 
@@ -264,6 +264,16 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
         },
         options,
       );
+      return createdDetail('Workspace', created.id, async () =>
+        workspaceDetail(await sdk.workspaces.read(created.id, { signal: options.signal })),
+      );
+    },
+    createInlineWorkspace: async (
+      sandboxId: string,
+      input: CreateInlineWorkspaceInput,
+      options,
+    ) => {
+      const created = await sdk.workspaces.createInline(sandboxId, input, options);
       return createdDetail('Workspace', created.id, async () =>
         workspaceDetail(await sdk.workspaces.read(created.id, { signal: options.signal })),
       );
