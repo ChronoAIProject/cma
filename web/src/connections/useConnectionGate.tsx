@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react';
-import { Modal } from '../ui/Modal';
 import { ConnectionWizard } from './ConnectionWizard';
 import { connectionClient, type ConnectionTarget } from './client';
 
@@ -80,16 +79,16 @@ export function useConnectionGate() {
   };
   const dialog =
     pending === undefined || !interactive ? null : (
-      <Modal open title="Connect your accounts" onClose={cancel}>
-        <ConnectionWizard
-          key={pending.id}
-          target={pending.target}
-          forceSubscription={pending.forceSubscription}
-          expectedOwner={pending.owner}
-          onReady={() => complete(pending)}
-          onCancel={cancel}
-        />
-      </Modal>
+      <ConnectionWizard
+        key={pending.id}
+        target={pending.target}
+        presentation="dialog"
+        dialogTitle="Connect your accounts"
+        forceSubscription={pending.forceSubscription}
+        expectedOwner={pending.owner}
+        onReady={() => complete(pending)}
+        onCancel={cancel}
+      />
     );
   return {
     run,
