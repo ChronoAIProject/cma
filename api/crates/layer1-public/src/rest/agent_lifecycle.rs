@@ -79,7 +79,75 @@ pub struct AgentLifecyclePermissions {
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct AgentLifecycleCreateReceipt {
     pub id: String,
-    pub status: &'static str,
+    pub status: String,
+}
+
+/// A durable lifecycle event exposed to Agent Manager clients.  The event
+/// stream is intentionally small and phase-oriented: the runtime owns the
+/// detailed sandbox events, while CMA exposes the three user-facing gates.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct AgentLifecycleEventView {
+    pub sequence: u64,
+    pub phase: String,
+    pub status: String,
+    pub message: String,
+    pub occurred_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct AgentLifecycleOperationView {
+    pub id: String,
+    pub status: String,
+    pub phase: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    pub events: Vec<AgentLifecycleEventView>,
+}
+
+#[derive(Debug, Error)]
+pub enum AgentLifecycleOperationReadError {
+    #[error("the Agent lifecycle operation does not exist")]
+    NotFound,
+    #[error("the authenticated caller cannot read this Agent lifecycle operation")]
+    Forbidden,
+    #[error("the Agent lifecycle operation store is unavailable")]
+    Unavailable,
+}
+
+impl IntoResponse for AgentLifecycleOperationReadError {
+    fn into_response(self) -> Response {
+        let (status, slug, code) = match self {
+            Self::NotFound => (
+                StatusCode::NOT_FOUND,
+                "agent-lifecycle-operation-not-found",
+                "not_found",
+            ),
+            Self::Forbidden => (
+                StatusCode::FORBIDDEN,
+                "agent-lifecycle-operation-forbidden",
+                "permission_denied",
+            ),
+            Self::Unavailable => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "agent-lifecycle-operation-unavailable",
+                "temporarily_unavailable",
+            ),
+        };
+        let body = super::problem_document(status, slug, &self.to_string(), code);
+        super::problem_response(status, body)
+    }
+}
+
+/// Read port for durable lifecycle status and phase events.
+#[async_trait]
+pub trait AgentLifecycleOperationReader: Send + Sync {
+    async fn read(
+        &self,
+        caller: &Caller,
+        operation_id: &str,
+    ) -> Result<AgentLifecycleOperationView, AgentLifecycleOperationReadError>;
 }
 
 #[derive(Debug, Error)]

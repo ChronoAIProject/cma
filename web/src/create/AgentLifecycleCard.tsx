@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type {
   AgentLifecycleCreateInput,
   AgentLifecycleCreateReceipt,
+  AgentLifecycleOperationView,
   CmaWebClient,
   CommandOptions,
 } from '../api/client';
@@ -54,6 +55,7 @@ export function AgentLifecycleCard({ client, onClose, onCreated }: AgentLifecycl
     readonly target: ConnectionTarget;
   }>();
   const [createdReceipt, setCreatedReceipt] = useState<AgentLifecycleCreateReceipt>();
+  const [operation, setOperation] = useState<AgentLifecycleOperationView>();
   const selected = useMemo(
     () => images.find((image) => image.id === selectedImage) ?? SYSTEM_IMAGE,
     [images, selectedImage],
@@ -77,6 +79,28 @@ export function AgentLifecycleCard({ client, onClose, onCreated }: AgentLifecycl
       });
     return () => request.abort();
   }, []);
+  useEffect(() => {
+    if (createdReceipt === undefined || client.readAgentLifecycle === undefined) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const poll = async () => {
+      try {
+        const value = await client.readAgentLifecycle!(createdReceipt.id);
+        if (cancelled) return;
+        setOperation(value);
+        if (value.status === 'queued' || value.status === 'running') {
+          timer = setTimeout(() => void poll(), 1000);
+        }
+      } catch (error: unknown) {
+        if (!cancelled) setFailure(error instanceof Error ? error.message : 'Status unavailable.');
+      }
+    };
+    void poll();
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) clearTimeout(timer);
+    };
+  }, [client, createdReceipt]);
   const toggle = (values: readonly string[], value: string) =>
     values.includes(value) ? values.filter((item) => item !== value) : [...values, value];
   const submit = () => {
@@ -128,7 +152,15 @@ export function AgentLifecycleCard({ client, onClose, onCreated }: AgentLifecycl
             {createdReceipt !== undefined ? (
               <>
                 <Button onClick={onClose}>Close</Button>
-                <Button variant="primary" onClick={() => onCreated(createdReceipt)}>
+                <Button
+                  variant="primary"
+                  disabled={operation?.agent_id === undefined}
+                  onClick={() =>
+                    operation?.agent_id === undefined
+                      ? undefined
+                      : onCreated({ ...createdReceipt, id: operation.agent_id, status: 'ready' })
+                  }
+                >
                   Open agent
                 </Button>
               </>
@@ -161,7 +193,7 @@ export function AgentLifecycleCard({ client, onClose, onCreated }: AgentLifecycl
         }
       >
         {createdReceipt !== undefined ? (
-          <AgentProvisioningProgress receipt={createdReceipt} />
+          <AgentProvisioningProgress receipt={createdReceipt} operation={operation} />
         ) : null}
         {createdReceipt === undefined ? (
           <ol className="agent-lifecycle-steps" aria-label="Agent provisioning steps">
@@ -382,25 +414,29 @@ export function AgentLifecycleCard({ client, onClose, onCreated }: AgentLifecycl
   );
 }
 
-function AgentProvisioningProgress({ receipt }: { readonly receipt: AgentLifecycleCreateReceipt }) {
-  const status = receipt.status ?? 'creating';
-  const sandboxReady = [
-    'sandbox_ready',
-    'configuring',
-    'key_scope_ready',
-    'ready',
-    'active',
-  ].includes(status);
-  const runtimeReady = ['configuring', 'key_scope_ready', 'ready', 'active'].includes(status);
-  const keyScopeReady = ['key_scope_ready', 'ready', 'active'].includes(status);
+function AgentProvisioningProgress({
+  receipt,
+  operation,
+}: {
+  readonly receipt: AgentLifecycleCreateReceipt;
+  readonly operation?: AgentLifecycleOperationView;
+}) {
+  const status = operation?.status ?? receipt.status ?? 'queued';
+  const readyPhases = new Set(
+    operation?.events.filter((event) => event.status === 'ready').map((event) => event.phase),
+  );
+  const sandboxReady = readyPhases.has('sandbox_ready');
+  const runtimeReady = readyPhases.has('workspace_runtime');
+  const keyScopeReady = readyPhases.has('key_scope_ready') || status === 'succeeded';
   const state = (done: boolean, previous: boolean) =>
     done ? 'Ready' : previous ? 'In progress' : 'Waiting';
   return (
     <section className="agent-lifecycle-provisioning" aria-label="Agent provisioning progress">
-      <h3>Agent accepted</h3>
+      <h3>{status === 'failed' ? 'Agent provisioning needs attention' : 'Agent accepted'}</h3>
       <p>
-        Agent Manager is provisioning the Agent Sandbox and will continue asynchronously. You can
-        open the Agent now to follow its live status.
+        {status === 'failed'
+          ? operation?.error ?? 'Agent provisioning failed.'
+          : 'Agent Manager is provisioning the Agent Sandbox and will continue asynchronously. This page follows its durable status.'}
       </p>
       <ol>
         <li data-state={state(sandboxReady, true)}>
