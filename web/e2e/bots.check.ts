@@ -37,6 +37,16 @@ test('LOCAL Bot dashboard uses real CMA and CMAEG for creation, test and cleanup
   );
   await page.route('**/api/v1/bots**', async (route) => {
     const url = new URL(route.request().url());
+    // This journey exercises legacy Bot lifecycle compatibility. Inventory and
+    // profiles are local fixtures; every lifecycle mutation still reaches CMA
+    // and the compiled Gateway. Generic connection authoring has a different
+    // inventory contract from the retained NyxID Bot form.
+    if (url.pathname === '/api/v1/bots/nyxid-bots') {
+      await route.fulfill({
+        json: [{ id: 'external-bot', name: 'Telegram research', platform: 'telegram' }],
+      });
+      return;
+    }
     const upstream = await route.fetch({
       url: `${process.env.CMA_BOT_FIXTURE_ROOT}${url.pathname}${url.search}`,
       maxRedirects: 0,
