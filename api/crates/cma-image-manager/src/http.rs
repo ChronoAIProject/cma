@@ -28,6 +28,7 @@ pub fn router(state: Arc<App>) -> Router {
         .route("/v1/permissions", get(permissions))
         .route("/v1/images", get(list).post(create))
         .route("/v1/images/{id}", get(read).patch(edit).delete(retire))
+        .route("/v1/images/{id}/visibility", put(visibility))
         .route(
             "/v1/images/{id}/shares/{subject}",
             put(share).delete(unshare),
@@ -89,15 +90,25 @@ fn revision(headers: &HeaderMap) -> ResponseResult<i64> {
         .ok_or(Error::Invalid("invalid If-Match revision").into())
 }
 fn image_view(image: Image, actor: &str) -> Value {
-    let visibility = if image.owner == actor {
+    let visibility = if image.visibility == ImageVisibility::Public {
+        "public"
+    } else if image.owner == actor {
         "private"
     } else {
         "shared"
     };
-    json!({"id":image.id,"owner":image.owner,"name":image.spec.name,"description":image.spec.description,"shares":image.shares,"visibility":visibility,"retired":image.retired,"revision":image.revision,"created_at_ms":image.created_at_ms})
+    let shares = if image.owner == actor {
+        image.shares
+    } else {
+        vec![]
+    };
+    json!({"id":image.id,"owner":image.owner,"name":image.spec.name,"description":image.spec.description,"shares":shares,"visibility":visibility,"retired":image.retired,"revision":image.revision,"created_at_ms":image.created_at_ms})
 }
 fn build_view(build: Build) -> Value {
     json!({"id":build.id,"image_id":build.image_id,"source":build.source,"phase":build.phase,"error":build.error,"revision":build.revision,"reference":build.reference(),"digest":build.digest,"created_at_ms":build.created_at_ms,"updated_at_ms":build.updated_at_ms})
+}
+fn version_view(build: Build) -> Value {
+    json!({"id":build.id,"image_id":build.image_id,"phase":build.phase,"reference":build.reference(),"digest":build.digest,"created_at_ms":build.created_at_ms})
 }
 #[derive(Default, Deserialize)]
 struct Page {
@@ -111,7 +122,9 @@ struct Page {
 #[serde(rename_all = "lowercase")]
 enum ImageScopeParam {
     Private,
+    Owned,
     Shared,
+    Public,
     #[default]
     All,
 }
@@ -120,7 +133,9 @@ impl From<ImageScopeParam> for crate::store::ImageListScope {
     fn from(value: ImageScopeParam) -> Self {
         match value {
             ImageScopeParam::Private => Self::Private,
+            ImageScopeParam::Owned => Self::Owned,
             ImageScopeParam::Shared => Self::Shared,
+            ImageScopeParam::Public => Self::Public,
             ImageScopeParam::All => Self::All,
         }
     }
@@ -208,6 +223,25 @@ async fn retire(
         &u.subject,
     )))
 }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SetVisibility {
+    visibility: ImageVisibility,
+}
+async fn visibility(
+    State(a): State<Arc<App>>,
+    h: HeaderMap,
+    Path(id): Path<String>,
+    Json(input): Json<SetVisibility>,
+) -> ResponseResult<Json<Value>> {
+    let u = actor(&a, &h, p::SHARE).await?;
+    Ok(Json(image_view(
+        a.store
+            .set_visibility(&u.subject, &id, revision(&h)?, input.visibility)
+            .await?,
+        &u.subject,
+    )))
+}
 async fn share(
     State(a): State<Arc<App>>,
     h: HeaderMap,
@@ -277,7 +311,7 @@ async fn versions(
             .image_builds(&u.subject, &id, true, &q.after)
             .await?,
         |b| &b.id,
-        build_view,
+        version_view,
     )))
 }
 #[derive(Deserialize)]
@@ -292,7 +326,7 @@ async fn resolve(
     Json(input): Json<Resolve>,
 ) -> ResponseResult<Json<Value>> {
     let u = actor(&a, &h, p::USE).await?;
-    Ok(Json(build_view(
+    Ok(Json(version_view(
         a.store.resolve(&u.subject, &id, &input.version).await?,
     )))
 }
@@ -302,7 +336,7 @@ async fn version(
     Path((id, version)): Path<(String, String)>,
 ) -> ResponseResult<Json<Value>> {
     let u = actor(&a, &h, p::READ).await?;
-    Ok(Json(build_view(
+    Ok(Json(version_view(
         a.store.version(&u.subject, &id, &version).await?,
     )))
 }

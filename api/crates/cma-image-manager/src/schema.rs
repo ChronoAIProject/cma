@@ -12,6 +12,8 @@ pub const BUILDS: &str = "im_builds";
 pub const MIGRATIONS: &str = "im_schema_migrations";
 pub const SESSIONS: &str = "im_auth_sessions";
 pub const COLLECTIONS: &[&str] = &[IMAGES, BUILDS, MIGRATIONS, SESSIONS];
+// Collection rules evolve separately from backward-compatible document fields.
+const SCHEMA_VERSION: i32 = 2;
 const SESSION_ACTIONS: &[&str] = &["find", "insert", "update", "remove", "listIndexes"];
 const ACTIONS: &[&str] = &["find", "insert", "update", "listIndexes"];
 
@@ -123,7 +125,7 @@ pub async fn verify_runtime(db: &Database) -> Result<(), SchemaError> {
         .collection::<Document>(MIGRATIONS)
         .find_one(doc! {"_id":"schema"})
         .await?;
-    if marker.as_ref().and_then(|d| d.get_i32("version").ok()) != Some(DOCUMENT_VERSION) {
+    if marker.as_ref().and_then(|d| d.get_i32("version").ok()) != Some(SCHEMA_VERSION) {
         return Err(SchemaError::MigrationRequired);
     }
     use futures_util::TryStreamExt;
@@ -169,10 +171,15 @@ pub fn validator(build: bool) -> Document {
             "spec":{"bsonType":"object","additionalProperties":false,"required":["name","description"],"properties":{
                 "name":{"bsonType":"string","minLength":1,"maxLength":128},"description":{"bsonType":"string","maxLength":4096}}},
             "shares":{"bsonType":"array","maxItems":1000,"uniqueItems":true,"items":{"bsonType":"string","minLength":1,"maxLength":512}},
-            "retired":{"bsonType":"bool"}
+            "retired":{"bsonType":"bool"},
+            "visibility":{"enum":["private","public"]}
         });
     }
-    let required: Vec<_> = properties.keys().cloned().collect();
+    let required: Vec<_> = properties
+        .keys()
+        .filter(|key| key.as_str() != "visibility")
+        .cloned()
+        .collect();
     doc! {"$jsonSchema":{"bsonType":"object","additionalProperties":false,"required":required,"properties":properties}}
 }
 
@@ -180,7 +187,7 @@ pub async fn migrate(db: &Database) -> Result<(), SchemaError> {
     cma_service_auth::browser::migrate(db, SESSIONS).await?;
     for name in [IMAGES, BUILDS, MIGRATIONS].iter() {
         let validation = if *name == MIGRATIONS {
-            doc! {"$jsonSchema":{"bsonType":"object","additionalProperties":false,"required":["_id","version"],"properties":{"_id":{"enum":["schema"]},"version":{"enum":[DOCUMENT_VERSION]}}}}
+            doc! {"$jsonSchema":{"bsonType":"object","additionalProperties":false,"required":["_id","version"],"properties":{"_id":{"enum":["schema"]},"version":{"enum":[SCHEMA_VERSION]}}}}
         } else {
             validator(*name == BUILDS)
         };
@@ -213,6 +220,14 @@ pub async fn migrate(db: &Database) -> Result<(), SchemaError> {
                 .build(),
         )
         .await?;
+    for keys in [
+        doc! {"visibility":1,"retired":1,"_id":1},
+        doc! {"shares":1,"_id":1},
+    ] {
+        db.collection::<Document>(IMAGES)
+            .create_index(IndexModel::builder().keys(keys).build())
+            .await?;
+    }
     db.collection::<Document>(BUILDS)
         .create_index(
             IndexModel::builder()
@@ -223,7 +238,7 @@ pub async fn migrate(db: &Database) -> Result<(), SchemaError> {
     db.collection::<Document>(MIGRATIONS)
         .update_one(
             doc! {"_id":"schema"},
-            doc! {"$set":{"version":DOCUMENT_VERSION}},
+            doc! {"$set":{"version":SCHEMA_VERSION}},
         )
         .upsert(true)
         .await?;

@@ -41,6 +41,7 @@ impl Store {
             request_sha256: hash(&spec)?,
             spec,
             shares: vec![],
+            visibility: ImageVisibility::Private,
             retired: false,
             revision: 1,
             created_at_ms: now_ms(),
@@ -77,8 +78,10 @@ impl Store {
         scope: ImageListScope,
     ) -> Result<Vec<Image>> {
         let mut filter = match scope {
-            ImageListScope::Private => doc! {"owner": actor},
-            ImageListScope::Shared => doc! {"shares": actor},
+            ImageListScope::Private => doc! {"owner": actor, "visibility":{"$ne":"public"}},
+            ImageListScope::Owned => doc! {"owner": actor},
+            ImageListScope::Shared => doc! {"shares": actor, "owner":{"$ne":actor}},
+            ImageListScope::Public => doc! {"visibility":"public", "retired":false},
             ImageListScope::All => access_filter(actor, "", false),
         };
         filter.remove("_id");
@@ -106,6 +109,32 @@ impl Store {
         // Retirement never deletes registry blobs still used by live Agents.
         self.image_change(owner, id, revision, doc! {"$set":{"retired":true}})
             .await
+    }
+    pub async fn set_visibility(
+        &self,
+        owner: &str,
+        id: &str,
+        revision: i64,
+        visibility: ImageVisibility,
+    ) -> Result<Image> {
+        if revision <= 0 {
+            return Err(Error::Invalid("positive revision required"));
+        }
+        self.image(owner, id, true).await?;
+        let mut filter = doc! {"_id":id,"owner":owner,"revision":revision};
+        if visibility == ImageVisibility::Public {
+            filter.insert("retired", false);
+        }
+        let value =
+            mongodb::bson::serialize_to_bson(&visibility).map_err(|_| Error::Unavailable)?;
+        self.images
+            .find_one_and_update(
+                filter,
+                doc! {"$set":{"visibility":value},"$inc":{"revision":1_i64}},
+            )
+            .return_document(ReturnDocument::After)
+            .await?
+            .ok_or(Error::Conflict)
     }
     pub async fn share(
         &self,
@@ -309,7 +338,9 @@ impl Store {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImageListScope {
     Private,
+    Owned,
     Shared,
+    Public,
     All,
 }
 
@@ -317,7 +348,7 @@ fn access_filter(actor: &str, id: &str, owned: bool) -> Document {
     if owned {
         doc! {"_id":id,"owner":actor}
     } else {
-        doc! {"_id":id,"$or":[{"owner":actor},{"shares":actor}]}
+        doc! {"_id":id,"$or":[{"owner":actor},{"shares":actor},{"visibility":"public","retired":false}]}
     }
 }
 fn validate_actor_key(owner: &str, key: &str) -> Result<()> {
