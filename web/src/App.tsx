@@ -148,12 +148,6 @@ function AgentApp({ router }: { readonly router: AppRouter }) {
             ? undefined
             : (value) => setRequest({ owner: state.user.id, value })
         }
-        onUseProfile={
-          creation === undefined
-            ? undefined
-            : (selection) =>
-                setRequest({ owner: state.user.id, value: { kind: 'profile_use', selection } })
-        }
         onSignOut={() => {
           setRequest(undefined);
           void signOut();
