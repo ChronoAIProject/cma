@@ -208,6 +208,12 @@ jobs:
           if [ -n "$hits" ]; then
             echo "::error::protocol or kernel name found in layer2-core:"; echo "$hits"; exit 1
           fi
+      - name: Sandbox Manager has no Agent or Gateway dependencies
+        run: |
+          if grep -qE 'layer[1-4]-|cmaeg|path *=.*["/]cma["/]|cma-agent-manager' api/crates/cma-sandbox-manager/Cargo.toml; then
+            echo '::error::Sandbox Manager cannot depend on Agent or Gateway implementation crates'
+            exit 1
+          fi
 
   secrets:
     name: Secret scanning
@@ -281,6 +287,9 @@ jobs:
         # Retain the complete corpus and two bounded fixtures on slower runners.
         timeout-minutes: 75
         run: bash ../.github/scripts/mongo-contract-tests.sh
+      - name: Sandbox Manager authenticated Mongo isolation
+        timeout-minutes: 10
+        run: bash ../.github/scripts/sandbox-manager-mongo-contract.sh
       - name: Doctests
         run: cargo test --doc --workspace --locked
       - uses: EmbarkStudios/cargo-deny-action@v2

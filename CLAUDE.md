@@ -188,6 +188,7 @@ api/crates/
   cma/               binary: composition, persistence and production adapters
   cmaeg-core/        pure CMA Event Gateway protocol library
   cmaeg/             CMA Event Gateway service binary
+  cma-sandbox-manager/ independent generic environment authority and persistence
 ```
 
 ### Layer 1: public interfaces
@@ -327,6 +328,23 @@ layer4-runtime (independent; shares only wire-protocol types)
 - Nothing in the control plane may depend on `layer4-runtime`.
 
 A dependency edge not in this list is a CI failure, not a review comment.
+
+### Service extraction in progress
+
+The authorized service split is specified in `docs/CMA_Service_Split.md` and
+`docs/CMA_Service_Isolation.md`. `cma-sandbox-manager` owns generic container
+environment state and its `sm_` collections. It must not depend on `cma`, the
+Agent domain layers, or CMAEG; it must not open their collections. Database
+runtime and migration identities are separate, explicitly scoped to its own
+collections, and verified against effective Mongo privileges at startup.
+
+Sandbox Manager accepts user-selected container images and commands. Codex,
+the current runtime supervisor, WebSocket bridges, NyxID CLI and Chromium are
+one caller's environment configuration, never prerequisites for all Sandboxes.
+Repository cloning, Agent homes, models, prompts, ACP and conversation recovery
+remain Agent Manager responsibilities. The existing deployed monolith retains
+its current contracts until an explicitly verified cutover; the new crate's
+presence does not declare that the service split or deployment is complete.
 
 ### CMAEG crates
 
