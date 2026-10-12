@@ -108,5 +108,6 @@ it('does not offer management actions without the owner capability or a creation
   expect(
     screen.queryByRole('button', { name: 'Customize a private copy' }),
   ).not.toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Use' })).toBeDisabled();
+  expect(screen.queryByRole('button', { name: 'Use' })).not.toBeInTheDocument();
+  expect(screen.getByText(/Profile based creation is retired/)).toBeInTheDocument();
 });

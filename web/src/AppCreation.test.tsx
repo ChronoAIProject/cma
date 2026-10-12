@@ -1,5 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+import { render, screen } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { App } from './App';
 import { AuthContextProvider } from './auth/context';
@@ -7,7 +6,6 @@ import { createMockAuthProvider } from './auth/mock';
 import { CmaClientProvider } from './api/context';
 import { agentClient } from './test/agent';
 import { creationClient } from './test/creation';
-import { sandboxFixture } from './test/hierarchy';
 import {
   documentClient,
   OWN_PROFILES,
@@ -19,29 +17,21 @@ import {
 
 afterEach(() => window.history.replaceState({}, '', '/'));
 
-it('binds the production App create command and opens the created Sandbox route', async () => {
-  const user = userEvent.setup();
-  const createSandbox = vi.fn().mockResolvedValue(sandboxFixture('provisioning'));
-  const client = agentClient({ createSandbox });
+it('retires the profile-driven Sandbox creation entry from the Agent Manager home', async () => {
   render(
     <AuthContextProvider provider={createMockAuthProvider({ initiallyAuthenticated: true })}>
-      <CmaClientProvider client={client} creation={creationClient()}>
+      <CmaClientProvider client={agentClient()} creation={creationClient()}>
         <App />
       </CmaClientProvider>
     </AuthContextProvider>,
   );
-  await user.click(await screen.findByRole('button', { name: 'New sandbox' }));
-  await user.click(await screen.findByRole('button', { name: /Research sandbox Version/ }));
-  await user.click(await screen.findByRole('checkbox', { name: 'I trust this profile' }));
-  await user.click(screen.getByRole('button', { name: 'Create sandbox' }));
-  await waitFor(() => expect(window.location.pathname).toBe('/sandboxes/sbx_1'));
-  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-  expect(await screen.findByRole('heading', { name: 'Atlas' })).toBeInTheDocument();
+  await screen.findByRole('heading', { name: 'Welcome to CMA' });
+  expect(screen.getAllByRole('button', { name: 'New agent' }).length).toBeGreaterThan(0);
+  expect(screen.queryByRole('button', { name: 'New sandbox' })).not.toBeInTheDocument();
 });
 
-it('hands the reviewed Marketplace revision to creation without silently accepting its commands', async () => {
+it('keeps Marketplace profile revisions read-only while creation moves to Agent Manager', async () => {
   window.history.replaceState({}, '', '/marketplace/sandbox/sbp_research');
-  const user = userEvent.setup();
   const readMarketplace = vi.fn(marketplaceClient().readMarketplace);
   const catalog = creationClient();
   const readProfile = vi.spyOn(catalog, 'readProfile');
@@ -59,10 +49,10 @@ it('hands the reviewed Marketplace revision to creation without silently accepti
       </CmaClientProvider>
     </AuthContextProvider>,
   );
-  await user.click(await screen.findByRole('button', { name: 'Use' }));
-  const dialog = await screen.findByRole('dialog', { name: 'New sandbox' });
-  expect(within(dialog).getByRole('checkbox', { name: 'I trust this profile' })).not.toBeChecked();
-  expect(within(dialog).getByText('mkdir -p /home/cma/tools')).toBeInTheDocument();
+  await screen.findByRole('heading', { name: 'Research sandbox' });
+  expect(screen.queryByRole('button', { name: 'Use' })).not.toBeInTheDocument();
+  expect(screen.getByText(/Profile based creation is retired/)).toBeInTheDocument();
+  expect(screen.getByText('mkdir -p /home/cma/tools')).toBeInTheDocument();
   expect(readMarketplace).toHaveBeenCalledTimes(1);
   expect(readProfile).not.toHaveBeenCalled();
 });
