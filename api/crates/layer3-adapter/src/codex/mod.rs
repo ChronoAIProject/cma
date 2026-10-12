@@ -362,6 +362,14 @@ impl SandboxAdapter for CodexAdapter {
         self.hosted.capture_agent(handle, agent).await
     }
 
+    async fn export_agent_history(
+        &self,
+        handle: &RuntimeHandle,
+        agent: &AgentSlot,
+    ) -> crate::Result<Vec<u8>> {
+        self.hosted.export_agent_history(handle, agent).await
+    }
+
     fn checkpoint_exclusions(&self, agents: &[AgentSlot]) -> crate::Result<Vec<String>> {
         home::checkpoint_exclusions(agents)
     }

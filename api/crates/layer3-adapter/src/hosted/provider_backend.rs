@@ -47,6 +47,16 @@ pub trait HostedControlTransport: Send + Sync {
             .await
     }
 
+    async fn export_agent_history(
+        &self,
+        _handle: &RuntimeHandle,
+        _agent: &crate::AgentSlot,
+    ) -> crate::Result<Vec<u8>> {
+        Err(AdapterError::Unsupported(
+            "agent history export is not supported".into(),
+        ))
+    }
+
     async fn open_agent(
         &self,
         handle: &RuntimeHandle,
@@ -313,6 +323,14 @@ impl HostedBackend for ProviderHostedBackend {
         self.transport
             .open_agent(handle, launch, resume_conversation, settings, updates)
             .await
+    }
+
+    async fn export_agent_history(
+        &self,
+        handle: &RuntimeHandle,
+        agent: &crate::AgentSlot,
+    ) -> crate::Result<Vec<u8>> {
+        self.transport.export_agent_history(handle, agent).await
     }
 
     async fn teardown(&self, handle: &RuntimeHandle) -> crate::Result<()> {

@@ -107,5 +107,15 @@ pub trait HostedBackend: Send + Sync {
         updates: mpsc::Sender<ConversationUpdate>,
     ) -> Result<(ConversationChannel, FencedReceipt<AgentOpenReceipt>)>;
 
+    async fn export_agent_history(
+        &self,
+        _handle: &RuntimeHandle,
+        _agent: &crate::AgentSlot,
+    ) -> Result<Vec<u8>> {
+        Err(crate::AdapterError::Unsupported(
+            "agent history export is not supported".into(),
+        ))
+    }
+
     async fn teardown(&self, handle: &RuntimeHandle) -> Result<()>;
 }

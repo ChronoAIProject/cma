@@ -243,6 +243,18 @@ pub trait SandboxAdapter: Send + Sync {
         agent: &AgentSlot,
     ) -> Result<ConversationSnapshot>;
 
+    /// Export the agent-sandbox-owned session JSONL for one admitted Agent.
+    /// Implementations preserve the runtime's bounded NDJSON payload.
+    async fn export_agent_history(
+        &self,
+        _handle: &RuntimeHandle,
+        _agent: &AgentSlot,
+    ) -> Result<Vec<u8>> {
+        Err(crate::AdapterError::Unsupported(
+            "agent history export is not supported".into(),
+        ))
+    }
+
     /// Exact disposable paths relative to the sandbox home, in canonical order.
     /// Callers supply every retained agent slot, including terminal agents.
     fn checkpoint_exclusions(&self, _agents: &[AgentSlot]) -> Result<Vec<String>> {

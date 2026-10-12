@@ -20,6 +20,7 @@ use layer2_core::{
 };
 use serde::Deserialize;
 
+use super::agent_history::AgentHistoryExporter;
 use super::agent_lifecycle::{
     AgentLifecycleCreateReceipt, AgentLifecycleCreateRequest, AgentLifecycleProvisioner,
     AgentLifecycleProvisioningError,
@@ -43,6 +44,7 @@ pub struct AgentRoutesState {
     pub(super) agent_operations: Arc<AgentOperationService>,
     pub(super) operation_records: Arc<dyn OperationStore>,
     pub(super) lifecycle: Option<Arc<dyn AgentLifecycleProvisioner>>,
+    pub(super) history_exporter: Option<Arc<dyn AgentHistoryExporter>>,
 }
 
 impl AgentRoutesState {
@@ -59,6 +61,7 @@ impl AgentRoutesState {
             agent_operations,
             operation_records,
             lifecycle: None,
+            history_exporter: None,
         }
     }
 
@@ -66,6 +69,11 @@ impl AgentRoutesState {
     /// retained hierarchy routes used by compatibility clients and tests.
     pub fn with_lifecycle(mut self, lifecycle: Arc<dyn AgentLifecycleProvisioner>) -> Self {
         self.lifecycle = Some(lifecycle);
+        self
+    }
+
+    pub fn with_history_exporter(mut self, exporter: Arc<dyn AgentHistoryExporter>) -> Self {
+        self.history_exporter = Some(exporter);
         self
     }
 

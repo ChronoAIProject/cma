@@ -413,6 +413,14 @@ impl SandboxAdapter for HostedAdapter {
         }
     }
 
+    async fn export_agent_history(
+        &self,
+        handle: &RuntimeHandle,
+        agent: &AgentSlot,
+    ) -> crate::Result<Vec<u8>> {
+        self.backend.export_agent_history(handle, agent).await
+    }
+
     async fn checkpoint(
         &self,
         handle: &RuntimeHandle,
