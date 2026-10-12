@@ -138,6 +138,7 @@ export function Console({
     removeWorkspace: canUse,
     stopAgent: canUse,
     deleteAgent: canUse,
+    exportHistory: canUse,
     deleteSandbox: user.capabilities.includes('delete_own_sandbox'),
   };
   const ready = agent.state.status === 'ready' ? agent.state : undefined;
@@ -389,11 +390,6 @@ export function Console({
                 <SharingButton
                   client={client.resourceViews}
                   target={{
-                    kind: 'agent',
-                    id: ready.detail.id,
-                    name: ready.detail.title?.trim() || 'Untitled agent',
-                  }}
-                  sandbox={{
                     kind: 'sandbox',
                     id: ready.detail.sandbox.id,
                     name: ready.detail.sandbox.name,
@@ -421,7 +417,6 @@ export function Console({
           navigation={
             <ScopedNavigation
               client={user.visitor ? undefined : client.resourceViews}
-              bridges={!user.visitor && client.bridgeViews !== undefined}
               scope={navigationScope}
               onScopeChange={setNavigationScope}
               onNavigate={(next) => {
@@ -477,6 +472,7 @@ export function Console({
               collapsed={collapsed}
               onSignOut={onSignOut}
               onNavigate={onNavigate}
+              canManageBridges={!user.visitor && client.bridgeViews !== undefined}
             />
           }
         />

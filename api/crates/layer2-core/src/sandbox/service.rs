@@ -15,7 +15,7 @@ use super::{
     Sandbox, SandboxCredentialPrerequisite, SandboxEvent, SandboxEventKind, SandboxStatus,
 };
 
-pub const DEFAULT_OWNER_SANDBOX_LIMIT: u16 = 3;
+pub const DEFAULT_OWNER_SANDBOX_LIMIT: u16 = 10;
 pub const DEFAULT_VISITOR_SANDBOX_LIMIT: u16 = 1;
 pub const DEFAULT_RETENTION_GRACE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 pub const DEFAULT_INACTIVITY_PAUSE_AFTER_SECONDS: u64 = 15 * 60;

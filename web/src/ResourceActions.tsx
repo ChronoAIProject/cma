@@ -7,6 +7,7 @@ import { DeletionDialog } from './DeletionDialog';
 import { Button } from './ui/Button';
 import { useConnectionGate } from './connections/useConnectionGate';
 import { restoreDeletion, type DeleteAction, type DeletionRequest } from './deletion';
+import { downloadAgentHistory } from './agent/historyExport';
 
 export type CreateAction =
   | Extract<TreeAction, { kind: 'new_agent' | 'new_workspace' }>
@@ -58,6 +59,11 @@ export function useResourceActions(
         case 'delete_agent':
           await client.deleteAgent(action.agentId, options);
           break;
+        case 'export_history': {
+          const transcript = await client.readAgentTranscript(action.agentId);
+          downloadAgentHistory(action.agentId, transcript);
+          break;
+        }
       }
       keys.current.settle(scope);
       onChanged();
@@ -71,6 +77,8 @@ export function useResourceActions(
   const select = (action: TreeAction) => {
     if (action.kind === 'new_agent' || action.kind === 'new_workspace') {
       onCreate?.(action);
+    } else if (action.kind === 'export_history') {
+      void execute(action);
     } else if (['delete_sandbox', 'remove_workspace', 'delete_agent'].includes(action.kind)) {
       if (pending || deletion !== undefined) return;
       setError(undefined);

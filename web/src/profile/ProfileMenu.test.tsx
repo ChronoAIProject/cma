@@ -45,6 +45,36 @@ describe('account menu', () => {
     await actor.click(screen.getByRole('button', { name: /account menu/i }));
     expect(screen.getByRole('menuitem', { name: 'Operations' })).toBeInTheDocument();
   });
+
+  it('keeps Event Gateway consumers in the owner account menu and routes there', async () => {
+    const onNavigate = vi.fn();
+    const actor = userEvent.setup();
+    render(
+      <ProfileMenu
+        user={{ ...user, capabilities: ['use_own_sandboxes'] }}
+        onSignOut={vi.fn()}
+        onNavigate={onNavigate}
+        canManageBridges
+      />,
+    );
+    await actor.click(screen.getByRole('button', { name: /account menu/i }));
+    await actor.click(screen.getByRole('menuitem', { name: 'Event Gateway consumers' }));
+    expect(onNavigate).toHaveBeenCalledWith({ kind: 'bridges' });
+  });
+
+  it('does not expose Event Gateway consumers to visitors', async () => {
+    const actor = userEvent.setup();
+    render(
+      <ProfileMenu
+        user={{ ...user, visitor: true }}
+        onSignOut={vi.fn()}
+        onNavigate={vi.fn()}
+        canManageBridges
+      />,
+    );
+    await actor.click(screen.getByRole('button', { name: /account menu/i }));
+    expect(screen.queryByRole('menuitem', { name: 'Event Gateway consumers' })).not.toBeInTheDocument();
+  });
 });
 
 it('derives stable initials from the display name', () => {

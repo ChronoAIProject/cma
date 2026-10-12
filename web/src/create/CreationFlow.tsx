@@ -7,6 +7,7 @@ import type { CreationClient } from './client';
 import { NewAgentCard } from './NewAgentCard';
 import { NewSandboxCard } from './NewSandboxCard';
 import { NewWorkspaceCard } from './NewWorkspaceCard';
+import { AgentLifecycleCard } from './AgentLifecycleCard';
 
 export type CreationRequest =
   CreateAction | { readonly kind: 'profile_use'; readonly selection: ProfileUse };
@@ -29,6 +30,15 @@ export function CreationFlow({
   readonly canCreateSandbox: boolean;
 }) {
   const initial = request.kind === 'profile_use' ? fromProfileUse(request.selection) : undefined;
+  if (request.kind === 'new_agent' && client.createAgentLifecycle !== undefined) {
+    return (
+      <AgentLifecycleCard
+        client={client}
+        onClose={onClose}
+        onCreated={(receipt) => onCreated({ kind: 'agent', agentId: receipt.id })}
+      />
+    );
+  }
   const props = { client, catalog, onClose, initial };
   if (request.kind === 'new_sandbox' || initial?.kind === 'sandbox')
     return (

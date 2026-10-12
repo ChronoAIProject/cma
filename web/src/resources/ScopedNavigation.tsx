@@ -15,14 +15,12 @@ export function ScopedNavigation({
   scope,
   onScopeChange,
   onNavigate,
-  bridges = false,
 }: {
   readonly client?: ResourceViewsClient;
   readonly personal: ReactNode;
   readonly scope: string;
   readonly onScopeChange: (scope: string) => void;
   readonly onNavigate: (route: AppRoute) => void;
-  readonly bridges?: boolean;
 }) {
   const read = useMemo(
     () =>
@@ -53,11 +51,6 @@ export function ScopedNavigation({
       <Picker label="Navigation scope" value={scope} options={options} onChange={onScopeChange} />
       {current.state.status === 'error' ? (
         <p>Organization choices are unavailable. Personal navigation remains available.</p>
-      ) : null}
-      {bridges && shared !== true ? (
-        <ResourceLink route={{ kind: 'bridges', organization }} onNavigate={onNavigate}>
-          Bridges
-        </ResourceLink>
       ) : null}
       {shared === true ? (
         <>
