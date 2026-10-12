@@ -1,14 +1,9 @@
 import { Presence } from './ui/Presence';
-import { ProfileViews, Operations, TriggerPublisherPage } from './ConsolePages';
+import { Operations, TriggerPublisherPage } from './ConsolePages';
 import { BotManagement, isBotRoute, canManageBots } from './BotManagement';
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { LandingCharacter } from './landing/LandingCharacter';
-import {
-  useCmaClient,
-  useProfileViewsClient,
-  useOperatorClient,
-  usePublisherClient,
-} from './api/context';
+import { useCmaClient, useOperatorClient, usePublisherClient } from './api/context';
 import { canOpenOperations } from './operator/capabilities';
 import { AgentSurface } from './agent/AgentSurface';
 import { useAgentDraft } from './agent/draft';
@@ -86,7 +81,6 @@ export function Console({
     route.kind === 'agent' && (client.resourceViews === undefined || agentAccess.personalReady)
       ? route.agentId
       : undefined;
-  const profiles = useProfileViewsClient();
   const operator = useOperatorClient();
   const publisher = usePublisherClient();
   const navigation = useNavigation(client);
@@ -229,28 +223,7 @@ export function Console({
     route.kind === 'profile' ? (
     <LegacyProfileNotice />
   ) : route.kind === 'marketplace' || route.kind === 'marketplace_profile' ? (
-    profiles === undefined ? (
-      <section className="console__empty">
-        <h1>Profiles unavailable</h1>
-      </section>
-    ) : (
-      <Suspense
-        fallback={
-          <section className="console__empty" role="status">
-            Loading profiles
-          </section>
-        }
-      >
-        <ProfileViews
-          key={JSON.stringify(route)}
-          route={route}
-          viewerId={user.id}
-          client={profiles}
-          onNavigate={onNavigate}
-          canManage={!user.visitor && user.capabilities.includes('manage_own_profiles')}
-        />
-      </Suspense>
-    )
+    <LegacyProfileNotice />
   ) : route.kind === 'operations' ? (
     operator !== undefined && canOpenOperations(user.capabilities) ? (
       <Suspense
