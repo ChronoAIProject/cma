@@ -11,6 +11,7 @@ pub(super) fn sandbox() -> Sandbox {
             revision: 1,
             digest: "a".repeat(64),
             content: SandboxProfileContent {
+                runtime_image: None,
                 cpu_millis: 1000,
                 memory_mib: 2048,
                 nyxid_services: vec![ServiceId::new("chrono-llm")],

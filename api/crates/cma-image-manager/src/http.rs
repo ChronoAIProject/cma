@@ -88,8 +88,13 @@ fn revision(headers: &HeaderMap) -> ResponseResult<i64> {
         .filter(|v| *v > 0)
         .ok_or(Error::Invalid("invalid If-Match revision").into())
 }
-fn image_view(image: Image) -> Value {
-    json!({"id":image.id,"owner":image.owner,"name":image.spec.name,"description":image.spec.description,"shares":image.shares,"retired":image.retired,"revision":image.revision,"created_at_ms":image.created_at_ms})
+fn image_view(image: Image, actor: &str) -> Value {
+    let visibility = if image.owner == actor {
+        "private"
+    } else {
+        "shared"
+    };
+    json!({"id":image.id,"owner":image.owner,"name":image.spec.name,"description":image.spec.description,"shares":image.shares,"visibility":visibility,"retired":image.retired,"revision":image.revision,"created_at_ms":image.created_at_ms})
 }
 fn build_view(build: Build) -> Value {
     json!({"id":build.id,"image_id":build.image_id,"source":build.source,"phase":build.phase,"error":build.error,"revision":build.revision,"reference":build.reference(),"digest":build.digest,"created_at_ms":build.created_at_ms,"updated_at_ms":build.updated_at_ms})
@@ -98,6 +103,27 @@ fn build_view(build: Build) -> Value {
 struct Page {
     #[serde(default)]
     after: String,
+    #[serde(default)]
+    scope: ImageScopeParam,
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum ImageScopeParam {
+    Private,
+    Shared,
+    #[default]
+    All,
+}
+
+impl From<ImageScopeParam> for crate::store::ImageListScope {
+    fn from(value: ImageScopeParam) -> Self {
+        match value {
+            ImageScopeParam::Private => Self::Private,
+            ImageScopeParam::Shared => Self::Shared,
+            ImageScopeParam::All => Self::All,
+        }
+    }
 }
 fn paginated<T>(mut items: Vec<T>, id: impl Fn(&T) -> &str, view: impl Fn(T) -> Value) -> Value {
     let more = items.len() > 100;
@@ -125,10 +151,11 @@ async fn list(
     Query(q): Query<Page>,
 ) -> ResponseResult<Json<Value>> {
     let u = actor(&a, &h, p::READ).await?;
+    let scope = q.scope.into();
     Ok(Json(paginated(
-        a.store.list_images(&u.subject, &q.after).await?,
+        a.store.list_images(&u.subject, &q.after, scope).await?,
         |i| &i.id,
-        image_view,
+        |image| image_view(image, &u.subject),
     )))
 }
 async fn create(
@@ -141,6 +168,7 @@ async fn create(
         StatusCode::CREATED,
         Json(image_view(
             a.store.create_image(&u.subject, key(&h)?, input).await?,
+            &u.subject,
         )),
     ))
 }
@@ -152,6 +180,7 @@ async fn read(
     let u = actor(&a, &h, p::READ).await?;
     Ok(Json(image_view(
         a.store.image(&u.subject, &id, false).await?,
+        &u.subject,
     )))
 }
 async fn edit(
@@ -165,6 +194,7 @@ async fn edit(
         a.store
             .update_image(&u.subject, &id, revision(&h)?, input)
             .await?,
+        &u.subject,
     )))
 }
 async fn retire(
@@ -175,6 +205,7 @@ async fn retire(
     let u = actor(&a, &h, p::DELETE).await?;
     Ok(Json(image_view(
         a.store.retire(&u.subject, &id, revision(&h)?).await?,
+        &u.subject,
     )))
 }
 async fn share(
@@ -187,6 +218,7 @@ async fn share(
         a.store
             .share(&u.subject, &id, revision(&h)?, &subject, true)
             .await?,
+        &u.subject,
     )))
 }
 async fn unshare(
@@ -199,6 +231,7 @@ async fn unshare(
         a.store
             .share(&u.subject, &id, revision(&h)?, &subject, false)
             .await?,
+        &u.subject,
     )))
 }
 async fn build(

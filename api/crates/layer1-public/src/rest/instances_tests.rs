@@ -281,6 +281,7 @@ pub(super) async fn publish_workspace_profile(
 
 fn sandbox_content(max_workspaces: u8) -> SandboxProfileContent {
     SandboxProfileContent {
+        runtime_image: None,
         cpu_millis: 1_000,
         memory_mib: 2_048,
         nyxid_services: vec![],

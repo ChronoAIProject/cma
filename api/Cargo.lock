@@ -368,6 +368,7 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
+ "url",
  "uuid",
  "zeroize",
 ]
@@ -1818,6 +1819,7 @@ dependencies = [
  "serde_json",
  "serde_urlencoded",
  "sha2 0.10.9",
+ "thiserror 2.0.21",
  "tokio",
  "tower",
  "tracing",

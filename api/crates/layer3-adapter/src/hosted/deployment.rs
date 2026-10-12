@@ -82,6 +82,13 @@ impl HostedDeployment {
     ) -> crate::Result<ProviderSandboxRequest> {
         self.contract()?;
         validate_spec(spec)?;
+        let image_uri = spec
+            .runtime_image
+            .as_deref()
+            .unwrap_or(self.image.uri.as_str());
+        if spec.runtime_image.is_some() {
+            validate_runtime_image(image_uri)?;
+        }
         if generation == 0 {
             return Err(AdapterError::Rejected(
                 "runtime generation must be non-zero".into(),
@@ -162,10 +169,7 @@ impl HostedDeployment {
                 RUNTIME_GENERATION_METADATA.to_string(),
                 generation.to_string(),
             ),
-            (
-                RUNTIME_IMAGE_METADATA.to_string(),
-                image_sha256(&self.image.uri),
-            ),
+            (RUNTIME_IMAGE_METADATA.to_string(), image_sha256(image_uri)),
             (
                 RUNTIME_CONTRACT_METADATA.to_string(),
                 RUNTIME_CONTRACT_VERSION.to_string(),
@@ -177,7 +181,7 @@ impl HostedDeployment {
 
         let mut request = ProviderSandboxRequest {
             image: ProviderImage {
-                uri: self.image.uri.clone(),
+                uri: image_uri.to_owned(),
             },
             entrypoint: vec![spec.supervisor_program.clone()],
             env,
@@ -233,6 +237,34 @@ impl HostedDeployment {
         upstream.set_path(&format!("/api/v1/proxy/s/{service}"));
         upstream.to_string()
     }
+}
+
+fn validate_runtime_image(image: &str) -> crate::Result<()> {
+    let Some((name, digest)) = image.rsplit_once("@sha256:") else {
+        return Err(AdapterError::Rejected(
+            "runtime image must be pinned by digest".into(),
+        ));
+    };
+    if name.is_empty()
+        || name.len() > 2_048
+        || name.contains('@')
+        || name.contains("://")
+        || name.starts_with(['.', '-', '_', '/', ':'])
+        || name.ends_with(['.', '-', '_', '/', ':'])
+        || name.contains("//")
+        || !name.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-' | b'/' | b':')
+        })
+        || digest.len() != 64
+        || !digest
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+    {
+        return Err(AdapterError::Rejected(
+            "runtime image must be a valid immutable OCI reference".into(),
+        ));
+    }
+    Ok(())
 }
 
 pub(super) fn provider_request_fingerprint(

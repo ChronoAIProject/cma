@@ -30,6 +30,7 @@ fn profile(visibility: ProfileVisibility) -> SandboxProfile {
         updated_at: "2026-09-07T00:00:00Z".into(),
         retired_at: None,
         draft: SandboxProfileContent {
+            runtime_image: None,
             cpu_millis: 1000,
             memory_mib: 1024,
             nyxid_services: vec![],

@@ -75,6 +75,7 @@ impl ControlPlaneComposition {
         let users = UserDirectory::new(stores.users.clone());
         let profile_policy = profile_route_policy();
         let authoring_bounds = profile_policy.capacity_bounds;
+        let profile_scanner = Arc::clone(&profile_policy.public_value_scanner);
         profiles::seed_profiles(&stores, config, &profile_policy).await?;
 
         let retirement = Arc::new(StoredSandboxRetirement::new(stores.sandbox_model.clone()));
@@ -179,6 +180,20 @@ impl ControlPlaneComposition {
         )
         .with_connections(connection_prerequisite.clone())
         .with_resource_access(resource_access.clone());
+        let image_resolver = crate::agent_lifecycle::ImageManagerResolver::new(
+            config.image_manager_base_url.clone(),
+        )
+        .map_err(|error| format!("Image Manager resolver is not usable: {error}"))?;
+        let inline_lifecycle = crate::agent_lifecycle::InlineAgentLifecycle::new(
+            Arc::clone(&sandbox_service),
+            Arc::clone(&workspace_service),
+            projections.agents(),
+            stores.sandbox_profiles.clone(),
+            image_resolver,
+            authoring_bounds,
+            profile_scanner,
+        );
+        let projections = projections.with_lifecycle(inline_lifecycle);
         let bindings = bindings::BindingComposition::new(
             &stores,
             layer2_core::sandbox::binding::BindingResources {

@@ -320,6 +320,7 @@ pub(super) fn sandbox(id: &str, owner: &str) -> Sandbox {
             revision: 3,
             digest: "a".repeat(64),
             content: SandboxProfileContent {
+                runtime_image: None,
                 cpu_millis: 1_000,
                 memory_mib: 2_048,
                 nyxid_services: vec![ServiceId::new("api-github")],
