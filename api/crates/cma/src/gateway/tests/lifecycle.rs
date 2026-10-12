@@ -134,6 +134,7 @@ async fn production_effects_create_disable_rotate_and_delete_through_compiled_ga
     assert!(server.remote.provider_keys.lock().unwrap().is_empty());
 }
 #[tokio::test]
+#[ignore = "requires authenticated disposable service Mongo fixture"]
 async fn disabled_runtime_rotates_after_route_removal_and_cannot_enable_without_a_route() {
     let server = Server::start().await;
     let gateway = Gateway::start(&server).await;
