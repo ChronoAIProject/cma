@@ -31,7 +31,11 @@ export function ServiceTabs({
   return (
     <nav className="service-tabs" aria-label="CMA services">
       <a className="service-tabs__brand" href={routePath({ kind: 'home' })} aria-label="CMA home">
-        <span className="service-tabs__mark" aria-hidden="true" dangerouslySetInnerHTML={markHtml} />
+        <span
+          className="service-tabs__mark"
+          aria-hidden="true"
+          dangerouslySetInnerHTML={markHtml}
+        />
         <span>CMA</span>
       </a>
       <span className="service-tabs__divider" aria-hidden="true" />

@@ -77,7 +77,9 @@ describe('account menu', () => {
       />,
     );
     await actor.click(screen.getByRole('button', { name: /account menu/i }));
-    expect(screen.queryByRole('menuitem', { name: 'Event Gateway consumers' })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('menuitem', { name: 'Event Gateway consumers' }),
+    ).not.toBeInTheDocument();
   });
 });
 
