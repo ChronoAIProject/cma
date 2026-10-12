@@ -14,6 +14,7 @@ import { chooseOption } from '../test/select';
 import { NewAgentCard } from './NewAgentCard';
 import { NewSandboxCard } from './NewSandboxCard';
 import { NewWorkspaceCard } from './NewWorkspaceCard';
+import { InlineWorkspaceCard } from './InlineWorkspaceCard';
 
 describe('Sandbox creation', () => {
   it('requires verbatim foreign command/environment review and sends the exact revision digest', async () => {
@@ -138,6 +139,25 @@ it('creates a Workspace inside the selected active Sandbox with its reviewed set
       trustConfirmed: true,
       commandsDigest: 'workspace-content-digest',
     },
+    expect.objectContaining({ idempotencyKey: expect.any(String) }),
+  );
+});
+
+it('admits an inline empty Workspace without reading a Workspace Profile', async () => {
+  const user = userEvent.setup();
+  const createInlineWorkspace = vi.fn().mockResolvedValue(workspaceFixture());
+  render(
+    <InlineWorkspaceCard
+      client={agentClient({ createInlineWorkspace })}
+      sandboxId="sbx_1"
+      onCreated={vi.fn()}
+      onClose={vi.fn()}
+    />,
+  );
+  await user.click(screen.getByRole('button', { name: 'Create workspace' }));
+  expect(createInlineWorkspace).toHaveBeenCalledWith(
+    'sbx_1',
+    { source: { type: 'empty' }, name: 'workspace' },
     expect.objectContaining({ idempotencyKey: expect.any(String) }),
   );
 });
