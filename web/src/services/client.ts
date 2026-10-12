@@ -1,0 +1,50 @@
+export type Service = 'event-gateway' | 'image-manager';
+export interface ServiceSession {
+  authenticated: true;
+  subject: string;
+  permissions: readonly string[];
+  expires_at: number;
+}
+export class ServiceError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+export async function serviceRequest<T>(
+  service: Service,
+  path: string,
+  init: RequestInit = {},
+): Promise<T> {
+  const response = await fetch(`/api/${service}${path}`, {
+    ...init,
+    credentials: 'same-origin',
+    cache: 'no-store',
+    signal: init.signal ?? AbortSignal.timeout(15000),
+    headers: {
+      ...(init.body === undefined ? {} : { 'Content-Type': 'application/json' }),
+      ...init.headers,
+    },
+  });
+  if (!response.ok) {
+    let detail = `Service request failed (${response.status}).`;
+    try {
+      const body = (await response.json()) as { detail?: string };
+      if (typeof body.detail === 'string') detail = body.detail;
+    } catch {
+      /* Status remains authoritative. */
+    }
+    throw new ServiceError(response.status, detail);
+  }
+  return response.status === 204 ? (undefined as T) : ((await response.json()) as T);
+}
+export function can(session: ServiceSession, service: Service, permission: string): boolean {
+  const prefix = service === 'image-manager' ? 'cma-im' : 'cma-eg';
+  return (
+    session.permissions.includes(`${prefix}:admin`) ||
+    session.permissions.includes(`${prefix}:${permission}`)
+  );
+}
+export const segment = encodeURIComponent;
