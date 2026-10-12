@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cma-image-manager
+  namespace: chrono-bot
+data:
+  CMA_IM_LISTEN: "0.0.0.0:8080"
+  CMA_IM_MONGODB_DATABASE: "cma_image_manager"
+  CMA_IM_NYXID_ISSUER: "https://nyx-api.chrono-ai.fun"
+  CMA_IM_WEB_ORIGIN: "https://bot.chrono-ai.fun"
+  CMA_IM_COOKIE_KEY_FILE: "/var/run/cma-image-manager/cookie-key"
+  # Assign this dedicated build identity and pin the tested builder digest before enabling replicas.
+  CMA_IM_BUILD_SERVICE_ACCOUNT: "projects/example-project-02/serviceAccounts/cma-image-build@example-project-02.iam.gserviceaccount.com"
+  CMA_IM_BUILDER_IMAGE: ""
+  # Empty uses GKE Workload Identity; a rotating token file is supported for local integration.
+  CMA_IM_GOOGLE_TOKEN_FILE: ""
