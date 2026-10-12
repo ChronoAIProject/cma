@@ -16,7 +16,7 @@ impl BotProfileResolver for Profiles {
 }
 
 #[tokio::test]
-#[ignore = "requires built web/, installed Playwright browser and compiled CMAEG"]
+#[ignore = "requires authenticated service Mongo, built web/, Playwright and compiled CMAEG"]
 async fn dashboard_creates_tests_and_deletes_through_real_cma_and_compiled_gateway() {
     let remote = Server::start().await;
     let gateway = Gateway::start(&remote).await;
