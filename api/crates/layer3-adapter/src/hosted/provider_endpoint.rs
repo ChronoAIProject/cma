@@ -5,10 +5,11 @@ use crate::AdapterError;
 const MAX_ENDPOINT_BYTES: usize = 2_048;
 
 /// A provider proxy prefix resolved to the schemes trusted by configuration.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub(super) struct RuntimeEndpoint {
     base: Url,
     secure: bool,
+    control_token: Option<String>,
 }
 
 impl RuntimeEndpoint {
@@ -74,7 +75,17 @@ impl RuntimeEndpoint {
         Ok(Self {
             base: parsed,
             secure,
+            control_token: None,
         })
+    }
+
+    pub(super) fn with_control_token(mut self, token: String) -> Self {
+        self.control_token = Some(token);
+        self
+    }
+
+    pub(super) fn control_token(&self) -> Option<&str> {
+        self.control_token.as_deref()
     }
 
     pub(super) fn control(&self) -> crate::Result<Url> {
@@ -114,3 +125,12 @@ fn rejected(detail: &str) -> AdapterError {
 #[cfg(test)]
 #[path = "provider_endpoint_tests.rs"]
 mod tests;
+
+impl std::fmt::Debug for RuntimeEndpoint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RuntimeEndpoint")
+            .field("base", &self.base)
+            .field("secure", &self.secure)
+            .finish_non_exhaustive()
+    }
+}

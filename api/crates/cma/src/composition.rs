@@ -437,7 +437,7 @@ impl ControlPlaneComposition {
             )
             .merge(trigger_routes)
             .merge(layer1_public::rest::admin::router(admin));
-        let resource_routes = resource_routes.merge(bindings.router(&stores, activity.clone()));
+        let resource_routes = resource_routes.merge(bindings.router());
         let (bot_routes, bots) =
             bots::BotComposition::build(config, &stores, auth.clone(), settings)?;
         let resource_routes = resource_routes.merge(bot_routes);

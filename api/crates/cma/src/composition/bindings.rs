@@ -29,10 +29,8 @@ impl BindingComposition {
             ),
         }
     }
-    pub(super) fn router(&self, stores: &MongoStores, activity: Arc<ActivityService>) -> Router {
-        rest::binding_router(self.service.clone()).merge(rest::gateway_record_router(
-            layer2_core::GatewayRecordService::new(stores.gateway_records.clone(), activity),
-        ))
+    pub(super) fn router(&self) -> Router {
+        rest::binding_router(self.service.clone())
     }
     pub(crate) fn spawn(
         self,

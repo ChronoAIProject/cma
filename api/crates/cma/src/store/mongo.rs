@@ -7,7 +7,7 @@ use mongodb::{bson::doc, Client};
 
 use super::{
     AuthEncryptionKey, MongoActivityStore, MongoAuthStore, MongoCheckpointObjectStore,
-    MongoGatewayRecordStore, MongoOperationStore, MongoPlatformSettingsStore, MongoProfileStore,
+    MongoOperationStore, MongoPlatformSettingsStore, MongoProfileStore,
     MongoSandboxCredentialStore, MongoSandboxStore, MongoTriggerDefinitionStore,
     MongoUserDirectoryStore,
 };
@@ -39,7 +39,6 @@ pub struct MongoStores {
     pub users: Arc<MongoUserDirectoryStore>,
     pub settings: Arc<MongoPlatformSettingsStore>,
     pub operations: Arc<MongoOperationStore>,
-    pub gateway_records: Arc<MongoGatewayRecordStore>,
     client: Client,
     database: String,
 }
@@ -57,6 +56,7 @@ impl MongoStores {
         let client = Client::with_uri_str(uri)
             .await
             .map_err(|error| StoreError::Unavailable(format!("connect to MongoDB: {error}")))?;
+        super::isolation::verify(&client.database(database)).await?;
         let mut sandbox_model =
             MongoSandboxStore::open_with_storage(&client, database, checkpoint_storage).await?;
         sandbox_model.warm_runtime_version = Some(runtime.0.to_owned());
@@ -98,7 +98,6 @@ impl MongoStores {
         let users = Arc::new(MongoUserDirectoryStore::open(&client, database).await?);
         let settings = Arc::new(MongoPlatformSettingsStore::open(&client, database).await?);
         let operations = Arc::new(MongoOperationStore::open(&client, database).await?);
-        let gateway_records = Arc::new(MongoGatewayRecordStore::open(&client, database).await?);
         let bots = Arc::new(
             super::bots::MongoBotStore::open(&client, database)
                 .await
@@ -120,7 +119,6 @@ impl MongoStores {
             users,
             settings,
             operations,
-            gateway_records,
             client,
             database: database.to_owned(),
         };

@@ -53,10 +53,12 @@ mod default_profiles;
 pub mod directory;
 mod durability;
 mod encryption;
+#[cfg(test)]
 mod gateway_records;
 #[cfg(test)]
 mod gateway_records_mongo_integration_tests;
 mod hierarchy;
+pub(crate) mod isolation;
 mod launch_context;
 #[cfg(test)]
 mod launch_context_mongo_integration_tests;
@@ -81,6 +83,7 @@ mod profile_operator_mongo_integration_tests;
 mod profile_references;
 mod profiles;
 mod resource_access;
+pub(crate) mod runtime_routing;
 mod sandbox_admission;
 #[cfg(test)]
 mod sandbox_admission_mongo_integration_tests;
@@ -130,7 +133,6 @@ pub(crate) use codex_subscriptions::MongoSubscriptionStore;
 pub(crate) use default_profiles::DefaultProfileSpec;
 pub use directory::MongoUserDirectoryStore;
 pub(crate) use encryption::AuthEncryptionKey;
-pub(crate) use gateway_records::MongoGatewayRecordStore;
 pub use mongo::MongoStores;
 pub use operation::MongoOperationStore;
 pub(crate) use sandbox_credentials::MongoSandboxCredentialStore;
