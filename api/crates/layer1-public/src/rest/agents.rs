@@ -11,19 +11,14 @@ use axum::{
 };
 use layer2_core::profiles::AgentProfileRef;
 use layer2_core::sandbox::store::PageRequest;
-use layer2_core::sandbox::{
-    AgentListQuery, AgentOperationService, AgentOrigin, AgentReadService, AgentService,
-    AgentStatus, CreateAgent,
-};
-use layer2_core::{
-    AgentId, AgentProfileId, Caller, Capability, OperationStore, SandboxId, SubjectId, WorkspaceId,
-};
+use layer2_core::sandbox::{AgentListQuery, AgentOrigin, AgentStatus, CreateAgent};
+use layer2_core::{AgentId, AgentProfileId, Caller, Capability, SandboxId, SubjectId, WorkspaceId};
 use serde::Deserialize;
 
-use super::agent_history::AgentHistoryExporter;
+#[path = "agent_state.rs"]
+mod agent_state;
 use super::agent_lifecycle::{
-    AgentLifecycleCreateReceipt, AgentLifecycleCreateRequest, AgentLifecycleProvisioner,
-    AgentLifecycleProvisioningError,
+    AgentLifecycleCreateReceipt, AgentLifecycleCreateRequest, AgentLifecycleProvisioningError,
 };
 use super::agent_openapi_shapes::{AgentListItemView, AgentView, CreateAgentRequest};
 use super::agent_shared_shapes::{
@@ -33,60 +28,9 @@ use super::idempotency::{self, IdempotencyKey, RequestBody};
 use super::instance_problem::InstanceProblem;
 use super::BodyProblem;
 use crate::{AuthenticatedCaller, AuthenticatedResourceCaller, DelegatedCredential};
+pub use agent_state::AgentRoutesState;
 
 const DEFAULT_PAGE_LIMIT: u16 = 200;
-
-#[derive(Clone)]
-pub struct AgentRoutesState {
-    pub(super) commands: Option<Arc<layer2_core::sandbox::agent_io::AgentCommandService>>,
-    pub(super) agents: Arc<AgentService>,
-    pub(super) reads: Arc<AgentReadService>,
-    pub(super) agent_operations: Arc<AgentOperationService>,
-    pub(super) operation_records: Arc<dyn OperationStore>,
-    pub(super) lifecycle: Option<Arc<dyn AgentLifecycleProvisioner>>,
-    pub(super) history_exporter: Option<Arc<dyn AgentHistoryExporter>>,
-}
-
-impl AgentRoutesState {
-    pub fn new(
-        agents: Arc<AgentService>,
-        reads: Arc<AgentReadService>,
-        agent_operations: Arc<AgentOperationService>,
-        operation_records: Arc<dyn OperationStore>,
-    ) -> Self {
-        Self {
-            commands: None,
-            agents,
-            reads,
-            agent_operations,
-            operation_records,
-            lifecycle: None,
-            history_exporter: None,
-        }
-    }
-
-    /// Attach the simplified inline lifecycle facade without changing the
-    /// retained hierarchy routes used by compatibility clients and tests.
-    pub fn with_lifecycle(mut self, lifecycle: Arc<dyn AgentLifecycleProvisioner>) -> Self {
-        self.lifecycle = Some(lifecycle);
-        self
-    }
-
-    pub fn with_history_exporter(mut self, exporter: Arc<dyn AgentHistoryExporter>) -> Self {
-        self.history_exporter = Some(exporter);
-        self
-    }
-
-    /// Production adapters share the durable command ledger. Older service
-    /// compositions keep their established operation behavior until migrated.
-    pub fn with_commands(
-        mut self,
-        commands: Arc<layer2_core::sandbox::agent_io::AgentCommandService>,
-    ) -> Self {
-        self.commands = Some(commands);
-        self
-    }
-}
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
