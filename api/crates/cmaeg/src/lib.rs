@@ -32,12 +32,14 @@ pub use config::{
     ServiceAccountConfig, TurnConfig, CMAEG_ACCEPT_BUDGET_MS, CMAEG_ACK_TEXT,
     CMAEG_BUSY_RETRY_MAX_MS, CMAEG_CHANNEL_CACHE_MAX, CMAEG_CHANNEL_CACHE_TTL_MS,
     CMAEG_CHANNEL_NEGATIVE_TTL_MS, CMAEG_CMA_BASE_URL, CMAEG_CMA_SERVICE_TOKEN_FILE,
-    CMAEG_DRAIN_SECONDS, CMAEG_FAILURE_TEXT, CMAEG_HEARTBEAT_MS, CMAEG_INGRESS_INFLIGHT,
-    CMAEG_INGRESS_MAX_BODY, CMAEG_JWKS_TTL_MS, CMAEG_LISTEN, CMAEG_MASTER_KEYS_FILE,
-    CMAEG_METRICS_LISTEN, CMAEG_NYXID_BASE_URL, CMAEG_NYXID_REPLY_TIMEOUT_MS, CMAEG_PROVIDERS,
-    CMAEG_PROVIDER_CONNECT_TIMEOUT_MS, CMAEG_PROVIDER_MAX_INFLIGHT,
-    CMAEG_PROVIDER_REQUEST_TIMEOUT_MS, CMAEG_PUBLIC_URL, CMAEG_RESTORE_RATE_PER_MINUTE,
-    CMAEG_RESTORE_TIMEOUT_MS, CMAEG_TOOLS_NYXID_SLUG, CMAEG_TURN_TIMEOUT_MS,
+    CMAEG_COOKIE_KEY_FILE, CMAEG_DRAIN_SECONDS, CMAEG_FAILURE_TEXT, CMAEG_HEARTBEAT_MS,
+    CMAEG_INGRESS_INFLIGHT, CMAEG_INGRESS_MAX_BODY, CMAEG_JWKS_TTL_MS, CMAEG_LISTEN,
+    CMAEG_MASTER_KEYS_FILE, CMAEG_METRICS_LISTEN, CMAEG_MONGODB_DATABASE, CMAEG_MONGODB_URI,
+    CMAEG_NYXID_BASE_URL, CMAEG_NYXID_CLIENT_ID, CMAEG_NYXID_CLIENT_SECRET,
+    CMAEG_NYXID_REPLY_TIMEOUT_MS, CMAEG_PROVIDERS, CMAEG_PROVIDER_CONNECT_TIMEOUT_MS,
+    CMAEG_PROVIDER_MAX_INFLIGHT, CMAEG_PROVIDER_REQUEST_TIMEOUT_MS, CMAEG_PUBLIC_URL,
+    CMAEG_RESTORE_RATE_PER_MINUTE, CMAEG_RESTORE_TIMEOUT_MS, CMAEG_TOOLS_NYXID_SLUG,
+    CMAEG_TURN_TIMEOUT_MS, CMAEG_WEB_ORIGIN,
 };
 
 const REQUEST_BODY_LIMIT_BYTES: usize = 1024 * 1024;
@@ -104,16 +106,83 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let providers = std::sync::Arc::new(
         providers::ProviderClient::from_config(&config)?.with_service_auth(service_auth.clone()),
     );
-    let records = std::sync::Arc::new(
-        records::RecordClient::new(
-            &config.management.cma_base_url,
-            config.management.cma_service_token.as_str(),
-        )?
-        .with_service_auth(service_auth),
-    );
-    let creator_auth = std::sync::Arc::new(auth::CreatorAuthenticator::new(
-        &config.management.nyxid_base_url,
-    )?);
+    let independent_store_enabled = [
+        CMAEG_MONGODB_URI,
+        CMAEG_MONGODB_DATABASE,
+        CMAEG_NYXID_CLIENT_ID,
+        CMAEG_NYXID_CLIENT_SECRET,
+        CMAEG_WEB_ORIGIN,
+        CMAEG_COOKIE_KEY_FILE,
+    ]
+    .iter()
+    .any(|key| std::env::var_os(key).is_some());
+    let (records, creator_auth, browser) = if independent_store_enabled {
+        let mongo_uri = std::env::var(CMAEG_MONGODB_URI).map_err(|_| {
+            format!("{CMAEG_MONGODB_URI} is required when independent Gateway storage is enabled")
+        })?;
+        let database_name = std::env::var(CMAEG_MONGODB_DATABASE).map_err(|_| {
+            format!(
+                "{CMAEG_MONGODB_DATABASE} is required when independent Gateway storage is enabled"
+            )
+        })?;
+        let client_id = std::env::var(CMAEG_NYXID_CLIENT_ID).map_err(|_| {
+            format!(
+                "{CMAEG_NYXID_CLIENT_ID} is required when independent Gateway storage is enabled"
+            )
+        })?;
+        let client_secret = std::env::var(CMAEG_NYXID_CLIENT_SECRET)
+            .map_err(|_| format!("{CMAEG_NYXID_CLIENT_SECRET} is required when independent Gateway storage is enabled"))?;
+        let web_origin = std::env::var(CMAEG_WEB_ORIGIN).map_err(|_| {
+            format!("{CMAEG_WEB_ORIGIN} is required when independent Gateway storage is enabled")
+        })?;
+        let cookie_key_file = std::env::var(CMAEG_COOKIE_KEY_FILE).map_err(|_| {
+            format!(
+                "{CMAEG_COOKIE_KEY_FILE} is required when independent Gateway storage is enabled"
+            )
+        })?;
+        let mongo = mongodb::Client::with_uri_str(mongo_uri).await?;
+        let database_handle = mongo.database(&database_name);
+        let database = records::mongo::MongoRecords::open(database_handle.clone()).await?;
+        let service_identity = cma_service_auth::NyxIdAuth::new(
+            &config.management.nyxid_base_url,
+            cma_service_auth::Service::EventGateway,
+            &client_id,
+            client_secret,
+        )?;
+        let browser = std::sync::Arc::new(cma_service_auth::browser::BrowserAuth::new(
+            service_identity.clone(),
+            &database_handle,
+            records::mongo::SESSIONS,
+            &web_origin,
+            "/api/event-gateway",
+            "/event-gateway",
+            &std::fs::read(cookie_key_file)?,
+        )?);
+        let records = std::sync::Arc::new(
+            records::RecordClient::new(
+                &config.management.cma_base_url,
+                config.management.cma_service_token.as_str(),
+            )?
+            .with_database(database),
+        );
+        let creator_auth = std::sync::Arc::new(
+            auth::CreatorAuthenticator::new(&config.management.nyxid_base_url)?
+                .with_service(service_identity),
+        );
+        (records, creator_auth, Some(browser))
+    } else {
+        let records = std::sync::Arc::new(
+            records::RecordClient::new(
+                &config.management.cma_base_url,
+                config.management.cma_service_token.as_str(),
+            )?
+            .with_service_auth(service_auth),
+        );
+        let creator_auth = std::sync::Arc::new(auth::CreatorAuthenticator::new(
+            &config.management.nyxid_base_url,
+        )?);
+        (records, creator_auth, None)
+    };
     let mut state = http::ManagementState::new(
         providers.clone(),
         records,
@@ -180,22 +249,25 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     tracing::info!(bind = %config.listen, "CMAEG listening");
 
     let (shutdown_started, shutdown_signal) = oneshot::channel();
+    let mut router = router_with_state(state)
+        .merge(http::events::router(http::events::CustomIngressState {
+            ingress: ingress.clone(),
+            waiters,
+        }))
+        .merge(http::connections::router(connections.clone()))
+        .merge(http::connection_browser::router(connections))
+        .merge(http::telegram::router(ingress.clone()))
+        .merge(http::callbacks::router(ingress))
+        .merge(http::tools::router(tools_state.clone()))
+        .merge(mcp::router(tools_state))
+        .layer(RequestBodyLimitLayer::new(REQUEST_BODY_LIMIT_BYTES))
+        .layer(CatchPanicLayer::custom(http::problems::panic_response));
+    if let Some(browser) = browser {
+        router = browser.protect(router).merge(browser.routes());
+    }
     let server = axum::serve(
         listener,
-        router_with_state(state)
-            .merge(http::events::router(http::events::CustomIngressState {
-                ingress: ingress.clone(),
-                waiters,
-            }))
-            .merge(http::connections::router(connections.clone()))
-            .merge(http::connection_browser::router(connections))
-            .merge(http::telegram::router(ingress.clone()))
-            .merge(http::callbacks::router(ingress))
-            .merge(http::tools::router(tools_state.clone()))
-            .merge(mcp::router(tools_state))
-            .layer(RequestBodyLimitLayer::new(REQUEST_BODY_LIMIT_BYTES))
-            .layer(CatchPanicLayer::custom(http::problems::panic_response))
-            .into_make_service_with_connect_info::<SocketAddr>(),
+        router.into_make_service_with_connect_info::<SocketAddr>(),
     )
     .with_graceful_shutdown(async move {
         wait_for_shutdown_signal().await;

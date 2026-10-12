@@ -128,6 +128,8 @@ pub use trigger_definitions::MongoTriggerDefinitionStore;
 pub(crate) use warm_sandboxes::WarmSandboxClaim;
 
 pub(crate) mod event_workers;
+pub(crate) mod isolation;
 mod legacy_finalization;
 mod legacy_reuse_lifecycle;
 mod legacy_sandbox;
+pub(crate) mod runtime_routing;

@@ -26,4 +26,3 @@ export async function listAgentImages(signal?: AbortSignal): Promise<readonly Ag
   const value = (await response.json()) as ImagePage;
   return Array.isArray(value.items) ? value.items : [];
 }
-
