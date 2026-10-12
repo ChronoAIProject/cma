@@ -194,6 +194,9 @@ fn valid_runtime_image(value: &str) -> bool {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SandboxProfile {
+    /// Immutable service-owned snapshot, excluded from profile management.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub internal: bool,
     #[serde(default)]
     pub availability: super::SandboxProfileAvailability,
     pub id: SandboxProfileId,
@@ -216,6 +219,12 @@ pub struct SandboxProfile {
 impl SandboxProfile {
     pub fn validate(&self, bounds: ProfileCapacityBounds) -> Result<(), ProfileError> {
         self.availability.validate(self.visibility)?;
+        if self.internal && self.visibility != ProfileVisibility::Private {
+            return Err(ProfileError::new(
+                "internal_profile_must_be_private",
+                "visibility",
+            ));
+        }
         validate_metadata(&self.name, &self.description)?;
         self.draft.validate(bounds)?;
         Ok(())

@@ -355,6 +355,7 @@ pub(crate) fn sandbox(id: &str, owner: &str, version: &str) -> Sandbox {
 
 pub(crate) fn agent_profile(id: &str, owner: &str, visibility: ProfileVisibility) -> AgentProfile {
     AgentProfile {
+        internal: false,
         id: layer2_core::AgentProfileId(id.into()),
         owner: SubjectId::new(owner),
         name: format!("Agent {id}"),
