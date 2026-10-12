@@ -38,6 +38,7 @@ pub trait CreatorAuthState {
 pub enum CreatorAuthError {
     NotAuthenticated,
     ProviderUnavailable,
+    Forbidden,
 }
 
 impl CreatorAuthError {
@@ -47,6 +48,11 @@ impl CreatorAuthError {
                 ProblemCode::NotAuthenticated,
                 StatusCode::UNAUTHORIZED.as_u16(),
                 "A valid NyxID bearer token is required.",
+            ),
+            Self::Forbidden => Problem::new(
+                ProblemCode::NotAuthenticated,
+                403,
+                "Event Gateway permission is required.",
             ),
             Self::ProviderUnavailable => Problem::new(
                 ProblemCode::ProviderUnavailable,
@@ -62,6 +68,7 @@ impl fmt::Display for CreatorAuthError {
         formatter.write_str(match self {
             Self::NotAuthenticated => "creator is not authenticated",
             Self::ProviderUnavailable => "creator authentication provider is unavailable",
+            Self::Forbidden => "Event Gateway permission is required",
         })
     }
 }
@@ -91,12 +98,36 @@ where
     type Rejection = CreatorAuthError;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        state.creator_auth().authenticate(&parts.headers).await
+        let auth = state.creator_auth();
+        if let Some(service) = &auth.service {
+            let principal = service
+                .authenticate(&parts.headers)
+                .await
+                .map_err(service_error)?;
+            let permission = match parts.method {
+                axum::http::Method::GET | axum::http::Method::HEAD => "cma-eg:channels:read",
+                axum::http::Method::DELETE => "cma-eg:channels:delete",
+                axum::http::Method::POST if parts.uri.path().ends_with("/test") => {
+                    "cma-eg:channels:test"
+                }
+                axum::http::Method::POST => "cma-eg:channels:create",
+                _ => "cma-eg:channels:update",
+            };
+            principal.require(permission).map_err(service_error)?;
+            return Ok(Creator {
+                subject: principal.subject,
+                token_hash: token_hash(
+                    bearer(&parts.headers).ok_or(CreatorAuthError::NotAuthenticated)?,
+                ),
+            });
+        }
+        auth.authenticate(&parts.headers).await
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct CreatorAuthenticator {
+    service: Option<cma_service_auth::NyxIdAuth>,
     client: Client,
     base_url: String,
     cache: std::sync::Arc<DashMap<String, CacheEntry>>,
@@ -118,6 +149,7 @@ impl CreatorAuthenticator {
             .user_agent(format!("cmaeg/{}", env!("CARGO_PKG_VERSION")))
             .build()?;
         Ok(Self {
+            service: None,
             client,
             base_url: base_url.trim_end_matches('/').to_owned(),
             cache: std::sync::Arc::new(DashMap::new()),
@@ -125,7 +157,21 @@ impl CreatorAuthenticator {
         })
     }
 
+    pub fn with_service(mut self, service: cma_service_auth::NyxIdAuth) -> Self {
+        self.service = Some(service);
+        self
+    }
     pub async fn authenticate(&self, headers: &HeaderMap) -> Result<Creator, CreatorAuthError> {
+        if let Some(service) = &self.service {
+            let principal = service.authenticate(headers).await.map_err(service_error)?;
+            principal
+                .require("cma-eg:channels:read")
+                .map_err(service_error)?;
+            return Ok(Creator {
+                subject: principal.subject,
+                token_hash: token_hash(bearer(headers).ok_or(CreatorAuthError::NotAuthenticated)?),
+            });
+        }
         let token = bearer(headers).ok_or(CreatorAuthError::NotAuthenticated)?;
         let token_hash = token_hash(token);
         if let Some(entry) = self.cache.get(&token_hash) {
@@ -236,6 +282,14 @@ fn token_hash(token: &str) -> String {
             .map(|byte| format!("{byte:02x}"))
             .collect::<String>()
     )
+}
+
+fn service_error(error: cma_service_auth::AuthError) -> CreatorAuthError {
+    match error {
+        cma_service_auth::AuthError::Unauthenticated => CreatorAuthError::NotAuthenticated,
+        cma_service_auth::AuthError::Forbidden => CreatorAuthError::Forbidden,
+        _ => CreatorAuthError::ProviderUnavailable,
+    }
 }
 
 #[cfg(test)]

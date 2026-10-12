@@ -24,7 +24,8 @@ use super::problems::{no_store, problem, protocol_headers};
 
 pub fn management_router(state: ManagementState) -> Router {
     Router::new()
-        .route("/v1/channels", post(create_channel))
+        .route("/v1/permissions", get(permission_catalog))
+        .route("/v1/channels", get(list_channels).post(create_channel))
         .route(
             "/v1/channel-records/{record_id}",
             get(super::creation::recover_channel),
@@ -365,4 +366,66 @@ pub async fn rekey_channel(
         Ok(kid) => no_store(Json(RekeyResponse { kid }).into_response()),
         Err(error) => management_error(error),
     }
+}
+
+#[derive(Default, Deserialize, IntoParams)]
+#[serde(deny_unknown_fields)]
+#[into_params(parameter_in=Query)]
+pub struct ListQuery {
+    pub after: Option<String>,
+}
+#[derive(Serialize, ToSchema)]
+pub struct ChannelPage {
+    pub items: Vec<ChannelResponse>,
+    pub next_cursor: Option<String>,
+}
+#[utoipa::path(get,path="/v1/channels",operation_id="listChannels",tag="channels",security(("creatorBearer"=[])),params(ListQuery),responses((status=200,body=ChannelPage),(status="default",body=cmaeg_core::problem::Problem,content_type="application/problem+json")))]
+pub async fn list_channels(
+    State(state): State<ManagementState>,
+    creator: Creator,
+    Query(query): Query<ListQuery>,
+) -> Response {
+    let heads = match state
+        .records
+        .list(Some(&creator.subject), query.after.as_deref(), 51)
+        .await
+    {
+        Ok(rows) => rows,
+        Err(error) => return management_error(ManagementError::Record(error)),
+    };
+    let next_cursor = if heads.len() > 50 {
+        heads.get(49).map(|h| h.record_id.clone())
+    } else {
+        None
+    };
+    let mut items = Vec::new();
+    for head in heads.into_iter().take(50) {
+        let id = match cmaeg_core::ids::RecordId::new(head.record_id) {
+            Ok(id) => id,
+            Err(e) => return management_error(ManagementError::Invalid(e)),
+        };
+        let loaded = match crate::channels::creation::load_record(&state, &creator, &id).await {
+            Ok(value) => value,
+            Err(error) => return management_error(error),
+        };
+        match channel_response(
+            &state,
+            &loaded.channel_id,
+            &loaded.definition,
+            loaded.record.version,
+            provider_response(&loaded.definition),
+            &id,
+        ) {
+            Ok(value) => items.push(value),
+            Err(error) => return management_error(error),
+        }
+    }
+    no_store(Json(ChannelPage { items, next_cursor }).into_response())
+}
+
+#[utoipa::path(get, path="/v1/permissions", operation_id="getPermissions", tag="identity",
+    security(("creatorBearer"=[])), responses((status=200, body=serde_json::Value),
+    (status="default",body=cmaeg_core::problem::Problem,content_type="application/problem+json")))]
+pub async fn permission_catalog(creator: Creator) -> Json<serde_json::Value> {
+    Json(serde_json::json!({"subject":creator.subject,"roles":crate::auth::permissions::ROLES}))
 }

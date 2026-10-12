@@ -56,7 +56,26 @@ spec:
           envFrom:
             - configMapRef:
                 name: cmaeg
+          volumeMounts:
+            - name: cookie-key
+              mountPath: /var/run/cmaeg-auth
+              readOnly: true
           env:
+            - name: CMAEG_MONGODB_URI
+              valueFrom:
+                secretKeyRef:
+                  name: cmaeg-auth
+                  key: CMAEG_MONGODB_URI
+            - name: CMAEG_NYXID_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: cmaeg-auth
+                  key: CMAEG_NYXID_CLIENT_ID
+            - name: CMAEG_NYXID_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: cmaeg-auth
+                  key: CMAEG_NYXID_CLIENT_SECRET
             - name: CMAEG_MASTER_KEYS
               valueFrom:
                 secretKeyRef:
@@ -109,3 +128,10 @@ spec:
             preStop:
               exec:
                 command: ["/bin/sleep", "5"]
+      volumes:
+        - name: cookie-key
+          secret:
+            secretName: cmaeg-auth
+            items:
+              - key: cookie-key
+                path: cookie-key

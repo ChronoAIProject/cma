@@ -5,6 +5,7 @@ edition.workspace = true
 publish = false
 
 [dependencies]
+cma-service-auth = { path = "../cma-service-auth" }
 base64 = { workspace = true }
 bytes = { workspace = true }
 h2 = { workspace = true }
@@ -20,6 +21,7 @@ dashmap = { workspace = true }
 futures-util = { workspace = true }
 governor = { workspace = true }
 metrics = { workspace = true }
+mongodb = { workspace = true }
 metrics-exporter-prometheus = { workspace = true }
 reqwest = { workspace = true }
 ring = { workspace = true }

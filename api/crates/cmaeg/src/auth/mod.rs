@@ -7,3 +7,5 @@ pub use creator::{Creator, CreatorAuthError, CreatorAuthState, CreatorAuthentica
 pub mod agent;
 pub mod webhook;
 pub use agent::{AgentAuthError, AgentCaller};
+
+pub mod permissions;
