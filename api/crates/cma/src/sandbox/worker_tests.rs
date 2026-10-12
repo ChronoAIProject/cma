@@ -684,6 +684,7 @@ async fn seed_sandbox_profile(
             forked_from: None,
             uses_count: 0,
             draft: SandboxProfileContent {
+                runtime_image: None,
                 cpu_millis: 1_000,
                 memory_mib: 2_048,
                 nyxid_services: vec![ServiceId::new("profile-service")],

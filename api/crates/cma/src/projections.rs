@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use axum::Router;
+use layer1_public::rest::AgentLifecycleProvisioner;
 use layer1_public::rest::{agent_router, AgentRoutesState};
 use layer2_core::profiles::{AgentProfileStore, ProfileUseRecorder};
 use layer2_core::sandbox::store::{AgentReadStore, AgentServiceStore};
@@ -21,6 +22,7 @@ pub(crate) struct AgentProjectionServices {
     agents: Arc<AgentService>,
     operations: Arc<AgentOperationService>,
     reads: Arc<AgentReadService>,
+    lifecycle: Option<Arc<dyn AgentLifecycleProvisioner>>,
 }
 
 impl AgentProjectionServices {
@@ -29,6 +31,11 @@ impl AgentProjectionServices {
         commands: Arc<layer2_core::sandbox::agent_io::AgentCommandService>,
     ) -> Self {
         self.commands = Some(commands);
+        self
+    }
+
+    pub(crate) fn with_lifecycle(mut self, lifecycle: Arc<dyn AgentLifecycleProvisioner>) -> Self {
+        self.lifecycle = Some(lifecycle);
         self
     }
 
@@ -75,6 +82,7 @@ impl AgentProjectionServices {
             agents,
             operations,
             reads,
+            lifecycle: None,
         }
     }
 
@@ -97,6 +105,10 @@ impl AgentProjectionServices {
             Arc::clone(&self.operations),
             operation_records,
         );
+        let agent_routes = match &self.lifecycle {
+            Some(lifecycle) => agent_routes.with_lifecycle(lifecycle.clone()),
+            None => agent_routes,
+        };
         let agent_routes = match &self.commands {
             Some(commands) => agent_routes.with_commands(commands.clone()),
             None => agent_routes,

@@ -96,6 +96,7 @@ pub(super) fn environment_spec(
             cpu_millis: profile.content.cpu_millis,
             memory_mib: profile.content.memory_mib,
         },
+        runtime_image: profile.content.runtime_image.clone(),
         environment: profile
             .content
             .environment_variables

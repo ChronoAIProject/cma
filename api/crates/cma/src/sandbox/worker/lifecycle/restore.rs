@@ -437,6 +437,11 @@ fn replacement_runtime_version(sandbox: &Sandbox, deployed: &str) -> String {
             target_runtime_version,
             ..
         }) => target_runtime_version.clone(),
-        _ => deployed.to_owned(),
+        _ => sandbox
+            .profile
+            .content
+            .runtime_image
+            .clone()
+            .unwrap_or_else(|| deployed.to_owned()),
     }
 }

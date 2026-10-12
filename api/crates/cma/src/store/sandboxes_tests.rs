@@ -21,6 +21,7 @@ const NOW: &str = "2026-09-05T00:00:00Z";
 
 fn sandbox(origin: SandboxOrigin) -> Sandbox {
     let content = SandboxProfileContent {
+        runtime_image: None,
         cpu_millis: 1_000,
         memory_mib: 2_048,
         nyxid_services: vec![ServiceId::new("profile-service")],

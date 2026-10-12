@@ -32,6 +32,7 @@ async fn database(prefix: &str) -> (Client, String) {
 
 fn sandbox(id: &str, launch_id: &str) -> Sandbox {
     let content = SandboxProfileContent {
+        runtime_image: None,
         cpu_millis: 1_000,
         memory_mib: 2_048,
         nyxid_services: vec![ServiceId::new("profile-service")],

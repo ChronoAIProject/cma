@@ -3,7 +3,7 @@
 use std::{future::Future, sync::Arc};
 
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Extension, Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -20,6 +20,10 @@ use layer2_core::{
 };
 use serde::Deserialize;
 
+use super::agent_lifecycle::{
+    AgentLifecycleCreateReceipt, AgentLifecycleCreateRequest, AgentLifecycleProvisioner,
+    AgentLifecycleProvisioningError,
+};
 use super::agent_openapi_shapes::{AgentListItemView, AgentView, CreateAgentRequest};
 use super::agent_shared_shapes::{
     AccessibleAgentListItemView, AccessibleAgentPageView, AccessibleAgentView,
@@ -38,6 +42,7 @@ pub struct AgentRoutesState {
     pub(super) reads: Arc<AgentReadService>,
     pub(super) agent_operations: Arc<AgentOperationService>,
     pub(super) operation_records: Arc<dyn OperationStore>,
+    pub(super) lifecycle: Option<Arc<dyn AgentLifecycleProvisioner>>,
 }
 
 impl AgentRoutesState {
@@ -53,7 +58,15 @@ impl AgentRoutesState {
             reads,
             agent_operations,
             operation_records,
+            lifecycle: None,
         }
+    }
+
+    /// Attach the simplified inline lifecycle facade without changing the
+    /// retained hierarchy routes used by compatibility clients and tests.
+    pub fn with_lifecycle(mut self, lifecycle: Arc<dyn AgentLifecycleProvisioner>) -> Self {
+        self.lifecycle = Some(lifecycle);
+        self
     }
 
     /// Production adapters share the durable command ledger. Older service
@@ -110,8 +123,66 @@ impl AgentPageParams {
 pub(super) fn routes() -> Router<AgentRoutesState> {
     Router::new()
         .route("/api/v1/workspaces/{id}/agents", post(create))
-        .route("/api/v1/agents", get(list))
+        .route("/api/v1/agents", get(list).post(create_lifecycle))
         .route("/api/v1/agents/{id}", get(read).delete(delete_agent))
+}
+
+/// Create an Agent from one inline lifecycle request.  The provisioning port
+/// owns the sandbox/workspace/agent orchestration; this boundary never accepts
+/// profile, workspace, worktree, pod, or runtime identifiers from the caller.
+#[utoipa::path(
+    post,
+    path = "/api/v1/agents",
+    tag = "agents",
+    params(("Idempotency-Key" = String, Header)),
+    request_body = AgentLifecycleCreateRequest,
+    responses(
+        (status = 202, body = AgentLifecycleCreateReceipt),
+        (status = 422, body = crate::rest::ProblemDocument),
+        (status = 503, body = crate::rest::ProblemDocument)
+    )
+)]
+pub(crate) async fn create_lifecycle(
+    State(state): State<AgentRoutesState>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    context: Option<Extension<layer2_core::resource_access::CallerContext>>,
+    credential: Option<Extension<DelegatedCredential>>,
+    key: IdempotencyKey,
+    body: Result<RequestBody<AgentLifecycleCreateRequest>, BodyProblem>,
+) -> Response {
+    let Some(provisioner) = state.lifecycle.clone() else {
+        return AgentLifecycleProvisioningError::Unavailable.into_response();
+    };
+    let profile_key = key
+        .value()
+        .map(str::to_owned)
+        .unwrap_or_else(|| "unkeyed".into());
+    let operation_caller = caller.clone();
+    let delegated_credential = credential
+        .as_ref()
+        .map(|Extension(value)| value.value().to_owned());
+    execute_command_raw(
+        &state,
+        &caller,
+        key,
+        "agent-manager:create".into(),
+        body,
+        move |body| async move {
+            let context = context.map(|Extension(value)| value);
+            provisioner
+                .create(
+                    &operation_caller,
+                    context.as_ref(),
+                    delegated_credential.as_deref(),
+                    body,
+                    &profile_key,
+                )
+                .await
+                .map(|receipt| (StatusCode::ACCEPTED, Json(receipt)).into_response())
+                .map_err(IntoResponse::into_response)
+        },
+    )
+    .await
 }
 
 /// Compose all owner-facing Agent routes against one shared service set.
@@ -346,6 +417,43 @@ where
     };
     let result: Result<Response, Response> = match body {
         Ok(body) => execute(body).await.map_err(IntoResponse::into_response),
+        Err(error) => Err(error.into_response()),
+    };
+    guard.finish(result).await
+}
+
+/// Idempotency wrapper for commands whose domain error already owns its HTTP
+/// projection (used by the new lifecycle facade).
+pub(super) async fn execute_command_raw<T, F, Fut>(
+    state: &AgentRoutesState,
+    caller: &Caller,
+    key: IdempotencyKey,
+    operation: String,
+    body: Result<RequestBody<T>, BodyProblem>,
+    execute: F,
+) -> Response
+where
+    T: serde::de::DeserializeOwned,
+    F: FnOnce(T) -> Fut,
+    Fut: Future<Output = Result<Response, Response>>,
+{
+    if let Err(problem) = require_use(caller) {
+        return problem.into_response();
+    }
+    let (guard, body, _) = match idempotency::required_command(
+        key,
+        Arc::clone(&state.operation_records),
+        caller,
+        operation,
+        body,
+    )
+    .await
+    {
+        Ok(parts) => parts,
+        Err(response) => return response,
+    };
+    let result = match body {
+        Ok(body) => execute(body).await,
         Err(error) => Err(error.into_response()),
     };
     guard.finish(result).await

@@ -71,6 +71,10 @@ impl Default for SandboxCapacity {
 pub struct SandboxSpec {
     pub sandbox_id: String,
     pub capacity: SandboxCapacity,
+    /// An optional immutable image selected by Image Manager for this
+    /// Sandbox.  `None` means the deployment-owned system default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_image: Option<String>,
     #[serde(default)]
     pub environment: BTreeMap<String, String>,
     #[serde(default)]
@@ -93,6 +97,7 @@ impl Default for SandboxSpec {
         Self {
             sandbox_id: String::new(),
             capacity: SandboxCapacity::default(),
+            runtime_image: None,
             environment: BTreeMap::new(),
             reaches: Vec::new(),
             own_credential: false,

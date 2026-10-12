@@ -303,6 +303,7 @@ fn sandbox() -> layer2_core::sandbox::Sandbox {
             revision: 1,
             digest: "a".repeat(64),
             content: SandboxProfileContent {
+                runtime_image: None,
                 cpu_millis: 1_000,
                 memory_mib: 1_024,
                 nyxid_services: vec![ServiceId::new("service-a")],
