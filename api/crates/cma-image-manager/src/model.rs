@@ -107,6 +107,11 @@ pub struct BuildInput {
     pub dockerfile: String,
     #[serde(default = "default_context")]
     pub context: String,
+    /// Optional Dockerfile imported from the user's local file picker. The
+    /// repository remains the build context; Cloud Build writes this content
+    /// to a fixed workspace path before invoking Docker.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dockerfile_content: Option<String>,
 }
 fn default_dockerfile() -> String {
     "Dockerfile".into()
@@ -150,6 +155,13 @@ impl BuildInput {
         if !relative_path(&self.dockerfile, false) || !relative_path(&self.context, true) {
             return Err(Error::Invalid(
                 "build paths must stay within the repository",
+            ));
+        }
+        if self.dockerfile_content.as_deref().is_some_and(|content| {
+            content.is_empty() || content.len() > 16 * 1024 || content.contains('\0')
+        }) {
+            return Err(Error::Invalid(
+                "imported Dockerfile must be non-empty and at most 16 KiB",
             ));
         }
         Ok(())

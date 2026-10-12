@@ -158,7 +158,8 @@ pub fn validator(build: bool) -> Document {
             "image_id":{"bsonType":"string","pattern":"^img_[0-9a-f]{32}$"},
             "source":{"bsonType":"object","additionalProperties":false,"required":["repository","commit","dockerfile","context"],"properties":{
                 "repository":{"bsonType":"string","maxLength":1024},"commit":{"bsonType":"string","pattern":"^[0-9a-f]{40}$"},
-                "dockerfile":{"bsonType":"string","maxLength":512},"context":{"bsonType":"string","maxLength":512}}},
+                "dockerfile":{"bsonType":"string","maxLength":512},"context":{"bsonType":"string","maxLength":512},
+                "dockerfile_content":{"bsonType":"string","maxLength":16384}}},
             "phase":{"enum":["queued","dispatching","running","succeeded","failed","cancelled"]},
             "cloud_id":{"bsonType":["string","null"]},"digest":{"bsonType":["string","null"],"pattern":"^sha256:[0-9a-f]{64}$"},
             "error":{"bsonType":["string","null"],"maxLength":2048},"updated_at_ms":{"bsonType":"long"}

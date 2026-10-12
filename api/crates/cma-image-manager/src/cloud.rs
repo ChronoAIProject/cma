@@ -1,5 +1,6 @@
 //! Cloud Build submits immutable sources and publishes to the configured CMA repository.
 use crate::model::*;
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde_json::{json, Value};
 use std::{sync::Arc, time::Duration};
 
@@ -90,9 +91,24 @@ impl CloudBuild {
         if !valid_id(&build.id, "bld") || !valid_id(&build.image_id, "img") {
             return Err(Error::Invalid("invalid build identity"));
         }
+        let (dockerfile, mut steps) = (build.source.dockerfile.clone(), Vec::new());
+        if let Some(content) = &build.source.dockerfile_content {
+            let encoded = STANDARD.encode(content.as_bytes());
+            steps.push(json!({
+                "name": self.builder_image,
+                "entrypoint": "sh",
+                "args": ["-ceu", format!(
+                    "printf '%s' '{}' | base64 -d > /workspace/CMA.Dockerfile",
+                    encoded
+                )]
+            }));
+            steps.push(json!({"name":self.builder_image,"args":["build","--file","/workspace/CMA.Dockerfile","--tag",build.destination(),build.source.context]}));
+        } else {
+            steps.push(json!({"name":self.builder_image,"args":["build","--file",dockerfile,"--tag",build.destination(),build.source.context]}));
+        }
         Ok(json!({
             "source":{"gitSource":{"url":build.source.repository,"revision":build.source.commit}},
-            "steps":[{"name":self.builder_image,"args":["build","--file",build.source.dockerfile,"--tag",build.destination(),build.source.context]}],
+            "steps":steps,
             "images":[build.destination()],"tags":[format!("cma-im-{}",build.id)],
             "serviceAccount":self.service_account,"timeout":"1800s",
             "options":{"logging":"CLOUD_LOGGING_ONLY"}
@@ -277,6 +293,7 @@ mod tests {
                 commit: "a".repeat(40),
                 dockerfile: "infra/Dockerfile".into(),
                 context: ".".into(),
+                dockerfile_content: None,
             },
             phase: BuildPhase::Dispatching,
             revision: 2,
@@ -327,5 +344,20 @@ mod tests {
             build.source.dockerfile = path.into();
             assert!(executor.request(&build).is_err());
         }
+    }
+
+    #[test]
+    fn imported_dockerfile_is_written_by_a_bounded_base64_step() {
+        let (executor, mut build) = fixture();
+        build.source.dockerfile_content = Some("FROM alpine:3.20\nRUN echo safe\n".into());
+        let request = executor.request(&build).unwrap();
+        let steps = request["steps"].as_array().unwrap();
+        assert_eq!(steps.len(), 2);
+        assert_eq!(steps[0]["entrypoint"], "sh");
+        assert_eq!(steps[1]["args"][1], "--file");
+        assert_eq!(steps[1]["args"][2], "/workspace/CMA.Dockerfile");
+        let script = steps[0]["args"][1].as_str().unwrap();
+        assert!(!script.contains("FROM alpine"));
+        assert!(script.contains("base64 -d > /workspace/CMA.Dockerfile"));
     }
 }

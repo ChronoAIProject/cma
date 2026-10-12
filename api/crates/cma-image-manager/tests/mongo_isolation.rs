@@ -120,6 +120,7 @@ async fn exercise(uri: &str, admin: &Client, name: &str) -> Result<(), Box<dyn s
         commit: "a".repeat(40),
         dockerfile: "Dockerfile".into(),
         context: ".".into(),
+        dockerfile_content: None,
     };
     assert!(store
         .create_build("bob", &image.id, "build", source.clone())
