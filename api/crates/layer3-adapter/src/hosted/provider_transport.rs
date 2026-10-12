@@ -23,11 +23,17 @@ const CONTROL_DEADLINE: Duration = Duration::from_secs(60 * 60);
 
 /// Concrete authenticated control and ACP transport for provider-hosted runtimes.
 pub struct ProviderHostedControlTransport {
-    client: SandboxClient,
+    client: RuntimeDiscovery,
     http: reqwest::Client,
     archive_factory: Arc<dyn CheckpointArchiveStoreFactory>,
     state: Arc<Mutex<TransportState>>,
     subscriptions: Option<Arc<dyn super::HostedSubscriptionSource>>,
+}
+
+#[derive(Clone)]
+enum RuntimeDiscovery {
+    Provider(SandboxClient),
+    AgentSandbox(crate::agent_sandbox::AgentSandboxClient),
 }
 
 #[derive(Default)]
@@ -62,40 +68,9 @@ impl ActiveLink {
 }
 
 impl ProviderHostedControlTransport {
-    pub fn new(
-        client: SandboxClient,
-        archive_factory: Arc<dyn CheckpointArchiveStoreFactory>,
-    ) -> crate::Result<Self> {
-        RuntimeEndpoint::parse(client.base_url(), "runtime.invalid")?;
-        let http = reqwest::Client::builder()
-            .connect_timeout(CONNECT_DEADLINE)
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .map_err(|error| {
-                AdapterError::Unavailable(format!(
-                    "runtime HTTP client could not be built: {error}"
-                ))
-            })?;
-        Ok(Self {
-            client,
-            http,
-            archive_factory,
-            state: Arc::new(Mutex::new(TransportState::default())),
-            subscriptions: None,
-        })
-    }
-
     pub fn with_subscriptions(mut self, source: Arc<dyn super::HostedSubscriptionSource>) -> Self {
         self.subscriptions = Some(source);
         self
-    }
-
-    async fn endpoint(&self, handle: &RuntimeHandle) -> crate::Result<RuntimeEndpoint> {
-        let advertised = self
-            .client
-            .endpoint(handle.as_str(), SUPERVISOR_PORT)
-            .await?;
-        RuntimeEndpoint::parse(self.client.base_url(), &advertised.endpoint)
     }
 
     async fn archive(&self, handle: &RuntimeHandle) -> crate::Result<BoundArchive> {
@@ -119,7 +94,7 @@ impl ProviderHostedControlTransport {
         request: &RequestFrame,
     ) -> crate::Result<ResponseFrame> {
         let url = endpoint.control()?;
-        let auth = self.client.auth_header();
+        let auth = self.auth_header(endpoint);
         let exchange = async {
             let response = self
                 .http
@@ -151,7 +126,7 @@ impl ProviderHostedControlTransport {
             checkpoint_transport::import(
                 &self.http,
                 endpoint.checkpoint(&restore.object_reference)?,
-                self.client.auth_header(),
+                self.auth_header(endpoint),
                 restore,
                 &archive.store,
             )
@@ -165,7 +140,7 @@ impl ProviderHostedControlTransport {
             let exported = checkpoint_transport::export(
                 &self.http,
                 endpoint.checkpoint(&checkpoint.object_reference)?,
-                self.client.auth_header(),
+                self.auth_header(endpoint),
                 checkpoint,
                 &archive.store,
             )
@@ -328,7 +303,7 @@ impl ProviderHostedControlTransport {
             .as_str()
             .into_client_request()
             .map_err(|_| AdapterError::Rejected("runtime WebSocket URL is invalid".into()))?;
-        let (name, value) = self.client.auth_header();
+        let (name, value) = self.auth_header(endpoint);
         let value = value
             .parse()
             .map_err(|_| AdapterError::Rejected("provider API key is not a valid header".into()))?;
@@ -488,3 +463,6 @@ impl super::HostedControlTransport for ProviderHostedControlTransport {
 #[cfg(test)]
 #[path = "provider_transport_tests.rs"]
 mod tests;
+
+#[path = "provider_discovery.rs"]
+mod discovery;

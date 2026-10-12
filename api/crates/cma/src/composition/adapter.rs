@@ -14,26 +14,63 @@ pub(super) async fn production_adapter(
     };
     use layer3_adapter::provider::{BatchSandboxReclaimer, SandboxClient};
 
-    let reclaimer =
-        BatchSandboxReclaimer::infer_namespaced(config.runtime.sandbox_namespace.clone())
-            .await
-            .map_err(|error| format!("sandbox cleanup authority is not usable: {error}"))?
-            .for_creator(config.deployment_id.clone());
-    reclaimer
-        .preflight_cleanup_authority()
-        .await
-        .map_err(|error| format!("sandbox cleanup authority is not readable: {error}"))?;
-    let client = SandboxClient::new(
-        config.runtime.sandbox_base_url.clone(),
-        config.runtime.sandbox_api_key.clone(),
-    )
-    .with_reclaimer(reclaimer);
     let archive_factory: Arc<dyn CheckpointArchiveStoreFactory> = checkpoint_objects;
-    let transport = ProviderHostedControlTransport::new(client.clone(), archive_factory)
-        .map_err(|error| format!("hosted runtime transport is not usable: {error}"))?
-        .with_subscriptions(subscriptions);
-    let backend = ProviderHostedBackend::new(client, Arc::new(transport), &config.deployment_id)
-        .map_err(|error| format!("sandbox provider scope is not usable: {error}"))?;
+    let routing_client = mongodb::Client::with_uri_str(&config.mongodb_uri)
+        .await
+        .map_err(|_| "runtime routing database unavailable")?;
+    let routing = crate::store::runtime_routing::MongoRuntimeRouting::open(
+        &routing_client.database(&config.mongodb_database),
+        &config.deployment_id,
+        config.runtime.allocate_agent_sandbox,
+    )
+    .await?;
+    let mut backends = layer3_adapter::hosted::RuntimeBackends {
+        routing,
+        agent_sandbox: None,
+        opensandbox: None,
+        allocate_agent_sandbox: config.runtime.allocate_agent_sandbox,
+    };
+    if !config.runtime.allocate_agent_sandbox || config.runtime.retain_opensandbox {
+        let reclaimer =
+            BatchSandboxReclaimer::infer_namespaced(config.runtime.sandbox_namespace.clone())
+                .await
+                .map_err(|e| format!("legacy runtime cleanup authority is unavailable: {e}"))?
+                .for_creator(config.deployment_id.clone());
+        reclaimer
+            .preflight_cleanup_authority()
+            .await
+            .map_err(|e| format!("legacy runtime cleanup authority is unreadable: {e}"))?;
+        let client = SandboxClient::new(
+            config.runtime.sandbox_base_url.clone(),
+            config.runtime.sandbox_api_key.clone(),
+        )
+        .with_reclaimer(reclaimer);
+        let transport =
+            ProviderHostedControlTransport::new(client.clone(), archive_factory.clone())
+                .map_err(|e| e.to_string())?
+                .with_subscriptions(subscriptions.clone());
+        backends.opensandbox = Some(Arc::new(
+            ProviderHostedBackend::new(client, Arc::new(transport), &config.deployment_id)
+                .map_err(|e| e.to_string())?,
+        ));
+    }
+    if let Some(settings) = &config.runtime.agent_sandbox {
+        let client = layer3_adapter::agent_sandbox::AgentSandboxClient::infer(settings.clone())
+            .await
+            .map_err(|e| e.to_string())?;
+        client
+            .inventory()
+            .await
+            .map_err(|e| format!("agent-sandbox API unavailable: {e}"))?;
+        let transport =
+            ProviderHostedControlTransport::for_agent_sandbox(client.clone(), archive_factory)
+                .map_err(|e| e.to_string())?
+                .with_subscriptions(subscriptions);
+        backends.agent_sandbox = Some(Arc::new(layer3_adapter::hosted::AgentSandboxBackend::new(
+            client,
+            Arc::new(transport),
+        )));
+    }
     let mut deployment = HostedDeployment::default();
     deployment.image.uri = config.runtime.sandbox_image.clone();
     deployment.upstream_base_url = config.runtime.upstream_base_url.clone();
@@ -43,7 +80,7 @@ pub(super) async fn production_adapter(
         .contract()
         .map_err(|error| format!("hosted runtime image is not usable: {error}"))?;
     let mut adapter = CodexAdapter::with_backend(
-        backend,
+        backends,
         CodexSandboxSpec {
             deployment,
             ..CodexSandboxSpec::default()

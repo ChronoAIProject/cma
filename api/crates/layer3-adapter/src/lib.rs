@@ -26,6 +26,7 @@ mod runtime_status;
 mod workspace;
 mod workspace_removal;
 
+pub mod agent_sandbox;
 pub mod codex;
 pub mod hosted;
 pub mod provider;

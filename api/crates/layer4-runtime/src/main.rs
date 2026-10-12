@@ -8,6 +8,7 @@ mod checkpoint_copy;
 mod checkpoint_manifest;
 mod command;
 mod config;
+mod control_auth;
 mod conversation;
 mod failure;
 mod fs_durability;
@@ -68,6 +69,7 @@ async fn run() -> Result<(), String> {
         }
         return Err("unknown runtime command".into());
     }
+    let control_auth = control_auth::ControlAuth::from_environment()?;
     let config = config::RuntimeConfig::from_environment()?;
     let bind = config.bind;
     let writer_boundary = writer_fence::SupervisorBoundary::install()?;
@@ -78,7 +80,14 @@ async fn run() -> Result<(), String> {
         .await
         .map_err(|error| format!("bind runtime supervisor at {bind}: {error}"))?;
     tracing::info!(%bind, "runtime supervisor listening");
-    axum::serve(listener, link::router(supervisor))
+    let mut router = link::router(supervisor);
+    if let Some(auth) = control_auth {
+        router = router.layer(axum::middleware::from_fn_with_state(
+            auth,
+            control_auth::authenticate,
+        ));
+    }
+    axum::serve(listener, router)
         .with_graceful_shutdown(shutdown_signal())
         .await
         .map_err(|error| format!("serve runtime supervisor: {error}"))

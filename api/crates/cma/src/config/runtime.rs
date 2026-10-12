@@ -11,6 +11,9 @@ const SHA256_SEPARATOR: &str = "@sha256:";
 /// Deployment-owned endpoints and runtime identity validated at startup.
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) struct RuntimeConfig {
+    pub agent_sandbox: Option<layer3_adapter::agent_sandbox::AgentSandboxConfig>,
+    pub allocate_agent_sandbox: bool,
+    pub retain_opensandbox: bool,
     pub sandbox_base_url: String,
     pub sandbox_api_key: String,
     pub sandbox_image: String,
@@ -41,11 +44,32 @@ impl RuntimeConfig {
     pub(super) fn from_lookup(
         lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
     ) -> Result<Self, String> {
-        let sandbox_base_url = parse_canonical_http_origin(
-            "CHRONO_SANDBOX_BASE_URL",
-            &required(lookup, "CHRONO_SANDBOX_BASE_URL")?,
-        )?;
-        let sandbox_api_key_file = required(lookup, "CHRONO_SANDBOX_API_KEY_FILE")?;
+        let allocate_agent_sandbox = match lookup("CHRONO_SANDBOX_PROVIDER")?
+            .as_deref()
+            .unwrap_or("opensandbox")
+        {
+            "opensandbox" => false,
+            "agent-sandbox" => true,
+            _ => return Err("CHRONO_SANDBOX_PROVIDER must be opensandbox or agent-sandbox".into()),
+        };
+        let retain_opensandbox = match lookup("CHRONO_RETAIN_OPENSANDBOX")?
+            .as_deref()
+            .unwrap_or("true")
+        {
+            "true" => true,
+            "false" => false,
+            _ => return Err("CHRONO_RETAIN_OPENSANDBOX must be true or false".into()),
+        };
+        let (sandbox_base_url, sandbox_api_key) = if retain_opensandbox || !allocate_agent_sandbox {
+            let base = parse_canonical_http_origin(
+                "CHRONO_SANDBOX_BASE_URL",
+                &required(lookup, "CHRONO_SANDBOX_BASE_URL")?,
+            )?;
+            let key = read_api_key(&required(lookup, "CHRONO_SANDBOX_API_KEY_FILE")?)?;
+            (base, key)
+        } else {
+            (String::new(), String::new())
+        };
         let sandbox_image = parse_pinned_image(
             "CHRONO_SANDBOX_IMAGE",
             &required(lookup, "CHRONO_SANDBOX_IMAGE")?,
@@ -66,9 +90,13 @@ impl RuntimeConfig {
             "CHRONO_PLATFORM_BASE_URL",
             &required(lookup, "CHRONO_PLATFORM_BASE_URL")?,
         )?;
-        let sandbox_api_key = read_api_key(&sandbox_api_key_file)?;
+        let agent_sandbox =
+            super::agent_sandbox::from_lookup(lookup, &sandbox_namespace, allocate_agent_sandbox)?;
 
         Ok(Self {
+            agent_sandbox,
+            allocate_agent_sandbox,
+            retain_opensandbox,
             sandbox_base_url,
             sandbox_api_key,
             sandbox_image,

@@ -35,7 +35,10 @@ async fn published_hold_verification_uses_authenticated_control_without_archive_
     let handle = RuntimeHandle::new("runtime-1");
     transport.bind_runtime(&handle, "sandbox-a").await.unwrap();
     let backend = ProviderHostedBackend::new(
-        transport.client.clone(),
+        match &transport.client {
+            RuntimeDiscovery::Provider(client) => client.clone(),
+            _ => unreachable!(),
+        },
         Arc::new(transport),
         "checkpoint-test",
     )
