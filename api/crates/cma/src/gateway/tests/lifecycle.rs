@@ -71,6 +71,7 @@ pub(super) async fn setup(
     (service, store, worker, bot)
 }
 #[tokio::test]
+#[ignore = "requires authenticated disposable service Mongo fixture"]
 async fn production_effects_create_disable_rotate_and_delete_through_compiled_gateway() {
     let server = Server::start().await;
     let mut gateway = Gateway::start(&server).await;
@@ -125,6 +126,7 @@ async fn production_effects_create_disable_rotate_and_delete_through_compiled_ga
     assert!(server.remote.provider_keys.lock().unwrap().is_empty());
 }
 #[tokio::test]
+#[ignore = "requires authenticated disposable service Mongo fixture"]
 async fn unknown_nyxid_creation_outcomes_clean_up_owned_effects_after_gateway_restart() {
     for failed_step in ["mint_agent", "mint_route", "callback", "create_route"] {
         let server = Server::start().await;
@@ -164,6 +166,7 @@ async fn unknown_nyxid_creation_outcomes_clean_up_owned_effects_after_gateway_re
 }
 
 #[tokio::test]
+#[ignore = "requires authenticated disposable service Mongo fixture"]
 async fn required_profile_refusal_cleans_up_instead_of_activating_a_partial_bot() {
     let server = Server::start().await;
     let gateway = Gateway::start(&server).await;

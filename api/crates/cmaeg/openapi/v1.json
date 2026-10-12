@@ -851,6 +851,26 @@
         "description": "An encrypted pointer to a CMA channel record.",
         "type": "string"
       },
+      "ChannelPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ChannelResponse"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
       "ChannelResponse": {
         "properties": {
           "channel_id": {
@@ -2770,6 +2790,49 @@
       }
     },
     "/channels": {
+      "get": {
+        "operationId": "listChannels",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelPage"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "channels"
+        ]
+      },
       "post": {
         "operationId": "createChannel",
         "parameters": [
@@ -3468,6 +3531,39 @@
         ],
         "tags": [
           "tools"
+        ]
+      }
+    },
+    "/permissions": {
+      "get": {
+        "operationId": "getPermissions",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "identity"
         ]
       }
     }

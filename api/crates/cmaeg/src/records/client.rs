@@ -58,6 +58,7 @@ impl std::error::Error for RecordError {}
 
 #[derive(Debug, Clone)]
 pub struct RecordClient {
+    database: Option<super::mongo::MongoRecords>,
     client: Client,
     base_url: Url,
     service_token: crate::service_auth::ServiceAuth,
@@ -92,19 +93,22 @@ impl RecordClient {
             .build()
             .map_err(|error| RecordError::Unavailable(error.to_string()))?;
         Ok(Self {
+            database: None,
             client,
             base_url,
             service_token: crate::service_auth::ServiceAuth::Static(Secret::new(service_token)),
         })
     }
 
-    pub(crate) fn with_service_auth(mut self, auth: crate::service_auth::ServiceAuth) -> Self {
-        self.service_token = auth;
+    pub fn with_database(mut self, database: super::mongo::MongoRecords) -> Self {
+        self.database = Some(database);
         self
     }
 
-    /// Probe CMA's readiness endpoint without inspecting or mutating channel records.
     pub async fn reachable(&self) -> bool {
+        if let Some(db) = &self.database {
+            return db.reachable().await;
+        }
         let Ok(url) = self.base_url.join("/ready") else {
             return false;
         };
@@ -142,6 +146,11 @@ impl RecordClient {
             ));
         }
         let url = self.record_url(record_id.as_str())?;
+        if let Some(db) = &self.database {
+            return db
+                .put(record_id.as_str(), owner, blob, expected_version)
+                .await;
+        }
         let response = self
             .client
             .put(url)
@@ -185,6 +194,9 @@ impl RecordClient {
                 "record URL is outside the configured CMA origin".into(),
             ));
         }
+        if let Some(db) = &self.database {
+            return db.get(id).await;
+        }
         let response = self
             .client
             .get(url)
@@ -222,6 +234,9 @@ impl RecordClient {
         expected_version: u64,
     ) -> Result<bool, RecordError> {
         let url = self.record_url(record_id.as_str())?;
+        if let Some(db) = &self.database {
+            return db.delete(record_id.as_str(), expected_version).await;
+        }
         let response = self
             .client
             .delete(url)
@@ -252,6 +267,9 @@ impl RecordClient {
         after: Option<&str>,
         limit: usize,
     ) -> Result<Vec<RecordHead>, RecordError> {
+        if let Some(db) = &self.database {
+            return db.list(owner, after, limit).await;
+        }
         let url = self
             .base_url
             .join(RECORD_PATH)
