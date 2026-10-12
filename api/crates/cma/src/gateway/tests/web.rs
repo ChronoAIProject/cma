@@ -1,5 +1,5 @@
-//! Opt-in browser interoperability: real CMA Bot routes/worker and compiled CMAEG.
-//! Identity, profile catalogue and provider execution are disposable local fakes.
+//! Browser interoperability over real consumer routes, workers, Gateway and Mongo.
+//! Identity, profile catalogue, provider execution and platform APIs are local fakes.
 use super::*;
 use axum::{body::Body, http::Request, middleware::Next};
 use std::path::Path;
@@ -16,10 +16,10 @@ impl BotProfileResolver for Profiles {
 }
 
 #[tokio::test]
-#[ignore = "requires authenticated service Mongo, built web/, Playwright and compiled CMAEG"]
-async fn dashboard_creates_tests_and_deletes_through_real_cma_and_compiled_gateway() {
+#[ignore = "requires authenticated service Mongo, built web/, Playwright and CMAEG migrations"]
+async fn dashboard_creates_tests_and_deletes_a_gateway_connection_consumer() {
     let remote = Server::start().await;
-    let gateway = Gateway::start(&remote).await;
+    let gateway = consumer_fixture::ConsumerGateway::start(&remote).await;
     let template = bot().await;
     let store = Arc::new(InMemoryBotStore::default());
     let service = BotService::new(
@@ -27,7 +27,7 @@ async fn dashboard_creates_tests_and_deletes_through_real_cma_and_compiled_gatew
         Arc::new(Profiles(template.profiles)),
         "cma_codex".into(),
     );
-    let external = lifecycle::external(&remote, &gateway);
+    let external = lifecycle::external_at(&remote, &gateway.base, consumer_fixture::PUBLIC);
     let worker = BotWorker::new(service.clone(), external.clone(), "web-fixture".into());
     let router = layer1_public::rest::bot_router(BotControl::new(service, external)).layer(
         axum::middleware::from_fn(|mut request: Request<Body>, next: Next| async move {
@@ -89,4 +89,12 @@ async fn dashboard_creates_tests_and_deletes_through_real_cma_and_compiled_gatew
     assert!(remote.identity.lock().unwrap().routes.is_empty());
     assert!(remote.remote.records.lock().unwrap().is_empty());
     assert!(remote.remote.provider_keys.lock().unwrap().is_empty());
+    {
+        let platform = gateway.platform.lock().unwrap();
+        assert!(platform.webhook.is_empty());
+        assert!(platform.calls.iter().any(|call| call == "setWebhook"));
+        assert!(platform.calls.iter().any(|call| call == "deleteWebhook"));
+    }
+    let (connection, _) = gateway.store.connection(&gateway.connection).await.unwrap();
+    assert!(connection.channel_record.is_none());
 }

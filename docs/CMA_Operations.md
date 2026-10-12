@@ -433,14 +433,14 @@ owner's current authority. Expired or revoked authority keeps work pending and
 requires the owner to reconnect; it does not cause a fallback to the gateway
 service identity.
 
-The owner first registers a personal Telegram bot with NyxID and connects the
-profile's explicit services and the managed model service. CMA attaches CMAEG
-tools through the binding's native endpoint using that Bot's own agent key.
-CMA will refuse a bot that already has an active NyxID route, preserving existing
-bridge routing. No separate `cmaeg` catalogue service or shared tool credential is
-required.
+The owner completes a channel connection in Event Gateway, then selects its
+opaque `connection_ref` from `GET /api/v1/bots/connections`. The Gateway owns
+platform credentials and webhook activation; CMA owns the consumer's Agent
+configuration and scoped Agent key. Connect the configuration's explicit services
+and managed model service before creating the consumer. CMA attaches CMAEG tools
+through the binding's native endpoint using that consumer's own Agent key.
 
-`POST /api/v1/bots` accepts `{name,nyxid_bot_id,profile:{id,revision},admission,reply}`
+`POST /api/v1/bots` accepts `{name,connection_ref,profile:{id,revision},admission,reply}`
 and an `Idempotency-Key`. It returns 201 with a durable `creating` resource;
 poll its GET route until `active` or `failed`. HTTP disconnects do not cancel
 admitted work. Optional `sandbox_profile:{id,revision}` and
@@ -454,7 +454,9 @@ required. Environment resources, workspace location, setup commands, service
 scope, skills, prompt, permissions and thinking effort follow the CMAEG profile
 schema; unsupported access is explicitly refused.
 
-Creation mints separate 30-day agent and route keys in the exact
+Connection consumers mint only their scoped Agent key. Legacy requests may
+still supply `nyxid_bot_id` instead of `connection_ref`; those integrations mint
+separate 30-day agent and route keys in the exact
 `cma:bot:<bot_id>:<agent|route>:<generation>` namespace. The agent key has only the
 resolved profile and model service grants. The route key has no service or node
 grants. Plaintext exists only during bounded requests; Bot records retain IDs,
@@ -480,12 +482,16 @@ channel delivery, ingress latency or restart continuity for a real conversation.
 Local interoperability tests under `cma::gateway::tests` execute the compiled
 gateway binary with HTTP fixtures and CMA's actual profile mapper. Build `cmaeg`
 before running these tests in isolation; full CI builds the workspace first.
+The consumer browser journey exercises real Gateway routes and restricted Mongo
+credentials in process, with local identity, provider and platform HTTP fixtures.
 
-The dashboard's personal **Bots** entry requires the `manage_own_bots` browser
-capability. `/bots/new` selects an available Telegram bot, an exact published
+The dashboard’s **Event Gateway consumers** account-menu entry requires the
+`manage_own_bots` browser capability. `/bots/new` selects a ready Gateway
+connection, an exact published
 Agent Profile revision, optional personally owned Sandbox and Workspace revisions,
 explicit message admission and reply settings, then reviews the request. Detail pages show durable setup checkpoints, provider level,
-callback URL, access expiry and the last synthetic test. They expose explicit
+access expiry and the last synthetic test. Connection consumers link to Event
+Gateway; legacy integrations also show their callback URL. They expose explicit
 enable/disable, key rotation and confirmed deletion. Credential values are never
 returned to the dashboard. Deletion is complete only after the accepted operation
 finishes and the public resource disappears; existing conversations are retained.

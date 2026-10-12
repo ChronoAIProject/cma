@@ -477,16 +477,19 @@ CloudEvents extension attributes are retained.
 
 ## Owner Bots
 
-`client.bots` exposes `create`, `list`, `get`, `available`, `test`, `disable`,
+`client.bots` exposes `create`, `list`, `get`, `connections`, `available`, `test`, `disable`,
 `enable`, `rotateKeys` and `delete`. Use the current renewable CMA sign-in with
 `cma:bot:manage`; independent agent keys cannot borrow the owner's stored login.
-The owner must already have registered a personal Telegram bot in NyxID and
-connected the profile's explicit services and managed model service. CMA attaches
+Use `connections()` to list ready Event Gateway connections as
+`{connection_ref,label}`. Complete channel setup in Event Gateway and connect
+the selected Agent configuration’s services and managed model service. CMA attaches
 CMAEG tools natively with the Bot's own agent key; no separate tools catalogue
 connection is required.
 
-Creation takes a name, `nyxid_bot_id`, a published Agent profile reference, an
-admission policy and a reply policy. Optional `sandbox_profile` and
+Creation takes a name, `connection_ref`, a published Agent profile reference, an
+admission policy and a reply policy. The legacy `nyxid_bot_id` remains accepted
+for existing integrations; provide exactly one connection identifier. A Gateway
+connection keeps platform credentials and webhook management within the Gateway. Optional `sandbox_profile` and
 `workspace_profile` references select personally owned published environments;
 each omitted reference pins its platform default. Bot responses include the
 pinned environment references (older servers may omit them). Custom profiles
@@ -496,7 +499,7 @@ uncertain outcomes. HTTP 201 returns the durable Bot in `creating`; poll `get`
 for `active` or `failed` and inspect `operation.step` for cleanup progress.
 Other mutations return 202 with progress. A deleted Bot becomes 404 only after
 its provider binding, channel, routes and owned credentials have been removed.
-The `test` method runs a synthetic provider turn and sends no Telegram message.
+The `test` method runs a synthetic provider turn and sends no external message.
 
 Bot responses contain no credential bytes. Preserve channel IDs and callback
 URLs exactly; never decode, reconstruct or log opaque gateway references.

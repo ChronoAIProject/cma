@@ -24,26 +24,26 @@ export function BotsList({
   return (
     <section aria-labelledby="bots-title">
       <header className="bots__header">
-        <h1 id="bots-title">Bots</h1>
-        <p>Connect your Telegram bot to an Agent in CMA.</p>
+        <h1 id="bots-title">Event Gateway consumers</h1>
+        <p>Choose an Event Gateway connection and configure the Agent that handles its messages.</p>
         <div className="bots__actions">
-          <Button onClick={current.reload}>Refresh Bots</Button>
+          <Button onClick={current.reload}>Refresh consumers</Button>
           <Button variant="primary" onClick={() => onNavigate({ kind: 'bot_new' })}>
-            New Bot
+            New consumer
           </Button>
         </div>
       </header>
       <div className="bots__body">
         {current.error === undefined ? null : <p role="alert">{current.error}</p>}
         {page === undefined && current.error === undefined ? (
-          <p role="status">Loading Bots</p>
+          <p role="status">Loading consumers</p>
         ) : null}
         {page === undefined ? null : (
           <>
             {page.items.length === 0 ? (
-              <p>No Bots on this page.</p>
+              <p>No consumers on this page.</p>
             ) : (
-              <ul className="bots__rows" aria-label="Your Bots">
+              <ul className="bots__rows" aria-label="Your consumers">
                 {page.items.map((bot) => (
                   <li key={bot.bot_id}>
                     <ResourceLink
@@ -63,7 +63,7 @@ export function BotsList({
                 ))}
               </ul>
             )}
-            <nav className="bots__actions" aria-label="Bot pages">
+            <nav className="bots__actions" aria-label="Consumer pages">
               <Button
                 disabled={cursors.length === 1}
                 onClick={() => setCursors((values) => values.slice(0, -1))}

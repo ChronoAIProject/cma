@@ -47,6 +47,7 @@ use super::trigger_openapi_shapes::*;
         super::bots::list,
         super::bots::read,
         super::bots::available,
+        super::bots::connections,
         super::bots::test,
         super::bots::disable,
         super::bots::enable,

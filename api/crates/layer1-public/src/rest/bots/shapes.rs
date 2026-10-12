@@ -156,6 +156,11 @@ pub struct ExternalBotView {
     pub name: String,
     pub platform: String,
 }
+#[derive(Serialize, ToSchema)]
+pub struct BotConnectionView {
+    pub connection_ref: String,
+    pub label: String,
+}
 impl From<BotTestResult> for TestView {
     fn from(r: BotTestResult) -> Self {
         Self {

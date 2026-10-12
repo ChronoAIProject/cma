@@ -56,9 +56,12 @@ export function BotCreate({
   const [failure, setFailure] = useState<string>();
   const active = useRef<AbortController | undefined>(undefined);
   const heading = useRef<HTMLHeadingElement>(null);
-  const read = useMemo(() => (signal: AbortSignal) => client.bots.available({ signal }), [client]);
+  const read = useMemo(
+    () => (signal: AbortSignal) => client.bots.connections({ signal }),
+    [client],
+  );
   const choices = useBotRead(read);
-  const selected = choices.value?.find((bot) => bot.id === botId && bot.platform === 'telegram');
+  const selected = choices.value?.find((connection) => connection.connection_ref === botId);
   const admission = admissionFor(policy.admission, policy.senders);
   const ack = Math.round(Number(policy.ackSeconds) * 1000);
   const validName =
@@ -92,7 +95,7 @@ export function BotCreate({
             key: crypto.randomUUID(),
             profileName:
               profileMode === 'worker' ? (worker?.source.name ?? '') : (profile?.name ?? ''),
-            botName: selected.name,
+            botName: selected.label,
             ...(profileMode === 'profiles' && environment.mode === 'custom'
               ? {
                   sandboxProfileName: environment.sandbox?.name,
@@ -101,7 +104,7 @@ export function BotCreate({
               : {}),
             body: {
               name,
-              nyxid_bot_id: selected.id,
+              connection_ref: selected.connection_ref,
               profile:
                 profileMode === 'worker' && worker
                   ? worker.source.agent_profile
@@ -158,7 +161,7 @@ export function BotCreate({
     }
   };
   const labels = [
-    'Choose a Telegram bot',
+    'Choose an Event Gateway connection',
     'Choose the worker configuration',
     'Choose message rules',
     'Review and create',
@@ -166,12 +169,12 @@ export function BotCreate({
   return (
     <section aria-labelledby="bot-create-title">
       <header className="bots__header">
-        <h1 id="bot-create-title">New Bot</h1>
-        <Button onClick={() => onNavigate({ kind: 'bots' })}>All Bots</Button>
+        <h1 id="bot-create-title">New consumer</h1>
+        <Button onClick={() => onNavigate({ kind: 'bots' })}>All consumers</Button>
       </header>
       <div className="bots__body">
         <div className="bots__form">
-          <ol className="bots__steps" aria-label="Bot creation steps">
+          <ol className="bots__steps" aria-label="Consumer creation steps">
             {labels.map((label, index) => (
               <li key={label} aria-current={step === index ? 'step' : undefined}>
                 {label}
@@ -184,7 +187,7 @@ export function BotCreate({
           {step !== 0 ? null : (
             <>
               <label className="bots__field">
-                Bot name
+                Consumer name
                 <Input
                   value={name}
                   onChange={(event) => setName(event.target.value)}
@@ -193,42 +196,37 @@ export function BotCreate({
               </label>
               <p id="bot-name-help">Use a short name on one line.</p>
               <div className="bots__field">
-                <span>Telegram bot</span>
+                <span>Event Gateway connection</span>
                 <Picker
-                  label="Telegram bot"
+                  label="Event Gateway connection"
                   value={botId}
                   options={[
                     {
                       value: '',
                       label:
                         choices.value === undefined
-                          ? 'Loading Telegram bots'
-                          : 'Choose a Telegram bot',
+                          ? 'Loading Event Gateway connections'
+                          : 'Choose an Event Gateway connection',
                     },
-                    ...(choices.value ?? [])
-                      .filter((bot) => bot.platform === 'telegram')
-                      .map((bot) => ({ value: bot.id, label: bot.name })),
+                    ...(choices.value ?? []).map((connection) => ({
+                      value: connection.connection_ref,
+                      label: connection.label,
+                    })),
                   ]}
                   onChange={setBotId}
                   disabled={!choices.fresh}
                 />
               </div>
               <p>
-                <a
-                  href="https://nyx.chrono-ai.fun/channel-bots"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  Register a Telegram bot in NyxID
-                </a>
-                , then refresh this list.
+                <Button onClick={() => onNavigate({ kind: 'event_gateway' })}>
+                  Open Event Gateway
+                </Button>
+                Complete a channel connection there, then refresh this list.
               </p>
-              <Button onClick={choices.reload}>Refresh Telegram bots</Button>
+              <Button onClick={choices.reload}>Refresh Event Gateway connections</Button>
               {choices.error === undefined ? null : <p role="alert">{choices.error}</p>}
               {choices.value?.length === 0 ? (
-                <p>
-                  No available Telegram bots. A bot with an existing route cannot be connected here.
-                </p>
+                <p>No ready connections. Complete channel setup in Event Gateway first.</p>
               ) : null}
             </>
           )}
@@ -271,8 +269,8 @@ export function BotCreate({
               <dl className="bots__facts">
                 <dt>Name</dt>
                 <dd>{intent?.body.name ?? name}</dd>
-                <dt>Telegram bot</dt>
-                <dd>{intent?.botName ?? selected?.name ?? 'Unavailable'}</dd>
+                <dt>Event Gateway connection</dt>
+                <dd>{intent?.botName ?? selected?.label ?? 'Unavailable'}</dd>
                 <dt>
                   {intent?.body.event_worker_profile || profileMode === 'worker'
                     ? 'Event Worker Profile'
@@ -318,13 +316,13 @@ export function BotCreate({
                 <dd>{(intent?.body.reply.ack_after_ms ?? ack) / 1000} seconds</dd>
               </dl>
               <p>
-                The Bot uses your account and the selected environment profiles. Connect the
+                The consumer uses your account and the selected environment profiles. Connect the
                 profile’s services and managed model in NyxID before creating it.
               </p>
               {intent === undefined ? null : (
                 <p role="status">
                   Creation has not been confirmed. Recover the same request to avoid creating a
-                  second Bot.
+                  second consumer.
                 </p>
               )}
             </>
@@ -351,7 +349,11 @@ export function BotCreate({
                 disabled={busy || (intent === undefined && !ready.every(Boolean))}
                 onClick={() => void submit()}
               >
-                {busy ? 'Creating Bot' : intent === undefined ? 'Create Bot' : 'Recover creation'}
+                {busy
+                  ? 'Creating consumer'
+                  : intent === undefined
+                    ? 'Create consumer'
+                    : 'Recover creation'}
               </Button>
             )}
           </footer>
