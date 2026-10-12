@@ -31,7 +31,10 @@ use std::{
     time::Duration,
 };
 
-use crate::store::{CreateResult, LifecycleInput, MongoAgentLifecycleStore};
+use crate::store::{CreateResult, LifecycleInput, LifecycleLease, MongoAgentLifecycleStore};
+
+#[path = "agent_lifecycle_worker.rs"]
+mod worker;
 
 #[path = "agent_lifecycle_image.rs"]
 mod image;
@@ -52,13 +55,14 @@ pub(crate) struct InlineAgentLifecycle {
     bounds: ProfileCapacityBounds,
     operations: Arc<MongoAgentLifecycleStore>,
     self_ref: OnceLock<Weak<Self>>,
+    worker_slots: Arc<tokio::sync::Semaphore>,
 }
 
 struct ProvisionInput {
     request: AgentLifecycleCreateRequest,
     runtime_image: Option<String>,
     key: String,
-    operation_id: String,
+    lease: LifecycleLease,
     existing_sandbox_id: Option<String>,
     existing_agent_id: Option<String>,
 }
@@ -84,27 +88,10 @@ impl InlineAgentLifecycle {
             bounds,
             operations,
             self_ref: OnceLock::new(),
+            worker_slots: Arc::new(tokio::sync::Semaphore::new(crate::store::DISCOVERY_BATCH)),
         });
         let _ = instance.self_ref.set(Arc::downgrade(&instance));
         instance
-    }
-
-    /// Reclaim queued operations after a process restart. The Mongo lease
-    /// makes this safe when multiple CMA replicas start simultaneously.
-    pub(crate) fn resume_pending(self: &Arc<Self>) {
-        let this = Arc::clone(self);
-        tokio::spawn(async move {
-            match this.operations.pending().await {
-                Ok(ids) => {
-                    for id in ids {
-                        this.spawn_worker(id);
-                    }
-                }
-                Err(error) => {
-                    tracing::error!(error = %error, "cannot resume Agent lifecycle operations")
-                }
-            }
-        });
     }
 
     fn authority(
@@ -221,7 +208,9 @@ impl InlineAgentLifecycle {
                     .await
                     .map_err(sandbox_error)?;
                 if sandbox.status == SandboxStatus::Failed {
-                    return Err(AgentLifecycleProvisioningError::Unavailable);
+                    return Err(AgentLifecycleProvisioningError::Conflict(
+                        "Sandbox provisioning failed".into(),
+                    ));
                 }
                 if sandbox.status == SandboxStatus::Active {
                     let page = self
@@ -253,7 +242,7 @@ impl InlineAgentLifecycle {
             request,
             runtime_image,
             key,
-            operation_id,
+            lease,
             existing_sandbox_id,
             existing_agent_id,
         } = input;
@@ -262,7 +251,7 @@ impl InlineAgentLifecycle {
             .await?;
         self.operations
             .append_event(
-                &operation_id,
+                &lease,
                 1,
                 "sandbox_ready",
                 "running",
@@ -279,7 +268,7 @@ impl InlineAgentLifecycle {
                     caller,
                     CreateSandbox {
                         profile: sandbox_profile.clone(),
-                        name: Some(format!("{} sandbox", request.name)),
+                        name: Some(validation::sandbox_name(&request.name)),
                         confirmed_digest: None,
                         origin: SandboxOrigin::Manual,
                     },
@@ -311,7 +300,7 @@ impl InlineAgentLifecycle {
                 Err(error) => return Err(sandbox_error(error)),
             };
             self.operations
-                .mark_sandbox(&operation_id, sandbox.id.as_str())
+                .mark_sandbox(&lease, sandbox.id.as_str())
                 .await
                 .map_err(|_| AgentLifecycleProvisioningError::Unavailable)?;
             sandbox.id
@@ -319,21 +308,11 @@ impl InlineAgentLifecycle {
         let workspace_id = self.wait_for_agent_workspace(caller, &sandbox_id).await?;
         self.operations
             .append_event(
-                &operation_id,
+                &lease,
                 2,
                 "sandbox_ready",
                 "ready",
                 "Agent Sandbox is ready",
-            )
-            .await
-            .map_err(|_| AgentLifecycleProvisioningError::Unavailable)?;
-        self.operations
-            .append_event(
-                &operation_id,
-                3,
-                "workspace_runtime",
-                "ready",
-                "Workspace, skills, model, reasoning effort, system prompt and permission level are ready",
             )
             .await
             .map_err(|_| AgentLifecycleProvisioningError::Unavailable)?;
@@ -356,16 +335,35 @@ impl InlineAgentLifecycle {
                     },
                 )
                 .await
-                .map_err(agent_error)?;
+                .map_err(|error| match error {
+                    layer2_core::sandbox::AgentServiceError::Connection(error) => {
+                        validation::connection_error(
+                            error,
+                            json!({"type":"workspace", "id":workspace_id.as_str()}),
+                        )
+                    }
+                    error => agent_error(error),
+                })?;
             self.operations
-                .mark_agent(&operation_id, agent.id.as_str())
+                .mark_agent(&lease, agent.id.as_str())
                 .await
                 .map_err(|_| AgentLifecycleProvisioningError::Unavailable)?;
             agent.id
         };
+        self.wait_for_agent_ready(caller, &agent_id).await?;
         self.operations
             .append_event(
-                &operation_id,
+                &lease,
+                3,
+                "workspace_runtime",
+                "ready",
+                "Workspace, skills, model, reasoning effort, system prompt and permission level are ready",
+            )
+            .await
+            .map_err(|_| AgentLifecycleProvisioningError::Unavailable)?;
+        self.operations
+            .append_event(
+                &lease,
                 4,
                 "key_scope_ready",
                 "ready",
@@ -374,56 +372,6 @@ impl InlineAgentLifecycle {
             .await
             .map_err(|_| AgentLifecycleProvisioningError::Unavailable)?;
         Ok(agent_id.to_string())
-    }
-
-    fn spawn_worker(&self, operation_id: String) {
-        let Some(this) = self.self_ref.get().and_then(Weak::upgrade) else {
-            return;
-        };
-        tokio::spawn(async move {
-            let Some(record) = (match this.operations.claim(&operation_id).await {
-                Ok(record) => record,
-                Err(error) => {
-                    tracing::error!(operation = %operation_id, error = %error, "cannot claim Agent lifecycle operation");
-                    return;
-                }
-            }) else {
-                return;
-            };
-            let caller = Caller::new(
-                SubjectId::new(record.owner.clone()),
-                Authorization::new(record.input.capabilities),
-            );
-            match this
-                .provision(
-                    &caller,
-                    ProvisionInput {
-                        request: record.input.request,
-                        runtime_image: record.input.resolved_image,
-                        key: record.key,
-                        operation_id: operation_id.clone(),
-                        existing_sandbox_id: record.sandbox_id,
-                        existing_agent_id: record.agent_id,
-                    },
-                )
-                .await
-            {
-                Ok(agent_id) => {
-                    if let Err(error) = this.operations.succeed(&operation_id, &agent_id).await {
-                        tracing::error!(operation = %operation_id, error = %error, "cannot complete Agent lifecycle operation");
-                    }
-                }
-                Err(error) => {
-                    if let Err(store_error) = this
-                        .operations
-                        .fail(&operation_id, &error.to_string())
-                        .await
-                    {
-                        tracing::error!(operation = %operation_id, error = %store_error, "cannot fail Agent lifecycle operation");
-                    }
-                }
-            }
-        });
     }
 }
 
@@ -443,7 +391,29 @@ impl AgentLifecycleProvisioner for InlineAgentLifecycle {
             .allows(Capability::UseOwnSandboxes)
             .then_some(())
             .ok_or(AgentLifecycleProvisioningError::Forbidden)?;
+        if !caller.authorization.allows(Capability::CreateSandbox) {
+            return Err(AgentLifecycleProvisioningError::Forbidden);
+        }
         let _authority = self.authority(caller, context)?;
+        if let Some(record) = self
+            .operations
+            .replay(&caller.subject, idempotency_key, &request)
+            .await
+            .map_err(validation::operation_error)?
+        {
+            self.operations
+                .resume_connection(&caller.subject, &record.id)
+                .await
+                .map_err(validation::operation_error)?;
+            self.spawn_worker(record.id.clone());
+            return Ok(AgentLifecycleCreateReceipt {
+                id: record.id,
+                status: "provisioning".into(),
+            });
+        }
+        let profile = request.profile.clone().unwrap_or_default();
+        agent_content(&profile)?;
+        services(&profile.permissions)?;
         // Resolve the delegated Image Manager reference before persisting the
         // operation. The durable worker then needs no secret after admission.
         let resolved_image = match &request.image {
@@ -463,14 +433,7 @@ impl AgentLifecycleProvisioner for InlineAgentLifecycle {
             .operations
             .create(&caller.subject, idempotency_key, input)
             .await
-            .map_err(|error| match error {
-                layer2_core::StoreError::RevisionConflict { .. } => {
-                    AgentLifecycleProvisioningError::Conflict(
-                        "idempotency key was already used for a different lifecycle request".into(),
-                    )
-                }
-                _ => AgentLifecycleProvisioningError::Unavailable,
-            })?;
+            .map_err(validation::operation_error)?;
         let operation_id = match operation {
             CreateResult::Created(id) => id,
             CreateResult::Existing(record) => record.id.clone(),

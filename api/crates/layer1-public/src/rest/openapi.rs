@@ -130,6 +130,8 @@ use super::trigger_openapi_shapes::*;
         super::profiles_marketplace::read,
         super::profiles_marketplace::fork,
         super::agents::create,
+        super::agents::create_lifecycle,
+        super::agents::read_lifecycle_operation,
         super::agents::list,
         super::agents::read,
         super::agent_source::read,

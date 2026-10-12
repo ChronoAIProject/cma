@@ -112,7 +112,8 @@ mod worktrees;
 
 pub use activity::MongoActivityStore;
 pub(crate) use agent_lifecycle_operations::{
-    CreateResult, LifecycleInput, MongoAgentLifecycleStore,
+    CreateResult, LifecycleInput, LifecycleLease, MongoAgentLifecycleStore, DISCOVERY_BATCH,
+    HEARTBEAT,
 };
 pub use auth::MongoAuthStore;
 pub(crate) use bindings::{MongoBindingCredentials, MongoProviderToolSource};

@@ -75,6 +75,7 @@ export interface AgentLifecycleOperationView {
   readonly agent_id?: string;
   readonly error?: string;
   readonly events: readonly AgentLifecycleOperationEvent[];
+  readonly connection?: { readonly services: readonly string[]; readonly target: ConnectionTarget };
 }
 
 export interface AgentLifecycleConnectionRequired {

@@ -26,6 +26,7 @@ mod gateway_cases;
 mod gateway_interaction_cases;
 mod inventory;
 mod inventory_cases;
+mod lifecycle_cases;
 mod provenance_cases;
 mod queued_cancellation_cases;
 mod replay;
@@ -141,6 +142,9 @@ fn paths() -> Vec<PathBuf> {
 }
 
 async fn scenario(name: &str) -> Scenario {
+    if let Some(scenario) = lifecycle_cases::scenario(name).await {
+        return scenario;
+    }
     if let Some(scenario) = bot_setup_cases::scenario(name).await {
         return scenario;
     }
