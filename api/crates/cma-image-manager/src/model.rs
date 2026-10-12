@@ -88,14 +88,26 @@ pub struct Image {
     pub request_sha256: String,
     pub spec: CreateImage,
     pub shares: Vec<String>,
+    #[serde(default)]
+    pub visibility: ImageVisibility,
     pub retired: bool,
     pub revision: i64,
     pub created_at_ms: i64,
 }
 impl Image {
     pub fn accessible(&self, actor: &str) -> bool {
-        self.owner == actor || self.shares.iter().any(|s| s == actor)
+        self.owner == actor
+            || self.shares.iter().any(|s| s == actor)
+            || (self.visibility == ImageVisibility::Public && !self.retired)
     }
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ImageVisibility {
+    #[default]
+    Private,
+    Public,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

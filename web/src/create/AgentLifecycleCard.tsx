@@ -14,7 +14,7 @@ import { SkillPicker } from '../profiles/pickers/SkillPicker';
 import type { SkillReference } from '../profiles/client';
 import { useLifecycleIntent } from './lifecycleIntent';
 import { AgentProvisioningProgress } from './AgentProvisioningProgress';
-import { listAgentImages, type AgentImageChoice } from './imageCatalog';
+import { imageVisibilityLabel, listAgentImages, type AgentImageChoice } from './imageCatalog';
 import './Create.css';
 import './AgentLifecycleCard.css';
 
@@ -234,7 +234,7 @@ export function AgentLifecycleCard({
                       {image.description ?? 'No description'}
                       {image.id === SYSTEM_IMAGE.id
                         ? ''
-                        : ` · ${image.visibility === 'shared' ? 'Shared with you' : 'Private'}`}
+                        : ` · ${imageVisibilityLabel(image.visibility)}`}
                     </small>
                   </span>
                 </label>

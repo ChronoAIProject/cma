@@ -3,9 +3,14 @@ export interface AgentImageChoice {
   readonly name: string;
   readonly description?: string;
   readonly owner?: string;
-  readonly visibility?: 'private' | 'shared';
+  readonly visibility?: 'private' | 'shared' | 'public';
   readonly retired?: boolean;
   readonly revision?: number;
+}
+
+export function imageVisibilityLabel(visibility: AgentImageChoice['visibility']): string {
+  if (visibility === 'public') return 'Public';
+  return visibility === 'shared' ? 'Shared with you' : 'Private';
 }
 
 export interface ResolvedAgentImage {
