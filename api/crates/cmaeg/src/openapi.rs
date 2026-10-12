@@ -11,6 +11,8 @@ use utoipa::OpenApi;
     components(schemas(crate::providers::EventContextSnapshot)),
     paths(
         http::management::create_channel,
+        http::management::list_channels,
+        http::management::permission_catalog,
         http::creation::recover_channel,
         http::management::get_channel,
         http::management::update_channel,

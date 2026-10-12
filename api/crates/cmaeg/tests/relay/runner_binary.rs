@@ -12,7 +12,11 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::process::{Child, Command};
+#[path = "../support/database.rs"]
+mod database;
+
 struct Process {
+    _database: database::DatabaseFixture,
     child: Child,
     dir: PathBuf,
     base: String,
@@ -55,8 +59,14 @@ impl Process {
         drop(listener);
         let base = format!("http://{address}");
         let log = fs::File::create(dir.join("trace.log")).unwrap();
-        let child=Command::new(env!("CARGO_BIN_EXE_cmaeg")).kill_on_drop(true)
-            .env_clear().env("RUST_LOG","cmaeg=info")
+        let database =
+            database::DatabaseFixture::new(std::path::Path::new(env!("CARGO_BIN_EXE_cmaeg"))).await;
+        database.admin.database(&database.name).collection::<mongodb::bson::Document>("eg_channel_records")
+            .insert_one(mongodb::bson::doc!{"_id":resolved.pointer.record_id.as_str(),"owner":&resolved.definition.owner.subject,"blob":mongodb::bson::Binary{subtype:mongodb::bson::spec::BinarySubtype::Generic,bytes:fixture.backend.blob.lock().unwrap().clone()},"version":resolved.version as i64,"schema_version":1_i32}).await.unwrap();
+        let mut command = Command::new(env!("CARGO_BIN_EXE_cmaeg"));
+        command.env_clear();
+        database.configure(&mut command);
+        let child=command.kill_on_drop(true).env("RUST_LOG","cmaeg=info")
             .env("CMAEG_LISTEN",address.to_string()).env("CMAEG_PUBLIC_URL",&base)
             .env("CMAEG_METRICS_LISTEN", "127.0.0.1:0")
             .env("CMAEG_CMA_BASE_URL",cma).env("CMAEG_NYXID_BASE_URL",nyxid)
@@ -65,7 +75,12 @@ impl Process {
             .env("CMAEG_ACCEPT_BUDGET_MS",budget_ms.to_string()).env("CMAEG_DRAIN_SECONDS","15")
             .env("CMAEG_PROVIDERS",json!([{"slug":"cma_codex","base_url":provider.base_url(),"kind":"responses_http","paths":{"agent_card":"/.well-known/agent-card.json","binding":"/api/v1/cmaeg/bindings/{binding_id}","conversation":"/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}","responses":"/api/v2/responses"},"max_inflight":1}]).to_string())
             .stdout(Stdio::from(log.try_clone().unwrap())).stderr(Stdio::from(log)).spawn().unwrap();
-        let mut process = Self { child, dir, base };
+        let mut process = Self {
+            child,
+            dir,
+            base,
+            _database: database,
+        };
         tokio::time::timeout(Duration::from_secs(5), async {
             loop {
                 assert!(
@@ -118,6 +133,7 @@ impl Process {
     }
 }
 #[tokio::test]
+#[ignore = "requires authenticated disposable service Mongo fixture"]
 async fn executable_delivers_ack_final_and_tool_reply_and_drains_the_relay_without_secret_logs() {
     use sha2::{Digest, Sha256};
     for use_tool in [false, true] {
@@ -197,6 +213,7 @@ fn credential(value: &mut Value) {
 }
 
 #[tokio::test]
+#[ignore = "requires authenticated disposable service Mongo fixture"]
 async fn executable_accepts_signed_custom_events_and_curl_streams_through_completion() {
     let provider = FakeProvider::start(FakeProviderConfig {
         terminal_delay: Duration::from_millis(200),
@@ -283,6 +300,7 @@ async fn executable_accepts_signed_custom_events_and_curl_streams_through_comple
 }
 
 #[tokio::test]
+#[ignore = "requires authenticated disposable service Mongo fixture"]
 async fn real_signed_callback_accepts_at_two_seconds_and_defers_at_twenty() {
     for (delay, budget, expected) in [(2, 20000, 2), (30, 20000, 20)] {
         let fake = FakeProvider::start(FakeProviderConfig {
@@ -329,6 +347,7 @@ async fn real_signed_callback_accepts_at_two_seconds_and_defers_at_twenty() {
 }
 #[cfg(unix)]
 #[tokio::test]
+#[ignore = "requires authenticated disposable service Mongo fixture"]
 async fn sigterm_keeps_process_alive_until_ten_second_turn_finishes() {
     let fake = FakeProvider::start(FakeProviderConfig {
         terminal_delay: Duration::from_secs(10),
