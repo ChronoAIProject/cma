@@ -461,7 +461,6 @@ export function Console({
               collapsed={collapsed}
               onSignOut={onSignOut}
               onNavigate={onNavigate}
-              canManageBridges={!user.visitor}
             />
           }
         />

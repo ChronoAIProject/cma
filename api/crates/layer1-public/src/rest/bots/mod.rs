@@ -16,6 +16,7 @@ pub fn bot_router(control: Arc<BotControl>) -> Router {
     Router::new()
         .route("/api/v1/bots", get(list).post(create))
         .route("/api/v1/bots/nyxid-bots", get(available))
+        .route("/api/v1/bots/connections", get(connections))
         .route("/api/v1/bots/{bot_id}", get(read).delete(delete))
         .route("/api/v1/bots/{bot_id}/test", post(test))
         .route("/api/v1/bots/{bot_id}/disable", post(disable))
@@ -102,6 +103,25 @@ pub async fn available(
                     id: b.id,
                     name: b.name,
                     platform: b.platform,
+                })
+                .collect::<Vec<_>>(),
+        )
+        .into_response(),
+        Err(error) => problem(error),
+    }
+}
+#[utoipa::path(get, path="/api/v1/bots/connections", tag="bots", responses((status=200, body=Vec<BotConnectionView>)))]
+pub async fn connections(
+    State(control): State<Arc<BotControl>>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+) -> Response {
+    match control.available(&caller).await {
+        Ok(connections) => Json(
+            connections
+                .into_iter()
+                .map(|connection| BotConnectionView {
+                    connection_ref: connection.id,
+                    label: connection.name,
                 })
                 .collect::<Vec<_>>(),
         )

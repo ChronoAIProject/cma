@@ -67,12 +67,12 @@ it('requires current-account review, creates a private profile, then creates the
   expect(screen.getByRole('button', { name: 'Create my agent profile' })).toBeDisabled();
   expect(createProfile).not.toHaveBeenCalled();
   expect(publishProfile).not.toHaveBeenCalled();
-  expect(client.bots.available).not.toHaveBeenCalled();
+  expect(client.bots.connections).not.toHaveBeenCalled();
   await user.clear(screen.getByLabelText('Agent instructions'));
   await user.type(screen.getByLabelText('Agent instructions'), 'My reviewed instructions.');
   await consent(user);
   await user.click(screen.getByRole('button', { name: 'Create my agent profile' }));
-  await screen.findByRole('heading', { name: 'New Bot' });
+  await screen.findByRole('heading', { name: 'New consumer' });
   expect(createProfile).toHaveBeenCalledWith(
     {
       name: draft.name,
@@ -92,8 +92,8 @@ it('requires current-account review, creates a private profile, then creates the
     expect.objectContaining({ idempotencyKey: expect.any(String) }),
   );
   expect(client.bots.create).not.toHaveBeenCalled();
-  expect(screen.getByLabelText('Bot name')).toHaveValue(draft.name);
-  await chooseOption(user, 'Telegram bot', 'Telegram research');
+  expect(screen.getByLabelText('Consumer name')).toHaveValue(draft.name);
+  await chooseOption(user, 'Event Gateway connection', 'Research channel');
   await user.click(screen.getByRole('button', { name: 'Continue' }));
   // The newly published private profile is selected; the normal picker still permits a change.
   expect(screen.getByRole('button', { name: 'Continue' })).toBeEnabled();
@@ -102,11 +102,11 @@ it('requires current-account review, creates a private profile, then creates the
   await user.click(screen.getByRole('button', { name: 'Continue' }));
   expect(screen.getByText(/Paper helper · Version 2/)).toBeInTheDocument();
   expect(client.bots.create).not.toHaveBeenCalled();
-  await user.click(screen.getByRole('button', { name: 'Create Bot' }));
+  await user.click(screen.getByRole('button', { name: 'Create consumer' }));
   expect(client.bots.create).toHaveBeenCalledWith(
     expect.objectContaining({
       name: draft.name,
-      nyxid_bot_id: 'external-fixture',
+      connection_ref: 'connection-fixture',
       profile: { id: AGENT_PROFILE.id, revision: 2 },
     }),
     expect.objectContaining({ idempotencyKey: expect.any(String) }),
@@ -152,7 +152,7 @@ it('recovers uncertain create and publish across reload with the same keys and n
   expect(publishProfile).toHaveBeenCalledTimes(1);
   await consent(user);
   await user.click(screen.getByRole('button', { name: 'Recover profile creation' }));
-  await screen.findByRole('heading', { name: 'New Bot' });
+  await screen.findByRole('heading', { name: 'New consumer' });
   expect(createProfile).toHaveBeenCalledTimes(2);
   expect(publishProfile).toHaveBeenCalledTimes(2);
   expect(publishProfile.mock.calls[0]?.[2].idempotencyKey).toBe(first?.publishKey);
@@ -241,10 +241,10 @@ it('requires profile authoring permission and rejects invalid setup before readi
   const client = botClient();
   const view = render(<Entry client={client} />);
   expect(screen.getByText(/needs permission to create its own Agent Profiles/)).toBeInTheDocument();
-  expect(client.bots.available).not.toHaveBeenCalled();
+  expect(client.bots.connections).not.toHaveBeenCalled();
   view.unmount();
   window.history.replaceState(null, '', '/bots/new?setup=null');
   render(<Entry client={client} authoring={profileClient()} />);
   expect(screen.getByRole('alert')).toHaveTextContent(/setup could not be read/);
-  expect(client.bots.available).not.toHaveBeenCalled();
+  expect(client.bots.connections).not.toHaveBeenCalled();
 });
