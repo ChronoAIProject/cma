@@ -59,6 +59,8 @@ pub(crate) struct LifecycleRecord {
     pub status: String,
     pub phase: String,
     pub events: Vec<LifecycleEvent>,
+    #[serde(default)]
+    pub sandbox_id: Option<String>,
     pub agent_id: Option<String>,
     pub error: Option<String>,
     pub lease_expires_at: Option<DateTime>,
@@ -138,6 +140,7 @@ impl MongoAgentLifecycleStore {
             status: "queued".into(),
             phase: "queued".into(),
             events: Vec::new(),
+            sandbox_id: None,
             agent_id: None,
             error: None,
             lease_expires_at: None,
@@ -272,6 +275,28 @@ impl MongoAgentLifecycleStore {
                         "updated_at": DateTime::now(),
                     }
                 },
+            )
+            .await
+            .map_err(driver)?;
+        Ok(())
+    }
+
+    pub(crate) async fn mark_sandbox(&self, id: &str, sandbox_id: &str) -> Result<(), StoreError> {
+        self.operations
+            .update_one(
+                doc! { "_id": id, "document_schema_version": DOCUMENT_SCHEMA_VERSION },
+                doc! { "$set": { "sandbox_id": sandbox_id, "updated_at": DateTime::now() } },
+            )
+            .await
+            .map_err(driver)?;
+        Ok(())
+    }
+
+    pub(crate) async fn mark_agent(&self, id: &str, agent_id: &str) -> Result<(), StoreError> {
+        self.operations
+            .update_one(
+                doc! { "_id": id, "document_schema_version": DOCUMENT_SCHEMA_VERSION },
+                doc! { "$set": { "agent_id": agent_id, "updated_at": DateTime::now() } },
             )
             .await
             .map_err(driver)?;
