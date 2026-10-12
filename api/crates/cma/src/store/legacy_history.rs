@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 //! Preserve permanent references for late checkpoint uploads from the retired bridge.
 //! This adapter cannot admit channel work or delete retained history.
 use layer2_core::profiles::content_digest;

@@ -6,7 +6,6 @@ use tokio::sync::watch;
 use tokio::task::{JoinHandle, JoinSet};
 use tokio::time::MissedTickBehavior;
 
-use super::checkpoint_maintenance::SandboxCheckpointMaintenance;
 use super::worker::SandboxWorker;
 use super::workspace_worker::WorkspaceWorker;
 
@@ -40,32 +39,7 @@ impl SandboxSweep for WorkspaceWorker {
     }
 }
 
-#[async_trait::async_trait]
-impl SandboxSweep for SandboxCheckpointMaintenance {
-    async fn run_due(&self, now: SystemTime) -> Result<usize, SandboxStoreError> {
-        self.run_once(now).await
-    }
-}
-
-#[async_trait::async_trait]
-impl SandboxSweep for crate::store::MongoCheckpointObjectStore {
-    async fn run_due(&self, now: SystemTime) -> Result<usize, SandboxStoreError> {
-        self.cleanup_due(now)
-            .await
-            .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))
-    }
-}
-
 impl SandboxScheduler {
-    pub(crate) fn for_checkpoint_cleanup(
-        worker: Arc<crate::store::MongoCheckpointObjectStore>,
-    ) -> Self {
-        Self {
-            worker,
-            sweep_interval: Duration::from_secs(30),
-            concurrent_sweeps: 1,
-        }
-    }
     pub(crate) fn new(worker: Arc<SandboxWorker>) -> Self {
         Self {
             worker,
@@ -78,14 +52,6 @@ impl SandboxScheduler {
         Self {
             worker,
             sweep_interval: DEFAULT_SWEEP_INTERVAL,
-            concurrent_sweeps: 1,
-        }
-    }
-
-    pub(crate) fn for_checkpoints(worker: Arc<SandboxCheckpointMaintenance>) -> Self {
-        Self {
-            worker,
-            sweep_interval: Duration::from_secs(2),
             concurrent_sweeps: 1,
         }
     }

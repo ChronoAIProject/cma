@@ -23,7 +23,9 @@ impl SandboxWorker {
         if !self.lifecycle_state_matches(&sandbox).await? {
             return Err(SandboxStoreError::Conflict);
         }
-        if self.resume_lifecycle_writers(&sandbox).await.is_err() {
+        if !Self::uses_retained_home(&sandbox)
+            && self.resume_lifecycle_writers(&sandbox).await.is_err()
+        {
             return self
                 .handle_lifecycle_failure(
                     sandbox,
@@ -67,8 +69,11 @@ impl SandboxWorker {
         sandbox: Sandbox,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
-        if let Err(failure) = self.ensure_lifecycle_checkpoint_hold(&sandbox).await {
-            return self.abort_lifecycle_hold(sandbox, failure, now).await;
+        let retained_home = Self::uses_retained_home(&sandbox);
+        if !retained_home {
+            if let Err(failure) = self.ensure_lifecycle_checkpoint_hold(&sandbox).await {
+                return self.abort_lifecycle_hold(sandbox, failure, now).await;
+            }
         }
         let agents = self.lifecycle_agents(&sandbox).await?;
         if let Some(failure) = agents
@@ -76,7 +81,11 @@ impl SandboxWorker {
             .filter(|agent| agent.status.is_live())
             .find_map(|agent| require_quiet_agent(agent).err())
         {
-            return self.abort_lifecycle_hold(sandbox, failure, now).await;
+            return if retained_home {
+                self.handle_lifecycle_failure(sandbox, failure, now).await
+            } else {
+                self.abort_lifecycle_hold(sandbox, failure, now).await
+            };
         }
 
         let stamp = rfc3339_at(now);
@@ -147,12 +156,21 @@ impl SandboxWorker {
             }
             return Ok(());
         }
-        self.fail_after_writer_resume(
-            sandbox,
-            WorkerFailure::retryable("agent parking publication is unconfirmed"),
-            now,
-        )
-        .await
+        if retained_home {
+            self.handle_lifecycle_failure(
+                sandbox,
+                WorkerFailure::retryable("agent parking publication is unconfirmed"),
+                now,
+            )
+            .await
+        } else {
+            self.fail_after_writer_resume(
+                sandbox,
+                WorkerFailure::retryable("agent parking publication is unconfirmed"),
+                now,
+            )
+            .await
+        }
     }
 
     pub(super) async fn teardown_lifecycle_runtime(
@@ -160,8 +178,11 @@ impl SandboxWorker {
         sandbox: Sandbox,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
-        if let Err(failure) = self.ensure_lifecycle_checkpoint_hold(&sandbox).await {
-            return self.abort_lifecycle_hold(sandbox, failure, now).await;
+        let retained_home = Self::uses_retained_home(&sandbox);
+        if !retained_home {
+            if let Err(failure) = self.ensure_lifecycle_checkpoint_hold(&sandbox).await {
+                return self.abort_lifecycle_hold(sandbox, failure, now).await;
+            }
         }
         let Some(handle) = runtime(&sandbox) else {
             return self
@@ -173,9 +194,13 @@ impl SandboxWorker {
                 .await;
         };
         if let Err(error) = self.dependencies.adapter.teardown(&handle).await {
-            return self
-                .abort_lifecycle_hold(sandbox, adapter_failure(error), now)
-                .await;
+            return if retained_home {
+                self.handle_lifecycle_failure(sandbox, adapter_failure(error), now)
+                    .await
+            } else {
+                self.abort_lifecycle_hold(sandbox, adapter_failure(error), now)
+                    .await
+            };
         }
         let stamp = rfc3339_at(now);
         let lease = lifecycle_lease(&sandbox, &self.config.holder)?;

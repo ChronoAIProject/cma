@@ -31,7 +31,9 @@ pub(super) use retention::{prune_evicted, RetentionError};
 pub struct MongoCheckpointObjectStore {
     manifests: Collection<Document>,
     gates: Collection<Document>,
+    #[allow(dead_code)]
     tombstones: Collection<Document>,
+    #[allow(dead_code)]
     sandboxes: Collection<Document>,
     objects: Arc<dyn CheckpointBlobStore>,
     client: Client,
@@ -84,11 +86,13 @@ impl MongoCheckpointObjectStore {
     ///
     /// Work is deliberately bounded. `Unavailable` after partial progress asks the
     /// lifecycle worker to retry; each retry continues idempotently.
+    #[allow(dead_code)]
     pub async fn purge_sandbox(&self, sandbox_id: &str) -> AdapterResult<()> {
         validate_sandbox_id(sandbox_id)?;
         purge::purge_sandbox(self, sandbox_id).await
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn cleanup_due(&self, now: std::time::SystemTime) -> AdapterResult<usize> {
         let now = mongodb::bson::DateTime::from_system_time(now);
         let retired = purge::retire_deleted_sandboxes(self, now).await;
