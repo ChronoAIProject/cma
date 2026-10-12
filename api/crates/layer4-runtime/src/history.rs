@@ -1,6 +1,6 @@
 //! Bounded access to the agent-sandbox session JSONL files.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::config::RuntimeConfig;
 use crate::failure::{Result, RuntimeError};
@@ -128,7 +128,7 @@ async fn append_file(path: &Path, output: &mut Vec<u8>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
+    use std::{fs, path::PathBuf};
 
     struct TempHome(PathBuf);
 
