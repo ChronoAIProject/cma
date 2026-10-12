@@ -33,6 +33,12 @@ module GatewaySourceContract
     [{ "group" => "", "kind" => "Service", "name" => name, "port" => 80, "weight" => 1 }]
   end
 
+  def self.service_route(service, target, replacement)
+    { "matches" => [path("PathPrefix", "/api/#{service}")],
+      "filters" => [{ "type" => "URLRewrite", "urlRewrite" => { "path" => { "type" => "ReplacePrefixMatch", "replacePrefixMatch" => replacement } } }],
+      "backendRefs" => backend(target) }
+  end
+
   def self.expected
     all = [path("PathPrefix", "/")]
     routes = [
@@ -43,6 +49,9 @@ module GatewaySourceContract
       object("HTTPRoute", "cma-web", {
         "parentRefs" => parent("https"), "hostnames" => ["bot.chrono-ai.fun"],
         "rules" => [
+          service_route("event-gateway", "cmaeg", "/"),
+          service_route("image-manager", "cma-image-manager", "/"),
+          service_route("agent-manager", "cma-api", "/api"),
           { "matches" => [path("PathPrefix", "/api"), path("PathPrefix", "/auth"), path("Exact", "/openapi.json"), path("Exact", "/.well-known/agent-card.json")], "backendRefs" => backend("cma-api") },
           { "matches" => all, "backendRefs" => backend("cma-web") },
         ],

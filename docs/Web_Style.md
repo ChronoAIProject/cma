@@ -1946,6 +1946,10 @@ Append-only. Never edit or delete an entry.
 | 2026-09-16 | Keep Queue message and Stop response aligned beside the input at every supported viewport, using explicit composer grid columns and existing control sizes and gaps. |
 | 2026-09-17 | Dismiss an open menu before its enclosing dialog on Escape from a row or trigger, preserving the selected value and returning focus to the trigger. |
 
+| 2026-10-12 | Add independent Event Gateway, Agent Manager and Image Manager navigation and service-local authentication, catalog/build/sharing, and channel inventory patterns using existing design tokens and controls. |
+
+| 2026-10-12 | Extend the Gateway page with explicit create/edit configuration forms, stable reserved record recovery, and confirmation before disconnecting a channel. Revalidate service identity on focus and clear private service views when authorization changes. |
+
 ### Approved Agent artifacts
 
 Personal Agent Details offers **Artifacts** under current artifact visibility;
@@ -1987,3 +1991,43 @@ Check current management access before and after each buffered page and retain
 the initial authority deadline. Changed scope, revoked authority or an expired
 read clears private history. Viewing history preserves the personal composer and
 draft. Summary readers never receive the management history control.
+
+
+### CMA service navigation
+
+The signed-in operational application has three persistent service links across
+its top: **Event Gateway**, **Agent Manager**, **Image Manager**. This deliberately
+extends the §9 frame with a 44px service navigation band; the Agent Manager's
+existing three columns fill the remaining height. Public Trigger journeys retain
+their existing frame. Use the established base background, level-1 border,
+primary/secondary ink, 14px text, 8px/16px spacing and standard focus ring. Mark
+the selected service with a primary-ink bottom border and `aria-current="page"`.
+At narrow widths the service band scrolls horizontally without shrinking labels.
+Service links are real URLs supporting browser back/forward and new tabs.
+
+Image and Gateway pages use the established page header, form field, Button,
+status band and bordered list patterns, with 24px desktop / 16px mobile padding,
+16px gaps and a 1000px content maximum. Forms use explicit labels and native
+inputs; versions and digests wrap inside the page. Each service owns its login,
+permissions, loading, access-denied and unavailable states. A failed service never
+blocks navigation to the other two. Sign-in is an explicit NyxID action; tokens
+never enter JavaScript or browser storage. Sign-out is scoped and labelled with
+the service name. Switching services preserves the mounted Agent conversation
+and draft when it has already been opened, without sending a lifecycle command.
+
+Image Manager exposes a catalog with name/description, immutable build source,
+build progress, successful versions, sharing with a NyxID account and retirement.
+Only explicit submission starts a build. Unknown write outcomes retain the same
+request key and body for retry; changed content requires deliberate dismissal.
+Retirement explains that existing Agents keep their images. Gateway lists actual
+owned channels with provider, version and source, and offers a current-definition
+view and explicit test action. Test dispatch is never automatic. Access loss
+clears private lists; temporary failures retain a clear retry path. Standard
+controls enforce the service's current permissions and the backend rechecks them.
+
+Gateway channel configuration uses a labelled multiline JSON field for the
+published channel policy, with credentials in a separate password field for
+creation. Editing starts from the current public policy and retains credentials.
+Keep a reserved record UUID and identical body while a creation result is unknown;
+provide explicit recovery and never automatically create another record. Confirm
+channel deletion with the channel name and explain that incoming delivery stops.

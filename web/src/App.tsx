@@ -24,9 +24,61 @@ const PublicJourney = lazy(() =>
   import('./public/PublicJourney').then((module) => ({ default: module.PublicJourney })),
 );
 
+import type { AppRouter, AppRoute } from './routing/routes';
+import { ServiceTabs } from './services/ServiceTabs';
+import { ServicePage } from './services/ServicePage';
+import { ImageManager } from './services/ImageManager';
+import { EventGateway } from './services/EventGateway';
+
 export function App() {
-  const { state, signIn, signOut } = useAuth();
   const router = useAppRouter();
+  const service =
+    router.route.kind === 'image_manager'
+      ? 'image-manager'
+      : router.route.kind === 'event_gateway'
+        ? 'event-gateway'
+        : undefined;
+  const [visitedServices, setVisitedServices] = useState<
+    readonly ('event-gateway' | 'image-manager')[]
+  >(service ? [service] : []);
+  if (service && !visitedServices.includes(service))
+    setVisitedServices([...visitedServices, service]);
+  const [lastAgentRoute, setLastAgentRoute] = useState<AppRoute>(router.route);
+  const [visitedAgent, setVisitedAgent] = useState(service === undefined);
+  if (service === undefined && lastAgentRoute !== router.route) {
+    setLastAgentRoute(router.route);
+    setVisitedAgent(true);
+  }
+  const publicJourney = router.route.kind === 'public_trigger' || router.route.kind === 'launch';
+  if (publicJourney) return <AgentApp router={router} />;
+  return (
+    <div className="service-shell">
+      <ServiceTabs route={router.route} onNavigate={router.navigate} />
+      {service === undefined || visitedAgent ? (
+        <div className="service-shell__body" hidden={service !== undefined}>
+          <AgentApp
+            router={{ ...router, route: service === undefined ? router.route : lastAgentRoute }}
+          />
+        </div>
+      ) : null}
+      {visitedServices.map((visited) => (
+        <div className="service-shell__body" key={visited} hidden={service !== visited}>
+          <ServicePage service={visited}>
+            {(session, denied) =>
+              visited === 'image-manager' ? (
+                <ImageManager session={session} denied={denied} />
+              ) : (
+                <EventGateway session={session} denied={denied} />
+              )
+            }
+          </ServicePage>
+        </div>
+      ))}
+    </div>
+  );
+}
+function AgentApp({ router }: { readonly router: AppRouter }) {
+  const { state, signIn, signOut } = useAuth();
   const client = useCmaClient();
   const creation = useCreationClient();
   const publicClient = usePublicClient();
