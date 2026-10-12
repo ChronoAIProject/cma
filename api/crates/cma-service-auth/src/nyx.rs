@@ -10,13 +10,13 @@ use std::{
 use axum::http::{header::AUTHORIZATION, HeaderMap};
 use serde::Deserialize;
 
-use crate::{model::bounded_text, permissions};
+use crate::{bounded_text, Service};
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum AuthError {
-    #[error("valid Sandbox Manager authorization is required")]
+    #[error("valid service authorization is required")]
     Unauthenticated,
-    #[error("Sandbox Manager permission is required")]
+    #[error("service permission is required")]
     Forbidden,
     #[error("NyxID authorization is temporarily unavailable")]
     Unavailable,
@@ -29,11 +29,16 @@ pub struct Principal {
     pub subject: String,
     pub permissions: Vec<String>,
     pub expires_at: u64,
+    pub(crate) admin_permission: String,
 }
 
 impl Principal {
     pub fn require(&self, permission: &str) -> Result<(), AuthError> {
-        if permissions::allows(&self.permissions, permission) {
+        if self
+            .permissions
+            .iter()
+            .any(|p| p == permission || p == &self.admin_permission)
+        {
             Ok(())
         } else {
             Err(AuthError::Forbidden)
@@ -43,12 +48,13 @@ impl Principal {
 
 #[derive(Clone)]
 pub struct NyxIdAuth {
-    http: reqwest::Client,
-    issuer: String,
+    pub(crate) http: reqwest::Client,
+    pub(crate) issuer: String,
     endpoint: url::Url,
-    resource: String,
-    client_id: String,
-    client_secret: Arc<str>,
+    pub(crate) resource: String,
+    pub(crate) client_id: String,
+    pub(crate) client_secret: Arc<str>,
+    pub(crate) service: Service,
 }
 
 #[derive(Deserialize)]
@@ -65,7 +71,7 @@ struct Introspection {
 impl NyxIdAuth {
     pub fn new(
         issuer: &str,
-        resource: &str,
+        service: Service,
         client_id: &str,
         client_secret: String,
     ) -> Result<Self, AuthError> {
@@ -84,7 +90,12 @@ impl NyxIdAuth {
         {
             return Err(AuthError::Configuration);
         }
-        let resource_url = url::Url::parse(resource).map_err(|_| AuthError::Configuration)?;
+        let resource = format!(
+            "{}/api/v1/proxy/s/{}",
+            issuer.trim_end_matches('/'),
+            service.slug()
+        );
+        let resource_url = url::Url::parse(&resource).map_err(|_| AuthError::Configuration)?;
         // NyxID resource identifiers are its own service proxy URIs. A different
         // issuer or service cannot become an alias of this service by accident.
         if resource_url.origin() != url.origin()
@@ -92,7 +103,7 @@ impl NyxIdAuth {
             || resource_url.fragment().is_some()
             || !resource_url.username().is_empty()
             || resource_url.password().is_some()
-            || resource_url.path() != "/api/v1/proxy/s/cma-sandbox-manager"
+            || resource_url.path() != format!("/api/v1/proxy/s/{}", service.slug())
         {
             return Err(AuthError::Configuration);
         }
@@ -108,12 +119,16 @@ impl NyxIdAuth {
             endpoint: url
                 .join("/oauth/introspect")
                 .map_err(|_| AuthError::Configuration)?,
-            resource: resource.to_owned(),
+            resource,
+            service,
             client_id: client_id.to_owned(),
             client_secret: client_secret.into(),
         })
     }
 
+    // NyxID's existing personal tokens may have no RFC 8707 resource restriction.
+    // They still require this service's explicit permission; a token restricted
+    // to another service is never accepted. This preserves admitted AM Bot work.
     pub async fn authenticate(&self, headers: &HeaderMap) -> Result<Principal, AuthError> {
         if headers.get_all(AUTHORIZATION).iter().count() != 1 {
             return Err(AuthError::Unauthenticated);
@@ -164,10 +179,10 @@ impl NyxIdAuth {
         if observation.iss.as_deref() != Some(&self.issuer)
             || observation.token_type.as_deref() != Some("access")
             || observation.exp.is_none_or(|exp| exp <= now)
-            || !observation
+            || observation
                 .resource
                 .as_ref()
-                .is_some_and(|resources| resources.contains(&self.resource))
+                .is_some_and(|resources| !resources.contains(&self.resource))
         {
             return Err(AuthError::Unauthenticated);
         }
@@ -179,8 +194,18 @@ impl NyxIdAuth {
         Ok(Principal {
             subject,
             permissions,
+            admin_permission: format!("{}:admin", self.service.permission_prefix()),
             expires_at: observation.exp.ok_or(AuthError::Unauthenticated)?,
         })
+    }
+}
+
+impl std::fmt::Debug for NyxIdAuth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NyxIdAuth")
+            .field("issuer", &self.issuer)
+            .field("resource", &self.resource)
+            .finish_non_exhaustive()
     }
 }
 
@@ -191,7 +216,7 @@ mod tests {
     fn auth() -> NyxIdAuth {
         NyxIdAuth::new(
             "https://identity.example",
-            "https://identity.example/api/v1/proxy/s/cma-sandbox-manager",
+            Service::ImageManager,
             "sandbox-client",
             "unused".into(),
         )
@@ -206,10 +231,23 @@ mod tests {
             exp: Some(200),
             token_type: Some("access".into()),
             resource: Some(vec![
-                "https://identity.example/api/v1/proxy/s/cma-sandbox-manager".into(),
+                "https://identity.example/api/v1/proxy/s/cma-image-manager".into(),
             ]),
-            permissions: Some(vec![permissions::CREATE.into()]),
+            permissions: Some(vec!["cma-im:images:create".into()]),
         }
+    }
+
+    #[test]
+    fn unrestricted_personal_token_still_requires_service_permission() {
+        let auth = auth();
+        let mut claim = evidence();
+        claim.resource = None;
+        claim.permissions = Some(vec!["cma:admin".into(), "cma-eg:admin".into()]);
+        let principal = auth.validate(claim, 100).unwrap();
+        assert_eq!(
+            principal.require("cma-im:images:read"),
+            Err(AuthError::Forbidden)
+        );
     }
 
     #[test]
@@ -217,7 +255,7 @@ mod tests {
         let auth = auth();
         auth.validate(evidence(), 100)
             .unwrap()
-            .require(permissions::CREATE)
+            .require("cma-im:images:create")
             .unwrap();
         for field in [
             "active",
@@ -249,14 +287,14 @@ mod tests {
             );
         }
         let mut claim = evidence();
-        claim.resource = None;
+        claim.resource = Some(vec![]);
         assert!(auth.validate(claim, 100).is_err());
         let mut claim = evidence();
         claim.permissions = Some(vec!["cma-am:admin".into()]);
         assert_eq!(
             auth.validate(claim, 100)
                 .unwrap()
-                .require(permissions::CREATE),
+                .require("cma-im:images:create"),
             Err(AuthError::Forbidden)
         );
     }
