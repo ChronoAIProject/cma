@@ -172,6 +172,7 @@ export function Progress({
       </Presence>
       {blocked?.type === 'connection_required' ? (
         <ConnectionWizard
+          presentation="dialog"
           target={connectionTarget}
           onReady={progress.refresh}
           onCancel={() => back(record)}

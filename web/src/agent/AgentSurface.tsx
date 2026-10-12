@@ -307,6 +307,8 @@ export function AgentSurface({
       {verified === undefined && !readOnly ? (
         <ConnectionWizard
           target={{ type: 'agent', id: agentId }}
+          presentation="dialog"
+          expectedOwner={viewerId}
           onReady={setVerified}
           onCancel={() => onNavigate({ kind: 'home' })}
         />

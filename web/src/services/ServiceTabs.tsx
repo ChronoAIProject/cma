@@ -1,6 +1,6 @@
 import type { AppRoute } from '../routing/routes';
 import { routePath } from '../routing/routes';
-import markMarkup from '../assets/brand/cma-mark-ink.svg?raw';
+import markMarkup from '../assets/brand/cma-mark.svg?raw';
 import './Services.css';
 
 const markHtml = { __html: markMarkup };

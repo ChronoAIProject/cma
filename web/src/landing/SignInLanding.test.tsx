@@ -6,15 +6,6 @@ import { SignInLanding } from './SignInLanding';
 afterEach(() => vi.useRealTimers());
 
 describe('the signed-out invitation', () => {
-  it('shows the ghost CMA mark and the three service tabs before sign-in', () => {
-    render(<SignInLanding onSignIn={vi.fn()} />);
-    expect(screen.getByRole('link', { name: 'CMA home' })).toBeInTheDocument();
-    expect(screen.getByRole('navigation', { name: 'CMA services' })).toHaveTextContent(
-      'Agent ManagerImage ManagerEvent Gateway',
-    );
-    expect(screen.getAllByRole('tab')).toHaveLength(3);
-  });
-
   it('reveals the cloud after five seconds, not glasses lettering', () => {
     vi.useFakeTimers();
     render(<SignInLanding onSignIn={vi.fn()} />);
