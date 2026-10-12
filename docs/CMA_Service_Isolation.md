@@ -77,6 +77,14 @@ retirement retains their registry blobs for already admitted Agents. The Gateway
 schema is `eg_channel_records`, `eg_schema_migrations`, `eg_auth_sessions`.
 AM's full exact collection catalog is owned by `store/isolation.rs`; the legacy
 `gateway_channel_records` collection is excluded from its runtime grants.
+Agent Manager no longer initializes or serves legacy channel, connection or
+interaction record storage. Event Gateway uses its own `eg_channel_records` store;
+the old adapters and protocol fixtures are retained only for migration regression
+coverage. Provider bindings remain Agent Manager resources.
+Agent Manager verifies its effective runtime grants before any startup DDL. The
+restricted bootstrap contract opens the full production store assembly twice,
+including Bot setups and Event Worker definitions, while reads of all three
+legacy Gateway collections remain forbidden.
 The startup migration of `binding_conversations` alone requires `dropIndex`;
 that action is refused on every other collection. The catalog includes runtime
 retained availability, provider tool opens, actor links and lifecycle operations

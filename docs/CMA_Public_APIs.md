@@ -17,14 +17,18 @@ provide request, replay and error semantics. CMAEG has a separate origin and
 | Sharing and organizations | List accessible resources and manage supported resource grants under current authority. |
 | Bots | Create and manage owner Bots through CMAEG, inspect progress, test, enable, disable, rotate credentials and delete. |
 | Triggers and Launches | Publish visitor entry points, placements and embeds; admit and observe visitor-owned work and service connections. |
-| Provider and gateway | Manage CMAEG bindings and encrypted records; admit provider turns and retrieve immutable full event context. |
+| Provider and gateway | Manage CMAEG provider bindings; admit provider turns and retrieve immutable full event context. |
 | Operations | Manage platform settings, defaults and authorized inventory; inspect activity and conformance. |
 | Auth and discovery | Browser sign-in/session/logout, OpenAPI, conformance and Agent-card discovery. |
 
 Authentication is required except for explicitly anonymous discovery, public
 marketplace and Trigger entry operations. Published does not mean anonymously
-writable. Provider management and gateway records require dedicated service
+writable. Provider management requires dedicated service
 capabilities; a personal bearer does not imply permission to call every route.
+
+The legacy Gateway channel/connection/interaction storage endpoints are retired
+from Agent Manager. Event Gateway owns that persistence directly; compatibility
+SDK methods and fixtures remain for migration testing.
 
 CMA PTY, MCP execution and A2A execution currently return typed unsupported
 responses. Their discovery/refusal routes are listed for completeness. CMAEG’s
@@ -32,7 +36,7 @@ native MCP event tools are implemented independently.
 
 ## Exact method and path inventory
 
-The generated OpenAPI document contains **176 operations across 139 paths**.
+The generated OpenAPI document contains **180 operations across 144 paths**.
 Each row below names a public method and path; schemas, authentication schemes,
 request parameters and error contracts are in `GET /openapi.json`. Disabled
 features and typed unsupported operations are included because they remain part
@@ -49,7 +53,7 @@ of the public contract.
 | agents | 17 |
 | bots | 9 |
 | discovery | 2 |
-| event gateway | 4 |
+| event gateway | 0 |
 | event worker profiles | 6 |
 | profile authoring | 4 |
 | profile marketplace | 3 |
@@ -183,14 +187,6 @@ of the public contract.
 
 | Method and path |
 | --- |
-| `GET /api/v1/gateway/channel-records` |
-| `DELETE /api/v1/gateway/channel-records/{record_id}` |
-| `GET /api/v1/gateway/channel-records/{record_id}` |
-| `PUT /api/v1/gateway/channel-records/{record_id}` |
-| `GET /api/v1/gateway/connection-records` |
-| `DELETE /api/v1/gateway/connection-records/{record_id}` |
-| `GET /api/v1/gateway/connection-records/{record_id}` |
-| `PUT /api/v1/gateway/connection-records/{record_id}` |
 
 ### event worker profiles
 
@@ -396,7 +392,7 @@ historical revisions. The complete configuration is returned in `profile`.
 
 ## Supplemental browser, discovery and operational routes
 
-These router surfaces supplement the 176 OpenAPI operations above. Browser
+These router surfaces supplement the 180 OpenAPI operations above. Browser
 identity and connection flows retain their cookie, redirect and same-origin
 requirements; they are not generic resource CRUD. `GET /auth/signup-options`
 and the public Trigger embed routes are already included in the OpenAPI table.

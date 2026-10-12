@@ -140,7 +140,14 @@ response is exactly `{ email_signup, social_providers, invite_code_required,
 register_available }`. CMA reports registration availability but never creates
 NyxID users or roles. Anonymous preview/badge GETs and OAuth callbacks are inert.
 
-## Event Gateway Channel Records
+## Legacy Event Gateway storage protocol
+
+The three `/api/v1/gateway/*-records` namespaces below are retired from Agent
+Manager deployment and its OpenAPI. Event Gateway now owns its sealed storage in
+`eg_channel_records`, with an explicit legacy import command. These protocol
+descriptions and the SDK compatibility methods remain for older installations
+and migration tests; they are not endpoints on the current Agent Manager. Their
+eleven operations are classified `legacy_gateway` in the shared contract corpus.
 
 The `/api/v1/gateway/channel-records` routes store opaque, base64-encoded CMAEG
 channel-definition blobs for callers with the NyxID permission
