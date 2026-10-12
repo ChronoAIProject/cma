@@ -17,18 +17,24 @@ procedure to apply changes. Configuration is operator-owned.
 | `CMAEG_PUBLIC_URL` | origin URL | Required | Externally reachable origin used in channel callback and tool URLs, without a trailing slash. HTTPS, or loopback HTTP for local tests. |
 | `CMAEG_MASTER_KEYS` | secret string | Required unless file source is set | Kubernetes Secret environment value containing `kid:base64key[,kid:base64key]`; each key decodes to 32 bytes and the first key is current. |
 | `CMAEG_MASTER_KEYS_FILE` | file path | Optional alternative | Compatibility file source for the same key ring; mutually exclusive with `CMAEG_MASTER_KEYS`. |
-| `CMAEG_CMA_BASE_URL` | origin URL | Required | CMA record-store origin. HTTPS, or loopback/`.svc` HTTP; no credentials, path, query, fragment, or trailing slash. |
+| `CMAEG_CMA_BASE_URL` | origin URL | Required | Stable origin sealed into channel pointers; retain it through the DB split so existing channel IDs remain valid. Records are read from Gateway's MongoDB. HTTPS, or loopback/`.svc` HTTP; no credentials, path, query, fragment, or trailing slash. |
 | `CMAEG_CMA_SERVICE_TOKEN` | secret string | Required unless file source is set | Kubernetes Secret environment value authenticating inbound gateway rekey. Also used for outbound CMA authentication when the service-account client pair is absent. |
 | `CMAEG_CMA_CLIENT_ID` | string | Optional pair | Dedicated NyxID service-account client ID, injected from Kubernetes Secret. Must be set together with its client secret. |
-| `CMAEG_CMA_CLIENT_SECRET` | secret string | Optional pair | Exchanges renewable outbound CMA tokens at the configured NyxID origin using `client_credentials` and `openid roles`. The account role grants `cma:gateway:records` and `cma:provider:bindings`. |
+| `CMAEG_CMA_CLIENT_SECRET` | secret string | Optional pair | Exchanges renewable outbound provider-management tokens at the configured NyxID origin using `client_credentials` and `openid roles`. The account role grants `cma:provider:bindings`; it needs no Agent Manager record-store access. |
 | `CMAEG_CMA_SERVICE_TOKEN_FILE` | file path | Optional alternative | Compatibility file source for the same bearer; mutually exclusive with `CMAEG_CMA_SERVICE_TOKEN`. |
 | `CMAEG_NYXID_BASE_URL` | origin URL | Required | NyxID origin for creator authentication, with the same URL restrictions as the CMA origin. |
+| `CMAEG_MONGODB_URI` | secret string | Required | Gateway-only runtime DB credential; separate migrator credential for `--migrate` and `--import-legacy-records`. Broad or foreign collection grants fail startup. |
+| `CMAEG_MONGODB_DATABASE` | string | Required | Gateway schema database; its `eg_` collections may share Mongo infrastructure with other services. |
+| `CMAEG_NYXID_CLIENT_ID` | string | Required | Independent Gateway browser OAuth and introspection client, with `cma-eg:` roles and permissions. |
+| `CMAEG_NYXID_CLIENT_SECRET` | secret string | Required | Secret for the independent Gateway NyxID client; distinct from the outbound CMA service account. |
+| `CMAEG_WEB_ORIGIN` | HTTPS origin | Required | Unified web origin, used for OAuth callback and browser mutation origin checks. |
+| `CMAEG_COOKIE_KEY_FILE` | file path | Required | Mounted file containing exactly 32 raw key bytes for sealed browser session custody in `eg_auth_sessions`. Kubernetes Secret `data` values encode those bytes as base64 before mounting. |
 | `CMAEG_TOOLS_NYXID_SLUG` | string | `cmaeg` | NyxID service slug in the provider tools advertisement, matching `[a-z0-9_]{1,32}`. |
 | `CMAEG_CHANNEL_CACHE_TTL_MS` | positive integer, ms | `60000` | Fresh lifetime of a resolved channel on this replica. |
-| `CMAEG_CHANNEL_NEGATIVE_TTL_MS` | positive integer, ms | `10000` | Lifetime of a cached CMA record-not-found result; expired negative entries are never served. |
+| `CMAEG_CHANNEL_NEGATIVE_TTL_MS` | positive integer, ms | `10000` | Lifetime of a cached Gateway record-not-found result; expired negative entries are never served. |
 | `CMAEG_CHANNEL_CACHE_MAX` | positive integer | `50000` | Maximum positive and negative channel entries on this replica. |
 | `CMAEG_RESTORE_RATE_PER_MINUTE` | positive integer | `10` | Per-channel restore refill rate, with an initial burst of three. |
-| `CMAEG_RESTORE_TIMEOUT_MS` | positive integer, ms | `800` | Total cold-restore deadline, inside the record client's 1.5-second HTTP deadline. |
+| `CMAEG_RESTORE_TIMEOUT_MS` | positive integer, ms | `800` | Total cold-restore deadline, including the Gateway MongoDB record read. |
 | `CMAEG_JWKS_TTL_MS` | positive integer, ms | `600000` | Fresh lifetime of relay signing keys; at most one refresh every five seconds per retained URL. |
 | `CMAEG_INGRESS_MAX_BODY` | positive integer | `1048576` | Callback body limit, configurable from 1 byte through 16 MiB. |
 | `CMAEG_INGRESS_INFLIGHT` | positive integer | `256` | Concurrent callbacks per replica; overflow returns immediate 429 with `Retry-After: 1`. |
@@ -201,8 +207,9 @@ Use native Kubernetes Secrets, injected as environment variables through explici
 `secretKeyRef` entries. `cmaeg-master-keys` supplies `CMAEG_MASTER_KEYS`, and
 `cmaeg-cma-service-token` supplies `CMAEG_CMA_SERVICE_TOKEN`,
 `CMAEG_CMA_CLIENT_ID`, and `CMAEG_CMA_CLIENT_SECRET`. Populate both Secrets
-out of band. `secret.yaml` contains names and key contracts only, never values.
-There are no credential file mounts, CSI resources, or Google Secret Manager
+out of band. `cmaeg-auth` supplies the independent Mongo and NyxID credentials
+and mounts the cookie encryption key. `secret.yaml` contains names and key
+contracts only, never values. There are no CSI resources or Google Secret Manager
 dependencies for the gateway. Its service account has no RBAC grants and does not
 mount a Kubernetes API token. Existing `_FILE` inputs remain optional for other
 installations; setting both sources for a credential fails startup.
@@ -210,7 +217,7 @@ installations; setting both sources for a credential fails startup.
 Secrets are read at process startup. Preserve the key ring across pod replacements.
 Production supplies the service-account client pair because NyxID access tokens
 expire after one hour. CMAEG obtains a token before opening its listener and
-shares its cache across records and provider management. Requests renew the token
+uses its cache for provider management. Requests renew the token
 within the final minute of its lifetime; concurrent callers share one exchange.
 A failed refresh can use the existing token only until expiry, and retries are
 bounded. Exchange responses and credentials are never logged, and redirects are
@@ -221,8 +228,9 @@ renewable authentication is enabled. It is not sent to CMA in that mode. Static
 outbound bearer configuration remains available for other installations; those
 operators must renew it and restart before expiry. Client-secret rotation also
 requires a Secret update and a gateway rollout. Retain the same service-account
-subject so stored CMA records and provider bindings remain accessible. Grant the
-account only the two gateway permissions. Register
+subject so provider bindings remain accessible. Grant the account only the
+provider-binding permission. Gateway record authority comes exclusively from
+its own Mongo credential. Register
 the tools service under `CMAEG_TOOLS_NYXID_SLUG` with the four protocol operation
 IDs. Configure provider paths explicitly and retain provider/binding ownership.
 A channel's bot agent key supplies provider and tool authority; a relay user token
@@ -232,7 +240,7 @@ The deployment permits a rolling replacement with one surge pod and zero
 unavailable pods. Its 615-second termination grace covers the five-second
 load-balancer propagation delay, the 600-second application drain, and teardown.
 Apply ConfigMap and populated Secrets before starting the Deployment. Confirm
-`/healthz`, `/readyz`, accepted HTTPRoute/health policy status, authenticated CMA
+`/healthz`, `/readyz`, accepted HTTPRoute/health policy status, authenticated Gateway
 record access, and the public HTTPS route after rollout. A ready gateway alone
 does not prove a deployed Telegram round trip.
 
@@ -244,7 +252,7 @@ can be lost if the deadline expires. A rollout does not stop provider Sandboxes;
 the provider remains responsible for their durable lifecycle and admission.
 
 For a restore failure, inspect `cmaeg_restore_duration_seconds` outcomes and
-`cmaeg_refusals_total`, then check CMA reachability, the injected service token,
+`cmaeg_refusals_total`, then check Gateway Mongo reachability and its credential,
 record ownership, and the retained key IDs. Repeated misses can consume the
 per-channel restore burst; wait for its refill instead of raising the global
 limits first. Invalid records fail closed. Positive stale entries can be served

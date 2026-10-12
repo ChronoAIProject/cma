@@ -171,7 +171,7 @@ trap cleanup EXIT HUP INT TERM
 
 # Validate every archive and its authoritative root before looking at or
 # changing the destination. The copy phase consumes only these checked files.
-for component in api web runtime; do
+for component in api web runtime cmaeg image-manager; do
   base="cma-${component}-${version}-${revision}"
   metadata="${component}/${base}.json"
   archive="${component}/${base}.oci.tar"
@@ -241,7 +241,7 @@ done
 
 # Complete the six-tag preflight before the first copy. An existing equal tag
 # is an idempotent success; any mismatch aborts the entire import unchanged.
-for component in api web runtime; do
+for component in api web runtime cmaeg image-manager; do
   destination_repository="${destination_prefix}/cma-${component}"
   tags="$tmp_dir/${component}-tags.json"
   tags_error="$tmp_dir/${component}-tags.error"
@@ -281,7 +281,7 @@ for component in api web runtime; do
   done
 done
 
-for component in api web runtime; do
+for component in api web runtime cmaeg image-manager; do
   base="cma-${component}-${version}-${revision}"
   archive="${component}/${base}.oci.tar"
   destination_repository="${destination_prefix}/cma-${component}"

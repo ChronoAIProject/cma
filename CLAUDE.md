@@ -125,6 +125,14 @@ infra/cmaeg/serviceaccount.yaml
 infra/cmaeg/httproute.yaml
 infra/cmaeg/healthcheckpolicy.yaml
 infra/cmaeg/gcpbackendpolicy.yaml
+infra/image-manager/Dockerfile
+infra/image-manager/configmap.yaml
+infra/image-manager/deployment.yaml
+infra/image-manager/gcpbackendpolicy.yaml
+infra/image-manager/healthcheckpolicy.yaml
+infra/image-manager/secret.yaml
+infra/image-manager/service.yaml
+infra/image-manager/serviceaccount.yaml
 infra/runtime/Dockerfile
 infra/storage/home-seed.yaml
 infra/storage/home-template.yaml
@@ -164,7 +172,7 @@ infrastructure this repository consumes rather than owns.
 
 `infra/runtime/` is an image and nothing else. It carries no `deployment.yaml`, no `service.yaml` and no config, and that absence is the point: the Sandbox pod is scheduled by the sandbox provider, not by this repository. CMA hands the provider an image URI and an entrypoint and gets an isolated runtime back. A Deployment here would mean the control plane was scheduling agent workloads itself, which §1 forbids.
 
-`infra/cmaeg/` is the CMA Event Gateway, a separate stateless service in the
+`infra/cmaeg/` is the CMA Event Gateway, a separate service with its own sealed-record database in the
 same namespace. CMA and CMAEG each run one replica. Kubernetes Secrets inject
 the gateway's master keys and CMA service credential as environment variables.
 
@@ -188,7 +196,8 @@ api/crates/
   cma/               binary: composition, persistence and production adapters
   cmaeg-core/        pure CMA Event Gateway protocol library
   cmaeg/             CMA Event Gateway service binary
-  cma-sandbox-manager/ independent generic environment authority and persistence
+  cma-image-manager/ independent image build, catalog and sharing service
+  cma-service-auth/  technical NyxID transport with per-service sessions
 ```
 
 ### Layer 1: public interfaces
@@ -331,26 +340,29 @@ A dependency edge not in this list is a CI failure, not a review comment.
 
 ### Service extraction in progress
 
-The authorized service split is specified in `docs/CMA_Service_Split.md` and
-`docs/CMA_Service_Isolation.md`. `cma-sandbox-manager` owns generic container
-environment state and its `sm_` collections. It must not depend on `cma`, the
-Agent domain layers, or CMAEG; it must not open their collections. Database
-runtime and migration identities are separate, explicitly scoped to its own
-collections, and verified against effective Mongo privileges at startup.
+The revised authorized split is Event Gateway, Agent Manager and Image Manager,
+specified in `docs/CMA_Service_Split.md`. There is no CMA Sandbox Manager.
+Agent Manager integrates directly with infra-owned agent-sandbox CRDs/controllers,
+including resources, persistent mounts and exact CMA Sandbox/Pod UID authority.
+It never adopts, pauses or reclaims another application's workloads.
 
-Sandbox Manager accepts user-selected container images and commands. Codex,
-the current runtime supervisor, WebSocket bridges, NyxID CLI and Chromium are
-one caller's environment configuration, never prerequisites for all Sandboxes.
-Repository cloning, Agent homes, models, prompts, ACP and conversation recovery
-remain Agent Manager responsibilities. The existing deployed monolith retains
-its current contracts until an explicitly verified cutover; the new crate's
-presence does not declare that the service split or deployment is complete.
+Image Manager owns builds, catalog versions, sharing and image lifecycle in
+`asia-northeast1-docker.pkg.dev/chronoai-501608/chronoai-registry`, using its own
+Google identity. Each service has independent NyxID permissions, schema, runtime
+DB credentials and migrations. No cross-service collection access or domain/store
+implementation dependency is allowed. The old local `cma-sandbox-manager`
+foundation is superseded and must not become a fourth deployment.
+
+Agent Manager retains repository setup, Agent homes, models, prompts, ACP and
+runtime/conversation recovery. Existing OpenSandbox resources retain their old
+provider authority until verified migration. New crates alone do not declare the
+split or deployment complete; live continuity remains mandatory.
 
 ### CMAEG crates
 
 CMAEG lives in this repository: `api/crates/cmaeg-core` (pure protocol library,
 depends on no other crate of this workspace) and `api/crates/cmaeg` (the service
-binary, depends only on `cmaeg-core` and third-party crates). It is a separate
+binary, depends only on `cmaeg-core`, the technical `cma-service-auth` library and third-party crates). It is a separate
 deployment in namespace `chrono-bot` with manifests under `infra/cmaeg/`.
 Nothing in `layer1-public`, `layer2-core`, `layer3-adapter`, `layer4-runtime` or
 `cma` may depend on the CMAEG crates, and CMAEG crates may not depend on them;
@@ -461,7 +473,7 @@ owner to manually restart an Agent after deployment.
 
 **Cross-cutting**
 - Secret scanning — **gitleaks**. No credential, secret, or sensitive value may exist anywhere in the repository, including tests and fixtures. **Nothing may be allowlisted or bypassed.** If a test string trips gitleaks, change the string — never add an exception.
-- Docker build for all three images — `api`, `web`, `runtime`
+- Docker build for all five images — `api`, `web`, `runtime`, `cmaeg`, `image-manager`
 - Image vulnerability scan
 - Manifest validation — `kubeconform`, so malformed YAML or a bad `apiVersion` fails in CI rather than at `kubectl apply`
 - Manifest policy — `kube-linter`: resource requests and limits set, liveness and readiness probes present, no `:latest` tag, non-root user, read-only root filesystem
@@ -499,8 +511,8 @@ That section, and only that section, becomes the annotated tag message and the r
 
 The merge is the release. Nothing is tagged or published before it, and nothing further is required after it:
 
-- The three images are built, scanned and pushed to `ghcr.io/chronoaiproject/cma-{api,web,runtime}`, tagged with the version and with the short commit SHA. The intended contract is one assignment per tag, backed by an audited exclusive-writer ACL and package history. GHCR exposes no tag compare-and-swap, so stale absence reads on a sequential rerun remain a residual overwrite risk; matching labels and platform shape are validation, not provenance.
-- After all three current GHCR digests pass the writer/history verification, each exact root digest is exported as
+- The five images are built, scanned and pushed to `ghcr.io/chronoaiproject/cma-{api,web,runtime,cmaeg,image-manager}`, tagged with the version and with the short commit SHA. The intended contract is one assignment per tag, backed by an audited exclusive-writer ACL and package history. GHCR exposes no tag compare-and-swap, so stale absence reads on a sequential rerun remain a residual overwrite risk; matching labels and platform shape are validation, not provenance.
+- After all five current GHCR digests pass the writer/history verification, each exact root digest is exported as
   an OCI archive plus JSON metadata in a one-day Actions transfer artifact.
   These unencrypted archives are an additional, ephemeral distribution
   surface: anyone who can download this internal repository's Actions

@@ -1,5 +1,9 @@
 # CMA Sandbox Manager API 草案
 
+> Superseded on 2026-10-12. There is no CMA Sandbox Manager. Agent Manager
+> directly integrates with infra-owned agent-sandbox; Image Manager is the third
+> service. This document is historical. See [current architecture](CMA_Service_Split.md).
+
 状态：待定稿的目标契约，2026-10-12；尚未实现。见
 [服务拆分](CMA_Service_Split.md) 和 [身份、数据库及统一前端](CMA_Service_Isolation.md)。
 本 API 面向统一 CMA 前端的 Sandbox Manager 入口和任意获得授权的应用、CLI。
