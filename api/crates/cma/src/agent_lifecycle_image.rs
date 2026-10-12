@@ -59,12 +59,8 @@ impl ImageResolver for ImageManagerResolver {
         delegated_credential: Option<&str>,
         image: &AgentLifecycleImageReference,
     ) -> Result<String, AgentLifecycleProvisioningError> {
-        let credential = delegated_credential.ok_or_else(|| {
-            AgentLifecycleProvisioningError::ConnectionRequired {
-                services: vec!["cma-image-manager".into()],
-                connection_target: json!({"type":"image_manager","image_id":image.id}),
-            }
-        })?;
+        let credential =
+            delegated_credential.ok_or(AgentLifecycleProvisioningError::SignInRequired)?;
         let mut url = reqwest::Url::parse(&self.base_url)
             .map_err(|_| AgentLifecycleProvisioningError::Unavailable)?;
         {
@@ -93,19 +89,7 @@ impl ImageResolver for ImageManagerResolver {
             .await
             .map_err(|_| AgentLifecycleProvisioningError::Unavailable)?;
         let status = response.status();
-        let bytes = response
-            .bytes()
-            .await
-            .map_err(|_| AgentLifecycleProvisioningError::Unavailable)?;
-        if bytes.len() > 64 * 1024 {
-            return Err(AgentLifecycleProvisioningError::Unavailable);
-        }
-        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-            return Err(AgentLifecycleProvisioningError::ConnectionRequired {
-                services: vec!["cma-image-manager".into()],
-                connection_target: json!({"type":"image_manager","image_id":image.id,"version":version}),
-            });
-        }
+        require_image_authority(status)?;
         if status == reqwest::StatusCode::NOT_FOUND {
             return Err(AgentLifecycleProvisioningError::Invalid(
                 "the selected Image Manager image version was not found".into(),
@@ -114,7 +98,7 @@ impl ImageResolver for ImageManagerResolver {
         if !status.is_success() {
             return Err(AgentLifecycleProvisioningError::Unavailable);
         }
-        let resolved: ResolvedImage = serde_json::from_slice(&bytes)
+        let resolved: ResolvedImage = serde_json::from_slice(&bounded_body(response).await?)
             .map_err(|_| AgentLifecycleProvisioningError::Unavailable)?;
         let reference = resolved
             .reference
@@ -164,19 +148,7 @@ impl ImageManagerResolver {
             .await
             .map_err(|_| AgentLifecycleProvisioningError::Unavailable)?;
         let status = response.status();
-        let bytes = response
-            .bytes()
-            .await
-            .map_err(|_| AgentLifecycleProvisioningError::Unavailable)?;
-        if bytes.len() > 64 * 1024 {
-            return Err(AgentLifecycleProvisioningError::Unavailable);
-        }
-        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-            return Err(AgentLifecycleProvisioningError::ConnectionRequired {
-                services: vec!["cma-image-manager".into()],
-                connection_target: json!({"type":"image_manager","image_id":image_id}),
-            });
-        }
+        require_image_authority(status)?;
         if status == reqwest::StatusCode::NOT_FOUND {
             return Err(AgentLifecycleProvisioningError::Invalid(
                 "the selected Image Manager image was not found".into(),
@@ -189,7 +161,7 @@ impl ImageManagerResolver {
         struct Page {
             items: Vec<ResolvedImage>,
         }
-        let page: Page = serde_json::from_slice(&bytes)
+        let page: Page = serde_json::from_slice(&bounded_body(response).await?)
             .map_err(|_| AgentLifecycleProvisioningError::Unavailable)?;
         page.items
             .into_iter()
@@ -207,6 +179,37 @@ impl ImageManagerResolver {
             })
     }
 }
+
+fn require_image_authority(
+    status: reqwest::StatusCode,
+) -> Result<(), AgentLifecycleProvisioningError> {
+    match status {
+        reqwest::StatusCode::UNAUTHORIZED => Err(AgentLifecycleProvisioningError::SignInRequired),
+        reqwest::StatusCode::FORBIDDEN => Err(AgentLifecycleProvisioningError::ImageAccessDenied),
+        _ => Ok(()),
+    }
+}
+
+async fn bounded_body(
+    mut response: reqwest::Response,
+) -> Result<Vec<u8>, AgentLifecycleProvisioningError> {
+    let mut body = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|_| AgentLifecycleProvisioningError::Unavailable)?
+    {
+        if chunk.len() > (64 * 1024_usize).saturating_sub(body.len()) {
+            return Err(AgentLifecycleProvisioningError::Unavailable);
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
+}
+
+#[cfg(test)]
+#[path = "agent_lifecycle_image_tests.rs"]
+mod tests;
 
 fn valid_immutable_image(value: &str) -> bool {
     let Some((name, digest)) = value.rsplit_once("@sha256:") else {

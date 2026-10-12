@@ -77,6 +77,10 @@ retirement retains their registry blobs for already admitted Agents. The Gateway
 schema is `eg_channel_records`, `eg_schema_migrations`, `eg_auth_sessions`.
 AM's full exact collection catalog is owned by `store/isolation.rs`; the legacy
 `gateway_channel_records` collection is excluded from its runtime grants.
+The startup migration of `binding_conversations` alone requires `dropIndex`;
+that action is refused on every other collection. The catalog includes runtime
+retained availability, provider tool opens, actor links and lifecycle operations
+so the same restricted credential can initialize and operate the actual stores.
 
 `cma --print-runtime-role`, `cmaeg --print-runtime-role` and
 `cma-image-manager --print-runtime-role` emit collection-scoped roles. The latter

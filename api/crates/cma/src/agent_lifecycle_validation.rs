@@ -148,7 +148,9 @@ pub(super) fn repository_location(
 pub(super) fn sandbox_error(error: SandboxServiceError) -> AgentLifecycleProvisioningError {
     match error {
         SandboxServiceError::Forbidden => AgentLifecycleProvisioningError::Forbidden,
-        SandboxServiceError::NameConflict | SandboxServiceError::SandboxOriginConflict => {
+        SandboxServiceError::NameConflict
+        | SandboxServiceError::SandboxOriginConflict
+        | SandboxServiceError::NotFound => {
             AgentLifecycleProvisioningError::Conflict(error.to_string())
         }
         SandboxServiceError::ProfileNotFound
@@ -235,4 +237,20 @@ pub(super) fn sandbox_name(agent_name: &str) -> String {
         end -= 1;
     }
     format!("{} sandbox", &agent_name[..end])
+}
+
+pub(super) fn profile_error(
+    error: layer2_core::profiles::ProfileCreationError,
+) -> AgentLifecycleProvisioningError {
+    use layer2_core::profiles::{store::ProfileStoreError, ProfileCreationError};
+    match error {
+        ProfileCreationError::Store(ProfileStoreError::Unavailable(_)) => {
+            AgentLifecycleProvisioningError::Unavailable
+        }
+        ProfileCreationError::Forbidden => AgentLifecycleProvisioningError::Forbidden,
+        ProfileCreationError::Conflict => {
+            AgentLifecycleProvisioningError::Conflict(error.to_string())
+        }
+        _ => AgentLifecycleProvisioningError::Invalid(error.to_string()),
+    }
 }

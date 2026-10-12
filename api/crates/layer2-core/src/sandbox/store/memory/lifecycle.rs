@@ -5,9 +5,9 @@ impl SandboxAdmissionStore for InMemorySandboxStore {
     async fn sandbox_admission_replay(
         &self,
         owner: &SubjectId,
-        launch_id: &str,
+        origin: &SandboxOrigin,
     ) -> Result<Option<SandboxAdmissionReplay>, SandboxStoreError> {
-        sandbox_admission_replay(&self.lock(), owner, launch_id)
+        sandbox_admission_replay(&self.lock(), owner, origin)
     }
 
     async fn admit_sandbox(
@@ -25,14 +25,15 @@ impl SandboxAdmissionStore for InMemorySandboxStore {
             fence.require_sandbox(binding, &admission.sandbox)?;
             resource_policy = binding.sandbox_resource_policy(&admission.sandbox)?;
         }
-        let replay_key = admission
-            .trigger_launch_id()
-            .map(|launch_id| (admission.sandbox.owner.clone(), launch_id.to_string()));
-        if let Some(replay) = replay_key
-            .as_ref()
-            .map(|(owner, launch_id)| sandbox_admission_replay(&state, owner, launch_id))
-            .transpose()?
-            .flatten()
+        let replay_key = admission.origin_key().map(|(kind, id)| {
+            (
+                admission.sandbox.owner.clone(),
+                kind.to_owned(),
+                id.to_owned(),
+            )
+        });
+        if let Some(replay) =
+            sandbox_admission_replay(&state, &admission.sandbox.owner, &admission.sandbox.origin)?
         {
             if replay.admission_fingerprint != admission.admission_fingerprint {
                 return Err(SandboxStoreError::SandboxOriginConflict);
@@ -208,26 +209,27 @@ fn allocated_name(state: &State, owner: &SubjectId, base: &str) -> String {
 fn sandbox_admission_replay(
     state: &State,
     owner: &SubjectId,
-    launch_id: &str,
+    origin: &SandboxOrigin,
 ) -> Result<Option<SandboxAdmissionReplay>, SandboxStoreError> {
-    let origin = SandboxOrigin::Trigger {
-        launch_id: launch_id.to_string(),
+    let Some((kind, id)) = origin.replay_key() else {
+        return Ok(None);
     };
     let matching_ids = state
         .sandboxes
         .values()
-        .filter(|sandbox| sandbox.owner == *owner && sandbox.origin == origin)
+        .filter(|sandbox| sandbox.owner == *owner && sandbox.origin == *origin)
         .map(|sandbox| &sandbox.id)
         .collect::<Vec<_>>();
-    let Some((sandbox_id, name, fingerprint)) = state
-        .sandbox_admissions
-        .get(&(owner.clone(), launch_id.to_string()))
+    let Some((sandbox_id, name, fingerprint)) =
+        state
+            .sandbox_admissions
+            .get(&(owner.clone(), kind.to_owned(), id.to_owned()))
     else {
         return if matching_ids.is_empty() {
             Ok(None)
         } else {
             Err(SandboxStoreError::Corrupt(
-                "trigger sandbox is missing admission replay metadata".into(),
+                "sandbox is missing admission replay metadata".into(),
             ))
         };
     };
@@ -236,7 +238,7 @@ fn sandbox_admission_replay(
     })?;
     if matching_ids.as_slice() != [sandbox_id]
         || sandbox.owner != *owner
-        || sandbox.origin != origin
+        || sandbox.origin != *origin
     {
         return Err(SandboxStoreError::Corrupt(
             "sandbox admission origin disagrees with its aggregate".into(),

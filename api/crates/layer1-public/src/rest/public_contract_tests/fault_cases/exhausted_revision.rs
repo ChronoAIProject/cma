@@ -54,7 +54,7 @@ delegate_port!(SandboxEventStore {
     fn sandbox_events(id: &SandboxId, after: u64, limit: u16) -> Vec<SandboxEvent>;
 });
 delegate_port!(SandboxAdmissionStore {
-    fn sandbox_admission_replay(owner: &SubjectId, launch_id: &str) -> Option<SandboxAdmissionReplay>;
+    fn sandbox_admission_replay(owner: &SubjectId, origin: &layer2_core::sandbox::SandboxOrigin) -> Option<SandboxAdmissionReplay>;
     fn admit_sandbox(admission: SandboxAdmission) -> SandboxAdmissionResult;
 });
 delegate_port!(SandboxTransactionStore {

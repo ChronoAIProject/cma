@@ -427,7 +427,8 @@ struct State {
     worktrees: HashMap<WorktreeId, Worktree>,
     agents: HashMap<AgentId, Agent>,
     agent_reuse_bindings: HashMap<(SubjectId, String), (AgentId, String)>,
-    sandbox_admissions: HashMap<(SubjectId, String), (SandboxId, SandboxAdmissionName, String)>,
+    sandbox_admissions:
+        HashMap<(SubjectId, String, String), (SandboxId, SandboxAdmissionName, String)>,
     sandbox_events: HashMap<SandboxId, Vec<SandboxEvent>>,
     agent_logs: HashMap<AgentId, Vec<AgentLogEntry>>,
     agent_message_checkpoints: HashMap<AgentId, AgentMessageCheckpoint>,

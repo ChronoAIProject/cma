@@ -26,6 +26,44 @@ struct ResolvedProfile {
 }
 
 impl SandboxService {
+    /// Trusted lifecycle worker admission. Replay precedes current capacity and
+    /// dependency checks so a lost response cannot allocate a second Sandbox.
+    pub async fn create_for_lifecycle(
+        &self,
+        caller: &Caller,
+        request: CreateSandbox,
+    ) -> Result<Sandbox, SandboxServiceError> {
+        require(caller, Capability::UseOwnSandboxes)?;
+        require(caller, Capability::CreateSandbox)?;
+        request.origin.validate()?;
+        if !matches!(request.origin, SandboxOrigin::Lifecycle { .. }) {
+            return Err(SandboxServiceError::InvalidOrigin);
+        }
+        let exact_name = request.name.clone().map(exact_name).transpose()?;
+        if let Some(replay) = self
+            .store
+            .sandbox_admission_replay(&caller.subject, &request.origin)
+            .await
+            .map_err(store_error)?
+        {
+            return reconcile_launch_replay(caller, &request, exact_name.as_deref(), replay);
+        }
+        let policy = self
+            .policy
+            .current_sandbox_policy()
+            .await
+            .map_err(policy_error)?;
+        let profile = self.read_profile(&caller.subject, &request, true).await?;
+        self.admit(
+            caller,
+            request,
+            profile,
+            policy.max_sandboxes_per_owner,
+            policy,
+        )
+        .await
+    }
+
     pub async fn create(
         &self,
         caller: &Caller,
@@ -60,13 +98,13 @@ impl SandboxService {
     ) -> Result<Sandbox, SandboxServiceError> {
         require_launch(caller, authority)?;
         request.origin.validate()?;
-        let SandboxOrigin::Trigger { launch_id } = &request.origin else {
+        let SandboxOrigin::Trigger { .. } = &request.origin else {
             return Err(SandboxServiceError::InvalidOrigin);
         };
         let exact_name = request.name.clone().map(exact_name).transpose()?;
         if let Some(replay) = self
             .store
-            .sandbox_admission_replay(&caller.subject, launch_id)
+            .sandbox_admission_replay(&caller.subject, &request.origin)
             .await
             .map_err(store_error)?
         {

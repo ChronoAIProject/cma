@@ -125,6 +125,19 @@ impl AgentAdmission {
     }
 
     pub fn materialize(&self, workspace: &Workspace) -> Result<AgentCreation, SandboxStoreError> {
+        if let AgentOrigin::Lifecycle { operation_id } = &self.origin {
+            let digest = content_digest(&self.origin)
+                .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
+            if operation_id.trim().is_empty()
+                || operation_id.len() > 128
+                || operation_id.chars().any(char::is_control)
+                || self.creation_key != format!("lifecycle:{digest}")
+            {
+                return Err(SandboxStoreError::InvalidTransaction(
+                    "lifecycle admission identity is invalid",
+                ));
+            }
+        }
         if self.workspace_id != workspace.id
             || self.owner != workspace.owner
             || self.creation_key.trim().is_empty()

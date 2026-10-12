@@ -74,6 +74,7 @@ impl InlineAgentLifecycle {
             return Ok(());
         };
         let lease = record.lease()?;
+        let attempts = record.attempts;
         let caller = Caller::new(
             SubjectId::new(record.owner),
             Authorization::new(record.input.capabilities),
@@ -87,6 +88,7 @@ impl InlineAgentLifecycle {
                 lease: lease.clone(),
                 existing_sandbox_id: record.sandbox_id,
                 existing_agent_id: record.agent_id,
+                actor: record.input.actor,
             },
         );
         tokio::pin!(work);
@@ -101,6 +103,9 @@ impl InlineAgentLifecycle {
         };
         match outcome {
             Ok(agent_id) => self.operations.succeed(&lease, &agent_id).await,
+            Err(AgentLifecycleProvisioningError::Unavailable) => {
+                self.operations.retry(&lease, attempts).await
+            }
             Err(AgentLifecycleProvisioningError::ConnectionRequired {
                 services,
                 connection_target,

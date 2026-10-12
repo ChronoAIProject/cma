@@ -2584,6 +2584,7 @@
         "connection_required",
         "forbidden",
         "not_authenticated",
+        "permission_denied",
         "temporarily_unavailable"
       ]
     },

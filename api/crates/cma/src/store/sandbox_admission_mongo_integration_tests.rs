@@ -30,7 +30,7 @@ async fn database(prefix: &str) -> (Client, String) {
     (client, name)
 }
 
-fn sandbox(id: &str, launch_id: &str) -> Sandbox {
+pub(super) fn sandbox(id: &str, launch_id: &str) -> Sandbox {
     let content = SandboxProfileContent {
         runtime_image: None,
         cpu_millis: 1_000,
@@ -126,7 +126,12 @@ async fn trigger_replay_survives_lifecycle_changes_and_precedes_zero_quota() {
         &doc! { "mode": "allocate", "value": "trigger-research" }
     );
     let replay = store
-        .sandbox_admission_replay(&SubjectId::new("owner"), "launch-replay")
+        .sandbox_admission_replay(
+            &SubjectId::new("owner"),
+            &SandboxOrigin::Trigger {
+                launch_id: "launch-replay".into(),
+            },
+        )
         .await
         .unwrap()
         .unwrap();
@@ -134,12 +139,22 @@ async fn trigger_replay_survives_lifecycle_changes_and_precedes_zero_quota() {
     assert_eq!(replay.name, first.name);
     assert_eq!(replay.admission_fingerprint, first.admission_fingerprint);
     assert!(store
-        .sandbox_admission_replay(&SubjectId::new("other"), "launch-replay")
+        .sandbox_admission_replay(
+            &SubjectId::new("other"),
+            &SandboxOrigin::Trigger {
+                launch_id: "launch-replay".into()
+            }
+        )
         .await
         .unwrap()
         .is_none());
     assert!(store
-        .sandbox_admission_replay(&SubjectId::new("owner"), "launch-missing")
+        .sandbox_admission_replay(
+            &SubjectId::new("owner"),
+            &SandboxOrigin::Trigger {
+                launch_id: "launch-missing".into()
+            }
+        )
         .await
         .unwrap()
         .is_none());
@@ -166,7 +181,12 @@ async fn trigger_replay_survives_lifecycle_changes_and_precedes_zero_quota() {
     );
     assert_eq!(
         store
-            .sandbox_admission_replay(&SubjectId::new("owner"), "launch-replay")
+            .sandbox_admission_replay(
+                &SubjectId::new("owner"),
+                &SandboxOrigin::Trigger {
+                    launch_id: "launch-replay".into()
+                }
+            )
             .await
             .unwrap()
             .unwrap()
@@ -221,7 +241,12 @@ async fn replay_discovery_rejects_hidden_query_field_drift_and_duplicate_identit
 
     assert!(matches!(
         store
-            .sandbox_admission_replay(&SubjectId::new("owner"), "launch-corrupt-origin")
+            .sandbox_admission_replay(
+                &SubjectId::new("owner"),
+                &SandboxOrigin::Trigger {
+                    launch_id: "launch-corrupt-origin".into()
+                }
+            )
             .await,
         Err(SandboxStoreError::Corrupt(_))
     ));
