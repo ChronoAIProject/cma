@@ -41,9 +41,9 @@ pass 'scanner build steps have valid POSIX shell syntax'
 
 image_definition=$(<"$dockerfile")
 contains "$image_definition" \
-  'FROM --platform=$BUILDPLATFORM golang:1.26.8-alpine3.23@sha256:33ce311e5eecedee48ec1b84419c1306e9fbd71009f0d5c3f2a6904b579c1ecc AS secret-scanner-build' \
+  'FROM --platform=$BUILDPLATFORM golang:1.26.9-alpine3.23@sha256:6750308561953d451210ed1a8086d36c8c8bdcbf672d38d9d0d424b8a7a0216c AS secret-scanner-build' \
   'native builder must use the reviewed multi-platform Go digest'
-contains "$prepare" 'test "$(go env GOVERSION)" = '\''go1.26.8'\' \
+contains "$prepare" 'test "$(go env GOVERSION)" = '\''go1.26.9'\' \
   'builder must assert its Go version'
 contains "$image_definition" 'GOTOOLCHAIN=local GOENV=off GOTELEMETRY=off' \
   'builder must not inherit Go settings or download another toolchain'
