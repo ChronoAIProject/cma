@@ -22,7 +22,8 @@ use layer2_core::sandbox::{
     SandboxServiceError, SandboxStatus, WorkspaceService, WorkspaceStatus,
 };
 use layer2_core::{
-    Authorization, Caller, Capability, SandboxProfileId, SubjectId, WorkspaceProfileId,
+    AgentId, Authorization, Caller, Capability, SandboxId, SandboxProfileId, SubjectId,
+    WorkspaceProfileId,
 };
 use serde_json::json;
 use std::{
@@ -51,6 +52,15 @@ pub(crate) struct InlineAgentLifecycle {
     bounds: ProfileCapacityBounds,
     operations: Arc<MongoAgentLifecycleStore>,
     self_ref: OnceLock<Weak<Self>>,
+}
+
+struct ProvisionInput {
+    request: AgentLifecycleCreateRequest,
+    runtime_image: Option<String>,
+    key: String,
+    operation_id: String,
+    existing_sandbox_id: Option<String>,
+    existing_agent_id: Option<String>,
 }
 
 impl InlineAgentLifecycle {
@@ -237,17 +247,22 @@ impl InlineAgentLifecycle {
     async fn provision(
         &self,
         caller: &Caller,
-        request: AgentLifecycleCreateRequest,
-        runtime_image: Option<String>,
-        key: &str,
-        operation_id: &str,
+        input: ProvisionInput,
     ) -> Result<String, AgentLifecycleProvisioningError> {
+        let ProvisionInput {
+            request,
+            runtime_image,
+            key,
+            operation_id,
+            existing_sandbox_id,
+            existing_agent_id,
+        } = input;
         let (agent_revision, _workspace_profile, sandbox_profile) = self
-            .create_profiles(caller, &request, runtime_image, key)
+            .create_profiles(caller, &request, runtime_image, &key)
             .await?;
         self.operations
             .append_event(
-                operation_id,
+                &operation_id,
                 1,
                 "sandbox_ready",
                 "running",
@@ -255,47 +270,56 @@ impl InlineAgentLifecycle {
             )
             .await
             .map_err(|_| AgentLifecycleProvisioningError::Unavailable)?;
-        let sandbox = match self
-            .sandbox
-            .create(
-                caller,
-                CreateSandbox {
-                    profile: sandbox_profile.clone(),
-                    name: Some(format!("{} sandbox", request.name)),
-                    confirmed_digest: None,
-                    origin: SandboxOrigin::Manual,
-                },
-            )
-            .await
-        {
-            Ok(value) => value,
-            Err(SandboxServiceError::ConnectionsRequired { services }) => {
-                return Err(AgentLifecycleProvisioningError::ConnectionRequired {
-                    services: services
-                        .into_iter()
-                        .map(|service| service.to_string())
-                        .collect(),
-                    connection_target: json!({
-                        "type":"sandbox_profile",
-                        "profile":{"id":sandbox_profile.id.to_string(),"revision":sandbox_profile.revision}
-                    }),
-                });
-            }
-            Err(SandboxServiceError::CredentialSetupRequired) => {
-                return Err(AgentLifecycleProvisioningError::ConnectionRequired {
-                    services: vec!["cma-credentials".into()],
-                    connection_target: json!({
-                        "type":"sandbox_profile",
-                        "profile":{"id":sandbox_profile.id.to_string(),"revision":sandbox_profile.revision}
-                    }),
-                });
-            }
-            Err(error) => return Err(sandbox_error(error)),
+        let sandbox_id = if let Some(id) = existing_sandbox_id {
+            SandboxId(id)
+        } else {
+            let sandbox = match self
+                .sandbox
+                .create(
+                    caller,
+                    CreateSandbox {
+                        profile: sandbox_profile.clone(),
+                        name: Some(format!("{} sandbox", request.name)),
+                        confirmed_digest: None,
+                        origin: SandboxOrigin::Manual,
+                    },
+                )
+                .await
+            {
+                Ok(value) => value,
+                Err(SandboxServiceError::ConnectionsRequired { services }) => {
+                    return Err(AgentLifecycleProvisioningError::ConnectionRequired {
+                        services: services
+                            .into_iter()
+                            .map(|service| service.to_string())
+                            .collect(),
+                        connection_target: json!({
+                            "type":"sandbox_profile",
+                            "profile":{"id":sandbox_profile.id.to_string(),"revision":sandbox_profile.revision}
+                        }),
+                    });
+                }
+                Err(SandboxServiceError::CredentialSetupRequired) => {
+                    return Err(AgentLifecycleProvisioningError::ConnectionRequired {
+                        services: vec!["cma-credentials".into()],
+                        connection_target: json!({
+                            "type":"sandbox_profile",
+                            "profile":{"id":sandbox_profile.id.to_string(),"revision":sandbox_profile.revision}
+                        }),
+                    });
+                }
+                Err(error) => return Err(sandbox_error(error)),
+            };
+            self.operations
+                .mark_sandbox(&operation_id, sandbox.id.as_str())
+                .await
+                .map_err(|_| AgentLifecycleProvisioningError::Unavailable)?;
+            sandbox.id
         };
-        let workspace_id = self.wait_for_agent_workspace(caller, &sandbox.id).await?;
+        let workspace_id = self.wait_for_agent_workspace(caller, &sandbox_id).await?;
         self.operations
             .append_event(
-                operation_id,
+                &operation_id,
                 2,
                 "sandbox_ready",
                 "ready",
@@ -305,7 +329,7 @@ impl InlineAgentLifecycle {
             .map_err(|_| AgentLifecycleProvisioningError::Unavailable)?;
         self.operations
             .append_event(
-                operation_id,
+                &operation_id,
                 3,
                 "workspace_runtime",
                 "ready",
@@ -313,26 +337,35 @@ impl InlineAgentLifecycle {
             )
             .await
             .map_err(|_| AgentLifecycleProvisioningError::Unavailable)?;
-        let agent = self
-            .agents
-            .create(
-                caller,
-                &workspace_id,
-                CreateAgent {
-                    profile: layer2_core::profiles::AgentProfileRef::new(
-                        agent_revision.profile_id.clone(),
-                        agent_revision.revision,
-                    ),
-                    title: Some(request.name),
-                    first_message: None,
-                    origin: AgentOrigin::Manual,
-                },
-            )
-            .await
-            .map_err(agent_error)?;
+        let agent_id = if let Some(id) = existing_agent_id {
+            AgentId(id)
+        } else {
+            let agent = self
+                .agents
+                .create(
+                    caller,
+                    &workspace_id,
+                    CreateAgent {
+                        profile: layer2_core::profiles::AgentProfileRef::new(
+                            agent_revision.profile_id.clone(),
+                            agent_revision.revision,
+                        ),
+                        title: Some(request.name),
+                        first_message: None,
+                        origin: AgentOrigin::Manual,
+                    },
+                )
+                .await
+                .map_err(agent_error)?;
+            self.operations
+                .mark_agent(&operation_id, agent.id.as_str())
+                .await
+                .map_err(|_| AgentLifecycleProvisioningError::Unavailable)?;
+            agent.id
+        };
         self.operations
             .append_event(
-                operation_id,
+                &operation_id,
                 4,
                 "key_scope_ready",
                 "ready",
@@ -340,7 +373,7 @@ impl InlineAgentLifecycle {
             )
             .await
             .map_err(|_| AgentLifecycleProvisioningError::Unavailable)?;
-        Ok(agent.id.to_string())
+        Ok(agent_id.to_string())
     }
 
     fn spawn_worker(&self, operation_id: String) {
@@ -364,10 +397,14 @@ impl InlineAgentLifecycle {
             match this
                 .provision(
                     &caller,
-                    record.input.request,
-                    record.input.resolved_image,
-                    &record.key,
-                    &operation_id,
+                    ProvisionInput {
+                        request: record.input.request,
+                        runtime_image: record.input.resolved_image,
+                        key: record.key,
+                        operation_id: operation_id.clone(),
+                        existing_sandbox_id: record.sandbox_id,
+                        existing_agent_id: record.agent_id,
+                    },
                 )
                 .await
             {
