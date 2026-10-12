@@ -7,6 +7,13 @@ metadata:
     app.kubernetes.io/name: cma-api
     app.kubernetes.io/part-of: cma
 data:
+  CHRONO_SANDBOX_PROVIDER: "opensandbox"
+  CHRONO_RETAIN_OPENSANDBOX: "true"
+  CHRONO_AGENT_SANDBOX_ENABLED: "false"
+  CHRONO_AGENT_SANDBOX_CONTROL_KEY_FILE: "/var/run/cma-agent-sandbox/control-key"
+  CHRONO_AGENT_SANDBOX_RUNTIME_CLASS: ""
+  CHRONO_AGENT_SANDBOX_SERVICE_ACCOUNT: "cma-runtime"
+  CHRONO_AGENT_SANDBOX_IMAGE_PULL_SECRETS: ""
   # Preserve the active production Bridge gates recorded on 2026-09-22.
   # Additional gates still require their own canary verification.
   CHRONO_BRIDGE_MANAGEMENT_ENABLED: "true"

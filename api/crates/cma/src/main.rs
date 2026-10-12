@@ -63,6 +63,21 @@ async fn main() {
         )
         .init();
 
+    let arguments: Vec<_> = std::env::args().skip(1).collect();
+    if arguments == ["--print-runtime-role"] {
+        match std::env::var("CHRONO_MONGODB_DATABASE") {
+            Ok(database) => println!("{}", store::isolation::role(&database)),
+            Err(_) => {
+                eprintln!("CHRONO_MONGODB_DATABASE is required");
+                std::process::exit(2)
+            }
+        }
+        return;
+    }
+    if !arguments.is_empty() {
+        eprintln!("usage: cma [--print-runtime-role]");
+        std::process::exit(2)
+    }
     if let Err(error) = serve().await {
         tracing::error!(error = %error, "CMA stopped");
         std::process::exit(1);
