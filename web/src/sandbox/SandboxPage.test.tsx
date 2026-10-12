@@ -142,7 +142,9 @@ it('explains persistent PV storage in Advanced and exposes no snapshot controls'
   expect(screen.queryByText('Latest snapshot')).not.toBeInTheDocument();
   await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Advanced' })));
   expect(screen.getByText('Persistent storage')).toBeInTheDocument();
-  expect(screen.getByText(/CMA does not create, schedule, download or delete S3 snapshots/)).toBeInTheDocument();
+  expect(
+    screen.getByText(/CMA does not create, schedule, download or delete S3 snapshots/),
+  ).toBeInTheDocument();
   expect(screen.queryByRole('link', { name: 'Download snapshot' })).not.toBeInTheDocument();
 });
 
@@ -165,7 +167,9 @@ it('refreshes lifecycle phases and restores Pause only after authoritative eligi
   );
   expect(screen.queryByText(/Saving started/)).not.toBeInTheDocument();
   await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Advanced' })));
-  expect(screen.getByText(/CMA does not create, schedule, download or delete S3 snapshots/)).toBeInTheDocument();
+  expect(
+    screen.getByText(/CMA does not create, schedule, download or delete S3 snapshots/),
+  ).toBeInTheDocument();
   await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Close' })));
   expect(screen.getByRole('button', { name: 'New workspace' })).toBeEnabled();
   expect(screen.getByRole('button', { name: 'New agent' })).toBeEnabled();
