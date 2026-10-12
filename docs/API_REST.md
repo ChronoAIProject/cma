@@ -41,6 +41,21 @@ replica, and renew a 90-second claim every 20 seconds. Every status/event/child
 write checks the current claim token and expiry. Stage events are replay-safe.
 The Agent Manager's restricted database role includes `agent_lifecycle_operations`.
 
+Each operation also supplies the durable admission identity for its Sandbox and
+Agent. Concurrent workers and retries after an admission response is lost recover
+the same children, including when the owner's quota has since been exhausted.
+The original authenticated actor remains attached to Agent creation. Legacy
+records without a captured actor retain unknown attribution.
+
+Temporary dependency failures and readiness timeouts return the operation to
+`queued`, with durable retry delays of 5, 10, 20, 40 and then 60 seconds. Periodic
+discovery observes this delay. Child identities and completed stages survive
+each retry. Terminal resource conflicts remain `failed`.
+
+Image Manager authentication failures return `401 not_authenticated`; an image
+permission refusal returns `403 permission_denied`. These are distinct from a
+missing NyxID service connection and do not provide a connection-wizard target.
+
 ## Authentication And HTTP
 
 Use `Authorization: Bearer <credential>` for backend calls, or the same-origin

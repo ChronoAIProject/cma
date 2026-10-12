@@ -93,9 +93,9 @@ impl SandboxStore for InMemorySandboxStore {
                 "service access requires an existing sandbox and an atomic grant",
             ));
         }
-        if matches!(&sandbox.origin, SandboxOrigin::Trigger { .. }) {
+        if sandbox.origin.replay_key().is_some() {
             return Err(SandboxStoreError::InvalidTransaction(
-                "trigger sandboxes require atomic admission",
+                "origin-bound sandboxes require atomic admission",
             ));
         }
         let mut state = self.lock();

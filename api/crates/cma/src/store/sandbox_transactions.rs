@@ -203,7 +203,7 @@ async fn apply_transaction(
                 .checked_add(1)
                 .ok_or(ApplyError::Domain(SandboxStoreError::SequenceConflict))?;
             let mut fields = sandbox_replacement_fields(sandbox).map_err(ApplyError::Domain)?;
-            let (origin_type, origin_launch_id) =
+            let (origin_type, origin_launch_id, origin_operation_id) =
                 sandbox_origin_fields(sandbox).map_err(ApplyError::Domain)?;
             fields.insert(
                 "last_seq",
@@ -223,8 +223,8 @@ async fn apply_transaction(
                         "last_seq": signed(previous, "sandbox event sequence")
                             .map_err(SandboxStoreError::Corrupt)
                             .map_err(ApplyError::Domain)?,
-                        "origin_type": origin_type,
-                        "origin_launch_id": origin_launch_id,
+                        "origin_type": origin_type, "origin_launch_id": origin_launch_id,
+                        "origin_operation_id": origin_operation_id,
                     },
                     doc! { "$set": fields },
                 )

@@ -164,6 +164,10 @@ pub enum AgentLifecycleProvisioningError {
     Unavailable,
     #[error("the authenticated caller cannot create an Agent")]
     Forbidden,
+    #[error("sign in again to authorize the selected Image Manager image")]
+    SignInRequired,
+    #[error("the selected Image Manager image is not accessible to this account")]
+    ImageAccessDenied,
     #[error("invalid Agent lifecycle request: {0}")]
     Invalid(String),
     #[error("the selected services need to be connected before provisioning")]
@@ -187,6 +191,18 @@ impl IntoResponse for AgentLifecycleProvisioningError {
             Self::Forbidden => (
                 StatusCode::FORBIDDEN,
                 "agent-manager-forbidden",
+                "permission_denied",
+                self.to_string(),
+            ),
+            Self::SignInRequired => (
+                StatusCode::UNAUTHORIZED,
+                "agent-manager-sign-in-required",
+                "not_authenticated",
+                self.to_string(),
+            ),
+            Self::ImageAccessDenied => (
+                StatusCode::FORBIDDEN,
+                "agent-manager-image-access-denied",
                 "permission_denied",
                 self.to_string(),
             ),

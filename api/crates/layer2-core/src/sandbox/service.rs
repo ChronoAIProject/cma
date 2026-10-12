@@ -25,15 +25,22 @@ pub const DEFAULT_INACTIVITY_PAUSE_AFTER_SECONDS: u64 = 15 * 60;
 pub enum SandboxOrigin {
     Manual,
     Trigger { launch_id: String },
+    Lifecycle { operation_id: String },
 }
 
 impl SandboxOrigin {
+    /// Stable admission namespace and identity; manual requests have no replay origin.
+    pub fn replay_key(&self) -> Option<(&'static str, &str)> {
+        match self {
+            Self::Manual => None,
+            Self::Trigger { launch_id } => Some(("trigger", launch_id)),
+            Self::Lifecycle { operation_id } => Some(("lifecycle", operation_id)),
+        }
+    }
+
     pub(super) fn validate(&self) -> Result<(), SandboxServiceError> {
-        if let Self::Trigger { launch_id } = self {
-            if launch_id.trim().is_empty()
-                || launch_id.len() > 128
-                || launch_id.chars().any(char::is_control)
-            {
+        if let Some((_, id)) = self.replay_key() {
+            if id.trim().is_empty() || id.len() > 128 || id.chars().any(char::is_control) {
                 return Err(SandboxServiceError::InvalidOrigin);
             }
         }

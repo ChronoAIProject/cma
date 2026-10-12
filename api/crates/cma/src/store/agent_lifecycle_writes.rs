@@ -11,6 +11,27 @@ impl LifecycleLease {
 }
 
 impl MongoAgentLifecycleStore {
+    /// Preserve all immutable input and admitted child IDs across transient
+    /// dependency failures. Backoff is durable, bounded and claim-fenced.
+    pub(crate) async fn retry(
+        &self,
+        lease: &LifecycleLease,
+        attempts: u32,
+    ) -> Result<(), StoreError> {
+        let delay = Duration::from_secs((5_u64 << attempts.saturating_sub(1).min(4)).min(60));
+        let retry_at = SystemTime::now()
+            .checked_add(delay)
+            .ok_or_else(|| StoreError::Malformed("lifecycle retry time overflowed".into()))?;
+        self.write(
+            lease,
+            doc! { "$set": { "status": "queued",
+            "retry_at": DateTime::from_system_time(retry_at),
+            "lease_token": Bson::Null, "lease_expires_at": Bson::Null,
+            "updated_at": DateTime::now() } },
+        )
+        .await
+    }
+
     async fn write(&self, lease: &LifecycleLease, update: Document) -> Result<(), StoreError> {
         let result = self
             .operations

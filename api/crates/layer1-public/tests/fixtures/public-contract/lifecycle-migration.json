@@ -521,6 +521,68 @@
         "bodyKind": "json"
       },
       "captures": {}
+    },
+    {
+      "id": "lifecycle-create-image-auth",
+      "operation": "POST /api/v1/agents",
+      "scenario": "lifecycle_contract_image_auth",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "lifecycle-key"
+        },
+        "body": {
+          "name": "Research"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-manager-sign-in-required",
+          "title": "agent manager sign in required",
+          "status": 401,
+          "detail": "sign in again to authorize the selected Image Manager image",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "lifecycle-create-image-forbidden",
+      "operation": "POST /api/v1/agents",
+      "scenario": "lifecycle_contract_image_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "lifecycle-key"
+        },
+        "body": {
+          "name": "Research"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-manager-image-access-denied",
+          "title": "agent manager image access denied",
+          "status": 403,
+          "detail": "the selected Image Manager image is not accessible to this account",
+          "code": "permission_denied"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
     }
   ]
 }

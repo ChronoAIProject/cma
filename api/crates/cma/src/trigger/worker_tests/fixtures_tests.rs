@@ -564,7 +564,9 @@ impl LaunchResourceDriver for FakeDriver {
             } => {
                 let launch_id = match &request.origin {
                     SandboxOrigin::Trigger { launch_id } => launch_id.clone(),
-                    SandboxOrigin::Manual => return Err(Self::missing_profile()),
+                    SandboxOrigin::Manual | SandboxOrigin::Lifecycle { .. } => {
+                        return Err(Self::missing_profile())
+                    }
                 };
                 let context = self
                     .context_for_sandbox(&request.profile)
@@ -732,9 +734,9 @@ impl LaunchResourceDriver for FakeDriver {
                         trigger_id,
                         launch_id,
                     } => (trigger_id.clone(), launch_id.clone()),
-                    AgentOrigin::Manual | AgentOrigin::WorkspaceProfile { .. } => {
-                        return Err(Self::missing_profile())
-                    }
+                    AgentOrigin::Manual
+                    | AgentOrigin::Lifecycle { .. }
+                    | AgentOrigin::WorkspaceProfile { .. } => return Err(Self::missing_profile()),
                 };
                 let context = self
                     .context_for_agent(&request.profile)

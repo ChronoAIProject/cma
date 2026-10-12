@@ -63,7 +63,7 @@ unavailable_port!(SandboxTransactionStore {
     fn commit(transaction: SandboxTransaction) -> ();
 });
 unavailable_port!(SandboxAdmissionStore {
-    fn sandbox_admission_replay(owner: &SubjectId, launch_id: &str) -> Option<SandboxAdmissionReplay>;
+    fn sandbox_admission_replay(owner: &SubjectId, origin: &layer2_core::sandbox::SandboxOrigin) -> Option<SandboxAdmissionReplay>;
     fn admit_sandbox(admission: SandboxAdmission) -> SandboxAdmissionResult;
 });
 unavailable_port!(WorkspaceAdmissionStore {
