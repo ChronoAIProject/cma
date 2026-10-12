@@ -41,7 +41,7 @@ def validate(source)
   end
 end
 
-%w[api web runtime cmaeg].each do |name|
+%w[api web runtime cmaeg image-manager].each do |name|
   source = File.read(File.join(ARGV.fetch(0), "infra", name, "Dockerfile"))
   validate(source)
   EXPECTED.each_key do |key|

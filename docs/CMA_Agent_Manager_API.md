@@ -4,7 +4,7 @@
 [三服务拆分方案](CMA_Service_Split.md)。本文中 `/v1` 是新 Agent Manager 的服务根路径，
 不修改既有 CMA `/api/v1` 或 `/api/v2` 的语义。统一 `web/` 的 Agent Manager 入口
 通过 `/api/agent-manager/v1/...` 访问本服务；本服务独立注册 NyxID 和管理自己的
-roles/permissions，不访问 Sandbox Manager 的数据库。详情见
+roles/permissions，不访问 Event Gateway 或 Image Manager 的数据库。详情见
 [服务隔离方案](CMA_Service_Isolation.md)。
 
 ## 1. 最常用的三个请求
@@ -147,12 +147,16 @@ Accept: text/event-stream
 服务信息。创建请求不接收原始 NyxID key、GitHub token 或 Kubernetes 凭证。
 实例 GET 返回解析后的 profile 和 `effective_permissions`，让调用者看到最终生效范围。
 
-私有 GitHub repo 属于目标能力，需要通过 Sandbox Manager 的 GitHub/NyxID 绑定
+私有 GitHub repo 属于目标能力，需要通过 Agent Manager 的 GitHub/NyxID 绑定
 验证后启用。现有实现只支持 public GitHub clone，不能在尚未实现时接受私有仓库
 请求并声称创建成功。
 
-创建时不接收镜像、CPU、内存、PV、任意安装命令；这些属于 Sandbox Manager 及
-Agent Manager 的环境策略。默认环境必须足够完成普通 Agent 工作。
+环境配置归 Agent Manager：它直接把 CPU、memory 和持久卷挂载转成 agent-sandbox
+Sandbox CRD 的 podTemplate。默认配置服务普通 Agent 创建；高级配置属于可选的
+`environment`，可以引用 Image Manager 返回的不可变镜像版本和资源配置。镜像构建、
+共享和退役只由 Image Manager 负责，不引入 Sandbox Manager。当前兼容 API 仍通过
+Sandbox Profile 选择 CPU/memory，通过部署策略选择默认镜像和持久 home PVC；
+本篇简化创建 facade 和每次创建选择镜像的形状仍是目标契约，不能当作已上线 API。
 
 ## 4. Agent 读取与状态
 

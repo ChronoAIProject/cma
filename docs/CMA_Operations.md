@@ -997,6 +997,13 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_MONGODB_URI` | Required secret reference, `mongodb://` or `mongodb+srv://` |
 | `CHRONO_MONGODB_DATABASE` | Database name; code default `chrono_bot`, production explicitly `chrono-bot` |
 | `CHRONO_DEPLOYMENT_ID` | Required stable Kubernetes-label-compatible CMA ownership identity |
+| `CHRONO_SANDBOX_PROVIDER` | New allocation backend: `opensandbox` (compatibility default) or `agent-sandbox` |
+| `CHRONO_RETAIN_OPENSANDBOX` | Keep legacy provider available for persisted bindings; default true |
+| `CHRONO_AGENT_SANDBOX_ENABLED` | Keep direct agent-sandbox access available during coexistence/rollback; selecting it as allocation backend also enables it |
+| `CHRONO_AGENT_SANDBOX_CONTROL_KEY_FILE` | Dedicated mounted signing key, at least 32 bytes; required when agent-sandbox is enabled; retain across restarts |
+| `CHRONO_AGENT_SANDBOX_RUNTIME_CLASS` | Optional infra-provided RuntimeClass name |
+| `CHRONO_AGENT_SANDBOX_SERVICE_ACCOUNT` | Workload service account; default `cma-runtime`, API token automount disabled |
+| `CHRONO_AGENT_SANDBOX_IMAGE_PULL_SECRETS` | Comma-separated namespace-local image pull Secret names, or empty for node/infra registry pull identity |
 | `CHRONO_SANDBOX_BASE_URL` | Required canonical HTTP(S) provider origin |
 | `CHRONO_SANDBOX_API_KEY_FILE` | Required readable nonempty mounted provider key; never a ConfigMap value |
 | `CHRONO_SANDBOX_NAMESPACE` | Required DNS-label namespace for CMA-owned provider resources |
@@ -1658,3 +1665,92 @@ the scoped NyxID tools service and accepts CMA's explicit refusal of the optiona
 native MCP endpoint; refusals of requested profile fields fail creation and
 retain durable cleanup. These checks do not establish real Telegram delivery or
 authorize retiring the existing bridge.
+
+Direct agent-sandbox runtimes receive `CHRONO_RUNTIME_CONTROL_TOKEN` at bootstrap.
+The supervisor consumes it before preparing child environment maps and requires
+it on runtime control, checkpoint and WebSocket endpoints. Existing provider
+runtimes retain their proxy authentication. This change requires building the
+matching runtime image before selecting the direct backend.
+
+
+## Three-service local implementation and rollout prerequisites
+
+The web now has Event Gateway, Agent Manager and Image Manager service tabs.
+`/api/event-gateway/*` and `/api/image-manager/*` strip their prefixes to the
+independent services; `/api/agent-manager/*` maps to AM's existing `/api/*`.
+Existing Agent URLs, cookies and public REST/Responses endpoints remain valid.
+Both the managed Gateway HTTPRoute and nginx fallback implement this routing.
+
+Image Manager uses Cloud Build for an immutable public GitHub commit and pushes
+to `asia-northeast1-docker.pkg.dev/example-project-02/chronoai-registry`.
+Its GKE identity needs Cloud Build submission/read, Logging read, and permission
+to act as the dedicated build service account. That build account needs only the
+build's required logs/source and repository push permissions. Populate
+`CMA_IM_BUILDER_IMAGE` with a tested `gcr.io/cloud-builders/docker@sha256:...`.
+Private repository credential delivery and physical registry garbage collection
+are not implemented. Retirement is logical and retains images for live Agents.
+The IM manifest stays at zero replicas with an unreleased image until a real
+image digest, configured identities and migrated database are available.
+
+All services use separate Mongo credentials. Image Manager requires a replica
+set because build admission and the retirement fence share a transaction.
+Generate exact roles with each binary's `--print-runtime-role`; the image and
+gateway migrations run explicitly with their separate migration credentials.
+Existing AM stores retain their own startup schema/index initialization within
+the AM collection allowlist. Broad existing `readWrite`/admin credentials are
+rejected at startup and must be replaced before deployment.
+
+Deploy the adapter-capable AM first with `CHRONO_SANDBOX_PROVIDER=opensandbox` and
+`CHRONO_RETAIN_OPENSANDBOX=true`. It records existing generation choices in
+`runtime_backend_routes`. After all old workers are replaced and retained
+requests have durable routing, enable agent-sandbox for new generations. A route
+is written before external creation and never changes when the default changes.
+Existing runtime handles continue to use their original provider. A first
+cutover containing retained unbound Sandboxes without routing is refused, rather
+than replaying uncertain creation against a different provider. Fresh empty AM
+databases can enable agent-sandbox immediately. Rollback must retain the backend
+for every persisted route; do not disable OpenSandbox while its rows remain.
+
+Before routing live Gateway traffic to its new database, copy the legacy sealed
+records with an operator-owned migration identity, preserving record ID, owner,
+blob and version exactly. Keep the stable master keys and canonical legacy
+pointer origin. Quiesce channel *management mutations* during this authority
+transfer, reconcile counts/versions/digests, then switch Gateway DB credentials.
+The runtime service must not retain access to the legacy AM collection. This
+local change does not perform the production data transfer or any rollout.
+
+agent-sandbox integration targets `agents.x-k8s.io/v1beta1` (upstream v1.0.6).
+Infra owns CRDs/controller; AM submits Sandbox objects with explicit CPU/memory,
+pinned runtime images and owned existing PVCs. Destructive operations use UID and
+resourceVersion preconditions. Controller-created Pods are discovered through
+CMA labels plus exact Sandbox controller UID, never by a namespace-wide cleanup.
+Lifecycle pause retains the existing writer-fenced checkpoint/teardown flow;
+the adapter also implements upstream Suspended mode, but the application does
+not bypass its conversation/checkpoint protocol to use that mode.
+
+### Transfer retained Gateway records
+
+Use a one-time read-only credential for the legacy `gateway_channel_records`
+collection to run `.github/scripts/export-gateway-records.js` with `mongosh`.
+Select the legacy database in the connection URI and set
+`CMA_GATEWAY_EXPORT_FILE` to a new private local file. Quiesce channel management
+mutations during export, verification and routing cutover; existing Agent turns
+must continue. The exporter creates the file with mode 0600 and prints only the
+record count. The service processes never receive that legacy credential.
+
+Run `cmaeg --migrate` with the destination migrator credential, then
+`cmaeg --import-legacy-records <export-file>` using that same destination identity.
+Import preserves the record UUID, owner, sealed bytes and version, verifies each
+insert with majority reads, and supports exact replay. It refuses conflicts and
+never overwrites destination records. A partial failure is resumed with the same
+file after its cause is repaired. Keep the gateway's original master keys and
+canonical CMA base URL so existing callback/channel IDs remain valid. Verify
+counts and original callback resolution before enabling management writes, then
+remove the temporary export and credentials according to the operator's policy.
+
+Image build dispatch records explicitly distinguish a definitive submission
+rejection from an unconfirmed outcome. Unknown Cloud Build POSTs are observed by
+their original unique tag and never resubmitted automatically. A crash before
+POST may therefore require operator reconciliation; elapsed time alone cannot
+prove that no build was accepted. Retirement blocks new builds/resolution but
+keeps existing immutable registry blobs for retained Agents.
