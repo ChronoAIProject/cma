@@ -188,6 +188,7 @@ function ImageDetails({
                 label: 'Import Dockerfile (optional)',
                 type: 'file',
                 accept: '.dockerfile,Dockerfile,text/plain',
+                maxBytes: 16 * 1024,
               },
             ]}
           />
