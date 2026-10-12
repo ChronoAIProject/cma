@@ -64,6 +64,68 @@ function fixture() {
   return { client, connected, report };
 }
 
+it('verifies a connected session without opening a dialog or taking focus', async () => {
+  const { client, connected } = fixture();
+  services.forEach((service) => connected.add(service));
+  const ready = vi.fn();
+  render(
+    <>
+      <button autoFocus>Keep focus</button>
+      <ConnectionWizard target={target} client={client} presentation="dialog" onReady={ready} />
+    </>,
+  );
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  await flush();
+  expect(ready).toHaveBeenCalledOnce();
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Keep focus' })).toHaveFocus();
+  expect(window.open).not.toHaveBeenCalled();
+});
+
+it('puts missing connections in a modal and returns focus after verification', async () => {
+  const { client, connected } = fixture();
+  const ready = vi.fn();
+  render(
+    <>
+      <button autoFocus>Return here</button>
+      <ConnectionWizard target={target} client={client} presentation="dialog" onReady={ready} />
+    </>,
+  );
+  await flush();
+  expect(screen.getByRole('dialog', { name: 'Connect required services' })).toHaveAttribute(
+    'aria-modal',
+    'true',
+  );
+  expect(screen.getByRole('button', { name: 'Close' })).toHaveFocus();
+  services.forEach((service) => connected.add(service));
+  await poll();
+  expect(ready).toHaveBeenCalledOnce();
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Return here' })).toHaveFocus();
+});
+
+it('cancels the active server intent when the connection modal is dismissed', async () => {
+  const { client } = fixture();
+  const cancel = vi.fn();
+  render(
+    <ConnectionWizard
+      target={target}
+      client={client}
+      presentation="dialog"
+      onReady={vi.fn()}
+      onCancel={cancel}
+    />,
+  );
+  await flush();
+  fireEvent.click(screen.getByRole('button', { name: 'Connect all' }));
+  await flush();
+  fireEvent.keyDown(document, { key: 'Escape' });
+  await flush();
+  expect(client.cancel).toHaveBeenCalledOnce();
+  expect(popup.close).toHaveBeenCalledOnce();
+  expect(cancel).toHaveBeenCalledOnce();
+});
+
 it('one Connect all action verifies every service in sequence before continuing once', async () => {
   const { client, connected } = fixture();
   const ready = vi.fn();
