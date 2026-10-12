@@ -76,7 +76,38 @@ pub(super) fn routes() -> Router<AgentRoutesState> {
     Router::new()
         .route("/api/v1/workspaces/{id}/agents", post(create))
         .route("/api/v1/agents", get(list).post(create_lifecycle))
+        .route(
+            "/api/v1/agent-lifecycle/{id}",
+            get(read_lifecycle_operation),
+        )
         .route("/api/v1/agents/{id}", get(read).delete(delete_agent))
+}
+
+/// Read a durable Agent lifecycle operation and its phase events.
+#[utoipa::path(
+    get,
+    path = "/api/v1/agent-lifecycle/{id}",
+    tag = "agents",
+    params(("id" = String, Path)),
+    responses(
+        (status = 200, body = crate::rest::AgentLifecycleOperationView),
+        (status = 403, body = crate::rest::ProblemDocument),
+        (status = 404, body = crate::rest::ProblemDocument)
+    )
+)]
+pub(crate) async fn read_lifecycle_operation(
+    State(state): State<AgentRoutesState>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Path(operation_id): Path<String>,
+) -> Response {
+    let Some(reader) = state.lifecycle_operations else {
+        return AgentLifecycleProvisioningError::Unavailable.into_response();
+    };
+    reader
+        .read(&caller, &operation_id)
+        .await
+        .map(|view| (StatusCode::OK, Json(view)).into_response())
+        .unwrap_or_else(IntoResponse::into_response)
 }
 
 /// Create an Agent from one inline lifecycle request.  The provisioning port

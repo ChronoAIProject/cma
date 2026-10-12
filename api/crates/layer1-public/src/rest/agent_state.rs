@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use super::super::agent_history::AgentHistoryExporter;
-use super::super::agent_lifecycle::AgentLifecycleProvisioner;
+use super::super::agent_lifecycle::{AgentLifecycleOperationReader, AgentLifecycleProvisioner};
 use layer2_core::sandbox::{AgentOperationService, AgentReadService, AgentService};
 use layer2_core::OperationStore;
 
@@ -13,6 +13,7 @@ pub struct AgentRoutesState {
     pub(in crate::rest) agent_operations: Arc<AgentOperationService>,
     pub(in crate::rest) operation_records: Arc<dyn OperationStore>,
     pub(in crate::rest) lifecycle: Option<Arc<dyn AgentLifecycleProvisioner>>,
+    pub(in crate::rest) lifecycle_operations: Option<Arc<dyn AgentLifecycleOperationReader>>,
     pub(in crate::rest) history_exporter: Option<Arc<dyn AgentHistoryExporter>>,
 }
 
@@ -30,6 +31,7 @@ impl AgentRoutesState {
             agent_operations,
             operation_records,
             lifecycle: None,
+            lifecycle_operations: None,
             history_exporter: None,
         }
     }
@@ -38,6 +40,14 @@ impl AgentRoutesState {
     /// retained hierarchy routes used by compatibility clients and tests.
     pub fn with_lifecycle(mut self, lifecycle: Arc<dyn AgentLifecycleProvisioner>) -> Self {
         self.lifecycle = Some(lifecycle);
+        self
+    }
+
+    pub fn with_lifecycle_operations(
+        mut self,
+        reader: Arc<dyn AgentLifecycleOperationReader>,
+    ) -> Self {
+        self.lifecycle_operations = Some(reader);
         self
     }
 

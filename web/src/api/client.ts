@@ -59,6 +59,23 @@ export interface AgentLifecycleCreateReceipt {
   readonly status?: string;
 }
 
+export interface AgentLifecycleOperationEvent {
+  readonly sequence: number;
+  readonly phase: string;
+  readonly status: string;
+  readonly message: string;
+  readonly occurred_at: string;
+}
+
+export interface AgentLifecycleOperationView {
+  readonly id: string;
+  readonly status: string;
+  readonly phase: string;
+  readonly agent_id?: string;
+  readonly error?: string;
+  readonly events: readonly AgentLifecycleOperationEvent[];
+}
+
 export interface AgentLifecycleConnectionRequired {
   readonly code: 'connection_required';
   readonly services: readonly string[];
@@ -93,6 +110,10 @@ export interface CmaWebClient {
     input: AgentLifecycleCreateInput,
     options: CommandOptions,
   ) => Promise<AgentLifecycleCreateReceipt>;
+  readonly readAgentLifecycle?: (
+    operationId: string,
+    options?: ReadOptions,
+  ) => Promise<AgentLifecycleOperationView>;
   readonly botViews?: BotClient;
   listSandboxes(options?: PageOptions): Promise<ResourcePage<SandboxSummary>>;
   readSandbox(id: string, options?: ReadOptions): Promise<SandboxDetail>;

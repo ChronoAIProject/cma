@@ -5,7 +5,8 @@ use std::sync::Arc;
 use axum::Router;
 use layer1_public::rest::{agent_router, AgentRoutesState};
 use layer1_public::rest::{
-    AgentHistoryExportError, AgentHistoryExporter, AgentLifecycleProvisioner,
+    AgentHistoryExportError, AgentHistoryExporter, AgentLifecycleOperationReader,
+    AgentLifecycleProvisioner,
 };
 use layer2_core::profiles::{AgentProfileStore, ProfileUseRecorder};
 use layer2_core::sandbox::store::{AgentReadStore, AgentServiceStore};
@@ -25,6 +26,7 @@ pub(crate) struct AgentProjectionServices {
     operations: Arc<AgentOperationService>,
     reads: Arc<AgentReadService>,
     lifecycle: Option<Arc<dyn AgentLifecycleProvisioner>>,
+    lifecycle_operations: Option<Arc<dyn AgentLifecycleOperationReader>>,
     history_exporter: Option<Arc<dyn AgentHistoryExporter>>,
 }
 
@@ -39,6 +41,14 @@ impl AgentProjectionServices {
 
     pub(crate) fn with_lifecycle(mut self, lifecycle: Arc<dyn AgentLifecycleProvisioner>) -> Self {
         self.lifecycle = Some(lifecycle);
+        self
+    }
+
+    pub(crate) fn with_lifecycle_operations(
+        mut self,
+        reader: Arc<dyn AgentLifecycleOperationReader>,
+    ) -> Self {
+        self.lifecycle_operations = Some(reader);
         self
     }
 
@@ -91,6 +101,7 @@ impl AgentProjectionServices {
             operations,
             reads,
             lifecycle: None,
+            lifecycle_operations: None,
             history_exporter: None,
         }
     }
@@ -116,6 +127,10 @@ impl AgentProjectionServices {
         );
         let agent_routes = match &self.lifecycle {
             Some(lifecycle) => agent_routes.with_lifecycle(lifecycle.clone()),
+            None => agent_routes,
+        };
+        let agent_routes = match &self.lifecycle_operations {
+            Some(reader) => agent_routes.with_lifecycle_operations(reader.clone()),
             None => agent_routes,
         };
         let agent_routes = match &self.history_exporter {
