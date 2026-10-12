@@ -45,6 +45,7 @@ export interface TreePermissions {
   readonly removeWorkspace: boolean;
   readonly stopAgent: boolean;
   readonly deleteAgent: boolean;
+  readonly exportHistory: boolean;
 }
 
 export type TreeAction =
@@ -55,7 +56,8 @@ export type TreeAction =
   | { readonly kind: 'new_agent'; readonly workspaceId: string }
   | { readonly kind: 'remove_workspace'; readonly workspaceId: string }
   | { readonly kind: 'stop_agent'; readonly agentId: string }
-  | { readonly kind: 'delete_agent'; readonly agentId: string };
+  | { readonly kind: 'delete_agent'; readonly agentId: string }
+  | { readonly kind: 'export_history'; readonly agentId: string };
 
 interface TreeProps {
   readonly resourceClient?: ResourceViewsClient;
@@ -443,7 +445,10 @@ export function Tree({
                                                 onNavigate={onNavigate}
                                                 onAction={(kind) =>
                                                   onAction({
-                                                    kind: kind as 'stop_agent' | 'delete_agent',
+                                                    kind: kind as
+                                                      | 'stop_agent'
+                                                      | 'delete_agent'
+                                                      | 'export_history',
                                                     agentId: agent.id,
                                                   })
                                                 }

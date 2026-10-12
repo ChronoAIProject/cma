@@ -95,7 +95,7 @@ pub struct PlatformLimits {
 impl Default for PlatformLimits {
     fn default() -> Self {
         Self {
-            max_sandboxes_per_user: 3,
+            max_sandboxes_per_user: 10,
             visitor_max_sandboxes: 1,
             visitor_max_launches_per_day: 5,
         }
@@ -194,7 +194,7 @@ mod tests {
                 "checkpoints": {"interval_seconds": 1800},
                 "retention": {"checkpoint_grace_days": 7, "agent_log_days": 90},
                 "limits": {
-                    "max_sandboxes_per_user": 3,
+                    "max_sandboxes_per_user": 10,
                     "visitor_max_sandboxes": 1,
                     "visitor_max_launches_per_day": 5
                 },

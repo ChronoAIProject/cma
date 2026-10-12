@@ -13,6 +13,7 @@ const FULL_ACCESS: TreePermissions = {
   removeWorkspace: true,
   stopAgent: true,
   deleteAgent: true,
+  exportHistory: true,
 };
 
 const READ_ONLY: TreePermissions = {
@@ -23,6 +24,7 @@ const READ_ONLY: TreePermissions = {
   removeWorkspace: false,
   stopAgent: false,
   deleteAgent: false,
+  exportHistory: false,
 };
 
 function renderTree(

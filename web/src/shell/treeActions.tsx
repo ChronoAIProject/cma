@@ -4,6 +4,7 @@ import {
   IconPauseOutline16,
   IconPlayOutline16,
   IconPlusOutline16,
+  IconDownloadOutline16,
   IconStopFill16,
   IconTrashOutline16,
 } from '../ui/icons';
@@ -105,6 +106,12 @@ export function agentActions(status: AgentStatus, permissions: TreePermissions):
       reason: !['stopped', 'failed'].includes(status)
         ? 'Stop this Agent before deleting it and its Worktree.'
         : undefined,
+    });
+  if (permissions.exportHistory)
+    actions.push({
+      id: 'export_history',
+      label: 'Export history',
+      icon: <IconDownloadOutline16 />,
     });
   return actions;
 }

@@ -423,7 +423,7 @@ impl Harness {
         let reference = seed_sandbox_profile(&profiles, commands, workspace_profiles).await;
         let store = Arc::new(InMemorySandboxStore::default());
         let policy = SandboxPolicy {
-            max_sandboxes_per_owner: 3,
+            max_sandboxes_per_owner: 10,
             max_sandboxes_per_visitor: 1,
             inactivity_pause_after_seconds: 15 * 60,
             checkpoint_interval_seconds: layer2_core::DEFAULT_CHECKPOINT_INTERVAL_SECONDS,
