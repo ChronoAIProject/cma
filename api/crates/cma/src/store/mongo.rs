@@ -35,6 +35,7 @@ pub struct MongoStores {
     pub users: Arc<MongoUserDirectoryStore>,
     pub settings: Arc<MongoPlatformSettingsStore>,
     pub operations: Arc<MongoOperationStore>,
+    pub(crate) agent_lifecycle: Arc<super::MongoAgentLifecycleStore>,
     pub gateway_records: Arc<MongoGatewayRecordStore>,
     pub(crate) gateway_connections: Arc<MongoGatewayRecordStore>,
     pub(crate) gateway_interactions: Arc<super::MongoGatewayInteractionStore>,
@@ -82,6 +83,8 @@ impl MongoStores {
         let users = Arc::new(MongoUserDirectoryStore::open(&client, database).await?);
         let settings = Arc::new(MongoPlatformSettingsStore::open(&client, database).await?);
         let operations = Arc::new(MongoOperationStore::open(&client, database).await?);
+        let agent_lifecycle =
+            Arc::new(super::MongoAgentLifecycleStore::open(&client.database(database)).await?);
         let gateway_records = Arc::new(MongoGatewayRecordStore::open(&client, database).await?);
         let gateway_connections =
             Arc::new(MongoGatewayRecordStore::open_connections(&client, database).await?);
@@ -131,6 +134,7 @@ impl MongoStores {
             users,
             settings,
             operations,
+            agent_lifecycle,
             gateway_records,
             gateway_connections,
             gateway_interactions,
