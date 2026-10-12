@@ -3,6 +3,7 @@ export interface AgentImageChoice {
   readonly name: string;
   readonly description?: string;
   readonly owner?: string;
+  readonly visibility?: 'private' | 'shared';
   readonly retired?: boolean;
   readonly revision?: number;
 }
@@ -17,7 +18,7 @@ interface ImagePage {
  * choice when the independent service is unavailable.
  */
 export async function listAgentImages(signal?: AbortSignal): Promise<readonly AgentImageChoice[]> {
-  const response = await fetch('/api/image-manager/v1/images', {
+  const response = await fetch('/api/image-manager/v1/images?scope=all', {
     credentials: 'same-origin',
     cache: 'no-store',
     signal,

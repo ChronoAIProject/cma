@@ -88,6 +88,10 @@ fn is_json_content_type(headers: &HeaderMap) -> bool {
 pub(super) struct IdempotencyKey(Option<String>);
 
 impl IdempotencyKey {
+    pub(super) fn value(&self) -> Option<&str> {
+        self.0.as_deref()
+    }
+
     /// Durable domain ledgers own their receipts and retain keys permanently.
     pub(super) fn into_required_value(self) -> Result<String, IdempotencyProblem> {
         self.0.ok_or(IdempotencyProblem::Missing)

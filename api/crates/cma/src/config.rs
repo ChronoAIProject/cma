@@ -137,6 +137,9 @@ impl TrustedProxyConfig {
 pub struct Config {
     pub bind: SocketAddr,
     pub public_url: String,
+    /// Base URL for the independently deployed Image Manager service.  CMA
+    /// only uses it with the request's delegated user credential.
+    pub image_manager_base_url: String,
     pub nyxid_public_url: Option<String>,
     pub nyxid_service_id: Option<String>,
     pub cors_origins: Vec<HeaderValue>,
@@ -164,6 +167,7 @@ impl std::fmt::Debug for Config {
             .debug_struct("Config")
             .field("bind", &self.bind)
             .field("public_url", &self.public_url)
+            .field("image_manager_base_url", &self.image_manager_base_url)
             .field("nyxid_public_url", &self.nyxid_public_url)
             .field("cors_origins", &self.cors_origins)
             .field("rate_limits", &self.rate_limits)
@@ -198,6 +202,14 @@ impl Config {
             .map_err(|error| format!("CHRONO_SERVER_BIND is not a socket address: {error}"))?;
         let public_url = value_or(&mut lookup, "CHRONO_SERVER_PUBLIC_URL", DEFAULT_PUBLIC_URL)?;
         validate_origin("CHRONO_SERVER_PUBLIC_URL", &public_url)?;
+        let image_manager_base_url = parse_service_base_url(
+            "CHRONO_IMAGE_MANAGER_BASE_URL",
+            &value_or(
+                &mut lookup,
+                "CHRONO_IMAGE_MANAGER_BASE_URL",
+                &format!("{}/api/image-manager", public_url.trim_end_matches('/')),
+            )?,
+        )?;
         let cors_origins = value_or(
             &mut lookup,
             "CHRONO_SERVER_CORS_ORIGIN",
@@ -300,6 +312,7 @@ impl Config {
         Ok(Self {
             bind,
             public_url,
+            image_manager_base_url,
             nyxid_public_url,
             nyxid_service_id: lookup("CHRONO_NYXID_SERVICE_ID")?.filter(|id| !id.trim().is_empty()),
             cors_origins,
@@ -467,6 +480,30 @@ fn validate_origin(key: &str, value: &str) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+fn parse_service_base_url(key: &str, value: &str) -> Result<String, String> {
+    let parsed =
+        reqwest::Url::parse(value).map_err(|error| format!("{key} is not a URL: {error}"))?;
+    if !matches!(parsed.scheme(), "http" | "https")
+        || parsed.host_str().is_none()
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+        || value.len() > 2_048
+        || parsed.path().contains("//")
+        || parsed
+            .path()
+            .split('/')
+            .any(|part| part == ".." || part == ".")
+        || value.ends_with('/')
+    {
+        return Err(format!(
+            "{key} must be an HTTP(S) service base URL without credentials, query, fragment or trailing slash"
+        ));
+    }
+    Ok(value.to_owned())
 }
 
 fn parse_canonical_https_origin(key: &str, raw: &str) -> Result<String, String> {

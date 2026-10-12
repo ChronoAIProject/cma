@@ -837,6 +837,7 @@ pub(super) fn frozen_inputs(
     };
     let workspace_ref = WorkspaceProfileRef::new(workspace_id, revision);
     let sandbox_content = SandboxProfileContent {
+        runtime_image: None,
         cpu_millis: 1_000,
         memory_mib: 2_048,
         nyxid_services: Vec::new(),

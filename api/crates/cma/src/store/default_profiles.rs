@@ -109,6 +109,7 @@ impl DefaultProfileSpec {
             forked_from: None,
             uses_count: 0,
             draft: SandboxProfileContent {
+                runtime_image: None,
                 cpu_millis: self.cpu_millis,
                 memory_mib: self.memory_mib,
                 nyxid_services: Vec::new(),

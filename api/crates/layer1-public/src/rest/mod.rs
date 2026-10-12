@@ -35,6 +35,7 @@ mod agent_reads;
 mod agent_shared_shapes;
 mod agent_source;
 pub use agent_provenance::agent_provenance_router;
+mod agent_lifecycle;
 #[cfg(test)]
 mod agent_provenance_tests;
 mod agents;
@@ -124,6 +125,11 @@ mod triggers;
 mod workspaces;
 mod worktrees;
 
+pub use agent_lifecycle::{
+    AgentLifecycleCreateReceipt, AgentLifecycleCreateRequest, AgentLifecycleImageReference,
+    AgentLifecyclePermissions, AgentLifecycleProfile, AgentLifecycleProvisioner,
+    AgentLifecycleProvisioningError, AgentLifecycleRepository, AgentLifecycleSkill,
+};
 pub use agent_source::agent_source_router;
 pub use agents::{agent_router, AgentRoutesState};
 pub use embed::{
