@@ -78,7 +78,7 @@ def main():
             for command in [
                 ["cargo", "test", "--locked", "-p", "cma", "gateway::tests::", "--", "--ignored", "--test-threads=1"],
                 ["cargo", "test", "--locked", "-p", "cmaeg", "--test", "relay_ingress", "runner_binary::", "--", "--ignored", "--test-threads=1"],
-                ["cargo", "test", "--locked", "-p", "cmaeg", "--test", "management", "binary::compiled_binary_", "--", "--ignored", "--test-threads=1"],
+                ["cargo", "test", "--locked", "-p", "cmaeg", "--test", "management", "binary::compiled_binary_", "--", "--include-ignored", "--test-threads=1"],
                 ["cargo", "test", "--locked", "-p", "cmaeg", "--test", "mongo_isolation", "--", "--ignored", "--test-threads=1"],
                 ["cargo", "test", "--locked", "-p", "cma", "store::isolation::tests::real_", "--", "--ignored", "--test-threads=1"],
             ]:

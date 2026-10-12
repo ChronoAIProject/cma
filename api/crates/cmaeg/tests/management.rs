@@ -1,3 +1,5 @@
+#[path = "support/database.rs"]
+mod database;
 #[path = "fake_cma.rs"]
 pub mod fake_cma;
 #[path = "fake_nyxid.rs"]
