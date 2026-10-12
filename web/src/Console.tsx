@@ -227,9 +227,9 @@ export function Console({
   ) : route.kind === 'event_worker_profiles' ||
     route.kind === 'event_worker_profile' ||
     route.kind === 'profiles' ||
-    route.kind === 'profile' ||
-    route.kind === 'marketplace' ||
-    route.kind === 'marketplace_profile' ? (
+    route.kind === 'profile' ? (
+    <LegacyProfileNotice />
+  ) : route.kind === 'marketplace' || route.kind === 'marketplace_profile' ? (
     profiles === undefined ? (
       <section className="console__empty">
         <h1>Profiles unavailable</h1>
@@ -492,5 +492,19 @@ export function Console({
         </main>
       }
     />
+  );
+}
+
+function LegacyProfileNotice() {
+  return (
+    <section className="console__empty" aria-labelledby="legacy-profile-title">
+      <p className="console__eyebrow">Profiles retired</p>
+      <h1 id="legacy-profile-title">Configure Agents directly</h1>
+      <p>
+        Agent setup is now saved inline with each Agent. Choose an image and configure the Agent
+        from New agent; Image Manager owns runtime image versions.
+      </p>
+      <a href="/">Return to Agent Manager</a>
+    </section>
   );
 }
