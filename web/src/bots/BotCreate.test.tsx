@@ -30,10 +30,10 @@ function Form({ client, navigate }: { client: BotClient; navigate: () => void })
 }
 async function fill(custom = false) {
   const user = userEvent.setup();
-  await screen.findByRole('button', { name: 'Telegram bot' });
+  await screen.findByRole('button', { name: 'Event Gateway connection' });
   expect(screen.getByRole('button', { name: 'Continue' })).toBeDisabled();
-  await user.type(screen.getByLabelText('Bot name'), 'Research bot');
-  await chooseOption(user, 'Telegram bot', 'Telegram research');
+  await user.type(screen.getByLabelText('Consumer name'), 'Research bot');
+  await chooseOption(user, 'Event Gateway connection', 'Research channel');
   await user.click(screen.getByRole('button', { name: 'Continue' }));
   expect(screen.getByRole('button', { name: 'Continue' })).toBeDisabled();
   await user.click(
@@ -56,10 +56,10 @@ async function fill(custom = false) {
   await user.click(screen.getByRole('button', { name: 'Continue' }));
   expect(screen.getByRole('button', { name: 'Continue' })).toBeDisabled();
   await chooseOption(user, 'Admission policy', 'Selected senders in private chats');
-  await user.type(screen.getByLabelText('Telegram sender IDs'), '111,111');
+  await user.type(screen.getByLabelText('Sender IDs'), '111,111');
   expect(screen.getByRole('button', { name: 'Continue' })).toBeDisabled();
-  await user.clear(screen.getByLabelText('Telegram sender IDs'));
-  await user.type(screen.getByLabelText('Telegram sender IDs'), '111,222');
+  await user.clear(screen.getByLabelText('Sender IDs'));
+  await user.type(screen.getByLabelText('Sender IDs'), '111,222');
   await user.clear(screen.getByLabelText('Acknowledgement delay (seconds)'));
   await user.type(screen.getByLabelText('Acknowledgement delay (seconds)'), '1.001');
   await user.click(screen.getByRole('button', { name: 'Continue' }));
@@ -74,7 +74,7 @@ it('requires all choices and preserves the exact create request after an uncerta
   const client = botClient({ create });
   const view = render(<Form client={client} navigate={navigate} />);
   const user = await fill(true);
-  await user.click(screen.getByRole('button', { name: 'Create Bot' }));
+  await user.click(screen.getByRole('button', { name: 'Create consumer' }));
   await screen.findByRole('button', { name: 'Recover creation' });
   view.unmount();
   render(<Form client={client} navigate={navigate} />);
@@ -82,6 +82,8 @@ it('requires all choices and preserves the exact create request after an uncerta
   await user.click(await screen.findByRole('button', { name: 'Recover creation' }));
   expect(create).toHaveBeenCalledTimes(2);
   expect(create.mock.calls[0]?.[0]).toEqual(create.mock.calls[1]?.[0]);
+  expect(create.mock.calls[0]?.[0].connection_ref).toBe('connection-fixture');
+  expect(create.mock.calls[0]?.[0]).not.toHaveProperty('nyxid_bot_id');
   expect(create.mock.calls[0]?.[1].idempotencyKey).toBe(create.mock.calls[1]?.[1].idempotencyKey);
   expect(create.mock.calls[0]?.[0].admission).toEqual({
     type: 'scoped',
@@ -107,14 +109,16 @@ it('shows the public problem detail and permits correction after an explicit ref
       client={botClient({
         create: vi
           .fn()
-          .mockRejectedValue(new ApiError(409, 'This Telegram bot already has a route.')),
+          .mockRejectedValue(
+            new ApiError(409, 'This Event Gateway connection already has a route.'),
+          ),
       })}
       navigate={vi.fn()}
     />,
   );
   const user = await fill();
-  await user.click(screen.getByRole('button', { name: 'Create Bot' }));
-  await screen.findByText('This Telegram bot already has a route.');
+  await user.click(screen.getByRole('button', { name: 'Create consumer' }));
+  await screen.findByText('This Event Gateway connection already has a route.');
   expect(screen.getByRole('button', { name: 'Back' })).toBeEnabled();
 });
 
@@ -128,9 +132,9 @@ it('pins the complete worker revision and all three source references in Bot cre
   } as unknown as BotClient;
   const user = userEvent.setup();
   render(<Form client={client} navigate={vi.fn()} />);
-  await screen.findByRole('button', { name: 'Telegram bot' });
-  await user.type(screen.getByLabelText('Bot name'), 'Worker bot');
-  await chooseOption(user, 'Telegram bot', 'Telegram research');
+  await screen.findByRole('button', { name: 'Event Gateway connection' });
+  await user.type(screen.getByLabelText('Consumer name'), 'Worker bot');
+  await chooseOption(user, 'Event Gateway connection', 'Research channel');
   await user.click(screen.getByRole('button', { name: 'Continue' }));
   await user.click(screen.getByRole('radio', { name: 'Event Worker Profile' }));
   await chooseOption(
@@ -140,9 +144,9 @@ it('pins the complete worker revision and all three source references in Bot cre
   );
   await user.click(screen.getByRole('button', { name: 'Continue' }));
   await chooseOption(user, 'Admission policy', 'Selected senders in private chats');
-  await user.type(screen.getByLabelText('Telegram sender IDs'), '111');
+  await user.type(screen.getByLabelText('Sender IDs'), '111');
   await user.click(screen.getByRole('button', { name: 'Continue' }));
-  await user.click(screen.getByRole('button', { name: 'Create Bot' }));
+  await user.click(screen.getByRole('button', { name: 'Create consumer' }));
   expect(create.mock.calls[0]?.[0]).toMatchObject({
     event_worker_profile: { id: worker.id, revision: worker.revision },
     profile: worker.source.agent_profile,

@@ -977,12 +977,13 @@ returns 409, including changing an omitted default into an explicit reference.
 |---|---|
 | `POST /api/v1/bots` | Create a durable owner Bot with an Idempotency-Key; 201 returns creation progress. |
 | `GET /api/v1/bots` | List owned Bots with exclusive `after` and `limit` (1–200). |
-| `GET /api/v1/bots/nyxid-bots` | List the signed-in owner's active Telegram bots registered with NyxID. |
+| `GET /api/v1/bots/connections` | List the signed-in owner’s ready Gateway connections as `{connection_ref,label}`. |
+| `GET /api/v1/bots/nyxid-bots` | Compatibility inventory projection; new clients use `/connections`. |
 | `GET /api/v1/bots/{bot_id}` | Read owned Bot state, operation progress, channel endpoints and last synthetic test. |
 | `POST /api/v1/bots/{bot_id}/test` | Run a synthetic provider turn; does not send an external chat message. |
 | `POST /api/v1/bots/{bot_id}/disable` | 202 admits durable denial of all source events. |
 | `POST /api/v1/bots/{bot_id}/enable` | 202 admits restoration of the original source admission policy. |
-| `POST /api/v1/bots/{bot_id}/rotate-keys` | 202 admits rotation of both Bot credentials with recovery and cleanup. |
+| `POST /api/v1/bots/{bot_id}/rotate-keys` | 202 admits rotation of the consumer Agent credential (and the route credential for legacy consumers), with recovery and cleanup. |
 | `DELETE /api/v1/bots/{bot_id}` | 202 admits deletion; GET returns 404 after provider, channel, routes and keys are removed. |
 
 ### Resource access and share management

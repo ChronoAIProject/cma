@@ -31,8 +31,8 @@ export function botClient(overrides: Partial<BotClient['bots']> = {}) {
     bots: {
       list: vi.fn(async () => ({ items: [bot], next_after: null })),
       get: vi.fn(async () => bot),
-      available: vi.fn(async () => [
-        { id: 'external-fixture', name: 'Telegram research', platform: 'telegram' },
+      connections: vi.fn(async () => [
+        { connection_ref: 'connection-fixture', label: 'Research channel' },
       ]),
       create: vi.fn(async () => ({ ...bot, state: 'creating' as const })),
       test: vi.fn(async () => ({

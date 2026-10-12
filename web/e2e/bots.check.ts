@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { LocalStartup, recorded } from './agent-startup-fixtures';
 
-test('LOCAL Bot dashboard uses real CMA and CMAEG for creation, test and cleanup', async ({
+test('LOCAL consumer dashboard uses real CMA, Gateway and Mongo for creation, test and cleanup', async ({
   page,
   baseURL,
 }, info) => {
@@ -37,16 +37,6 @@ test('LOCAL Bot dashboard uses real CMA and CMAEG for creation, test and cleanup
   );
   await page.route('**/api/v1/bots**', async (route) => {
     const url = new URL(route.request().url());
-    // This journey exercises legacy Bot lifecycle compatibility. Inventory and
-    // profiles are local fixtures; every lifecycle mutation still reaches CMA
-    // and the compiled Gateway. Generic connection authoring has a different
-    // inventory contract from the retained NyxID Bot form.
-    if (url.pathname === '/api/v1/bots/nyxid-bots') {
-      await route.fulfill({
-        json: [{ id: 'external-bot', name: 'Telegram research', platform: 'telegram' }],
-      });
-      return;
-    }
     const upstream = await route.fetch({
       url: `${process.env.CMA_BOT_FIXTURE_ROOT}${url.pathname}${url.search}`,
       maxRedirects: 0,
@@ -56,11 +46,11 @@ test('LOCAL Bot dashboard uses real CMA and CMAEG for creation, test and cleanup
   });
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto('/bots');
-  await page.getByRole('button', { name: 'New Bot', exact: true }).click();
+  await page.getByRole('button', { name: 'New consumer', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Continue' })).toBeDisabled();
-  await page.getByLabel('Bot name', { exact: true }).fill('Browser acceptance Bot');
-  await page.getByRole('button', { name: 'Telegram bot', exact: true }).click();
-  await page.getByRole('menuitemradio', { name: 'Telegram research' }).click();
+  await page.getByLabel('Consumer name', { exact: true }).fill('Browser acceptance Bot');
+  await page.getByRole('button', { name: 'Event Gateway connection', exact: true }).click();
+  await page.getByRole('menuitemradio', { name: 'Research channel' }).click();
   await page.getByRole('button', { name: 'Continue' }).click();
   await page.getByRole('button', { name: /Select Research profile Version/ }).click();
   await page.getByRole('button', { name: 'Continue' }).click();
@@ -68,9 +58,9 @@ test('LOCAL Bot dashboard uses real CMA and CMAEG for creation, test and cleanup
   await page.getByRole('menuitemradio', { name: 'Private chats only', exact: true }).click();
   await page.getByLabel('Acknowledgement delay (seconds)', { exact: true }).fill('0');
   await page.getByRole('button', { name: 'Continue' }).click();
-  await page.getByRole('button', { name: 'Create Bot', exact: true }).click();
+  await page.getByRole('button', { name: 'Create consumer', exact: true }).click();
   await expect(page.getByText('Active', { exact: true })).toBeVisible();
-  await expect(page.locator('.bots__callback')).toContainText('/v1/callbacks/');
+  await expect(page.getByText('Event Gateway connection', { exact: true })).toBeVisible();
   for (const theme of ['light', 'dark']) {
     await page.evaluate(
       (value) => document.body.toggleAttribute('data-ds-dark-theme', value === 'dark'),
@@ -97,18 +87,18 @@ test('LOCAL Bot dashboard uses real CMA and CMAEG for creation, test and cleanup
   }
   await page.getByRole('button', { name: 'Run synthetic test' }).click();
   await expect(page.getByText(/Accepted after \d+ ms/)).toBeVisible();
-  await page.getByRole('button', { name: 'Disable Bot', exact: true }).click();
+  await page.getByRole('button', { name: 'Disable consumer', exact: true }).click();
   await expect(page.getByText('Disabled', { exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Enable Bot', exact: true }).click();
+  await page.getByRole('button', { name: 'Enable consumer', exact: true }).click();
   await expect(page.getByText('Active', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Rotate keys', exact: true }).click();
   await page.getByRole('button', { name: 'Confirm key rotation' }).click();
-  await expect(page.getByRole('button', { name: 'Delete Bot', exact: true })).toBeEnabled();
-  await page.getByRole('button', { name: 'Delete Bot', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Delete consumer', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: 'Delete consumer', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Confirm deletion' })).toBeDisabled();
   await page.getByRole('checkbox').check();
   await page.getByRole('button', { name: 'Confirm deletion' }).click();
-  await expect(page.getByText(/Bot deleted\./)).toBeVisible();
+  await expect(page.getByText(/Consumer deleted\./)).toBeVisible();
   expect(boundary.unexpected).toEqual([]);
   expect(boundary.errors).toEqual([]);
 });

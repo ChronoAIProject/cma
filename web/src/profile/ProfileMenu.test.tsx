@@ -19,7 +19,7 @@ describe('account menu', () => {
     const actor = userEvent.setup();
     render(<ProfileMenu user={user} bots onSignOut={onSignOut} onNavigate={onNavigate} />);
     await actor.click(screen.getByRole('button', { name: /account menu/i }));
-    for (const name of ['Bot settings', 'Developer']) {
+    for (const name of ['Event Gateway consumers', 'Developer']) {
       expect(screen.getByRole('menuitem', { name })).toBeInTheDocument();
     }
     expect(screen.queryByRole('menuitem', { name: 'Marketplace' })).not.toBeInTheDocument();
@@ -27,7 +27,7 @@ describe('account menu', () => {
     expect(screen.queryByRole('menuitem', { name: 'CMA Trigger' })).not.toBeInTheDocument();
     expect(screen.getByRole('menuitem', { name: /appearance/i })).toBeInTheDocument();
 
-    await actor.click(screen.getByRole('menuitem', { name: 'Bot settings' }));
+    await actor.click(screen.getByRole('menuitem', { name: 'Event Gateway consumers' }));
     expect(onNavigate).toHaveBeenCalledWith({ kind: 'bots' });
     await actor.click(screen.getByRole('button', { name: /account menu/i }));
     await actor.click(screen.getByRole('menuitem', { name: 'Sign out' }));
@@ -55,12 +55,12 @@ describe('account menu', () => {
         user={{ ...user, capabilities: ['use_own_sandboxes'] }}
         onSignOut={vi.fn()}
         onNavigate={onNavigate}
-        canManageBridges
+        bots
       />,
     );
     await actor.click(screen.getByRole('button', { name: /account menu/i }));
     await actor.click(screen.getByRole('menuitem', { name: 'Event Gateway consumers' }));
-    expect(onNavigate).toHaveBeenCalledWith({ kind: 'event_gateway' });
+    expect(onNavigate).toHaveBeenCalledWith({ kind: 'bots' });
   });
 
   it('does not expose Event Gateway consumers to visitors', async () => {
@@ -70,7 +70,7 @@ describe('account menu', () => {
         user={{ ...user, visitor: true }}
         onSignOut={vi.fn()}
         onNavigate={vi.fn()}
-        canManageBridges
+        bots
       />,
     );
     await actor.click(screen.getByRole('button', { name: /account menu/i }));

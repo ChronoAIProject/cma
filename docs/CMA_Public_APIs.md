@@ -163,6 +163,7 @@ of the public contract.
 | --- |
 | `GET /api/v1/bots` |
 | `POST /api/v1/bots` |
+| `GET /api/v1/bots/connections` |
 | `GET /api/v1/bots/nyxid-bots` |
 | `DELETE /api/v1/bots/{bot_id}` |
 | `GET /api/v1/bots/{bot_id}` |

@@ -54,7 +54,7 @@ it('clears protected records on viewer and client change and ignores late previo
   const next = botClient({ list: vi.fn(async () => ({ items: [], next_after: null })) });
   const second = { ...unavailableClient, botViews: next };
   view.rerender(<Entry user={{ ...owner, id: 'other' }} client={second} />);
-  await screen.findByText('No Bots on this page.');
+  await screen.findByText('No consumers on this page.');
   await act(async () => finish?.({ items: [bot], next_after: null }));
   expect(screen.queryByText(bot.name)).not.toBeInTheDocument();
   view.rerender(
@@ -63,5 +63,5 @@ it('clears protected records on viewer and client change and ignores late previo
   await screen.findByText(bot.name);
   view.rerender(<Entry user={{ ...owner, id: 'third' }} client={second} />);
   expect(screen.queryByText(bot.name)).not.toBeInTheDocument();
-  await screen.findByText('No Bots on this page.');
+  await screen.findByText('No consumers on this page.');
 });
