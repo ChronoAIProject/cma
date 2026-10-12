@@ -213,18 +213,8 @@ impl SandboxWorker {
                     .await
             }
         };
-        // Archive retention ends with the runtime, independently of history retention.
-        // The purger fences late publications and retries exact object deletions.
-        if let Err(error) = self
-            .dependencies
-            .checkpoints
-            .purge_checkpoint_objects(&sandbox, &operation_id(&sandbox))
-            .await
-        {
-            return self
-                .retry_failure(sandbox, dependency_failure(error), now)
-                .await;
-        }
+        // Agent-sandbox owns the runtime state on the durable home PVC. CMA
+        // does not purge checkpoint archives during retirement.
         let purge_at = now + policy.retention_grace;
         sandbox.purge_after = Some(rfc3339_at(purge_at));
         let next = if sandbox.credential.revoke_debt.is_empty() {
@@ -391,16 +381,6 @@ impl SandboxWorker {
                 sandbox.credential.queue_revoke(id, rfc3339_at(now));
             }
             return self.defer_purge_for_revocation(sandbox, now).await;
-        }
-        if let Err(error) = self
-            .dependencies
-            .checkpoints
-            .purge_checkpoint_objects(&sandbox, &operation_id(&sandbox))
-            .await
-        {
-            return self
-                .retry_failure(sandbox, dependency_failure(error), now)
-                .await;
         }
         self.dependencies
             .store

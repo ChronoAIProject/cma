@@ -27,9 +27,9 @@ use crate::{
     projections::{AdapterAgentHistoryExporter, AdapterSandboxResources, AgentProjectionServices},
     rate_limit::RateLimiters,
     sandbox::{
-        runtime_capabilities, DurableCheckpointObjectPurger, LiveAgentRegistry, LiveSandboxPolicy,
-        OrnnAgentSkillResolver, ProviderTitleEndpoint, SandboxLifecycleComposition,
-        SandboxLifecycleConfig, SandboxLifecycleDependencies,
+        runtime_capabilities, LiveAgentRegistry, LiveSandboxPolicy, OrnnAgentSkillResolver,
+        ProviderTitleEndpoint, SandboxLifecycleComposition, SandboxLifecycleConfig,
+        SandboxLifecycleDependencies,
     },
     store::{DefaultProfileSpec, MongoStores},
     trigger::{CmaServiceConnectionBroker, TriggerComposition, TriggerCompositionDependencies},
@@ -105,21 +105,6 @@ impl ControlPlaneComposition {
             crate::store::MongoProviderToolSource::new(stores.sandbox_model.clone()),
         )
         .await?;
-        let checkpoint_export = if config.runtime.home_policy.is_some() {
-            let homes = layer3_adapter::provider::PersistentHomeVolumes::infer_namespaced(
-                &config.runtime.sandbox_namespace,
-                &config.deployment_id,
-            )
-            .await
-            .map_err(|error| format!("checkpoint export authority is not usable: {error}"))?;
-            Some(crate::sandbox::ExportDependencies {
-                homes: Arc::new(homes),
-                objects: stores.checkpoint_objects.clone(),
-                image: config.runtime.sandbox_image.clone(),
-            })
-        } else {
-            None
-        };
         let auth = AuthState::with_store_and_nyxid_public_url(
             config.auth_mode.clone(),
             Some(SignInRecords {
@@ -259,7 +244,6 @@ impl ControlPlaneComposition {
         let worker_holder = format!("{}:{}", config.deployment_id, uuid::Uuid::new_v4());
         let sandbox_lifecycle = SandboxLifecycleComposition::new(
             SandboxLifecycleDependencies {
-                checkpoint_objects: Arc::clone(&stores.checkpoint_objects),
                 store: stores.sandbox_model.clone(),
                 title_runtime: Arc::new(ProviderTitleEndpoint {
                     adapter: Arc::clone(&adapter),
@@ -271,9 +255,6 @@ impl ControlPlaneComposition {
                 }),
                 adapter: adapter.clone(),
                 credentials: sandbox_credentials,
-                checkpoints: Arc::new(DurableCheckpointObjectPurger::new(
-                    stores.checkpoint_objects.clone(),
-                )),
                 registry: Arc::clone(&live_agents),
                 workspaces: Arc::clone(&workspace_service),
                 agents: projections.agents(),
@@ -288,7 +269,6 @@ impl ControlPlaneComposition {
                 deployment_id: config.deployment_id.clone(),
                 runtime_version: config.runtime.sandbox_image.clone(),
                 title_model: config.default_profiles.agent_model.clone(),
-                checkpoint_export,
             },
         );
         let trigger = TriggerComposition::new(TriggerCompositionDependencies {

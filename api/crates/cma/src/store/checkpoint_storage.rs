@@ -30,10 +30,12 @@ pub(crate) trait CheckpointBlobStore: Send + Sync {
         sha256: &str,
         size: u64,
     ) -> Result<CheckpointArchiveDownload>;
+    #[allow(dead_code)]
     async fn delete(&self, key: &str) -> Result<()>;
 
     /// True only when storage durably rejects later writes to every owned key.
     /// Observed absence alone cannot settle an uncertain upload.
+    #[allow(dead_code)]
     async fn finalize_delete(&self, key: &str) -> Result<bool> {
         self.delete(key).await?;
         Ok(false)
@@ -159,6 +161,7 @@ impl CheckpointBlobStore for ChronoStorage {
 }
 
 impl ChronoStorage {
+    #[allow(dead_code)]
     async fn fence_deleted_object(&self, key: &str) -> Result<()> {
         // CMA allocates immutable UUID object keys. Generation 2 permanently
         // supersedes their legacy writes (generation 0) and fenced writes (1).
@@ -199,6 +202,7 @@ impl ChronoStorage {
         Ok(())
     }
 
+    #[allow(dead_code)]
     async fn delete_object(&self, key: &str) -> Result<()> {
         let response = self
             .http
@@ -235,6 +239,7 @@ pub(super) fn checkpoint_object_key(base: String, size: u64) -> String {
     }
 }
 
+#[allow(dead_code)]
 pub(super) fn checkpoint_object_key_base(key: &str) -> Result<&str> {
     if multipart::size_from_key(key)?.is_some() {
         Ok(key

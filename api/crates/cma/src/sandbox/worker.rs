@@ -62,22 +62,12 @@ pub(crate) trait LiveAgentStopper: Send + Sync {
     ) -> Result<(), SandboxDependencyError>;
 }
 
-#[async_trait::async_trait]
-pub(crate) trait CheckpointObjectPurger: Send + Sync {
-    async fn purge_checkpoint_objects(
-        &self,
-        sandbox: &Sandbox,
-        operation_id: &str,
-    ) -> Result<(), SandboxDependencyError>;
-}
-
 pub(crate) struct SandboxWorkerDependencies {
     pub store: Arc<dyn SandboxLifecycleStore>,
     pub adapter: Arc<dyn SandboxAdapter>,
     pub credentials: Arc<dyn SandboxCredentialController>,
     pub workspaces: Arc<dyn ProfileWorkspaceProvisioner>,
     pub agents: Arc<dyn LiveAgentStopper>,
-    pub checkpoints: Arc<dyn CheckpointObjectPurger>,
     pub registry: Arc<LiveAgentRegistry>,
     pub updates: Arc<dyn AgentUpdateRecorder>,
     pub operations: Arc<AgentOperationService>,

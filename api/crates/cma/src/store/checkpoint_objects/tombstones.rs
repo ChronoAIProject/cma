@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use futures_util::TryStreamExt;
 use layer2_core::StoreError;
 use mongodb::bson::{doc, DateTime, Document};
