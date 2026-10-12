@@ -5,7 +5,8 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 
 use super::deployment::{
-    provider_metadata_identity, provider_request_identity, ProviderIdentity, SANDBOX_METADATA,
+    provider_metadata_identity, provider_request_identity, ProviderIdentity,
+    CONTROL_PLANE_METADATA, SANDBOX_METADATA,
 };
 use super::{
     CheckpointArchiveStoreFactory, HostedAgentOpenSettings, HostedBackend,
@@ -64,24 +65,41 @@ pub struct ProviderHostedBackend {
     transport: Arc<dyn HostedControlTransport>,
     ready_timeout: Duration,
     ready_poll: Duration,
+    created_by: String,
 }
 
 impl ProviderHostedBackend {
-    pub fn new(client: SandboxClient, transport: Arc<dyn HostedControlTransport>) -> Self {
-        Self {
+    pub fn new(
+        client: SandboxClient,
+        transport: Arc<dyn HostedControlTransport>,
+        created_by: impl Into<String>,
+    ) -> crate::Result<Self> {
+        let created_by = created_by.into();
+        if created_by.is_empty()
+            || created_by.len() > 256
+            || created_by.trim() != created_by
+            || created_by.chars().any(char::is_control)
+        {
+            return Err(AdapterError::Rejected(
+                "provider inventory requires a control-plane identity".into(),
+            ));
+        }
+        Ok(Self {
             client,
             transport,
             ready_timeout: DEFAULT_READY_TIMEOUT,
             ready_poll: DEFAULT_READY_POLL,
-        }
+            created_by,
+        })
     }
 
     pub fn production(
         client: SandboxClient,
         archive_factory: Arc<dyn CheckpointArchiveStoreFactory>,
+        created_by: impl Into<String>,
     ) -> crate::Result<Self> {
         let transport = ProviderHostedControlTransport::new(client.clone(), archive_factory)?;
-        Ok(Self::new(client, Arc::new(transport)))
+        Self::new(client, Arc::new(transport), created_by)
     }
 
     #[must_use]
@@ -93,6 +111,17 @@ impl ProviderHostedBackend {
 
     pub fn client(&self) -> &SandboxClient {
         &self.client
+    }
+
+    fn require_creator(&self, request: &ProviderSandboxRequest) -> crate::Result<()> {
+        if request.metadata.get(CONTROL_PLANE_METADATA) != Some(&self.created_by) {
+            return Err(identity_mismatch());
+        }
+        Ok(())
+    }
+
+    async fn scoped_inventory(&self) -> crate::Result<Vec<RuntimeObservation>> {
+        creator_inventory(&self.created_by, self.client.list().await?)
     }
 
     async fn await_running(
@@ -126,6 +155,7 @@ impl ProviderHostedBackend {
         &self,
         request: &ProviderSandboxRequest,
     ) -> crate::Result<Option<ProviderSandbox>> {
+        self.require_creator(request)?;
         matching_sandbox(request, self.client.list().await?)
     }
 }
@@ -216,7 +246,7 @@ impl HostedBackend for ProviderHostedBackend {
     }
 
     async fn inventory(&self) -> crate::Result<Vec<RuntimeObservation>> {
-        provider_inventory(self.client.list().await?)
+        self.scoped_inventory().await
     }
 
     async fn adopt(
@@ -224,12 +254,9 @@ impl HostedBackend for ProviderHostedBackend {
         handle: &RuntimeHandle,
         request: &ProviderSandboxRequest,
     ) -> crate::Result<Option<RuntimeObservation>> {
+        self.require_creator(request)?;
         let expected = provider_request_identity(request)?;
-        let observation = select_adoption(
-            handle,
-            &expected,
-            provider_inventory(self.client.list().await?)?,
-        )?;
+        let observation = select_adoption(handle, &expected, self.scoped_inventory().await?)?;
         if observation.is_some() {
             self.transport
                 .bind_runtime(handle, &expected.sandbox_id)
@@ -246,7 +273,9 @@ impl HostedBackend for ProviderHostedBackend {
         else {
             return Ok(());
         };
-        let current = provider_inventory(self.client.list().await?)?
+        let current = self
+            .scoped_inventory()
+            .await?
             .into_iter()
             .find(|current| current.handle == observation.handle);
         if current.as_ref() != Some(observation) {
@@ -332,7 +361,10 @@ fn matching_sandbox(
     let identity = provider_request_identity(request)?;
     let mut candidates = Vec::new();
     for sandbox in sandboxes {
-        if sandbox.metadata.get(SANDBOX_METADATA) == Some(&identity.sandbox_id) {
+        if sandbox.metadata.get(SANDBOX_METADATA) == Some(&identity.sandbox_id)
+            && sandbox.metadata.get(CONTROL_PLANE_METADATA)
+                == request.metadata.get(CONTROL_PLANE_METADATA)
+        {
             let candidate = provider_metadata_identity(&sandbox.metadata)?;
             if candidate.generation == identity.generation {
                 candidates.push(sandbox);
@@ -356,10 +388,33 @@ fn validate_sandbox_identity(
     let identity = provider_request_identity(request)?;
     if invalid_handle(&sandbox.id)
         || provider_metadata_identity(&sandbox.metadata).as_ref() != Ok(&identity)
+        || sandbox.metadata.get(CONTROL_PLANE_METADATA)
+            != request.metadata.get(CONTROL_PLANE_METADATA)
     {
         return Err(identity_mismatch());
     }
     Ok(sandbox)
+}
+
+fn creator_inventory(
+    created_by: &str,
+    sandboxes: Vec<ProviderSandbox>,
+) -> crate::Result<Vec<RuntimeObservation>> {
+    // A shared provider also hosts generic environments and other services.
+    // Only this controller's resources carry its runtime-contract obligations.
+    // Filter ownership before decoding that contract; foreign images need no
+    // CMA metadata and must never become candidates for orphan reclamation.
+    let owned = sandboxes
+        .into_iter()
+        .filter(|sandbox| {
+            sandbox
+                .metadata
+                .get(CONTROL_PLANE_METADATA)
+                .map(String::as_str)
+                == Some(created_by)
+        })
+        .collect();
+    provider_inventory(owned)
 }
 
 fn provider_inventory(sandboxes: Vec<ProviderSandbox>) -> crate::Result<Vec<RuntimeObservation>> {
