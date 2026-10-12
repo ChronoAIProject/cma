@@ -4,9 +4,7 @@ import { expect, it, vi } from 'vitest';
 import { Console } from './Console';
 import { CmaClientProvider } from './api/context';
 import { createRestWebClient } from './api/rest';
-import { createProfileViewsClient } from './api/profiles';
 import type { AppRoute } from './routing/routes';
-import { wireMarketplace, wireProfile } from './test/rest';
 
 const cases: readonly { route: AppRoute; heading: string }[] = [
   { route: { kind: 'marketplace' }, heading: 'Marketplace' },
@@ -19,31 +17,10 @@ const cases: readonly { route: AppRoute; heading: string }[] = [
 function publicClient() {
   const fetch = vi.fn(async (url: string | URL | Request) => {
     const path = new URL(String(url), 'https://cma.example.test').pathname;
-    if (path === '/api/v1/sandboxes') return Response.json({ items: [] });
-    if (path === '/api/v1/profile-authoring/skills') return Response.json({ items: [] });
-    if (path === '/api/v1/profile-authoring/services') return Response.json([]);
-    if (path === '/api/v1/profile-authoring/bounds')
-      return Response.json({
-        min_cpu_millis: 1000,
-        max_cpu_millis: 8000,
-        min_memory_mib: 1024,
-        max_memory_mib: 16384,
-      });
-    const match =
-      /^\/api\/v1\/(marketplace\/)?(agent|workspace|sandbox)-profiles(?:\/[^/]+)?$/.exec(path);
-    const kind = match?.[2];
-    if (kind !== 'agent' && kind !== 'workspace' && kind !== 'sandbox')
-      throw new Error(`Unexpected test route ${path}`);
-    const collection = path.endsWith('-profiles');
-    const profile = match?.[1] === undefined ? wireProfile(kind) : wireMarketplace(kind);
-    return Response.json(
-      collection
-        ? { items: [match?.[1] === undefined ? profile : wireMarketplace(kind).summary] }
-        : profile,
-    );
+    throw new Error(`Unexpected request after profile retirement: ${path}`);
   });
   const sdk = createClient({ fetch });
-  return { client: createRestWebClient(sdk), profiles: createProfileViewsClient(sdk), fetch };
+  return { client: createRestWebClient(sdk), fetch };
 }
 
 it.each(cases)(
@@ -51,7 +28,7 @@ it.each(cases)(
   async ({ route, heading }) => {
     const clients = publicClient();
     render(
-      <CmaClientProvider client={clients.client} profiles={clients.profiles}>
+      <CmaClientProvider client={clients.client}>
         <Console
           user={{
             id: 'owner',
@@ -65,13 +42,12 @@ it.each(cases)(
         />
       </CmaClientProvider>,
     );
-    expect(await screen.findByRole('heading', { name: heading, level: 1 })).toBeInTheDocument();
-    if (route.kind === 'marketplace_profile') {
-      expect(screen.queryByRole('button', { name: 'Use' })).not.toBeInTheDocument();
-      expect(screen.getByText(/Profile based creation is retired/)).toBeInTheDocument();
-    }
-    expect(clients.fetch.mock.calls.every(([url]) => String(url).startsWith('/api/v1/'))).toBe(
-      true,
+    expect(
+      await screen.findByRole('heading', { name: 'Configure Agents directly', level: 1 }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: heading, level: 1 })).not.toBeInTheDocument();
+    expect(clients.fetch.mock.calls.some(([url]) => /profile|marketplace/.test(String(url)))).toBe(
+      false,
     );
   },
 );
@@ -79,7 +55,7 @@ it.each(cases)(
 it('does not permit profile management without the public capability', async () => {
   const clients = publicClient();
   render(
-    <CmaClientProvider client={clients.client} profiles={clients.profiles}>
+    <CmaClientProvider client={clients.client}>
       <Console
         user={{ id: 'visitor', handle: 'Visitor', visitor: true, capabilities: [] }}
         route={{ kind: 'profile', profileKind: 'agent', profileId: 'agent-1' }}
@@ -107,7 +83,7 @@ it.each([
 ] as const)('retires the legacy profile route $kind', async (route) => {
   const clients = publicClient();
   render(
-    <CmaClientProvider client={clients.client} profiles={clients.profiles}>
+    <CmaClientProvider client={clients.client}>
       <Console
         user={{
           id: 'owner',
