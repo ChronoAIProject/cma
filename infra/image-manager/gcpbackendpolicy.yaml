@@ -1,0 +1,15 @@
+apiVersion: networking.gke.io/v1
+kind: GCPBackendPolicy
+metadata:
+  name: cma-image-manager
+  namespace: chrono-bot
+  labels:
+    app.kubernetes.io/name: cma-image-manager
+    app.kubernetes.io/part-of: cma
+spec:
+  targetRef:
+    group: ""
+    kind: Service
+    name: cma-image-manager
+  default:
+    timeoutSec: 660

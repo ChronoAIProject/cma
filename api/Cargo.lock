@@ -365,11 +365,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "cma-sandbox-manager"
+name = "cma-image-manager"
 version = "0.1.0"
 dependencies = [
  "async-trait",
  "axum",
+ "cma-service-auth",
  "futures-util",
  "mongodb",
  "reqwest",
@@ -377,9 +378,28 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "thiserror 2.0.20",
+ "time",
  "tokio",
+ "tower-http",
  "tracing",
  "tracing-subscriber",
+ "url",
+ "uuid",
+]
+
+[[package]]
+name = "cma-service-auth"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "base64",
+ "mongodb",
+ "reqwest",
+ "ring",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
  "url",
  "uuid",
 ]
@@ -391,6 +411,7 @@ dependencies = [
  "axum",
  "base64",
  "bytes",
+ "cma-service-auth",
  "cmaeg-core",
  "dashmap",
  "futures-util",
@@ -402,6 +423,7 @@ dependencies = [
  "meteroid-utoipa",
  "metrics",
  "metrics-exporter-prometheus",
+ "mongodb",
  "reqwest",
  "ring",
  "rustls",
@@ -1816,6 +1838,7 @@ dependencies = [
  "k8s-openapi",
  "kube",
  "reqwest",
+ "ring",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -1840,8 +1863,10 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "subtle",
  "tokio",
  "tokio-tungstenite 0.24.0",
+ "tower",
  "tracing",
  "tracing-subscriber",
  "url",
