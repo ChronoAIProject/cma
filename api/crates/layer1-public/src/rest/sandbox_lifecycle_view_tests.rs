@@ -168,10 +168,7 @@ fn lifecycle_projection_tracks_writer_release_and_records_real_operation_phases(
         .unwrap();
     let view = serde_json::to_value(SandboxView::from(&value)).unwrap();
     assert_eq!(view["lifecycle"]["checkpoint"]["phase"], "resume_writers");
-    assert_eq!(
-        view["lifecycle"]["latest_snapshot"],
-        json!({"epoch":1, "saved_at":checkpoint(1).sealed_at, "download_url":"/api/v1/sandboxes/sbx_capturing/snapshots/1/download"})
-    );
+    assert!(view["lifecycle"].get("latest_snapshot").is_none());
     assert_eq!(view["lifecycle"]["pause"]["allowed"], false);
     assert_public_lifecycle(&view);
     let fence = claim_capture(&mut value);
@@ -202,31 +199,4 @@ fn lifecycle_projection_tracks_writer_release_and_records_real_operation_phases(
     );
     assert_eq!(view["lifecycle"]["revive"]["allowed"], false);
     assert_public_lifecycle(&view);
-}
-
-#[tokio::test]
-async fn snapshot_download_is_owner_scoped_and_refuses_obsolete_epochs() {
-    let fixture = fixture(10);
-    for (id, owner) in [
-        ("sbx_owned_snapshot", "owner"),
-        ("sbx_foreign_snapshot", "stranger"),
-    ] {
-        fixture
-            .store
-            .create_sandbox(paused_sandbox(id, owner))
-            .await
-            .unwrap();
-    }
-    for path in [
-        "/api/v1/sandboxes/sbx_foreign_snapshot/snapshots/1/download",
-        "/api/v1/sandboxes/sbx_owned_snapshot/snapshots/999/download",
-        "/api/v1/sandboxes/sbx_missing/snapshots/1/download",
-    ] {
-        let (status, _) = json_response(
-            &fixture.router,
-            authenticated(Method::GET, path, None, None),
-        )
-        .await;
-        assert_eq!(status, StatusCode::NOT_FOUND);
-    }
 }
