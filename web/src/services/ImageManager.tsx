@@ -2,12 +2,14 @@ import { useEffect, useState } from 'react';
 import { Button } from '../ui/Button';
 import { can, segment, serviceRequest, ServiceError, type ServiceSession } from './client';
 import { PageStatus, usePage, WriteForm } from './data';
+import { imageVisibilityLabel } from '../create/imageCatalog';
 interface Image {
   id: string;
   owner: string;
   name: string;
   description: string;
   shares: string[];
+  visibility?: 'private' | 'shared' | 'public';
   retired: boolean;
   revision: number;
 }
@@ -17,7 +19,7 @@ interface Build {
   error?: string | null;
   reference: string | null;
   created_at_ms: number;
-  source: { repository: string; commit: string };
+  source?: { repository: string; commit: string };
 }
 export function ImageManager({
   session,
@@ -26,13 +28,39 @@ export function ImageManager({
   readonly session: ServiceSession;
   readonly denied: () => void;
 }) {
-  const catalog = usePage<Image>('image-manager', '/v1/images', denied);
+  const [scope, setScope] = useState('all');
+  return (
+    <>
+      <label>
+        Image catalog
+        <select value={scope} onChange={(event) => setScope(event.target.value)}>
+          <option value="all">All accessible images</option>
+          <option value="owned">Your images</option>
+          <option value="private">Your private images</option>
+          <option value="public">Public images</option>
+          <option value="shared">Shared with you</option>
+        </select>
+      </label>
+      <ImageCatalog key={scope} scope={scope} session={session} denied={denied} />
+    </>
+  );
+}
+function ImageCatalog({
+  scope,
+  session,
+  denied,
+}: {
+  readonly scope: string;
+  readonly session: ServiceSession;
+  readonly denied: () => void;
+}) {
+  const catalog = usePage<Image>('image-manager', `/v1/images?scope=${scope}`, denied);
   const [selected, setSelected] = useState<string>();
   const image = catalog.value?.items.find((i) => i.id === selected);
   return (
     <>
       <div className="service-actions">
-        <h2>Your images</h2>
+        <h2>Images</h2>
         <Button onClick={catalog.refresh} disabled={catalog.busy}>
           Refresh
         </Button>
@@ -54,9 +82,7 @@ export function ImageManager({
         </details>
       ) : null}
       <PageStatus busy={catalog.busy} error={catalog.error} retry={catalog.refresh} />
-      {catalog.value?.items.length === 0 ? (
-        <p>No images yet. Create an image to add its first build.</p>
-      ) : null}
+      {catalog.value?.items.length === 0 ? <p>No images in this catalog.</p> : null}
       <ul className="service-list">
         {catalog.value?.items.map((i) => (
           <li key={i.id}>
@@ -68,7 +94,8 @@ export function ImageManager({
                 </h3>
                 <p>
                   {i.description || 'No description'}
-                  {i.owner === session.subject ? '' : ' · Shared with you'}
+                  {' · '}
+                  {imageVisibilityLabel(i.visibility)}
                 </p>
               </div>
               <Button onClick={() => setSelected(i.id)} aria-expanded={selected === i.id}>
@@ -129,13 +156,14 @@ function ImageDetails({
     }, 5000);
     return () => window.clearInterval(timer);
   }, [pending, refresh, builds.firstPage]);
-  async function mutate(path: string, method: string) {
+  async function mutate(path: string, method: string, body?: unknown) {
     setBusy(true);
     setError(undefined);
     try {
       await serviceRequest('image-manager', path, {
         method,
         headers: { 'If-Match': String(image.revision) },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       });
       setRetiring(false);
       changed();
@@ -208,9 +236,11 @@ function ImageDetails({
             <p>
               {b.phase} · {new Date(b.created_at_ms).toLocaleString()}
             </p>
-            <p>
-              {b.source.repository} · <code>{b.source.commit}</code>
-            </p>
+            {b.source ? (
+              <p>
+                {b.source.repository} · <code>{b.source.commit}</code>
+              </p>
+            ) : null}
             {b.error === 'submission_outcome_unconfirmed' ? (
               <p>
                 Waiting for the build service to confirm this request. It will not be submitted
@@ -264,8 +294,28 @@ function ImageDetails({
         <details>
           <summary>Sharing</summary>
           <p>
+            {image.visibility === 'public'
+              ? 'Public: signed-in Image Manager users can discover this image and use its successful versions.'
+              : 'Private: only you and the accounts listed below can use this image.'}
+          </p>
+          {image.visibility === 'public' ? (
+            <Button
+              disabled={busy}
+              onClick={() => void mutate(`${base}/visibility`, 'PUT', { visibility: 'private' })}
+            >
+              Make private
+            </Button>
+          ) : !image.retired ? (
+            <Button
+              disabled={busy}
+              onClick={() => void mutate(`${base}/visibility`, 'PUT', { visibility: 'public' })}
+            >
+              Make public
+            </Button>
+          ) : null}
+          <p>
             Shared accounts can view and use successful versions. They cannot change or build this
-            image.
+            image. Making it private preserves these individual shares and existing Agents.
           </p>
           <form
             className="service-form"

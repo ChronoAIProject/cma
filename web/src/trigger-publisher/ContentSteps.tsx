@@ -14,7 +14,12 @@ import {
 } from './model';
 import { ProfilePicker } from './ProfilePicker';
 import { QuickMessageFields } from './QuickMessageFields';
-import { listAgentImages, resolveAgentImage, type AgentImageChoice } from '../create/imageCatalog';
+import {
+  imageVisibilityLabel,
+  listAgentImages,
+  resolveAgentImage,
+  type AgentImageChoice,
+} from '../create/imageCatalog';
 import { TrustDisclosures } from './TrustDisclosures';
 
 export { TrustDisclosures } from './TrustDisclosures';
@@ -160,7 +165,7 @@ function InlineTargetStep({
           <option value="">System default image</option>
           {images.map((image) => (
             <option key={image.id} value={image.id}>
-              {image.name} ({image.visibility === 'private' ? 'Private' : 'Shared'})
+              {image.name} ({imageVisibilityLabel(image.visibility)})
             </option>
           ))}
         </select>

@@ -9,6 +9,8 @@ use mongodb::{
     options::{ClientOptions, Credential},
     Client,
 };
+#[path = "support/public_images.rs"]
+mod public_images;
 #[tokio::test]
 #[ignore = "requires the authenticated image-manager Mongo contract fixture"]
 async fn isolated_credentials_preserve_owner_idempotency_shares_and_build_fences() {
@@ -94,6 +96,22 @@ async fn exercise(uri: &str, admin: &Client, name: &str) -> Result<(), Box<dyn s
     let images = accepted.into_iter().collect::<Result<Vec<_>, _>>()?;
     let image = &images[0];
     assert!(images.iter().all(|i| i.id == image.id));
+    // Old documents omit visibility. Migration must preserve their private
+    // meaning, while a restarted runtime refuses the old collection rules.
+    db.collection::<Document>(schema::IMAGES)
+        .update_one(doc! {"_id":&image.id}, doc! {"$unset":{"visibility":""}})
+        .await?;
+    db.run_command(doc! {"collMod":schema::MIGRATIONS,"validator":{"$jsonSchema":{"bsonType":"object","required":["_id","version"],"properties":{"_id":{"enum":["schema"]},"version":{"enum":[1]}}}}}).await?;
+    db.collection::<Document>(schema::MIGRATIONS)
+        .update_one(doc! {"_id":"schema"}, doc! {"$set":{"version":1}})
+        .await?;
+    assert!(Store::open(runtime.database(name)).await.is_err());
+    schema::migrate(&migrator.database(name)).await?;
+    let reopened = Store::open(runtime.database(name)).await?;
+    assert_eq!(
+        reopened.image("alice", &image.id, true).await?.visibility,
+        cma_image_manager::model::ImageVisibility::Private
+    );
     assert!(matches!(
         store.image("bob", &image.id, false).await,
         Err(Error::NotFound)
@@ -215,6 +233,7 @@ async fn exercise(uri: &str, admin: &Client, name: &str) -> Result<(), Box<dyn s
             .len(),
         1
     );
+    public_images::verify(store).await;
     Ok(())
 }
 fn unauthorized(error: mongodb::error::Error) -> bool {
