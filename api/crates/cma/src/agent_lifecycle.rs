@@ -142,14 +142,6 @@ impl InlineAgentLifecycle {
             revision: workspace_revision.revision,
         };
 
-        // Image selection is intentionally rejected until the Image Manager
-        // service-to-service resolver is composed.  Silently falling back to
-        // the deployment image would make the UI claim a different image ran.
-        if request.image.is_some() {
-            return Err(AgentLifecycleProvisioningError::Invalid(
-                "selected Image Manager versions are not yet available to the Agent Manager runtime".into(),
-            ));
-        }
         let permissions = services(&profile.permissions)?;
         let sandbox_content = SandboxProfileContent {
             runtime_image,
