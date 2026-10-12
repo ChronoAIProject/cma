@@ -281,9 +281,9 @@ impl InMemorySandboxStore {
             .checked_add(1)
             .ok_or(SandboxStoreError::Conflict)?;
         let cause = match admission.origin {
-            AgentOrigin::Manual | AgentOrigin::WorkspaceProfile { .. } => {
-                SandboxReviveCause::AgentCreation
-            }
+            AgentOrigin::Manual
+            | AgentOrigin::Lifecycle { .. }
+            | AgentOrigin::WorkspaceProfile { .. } => SandboxReviveCause::AgentCreation,
             AgentOrigin::Trigger { .. } => SandboxReviveCause::TriggerLaunch,
         };
         let revival = next_sandbox

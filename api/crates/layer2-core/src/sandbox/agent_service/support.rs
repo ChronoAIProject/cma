@@ -6,6 +6,16 @@ pub(super) fn creation_key(
 ) -> Result<String, AgentServiceError> {
     match origin {
         AgentOrigin::Manual => Ok(format!("manual:{agent_id}")),
+        AgentOrigin::Lifecycle { operation_id } => {
+            if !valid_key_part(operation_id) {
+                return Err(AgentServiceError::InvalidRequest(
+                    "lifecycle origin is invalid".into(),
+                ));
+            }
+            content_digest(origin)
+                .map(|digest| format!("lifecycle:{digest}"))
+                .map_err(|error| AgentServiceError::InvalidRequest(error.to_string()))
+        }
         AgentOrigin::WorkspaceProfile { .. } => Err(AgentServiceError::InvalidRequest(
             "workspace profile origin requires automatic admission".into(),
         )),

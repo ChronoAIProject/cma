@@ -65,6 +65,7 @@ struct ProvisionInput {
     lease: LifecycleLease,
     existing_sandbox_id: Option<String>,
     existing_agent_id: Option<String>,
+    actor: Option<layer2_core::resource_access::ResourceActor>,
 }
 
 impl InlineAgentLifecycle {
@@ -135,7 +136,7 @@ impl InlineAgentLifecycle {
                 agent,
             )
             .await
-            .map_err(|error| AgentLifecycleProvisioningError::Invalid(error.to_string()))?;
+            .map_err(validation::profile_error)?;
 
         let workspace_content = WorkspaceProfileContent {
             location: repository_location(request)?,
@@ -157,7 +158,7 @@ impl InlineAgentLifecycle {
                 workspace_content,
             )
             .await
-            .map_err(|error| AgentLifecycleProvisioningError::Invalid(error.to_string()))?;
+            .map_err(validation::profile_error)?;
         let workspace_ref = WorkspaceProfileRef {
             id: WorkspaceProfileId(workspace_revision.profile_id.to_string()),
             revision: workspace_revision.revision,
@@ -187,7 +188,7 @@ impl InlineAgentLifecycle {
                 sandbox_content,
             )
             .await
-            .map_err(|error| AgentLifecycleProvisioningError::Invalid(error.to_string()))?;
+            .map_err(validation::profile_error)?;
         let sandbox_ref = SandboxProfileRef {
             id: SandboxProfileId(sandbox_revision.profile_id.to_string()),
             revision: sandbox_revision.revision,
@@ -207,7 +208,10 @@ impl InlineAgentLifecycle {
                     .read(caller, sandbox_id)
                     .await
                     .map_err(sandbox_error)?;
-                if sandbox.status == SandboxStatus::Failed {
+                if matches!(
+                    sandbox.status,
+                    SandboxStatus::Failed | SandboxStatus::Retiring | SandboxStatus::Retired
+                ) {
                     return Err(AgentLifecycleProvisioningError::Conflict(
                         "Sandbox provisioning failed".into(),
                     ));
@@ -245,6 +249,7 @@ impl InlineAgentLifecycle {
             lease,
             existing_sandbox_id,
             existing_agent_id,
+            actor,
         } = input;
         let (agent_revision, _workspace_profile, sandbox_profile) = self
             .create_profiles(caller, &request, runtime_image, &key)
@@ -264,13 +269,15 @@ impl InlineAgentLifecycle {
         } else {
             let sandbox = match self
                 .sandbox
-                .create(
+                .create_for_lifecycle(
                     caller,
                     CreateSandbox {
                         profile: sandbox_profile.clone(),
                         name: Some(validation::sandbox_name(&request.name)),
                         confirmed_digest: None,
-                        origin: SandboxOrigin::Manual,
+                        origin: SandboxOrigin::Lifecycle {
+                            operation_id: lease.id.clone(),
+                        },
                     },
                 )
                 .await
@@ -321,8 +328,9 @@ impl InlineAgentLifecycle {
         } else {
             let agent = self
                 .agents
-                .create(
+                .create_for_lifecycle(
                     caller,
+                    actor.as_ref(),
                     &workspace_id,
                     CreateAgent {
                         profile: layer2_core::profiles::AgentProfileRef::new(
@@ -331,7 +339,9 @@ impl InlineAgentLifecycle {
                         ),
                         title: Some(request.name),
                         first_message: None,
-                        origin: AgentOrigin::Manual,
+                        origin: AgentOrigin::Lifecycle {
+                            operation_id: lease.id.clone(),
+                        },
                     },
                 )
                 .await
@@ -428,6 +438,7 @@ impl AgentLifecycleProvisioner for InlineAgentLifecycle {
             request,
             resolved_image,
             capabilities: caller.authorization.iter().collect(),
+            actor: context.map(|context| context.actor.clone()),
         };
         let operation = self
             .operations
