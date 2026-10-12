@@ -107,6 +107,14 @@ impl RecordClient {
         self
     }
 
+    pub(crate) fn with_service_auth(
+        mut self,
+        service_auth: crate::service_auth::ServiceAuth,
+    ) -> Self {
+        self.service_token = service_auth;
+        self
+    }
+
     pub async fn reachable(&self) -> bool {
         if let Some(db) = &self.database {
             return db.reachable().await;

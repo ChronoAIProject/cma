@@ -10,6 +10,7 @@ use layer2_core::ServiceId;
 
 use crate::{auth::AuthMode, store::AuthEncryptionKey};
 
+mod agent_sandbox;
 mod execution;
 mod gateway;
 mod home;

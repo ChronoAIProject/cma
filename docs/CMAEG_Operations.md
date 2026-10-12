@@ -62,6 +62,12 @@ applies with all media flags off.
 | `CMAEG_CMA_CLIENT_SECRET` | secret string | Optional pair | Exchanges renewable outbound CMA tokens at the configured NyxID origin using `client_credentials` and `openid roles`. The account role grants `cma:gateway:records` and `cma:provider:bindings`. |
 | `CMAEG_CMA_SERVICE_TOKEN_FILE` | file path | Optional alternative | Compatibility file source for the same bearer; mutually exclusive with `CMAEG_CMA_SERVICE_TOKEN`. |
 | `CMAEG_NYXID_BASE_URL` | origin URL | Required | NyxID origin for creator authentication, with the same URL restrictions as the CMA origin. |
+| `CMAEG_MONGODB_URI` | connection URI | Required by the management integration tests and the independent gateway store | MongoDB connection for Event Gateway channel and credential records; keep it in a Secret. |
+| `CMAEG_MONGODB_DATABASE` | database name | Required by the management integration tests and the independent gateway store | Database name for Event Gateway records. |
+| `CMAEG_NYXID_CLIENT_ID` | string | Required when browser service authentication is enabled | NyxID OAuth client ID used by the Event Gateway management surface. |
+| `CMAEG_NYXID_CLIENT_SECRET` | secret string | Required with the client ID | NyxID OAuth client secret; inject through a Secret and never a ConfigMap. |
+| `CMAEG_WEB_ORIGIN` | origin URL | Required when browser service authentication is enabled | Exact browser origin accepted by Event Gateway authentication and callback checks. |
+| `CMAEG_COOKIE_KEY_FILE` | file path | Required when browser service authentication is enabled | Mounted key material used to sign CMAEG browser cookies. |
 | `CMAEG_TOOLS_NYXID_SLUG` | string | `cmaeg` | NyxID service slug in the provider tools advertisement, matching `[a-z0-9_]{1,32}`. |
 | `CMAEG_CHANNEL_CACHE_TTL_MS` | positive integer, ms | `60000` | Fresh lifetime of a resolved channel on this replica. |
 | `CMAEG_CHANNEL_NEGATIVE_TTL_MS` | positive integer, ms | `10000` | Lifetime of a cached CMA record-not-found result; expired negative entries are never served. |

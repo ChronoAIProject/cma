@@ -18,8 +18,12 @@ pub(super) async fn production_adapter(
     let routing_client = mongodb::Client::with_uri_str(&config.mongodb_uri)
         .await
         .map_err(|_| "runtime routing database unavailable")?;
+    let runtime_database = routing_client.database(&config.mongodb_database);
+    crate::store::isolation::verify(&runtime_database)
+        .await
+        .map_err(|error| format!("runtime database authority is not isolated: {error}"))?;
     let routing = crate::store::runtime_routing::MongoRuntimeRouting::open(
-        &routing_client.database(&config.mongodb_database),
+        &runtime_database,
         &config.deployment_id,
         config.runtime.allocate_agent_sandbox,
     )

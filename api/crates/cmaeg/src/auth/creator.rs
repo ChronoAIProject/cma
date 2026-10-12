@@ -117,6 +117,7 @@ where
             principal.require(permission).map_err(service_error)?;
             return Ok(Creator {
                 subject: principal.subject,
+                organization: false,
                 token_hash: token_hash(
                     bearer(&parts.headers).ok_or(CreatorAuthError::NotAuthenticated)?,
                 ),
@@ -170,6 +171,7 @@ impl CreatorAuthenticator {
                 .map_err(service_error)?;
             return Ok(Creator {
                 subject: principal.subject,
+                organization: false,
                 token_hash: token_hash(bearer(headers).ok_or(CreatorAuthError::NotAuthenticated)?),
             });
         }
