@@ -173,6 +173,20 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
         })),
       };
     },
+    exportAgentHistory: async (id, options) => {
+      const response = await sdk.config.fetch(
+        `${sdk.config.baseUrl}/api/v1/agents/${encodeURIComponent(id)}/history`,
+        {
+          credentials: sdk.config.cookies ? 'include' : 'omit',
+          cache: 'no-store',
+          signal: options?.signal,
+        },
+      );
+      if (!response.ok) {
+        throw new ProtocolError(`Agent history export failed (${String(response.status)}).`);
+      }
+      return response.blob();
+    },
     readAgentUsage: async (id, options) => {
       const value = await sdk.agents.usage(id, options);
       return {

@@ -129,6 +129,14 @@ impl HostedBackend for AgentSandboxBackend {
     ) -> Result<ResponseFrame> {
         self.transport.exchange(handle, request).await
     }
+
+    async fn export_agent_history(
+        &self,
+        handle: &RuntimeHandle,
+        agent: &AgentSlot,
+    ) -> Result<Vec<u8>> {
+        self.transport.export_agent_history(handle, agent).await
+    }
     async fn verify_checkpoint_hold(
         &self,
         handle: &RuntimeHandle,

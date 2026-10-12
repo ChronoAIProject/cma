@@ -43,6 +43,7 @@ use tower::ServiceExt;
 use super::agent_openapi_shapes::{AgentResourcesView, AgentUsageView};
 use super::agents::{agent_router, AgentRoutesState};
 use super::instance_problem::InstanceProblem;
+use super::{AgentHistoryExportError, AgentHistoryExporter};
 use crate::AuthenticatedSubject;
 
 const OWNER: &str = "owner-a";
@@ -137,6 +138,20 @@ impl AgentRuntimeRegistry for TestRegistry {
 }
 
 pub(super) struct TestResources;
+
+struct TestHistoryExporter;
+
+#[async_trait]
+impl AgentHistoryExporter for TestHistoryExporter {
+    async fn export(
+        &self,
+        runtime_id: &str,
+        agent_id: &str,
+    ) -> Result<Vec<u8>, AgentHistoryExportError> {
+        assert_eq!(runtime_id, "runtime-route");
+        Ok(format!("{{\"agent_id\":\"{agent_id}\"}}\n").into_bytes())
+    }
+}
 
 #[test]
 fn optional_reading_shapes_distinguish_absent_context_from_unreported_resources() {
@@ -877,6 +892,41 @@ async fn control_routes_require_operation_keys_before_runtime_resolution() {
         assert_eq!(unavailable.0, StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(unavailable.1["code"], "instance_service_unavailable");
     }
+}
+
+#[tokio::test]
+async fn owner_history_download_uses_runtime_jsonl_and_safe_headers() {
+    let mut fixture = fixture().await;
+    let agent = seeded_agent("agt_history", AgentStatus::Ready, 2, None);
+    insert_agent(&fixture.store, agent, Vec::new()).await;
+    let state = fixture
+        .state
+        .clone()
+        .with_history_exporter(Arc::new(TestHistoryExporter));
+    fixture.router = agent_router(state);
+    let response = fixture
+        .router
+        .clone()
+        .oneshot(request(
+            Method::GET,
+            "/api/v1/agents/agt_history/history",
+            OWNER,
+            None,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers().get(header::CONTENT_TYPE).unwrap(),
+        "application/x-ndjson"
+    );
+    assert_eq!(
+        response.headers().get(header::CONTENT_DISPOSITION).unwrap(),
+        "attachment; filename=agent-history.jsonl"
+    );
+    let body = to_bytes(response.into_body(), 1024).await.unwrap();
+    assert_eq!(&body[..], b"{\"agent_id\":\"agt_history\"}\n");
 }
 
 #[tokio::test]

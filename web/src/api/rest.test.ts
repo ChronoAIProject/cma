@@ -217,6 +217,10 @@ describe('public REST web binding', () => {
         },
       ],
     });
+    test.reply({ sequence: 1 });
+    const history = await client.exportAgentHistory('agent-1');
+    expect(await history.text()).toBe('{"sequence":1}');
+    expect(test.fetch.mock.calls.at(-1)?.[0]).toBe('/api/v1/agents/agent-1/history');
     test.reply({
       agent_id: 'agent-1',
       through_seq: 1,

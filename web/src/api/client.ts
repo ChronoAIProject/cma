@@ -103,6 +103,7 @@ export interface CmaWebClient {
     options?: PageOptions<number>,
   ): Promise<ResourcePage<AgentEvent, number>>;
   readAgentTranscript(id: string, options?: ReadOptions): Promise<AgentTranscript>;
+  exportAgentHistory(id: string, options?: ReadOptions): Promise<Blob>;
   readAgentUsage(id: string, options?: ReadOptions): Promise<AgentUsage>;
   readAgentResources(id: string, options?: ReadOptions): Promise<AgentResources>;
   readAgentSource(id: string, options?: ReadOptions): Promise<AccessibleAgentSource>;
@@ -157,6 +158,7 @@ export const unavailableClient: CmaWebClient = {
   readAgent: unavailable,
   readAgentEvents: unavailable,
   readAgentTranscript: unavailable,
+  exportAgentHistory: unavailable,
   readAgentUsage: unavailable,
   readAgentResources: unavailable,
   readAgentSource: unavailable,

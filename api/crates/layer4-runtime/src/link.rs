@@ -36,6 +36,7 @@ pub(crate) fn router(supervisor: Arc<Supervisor>) -> Router {
             post(control).layer(DefaultBodyLimit::max(CONTROL_BODY_BYTES)),
         )
         .route("/runtime/agents/{agent_id}/conversation", get(conversation))
+        .route("/runtime/agents/{agent_id}/history", get(history))
         .route(
             "/runtime/checkpoints/{reference}",
             get(download_checkpoint).put(upload_checkpoint),
@@ -65,6 +66,26 @@ async fn readiness(State(supervisor): State<Arc<Supervisor>>) -> Json<Readiness>
         status: "ready",
         phase,
     })
+}
+
+async fn history(
+    Path(agent_id): Path<String>,
+    State(supervisor): State<Arc<Supervisor>>,
+) -> Response {
+    match supervisor.export_history(&agent_id).await {
+        Ok(bytes) => {
+            let mut response = Response::new(Body::from(bytes));
+            response.headers_mut().insert(
+                header::CONTENT_TYPE,
+                HeaderValue::from_static("application/x-ndjson"),
+            );
+            response
+                .headers_mut()
+                .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+            response
+        }
+        Err(error) => runtime_failure(error),
+    }
 }
 
 async fn control(State(supervisor): State<Arc<Supervisor>>, body: Bytes) -> Response {

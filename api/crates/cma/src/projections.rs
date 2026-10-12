@@ -3,8 +3,10 @@
 use std::sync::Arc;
 
 use axum::Router;
-use layer1_public::rest::AgentLifecycleProvisioner;
 use layer1_public::rest::{agent_router, AgentRoutesState};
+use layer1_public::rest::{
+    AgentHistoryExportError, AgentHistoryExporter, AgentLifecycleProvisioner,
+};
 use layer2_core::profiles::{AgentProfileStore, ProfileUseRecorder};
 use layer2_core::sandbox::store::{AgentReadStore, AgentServiceStore};
 use layer2_core::sandbox::{
@@ -23,6 +25,7 @@ pub(crate) struct AgentProjectionServices {
     operations: Arc<AgentOperationService>,
     reads: Arc<AgentReadService>,
     lifecycle: Option<Arc<dyn AgentLifecycleProvisioner>>,
+    history_exporter: Option<Arc<dyn AgentHistoryExporter>>,
 }
 
 impl AgentProjectionServices {
@@ -36,6 +39,11 @@ impl AgentProjectionServices {
 
     pub(crate) fn with_lifecycle(mut self, lifecycle: Arc<dyn AgentLifecycleProvisioner>) -> Self {
         self.lifecycle = Some(lifecycle);
+        self
+    }
+
+    pub(crate) fn with_history_exporter(mut self, exporter: Arc<dyn AgentHistoryExporter>) -> Self {
+        self.history_exporter = Some(exporter);
         self
     }
 
@@ -83,6 +91,7 @@ impl AgentProjectionServices {
             operations,
             reads,
             lifecycle: None,
+            history_exporter: None,
         }
     }
 
@@ -107,6 +116,10 @@ impl AgentProjectionServices {
         );
         let agent_routes = match &self.lifecycle {
             Some(lifecycle) => agent_routes.with_lifecycle(lifecycle.clone()),
+            None => agent_routes,
+        };
+        let agent_routes = match &self.history_exporter {
+            Some(exporter) => agent_routes.with_history_exporter(exporter.clone()),
             None => agent_routes,
         };
         let agent_routes = match &self.commands {
@@ -160,6 +173,43 @@ impl SandboxResourceReader for UnavailableSandboxResources {
 
 pub(crate) struct AdapterSandboxResources {
     adapter: Arc<dyn SandboxAdapter>,
+}
+
+pub(crate) struct AdapterAgentHistoryExporter {
+    adapter: Arc<dyn SandboxAdapter>,
+}
+
+impl AdapterAgentHistoryExporter {
+    pub(crate) fn new(adapter: Arc<dyn SandboxAdapter>) -> Self {
+        Self { adapter }
+    }
+}
+
+#[async_trait::async_trait]
+impl AgentHistoryExporter for AdapterAgentHistoryExporter {
+    async fn export(
+        &self,
+        runtime_id: &str,
+        agent_id: &str,
+    ) -> Result<Vec<u8>, AgentHistoryExportError> {
+        let bytes = self
+            .adapter
+            .export_agent_history(
+                &RuntimeHandle::new(runtime_id),
+                &layer3_adapter::AgentSlot::new(agent_id),
+            )
+            .await
+            .map_err(|error| match error {
+                AdapterError::Unsupported(_) => AgentHistoryExportError::Unsupported,
+                AdapterError::Unavailable(_) | AdapterError::AtCapacity(_) => {
+                    AgentHistoryExportError::Unavailable
+                }
+                AdapterError::Rejected(_)
+                | AdapterError::OperationIdentityConflict(_)
+                | AdapterError::RuntimeContractMismatch(_) => AgentHistoryExportError::Rejected,
+            })?;
+        Ok(bytes)
+    }
 }
 
 impl AdapterSandboxResources {
