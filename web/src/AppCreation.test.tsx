@@ -7,11 +7,11 @@ import { CmaClientProvider } from './api/context';
 import { agentClient } from './test/agent';
 import { creationClient } from './test/creation';
 import {
-  documentClient,
-  OWN_PROFILES,
   AGENT_PROFILE,
-  WORKSPACE_PROFILE,
+  OWN_PROFILES,
   SANDBOX_PROFILE,
+  WORKSPACE_PROFILE,
+  documentClient,
   marketplaceClient,
 } from './test/profiles';
 
@@ -33,8 +33,6 @@ it('retires the profile-driven Sandbox creation entry from the Agent Manager hom
 it('keeps Marketplace profile revisions read-only while creation moves to Agent Manager', async () => {
   window.history.replaceState({}, '', '/marketplace/sandbox/sbp_research');
   const readMarketplace = vi.fn(marketplaceClient().readMarketplace);
-  const catalog = creationClient();
-  const readProfile = vi.spyOn(catalog, 'readProfile');
   const profiles = {
     profiles: OWN_PROFILES,
     agent: documentClient(AGENT_PROFILE),
@@ -44,17 +42,15 @@ it('keeps Marketplace profile revisions read-only while creation moves to Agent 
   };
   render(
     <AuthContextProvider provider={createMockAuthProvider({ initiallyAuthenticated: true })}>
-      <CmaClientProvider client={agentClient()} profiles={profiles} creation={catalog}>
+      <CmaClientProvider client={agentClient()} profiles={profiles} creation={creationClient()}>
         <App />
       </CmaClientProvider>
     </AuthContextProvider>,
   );
-  await screen.findByRole('heading', { name: 'Research sandbox' });
+  await screen.findByRole('heading', { name: 'Configure Agents directly' });
   expect(screen.queryByRole('button', { name: 'Use' })).not.toBeInTheDocument();
-  expect(screen.getByText(/Profile based creation is retired/)).toBeInTheDocument();
-  expect(screen.getByText('mkdir -p /home/cma/tools')).toBeInTheDocument();
-  expect(readMarketplace).toHaveBeenCalledTimes(1);
-  expect(readProfile).not.toHaveBeenCalled();
+  expect(screen.getByText(/Agent setup is now saved inline/)).toBeInTheDocument();
+  expect(readMarketplace).not.toHaveBeenCalled();
 });
 
 it('does not offer Sandbox creation without its distinct capability', async () => {
