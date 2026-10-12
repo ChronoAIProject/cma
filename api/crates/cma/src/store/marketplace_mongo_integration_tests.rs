@@ -183,6 +183,7 @@ fn sandbox_profile(id: &str, workspaces: Vec<WorkspaceProfileRef>) -> SandboxPro
         forked_from: None,
         uses_count: 0,
         draft: SandboxProfileContent {
+            runtime_image: None,
             cpu_millis: 2_000,
             memory_mib: 4_096,
             nyxid_services: vec![],

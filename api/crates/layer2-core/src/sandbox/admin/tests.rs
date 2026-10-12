@@ -124,6 +124,7 @@ fn sandbox(id: &str, owner: &str, status: SandboxStatus, runtime_version: &str) 
 
 fn sandbox_profile_content() -> SandboxProfileContent {
     SandboxProfileContent {
+        runtime_image: None,
         cpu_millis: 1_000,
         memory_mib: 2_048,
         nyxid_services: vec![],

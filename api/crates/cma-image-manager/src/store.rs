@@ -70,8 +70,17 @@ impl Store {
             .await?
             .ok_or(Error::NotFound)
     }
-    pub async fn list_images(&self, actor: &str, after: &str) -> Result<Vec<Image>> {
-        let mut filter = access_filter(actor, "", false);
+    pub async fn list_images(
+        &self,
+        actor: &str,
+        after: &str,
+        scope: ImageListScope,
+    ) -> Result<Vec<Image>> {
+        let mut filter = match scope {
+            ImageListScope::Private => doc! {"owner": actor},
+            ImageListScope::Shared => doc! {"shares": actor},
+            ImageListScope::All => access_filter(actor, "", false),
+        };
         filter.remove("_id");
         filter.insert("_id", doc! {"$gt":after});
         Ok(self
@@ -295,6 +304,13 @@ impl Store {
             doc!{"$set":{"cloud_id":cloud_id,"phase":phase,"digest":digest,"error":mongodb::bson::Bson::Null,"updated_at_ms":now_ms()},"$inc":{"revision":1_i64}}).await?;
         Ok(result.modified_count == 1)
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImageListScope {
+    Private,
+    Shared,
+    All,
 }
 
 fn access_filter(actor: &str, id: &str, owned: bool) -> Document {

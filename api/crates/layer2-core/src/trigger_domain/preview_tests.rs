@@ -61,6 +61,7 @@ fn fixture(
     environment_variables: Vec<EnvironmentVariable>,
 ) -> Fixture {
     let sandbox_content = SandboxProfileContent {
+        runtime_image: None,
         cpu_millis: 2_000,
         memory_mib: 4_096,
         nyxid_services: Vec::new(),

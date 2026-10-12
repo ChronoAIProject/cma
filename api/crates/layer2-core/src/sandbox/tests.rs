@@ -23,6 +23,7 @@ fn sandbox_snapshot() -> SandboxProfileSnapshot {
         revision: 1,
         digest: "a".repeat(64),
         content: SandboxProfileContent {
+            runtime_image: None,
             cpu_millis: 1_000,
             memory_mib: 2_048,
             nyxid_services: vec![],

@@ -213,7 +213,7 @@ export function AgentLifecycleCard({ client, onClose, onCreated }: AgentLifecycl
                       {image.description ?? 'No description'}
                       {image.id === SYSTEM_IMAGE.id
                         ? ''
-                        : ` · ${image.owner === undefined ? 'Public or shared' : 'Private'}`}
+                        : ` · ${image.visibility === 'shared' ? 'Shared with you' : 'Private'}`}
                     </small>
                   </span>
                 </label>

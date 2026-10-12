@@ -294,6 +294,7 @@ async fn private_custom_profiles_pin_revisions_and_enforce_child_ownership() {
         .await
         .unwrap();
     let sandbox = SandboxProfileContent {
+        runtime_image: None,
         cpu_millis: 1000,
         memory_mib: 2048,
         nyxid_services: vec![],
@@ -370,6 +371,7 @@ async fn profile_creation_resumes_an_inserted_private_draft_and_preserves_keep_a
     assert_eq!(revision.profile_id, id);
     assert_eq!(revision.revision, 1);
     let input = SandboxProfileContent {
+        runtime_image: None,
         cpu_millis: 1000,
         memory_mib: 2048,
         nyxid_services: vec![],
