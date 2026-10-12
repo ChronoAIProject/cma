@@ -197,6 +197,9 @@ pub(crate) async fn verify(database: &Database) -> Result<(), StoreError> {
     validate(&status, database.name())
 }
 #[cfg(test)]
+#[path = "profile_internal_contract.rs"]
+mod profile_internal_contract;
+#[cfg(test)]
 mod tests {
     use super::*;
     #[tokio::test]
@@ -238,6 +241,8 @@ mod tests {
         assert!(restarted.select("new-sandbox", 1, false).await.unwrap());
         assert!(!restarted.select("new-sandbox", 2, false).await.unwrap());
         assert!(restarted.select("overflow", u64::MAX, true).await.is_err());
+
+        profile_internal_contract::verify(&runtime, &name).await;
 
         for foreign in [
             "gateway_channel_records",

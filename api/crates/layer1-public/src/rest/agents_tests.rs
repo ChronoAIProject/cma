@@ -293,6 +293,7 @@ async fn fixture_with_ports<R: AgentRuntimeRegistry + 'static>(
 
 pub(super) async fn publish_profile(store: &InMemoryProfileStore) {
     let profile = AgentProfile {
+        internal: false,
         id: AgentProfileId("agp_route".into()),
         owner: SubjectId::new(OWNER),
         name: "Proof agent".into(),

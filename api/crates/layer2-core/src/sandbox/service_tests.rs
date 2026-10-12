@@ -387,6 +387,7 @@ fn profile(
     unsafe_content: bool,
 ) -> SandboxProfile {
     SandboxProfile {
+        internal: false,
         availability: Default::default(),
         id: SandboxProfileId(id.into()),
         owner: SubjectId(owner.into()),
@@ -428,6 +429,7 @@ fn profile(
 
 fn workspace_profile(id: &str, owner: &str, setup_commands: Vec<String>) -> WorkspaceProfile {
     WorkspaceProfile {
+        internal: false,
         id: WorkspaceProfileId(id.into()),
         owner: SubjectId(owner.into()),
         name: "workspace profile".into(),

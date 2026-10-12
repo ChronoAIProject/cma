@@ -228,6 +228,7 @@ fn encryption_key() -> AuthEncryptionKey {
 
 fn agent_profile(id: &str) -> AgentProfile {
     AgentProfile {
+        internal: false,
         id: AgentProfileId(id.into()),
         owner: SubjectId("owner".into()),
         name: "Research agent".into(),
@@ -252,6 +253,7 @@ fn agent_profile(id: &str) -> AgentProfile {
 
 fn workspace_service_profile(id: &str, name: &str) -> WorkspaceProfile {
     WorkspaceProfile {
+        internal: false,
         id: WorkspaceProfileId(id.into()),
         owner: SubjectId("owner".into()),
         name: format!("{name} profile"),

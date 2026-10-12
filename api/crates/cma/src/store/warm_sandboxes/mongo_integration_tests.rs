@@ -37,6 +37,7 @@ async fn fixture(
     let profiles = MongoProfileStore::open(&client, &name).await.unwrap();
     let source = sandbox("sbx_unused", "unused");
     let mut profile = SandboxProfile {
+        internal: false,
         id: source.profile.id,
         owner: source.owner,
         name: "Warm environment".into(),

@@ -13,7 +13,7 @@ use super::profiles::MAX_PROFILE_PAGE;
 use super::sandbox_mongo::{require_version, MongoProfileStore, DOCUMENT_SCHEMA_VERSION};
 
 fn admin_filter(query: &ProfileAdminQuery) -> Document {
-    let mut filter = Document::new();
+    let mut filter = doc! { "record.internal": { "$ne": true } };
     if let Some(owner) = &query.owner {
         filter.insert("owner", owner.as_str());
     }
@@ -100,6 +100,7 @@ fn retirement_filter(id: &str, kind: &str) -> Document {
         "_id": id,
         "document_schema_version": DOCUMENT_SCHEMA_VERSION,
         "kind": kind,
+        "record.internal": { "$ne": true },
         "retired_at": Bson::Null,
     }
 }
@@ -119,7 +120,7 @@ async fn retire_document(
         return Ok(RetirementDocument::Updated(document));
     }
     let existing = collection
-        .find_one(doc! { "_id": id })
+        .find_one(doc! { "_id": id, "record.internal": { "$ne": true } })
         .await
         .map_err(|error| ProfileStoreError::Unavailable(error.to_string()))?
         .ok_or(ProfileStoreError::NotFound)?;
@@ -229,6 +230,7 @@ mod tests {
         assert_eq!(
             admin_filter(&query),
             doc! {
+                "record.internal": { "$ne": true },
                 "owner": "profile-owner",
                 "visibility": "private",
                 "_id": { "$gt": "agp_after" },
@@ -244,6 +246,7 @@ mod tests {
                 "_id": "agp_target",
                 "document_schema_version": DOCUMENT_SCHEMA_VERSION,
                 "kind": "agent",
+                "record.internal": { "$ne": true },
                 "retired_at": Bson::Null,
             }
         );

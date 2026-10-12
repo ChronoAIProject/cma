@@ -53,6 +53,7 @@ pub(super) async fn seed_profiles(
     let sandbox_id = SandboxProfileId("sbp_sandbox".into());
 
     let agent = AgentProfile {
+        internal: false,
         id: agent_id.clone(),
         owner: owner.clone(),
         name: "Research Agent".into(),
@@ -87,6 +88,7 @@ pub(super) async fn seed_profiles(
         .expect("agent revision");
 
     let workspace = WorkspaceProfile {
+        internal: false,
         id: workspace_id.clone(),
         owner: owner.clone(),
         name: "Proof Workspace".into(),
@@ -117,6 +119,7 @@ pub(super) async fn seed_profiles(
         .expect("workspace revision");
 
     let sandbox = SandboxProfile {
+        internal: false,
         availability: Default::default(),
         id: sandbox_id.clone(),
         owner: owner.clone(),
