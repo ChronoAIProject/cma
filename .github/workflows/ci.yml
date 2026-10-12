@@ -161,6 +161,14 @@ jobs:
             infra/cmaeg/serviceaccount.yaml \
             infra/cmaeg/httproute.yaml infra/cmaeg/healthcheckpolicy.yaml \
             infra/cmaeg/gcpbackendpolicy.yaml \
+            infra/image-manager/Dockerfile \
+            infra/image-manager/configmap.yaml \
+            infra/image-manager/deployment.yaml \
+            infra/image-manager/gcpbackendpolicy.yaml \
+            infra/image-manager/healthcheckpolicy.yaml \
+            infra/image-manager/secret.yaml \
+            infra/image-manager/service.yaml \
+            infra/image-manager/serviceaccount.yaml \
             infra/runtime/Dockerfile \
             infra/storage/home-seed.yaml infra/storage/home-template.yaml \
             infra/web/Dockerfile infra/web/configmap.yaml infra/web/deployment.yaml \
@@ -208,10 +216,10 @@ jobs:
           if [ -n "$hits" ]; then
             echo "::error::protocol or kernel name found in layer2-core:"; echo "$hits"; exit 1
           fi
-      - name: Sandbox Manager has no Agent or Gateway dependencies
+      - name: Image Manager has no Agent or Gateway dependencies
         run: |
-          if grep -qE 'layer[1-4]-|cmaeg|path *=.*["/]cma["/]|cma-agent-manager' api/crates/cma-sandbox-manager/Cargo.toml; then
-            echo '::error::Sandbox Manager cannot depend on Agent or Gateway implementation crates'
+          if grep -qE 'layer[1-4]-|cmaeg|path *=.*["/]cma["/]|cma-agent-manager' api/crates/cma-image-manager/Cargo.toml; then
+            echo '::error::Image Manager cannot depend on Agent or Gateway implementation crates'
             exit 1
           fi
 
@@ -287,9 +295,9 @@ jobs:
         # Retain the complete corpus and two bounded fixtures on slower runners.
         timeout-minutes: 75
         run: bash ../.github/scripts/mongo-contract-tests.sh
-      - name: Sandbox Manager authenticated Mongo isolation
+      - name: Image Manager authenticated Mongo isolation
         timeout-minutes: 10
-        run: bash ../.github/scripts/sandbox-manager-mongo-contract.sh
+        run: bash ../.github/scripts/image-manager-mongo-contract.sh
       - name: Doctests
         run: cargo test --doc --workspace --locked
       - uses: EmbarkStudios/cargo-deny-action@v2
@@ -506,7 +514,7 @@ jobs:
           ./kubeconform -strict -summary -output text \
             -schema-location default \
             -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
-            infra/api/*.yaml infra/cmaeg/*.yaml infra/web/*.yaml infra/storage/*.yaml
+            infra/api/*.yaml infra/cmaeg/*.yaml infra/image-manager/*.yaml infra/web/*.yaml infra/storage/*.yaml
       - name: kube-linter
         uses: stackrox/kube-linter-action@v1
         with:
@@ -524,7 +532,7 @@ jobs:
         # Adding a value here adds a check named "Images (<value>)" and leaves
         # the existing names untouched, so branch protection keeps reporting.
         # The new check is not required until it is added to the ruleset.
-        component: [api, web, runtime, cmaeg]
+        component: [api, web, runtime, cmaeg, image-manager]
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       # arm64 builds run under emulation on the amd64 runner.

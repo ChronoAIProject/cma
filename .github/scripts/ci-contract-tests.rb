@@ -43,7 +43,7 @@ guarded = mode == "release" ? [
   ["ci", "trigger-provider-smoke-contract", "Typecheck every harness entry point"],
   ["ci", "trigger-provider-smoke-contract", "Local browser guard mechanics"],
   ["ci", "backend", "Disposable real Mongo persistence contracts"],
-  ["ci", "backend", "Sandbox Manager authenticated Mongo isolation"],
+  ["ci", "backend", "Image Manager authenticated Mongo isolation"],
   ["nightly-staging", "smoke", "Initialize isolated evidence path"],
   ["nightly-staging", "journeys", "Initialize isolated evidence path"],
   ["nightly-staging", "journeys", "Verify approval policy and independently observed deployment before fixture access"],
@@ -65,9 +65,14 @@ guarded.each do |workflow, id, name|
 end
 
 if mode == "release"
-  %w[api web runtime cmaeg].each do |component|
+  %w[api web runtime cmaeg image-manager].each do |component|
     reject.call("CI omits #{component} image") do |value|
       value["ci"]["jobs"]["images"]["strategy"]["matrix"]["component"].delete(component)
+    end
+    %w[images image-exports].each do |id|
+      reject.call("release #{id} omits #{component}") do |value|
+        value["publish"]["jobs"][id]["strategy"]["matrix"]["component"].delete(component)
+      end
     end
   end
   reject.call("release omits runtime dependency") { |value| value["publish"]["jobs"]["release"]["needs"].delete("runtime-image-gate") }
