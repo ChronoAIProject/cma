@@ -28,7 +28,6 @@ import { useResourceActions, type CreateAction } from './ResourceActions';
 import { Button } from './ui/Button';
 import { IconNewChatOutline16 } from './ui/icons';
 import './Console.css';
-import type { ProfileUse } from './profiles/marketplace/client';
 import { useAgentAccess } from './resources/agentAccess';
 import { SharedAgent } from './resources/SharedAgent';
 import { SharedAgentDetails } from './resources/SharedAgentDetails';
@@ -50,7 +49,6 @@ interface ConsoleProps {
   readonly onSignOut: () => void;
   readonly onNavigate: (route: AppRoute) => void;
   readonly onCreate?: (action: CreateAction) => void;
-  readonly onUseProfile?: (selection: ProfileUse) => void;
   readonly hierarchyRevision?: number;
 }
 
@@ -60,7 +58,6 @@ export function Console({
   onSignOut,
   onNavigate,
   onCreate,
-  onUseProfile,
   hierarchyRevision = 0,
 }: ConsoleProps) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -123,10 +120,12 @@ export function Console({
   const canUse = user.capabilities.includes('use_own_sandboxes');
   const canCreate = !user.visitor && canUse && onCreate !== undefined;
   const canCreateInScope = canCreate && navigationScope === '' && scopeReady;
-  const canCreateSandbox = canCreate && user.capabilities.includes('create_sandbox');
   const permissions: TreePermissions = {
     createAgent: canCreate,
-    createWorkspace: canCreate,
+    // Workspace creation is being moved to the Agent Manager/agent-sandbox
+    // boundary. Keep the compatibility card available to tests and recovery,
+    // but do not expose the profile-driven command in the user navigation.
+    createWorkspace: false,
     pauseSandbox: canUse,
     removeWorkspace: canUse,
     stopAgent: canUse,
@@ -250,14 +249,6 @@ export function Console({
           client={profiles}
           onNavigate={onNavigate}
           canManage={!user.visitor && user.capabilities.includes('manage_own_profiles')}
-          onUse={
-            canCreate &&
-            (route.kind !== 'marketplace_profile' ||
-              route.profileKind !== 'sandbox' ||
-              canCreateSandbox)
-              ? onUseProfile
-              : undefined
-          }
         />
       </Suspense>
     )
@@ -322,9 +313,6 @@ export function Console({
           >
             New agent
           </Button>
-          {canCreateSandbox ? (
-            <Button onClick={() => onCreate?.({ kind: 'new_sandbox' })}>New sandbox</Button>
-          ) : null}
         </div>
       ) : null}
     </section>
