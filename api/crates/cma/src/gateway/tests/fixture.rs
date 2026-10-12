@@ -49,6 +49,14 @@ impl Server {
         let app = app.merge(super::nyxid_fixture::routes(Arc::clone(&identity)));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
+        let issuer = base.clone();
+        let app = app.route("/oauth/introspect",post(move |axum::Form(form): axum::Form<BTreeMap<String,String>>| {
+            let issuer=issuer.clone();
+            async move {
+                let active=form.get("token").is_some_and(|v|v=="owner-token");
+                Json(json!({"active":active,"sub":"owner","iss":issuer,"token_type":"access","exp":4102444800_u64,"permissions":["cma-eg:admin"]}))
+            }
+        }));
         let task = tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
         });
@@ -202,7 +210,11 @@ async fn respond(
         .into_response()
 }
 
+#[path = "../../../../cmaeg/tests/support/database.rs"]
+mod database;
+
 pub(super) struct Gateway {
+    database: database::DatabaseFixture,
     pub base: String,
     pub child: tokio::process::Child,
     master: String,
@@ -222,9 +234,14 @@ impl Gateway {
                 .concat()
             )
         );
+        let binary = Self::binary();
+        let database = database::DatabaseFixture::new(&binary).await;
+        let mut command = Self::command(server, &base, &master);
+        database.configure(&mut command);
         let mut gateway = Self {
+            database,
             base: base.clone(),
-            child: Self::command(server, &base, &master)
+            child: command
                 .spawn()
                 .expect("build cmaeg before running Bot interoperability tests"),
             master,
@@ -232,14 +249,16 @@ impl Gateway {
         gateway.ready().await;
         gateway
     }
-    fn command(server: &Server, base: &str, master: &str) -> tokio::process::Command {
-        let binary = std::env::var_os("CMAEG_TEST_BINARY")
+    fn binary() -> std::path::PathBuf {
+        std::env::var_os("CMAEG_TEST_BINARY")
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|| {
                 let exe = std::env::current_exe().unwrap();
                 exe.parent().unwrap().parent().unwrap().join("cmaeg")
-            });
-        let mut cmd = tokio::process::Command::new(binary);
+            })
+    }
+    fn command(server: &Server, base: &str, master: &str) -> tokio::process::Command {
+        let mut cmd = tokio::process::Command::new(Self::binary());
         for (key, _) in std::env::vars().filter(|(k, _)| k.starts_with("CMAEG_")) {
             cmd.env_remove(key);
         }
@@ -271,9 +290,9 @@ impl Gateway {
     pub async fn restart(&mut self, server: &Server) {
         self.child.kill().await.unwrap();
         self.child.wait().await.unwrap();
-        self.child = Self::command(server, &self.base, &self.master)
-            .spawn()
-            .unwrap();
+        let mut command = Self::command(server, &self.base, &self.master);
+        self.database.configure(&mut command);
+        self.child = command.spawn().unwrap();
         self.ready().await;
     }
 }

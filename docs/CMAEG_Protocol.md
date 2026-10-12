@@ -231,6 +231,8 @@ new binding negotiation. `definition.secrets` contains only `agent_key_hash`.
 
 | Operation | Request | Success | Errors in addition to common management errors |
 | --- | --- | --- | --- |
+| `GET /v1/channels?after=<record UUID>` | Owner-scoped cursor; no owner override | 200 `{items,next_cursor}`; at most 50 channel responses | 403 missing read permission |
+| `GET /v1/permissions` | No body | 200 subject and service role catalog | 401 invalid service identity |
 | `POST /v1/channels` | Complete create body; optional idempotency header and reserved record UUID | 201 channel response | 409 reused key with different content; 503 cache capacity |
 | `GET /v1/channel-records/{record_id}` | No body | 200 recovered channel response | 404 absent, unreserved, or other owner |
 | `GET /v1/channels/{channel_id}` | No body | 200 channel response | 404 absent or other owner |
@@ -622,6 +624,8 @@ Generated from the reviewed OpenAPI snapshot; effective paths include its server
 | --- | --- |
 | `POST /v1/callbacks/{channel_id}` | `receiveRelayCallback` |
 | `POST /v1/channels` | `createChannel` |
+| `GET /v1/channels` | `listChannels` |
+| `GET /v1/permissions` | `getPermissions` |
 | `GET /v1/channel-records/{record_id}` | `recoverChannel` |
 | `DELETE /v1/channels/{channel_id}` | `deleteChannel` |
 | `GET /v1/channels/{channel_id}` | `getChannel` |
@@ -634,3 +638,18 @@ Generated from the reviewed OpenAPI snapshot; effective paths include its server
 | `POST /v1/events/{event_ref}/typing` | `sendTyping` |
 | `POST /v1/messages/{message_ref}/update` | `updateMessage` |
 <!-- openapi-operations:end -->
+
+
+## Independent service identity and persistence
+
+Management authenticates the `cma-event-gateway` NyxID resource and applies the
+`cma-eg:*` permissions before owner checks. The browser uses a separate encrypted
+server-side session via `/auth/login`, `/auth/callback`, `/auth/session` and
+`POST /auth/logout`; cookies do not authorize the other CMA services. Existing
+agent tool and relay authentication retain their protocol-specific contracts.
+
+Sealed records live in `eg_channel_records`, using the gateway's collection-scoped
+credential. Agent Manager never reads this collection. Existing channel pointers
+retain their canonical record URL and master keys, while record resolution is
+local to the gateway. Transfer legacy records before routing existing channels
+to this service, preserving record IDs, owners, versions and encrypted blobs.

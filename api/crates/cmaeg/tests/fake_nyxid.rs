@@ -18,6 +18,7 @@ pub struct FakeNyxid {
 }
 
 pub struct TokenState {
+    issuer: String,
     pub calls: AtomicUsize,
     pub expires_in: AtomicU64,
 }
@@ -28,12 +29,14 @@ impl FakeNyxid {
         let address = listener.local_addr().unwrap();
         let (shutdown, signal) = oneshot::channel();
         let service_tokens = Arc::new(TokenState {
+            issuer: format!("http://{address}"),
             calls: AtomicUsize::new(0),
             expires_in: AtomicU64::new(3600),
         });
         let router = Router::new()
             .route("/api/v1/users/me", get(users_me))
             .route("/oauth/token", post(service_token))
+            .route("/oauth/introspect", post(introspect))
             .with_state(service_tokens.clone());
         tokio::spawn(async move {
             axum::serve(listener, router)
@@ -83,5 +86,28 @@ async fn service_token(
     Json(
         serde_json::json!({"access_token":"cma-service", "token_type":"Bearer",
         "expires_in":state.expires_in.load(Ordering::SeqCst)}),
+    )
+}
+
+async fn introspect(
+    State(state): State<Arc<TokenState>>,
+    Form(form): Form<std::collections::BTreeMap<String, String>>,
+) -> impl IntoResponse {
+    assert_eq!(form["client_id"], "gateway-management");
+    assert_eq!(form["client_secret"], "gateway-management-fixture");
+    let subject = match form.get("token").map(String::as_str) {
+        Some("token-alice") => "alice",
+        Some("token-bob") => "bob",
+        _ => return Json(serde_json::json!({"active":false})),
+    };
+    let expiry = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + 3600;
+    Json(
+        serde_json::json!({"active":true,"sub":subject,"iss":state.issuer,"exp":expiry,
+        "token_type":"access","resource":[format!("{}/api/v1/proxy/s/cma-event-gateway",state.issuer)],
+        "permissions":["cma-eg:admin"]}),
     )
 }

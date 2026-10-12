@@ -7,6 +7,9 @@ metadata:
     app.kubernetes.io/name: cmaeg
     app.kubernetes.io/part-of: cma
 data:
+  CMAEG_MONGODB_DATABASE: "cma_event_gateway"
+  CMAEG_WEB_ORIGIN: "https://bot.chrono-ai.fun"
+  CMAEG_COOKIE_KEY_FILE: "/var/run/cmaeg-auth/cookie-key"
   CMAEG_LISTEN: "0.0.0.0:8090"
   CMAEG_METRICS_LISTEN: "0.0.0.0:9091"
   CMAEG_PUBLIC_URL: "https://bot-gateway.chrono-ai.fun"
