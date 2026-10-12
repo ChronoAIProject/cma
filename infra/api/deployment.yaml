@@ -107,6 +107,9 @@ spec:
             # Longer than the API's two-second store-ping deadline.
             timeoutSeconds: 3
           volumeMounts:
+            - name: agent-sandbox-control
+              mountPath: /var/run/cma-agent-sandbox
+              readOnly: true
             - name: tmp
               mountPath: /tmp
             # Read-only so a compromised process cannot rewrite the credential
@@ -115,6 +118,11 @@ spec:
               mountPath: /var/secrets
               readOnly: true
       volumes:
+        - name: agent-sandbox-control
+          secret:
+            secretName: cma-agent-sandbox-control
+            optional: true
+            defaultMode: 0440
         - name: tmp
           emptyDir: {}
         # The OpenSandbox API key arrives as a file rather than an environment

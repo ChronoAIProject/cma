@@ -5,6 +5,7 @@ mod acp_handshake;
 mod acp_inbound;
 mod acp_turn;
 mod adapter;
+mod agent_sandbox_backend;
 mod backend;
 mod channel_tools;
 mod checkpoint_store;
@@ -24,6 +25,7 @@ mod subscriptions;
 mod update_relay;
 
 pub use adapter::HostedAdapter;
+pub use agent_sandbox_backend::{AgentSandboxBackend, RuntimeBackends, RuntimeRoutingStore};
 pub use backend::{HostedAgentOpenSettings, HostedAgentRuntime, HostedBackend};
 pub use channel_tools::{HostedChannelToolBinding, HostedChannelToolSource};
 pub use checkpoint_store::{
