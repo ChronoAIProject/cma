@@ -223,20 +223,24 @@ impl SandboxLifecycleState {
         }
         if let Some(recovery) = &self.home_recovery {
             recovery.validate_for(sandbox)?;
-            if !matches!(
+            let operation_allows_home = matches!(
                 self.operation,
                 Some(
-                    SandboxLifecycleOperation::Revive { .. }
+                    SandboxLifecycleOperation::Pause { .. }
+                        | SandboxLifecycleOperation::Revive { .. }
                         | SandboxLifecycleOperation::ImageRotation { .. }
                 )
-            ) || (recovery.resume_pause.is_some()
-                && !matches!(
-                    self.operation,
-                    Some(SandboxLifecycleOperation::Revive {
-                        cause: SandboxReviveCause::RuntimeLost,
-                        ..
-                    })
-                ))
+            ) || (sandbox.status == SandboxStatus::Paused
+                && self.operation.is_none());
+            if !operation_allows_home
+                || (recovery.resume_pause.is_some()
+                    && !matches!(
+                        self.operation,
+                        Some(SandboxLifecycleOperation::Revive {
+                            cause: SandboxReviveCause::RuntimeLost,
+                            ..
+                        })
+                    ))
             {
                 return Err(invalid_lifecycle());
             }
@@ -289,7 +293,10 @@ impl SandboxLifecycleState {
             }
             None => {}
         }
-        if sandbox.status == SandboxStatus::Paused && self.checkpoints.latest.is_none() {
+        if sandbox.status == SandboxStatus::Paused
+            && self.checkpoints.latest.is_none()
+            && self.home_recovery.is_none()
+        {
             return Err(invalid_lifecycle());
         }
         Ok(())
@@ -305,7 +312,10 @@ impl SandboxLifecycleState {
             return Err(invalid_lifecycle());
         }
         let authority = self.allocate_authority(sandbox_id, requested_at, true)?;
-        self.home_recovery = None;
+        // A durable home is the pause/revive source for agent-sandbox. The
+        // runtime CRD can be removed while its PVC remains owned by the home
+        // authority, so the next revive does not need an S3 checkpoint.
+        self.home_recovery = self.select_home_recovery()?;
         self.operation = Some(SandboxLifecycleOperation::Pause {
             authority,
             phase: SandboxPausePhase::first(),

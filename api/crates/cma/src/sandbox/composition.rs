@@ -12,16 +12,13 @@ use super::{
     agent_scheduler::AgentScheduler,
     agent_skills::AgentSkillResolver,
     agent_worker::{AgentWorker, AgentWorkerConfig, AgentWorkerDependencies},
-    checkpoint_maintenance::SandboxCheckpointMaintenance,
     credential::SandboxCredentialController,
     live_agent_stopper::DurableLiveAgentStopper,
     reconciliation::SandboxReconciler,
     scheduler::SandboxScheduler,
     title_scheduler::AgentTitleScheduler,
     title_worker::{AgentTitleWorker, TitleRuntimeEndpoint},
-    worker::{
-        CheckpointObjectPurger, SandboxWorker, SandboxWorkerConfig, SandboxWorkerDependencies,
-    },
+    worker::{SandboxWorker, SandboxWorkerConfig, SandboxWorkerDependencies},
     workspace_worker::{
         DurableProfileWorkspaceProvisioner, WorkspaceWorker, WorkspaceWorkerConfig,
         WorkspaceWorkerDependencies,
@@ -31,11 +28,9 @@ use super::{
 use crate::{shutdown::ShutdownCoordinator, store::MongoSandboxStore};
 
 pub(crate) struct SandboxLifecycleDependencies {
-    pub checkpoint_objects: Arc<crate::store::MongoCheckpointObjectStore>,
     pub store: Arc<MongoSandboxStore>,
     pub adapter: Arc<dyn SandboxAdapter>,
     pub credentials: Arc<dyn SandboxCredentialController>,
-    pub checkpoints: Arc<dyn CheckpointObjectPurger>,
     pub registry: Arc<LiveAgentRegistry>,
     pub workspaces: Arc<WorkspaceService>,
     pub agents: Arc<AgentService>,
@@ -52,7 +47,6 @@ pub(crate) struct SandboxLifecycleConfig {
     pub deployment_id: String,
     pub runtime_version: String,
     pub title_model: String,
-    pub checkpoint_export: Option<super::checkpoint_maintenance::ExportDependencies>,
 }
 
 pub(crate) struct SandboxLifecycleComposition {
@@ -62,8 +56,6 @@ pub(crate) struct SandboxLifecycleComposition {
     workspace: SandboxScheduler,
     agent: AgentScheduler,
     titles: AgentTitleScheduler,
-    checkpoints: SandboxScheduler,
-    checkpoint_cleanup: SandboxScheduler,
     updates: Arc<dyn AgentUpdateRecorder>,
 }
 
@@ -89,26 +81,6 @@ impl SandboxLifecycleComposition {
             config.deployment_id.clone(),
         )
         .with_profile_agents(Arc::clone(&dependencies.agents));
-        let checkpoints = SandboxScheduler::for_checkpoints(
-            if let Some(export) = config.checkpoint_export.clone() {
-                SandboxCheckpointMaintenance::with_export_dependencies(
-                    dependencies.store.clone(),
-                    Arc::clone(&dependencies.adapter),
-                    config.deployment_id.clone(),
-                    format!("{}:checkpoint", config.holder),
-                    Arc::clone(&dependencies.policy),
-                    export,
-                )
-            } else {
-                SandboxCheckpointMaintenance::with_policy_source(
-                    dependencies.store.clone(),
-                    Arc::clone(&dependencies.adapter),
-                    config.deployment_id.clone(),
-                    format!("{}:checkpoint", config.holder),
-                    Arc::clone(&dependencies.policy),
-                )
-            },
-        );
         let updates = DurableAgentUpdateRecorder::new(Arc::clone(&dependencies.store));
         let registry = Arc::clone(&dependencies.registry);
         let titles = AgentTitleScheduler::new(AgentTitleWorker::new(
@@ -160,7 +132,6 @@ impl SandboxLifecycleComposition {
                     dependencies.store,
                     Arc::clone(&registry),
                 )),
-                checkpoints: dependencies.checkpoints,
                 registry,
                 updates: updates.clone(),
                 operations: dependencies.operations,
@@ -177,12 +148,8 @@ impl SandboxLifecycleComposition {
 
         Self {
             warmup,
-            checkpoint_cleanup: SandboxScheduler::for_checkpoint_cleanup(
-                dependencies.checkpoint_objects,
-            ),
             updates,
             reconciliation,
-            checkpoints,
             sandbox: SandboxScheduler::new(sandbox_worker),
             workspace: SandboxScheduler::for_workspaces(workspace_worker),
             agent: AgentScheduler::new(agent_worker),
@@ -207,12 +174,7 @@ impl SandboxLifecycleComposition {
         shutdown.push(self.reconciliation.spawn(signal));
         shutdown.push(self.agent.spawn(shutdown.subscribe()));
         shutdown.push(self.titles.spawn(shutdown.subscribe()));
-        for scheduler in [
-            self.checkpoints,
-            self.checkpoint_cleanup,
-            self.sandbox,
-            self.workspace,
-        ] {
+        for scheduler in [self.sandbox, self.workspace] {
             let signal = shutdown.subscribe();
             shutdown.push(scheduler.spawn(signal));
         }

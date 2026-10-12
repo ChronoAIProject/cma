@@ -165,10 +165,6 @@ pub(super) fn worker(harness: &Harness, homes: Arc<Homes>, holder: &str) -> Arc<
             agents: Arc::new(AgentStopRecorder {
                 actions: harness.actions.clone(),
             }),
-            checkpoints: Arc::new(CheckpointPurgeRecorder {
-                actions: harness.actions.clone(),
-                failures: harness.checkpoint_failures.clone(),
-            }),
             registry: harness.registry.clone(),
             updates: DurableAgentUpdateRecorder::new(harness.store.clone()),
             operations: AgentOperationService::new(harness.store.clone(), harness.registry.clone()),
