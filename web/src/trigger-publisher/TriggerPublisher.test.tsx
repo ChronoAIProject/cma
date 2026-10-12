@@ -46,6 +46,11 @@ async function next(user: ReturnType<typeof userEvent.setup>) {
 }
 
 async function selectTargets(user: ReturnType<typeof userEvent.setup>) {
+  const inlineImage = screen.queryByRole('combobox', { name: 'Image' });
+  if (inlineImage !== null) {
+    await waitFor(() => expect(inlineImage).toBeEnabled());
+    return;
+  }
   for (const kind of ['sandbox', 'workspace', 'agent'] as const) {
     const select = screen.getByRole('combobox', { name: `${kind} profile` });
     await waitFor(() => expect(select).toBeEnabled());
@@ -97,18 +102,12 @@ describe('Trigger publisher flow', () => {
     const user = userEvent.setup();
     const test = publisherFixture();
     render(<RoutedPublisher client={test.client} />);
-    await next(user);
-    expect(screen.getAllByRole('alert')).toHaveLength(3);
-    expect(test.triggers.create).not.toHaveBeenCalled();
     await selectTargets(user);
     expect(
       screen.getByText(
-        'Visitors get Codex in a trureturing workspace inside a Standard sandbox that reaches github.',
+        'Visitors get an inline Agent from the system default image in an empty workspace.',
       ),
     ).toBeInTheDocument();
-    expect(screen.getByRole('option', { name: 'From Sandbox profile' })).toBeInTheDocument();
-    await user.click(screen.getByText('Standard: commands and environment'));
-    expect(screen.getByText('corepack enable')).toBeInTheDocument();
     await next(user);
     await user.click(screen.getByRole('radio', { name: 'Always start a new one' }));
     expect(screen.getByText(/Every click starts a new Agent there/)).toBeInTheDocument();

@@ -10,6 +10,7 @@ use layer1_public::{
     },
 };
 use layer2_core::{
+    profiles::{ProfileCapacityBounds, PublicValueScanner},
     sandbox::{
         AgentReadService, AgentService, SandboxCredentialPrerequisite, SandboxService,
         WorkspaceService,
@@ -20,6 +21,7 @@ use layer2_core::{
     OperationStore, PlatformSettingsService, UserDirectory,
 };
 
+use super::InlineTriggerProfileMaterializer;
 use super::{
     scheduler::LaunchScheduler,
     worker::{
@@ -45,6 +47,8 @@ pub(crate) struct TriggerCompositionDependencies {
     pub rate_limiters: Arc<RateLimiters>,
     pub public_origin: String,
     pub worker_holder: String,
+    pub profile_bounds: ProfileCapacityBounds,
+    pub profile_scanner: Arc<dyn PublicValueScanner>,
 }
 
 pub(crate) struct TriggerComposition {
@@ -58,10 +62,16 @@ impl TriggerComposition {
         let profiles = dependencies.stores.sandbox_profiles.clone();
         let resources = dependencies.stores.sandbox_model.clone();
         let launch_policy = Arc::new(LiveLaunchPolicy::new(Arc::clone(&dependencies.settings)));
-        let triggers = TriggerService::new(
+        let inline_materializer = InlineTriggerProfileMaterializer::new(
+            dependencies.stores.sandbox_profiles.clone(),
+            dependencies.profile_bounds,
+            dependencies.profile_scanner,
+        );
+        let triggers = TriggerService::new_with_inline_materializer(
             definitions.clone(),
             definitions.clone(),
             dependencies.directory,
+            inline_materializer,
         );
         let launches = LaunchService::new(
             definitions.clone(),

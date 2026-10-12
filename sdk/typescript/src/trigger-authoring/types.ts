@@ -1,4 +1,9 @@
-import { profileReference } from '../profiles/types.js';
+import {
+  permissionLevel,
+  profileReference,
+  skillReference,
+  thinkingEffort,
+} from '../profiles/types.js';
 import {
   array,
   boolean,
@@ -22,6 +27,31 @@ export const triggerTheme = enumeration('auto', 'light', 'dark');
 export type TriggerTheme = Output<typeof triggerTheme>;
 export const triggerQuickMessage = object({ name: text, description: text, text });
 export type TriggerQuickMessage = Output<typeof triggerQuickMessage>;
+export const triggerImage = object({
+  id: text,
+  version: optional(text),
+  reference: optional(text),
+});
+export type TriggerImage = Output<typeof triggerImage>;
+export const triggerRepository = object({ url: text, reference: optional(text) });
+export type TriggerRepository = Output<typeof triggerRepository>;
+export const triggerInlineWorkspace = object({ repository: optional(triggerRepository) });
+export type TriggerInlineWorkspace = Output<typeof triggerInlineWorkspace>;
+export const triggerInlineAgent = object({
+  model: optional(text),
+  reasoning_effort: thinkingEffort,
+  permission_mode: permissionLevel,
+  skills: array(skillReference),
+  system_prompt: text,
+  services: array(text),
+});
+export type TriggerInlineAgent = Output<typeof triggerInlineAgent>;
+export const triggerInlineTarget = object({
+  image: optional(triggerImage),
+  agent: triggerInlineAgent,
+  workspace: optional(triggerInlineWorkspace),
+});
+export type TriggerInlineTarget = Output<typeof triggerInlineTarget>;
 export const triggerContent = object({
   presentation: object({
     title: text,
@@ -34,6 +64,7 @@ export const triggerContent = object({
     sandbox_profile: profileReference,
     workspace_profile: profileReference,
     agent_profile: profileReference,
+    inline: optional(triggerInlineTarget),
   }),
   reuse: object({
     sandbox: enumeration('reuse_existing', 'always_new'),
