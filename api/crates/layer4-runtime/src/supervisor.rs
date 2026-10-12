@@ -419,6 +419,10 @@ impl Supervisor {
             .map(|agent| Arc::clone(&agent.bridge))
     }
 
+    pub(crate) async fn export_history(&self, agent_id: &str) -> Result<Vec<u8>> {
+        crate::history::export(&self.config, agent_id).await
+    }
+
     pub(crate) fn checkpoint_store(&self) -> &CheckpointStore {
         &self.checkpoint
     }

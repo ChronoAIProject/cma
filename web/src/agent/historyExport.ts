@@ -40,10 +40,12 @@ export function agentHistoryJsonl(transcript: AgentTranscript): string {
   return `${lines.join('\n')}${lines.length === 0 ? '' : '\n'}`;
 }
 
-export function downloadAgentHistory(agentId: string, transcript: AgentTranscript): void {
-  const url = URL.createObjectURL(
-    new Blob([agentHistoryJsonl(transcript)], { type: 'application/x-ndjson' }),
-  );
+export function downloadAgentHistory(agentId: string, source: AgentTranscript | Blob): void {
+  const blob =
+    source instanceof Blob
+      ? source
+      : new Blob([agentHistoryJsonl(source)], { type: 'application/x-ndjson' });
+  const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = url;
   anchor.download = `cma-agent-${agentId}-history.jsonl`;
