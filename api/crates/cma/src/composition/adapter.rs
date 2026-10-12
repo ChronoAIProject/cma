@@ -32,7 +32,8 @@ pub(super) async fn production_adapter(
     let transport = ProviderHostedControlTransport::new(client.clone(), archive_factory)
         .map_err(|error| format!("hosted runtime transport is not usable: {error}"))?
         .with_subscriptions(subscriptions);
-    let backend = ProviderHostedBackend::new(client, Arc::new(transport));
+    let backend = ProviderHostedBackend::new(client, Arc::new(transport), &config.deployment_id)
+        .map_err(|error| format!("sandbox provider scope is not usable: {error}"))?;
     let mut deployment = HostedDeployment::default();
     deployment.image.uri = config.runtime.sandbox_image.clone();
     deployment.upstream_base_url = config.runtime.upstream_base_url.clone();

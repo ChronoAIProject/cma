@@ -34,7 +34,12 @@ async fn published_hold_verification_uses_authenticated_control_without_archive_
     let (transport, provider, runtime) = transport_fixture(json_response(&response)).await;
     let handle = RuntimeHandle::new("runtime-1");
     transport.bind_runtime(&handle, "sandbox-a").await.unwrap();
-    let backend = ProviderHostedBackend::new(transport.client.clone(), Arc::new(transport));
+    let backend = ProviderHostedBackend::new(
+        transport.client.clone(),
+        Arc::new(transport),
+        "checkpoint-test",
+    )
+    .unwrap();
 
     assert_eq!(
         backend
