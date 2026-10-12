@@ -20,7 +20,7 @@ export function usePage<T>(service: Service, path: string, denied: () => void) {
     const controller = new AbortController();
     serviceRequest<Page<T>>(
       service,
-      `${path}${cursor ? `?after=${encodeURIComponent(cursor)}` : ''}`,
+      `${path}${cursor ? `${path.includes('?') ? '&' : '?'}after=${encodeURIComponent(cursor)}` : ''}`,
       { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(15000)]) },
     )
       .then((next) => {

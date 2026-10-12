@@ -20,6 +20,7 @@ deployment secrets. Registry:
 | GET | `/v1/images/{id}/versions` | List immutable ready versions |
 | GET | `/v1/images/{id}/versions/{version}` | Digest and provenance |
 | PUT / DELETE | `/v1/images/{id}/shares/{subject}` | Grant/revoke use |
+| PUT | `/v1/images/{id}/visibility` | Publish or withdraw an owned image from the public catalog |
 | POST | `/v1/images/{id}/resolve` | Authorize and resolve a version |
 
 Create accepts `{name, description}`. Builds identify approved source, immutable
@@ -31,9 +32,32 @@ reconciled before retry. Success requires verified digest/provenance for the
 expected destination. Only successful versions resolve to `@sha256:...`.
 
 Sharing grants use, not build/edit/share/delete rights or direct Registry IAM.
-Every request checks service permission plus resource ownership/share. Resolve authenticates the actual caller; an owner string is insufficient. Per-Agent image selection in Agent Manager is a separate API extension. Retiring blocks new use, retaining blobs and
+Every request checks service permission plus resource ownership/share/public visibility. Resolve authenticates the actual caller; an owner string is insufficient. Agent Manager accepts an Image Manager reference during inline Agent creation. Retiring blocks new use, retaining blobs and
 metadata for running Agents/recovery. Physical deletion requires verified absence
 of retained references, failing closed if dependencies cannot be checked.
+
+Images start private. The owner may send `{"visibility":"public"}` or
+`{"visibility":"private"}` to the visibility endpoint with the current numeric
+`If-Match` revision and `cma-im:images:share`. Public means discoverable and usable
+by signed-in callers with this service's read/use permissions. It does not make
+the container registry anonymously accessible. Making an image private removes
+public access while preserving explicit shares and already admitted Agents.
+Retired images cannot be published or resolved for new use.
+
+`GET /v1/images?scope=private|owned|shared|public|all` filters before pagination.
+`private` selects the caller's non-public images; `owned` includes their public
+images; `shared` selects incoming explicit shares; `public` excludes retired
+images; the default `all` combines accessible entries. The view's `visibility`
+is `public`, `private` (owned), or `shared` (incoming private share).
+Only the owner receives the share list. Version and resolve views contain the
+immutable reference, digest, image/version IDs, phase and creation time. Build
+inputs, imported Dockerfile contents, errors and logs remain owner-only through
+the build endpoints.
+
+Run the Image Manager migrator before this version of the runtime. Schema marker
+2 installs visibility validation and catalog indexes. Existing document IDs and
+builds remain unchanged; images without a visibility field stay private. Runtime
+startup refuses an older marker.
 
 Permissions: `cma-im:images:read`, `cma-im:images:create`,
 `cma-im:images:update`, `cma-im:images:delete`, `cma-im:images:share`,
