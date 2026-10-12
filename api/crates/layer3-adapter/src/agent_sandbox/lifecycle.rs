@@ -163,18 +163,19 @@ impl AgentSandboxClient {
     }
 
     pub async fn delete(&self, runtime: &RuntimeHandle) -> Result<()> {
-        let Some(object) = self.get(runtime).await? else {
-            return Ok(());
-        };
-        match self
-            .sandboxes
-            .delete(&object.name_any(), &delete_parameters(&object))
-            .await
-        {
-            Ok(_) => {}
-            Err(kube::Error::Api(error)) if error.code == 404 => {}
-            Err(error) => return Err(api_error(error)),
+        if let Some(object) = self.get(runtime).await? {
+            match self
+                .sandboxes
+                .delete(&object.name_any(), &delete_parameters(&object))
+                .await
+            {
+                Ok(_) => {}
+                Err(kube::Error::Api(error)) if error.code == 404 => {}
+                Err(error) => return Err(api_error(error)),
+            }
         }
+        // A missing CRD does not prove that its Pod stopped writing to the PV.
+        // Retried deletion must establish both absences before home release.
         self.wait_absent(runtime).await?;
         Ok(())
     }

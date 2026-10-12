@@ -177,6 +177,57 @@ async fn suspend_and_delete_send_exact_uid_version_and_foreground_policy() {
 }
 
 #[tokio::test]
+async fn deletion_retry_waits_for_the_original_pod_even_after_the_crd_is_gone() {
+    let (_, object) = object();
+    let name = object["metadata"]["name"].as_str().unwrap();
+    let handle = RuntimeHandle(format!("agent-sandbox:{name}:sandbox-uid"));
+    let mut pods = list("PodList");
+    pods["items"] = json!([{"apiVersion":"v1","kind":"Pod","metadata":{
+        "name":"lingering-runtime","namespace":"cma-test","uid":"pod-uid",
+        "ownerReferences":[{"apiVersion":"agents.x-k8s.io/v1beta1","kind":"Sandbox",
+            "name":name,"uid":"sandbox-uid","controller":true}]}}]);
+    let fixture = Fixture::start(vec![
+        (404, missing()),
+        (200, list("SandboxList")),
+        (200, pods),
+        (200, list("SandboxList")),
+        (200, list("PodList")),
+    ])
+    .await;
+    fixture.client.delete(&handle).await.unwrap();
+    let calls = fixture.calls.lock().unwrap();
+    assert_eq!(
+        calls.len(),
+        5,
+        "must observe the Pod disappearing before success"
+    );
+    assert!(calls.iter().all(|(line, _)| line.starts_with("GET ")));
+    assert!(calls[2].0.contains("/pods?"));
+    assert!(calls[4].0.contains("/pods?"));
+}
+
+#[tokio::test]
+async fn absent_crd_cannot_complete_deletion_with_an_incomplete_pod_inventory() {
+    let (_, object) = object();
+    let handle = RuntimeHandle(format!(
+        "agent-sandbox:{}:sandbox-uid",
+        object["metadata"]["name"].as_str().unwrap()
+    ));
+    let mut pods = list("PodList");
+    pods["metadata"]["continue"] = json!("next-page");
+    let fixture = Fixture::start(vec![
+        (404, missing()),
+        (200, list("SandboxList")),
+        (200, pods),
+    ])
+    .await;
+    assert!(matches!(
+        fixture.client.delete(&handle).await,
+        Err(AdapterError::Unavailable(_))
+    ));
+}
+
+#[tokio::test]
 async fn foreign_home_claim_is_refused_before_creating_sandbox() {
     let request = super::tests::request();
     let allocation = HomeVolumeRequest {
