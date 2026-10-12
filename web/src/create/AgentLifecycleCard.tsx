@@ -435,7 +435,7 @@ function AgentProvisioningProgress({
       <h3>{status === 'failed' ? 'Agent provisioning needs attention' : 'Agent accepted'}</h3>
       <p>
         {status === 'failed'
-          ? operation?.error ?? 'Agent provisioning failed.'
+          ? (operation?.error ?? 'Agent provisioning failed.')
           : 'Agent Manager is provisioning the Agent Sandbox and will continue asynchronously. This page follows its durable status.'}
       </p>
       <ol>

@@ -111,7 +111,10 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
         status: typeof value.status === 'string' ? value.status : undefined,
       };
     },
-    readAgentLifecycle: async (operationId: string, options): Promise<AgentLifecycleOperationView> => {
+    readAgentLifecycle: async (
+      operationId: string,
+      options,
+    ): Promise<AgentLifecycleOperationView> => {
       const response = await fetch(
         `/api/agent-manager/v1/agent-lifecycle/${encodeURIComponent(operationId)}`,
         {
