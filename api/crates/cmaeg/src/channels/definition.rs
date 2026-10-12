@@ -3,108 +3,16 @@
 use std::collections::BTreeSet;
 
 use cmaeg_core::{
-    channel::{
-        AdmissionPolicy, ChannelDefinition, ChannelSecrets, CustomAuth, ProviderBinding,
-        ReplyPolicy, Secret, Source,
-    },
-    ids::{BindingId, ProviderSlug, RecordId},
-    profile::{AgentProfileSnapshot, NyxIdIdentity, NyxIdIdentityKind},
+    channel::{ChannelDefinition, ChannelSecrets, CustomAuth, ProviderBinding, Secret, Source},
+    ids::{BindingId, RecordId},
+    profile::{NyxIdIdentity, NyxIdIdentityKind},
     seal::ChannelPointer,
     ValidationError,
 };
 use ring::digest::{digest, SHA256};
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
-use utoipa::ToSchema;
 
-/// Request wrapper used by channel creation.
-#[derive(Debug, Clone, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ChannelCreateRequest {
-    /// Optional UUID reserved by a durable creator before issuing the request.
-    #[serde(default)]
-    pub record_id: Option<RecordId>,
-    pub schema_version: u16,
-    pub name: String,
-    pub profile: AgentProfileSnapshot,
-    pub provider: ProviderRequest,
-    pub sources: Vec<SourceRequest>,
-    pub partition: cmaeg_core::channel::PartitionRule,
-    pub reply: ReplyPolicy,
-    pub credentials: CredentialsRequest,
-}
-
-/// Update body; credentials are retained when this field is absent.
-#[derive(Debug, Clone, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ChannelUpdateRequest {
-    pub schema_version: u16,
-    pub name: String,
-    pub profile: AgentProfileSnapshot,
-    pub provider: ProviderRequest,
-    pub sources: Vec<SourceRequest>,
-    pub partition: cmaeg_core::channel::PartitionRule,
-    pub reply: ReplyPolicy,
-    #[serde(default)]
-    pub credentials: Option<CredentialPatch>,
-    pub expected_version: u64,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ProviderRequest {
-    pub slug: ProviderSlug,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
-#[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
-pub enum SourceRequest {
-    NyxidRelay {
-        issuer: String,
-        key_id: String,
-        route_ids: Vec<String>,
-        platform: cmaeg_core::channel::Platform,
-        #[serde(default)]
-        bot_username: Option<String>,
-        admission: AdmissionPolicy,
-    },
-    Custom {
-        auth: CustomAuth,
-        #[serde(default)]
-        prompt_template: Option<String>,
-        #[serde(default)]
-        schema: Option<Value>,
-    },
-}
-
-#[derive(Debug, Clone, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CredentialsRequest {
-    pub agent_key: Secret,
-    #[serde(default)]
-    pub channel_key: Option<Secret>,
-    #[serde(default)]
-    pub hmac_secrets: Vec<HmacSecretRequest>,
-}
-
-#[derive(Debug, Clone, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CredentialPatch {
-    #[serde(default)]
-    pub agent_key: Option<Secret>,
-    #[serde(default)]
-    pub channel_key: Option<Secret>,
-    #[serde(default)]
-    pub hmac_secrets: Option<Vec<HmacSecretRequest>>,
-}
-
-#[derive(Debug, Clone, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct HmacSecretRequest {
-    pub key_id: String,
-    pub secret: Secret,
-}
+pub use super::requests::*;
 
 pub fn build_definition(
     request: &ChannelCreateRequest,
@@ -126,17 +34,23 @@ pub fn build_definition(
         record_id,
         creation: None,
         owner: NyxIdIdentity {
-            kind: NyxIdIdentityKind::Human,
+            kind: if request.profile.metadata.owner.kind == NyxIdIdentityKind::Organization {
+                NyxIdIdentityKind::Organization
+            } else {
+                NyxIdIdentityKind::Human
+            },
             subject: owner.to_owned(),
         },
         profile: request.profile.clone(),
         profile_digest: request.profile.digest(),
         provider: ProviderBinding {
             slug: request.provider.slug.clone(),
+            target: request.provider.target.clone(),
             binding_id,
             level,
         },
         sources: build_sources(&request.sources)?,
+        connection_ref: request.connection_ref.clone(),
         partition: request.partition.clone(),
         reply: request.reply.clone(),
         secrets: build_secrets(credentials),
@@ -150,6 +64,7 @@ pub fn build_definition(
 }
 
 pub fn validate_create_request(request: &ChannelCreateRequest) -> Result<(), ValidationError> {
+    request.provider.target.validate()?;
     if request.schema_version != cmaeg_core::channel::CHANNEL_SCHEMA_VERSION {
         return Err(ValidationError::new(
             "/schema_version",
@@ -167,6 +82,7 @@ pub fn validate_create_request(request: &ChannelCreateRequest) -> Result<(), Val
 }
 
 pub fn validate_update_request(request: &ChannelUpdateRequest) -> Result<(), ValidationError> {
+    request.provider.target.validate()?;
     if request.schema_version != cmaeg_core::channel::CHANNEL_SCHEMA_VERSION {
         return Err(ValidationError::new(
             "/schema_version",
@@ -205,6 +121,20 @@ pub fn build_update(
     request: &ChannelUpdateRequest,
     current: &ChannelDefinition,
 ) -> Result<ChannelDefinition, ValidationError> {
+    if request.provider.target != current.provider.target {
+        return Err(ValidationError::new(
+            "/provider/target",
+            "target is immutable; create a new channel to change it",
+        ));
+    }
+    if (request.profile.metadata.owner.kind == NyxIdIdentityKind::Organization)
+        != (current.profile.metadata.owner.kind == NyxIdIdentityKind::Organization)
+    {
+        return Err(ValidationError::new(
+            "/profile/metadata/owner/kind",
+            "organization ownership is immutable",
+        ));
+    }
     let mut credentials = current.secrets.clone();
     if let Some(patch) = &request.credentials {
         if let Some(agent_key) = &patch.agent_key {
@@ -219,6 +149,12 @@ pub fn build_update(
         }
         if let Some(channel_key) = &patch.channel_key {
             credentials.channel_key = Some(channel_key.clone());
+        }
+        if let Some(token) = &patch.telegram_bot_token {
+            credentials.telegram_bot_token = Some(token.clone());
+        }
+        if let Some(secret) = &patch.telegram_webhook_secret {
+            credentials.telegram_webhook_secret = Some(secret.clone());
         }
         if let Some(hmac_secrets) = &patch.hmac_secrets {
             credentials.hmac_secrets = hmac_secrets
@@ -237,6 +173,7 @@ pub fn build_update(
         profile_digest: request.profile.digest(),
         provider: current.provider.clone(),
         sources: build_sources(&request.sources)?,
+        connection_ref: request.connection_ref.clone(),
         partition: request.partition.clone(),
         reply: request.reply.clone(),
         secrets: credentials,
@@ -251,7 +188,22 @@ fn build_sources(sources: &[SourceRequest]) -> Result<Vec<Source>, ValidationErr
     let mut result = Vec::with_capacity(sources.len());
     for (index, source) in sources.iter().enumerate() {
         let pointer = format!("/sources/{index}");
-        if let SourceRequest::NyxidRelay { issuer, .. } = source {
+        if let SourceRequest::NyxidRelay {
+            issuer,
+            platform,
+            trust_normalized,
+            ..
+        } = source
+        {
+            // Refuse up front: a stored source like this would admit no callbacks,
+            // so a bot moved onto it would go silent. Ingress still refuses one as
+            // defense in depth for definitions stored before this check existed.
+            if !platform.verifies_raw_event() && !trust_normalized {
+                return Err(ValidationError::new(
+                    format!("{pointer}/trust_normalized"),
+                    "the platform has no raw-event verifier; set trust_normalized to true to admit its normalized callbacks",
+                ));
+            }
             let parsed = reqwest::Url::parse(issuer).map_err(|_| {
                 ValidationError::new(format!("{pointer}/issuer"), "must be an HTTPS origin")
             })?;
@@ -270,12 +222,23 @@ fn build_sources(sources: &[SourceRequest]) -> Result<Vec<Source>, ValidationErr
             }
         }
         result.push(match source {
+            SourceRequest::Telegram {
+                bot_id,
+                bot_username,
+                admission,
+            } => Source::Telegram {
+                bot_id: bot_id.clone(),
+                bot_username: bot_username.clone(),
+                admission: admission.clone(),
+            },
             SourceRequest::NyxidRelay {
                 issuer,
                 key_id,
                 route_ids,
                 platform,
                 bot_username,
+                bot_id,
+                trust_normalized,
                 admission,
             } => Source::NyxidRelay {
                 issuer: issuer.clone(),
@@ -284,6 +247,8 @@ fn build_sources(sources: &[SourceRequest]) -> Result<Vec<Source>, ValidationErr
                 route_ids: route_ids.clone(),
                 platform: *platform,
                 bot_username: bot_username.clone(),
+                bot_id: bot_id.clone(),
+                trust_normalized: *trust_normalized,
                 admission: admission.clone(),
             },
             SourceRequest::Custom {
@@ -313,6 +278,8 @@ fn build_secrets(credentials: &CredentialsRequest) -> ChannelSecrets {
             .map(|secret| (secret.key_id.clone(), secret.secret.clone()))
             .collect(),
         provider_credential: Some(credentials.agent_key.clone()),
+        telegram_bot_token: credentials.telegram_bot_token.clone(),
+        telegram_webhook_secret: credentials.telegram_webhook_secret.clone(),
     }
 }
 
@@ -402,6 +369,12 @@ pub fn channel_pointer(
 
 fn validate_definition(definition: &ChannelDefinition) -> Result<(), ValidationError> {
     definition.validate()?;
+    if definition.profile.metadata.owner.subject != definition.owner.subject {
+        return Err(ValidationError::new(
+            "/profile/metadata/owner/subject",
+            "must match the authenticated channel owner",
+        ));
+    }
     if definition.provider.slug != definition.profile.metadata.provider {
         return Err(ValidationError::new(
             "/provider/slug",
@@ -415,6 +388,8 @@ fn validate_definition(definition: &ChannelDefinition) -> Result<(), ValidationE
             .clone()
             .unwrap_or_else(|| Secret::new("")),
         channel_key: definition.secrets.channel_key.clone(),
+        telegram_bot_token: definition.secrets.telegram_bot_token.clone(),
+        telegram_webhook_secret: definition.secrets.telegram_webhook_secret.clone(),
         hmac_secrets: definition
             .secrets
             .hmac_secrets
@@ -464,7 +439,7 @@ fn validate_definition(definition: &ChannelDefinition) -> Result<(), ValidationE
 
 impl ChannelCreateRequest {
     pub(crate) fn fingerprint(&self) -> String {
-        let value = serde_json::json!({
+        let mut value = serde_json::json!({
             "record_id": self.record_id,
             "schema_version": self.schema_version, "name": self.name, "profile": self.profile,
             "provider": self.provider, "sources": self.sources, "partition": self.partition,
@@ -472,6 +447,20 @@ impl ChannelCreateRequest {
             "channel_key": self.credentials.channel_key.as_ref().map(|key| hash_secret(key.as_str())),
             "hmac_secrets": self.credentials.hmac_secrets.iter().map(|value| (&value.key_id, hash_secret(value.secret.as_str()))).collect::<Vec<_>>(),
         });
+        if let Some(reference) = &self.connection_ref {
+            value["connection_ref"] = reference.clone().into();
+        }
+        if let Some(admission) = &self.connection_admission {
+            value["connection_admission"] =
+                serde_json::to_value(admission).expect("admission serializes");
+        }
+        // Omit absent additions so retained creation fingerprints stay stable.
+        if let Some(token) = &self.credentials.telegram_bot_token {
+            value["telegram_bot_token"] = hash_secret(token.as_str()).into();
+        }
+        if let Some(secret) = &self.credentials.telegram_webhook_secret {
+            value["telegram_webhook_secret"] = hash_secret(secret.as_str()).into();
+        }
         hash_secret(&cmaeg_core::profile::canonical_json(value))
     }
 }

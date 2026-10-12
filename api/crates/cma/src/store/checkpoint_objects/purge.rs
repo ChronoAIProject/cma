@@ -232,8 +232,8 @@ async fn cleanup_one(
     if changed.matched_count != 1 {
         return Ok(false);
     }
-    store.objects.delete(&manifest.object_key).await?;
-    if !manifest.upload_confirmed {
+    let permanently_deleted = store.objects.finalize_delete(&manifest.object_key).await?;
+    if !manifest.upload_confirmed && !permanently_deleted {
         // A client deadline cannot bound remote completion. Preserve ownership
         // of this exact key even after an observed absence lets purge finish.
         return super::tombstones::retain(store, manifest, now).await;

@@ -3,6 +3,7 @@ use serde_json::json;
 
 fn context() -> ExternalEventContext {
     ExternalEventContext {
+        provider_conversation_id: None,
         source_id: "source".into(),
         conversation_id: "conversation".into(),
         event_id: "event".into(),

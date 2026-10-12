@@ -20,32 +20,40 @@ mod commands;
 mod conversations;
 mod custody;
 mod rotation;
+mod tools;
 pub(crate) use custody::MongoBindingCredentials;
+pub(crate) use tools::MongoProviderToolSource;
 mod documents;
 use documents::*;
 #[cfg(test)]
 mod admission_tests;
 #[cfg(test)]
+mod existing_tests;
+#[cfg(test)]
 mod mongo_tests;
 
 const BINDINGS: &str = "provider_bindings";
 const CONVERSATIONS: &str = "binding_conversations";
+const TOOL_OPENS: &str = "provider_tool_opens";
 
 #[derive(Clone)]
 pub(super) struct BindingCollections {
     pub(super) records: Collection<Document>,
     pub(super) conversations: Collection<Document>,
+    pub(super) tool_opens: Collection<Document>,
 }
 
 impl BindingCollections {
     pub(super) async fn open(database: &Database) -> Result<Self, StoreError> {
-        initialize_collections(database, &[BINDINGS, CONVERSATIONS]).await?;
+        initialize_collections(database, &[BINDINGS, CONVERSATIONS, TOOL_OPENS]).await?;
         let value = Self {
             records: majority_collection(database, BINDINGS),
             conversations: majority_collection(database, CONVERSATIONS),
+            tool_opens: majority_collection(database, TOOL_OPENS),
         };
         for (collection, keys) in [
             (&value.records, doc! {"pending": 1, "_id": 1}),
+            (&value.records, doc! {"key_history": 1}),
             (&value.records, doc! {"record.owner": 1, "_id": 1}),
             (&value.conversations, doc! {"pending": 1, "_id": 1}),
             (
@@ -58,27 +66,45 @@ impl BindingCollections {
                 .await
                 .map_err(|e| StoreError::Unavailable(format!("binding index: {e}")))?;
         }
-        for (collection, key) in [
-            (&value.records, "record.key_sha256"),
-            (&value.conversations, "record.agent_id"),
-        ] {
-            let mut keys = Document::new();
-            keys.insert(key, 1);
-            collection
-                .create_index(
-                    IndexModel::builder()
-                        .keys(keys)
-                        .options(
-                            mongodb::options::IndexOptions::builder()
-                                .unique(true)
-                                .build(),
-                        )
-                        .build(),
-                )
-                .await
-                .map_err(|error| {
-                    StoreError::Unavailable(format!("binding unique index: {error}"))
-                })?;
+        value
+            .records
+            .create_index(
+                IndexModel::builder()
+                    .keys(doc! {"record.key_sha256": 1})
+                    .options(
+                        mongodb::options::IndexOptions::builder()
+                            .unique(true)
+                            .build(),
+                    )
+                    .build(),
+            )
+            .await
+            .map_err(|error| StoreError::Unavailable(format!("binding unique index: {error}")))?;
+        // An existing Agent may be borrowed by another channel. Lookup remains
+        // unique inside one binding generation; resource lifecycle is retained
+        // by the Agent's original owner, independently of these associations.
+        value
+            .conversations
+            .create_index(
+                IndexModel::builder()
+                    .keys(doc! {"binding_id": 1, "generation": 1, "record.agent_id": 1})
+                    .options(
+                        mongodb::options::IndexOptions::builder()
+                            .unique(true)
+                            .name("binding_generation_agent".to_owned())
+                            .build(),
+                    )
+                    .build(),
+            )
+            .await
+            .map_err(|error| StoreError::Unavailable(format!("binding agent index: {error}")))?;
+        if let Err(error) = value.conversations.drop_index("record.agent_id_1").await {
+            if !matches!(&*error.kind, mongodb::error::ErrorKind::Command(command) if command.code == 27)
+            {
+                return Err(StoreError::Unavailable(format!(
+                    "binding agent index migration: {error}"
+                )));
+            }
         }
         Ok(value)
     }
@@ -86,6 +112,15 @@ impl BindingCollections {
 
 #[async_trait::async_trait]
 impl BindingStore for MongoSandboxStore {
+    async fn contains_key_hash(&self, hash: &str) -> Result<bool, SandboxStoreError> {
+        Ok(self
+            .bindings
+            .records
+            .find_one(doc! {"$or": [{"record.key_sha256": hash}, {"key_history": hash}]})
+            .await
+            .map_err(driver)?
+            .is_some())
+    }
     async fn find_by_key_hash(
         &self,
         hash: &str,
@@ -130,11 +165,12 @@ impl BindingStore for MongoSandboxStore {
             document.remove("_id");
             let result = self.bindings.records.update_one(
                 doc! {"_id": &next.binding_id, "revision": integer(expected)?, "document_schema_version": DOCUMENT_SCHEMA_VERSION},
-                doc! {"$set": document}).await.map_err(driver)?;
+                doc! {"$set": document, "$addToSet": {"key_history": {"$each": [current.as_ref().expect("validated update").key_sha256.clone(), next.key_sha256.clone()]}}}).await.map_err(driver)?;
             if result.matched_count != 1 {
                 return Err(SandboxStoreError::Conflict);
             }
         } else {
+            document.insert("key_history", vec![next.key_sha256.clone()]);
             self.bindings
                 .records
                 .insert_one(document)
@@ -258,3 +294,6 @@ mod access_tests;
 mod custody_tests;
 #[cfg(test)]
 mod rotation_tests;
+
+#[cfg(test)]
+mod organization_tests;

@@ -108,6 +108,9 @@ async fn context_reads_full_provider_activity_after_a_cold_replica_restore_witho
     assert!(!raw.contains(app.event_ref.as_str()));
     let value: Value = serde_json::from_str(&raw).unwrap();
     assert_eq!(value["event_id"], "message-1");
+    assert_eq!(value["activity_verified"], true);
+    assert_eq!(value["source"]["type"], "nyxid_relay");
+    assert_eq!(value["channel_id"], app.fixture.id.as_str());
     assert_eq!(value["activity"]["kind"]["text"], text);
     assert_eq!(value["activity"]["actor"]["id"], "7");
     assert_eq!(value["capabilities"]["typing"], false);
@@ -147,6 +150,34 @@ async fn context_reads_full_provider_activity_after_a_cold_replica_restore_witho
             .count(),
         1
     );
+}
+#[tokio::test]
+async fn context_reports_each_relay_platform_and_its_capabilities() {
+    for (platform, capabilities) in [
+        (
+            "telegram",
+            json!({"edit":true,"typing":false,"buttons":"inline_keyboard","cards":"text","attachments":"link_text","max_text_chars":4000}),
+        ),
+        (
+            "lark",
+            json!({"edit":false,"typing":false,"buttons":"numbered_text","cards":"text","attachments":"link_text","max_text_chars":4000}),
+        ),
+    ] {
+        let app = App::on(platform).await;
+        let response = app
+            .fixture
+            .client
+            .get(app.event_url("context"))
+            .bearer_auth(&app.key)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let value: Value = response.json().await.unwrap();
+        assert_eq!(value["source"]["platform"], platform);
+        assert_eq!(value["activity"]["conversation"]["kind"], "group");
+        assert_eq!(value["capabilities"], capabilities);
+    }
 }
 #[tokio::test]
 async fn deleted_channel_refuses_and_relay_update_and_typing_are_unsupported() {
@@ -297,4 +328,35 @@ async fn unconfirmed_delivery_is_bounded_by_eight_seconds() {
         .state
         .tracker
         .has_tool_reply(app.event_ref.as_str(), super::relay_support::now()));
+}
+
+#[tokio::test]
+async fn attested_context_rejects_mismatch_and_legacy_context_is_explicitly_unverified() {
+    let app = App::new().await;
+    let mut payload = app
+        .event_ref
+        .open(&app.state.keys, super::relay_support::now())
+        .unwrap()
+        .payload;
+    payload.activity_sha256 = Some("0".repeat(64));
+    let invalid = EventRef::seal(&payload, &app.state.keys).unwrap();
+    let request = |reference: EventRef| {
+        app.fixture
+            .client
+            .get(format!(
+                "{}/v1/events/{}/context",
+                app.base,
+                reference.as_str()
+            ))
+            .bearer_auth(&app.key)
+    };
+    assert_eq!(request(invalid).send().await.unwrap().status(), 503);
+    payload.activity_sha256 = None;
+    let legacy = EventRef::seal(&payload, &app.state.keys).unwrap();
+    let response = request(legacy).send().await.unwrap();
+    assert_eq!(response.status(), 200);
+    assert_eq!(
+        response.json::<Value>().await.unwrap()["activity_verified"],
+        false
+    );
 }

@@ -62,6 +62,10 @@ async fn tool_request_ids_timings_and_info_spans_exclude_secrets() {
         .unwrap();
     assert_eq!(response.status(), 200);
     assert_eq!(response.headers()["x-request-id"], "trace-request-1");
+    let server_timing = response.headers()["server-timing"]
+        .to_str()
+        .unwrap()
+        .to_owned();
     assert!(
         response.headers()["server-timing"]
             .to_str()
@@ -99,6 +103,9 @@ async fn tool_request_ids_timings_and_info_spans_exclude_secrets() {
     assert!(logs.contains("cmaeg.deliver"));
     assert!(logs.contains("trace-request-1"));
     assert!(logs.contains("/v1/events/{event_ref}/replies"));
+    assert!(logs.lines().any(|line| line.contains("trace-request-1")
+        && line.contains("request finished")
+        && line.contains(&server_timing)));
     let text = metrics.render();
     assert!(
         text.lines()

@@ -74,12 +74,16 @@ it('one Connect all action verifies every service in sequence before continuing 
   expect(popup.location.href).toContain('api-github');
   expect(ready).not.toHaveBeenCalled();
   for (const service of services) {
+    // Returning from one NyxID service must leave the same window reusable.
+    popup.location.href = '/connection-return?status=completed';
+    expect(popup.close).not.toHaveBeenCalled();
     connected.add(service);
     await poll();
   }
   expect(vi.mocked(client.start).mock.calls.map((call) => call[1].service_id)).toEqual(services);
   expect(ready).toHaveBeenCalledOnce();
   expect(window.open).toHaveBeenCalledOnce();
+  expect(popup.close).toHaveBeenCalledOnce();
   await poll();
   expect(ready).toHaveBeenCalledOnce();
 });

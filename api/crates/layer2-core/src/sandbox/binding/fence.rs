@@ -2,7 +2,7 @@ use super::{
     BindingConversation, BindingConversationState, BindingState, BindingWork, ProviderBinding,
 };
 use crate::sandbox::store::{AgentAdmission, SandboxStoreError};
-use crate::sandbox::{Sandbox, SandboxCredentialSource, Workspace};
+use crate::sandbox::{Sandbox, Workspace};
 
 /// A persisted parent reservation must still authorize a resource insertion in
 /// the same transaction. A process-local worker claim cannot supply this proof.
@@ -43,6 +43,7 @@ impl BindingAdmissionFence {
     fn require_binding(&self, binding: &ProviderBinding) -> Result<(), SandboxStoreError> {
         binding.validate().map_err(SandboxStoreError::Corrupt)?;
         if self.binding_id != binding.binding_id
+            || binding.existing_agent.is_some()
             || self.revision != binding.revision
             || self.generation != binding.generation
         {
@@ -68,10 +69,7 @@ impl BindingAdmissionFence {
             || sandbox.id != binding.sandbox_id
             || sandbox.owner != binding.owner
             || sandbox.profile.content != profile.sandbox
-            || sandbox.credential.source
-                != (SandboxCredentialSource::Binding {
-                    binding_id: binding.binding_id.clone(),
-                })
+            || sandbox.credential.source != binding.credential_source()
             || sandbox.credential.reaches != profile.sandbox.nyxid_services
         {
             return Err(SandboxStoreError::Conflict);

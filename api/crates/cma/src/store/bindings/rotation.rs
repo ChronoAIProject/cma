@@ -35,7 +35,7 @@ impl MongoBindingCredentials {
             if result.matched_count != 1 { return Err(conflict()); }
             let mut document = binding_document(&next).map_err(unavailable)?;
             document.remove("_id");
-            self.store.bindings.records.update_one(doc! {"_id": &binding.binding_id}, doc! {"$set": document})
+            self.store.bindings.records.update_one(doc! {"_id": &binding.binding_id}, doc! {"$set": document, "$addToSet": {"key_history": {"$each": [&binding.key_sha256, &next.key_sha256]}}})
                 .session(&mut session).await.map_err(unavailable)?;
             Ok(())
         }.await;

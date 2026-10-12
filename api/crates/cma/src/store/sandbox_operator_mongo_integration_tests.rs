@@ -174,6 +174,7 @@ fn agent(sandbox: &Sandbox, id: &str, status: AgentStatus) -> Agent {
             revision: 1,
             digest: "c".repeat(64),
             content: AgentProfileContent {
+                isolated_agent: false,
                 model: None,
                 thinking_effort: ThinkingEffort::Medium,
                 permission_level: PermissionLevel::Guarded,

@@ -3,7 +3,7 @@ use cmaeg_core::{
     channel::{ChannelDefinition, ChannelSecrets},
     cloudevent::CloudEvent,
     message::OutboundMessage,
-    profile::{canonical_json, AgentProfileSnapshot},
+    profile::{canonical_json, EventWorkerProfile},
 };
 
 fn fixture(name: &str) -> serde_json::Value {
@@ -19,7 +19,7 @@ fn canonical_json_sorts_objects_recursively_and_preserves_arrays() {
 
 #[test]
 fn profile_digest_is_stable() {
-    let profile: AgentProfileSnapshot =
+    let profile: EventWorkerProfile =
         serde_json::from_value(fixture("channel")["profile"].clone()).expect("profile fixture");
     assert_eq!(profile.digest(), profile.digest());
     assert!(profile.digest().starts_with("sha256:"));

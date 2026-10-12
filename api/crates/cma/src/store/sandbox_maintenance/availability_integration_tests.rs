@@ -1,4 +1,5 @@
 use super::*;
+use crate::store::schema::DOCUMENT_SCHEMA_VERSION;
 use crate::store::MongoProfileStore;
 use layer2_core::profiles::{
     MarketplaceLocator, MarketplaceStore, ProfileCapacityBounds, ProfileVisibility, SandboxProfile,
@@ -7,6 +8,7 @@ use layer2_core::profiles::{
 use layer2_core::sandbox::store::{
     SandboxLifecycleCommand, SandboxLifecycleCommandResult, SandboxLifecycleCommandStore,
 };
+use mongodb::bson::Document;
 
 async fn profile_fixture(
     client: &Client,
@@ -220,5 +222,62 @@ async fn warmup_policy_persists_after_publication_and_resets_on_private_copy() {
         .await
         .unwrap()
         .is_some());
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn removed_catalogue_policy_keeps_the_exact_instance_active_after_store_reopen() {
+    let (client, name, store) = database().await;
+    let (sandbox, _) = fixture(&store, "sbx_catalogue_cleanup").await;
+    let (profiles, profile) = profile_fixture(&client, &name, &sandbox).await;
+    let rows = client
+        .database(&name)
+        .collection::<Document>("sandbox_retained_availability");
+    rows.insert_one(doc!{"_id":sandbox.id.as_str(),"document_schema_version":DOCUMENT_SCHEMA_VERSION,"owner":sandbox.owner.as_str(),"sandbox_created_at":&sandbox.created_at,"profile_id":sandbox.profile.id.as_str(),"always_keep_alive":true}).await.unwrap();
+    profiles
+        .sandbox_profiles
+        .delete_one(doc! {"_id":profile.id.as_str()})
+        .await
+        .unwrap();
+    let reopened = MongoSandboxStore::open(&client, &name).await.unwrap();
+    assert_eq!(
+        reopened
+            .schedule_inactivity_pause(pause(&sandbox.id))
+            .await
+            .unwrap(),
+        SandboxMaintenanceOutcome::NotEligible
+    );
+    assert_eq!(
+        reopened.get_sandbox(&sandbox.id).await.unwrap(),
+        Some(sandbox.clone())
+    );
+    rows.update_one(
+        doc! {"_id":sandbox.id.as_str()},
+        doc! {"$set":{"owner":"different"}},
+    )
+    .await
+    .unwrap();
+    assert!(reopened
+        .schedule_inactivity_pause(pause(&sandbox.id))
+        .await
+        .is_err());
+    assert_eq!(
+        reopened.get_sandbox(&sandbox.id).await.unwrap(),
+        Some(sandbox.clone())
+    );
+    rows.update_one(
+        doc! {"_id":sandbox.id.as_str()},
+        doc! {"$set":{"owner":sandbox.owner.as_str(),"always_keep_alive":false}},
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        reopened
+            .schedule_inactivity_pause(pause(&sandbox.id))
+            .await
+            .unwrap(),
+        SandboxMaintenanceOutcome::Scheduled
+    );
     client.database(&name).drop().await.unwrap();
 }

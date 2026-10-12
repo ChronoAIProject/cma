@@ -230,10 +230,7 @@ pub(super) fn read_sandbox(document: &Document) -> Result<Sandbox, SandboxStoreE
         ));
     }
     read_admission_replay_metadata(document, &sandbox)?;
-    crate::store::bridge_allocations::channel_retirement::finalization::validate_document(
-        document, &sandbox,
-    )
-    .map_err(|_| {
+    crate::store::legacy_finalization::validate_document(document, &sandbox).map_err(|_| {
         SandboxStoreError::Corrupt("Channel retirement finalization is inconsistent".into())
     })?;
     Ok(sandbox)

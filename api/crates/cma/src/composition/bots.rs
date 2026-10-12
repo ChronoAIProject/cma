@@ -1,8 +1,8 @@
 use super::*;
-use layer2_core::bots::{BotControl, BotService, BotWorker, PublishedBotProfiles};
+use layer2_core::bots::{BotControl, BotService, BotWorker};
 
 pub(crate) struct BotComposition {
-    service: Arc<BotService>,
+    pub(super) service: Arc<BotService>,
     worker: BotWorker,
     activity: Arc<ActivityService>,
 }
@@ -11,7 +11,7 @@ impl BotComposition {
         config: &Config,
         stores: &MongoStores,
         auth: Arc<AuthState>,
-        settings: Arc<PlatformSettingsService>,
+        profiles: Arc<layer2_core::event_workers::EventWorkerProfileService>,
     ) -> Result<(Router, Option<Self>), String> {
         let Some(gateway) = &config.gateway else {
             return Ok((Router::new(), None));
@@ -21,15 +21,7 @@ impl BotComposition {
         };
         let external =
             crate::gateway::GatewayBots::new(gateway, auth, base_url, &config.deployment_id)?;
-        let service = BotService::new(
-            stores.bots.clone(),
-            PublishedBotProfiles::new(
-                stores.sandbox_profiles.clone(),
-                settings,
-                config.default_profiles.agent_model.clone(),
-            ),
-            "cma_codex".into(),
-        );
+        let service = BotService::new(stores.bots.clone(), profiles, "cma_codex".into());
         let router = rest::bot_router(BotControl::new(service.clone(), external.clone()));
         let worker = BotWorker::new(
             service.clone(),

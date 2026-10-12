@@ -22,9 +22,24 @@ use uuid::Uuid;
 pub async fn create(
     state: &ManagementState,
     creator: &Creator,
-    request: ChannelCreateRequest,
+    mut request: ChannelCreateRequest,
 ) -> Result<CreatedChannel, ManagementError> {
+    crate::connections::binding::expand_create(state, creator, &mut request).await?;
     validate_create_request(&request).map_err(ManagementError::Invalid)?;
+    if request.profile.metadata.owner.subject != creator.subject {
+        return Err(ManagementError::Invalid(ValidationError::new(
+            "/profile/metadata/owner/subject",
+            "must match the authenticated NyxID subject",
+        )));
+    }
+    if (request.profile.metadata.owner.kind == cmaeg_core::profile::NyxIdIdentityKind::Organization)
+        != creator.organization
+    {
+        return Err(ManagementError::Invalid(ValidationError::new(
+            "/profile/metadata/owner/kind",
+            "must match the authenticated NyxID subject type",
+        )));
+    }
     if let Some(record_id) = request.record_id.clone() {
         return super::creation::create(state, creator, request, record_id).await;
     }
@@ -106,11 +121,20 @@ pub async fn update(
     state: &ManagementState,
     creator: &Creator,
     channel_id: &ChannelId,
-    request: ChannelUpdateRequest,
+    mut request: ChannelUpdateRequest,
 ) -> Result<LoadedChannel, ManagementError> {
-    validate_update_request(&request).map_err(ManagementError::Invalid)?;
-    let _guard = state.mutation_guard(channel_id.as_str()).await;
+    let pointer = open_pointer(state, channel_id)?;
+    let _guard = state.mutation_guard(pointer.record_id.as_str()).await;
     let current = load(state, creator, channel_id).await?;
+    crate::connections::binding::expand_update(
+        state,
+        creator,
+        &current.definition.record_id,
+        current.definition.connection_ref.as_deref(),
+        &mut request,
+    )
+    .await?;
+    validate_update_request(&request).map_err(ManagementError::Invalid)?;
     if current
         .definition
         .creation
@@ -182,7 +206,8 @@ pub async fn delete(
     channel_id: &ChannelId,
     expected_version: u64,
 ) -> Result<(), ManagementError> {
-    let _guard = state.mutation_guard(channel_id.as_str()).await;
+    let pointer = open_pointer(state, channel_id)?;
+    let _guard = state.mutation_guard(pointer.record_id.as_str()).await;
     let current = load(state, creator, channel_id).await?;
     if current.record.version != expected_version {
         return Err(ManagementError::Conflict {
@@ -190,6 +215,7 @@ pub async fn delete(
             actual: Some(current.record.version),
         });
     }
+    crate::connections::binding::disconnect(state, &current.definition, channel_id).await?;
     state.resolver.invalidate(channel_id.as_str());
     let credential = current
         .definition
@@ -214,6 +240,7 @@ pub async fn delete(
         .await
     {
         Ok(true) | Ok(false) => {
+            crate::connections::binding::release(state, &current.definition).await?;
             state.resolver.invalidate(channel_id.as_str());
             Ok(())
         }
@@ -225,7 +252,8 @@ pub async fn delete(
 }
 
 pub async fn rekey(state: &ManagementState, channel_id: &ChannelId) -> Result<u8, ManagementError> {
-    let _guard = state.mutation_guard(channel_id.as_str()).await;
+    let pointer = open_pointer(state, channel_id)?;
+    let _guard = state.mutation_guard(pointer.record_id.as_str()).await;
     let loaded = load_unowned(state, channel_id).await?;
     state.resolver.invalidate(channel_id.as_str());
     let mut definition = loaded.definition;
@@ -250,10 +278,10 @@ pub async fn rekey(state: &ManagementState, channel_id: &ChannelId) -> Result<u8
     Ok(state.master_keys.current_kid())
 }
 
-async fn load_unowned(
+fn open_pointer(
     state: &ManagementState,
     channel_id: &ChannelId,
-) -> Result<LoadedChannel, ManagementError> {
+) -> Result<ChannelPointer, ManagementError> {
     let pointer = ChannelPointer::open_id(channel_id, state.master_keys.as_ref())
         .map_err(|error| match error {
             OpenError::Format | OpenError::WrongKind => ManagementError::Invalid(
@@ -271,6 +299,14 @@ async fn load_unowned(
     {
         return Err(ManagementError::NotFound);
     }
+    Ok(pointer)
+}
+
+async fn load_unowned(
+    state: &ManagementState,
+    channel_id: &ChannelId,
+) -> Result<LoadedChannel, ManagementError> {
+    let pointer = open_pointer(state, channel_id)?;
     let record = state
         .records
         .get(&pointer.record_url)
@@ -320,6 +356,7 @@ pub(super) fn binding_request(
 ) -> Result<BindingRequest, ManagementError> {
     Ok(BindingRequest {
         schema_version: definition.schema_version,
+        target: definition.provider.target.clone(),
         profile: definition.profile.clone(),
         profile_digest: definition.profile_digest.clone(),
         agent_key: definition

@@ -19,6 +19,7 @@ pub(super) async fn store() -> MongoAuthStore {
         login_attempts: client.database("test").collection(LOGIN_ATTEMPTS),
         subjects: client.database("test").collection(SUBJECTS),
         api_bearers: client.database("test").collection(API_BEARERS),
+        actor_links: client.database("test").collection(ACTOR_LINKS),
         cipher: AuthCipher::new("test", &key).unwrap(),
     }
 }
@@ -52,6 +53,11 @@ async fn login_verifier_is_encrypted_and_bound_to_its_attempt() {
         browser_binding: SecretDigest::identify("browser", "binding-a"),
         verifier: SecretValue::new("pkce-verifier-secret".into()),
         return_to: Some("/t/pub_test".into()),
+        actor_link_intent: Some(crate::auth::actor_links::ActorLoginIntent {
+            link_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+            actor_key: "attested-actor-key".into(),
+            revision: 3,
+        }),
         expires_at: SystemTime::UNIX_EPOCH + Duration::from_secs(20),
     };
 
@@ -64,6 +70,7 @@ async fn login_verifier_is_encrypted_and_bound_to_its_attempt() {
     assert_eq!(restored.browser_binding, original.browser_binding);
     assert_eq!(restored.verifier, original.verifier);
     assert_eq!(restored.return_to, original.return_to);
+    assert_eq!(restored.actor_link_intent, original.actor_link_intent);
     assert_eq!(restored.expires_at, original.expires_at);
 
     let mut moved = store.login_to_doc(original).unwrap();

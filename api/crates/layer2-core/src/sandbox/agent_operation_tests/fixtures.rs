@@ -71,6 +71,7 @@ pub(super) fn test_agent(status: AgentStatus, first_message: Option<&str>) -> Ag
             revision: 1,
             digest: "b".repeat(64),
             content: AgentProfileContent {
+                isolated_agent: false,
                 model: Some("model-a".into()),
                 thinking_effort: ThinkingEffort::High,
                 permission_level: PermissionLevel::Guarded,
@@ -235,8 +236,6 @@ pub(super) async fn seed_waiting_approval(store: &InMemorySandboxStore) -> Agent
         .commit_agent_conversation(AgentConversationMutation {
             command_claim: None,
             execution_fence: None,
-            channel_control_execution_fence: None,
-            channel_execution_fence: None,
             trigger_execution_fence: None,
             admission_guard: None,
             expected_agent_revision: working.revision,

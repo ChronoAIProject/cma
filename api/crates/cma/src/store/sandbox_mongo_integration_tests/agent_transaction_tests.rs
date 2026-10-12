@@ -427,8 +427,6 @@ async fn agent_conversation_rebuilds_approvals_and_rejects_incomplete_logs() {
         .commit_agent_conversation(AgentConversationMutation {
             command_claim: None,
             execution_fence: None,
-            channel_control_execution_fence: None,
-            channel_execution_fence: None,
             trigger_execution_fence: None,
             admission_guard: None,
             expected_agent_revision,
@@ -488,8 +486,6 @@ async fn agent_conversation_rebuilds_approvals_and_rejects_incomplete_logs() {
     let resume = AgentConversationMutation {
         command_claim: None,
         execution_fence: None,
-        channel_control_execution_fence: None,
-        channel_execution_fence: None,
         trigger_execution_fence: None,
         admission_guard: None,
         expected_agent_revision,

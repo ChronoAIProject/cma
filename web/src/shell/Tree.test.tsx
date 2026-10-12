@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { navigationFixture } from '../test/hierarchy';
 import type { NavigationSandbox } from './navigation';
+import type { AppRoute } from '../routing/routes';
 import { Tree, activityLabel, type TreeAction, type TreePermissions } from './Tree';
 
 const FULL_ACCESS: TreePermissions = {
@@ -36,7 +37,7 @@ function renderTree(
     readonly refreshError?: string;
     readonly lifecycleBusy?: boolean;
     readonly onAction?: (action: TreeAction) => void;
-    readonly onNavigate?: ReturnType<typeof vi.fn>;
+    readonly onNavigate?: (route: AppRoute) => void;
   } = {},
 ) {
   return render(

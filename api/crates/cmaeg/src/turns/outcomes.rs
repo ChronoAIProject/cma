@@ -1,7 +1,7 @@
 //! Events passed to delivery, retaining context only for the lifetime of a turn.
 pub use crate::delivery::intents::DeliveryCommand;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum TurnOutcome {
     Accepted { response_id: String },
     TextDelta { text: String },

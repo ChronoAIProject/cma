@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 203,
+  "openapi_operations": 187,
   "operations": {
     "GET /api/v1/organizations": {
       "classification": "openapi",
@@ -2168,217 +2168,6 @@
         "resource_not_found"
       ]
     },
-    "GET /api/v1/bridge-connectors": {
-      "classification": "openapi",
-      "source": "api/crates/layer1-public/src/rest/bridges/mod.rs# Deployment-pinned bridge setup uses current owner/admin authority, safe projections and durable revision/idempotency receipts.",
-      "required_problems": [
-        "bridge_management_required",
-        "bridge_setup_unavailable",
-        "not_authenticated"
-      ]
-    },
-    "GET /api/v1/bridges": {
-      "classification": "openapi",
-      "source": "api/crates/layer1-public/src/rest/bridges/mod.rs# Deployment-pinned bridge setup uses current owner/admin authority, safe projections and durable revision/idempotency receipts.",
-      "required_problems": [
-        "bridge_setup_unavailable",
-        "invalid_bridge_configuration",
-        "invalid_query",
-        "not_authenticated"
-      ]
-    },
-    "GET /api/v1/bridges/{id}": {
-      "classification": "openapi",
-      "source": "api/crates/layer1-public/src/rest/bridges/mod.rs# Deployment-pinned bridge setup uses current owner/admin authority, safe projections and durable revision/idempotency receipts.",
-      "required_problems": [
-        "bridge_authority_unavailable",
-        "bridge_not_found",
-        "bridge_setup_unavailable",
-        "not_authenticated"
-      ]
-    },
-    "GET /api/v1/bridges/{id}/configuration": {
-      "classification": "openapi",
-      "source": "api/crates/layer1-public/src/rest/bridges/mod.rs# Deployment-pinned bridge setup uses current owner/admin authority, safe projections and durable revision/idempotency receipts.",
-      "required_problems": [
-        "bridge_management_required",
-        "bridge_setup_unavailable",
-        "not_authenticated"
-      ]
-    },
-    "POST /api/v1/bridges": {
-      "classification": "openapi",
-      "source": "api/crates/layer1-public/src/rest/bridges/mod.rs# Deployment-pinned bridge setup uses current owner/admin authority, safe projections and durable revision/idempotency receipts.",
-      "required_problems": [
-        "bridge_management_required",
-        "bridge_setup_unavailable",
-        "idempotency_key_reused",
-        "invalid_bridge_configuration",
-        "invalid_json",
-        "missing_idempotency_key",
-        "not_authenticated"
-      ]
-    },
-    "POST /api/v1/bridges/{id}/commands": {
-      "classification": "openapi",
-      "source": "api/crates/layer1-public/src/rest/bridges/mod.rs# Deployment-pinned bridge setup uses current owner/admin authority, safe projections and durable revision/idempotency receipts.",
-      "required_problems": [
-        "bridge_invoke_consent_required",
-        "bridge_management_required",
-        "bridge_renewable_authority_required",
-        "bridge_revision_conflict",
-        "bridge_setup_unavailable",
-        "missing_idempotency_key",
-        "not_authenticated"
-      ]
-    },
-    "POST /api/v1/bridges/{id}/credential/revoke": {
-      "classification": "openapi",
-      "source": "api/crates/layer1-public/src/rest/bridges/mod.rs# Deployment-pinned bridge setup uses current owner/admin authority, safe projections and durable revision/idempotency receipts.",
-      "required_problems": [
-        "bridge_management_required",
-        "bridge_revision_conflict",
-        "bridge_setup_unavailable",
-        "missing_idempotency_key",
-        "not_authenticated"
-      ]
-    },
-    "POST /api/v1/bridges/{id}/validate": {
-      "classification": "openapi",
-      "source": "api/crates/layer1-public/src/rest/bridges/mod.rs# Deployment-pinned bridge setup uses current owner/admin authority, safe projections and durable revision/idempotency receipts.",
-      "required_problems": [
-        "bridge_management_required",
-        "bridge_renewable_authority_required",
-        "bridge_revision_conflict",
-        "bridge_setup_unavailable",
-        "not_authenticated"
-      ]
-    },
-    "PUT /api/v1/bridges/{id}/configuration": {
-      "classification": "openapi",
-      "source": "api/crates/layer1-public/src/rest/bridges/mod.rs# Deployment-pinned bridge setup uses current owner/admin authority, safe projections and durable revision/idempotency receipts.",
-      "required_problems": [
-        "bridge_identity_immutable",
-        "bridge_management_required",
-        "bridge_revision_conflict",
-        "bridge_setup_unavailable",
-        "missing_idempotency_key",
-        "not_authenticated"
-      ]
-    },
-    "PUT /api/v1/bridges/{id}/credential": {
-      "classification": "openapi",
-      "source": "api/crates/layer1-public/src/rest/bridges/mod.rs# Deployment-pinned bridge setup uses current owner/admin authority, safe projections and durable revision/idempotency receipts.",
-      "required_problems": [
-        "bridge_binding_mismatch",
-        "bridge_management_required",
-        "bridge_revision_conflict",
-        "bridge_setup_unavailable",
-        "not_authenticated"
-      ]
-    },
-    "POST /api/v1/bridges/{id}/invoke-grants": {
-      "classification": "openapi",
-      "source": "api/crates/layer1-public/src/rest/bridge_invokes/mod.rs# Explicit grant consent is required and actual owner/admin management remains independent from narrow execution proofs.",
-      "required_problems": [
-        "bridge_invoke_revision_conflict",
-        "bridge_invoke_target_mismatch",
-        "bridge_invoke_unavailable",
-        "bridge_not_found",
-        "idempotency_key_reused",
-        "invalid_json",
-        "missing_idempotency_key",
-        "not_authenticated"
-      ]
-    },
-    "GET /api/v1/bridges/{id}/invoke-grants": {
-      "classification": "openapi",
-      "source": "api/crates/layer1-public/src/rest/bridge_invokes/mod.rs# Explicit grant consent is required and actual owner/admin management remains independent from narrow execution proofs.",
-      "required_problems": [
-        "bridge_invoke_unavailable",
-        "bridge_not_found",
-        "invalid_bridge_invoke_request",
-        "not_authenticated"
-      ]
-    },
-    "GET /api/v1/bridges/{id}/invoke-readiness": {
-      "classification": "openapi",
-      "source": "api/crates/layer1-public/src/rest/bridge_invokes/mod.rs# Explicit grant consent is required and actual owner/admin management remains independent from narrow execution proofs.",
-      "required_problems": [
-        "bridge_invoke_unavailable",
-        "bridge_not_found",
-        "not_authenticated"
-      ]
-    },
-    "GET /api/v1/bridge-invoke-grants/{id}": {
-      "classification": "openapi",
-      "source": "api/crates/layer1-public/src/rest/bridge_invokes/mod.rs# Explicit grant consent is required and actual owner/admin management remains independent from narrow execution proofs.",
-      "required_problems": [
-        "bridge_invoke_not_found",
-        "bridge_invoke_unavailable",
-        "invalid_bridge_invoke_request",
-        "not_authenticated"
-      ]
-    },
-    "POST /api/v1/bridge-invoke-grants/{id}/revoke": {
-      "classification": "openapi",
-      "source": "api/crates/layer1-public/src/rest/bridge_invokes/mod.rs# Explicit grant consent is required and actual owner/admin management remains independent from narrow execution proofs.",
-      "required_problems": [
-        "bridge_invoke_not_found",
-        "bridge_invoke_revision_conflict",
-        "bridge_invoke_unavailable",
-        "invalid_json",
-        "missing_idempotency_key",
-        "not_authenticated"
-      ]
-    },
-    "GET /api/v1/bridges/{id}/deliveries": {
-      "classification": "openapi",
-      "source": "api/crates/layer1-public/src/rest/bridge_outbox/mod.rs# Current owner/admin delivery inspection and explicit original-item recovery.",
-      "required_problems": [
-        "bridge_delivery_unavailable",
-        "bridge_not_found",
-        "invalid_bridge_delivery_request",
-        "not_authenticated"
-      ]
-    },
-    "GET /api/v1/bridges/{id}/deliveries/{item}": {
-      "classification": "openapi",
-      "source": "api/crates/layer1-public/src/rest/bridge_outbox/mod.rs# Current owner/admin delivery inspection and explicit original-item recovery.",
-      "required_problems": [
-        "bridge_delivery_not_found",
-        "bridge_delivery_unavailable",
-        "bridge_not_found",
-        "not_authenticated"
-      ]
-    },
-    "POST /api/v1/bridges/{id}/delivery-recovery": {
-      "classification": "openapi",
-      "source": "api/crates/layer1-public/src/rest/bridge_outbox/mod.rs# Current owner/admin delivery inspection and explicit original-item recovery.",
-      "required_problems": [
-        "bridge_delivery_duplicate_risk_required",
-        "bridge_delivery_not_found",
-        "bridge_delivery_revision_conflict",
-        "bridge_delivery_unavailable",
-        "bridge_not_found",
-        "idempotency_key_reused",
-        "invalid_json",
-        "missing_idempotency_key",
-        "not_authenticated"
-      ]
-    },
-    "GET /api/v1/bridge-connectors/capabilities": {
-      "classification": "openapi",
-      "source": "api/crates/layer1-public/src/rest/bridges/capabilities.rs# Capability diagnostics require fresh owner or organization administrator authority and remain available with rollout switches disabled.",
-      "required_problems": [
-        "bridge_authority_unavailable",
-        "bridge_management_required",
-        "bridge_not_found",
-        "bridge_setup_unavailable",
-        "invalid_query",
-        "not_authenticated"
-      ]
-    },
     "GET /api/v2/agents/{agent_id}/responses/{response_id}/controls": {
       "classification": "openapi",
       "source": "api/crates/layer1-public/src/responses/v2/controls.rs# Additive response controls and safe command polling use core authorization and exact retained intent.",
@@ -2471,154 +2260,6 @@
         "response_not_found"
       ]
     },
-    "GET /api/v1/bridges/{id}/allocations": {
-      "classification": "openapi",
-      "source": "api/crates/layer1-public/src/rest/bridge_cleanup/mod.rs# Current Bridge and whole-parent management exposes explicit retained child cleanup and exact keyed recovery.",
-      "required_problems": [
-        "bridge_child_cleanup_conflict",
-        "bridge_child_cleanup_evidence_inconsistent",
-        "bridge_child_cleanup_unavailable",
-        "bridge_not_found",
-        "invalid_bridge_child_cleanup",
-        "not_authenticated"
-      ]
-    },
-    "GET /api/v1/bridges/{id}/allocations/{allocation}/child-cleanup": {
-      "classification": "openapi",
-      "source": "api/crates/layer1-public/src/rest/bridge_cleanup/mod.rs# Current Bridge and whole-parent management exposes explicit retained child cleanup and exact keyed recovery.",
-      "required_problems": [
-        "bridge_child_cleanup_conflict",
-        "bridge_child_cleanup_evidence_inconsistent",
-        "bridge_child_cleanup_not_found",
-        "bridge_child_cleanup_unavailable",
-        "bridge_not_found",
-        "invalid_bridge_child_cleanup",
-        "not_authenticated"
-      ]
-    },
-    "POST /api/v1/bridges/{id}/allocations/{allocation}/child-cleanup": {
-      "classification": "openapi",
-      "source": "api/crates/layer1-public/src/rest/bridge_cleanup/mod.rs# Current Bridge and whole-parent management exposes explicit retained child cleanup and exact keyed recovery.",
-      "required_problems": [
-        "bridge_child_cleanup_conflict",
-        "bridge_child_cleanup_evidence_inconsistent",
-        "bridge_child_cleanup_not_found",
-        "bridge_child_cleanup_original_actor_required",
-        "bridge_child_cleanup_unavailable",
-        "bridge_not_found",
-        "invalid_bridge_child_cleanup",
-        "invalid_json",
-        "missing_idempotency_key",
-        "not_authenticated"
-      ]
-    },
-    "GET /api/v1/bridges/{id}/allocations/{allocation}/workspace-cleanup": {
-      "classification": "openapi",
-      "source": "api/crates/layer1-public/src/rest/bridge_cleanup/workspace.rs# Current Bridge and whole-parent management exposes separate allocation-owned Workspace cleanup and exact keyed recovery.",
-      "required_problems": [
-        "bridge_workspace_cleanup_conflict",
-        "bridge_workspace_cleanup_evidence_inconsistent",
-        "bridge_workspace_cleanup_not_found",
-        "bridge_workspace_cleanup_unavailable",
-        "bridge_not_found",
-        "invalid_bridge_workspace_cleanup",
-        "not_authenticated"
-      ]
-    },
-    "POST /api/v1/bridges/{id}/allocations/{allocation}/workspace-cleanup": {
-      "classification": "openapi",
-      "source": "api/crates/layer1-public/src/rest/bridge_cleanup/workspace.rs# Current Bridge and whole-parent management exposes separate allocation-owned Workspace cleanup and exact keyed recovery.",
-      "required_problems": [
-        "bridge_workspace_cleanup_conflict",
-        "bridge_workspace_cleanup_evidence_inconsistent",
-        "bridge_workspace_cleanup_not_found",
-        "bridge_workspace_cleanup_original_actor_required",
-        "bridge_workspace_cleanup_unavailable",
-        "bridge_not_found",
-        "invalid_bridge_workspace_cleanup",
-        "invalid_json",
-        "missing_idempotency_key",
-        "not_authenticated"
-      ]
-    },
-    "GET /api/v1/bridge-invoke-grants/{id}/source-controls": {
-      "classification": "openapi",
-      "source": "api/crates/layer1-public/src/rest/bridge_source_controls/mod.rs# Separate per-invoke-grant consent is observed and explicitly admitted with exact revisions; consent does not execute channel controls.",
-      "required_problems": [
-        "bridge_invoke_not_found",
-        "bridge_not_found",
-        "bridge_source_control_unavailable",
-        "invalid_bridge_source_control_request",
-        "not_authenticated"
-      ]
-    },
-    "PUT /api/v1/bridge-invoke-grants/{id}/source-controls": {
-      "classification": "openapi",
-      "source": "api/crates/layer1-public/src/rest/bridge_source_controls/mod.rs# Separate per-invoke-grant consent is observed and explicitly admitted with exact revisions; consent does not execute channel controls.",
-      "required_problems": [
-        "bridge_invoke_not_found",
-        "bridge_invoke_revoked",
-        "bridge_not_found",
-        "bridge_source_control_revision_conflict",
-        "bridge_source_control_unavailable",
-        "idempotency_key_reused",
-        "invalid_bridge_source_control_request",
-        "invalid_idempotency_key",
-        "invalid_json",
-        "json_content_type_required",
-        "missing_idempotency_key",
-        "not_authenticated"
-      ]
-    },
-    "GET /api/v1/bridges/{id}/partitions": {
-      "classification": "openapi",
-      "source": "api/crates/layer1-public/src/rest/bridge_partitions/mod.rs# Current Bridge management and exact resource access authorize bounded read-only partition status.",
-      "required_problems": [
-        "bridge_not_found",
-        "bridge_partition_unavailable"
-      ]
-    },
-    "GET /api/v1/bridges/{id}/partitions/{allocation}": {
-      "classification": "openapi",
-      "source": "api/crates/layer1-public/src/rest/bridge_partitions/mod.rs# Current Bridge management and exact resource access authorize bounded read-only partition status.",
-      "required_problems": [
-        "bridge_not_found",
-        "bridge_partition_unavailable"
-      ]
-    },
-    "POST /api/v1/bridges/{id}/partitions/{allocation}/reset": {
-      "classification": "openapi",
-      "source": "api/crates/layer1-public/src/rest/bridge_partition_commands/mod.rs# Current owner/admin authorization recovers a permanent original partition command receipt before new effects.",
-      "required_problems": []
-    },
-    "POST /api/v1/bridges/{id}/partitions/{allocation}/detach": {
-      "classification": "openapi",
-      "source": "api/crates/layer1-public/src/rest/bridge_partition_commands/mod.rs# Current owner/admin authorization recovers a permanent original partition command receipt before new effects.",
-      "required_problems": []
-    },
-    "GET /api/v1/bridges/{id}/usage": {
-      "classification": "openapi",
-      "source": "api/crates/layer1-public/src/rest/bridge_partitions/usage.rs# Fresh Bridge and target authority returns bounded retained usage without admission or cleanup.",
-      "required_problems": [
-        "bridge_not_found",
-        "bridge_partition_unavailable"
-      ]
-    },
-    "GET /api/v1/bridge-creation-target": {
-      "classification": "openapi",
-      "source": "api/crates/layer1-public/src/rest/bridges/creation_target.rs# Read-only stable creation identity and callback discovery under current owner/admin and management authorization; the same key must be reused for creation.",
-      "required_problems": [
-        "bridge_authority_unavailable",
-        "bridge_management_required",
-        "bridge_not_found",
-        "bridge_setup_unavailable",
-        "bridge_unavailable",
-        "invalid_idempotency_key",
-        "invalid_query",
-        "missing_idempotency_key",
-        "not_authenticated"
-      ]
-    },
     "PUT /api/v1/cmaeg/bindings/{binding_id}": {
       "classification": "openapi",
       "source": "api/crates/layer1-public/src/rest/bindings.rs# Binding lifecycle or immutable context is exercised through real handlers and both SDKs.",
@@ -2677,14 +2318,6 @@
       "classification": "supplemental_asset",
       "source": "api/crates/layer1-public/src/a2a/mod.rs# Public provider card is anonymous discovery outside the REST OpenAPI document.",
       "required_problems": []
-    },
-    "GET /api/v1/bridges/{id}/partitions/{allocation}/pending-messages": {
-      "classification": "openapi",
-      "source": "api/crates/layer1-public/src/rest/bridge_partitions/mod.rs# Current Bridge management and exact resource access authorize bounded read-only partition status.",
-      "required_problems": [
-        "bridge_not_found",
-        "bridge_partition_unavailable"
-      ]
     },
     "POST /api/v1/bots": {
       "classification": "openapi",
@@ -2779,6 +2412,169 @@
         "bot_unavailable",
         "bot_not_found",
         "bot_conflict"
+      ]
+    },
+    "POST /api/v1/event-worker-profiles": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/event_workers/mod.rs# Public Event Worker Profile management; the web uses these same operations.",
+      "required_problems": [
+        "event_worker_profile_invalid"
+      ]
+    },
+    "GET /api/v1/event-worker-profiles/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/event_workers/mod.rs# Public Event Worker Profile management; the web uses these same operations.",
+      "required_problems": [
+        "event_worker_profile_not_found",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/event-worker-profiles/{id}/revisions/{revision}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/event_workers/mod.rs# Public Event Worker Profile management; the web uses these same operations.",
+      "required_problems": []
+    },
+    "GET /api/v1/event-worker-profiles": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/event_workers/mod.rs# Public Event Worker Profile management; the web uses these same operations.",
+      "required_problems": [
+        "event_worker_profile_forbidden",
+        "event_worker_profile_unavailable"
+      ]
+    },
+    "PUT /api/v1/event-worker-profiles/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/event_workers/mod.rs# Public Event Worker Profile management; the web uses these same operations.",
+      "required_problems": [
+        "event_worker_profile_conflict"
+      ]
+    },
+    "DELETE /api/v1/event-worker-profiles/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/event_workers/mod.rs# Public Event Worker Profile management; the web uses these same operations.",
+      "required_problems": []
+    },
+    "PUT /api/v1/gateway/interaction-records/{record_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/gateway_interactions.rs# Real REST fixtures exercise opaque records, permission checks, expiry admission, optimistic concurrency and store failures.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "invalid_gateway_record",
+        "store_failed",
+        "conflict",
+        "gateway_record_too_large"
+      ]
+    },
+    "GET /api/v1/gateway/interaction-records/{record_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/gateway_interactions.rs# Real REST fixtures exercise opaque records, permission checks, expiry admission, optimistic concurrency and store failures.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "invalid_gateway_record",
+        "store_failed"
+      ],
+      "non_problem_statuses": {
+        "404": "api/crates/layer1-public/src/rest/gateway_interactions.rs# Missing or expired interaction reads and deletes return an empty 404 response."
+      }
+    },
+    "DELETE /api/v1/gateway/interaction-records/{record_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/gateway_interactions.rs# Real REST fixtures exercise opaque records, permission checks, expiry admission, optimistic concurrency and store failures.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "invalid_gateway_record",
+        "store_failed",
+        "conflict"
+      ],
+      "non_problem_statuses": {
+        "404": "api/crates/layer1-public/src/rest/gateway_interactions.rs# Missing or expired interaction reads and deletes return an empty 404 response."
+      }
+    },
+    "POST /api/v1/bot-setups/advance": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bot_setups.rs# Binding-authenticated setup workflow returns the real core view and maps all BotError outcomes. Gateway attestation dependencies are fixture ports.",
+      "required_problems": [
+        "setup_authority_required",
+        "setup_not_found",
+        "setup_changed",
+        "setup_unavailable",
+        "invalid_setup"
+      ]
+    },
+    "POST /api/v1/bot-setups/actions": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bot_setups.rs# Binding-authenticated typed actions use the real setup state machine, replay fences and error mapping.",
+      "required_problems": [
+        "setup_authority_required",
+        "setup_not_found",
+        "setup_changed",
+        "setup_unavailable",
+        "invalid_setup"
+      ]
+    },
+    "POST /api/v1/agent-delegations/identity": {
+      "classification": "openapi",
+      "source": "api/crates/cma/src/bot_setups/delegation.rs# CMA-owned binding authentication resolves the admitted source actor and dispatches real consent and resource operations; external dependencies are fixture ports.",
+      "required_problems": [
+        "delegated_operation_refused"
+      ]
+    },
+    "POST /api/v1/agent-delegations/operations": {
+      "classification": "openapi",
+      "source": "api/crates/cma/src/bot_setups/delegation.rs# CMA-owned binding authentication resolves the admitted source actor and dispatches real consent and resource operations; external dependencies are fixture ports.",
+      "required_problems": [
+        "delegated_operation_refused"
+      ]
+    },
+    "DELETE /api/v1/gateway/connection-records/{record_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/gateway_connections.rs# Connection records reuse capability-gated record handlers with an independent namespace; the executable gateway-connections corpus covers success, authority, validation, storage and CAS outcomes.",
+      "required_problems": [
+        "conflict",
+        "forbidden",
+        "gateway_record_not_found",
+        "invalid_gateway_record",
+        "invalid_query",
+        "not_authenticated",
+        "store_failed"
+      ]
+    },
+    "GET /api/v1/gateway/connection-records": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/gateway_connections.rs# Connection records reuse capability-gated record handlers with an independent namespace; the executable gateway-connections corpus covers success, authority, validation, storage and CAS outcomes.",
+      "required_problems": [
+        "forbidden",
+        "invalid_gateway_record",
+        "invalid_query",
+        "not_authenticated",
+        "store_failed"
+      ]
+    },
+    "GET /api/v1/gateway/connection-records/{record_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/gateway_connections.rs# Connection records reuse capability-gated record handlers with an independent namespace; the executable gateway-connections corpus covers success, authority, validation, storage and CAS outcomes.",
+      "required_problems": [
+        "forbidden",
+        "gateway_record_not_found",
+        "invalid_gateway_record",
+        "not_authenticated",
+        "store_failed"
+      ]
+    },
+    "PUT /api/v1/gateway/connection-records/{record_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/gateway_connections.rs# Connection records reuse capability-gated record handlers with an independent namespace; the executable gateway-connections corpus covers success, authority, validation, storage and CAS outcomes.",
+      "required_problems": [
+        "conflict",
+        "forbidden",
+        "gateway_record_too_large",
+        "invalid_gateway_record",
+        "invalid_json",
+        "not_authenticated",
+        "store_failed"
       ]
     }
   }

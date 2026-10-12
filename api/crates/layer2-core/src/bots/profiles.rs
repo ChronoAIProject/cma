@@ -1,11 +1,11 @@
-//! Pin readable, published environment defaults alongside the selected Agent revision.
-use super::{BotError, BotProfileResolver, BotProfiles};
+//! Pin published defaults or personally owned environments alongside the Agent revision.
+use super::{BotError, BotProfileResolver, BotProfiles, CreateBot};
 use crate::{
     profiles::{
         content_digest,
         references::{reference_is_readable, verify_agent_revision, verify_workspace_revision},
         store::{AgentProfileStore, SandboxProfileStore, WorkspaceProfileStore},
-        AgentProfileRef, ProfileStoreError,
+        ProfileStoreError,
     },
     PlatformSettingsService, SubjectId,
 };
@@ -35,7 +35,7 @@ impl BotProfileResolver for PublishedBotProfiles {
     async fn resolve(
         &self,
         owner: &SubjectId,
-        reference: &AgentProfileRef,
+        request: &CreateBot,
     ) -> Result<BotProfiles, BotError> {
         let defaults = self
             .settings
@@ -44,6 +44,15 @@ impl BotProfileResolver for PublishedBotProfiles {
             .map_err(|_| BotError::Unavailable)?
             .settings
             .defaults;
+        let reference = &request.profile;
+        let sandbox_ref = request
+            .sandbox_profile
+            .as_ref()
+            .unwrap_or(&defaults.sandbox_profile);
+        let workspace_ref = request
+            .workspace_profile
+            .as_ref()
+            .unwrap_or(&defaults.workspace_profile);
         let agent = self
             .store
             .agent_profile(&reference.id)
@@ -52,13 +61,13 @@ impl BotProfileResolver for PublishedBotProfiles {
             .ok_or(BotError::NotFound)?;
         let sandbox = self
             .store
-            .sandbox_profile(&defaults.sandbox_profile.id)
+            .sandbox_profile(&sandbox_ref.id)
             .await
             .map_err(error)?
             .ok_or(BotError::NotFound)?;
         let workspace = self
             .store
-            .workspace_profile(&defaults.workspace_profile.id)
+            .workspace_profile(&workspace_ref.id)
             .await
             .map_err(error)?
             .ok_or(BotError::NotFound)?;
@@ -83,6 +92,13 @@ impl BotProfileResolver for PublishedBotProfiles {
         ) {
             return Err(BotError::NotFound);
         }
+        // Defaults are operator-selected. Explicit environments must belong to
+        // this owner; foreign install commands need a separate trust contract.
+        if (request.sandbox_profile.is_some() && &sandbox.owner != owner)
+            || (request.workspace_profile.is_some() && &workspace.owner != owner)
+        {
+            return Err(BotError::NotFound);
+        }
         let agent = self
             .store
             .agent_profile_revision(&reference.id, reference.revision)
@@ -91,26 +107,20 @@ impl BotProfileResolver for PublishedBotProfiles {
             .ok_or(BotError::NotFound)?;
         let sandbox = self
             .store
-            .sandbox_profile_revision(
-                &defaults.sandbox_profile.id,
-                defaults.sandbox_profile.revision,
-            )
+            .sandbox_profile_revision(&sandbox_ref.id, sandbox_ref.revision)
             .await
             .map_err(error)?
             .ok_or(BotError::NotFound)?;
         let workspace = self
             .store
-            .workspace_profile_revision(
-                &defaults.workspace_profile.id,
-                defaults.workspace_profile.revision,
-            )
+            .workspace_profile_revision(&workspace_ref.id, workspace_ref.revision)
             .await
             .map_err(error)?
             .ok_or(BotError::NotFound)?;
         verify_agent_revision(reference, &agent).map_err(error)?;
-        verify_workspace_revision(&defaults.workspace_profile, &workspace).map_err(error)?;
-        if sandbox.profile_id != defaults.sandbox_profile.id
-            || sandbox.revision != defaults.sandbox_profile.revision
+        verify_workspace_revision(workspace_ref, &workspace).map_err(error)?;
+        if sandbox.profile_id != sandbox_ref.id
+            || sandbox.revision != sandbox_ref.revision
             || content_digest(&sandbox.content).map_err(|_| BotError::Unavailable)?
                 != sandbox.digest
         {
@@ -127,6 +137,7 @@ impl BotProfileResolver for PublishedBotProfiles {
             ));
         }
         Ok(BotProfiles {
+            event_worker_profile: None,
             agent,
             sandbox,
             workspace,

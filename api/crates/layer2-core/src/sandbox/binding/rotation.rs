@@ -1,7 +1,5 @@
 use super::{BindingState, BindingWork, ProviderBinding};
-use crate::sandbox::{
-    Sandbox, SandboxCredentialAuthority, SandboxCredentialSource, SandboxStatus, SandboxWorkStep,
-};
+use crate::sandbox::{Sandbox, SandboxCredentialAuthority, SandboxStatus, SandboxWorkStep};
 use crate::CoreError;
 
 impl ProviderBinding {
@@ -15,8 +13,10 @@ impl ProviderBinding {
         }
         let mut next = self.clone();
         next.key_sha256 = hash;
-        next.state = BindingState::Provisioning;
-        next.work = BindingWork::DeliverCredential;
+        if self.existing_agent.is_none() {
+            next.state = BindingState::Provisioning;
+            next.work = BindingWork::DeliverCredential;
+        }
         next.advance_revision(at).map_err(CoreError::InvalidState)?;
         Ok(next)
     }
@@ -32,10 +32,7 @@ impl ProviderBinding {
             || self.state != BindingState::Provisioning
             || sandbox.id != self.sandbox_id
             || sandbox.owner != self.owner
-            || sandbox.credential.source
-                != (SandboxCredentialSource::Binding {
-                    binding_id: self.binding_id.clone(),
-                })
+            || sandbox.credential.source != self.credential_source()
             || !matches!(
                 sandbox.status,
                 SandboxStatus::Active | SandboxStatus::Paused
@@ -84,10 +81,7 @@ impl ProviderBinding {
                 sandbox.status,
                 SandboxStatus::Active | SandboxStatus::Paused
             )
-            && sandbox.credential.source
-                == (SandboxCredentialSource::Binding {
-                    binding_id: self.binding_id.clone(),
-                })
+            && sandbox.credential.source == self.credential_source()
             && sandbox.credential.pending.is_none()
             && sandbox.credential.current.as_ref().is_some_and(|current| {
                 current.provider_key_id == format!("provided-{}", self.key_sha256)

@@ -154,6 +154,7 @@ mod socket_tests {
             "model":{"access":"managed","service":"model-service","api_type":"responses","model":"test","thinking_effort":"medium"},"permission":{"action_mode":"guarded"},"context":{}})).unwrap();
         let request = super::super::BindingRequest {
             schema_version: 1,
+            target: Default::default(),
             profile,
             profile_digest: format!("sha256:{}", "a".repeat(64)),
             agent_key: agent.clone(),

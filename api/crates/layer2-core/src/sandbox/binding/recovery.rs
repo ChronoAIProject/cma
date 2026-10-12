@@ -101,7 +101,7 @@ impl BindingService {
                 };
             }
             ProvisionSandbox => {
-                let profile = self.profiles.sandbox(binding).await.map_err(unavailable)?;
+                let profile = self.profiles.sandbox(binding).map_err(unavailable)?;
                 let value = match self
                     .resources
                     .sandboxes
@@ -125,11 +125,7 @@ impl BindingService {
                 }
             }
             ProvisionWorkspace => {
-                let profile = self
-                    .profiles
-                    .workspace(binding)
-                    .await
-                    .map_err(unavailable)?;
+                let profile = self.profiles.workspace(binding).map_err(unavailable)?;
                 let value = match self
                     .resources
                     .workspaces
@@ -169,7 +165,11 @@ impl BindingService {
                 {
                     return Ok(());
                 }
-                next.work = RetireCurrentSandbox;
+                next.work = if binding.existing_agent.is_some() {
+                    Idle
+                } else {
+                    RetireCurrentSandbox
+                };
             }
             RetireCurrentSandbox => {
                 if !self.cleanup_sandbox(binding, &binding.sandbox_id).await? {
@@ -264,12 +264,13 @@ impl BindingService {
             return self.save_conversation_state(binding, value, Retiring).await;
         }
         if value.state == Retiring {
-            if self
-                .resources
-                .agents
-                .retire_for_binding(value)
-                .await
-                .map_err(unavailable)?
+            if binding.existing_agent.is_some()
+                || self
+                    .resources
+                    .agents
+                    .retire_for_binding(value)
+                    .await
+                    .map_err(unavailable)?
             {
                 self.save_conversation_state(binding, value, Retired)
                     .await?;
@@ -279,7 +280,7 @@ impl BindingService {
         if value.state != Provisioning || binding.work == BindingWork::DeliverCredential {
             return Ok(());
         }
-        let profile = self.profiles.agent(binding).await.map_err(unavailable)?;
+        let profile = self.profiles.agent(binding).map_err(unavailable)?;
         let agent = match self
             .resources
             .agents

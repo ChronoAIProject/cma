@@ -83,7 +83,11 @@ review, and follows recorded preparation. A GET or OAuth callback never starts
 work. Reuse always concerns the visitor's resources, never the publisher's.
 
 See [CMA Model](./docs/CMA_Model.md), [CMA Trigger](./docs/CMA_Trigger.md),
-[API Overview](./docs/API_Overview.md) and [REST API](./docs/API_REST.md).
+[API Overview](./docs/API_Overview.md), [REST API](./docs/API_REST.md), and the
+[complete public API list](./docs/CMA_Public_APIs.md).
+
+For the separate event gateway, see [architecture and integration](./docs/CMAEG_Architecture.md),
+[protocol](./docs/CMAEG_Protocol.md), and [operations](./docs/CMAEG_Operations.md).
 
 ## Branches And Deployment
 
@@ -94,3 +98,7 @@ exception: merge completed work to `develop`, build and deploy directly, and
 verify production without merging to `main` or invoking the release workflow.
 The exact reset/deployment order and safeguards belong to
 [CMA Operations](./docs/CMA_Operations.md).
+
+Event ingress and channel delivery belong to the separate
+[CMA Event Gateway](CMAEG_Protocol.md). CMA owns provider bindings, environments
+and Agent conversations; the former in-CMA Bridge execution pipeline is retired.

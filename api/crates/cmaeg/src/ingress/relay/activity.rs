@@ -1,8 +1,8 @@
 //! Public activity and opaque reply reference created after authentication and admission.
-use super::{telegram::TelegramFacts, verify::VerifiedCallback};
+use super::{facts::RelayFacts, verify::VerifiedCallback};
 use crate::{channels::resolver::ResolvedChannel, ingress::launch::LaunchRequest};
 use cmaeg_core::{
-    activity::{Activity, ActivityConversation, ActivityKind, Actor, ActorKind, SourceKind},
+    activity::{Activity, ActivityConversation, ActivityKind, Actor, SourceKind},
     channel::Platform,
     ids::{ConversationId, EventId, IdempotencyKey, MessageRef},
     seal::{EventRef, EventRefPayload, MasterKeyRing, ReplyAddress},
@@ -10,18 +10,32 @@ use cmaeg_core::{
 use std::{sync::Arc, time::Instant};
 pub fn launch_request(
     channel: Arc<ResolvedChannel>,
+    platform: Platform,
     verified: VerifiedCallback,
-    facts: TelegramFacts,
+    facts: RelayFacts,
     keys: &MasterKeyRing,
     received_at: Instant,
     now: i64,
 ) -> Result<LaunchRequest, &'static str> {
     let payload = verified.payload;
-    let event_id = EventId::new(payload.message_id.clone()).map_err(|_| "activity_invalid")?;
-    let activity = Activity {
-        schema_version: 1,
-        event_id: event_id.clone(),
-        kind: ActivityKind::Message {
+    let event_id = EventId::new(if let Some(callback) = &facts.callback {
+        use sha2::{Digest, Sha256};
+        format!(
+            "telegram-callback:{:x}",
+            Sha256::digest(format!("{}:{}", payload.conversation.id, callback.id).as_bytes())
+        )
+    } else {
+        payload.message_id.clone()
+    })
+    .map_err(|_| "activity_invalid")?;
+    let occurred_at = facts
+        .event
+        .as_ref()
+        .and_then(|ce| ce.time.clone())
+        .unwrap_or(payload.timestamp);
+    let kind = match facts.event {
+        Some(ce) => ActivityKind::Event { ce: *ce },
+        None => ActivityKind::Message {
             text: payload.content.text.unwrap_or_default(),
             attachments: Vec::new(),
             mentions_bot: facts.mentioned == Some(true),
@@ -31,19 +45,24 @@ pub fn launch_request(
                 .transpose()
                 .map_err(|_| "activity_invalid")?,
         },
+    };
+    let activity = Activity {
+        schema_version: 1,
+        event_id: event_id.clone(),
+        kind,
         actor: Actor {
             id: payload.sender.platform_id,
             display_name: payload.sender.display_name,
-            kind: ActorKind::Human,
+            kind: facts.actor,
         },
         conversation: ActivityConversation {
             id: payload.conversation.platform_id,
             kind: facts.conversation,
             thread_id: facts.thread_id,
         },
-        occurred_at: payload.timestamp,
+        occurred_at,
         source: SourceKind::NyxidRelay {
-            platform: Platform::Telegram,
+            platform,
             route_id: payload.conversation.id.clone(),
         },
     };
@@ -58,6 +77,7 @@ pub fn launch_request(
     let event_ref = EventRef::seal(
         &EventRefPayload {
             v: 1,
+            activity_sha256: Some(cmaeg_core::seal::event_ref::activity_digest(&activity)),
             channel_id: channel.id.clone(),
             record_id: channel.pointer.record_id.clone(),
             event_id: event_id.clone(),
@@ -67,7 +87,7 @@ pub fn launch_request(
             reply: ReplyAddress::NyxidRelay {
                 message_id: payload.message_id,
                 route_id: payload.conversation.id,
-                platform: Platform::Telegram,
+                platform,
                 reply_token: verified.reply_token,
                 reply_token_expires_at: verified.reply_expires_at,
             },

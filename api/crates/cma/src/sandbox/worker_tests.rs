@@ -43,7 +43,6 @@ use super::worker::{
 
 mod background_checkpoint_tests;
 mod binding_tests;
-mod channel_lifecycle_guard_tests;
 mod checkpoint_consistency_tests;
 mod checkpoint_lease_tests;
 mod checkpoint_maintenance_tests;

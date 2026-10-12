@@ -6,7 +6,10 @@ use axum::{
     response::Response,
     Router,
 };
-use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
+use tower_http::{
+    catch_panic::CatchPanicLayer,
+    request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
+};
 use tracing::Instrument;
 
 #[derive(Clone)]
@@ -18,6 +21,11 @@ pub(crate) struct RefusalReason(pub String);
 
 pub fn instrument(router: Router) -> Router {
     router
+        // Innermost, so a handler panic is answered and logged inside its
+        // request span and `request finished` records the 500.
+        .layer(CatchPanicLayer::custom(
+            crate::http::problems::panic_response,
+        ))
         .layer(PropagateRequestIdLayer::x_request_id())
         .layer(from_fn(observe))
         .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid))
@@ -40,10 +48,11 @@ async fn observe(mut request: Request, next: Next) -> Response {
     let span = tracing::info_span!("cmaeg.request", request_id, route);
     let source = match route.as_str() {
         "/v1/callbacks/{channel_id}" => Some("nyxid_relay"),
+        "/v1/telegram/{channel_id}" => Some("telegram"),
         "/v1/channels/{channel_id}/events" => Some("custom"),
         _ => None,
     };
-    let timing = source.map(IngressTiming::new);
+    let timing = span.in_scope(|| source.map(IngressTiming::new));
     if let Some(timing) = &timing {
         request.extensions_mut().insert(timing.clone());
     }
@@ -69,7 +78,10 @@ async fn observe(mut request: Request, next: Next) -> Response {
         } else if tools {
             response.headers_mut().insert("server-timing", format!("deliver;dur={:.3}", started.elapsed().as_secs_f64() * 1000.0).parse().unwrap());
         }
-        tracing::info!(status = response.status().as_u16(), "request finished");
+        let server_timing = response.headers().get("server-timing")
+            .filter(|_| source.is_some() || tools)
+            .and_then(|value| value.to_str().ok());
+        tracing::info!(status = response.status().as_u16(), server_timing, "request finished");
         response
     }.instrument(span).await
 }

@@ -61,6 +61,30 @@ fn binding_profile_maps_resources_commands_identity_and_agent_settings() {
 }
 
 #[test]
+fn isolated_user_sessions_preserve_parent_environment_and_report_support() {
+    let original = map(input()).unwrap();
+    let mut value = input();
+    value["environment"]["isolated_agents"] = json!(true);
+    value["environment"]["session_affinity"] = json!("source_user");
+    let isolated = map(value.clone()).unwrap();
+    assert_eq!(original.environment, isolated.environment);
+    assert!(!original.agent.isolated_agent);
+    assert!(isolated.agent.isolated_agent);
+    assert_eq!(isolated.session_affinity, SessionAffinity::SourceUser);
+    assert!(isolated
+        .honoured
+        .contains(&"environment.isolated_agents".into()));
+    assert!(isolated
+        .honoured
+        .contains(&"environment.session_affinity".into()));
+    value["model"]["access"] = json!("custom");
+    assert!(
+        map(value).is_err(),
+        "isolation cannot expose a shared model credential"
+    );
+}
+
+#[test]
 fn binding_profile_exposes_every_unsupported_requirement() {
     let mut value = input();
     value["model"]["api_type"] = "unsupported".into();
@@ -154,4 +178,25 @@ fn binding_profile_rejects_digest_mismatch_unknown_fields_and_invalid_bounds() {
     let mut value = input();
     value["environment"]["unexpected"] = true.into();
     assert!(map(value).is_err());
+}
+
+#[test]
+fn organization_and_keep_alive_are_explicit_and_legacy_plans_remain_compatible() {
+    let legacy = map(input()).unwrap();
+    let encoded = serde_json::to_value(&legacy).unwrap();
+    assert!(encoded.get("organization_owned").is_none());
+    assert!(encoded["environment"].get("always_keep_alive").is_none());
+    assert_eq!(
+        serde_json::from_value::<BindingProfilePlan>(encoded).unwrap(),
+        legacy
+    );
+    let mut value = input();
+    value["metadata"]["owner"]["kind"] = "organization".into();
+    value["environment"]["always_keep_alive"] = true.into();
+    let plan = map(value).unwrap();
+    assert!(plan.organization_owned);
+    assert!(plan.environment.as_ref().unwrap().always_keep_alive);
+    assert!(plan
+        .honoured
+        .contains(&"environment.always_keep_alive".into()));
 }

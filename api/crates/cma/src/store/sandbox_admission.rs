@@ -147,7 +147,7 @@ async fn apply(
     admission: &SandboxAdmission,
     session: &mut mongodb::ClientSession,
 ) -> Result<AdmissionReceipt, AdmissionError> {
-    store
+    let resource_policy = store
         .bindings
         .admit_sandbox(admission, session)
         .await
@@ -219,6 +219,8 @@ async fn apply(
         .session(&mut *session)
         .await
         .map_err(classify_insert)?;
+    super::resource_access::insert_admission_policy(store, resource_policy.as_ref(), session)
+        .await?;
     Ok(AdmissionReceipt::Created { sandbox, event })
 }
 

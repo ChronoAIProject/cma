@@ -9,6 +9,16 @@ use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
 impl AuthState {
+    pub(super) async fn is_known_binding_key(&self, token: &str) -> Result<bool, StoreError> {
+        let Some(access) = &self.bindings else {
+            return Ok(false);
+        };
+        let hash = format!("{:x}", Sha256::digest(token.as_bytes()));
+        access
+            .contains_key_hash(&hash)
+            .await
+            .map_err(|_| StoreError::Unavailable("binding key history unavailable".into()))
+    }
     pub(crate) fn with_binding_store(
         mut self: Arc<Self>,
         store: Arc<dyn BindingStore>,
@@ -19,7 +29,7 @@ impl AuthState {
         self
     }
 
-    pub(super) async fn binding_request(
+    pub(crate) async fn binding_request(
         &self,
         token: String,
     ) -> Result<Option<RequestAuth>, StoreError> {
@@ -67,6 +77,11 @@ pub(super) fn permits_request(method: &axum::http::Method, path: &str, binding: 
     let segments = path.trim_start_matches('/').split('/').collect::<Vec<_>>();
     match (method, segments.as_slice()) {
         (&Method::GET, ["api", "v2"])
+        // The setup handler separately attests the configured Father binding
+        // and the event's exact sender. This grants no ordinary Bot authority.
+        | (&Method::POST, ["api", "v1", "bot-setups", "advance"])
+        | (&Method::POST, ["api", "v1", "bot-setups", "actions"])
+        | (&Method::POST, ["api", "v1", "agent-delegations", "identity" | "operations"])
         | (&Method::POST, ["api", "v2", "responses"])
         | (&Method::POST, ["api", "v2", "agents", _, "responses"])
         | (&Method::GET, ["api", "v2", "responses", _])

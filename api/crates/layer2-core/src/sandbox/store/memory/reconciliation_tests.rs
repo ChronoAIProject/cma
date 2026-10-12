@@ -13,6 +13,9 @@ use crate::sandbox::lifecycle_test_support::{agent, checkpoint, sandbox, IDLE_AT
 use crate::sandbox::*;
 use crate::{AgentId, SandboxId, SubjectId};
 
+#[path = "retirement_loss_tests.rs"]
+mod retirement_loss_tests;
+
 #[tokio::test]
 async fn authority_scan_includes_every_state_owner_and_bound_runtime_in_stable_order() {
     let store = InMemorySandboxStore::default();

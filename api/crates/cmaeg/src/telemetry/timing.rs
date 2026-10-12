@@ -13,6 +13,7 @@ pub struct IngressTiming(Arc<Inner>);
 #[derive(Debug)]
 struct Inner {
     source: &'static str,
+    request_span: tracing::Span,
     started: Instant,
     received: OnceLock<Instant>,
     written: OnceLock<Instant>,
@@ -24,6 +25,7 @@ impl IngressTiming {
     pub fn new(source: &'static str) -> Self {
         Self(Arc::new(Inner {
             source,
+            request_span: tracing::Span::current(),
             started: Instant::now(),
             received: OnceLock::new(),
             written: OnceLock::new(),
@@ -31,6 +33,10 @@ impl IngressTiming {
             restore: Mutex::new(Duration::ZERO),
             verify: Mutex::new(Duration::ZERO),
         }))
+    }
+    /// The bounded ingress source this request was created for.
+    pub fn source(&self) -> &'static str {
+        self.0.source
     }
     pub fn received(&self) -> Instant {
         *self.0.received.get_or_init(Instant::now)
@@ -45,9 +51,17 @@ impl IngressTiming {
     pub fn written(&self, at: Instant) {
         if self.0.written.set(at).is_ok() {
             if let Some(received) = self.0.received.get() {
+                let seconds = at.saturating_duration_since(*received).as_secs_f64();
                 metrics::histogram!(names::INGRESS_TO_PROVIDER,
                     names::SOURCE => self.0.source, names::COLD => if self.is_cold() { "true" } else { "false" })
-                    .record(at.saturating_duration_since(*received).as_secs_f64());
+                    .record(seconds);
+                tracing::info!(
+                    parent: &self.0.request_span,
+                    source = self.0.source,
+                    cold = self.is_cold(),
+                    ingress_to_provider_ms = seconds * 1000.0,
+                    "ingress socket write"
+                );
             }
         }
     }

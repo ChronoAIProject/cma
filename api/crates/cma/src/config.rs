@@ -10,8 +10,6 @@ use layer2_core::ServiceId;
 
 use crate::{auth::AuthMode, store::AuthEncryptionKey};
 
-mod agent_sandbox;
-pub(crate) mod bridge_flags;
 mod execution;
 mod gateway;
 mod home;
@@ -19,8 +17,11 @@ mod profiles;
 mod runtime;
 mod storage;
 
-pub(crate) use bridge_flags::BridgeFeatureFlags;
+mod features;
+pub(crate) use features::FeatureFlags;
 pub(crate) use gateway::GatewayConfig;
+mod bot_father;
+pub(crate) use bot_father::BotFatherConfig;
 pub(crate) use profiles::DefaultProfileConfig;
 pub(crate) use runtime::RuntimeConfig;
 pub(crate) use storage::CheckpointStorageConfig;
@@ -136,6 +137,7 @@ pub struct Config {
     pub bind: SocketAddr,
     pub public_url: String,
     pub nyxid_public_url: Option<String>,
+    pub nyxid_service_id: Option<String>,
     pub cors_origins: Vec<HeaderValue>,
     pub rate_limits: RateLimitConfig,
     pub trusted_proxies: TrustedProxyConfig,
@@ -150,8 +152,9 @@ pub struct Config {
     pub activity_retention: Duration,
     pub default_profiles: DefaultProfileConfig,
     pub auth_mode: AuthMode,
-    pub bridge_flags: BridgeFeatureFlags,
+    pub features: FeatureFlags,
     pub gateway: Option<GatewayConfig>,
+    pub bot_father: Option<BotFatherConfig>,
 }
 
 impl std::fmt::Debug for Config {
@@ -175,7 +178,7 @@ impl std::fmt::Debug for Config {
             .field("activity_retention", &self.activity_retention)
             .field("default_profiles", &self.default_profiles)
             .field("auth_mode", &self.auth_mode)
-            .field("bridge_flags", &self.bridge_flags)
+            .field("features", &self.features)
             .finish()
     }
 }
@@ -213,7 +216,7 @@ impl Config {
             return Err("CHRONO_SERVER_CORS_ORIGIN must contain at least one origin".into());
         }
 
-        let bridge_flags = BridgeFeatureFlags::from_lookup(&mut lookup)?;
+        let features = FeatureFlags::from_lookup(&mut lookup)?;
         let rate_limits = RateLimitConfig::from_lookup(&mut lookup)?;
         let trusted_proxies = TrustedProxyConfig::from_lookup(&mut lookup)?;
         let mongodb_uri = required(&mut lookup, "CHRONO_MONGODB_URI")?;
@@ -297,6 +300,7 @@ impl Config {
             bind,
             public_url,
             nyxid_public_url,
+            nyxid_service_id: lookup("CHRONO_NYXID_SERVICE_ID")?.filter(|id| !id.trim().is_empty()),
             cors_origins,
             rate_limits,
             trusted_proxies,
@@ -311,8 +315,9 @@ impl Config {
             activity_retention,
             default_profiles,
             auth_mode,
-            bridge_flags,
+            features,
             gateway: GatewayConfig::from_lookup(&mut lookup)?,
+            bot_father: BotFatherConfig::from_lookup(&mut lookup)?,
         })
     }
 
@@ -491,9 +496,4 @@ fn validate_mongodb_uri(value: &str) -> Result<(), String> {
 }
 
 #[cfg(test)]
-#[path = "config_tests.rs"]
 mod tests;
-
-#[cfg(test)]
-#[path = "config/home_tests.rs"]
-mod home_tests;

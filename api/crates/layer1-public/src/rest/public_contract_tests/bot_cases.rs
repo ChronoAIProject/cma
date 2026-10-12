@@ -3,11 +3,22 @@ use layer2_core::{bots::*, profiles::*, Authorization, Capability, SubjectId};
 use serde_json::json;
 use std::sync::Arc;
 
-struct Profiles;
+pub(super) struct Profiles;
 #[async_trait::async_trait]
 impl BotProfileResolver for Profiles {
-    async fn resolve(&self, _: &SubjectId, _: &AgentProfileRef) -> Result<BotProfiles, BotError> {
-        Ok(profiles())
+    async fn resolve(&self, _: &SubjectId, request: &CreateBot) -> Result<BotProfiles, BotError> {
+        let mut pinned = profiles();
+        pinned.agent.profile_id = request.profile.id.clone();
+        pinned.agent.revision = request.profile.revision;
+        if let Some(reference) = &request.sandbox_profile {
+            pinned.sandbox.profile_id = reference.id.clone();
+            pinned.sandbox.revision = reference.revision;
+        }
+        if let Some(reference) = &request.workspace_profile {
+            pinned.workspace.profile_id = reference.id.clone();
+            pinned.workspace.revision = reference.revision;
+        }
+        Ok(pinned)
     }
 }
 fn profiles() -> BotProfiles {
@@ -88,6 +99,9 @@ impl BotExternal for External {
     async fn set_route_key(&self, _: &Bot, _: &str, _: &str) -> Result<(), BotError> {
         unreachable!()
     }
+    async fn active_route_key(&self, _: &Bot) -> Result<Option<String>, BotError> {
+        unreachable!()
+    }
     async fn delete_routes(&self, _: &Bot, _: &[String]) -> Result<(), BotError> {
         unreachable!()
     }
@@ -119,12 +133,16 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
     let mode = name.strip_prefix("bot_contract_")?;
     let store = Arc::new(InMemoryBotStore::default());
     let request = CreateBot {
+        event_worker_profile: None,
         name: "Example bot".into(),
         external_bot_id: "external-bot".into(),
+        connection_ref: None,
         profile: AgentProfileRef {
             id: layer2_core::AgentProfileId("agp_bot".into()),
             revision: 1,
         },
+        sandbox_profile: None,
+        workspace_profile: None,
         admission: BotAdmission::All,
         reply: BotReply {
             auto_final: true,
@@ -133,6 +151,7 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
     };
     let at = "2026-01-01T00:00:00Z";
     let mut bot = Bot {
+        ownership: None,
         bot_id: "bot_contract".into(),
         owner: SubjectId::new("owner"),
         request,

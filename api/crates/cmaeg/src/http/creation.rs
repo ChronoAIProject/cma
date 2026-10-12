@@ -20,7 +20,7 @@ use axum::{
 use cmaeg_core::ids::RecordId;
 
 #[utoipa::path(get, path="/v1/channel-records/{record_id}", operation_id="recoverChannel", tag="channels",
-    security(("creatorBearer"=[])), params(("record_id"=String, Path)),
+    security(("creatorBearer"=[])), params(("X-CMAEG-Owner" = Option<String>, Header, description = "Organization owner UUID; caller must be an authorized NyxID organization administrator"), ("record_id"=String, Path)),
     responses((status=200, body=ChannelResponse), (status="default", body=cmaeg_core::problem::Problem, content_type="application/problem+json")))]
 pub async fn recover_channel(
     State(state): State<ManagementState>,

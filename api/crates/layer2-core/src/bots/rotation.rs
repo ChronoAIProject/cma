@@ -41,21 +41,23 @@ impl BotWorker {
                 return Err(BotError::Unavailable);
             }
             bot.resources.channel = Some(restored.channel);
-            self.step(bot, "restore_retained_route_key").await?;
-            self.external
-                .set_route_key(
-                    bot,
-                    bot.resources
-                        .route_id
-                        .as_deref()
-                        .ok_or(BotError::Unavailable)?,
-                    bot.resources
-                        .credentials
-                        .route_key_id
-                        .as_deref()
-                        .ok_or(BotError::Unavailable)?,
-                )
-                .await?;
+            if bot.state != BotState::Disabled && bot.request.connection_ref.is_none() {
+                self.step(bot, "restore_retained_route_key").await?;
+                self.external
+                    .set_route_key(
+                        bot,
+                        bot.resources
+                            .route_id
+                            .as_deref()
+                            .ok_or(BotError::Unavailable)?,
+                        bot.resources
+                            .credentials
+                            .route_key_id
+                            .as_deref()
+                            .ok_or(BotError::Unavailable)?,
+                    )
+                    .await?;
+            }
             self.retire_unused_keys(bot, &bot.resources.credentials.clone())
                 .await?;
             bot.resources.replacement = Some(BotCredentialSet::default());
@@ -74,17 +76,19 @@ impl BotWorker {
             .channel(bot)
             .await?
             .ok_or(BotError::Unavailable)?;
-        self.step(bot, "set_replacement_callback").await?;
-        self.external
-            .set_callback(
-                bot,
-                replacement
-                    .route_key_id
-                    .as_deref()
-                    .ok_or(BotError::Unavailable)?,
-                &current.channel.callback_url,
-            )
-            .await?;
+        if bot.request.connection_ref.is_none() {
+            self.step(bot, "set_replacement_callback").await?;
+            self.external
+                .set_callback(
+                    bot,
+                    replacement
+                        .route_key_id
+                        .as_deref()
+                        .ok_or(BotError::Unavailable)?,
+                    &current.channel.callback_url,
+                )
+                .await?;
+        }
         self.step(bot, "replace_channel_keys").await?;
         let changed = self
             .external
@@ -124,20 +128,22 @@ impl BotWorker {
             return Err(BotError::Unavailable);
         }
         bot.resources.channel = Some(current.channel);
-        self.step(bot, "replace_route_key").await?;
-        self.external
-            .set_route_key(
-                bot,
-                bot.resources
-                    .route_id
-                    .as_deref()
-                    .ok_or(BotError::Unavailable)?,
-                replacement
-                    .route_key_id
-                    .as_deref()
-                    .ok_or(BotError::Unavailable)?,
-            )
-            .await?;
+        if bot.state != BotState::Disabled && bot.request.connection_ref.is_none() {
+            self.step(bot, "replace_route_key").await?;
+            self.external
+                .set_route_key(
+                    bot,
+                    bot.resources
+                        .route_id
+                        .as_deref()
+                        .ok_or(BotError::Unavailable)?,
+                    replacement
+                        .route_key_id
+                        .as_deref()
+                        .ok_or(BotError::Unavailable)?,
+                )
+                .await?;
+        }
         self.retire_unused_keys(bot, &replacement).await?;
         bot.resources.credentials = replacement;
         bot.resources.replacement = None;
@@ -145,16 +151,24 @@ impl BotWorker {
             .complete(bot, &self.holder, bot.state.clone())
             .await
     }
-    async fn retire_unused_keys(
+    pub(super) async fn retire_unused_keys(
         &self,
         bot: &mut Bot,
         retained: &BotCredentialSet,
     ) -> Result<(), BotError> {
+        let active_route_key =
+            if bot.state == BotState::Disabled && bot.request.connection_ref.is_none() {
+                self.step(bot, "read_retained_route_key").await?;
+                self.external.active_route_key(bot).await?
+            } else {
+                None
+            };
         self.step(bot, "discover_obsolete_keys").await?;
         let keys = self.external.keys(bot).await?;
         for key in keys {
             if Some(key.id.as_str()) != retained.agent_key_id.as_deref()
                 && Some(key.id.as_str()) != retained.route_key_id.as_deref()
+                && Some(key.id.as_str()) != active_route_key.as_deref()
             {
                 self.step(bot, "revoke_obsolete_key").await?;
                 self.external.revoke(bot, &key.id).await?;

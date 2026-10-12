@@ -2,6 +2,7 @@ use super::{
     BindingConversation, BindingConversationState, BindingError, BindingState, BindingStore,
     BindingWork, ProviderBinding,
 };
+use crate::resource_access::ResourceOwner;
 use crate::{AgentId, Authorization, Caller, Capability, SubjectId};
 use std::sync::Arc;
 
@@ -9,7 +10,7 @@ use std::sync::Arc;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BindingPrincipal {
     binding_id: String,
-    owner: SubjectId,
+    owner: ResourceOwner,
     generation: u64,
     key_sha256: String,
 }
@@ -19,6 +20,11 @@ impl BindingPrincipal {
         &self.binding_id
     }
     pub fn owner(&self) -> &SubjectId {
+        match &self.owner {
+            ResourceOwner::Person { subject } | ResourceOwner::Organization { subject } => subject,
+        }
+    }
+    pub fn resource_owner(&self) -> &ResourceOwner {
         &self.owner
     }
     pub fn generation(&self) -> u64 {
@@ -29,7 +35,7 @@ impl BindingPrincipal {
     }
     pub fn caller(&self) -> Caller {
         Caller::new(
-            self.owner.clone(),
+            self.owner().clone(),
             Authorization::new([Capability::UseBindingConversations]),
         )
     }
@@ -48,6 +54,12 @@ pub struct BindingAccessService {
 }
 
 impl BindingAccessService {
+    pub async fn contains_key_hash(
+        &self,
+        hash: &str,
+    ) -> Result<bool, crate::sandbox::store::SandboxStoreError> {
+        self.store.contains_key_hash(hash).await
+    }
     pub fn new(store: Arc<dyn BindingStore>) -> Arc<Self> {
         Arc::new(Self { store })
     }
@@ -153,7 +165,7 @@ impl BindingAccessService {
 fn principal(binding: &ProviderBinding) -> BindingPrincipal {
     BindingPrincipal {
         binding_id: binding.binding_id.clone(),
-        owner: binding.owner.clone(),
+        owner: binding.resource_owner(),
         generation: binding.generation,
         key_sha256: binding.key_sha256.clone(),
     }

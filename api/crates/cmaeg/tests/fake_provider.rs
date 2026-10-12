@@ -4,7 +4,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use axum::{
@@ -28,6 +28,7 @@ pub struct FakeProviderConfig {
     pub busy_always: bool,
     pub frames: Option<Vec<Value>>,
     pub busy_once: bool,
+    pub busy_retry_after: Option<u64>,
     pub conversation_missing_once: bool,
     pub malformed_frame: bool,
     pub disconnect_after: Option<usize>,
@@ -47,6 +48,7 @@ impl Default for FakeProviderConfig {
             busy_always: false,
             frames: None,
             busy_once: false,
+            busy_retry_after: None,
             conversation_missing_once: false,
             malformed_frame: false,
             disconnect_after: None,
@@ -60,6 +62,7 @@ impl Default for FakeProviderConfig {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReceivedRequest {
+    pub received_at: Instant,
     pub method: String,
     pub path: String,
     pub authorization: Option<String>,
@@ -244,7 +247,14 @@ async fn responses(
             .into_response();
     }
     if state.config.busy_always || state.busy_once.swap(false, Ordering::SeqCst) {
-        return (StatusCode::CONFLICT, Json(json!({"code":"session_busy"}))).into_response();
+        let mut response =
+            (StatusCode::CONFLICT, Json(json!({"code":"session_busy"}))).into_response();
+        if let Some(seconds) = state.config.busy_retry_after {
+            response
+                .headers_mut()
+                .insert("retry-after", seconds.to_string().parse().unwrap());
+        }
+        return response;
     }
     let mut frames = vec![
         "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_fake\"}}\n\n".to_owned(),
@@ -296,6 +306,7 @@ async fn responses(
 
 fn record(state: &StateData, method: &str, path: String, headers: HeaderMap, body: Bytes) {
     state.requests.lock().unwrap().push(ReceivedRequest {
+        received_at: Instant::now(),
         method: method.into(),
         path,
         authorization: headers

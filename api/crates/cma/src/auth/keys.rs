@@ -17,7 +17,7 @@ pub(crate) use identifiers::valid_provider_key_id;
 use identifiers::{credential_of, key_name, validate_credential_id};
 
 mod bots;
-pub(crate) mod bridge;
+pub(crate) use bots::owner_matches;
 mod catalog;
 mod identifiers;
 mod provided;
@@ -94,6 +94,8 @@ struct MintedKeyResponse {
     allowed_node_ids: Vec<String>,
     allow_all_services: bool,
     allow_all_nodes: bool,
+    #[serde(default)]
+    allow_auto_connected_services: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -457,6 +459,7 @@ fn minted_key_from_response(
         || !response.allowed_node_ids.is_empty()
         || response.allow_all_services
         || response.allow_all_nodes
+        || response.allow_auto_connected_services
     {
         return None;
     }
