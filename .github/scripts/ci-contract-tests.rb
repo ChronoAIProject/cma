@@ -43,6 +43,7 @@ guarded = mode == "release" ? [
   ["ci", "trigger-provider-smoke-contract", "Typecheck every harness entry point"],
   ["ci", "trigger-provider-smoke-contract", "Local browser guard mechanics"],
   ["ci", "backend", "Disposable real Mongo persistence contracts"],
+  ["ci", "backend", "Sandbox Manager authenticated Mongo isolation"],
   ["nightly-staging", "smoke", "Initialize isolated evidence path"],
   ["nightly-staging", "journeys", "Initialize isolated evidence path"],
   ["nightly-staging", "journeys", "Verify approval policy and independently observed deployment before fixture access"],

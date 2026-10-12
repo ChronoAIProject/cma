@@ -143,6 +143,8 @@ module CIContract
     backend = job(ci, "backend", "Backend")
     mongo = step(backend, "Disposable real Mongo persistence contracts", "bash ../.github/scripts/mongo-contract-tests.sh")
     require!(mongo["timeout-minutes"] == 75, "Mongo proof must retain its 75-minute bound")
+    sandbox_mongo = step(backend, "Sandbox Manager authenticated Mongo isolation", "bash ../.github/scripts/sandbox-manager-mongo-contract.sh")
+    require!(sandbox_mongo["timeout-minutes"] == 10, "Sandbox Manager isolation proof must remain bounded")
     require!(workflow["permissions"] == { "contents" => "read" }, "remote workflow permissions broadened")
     require!(workflow.dig("concurrency", "cancel-in-progress") == false, "remote writers cannot be cancelled by a newer run")
     triggers = workflow["on"] || workflow[true]
