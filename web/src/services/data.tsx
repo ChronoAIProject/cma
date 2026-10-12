@@ -88,6 +88,8 @@ export interface Field {
   pattern?: string;
   maxLength?: number;
   type?: string;
+  control?: 'input' | 'textarea';
+  accept?: string;
 }
 export function WriteForm({
   service,
@@ -138,11 +140,11 @@ export function WriteForm({
   return (
     <form
       className="service-form"
-      onSubmit={(event) => {
+      onSubmit={async (event) => {
         event.preventDefault();
         const request = pending ?? {
           key: crypto.randomUUID(),
-          body: JSON.stringify(Object.fromEntries(new FormData(event.currentTarget))),
+          body: await formBody(event.currentTarget),
         };
         setPending(request);
         void send(request);
@@ -151,15 +153,26 @@ export function WriteForm({
       {fields.map((field) => (
         <label key={field.name}>
           {field.label}
-          <input
-            name={field.name}
-            type={field.type ?? 'text'}
-            defaultValue={field.initial ?? ''}
-            required={field.required}
-            pattern={field.pattern}
-            maxLength={field.maxLength}
-            disabled={pending !== undefined}
-          />
+          {field.control === 'textarea' ? (
+            <textarea
+              name={field.name}
+              defaultValue={field.initial ?? ''}
+              required={field.required}
+              maxLength={field.maxLength}
+              disabled={pending !== undefined}
+            />
+          ) : (
+            <input
+              name={field.name}
+              type={field.type ?? 'text'}
+              accept={field.accept}
+              defaultValue={field.initial ?? ''}
+              required={field.required}
+              pattern={field.pattern}
+              maxLength={field.maxLength}
+              disabled={pending !== undefined}
+            />
+          )}
         </label>
       ))}
       {error ? (
@@ -175,4 +188,17 @@ export function WriteForm({
       </div>
     </form>
   );
+}
+
+async function formBody(form: HTMLFormElement): Promise<string> {
+  const entries: [string, string][] = [];
+  for (const [name, value] of new FormData(form).entries()) {
+    if (value instanceof File) {
+      if (value.size === 0) continue;
+      entries.push([name, await value.text()]);
+    } else {
+      entries.push([name, value]);
+    }
+  }
+  return JSON.stringify(Object.fromEntries(entries));
 }
