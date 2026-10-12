@@ -12,6 +12,7 @@ async fn contended(release: bool, expires: bool) {
     };
     input.content.push(AgentContent::ExternalEvent {
         context: ExternalEventContext {
+            provider_conversation_id: None,
             source_id: "independent-channel".into(),
             conversation_id: conversation.conversation_id,
             event_id: "contended-event".into(),

@@ -22,6 +22,72 @@ pub(super) fn validate_admission(
     Ok(())
 }
 
+/// Per-platform bot identity and trust rules for a NyxID relay source.
+pub(super) fn validate_relay_identity(
+    platform: Platform,
+    bot_username: Option<&str>,
+    bot_id: Option<&str>,
+    trust_normalized: bool,
+    pointer: &str,
+) -> Result<(), ValidationError> {
+    if let Some(username) = bot_username {
+        let (valid, message) = match platform {
+            Platform::Telegram => (
+                (5..=32).contains(&username.len())
+                    && username
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_'),
+                "must contain 5..=32 Telegram username characters without @",
+            ),
+            _ => (
+                identifier_safe(username, 64),
+                "must contain 1..=64 letters, digits, '_', '-' or '.' without @",
+            ),
+        };
+        if !valid {
+            return Err(ValidationError::new(
+                format!("{pointer}/bot_username"),
+                message,
+            ));
+        }
+    }
+    if let Some(id) = bot_id {
+        let (valid, message) = match platform {
+            Platform::Telegram => (
+                (1..=20).contains(&id.len()) && id.bytes().all(|byte| byte.is_ascii_digit()),
+                "must be the bot's numeric Telegram user ID",
+            ),
+            // Mentions carry the bot's open_id; app IDs (`cli_`) and union IDs never match.
+            Platform::Lark | Platform::Feishu => (
+                id.strip_prefix("ou_")
+                    .is_some_and(|rest| identifier_safe(rest, 125)),
+                "must be the bot's open_id (ou_ followed by at most 125 identifier characters)",
+            ),
+            Platform::Discord | Platform::Slack | Platform::Whatsapp => (
+                identifier_safe(id, 128),
+                "must contain 1..=128 letters, digits, '_', '-' or '.'",
+            ),
+        };
+        if !valid {
+            return Err(ValidationError::new(format!("{pointer}/bot_id"), message));
+        }
+    }
+    if trust_normalized && platform.verifies_raw_event() {
+        return Err(ValidationError::new(
+            format!("{pointer}/trust_normalized"),
+            "applies only to platforms without a raw-event verifier",
+        ));
+    }
+    Ok(())
+}
+
+fn identifier_safe(value: &str, max: usize) -> bool {
+    (1..=max).contains(&value.len())
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
+}
+
 pub(super) fn validate_custom_auth(
     auth: &CustomAuth,
     pointer: &str,
@@ -77,29 +143,17 @@ pub(super) fn validate_hash(value: &str, pointer: &str) -> Result<(), Validation
 }
 
 pub(crate) fn validate_https_url(value: &str, pointer: &str) -> Result<(), ValidationError> {
-    let (scheme, rest) = value
-        .split_once("://")
-        .ok_or_else(|| ValidationError::new(pointer, "must be an absolute URL"))?;
-    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
-    let host = authority
-        .rsplit('@')
-        .next()
-        .unwrap_or_default()
-        .split(':')
-        .next()
-        .unwrap_or_default();
-    if authority.is_empty() || host.is_empty() || value.chars().any(char::is_whitespace) {
+    let url = url::Url::parse(value)
+        .map_err(|_| ValidationError::new(pointer, "must be an absolute URL"))?;
+    if url.host_str().is_none() || value.chars().any(char::is_whitespace) {
         return Err(ValidationError::new(
             pointer,
             "must include an absolute host",
         ));
     }
-    if scheme == "https"
-        || (scheme == "http"
-            && matches!(
-                host.trim_matches(['[', ']']),
-                "127.0.0.1" | "localhost" | "::1"
-            ))
+    if url.scheme() == "https"
+        || (url.scheme() == "http"
+            && matches!(url.host_str(), Some("127.0.0.1" | "localhost" | "[::1]")))
     {
         Ok(())
     } else {

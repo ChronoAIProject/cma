@@ -196,6 +196,7 @@ pub(crate) fn outgoing(
         .request(request.method, url)
         .header(header::ACCEPT, "application/json")
         .timeout(client.request_timeout);
+    let has_content_type = request.headers.contains_key(header::CONTENT_TYPE);
     outgoing = outgoing.headers(request.headers);
     if !request.anonymous
         && let Some(bearer) = &client.bearer
@@ -206,9 +207,10 @@ pub(crate) fn outgoing(
         outgoing = outgoing.header("Idempotency-Key", key.as_str());
     }
     if let Some(body) = request.body {
-        outgoing = outgoing
-            .header(header::CONTENT_TYPE, "application/json")
-            .body(body);
+        if !has_content_type {
+            outgoing = outgoing.header(header::CONTENT_TYPE, "application/json");
+        }
+        outgoing = outgoing.body(body);
     }
     Ok(outgoing)
 }

@@ -100,6 +100,7 @@ pub async fn create(
         .await
         .map_err(ManagementError::Provider)?;
     current.definition.provider.level = binding.level;
+    crate::connections::binding::activate(state, &current.definition, &current.channel_id).await?;
     current.definition.creation.as_mut().unwrap().ready = true;
     let blob = seal_definition(&state.master_keys, &current.definition)?;
     let version = match state

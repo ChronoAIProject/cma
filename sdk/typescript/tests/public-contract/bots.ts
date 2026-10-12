@@ -1,6 +1,18 @@
 import type { Dispatch } from './context.js';
 
 export const botDispatch: Record<string, Dispatch> = {
+  'POST /api/v1/agent-delegations/identity': ({ client, body }) =>
+    client.agentDelegations.identity(body),
+  'POST /api/v1/agent-delegations/operations': ({ client, body }) =>
+    client.agentDelegations.operate(body),
+  'POST /api/v1/bot-setups/advance': ({ client, body }) => client.botSetups.advance(body),
+  'POST /api/v1/bot-setups/actions': ({ client, body }) => client.botSetups.act(body),
+  'PUT /api/v1/gateway/interaction-records/{record_id}': ({ client, param, body }) =>
+    client.gatewayInteractions.put(param('record_id'), body),
+  'GET /api/v1/gateway/interaction-records/{record_id}': ({ client, param }) =>
+    client.gatewayInteractions.get(param('record_id')),
+  'DELETE /api/v1/gateway/interaction-records/{record_id}': ({ client, param, query }) =>
+    client.gatewayInteractions.delete(param('record_id'), Number(query.get('expected_version'))),
   'POST /api/v1/bots': ({ client, body, command }) => client.bots.create(body, command),
   'GET /api/v1/bots': ({ client, query }) =>
     client.bots.list({

@@ -61,6 +61,7 @@ pub struct RecordClient {
     database: Option<super::mongo::MongoRecords>,
     client: Client,
     base_url: Url,
+    record_path: &'static str,
     service_token: crate::service_auth::ServiceAuth,
 }
 
@@ -96,6 +97,7 @@ impl RecordClient {
             database: None,
             client,
             base_url,
+            record_path: RECORD_PATH,
             service_token: crate::service_auth::ServiceAuth::Static(Secret::new(service_token)),
         })
     }
@@ -120,7 +122,18 @@ impl RecordClient {
             .is_ok_and(|response| response.status().is_success())
     }
 
+    pub fn connections(mut self) -> Self {
+        self.record_path = "/api/v1/gateway/connection-records";
+        self
+    }
+
+    pub fn interactions(mut self) -> Self {
+        self.record_path = "/api/v1/gateway/interaction-records";
+        self
+    }
+
     pub fn record_url(&self, record_id: &str) -> Result<Url, RecordError> {
+        let record_path = self.record_path;
         let id = uuid::Uuid::parse_str(record_id)
             .map_err(|_| RecordError::Rejected("invalid record ID".into()))?;
         if id.get_version_num() != 4 || id.to_string() != record_id {
@@ -129,7 +142,7 @@ impl RecordClient {
             ));
         }
         self.base_url
-            .join(&format!("{RECORD_PATH}/{record_id}"))
+            .join(&format!("{record_path}/{record_id}"))
             .map_err(|error| RecordError::Rejected(format!("record URL is invalid: {error}")))
     }
 
@@ -139,6 +152,18 @@ impl RecordClient {
         owner: &str,
         blob: &[u8],
         expected_version: Option<u64>,
+    ) -> Result<u64, RecordError> {
+        self.put_expiring(record_id, owner, blob, expected_version, None)
+            .await
+    }
+
+    pub async fn put_expiring(
+        &self,
+        record_id: &RecordId,
+        owner: &str,
+        blob: &[u8],
+        expected_version: Option<u64>,
+        expires_at: Option<i64>,
     ) -> Result<u64, RecordError> {
         if blob.is_empty() || blob.len() > 65_536 {
             return Err(RecordError::Rejected(
@@ -165,6 +190,7 @@ impl RecordClient {
                 owner,
                 blob: STANDARD.encode(blob),
                 expected_version,
+                expires_at,
             })
             .timeout(Duration::from_secs(5))
             .send()
@@ -180,15 +206,16 @@ impl RecordClient {
     }
 
     pub async fn get(&self, record_url: &str) -> Result<RecordValue, RecordError> {
+        let record_path = self.record_path;
         let url = Url::parse(record_url)
             .map_err(|error| RecordError::Rejected(format!("record URL is invalid: {error}")))?;
         let id = url
             .path()
-            .strip_prefix(&format!("{RECORD_PATH}/"))
+            .strip_prefix(&format!("{record_path}/"))
             .ok_or_else(|| RecordError::Rejected("invalid record path".into()))?;
         if self.record_url(id)?.as_str() != record_url
             || url.origin() != self.base_url.origin()
-            || !url.path().starts_with(&format!("{RECORD_PATH}/"))
+            || !url.path().starts_with(&format!("{record_path}/"))
         {
             return Err(RecordError::Rejected(
                 "record URL is outside the configured CMA origin".into(),
@@ -272,7 +299,7 @@ impl RecordClient {
         }
         let url = self
             .base_url
-            .join(RECORD_PATH)
+            .join(self.record_path)
             .map_err(|error| RecordError::Rejected(error.to_string()))?;
         let mut query = Vec::<(&str, String)>::new();
         if let Some(owner) = owner {
@@ -308,6 +335,8 @@ struct PutRequest<'a> {
     owner: &'a str,
     blob: String,
     expected_version: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    expires_at: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]

@@ -14,113 +14,17 @@ pub enum Classification {
 // against its source shape or the SDK's real preflight, then its shared error is decoded.
 pub const LOCAL_CASES: &[(&str, Classification)] = &[
     (
-        "bridge-workspace-cleanup-invalid-allocation",
-        Classification::Local,
-    ),
-    (
-        "bridge-workspace-cleanup-invalid-revision",
-        Classification::Local,
-    ),
-    (
-        "bridge-workspace-cleanup-invalid-workspace-revision",
-        Classification::Local,
-    ),
-    (
-        "bridge-workspace-cleanup-invalid-child-receipt",
-        Classification::Local,
-    ),
-    (
-        "bridge-workspace-cleanup-missing-key",
-        Classification::Local,
-    ),
-    (
-        "bridge-workspace-cleanup-closed-body",
+        "gateway-connection-list-invalid-query",
         Classification::TypedShape,
     ),
     (
-        "bridge-workspace-cleanup-unknown-action",
-        Classification::TypedShape,
-    ),
-    ("source-consent-invalid-id-get", Classification::Local),
-    ("source-consent-invalid-id-put", Classification::Local),
-    (
-        "source-consent-invalid-expected_bridge_revision-0",
-        Classification::Local,
-    ),
-    (
-        "source-consent-invalid-expected_bridge_revision-9223372036854775808",
-        Classification::Local,
-    ),
-    (
-        "source-consent-invalid-expected_grant_revision-0",
-        Classification::Local,
-    ),
-    (
-        "source-consent-invalid-expected_grant_revision-3",
-        Classification::Local,
-    ),
-    (
-        "source-consent-invalid-expected_policy_revision-256",
-        Classification::Local,
-    ),
-    (
-        "source-consent-invalid-expected_policy_revision-255",
-        Classification::Local,
-    ),
-    (
-        "source-consent-missing-field-expected_bridge_revision",
+        "gateway-connection-delete-invalid-query",
         Classification::TypedShape,
     ),
     (
-        "source-consent-missing-field-expected_grant_revision",
-        Classification::TypedShape,
+        "gateway-connection-put-invalid-json",
+        Classification::RawJson,
     ),
-    (
-        "source-consent-missing-field-expected_policy_revision",
-        Classification::TypedShape,
-    ),
-    (
-        "source-consent-missing-field-action",
-        Classification::TypedShape,
-    ),
-    ("source-consent-injected-actor", Classification::TypedShape),
-    ("source-consent-injected-owner", Classification::TypedShape),
-    ("source-consent-injected-scope", Classification::TypedShape),
-    (
-        "source-consent-injected-approval_mode",
-        Classification::TypedShape,
-    ),
-    ("source-consent-injected-target", Classification::TypedShape),
-    (
-        "source-consent-injected-enabled",
-        Classification::TypedShape,
-    ),
-    (
-        "source-consent-unknown-action-approve",
-        Classification::TypedShape,
-    ),
-    (
-        "source-consent-unknown-action-cancel",
-        Classification::TypedShape,
-    ),
-    (
-        "source-consent-unknown-action-steer",
-        Classification::TypedShape,
-    ),
-    ("source-consent-long-key", Classification::Local),
-    ("source-consent-missing-key", Classification::Local),
-    ("source-consent-invalid-key", Classification::Local),
-    (
-        "source-consent-missing-media-type",
-        Classification::MediaType,
-    ),
-    ("source-consent-malformed-json", Classification::RawJson),
-    ("bridge-cleanup-invalid-limit", Classification::Local),
-    ("bridge-cleanup-invalid-allocation", Classification::Local),
-    ("bridge-cleanup-invalid-revision", Classification::Local),
-    ("bridge-cleanup-missing-key", Classification::Local),
-    ("bridge-cleanup-closed-body", Classification::TypedShape),
-    ("bridge-cleanup-unknown-action", Classification::TypedShape),
     ("queued-cancellation-v2-missing-key", Classification::Local),
     (
         "queued-cancellation-v2-invalid-revision",
@@ -171,72 +75,6 @@ pub const LOCAL_CASES: &[(&str, Classification)] = &[
     (
         "response-controls-v2-status-query",
         Classification::QueryShape,
-    ),
-    (
-        "bridge-setup-capabilities-invalid-query",
-        Classification::QueryShape,
-    ),
-    ("bridge-creation-target-missing-key", Classification::Local),
-    ("bridge-creation-target-invalid-key", Classification::Local),
-    (
-        "bridge-creation-target-invalid-query",
-        Classification::QueryShape,
-    ),
-    ("bridge-outbox-list-invalid-limit", Classification::Local),
-    ("bridge-outbox-recover-missing-key", Classification::Local),
-    (
-        "bridge-outbox-recover-unknown-field",
-        Classification::TypedShape,
-    ),
-    (
-        "bridge-outbox-recover-nested-field",
-        Classification::TypedShape,
-    ),
-    ("bridge-invoke-issue-missing-key", Classification::Local),
-    ("bridge-invoke-revoke-missing-key", Classification::Local),
-    ("bridge-invoke-list-invalid-limit", Classification::Local),
-    ("bridge-invoke-list-invalid-cursor", Classification::Local),
-    ("bridge-invoke-detail-invalid-id", Classification::Local),
-    (
-        "bridge-invoke-issue-unknown-field",
-        Classification::TypedShape,
-    ),
-    (
-        "bridge-invoke-revoke-unknown-field",
-        Classification::TypedShape,
-    ),
-    (
-        "bridge-invoke-issue-missing-consent",
-        Classification::TypedShape,
-    ),
-    ("bridge-setup-list-zero-limit", Classification::Local),
-    (
-        "bridge-setup-list-unknown-query",
-        Classification::QueryShape,
-    ),
-    ("bridge-setup-create-missing-key", Classification::Local),
-    ("bridge-setup-update-missing-key", Classification::Local),
-    ("bridge-setup-control-missing-key", Classification::Local),
-    ("bridge-setup-revoke-missing-key", Classification::Local),
-    (
-        "bridge-setup-create-injected-issuer",
-        Classification::TypedShape,
-    ),
-    (
-        "bridge-setup-create-injected-base_url",
-        Classification::TypedShape,
-    ),
-    (
-        "bridge-setup-create-injected-custody",
-        Classification::TypedShape,
-    ),
-    (
-        "bridge-setup-create-injected-callback_url",
-        Classification::TypedShape,
-    ),
-    (
-        "bridge-setup-create-incompatible-context",
-        Classification::Local,
     ),
     (
         "channel-inventory-invalid-active",

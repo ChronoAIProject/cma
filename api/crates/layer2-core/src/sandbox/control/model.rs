@@ -52,14 +52,10 @@ pub struct SandboxControlEnvelope {
 
 impl SandboxControlEnvelope {
     pub fn actor_subject(&self) -> Result<&SubjectId, SandboxControlError> {
-        match &self.actor {
-            ResourceActor::Human { subject }
-            | ResourceActor::Api {
-                subject,
-                delegation_id: None,
-            } if valid_id(subject.as_str()) => Ok(subject),
-            _ => Err(SandboxControlError::Corrupt),
-        }
+        self.actor
+            .ordinary_subject()
+            .filter(|subject| valid_id(subject.as_str()))
+            .ok_or(SandboxControlError::Corrupt)
     }
 
     pub fn scope(&self) -> String {

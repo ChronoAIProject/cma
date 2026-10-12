@@ -77,9 +77,7 @@ pub(super) async fn request(
             schema_version: AGENT_IO_SCHEMA_VERSION,
             command_id: crate::ids::AgentCommandId::generate(),
             agent_id: proof.conversation.agent_id,
-            owner: AgentOwner::Person {
-                subject: principal.owner().clone(),
-            },
+            owner: held.snapshot.scope(&target).unwrap().owner,
             actor: context(&principal).actor,
             source: AgentCommandSource {
                 kind: AgentSourceKind::Api,
@@ -112,8 +110,19 @@ pub(super) async fn request(
 
 #[tokio::test]
 async fn binding_commands_fence_reservation_replay_execution_and_revival() {
+    binding_commands("human").await;
+}
+
+#[tokio::test]
+async fn organization_binding_commands_admit_replay_execute_and_revive_with_local_authority() {
+    binding_commands("organization").await;
+}
+
+async fn binding_commands(owner_kind: &str) {
     let mut f = fixture();
-    let binding = f.ready().await;
+    let mut profile = profile("Scoped command binding");
+    profile["metadata"]["owner"]["kind"] = owner_kind.into();
+    let binding = f.ready_with_profile(profile, None).await;
     let conversation = ready_conversation(&f, &binding).await;
     let bindings = BindingAccessService::new(f.store.clone());
     let authority = Arc::new(LocalAuthority(bindings.clone()));
@@ -128,6 +137,43 @@ async fn binding_commands_fence_reservation_replay_execution_and_revival() {
         f.store.reserve_command(missing_proof).await,
         Err(CommandLedgerError::Invalid)
     );
+    let wrong_kind = match old.envelope.owner.clone() {
+        AgentOwner::Person { subject } => AgentOwner::Organization { subject },
+        AgentOwner::Organization { subject } => AgentOwner::Person { subject },
+    };
+    let wrong_subject = match &old.envelope.owner {
+        AgentOwner::Person { .. } => AgentOwner::Person {
+            subject: SubjectId::new("foreign-owner"),
+        },
+        AgentOwner::Organization { .. } => AgentOwner::Organization {
+            subject: SubjectId::new("foreign-owner"),
+        },
+    };
+    for owner in [wrong_kind, wrong_subject] {
+        let mut forged = old.clone();
+        forged.envelope.owner = owner;
+        assert_eq!(
+            forged
+                .binding
+                .as_ref()
+                .unwrap()
+                .require_command(&forged.envelope),
+            Err(CommandLedgerError::Invalid)
+        );
+        assert!(matches!(
+            f.store.reserve_command(forged.clone()).await,
+            Err(CommandLedgerError::Invalid | CommandLedgerError::NotFound)
+        ));
+        let principal = bindings
+            .authenticate(&f.key.sha256())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(access
+            .authorize_command_execution(&context(&principal), "", &forged.envelope)
+            .await
+            .is_err());
+    }
     let CommandReservationResult::Created(record) =
         f.store.reserve_command(old.clone()).await.unwrap()
     else {

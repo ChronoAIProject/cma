@@ -40,12 +40,13 @@ impl BindingCollections {
         &self,
         admission: &SandboxAdmission,
         session: &mut ClientSession,
-    ) -> Result<(), SandboxStoreError> {
+    ) -> Result<Option<layer2_core::resource_access::ResourcePolicyRecord>, SandboxStoreError> {
         if let Some(fence) = &admission.binding {
             let binding = self.fence(fence, session).await?;
             fence.require_sandbox(&binding, &admission.sandbox)?;
+            return binding.sandbox_resource_policy(&admission.sandbox);
         }
-        Ok(())
+        Ok(None)
     }
 
     pub(in crate::store) async fn admit_workspace(
@@ -87,5 +88,42 @@ impl BindingCollections {
             fence.require_agent(&binding, &conversation, admission)?;
         }
         Ok(())
+    }
+}
+
+impl BindingCollections {
+    pub(in crate::store) async fn keep_alive(
+        &self,
+        sandbox: &layer2_core::sandbox::Sandbox,
+        session: &mut ClientSession,
+    ) -> Result<Option<bool>, SandboxStoreError> {
+        let layer2_core::sandbox::SandboxCredentialSource::Binding { binding_id, .. } =
+            &sandbox.credential.source
+        else {
+            return Ok(None);
+        };
+        let binding = self
+            .records
+            .find_one(doc! {"_id": binding_id})
+            .session(&mut *session)
+            .await
+            .map_err(driver)?
+            .map(read_binding)
+            .transpose()?
+            .ok_or(SandboxStoreError::NotFound)?;
+        if binding.sandbox_id != sandbox.id || binding.owner != sandbox.owner {
+            return Err(SandboxStoreError::Conflict);
+        }
+        if binding
+            .profile
+            .environment
+            .as_ref()
+            .is_some_and(|environment| environment.always_keep_alive)
+        {
+            return Ok(Some(true));
+        }
+        let fence = BindingAdmissionFence::environment(&binding);
+        self.fence(&fence, session).await?;
+        Ok(Some(false))
     }
 }

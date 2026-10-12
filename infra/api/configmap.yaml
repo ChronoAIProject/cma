@@ -16,26 +16,9 @@ data:
   CHRONO_AGENT_SANDBOX_IMAGE_PULL_SECRETS: ""
   # Preserve the active production Bridge gates recorded on 2026-09-22.
   # Additional gates still require their own canary verification.
-  CHRONO_BRIDGE_MANAGEMENT_ENABLED: "true"
-  CHRONO_BRIDGE_INGRESS_ENABLED: "true"
-  CHRONO_BRIDGE_CONTROL_ADMISSION_ENABLED: "false"
-  CHRONO_BRIDGE_ALLOCATION_ENABLED: "true"
-  CHRONO_BRIDGE_EXECUTION_ENABLED: "true"
-  CHRONO_BRIDGE_OUTBOUND_ENABLED: "true"
-  CHRONO_BRIDGE_TELEGRAM_ENABLED: "true"
-  CHRONO_BRIDGE_TELEGRAM_NEW_ENABLED: "false"
-  CHRONO_BRIDGE_DISCORD_ENABLED: "false"
   # New file admissions only; supporting readers/workers must precede enablement.
-  CHRONO_BRIDGE_DISCORD_TEXT_ATTACHMENTS_ENABLED: "false"
-  CHRONO_BRIDGE_LARK_ENABLED: "false"
-  CHRONO_BRIDGE_FEISHU_ENABLED: "false"
-  CHRONO_BRIDGE_SLACK_ENABLED: "false"
-  CHRONO_BRIDGE_WHATSAPP_ENABLED: "false"
-  CHRONO_BRIDGE_X_ENABLED: "false"
-  CHRONO_BRIDGE_V2_UI_TRANSPORT_ENABLED: "false"
+  CHRONO_V2_UI_TRANSPORT_ENABLED: "false"
   # Independent placement rollout selections; these do not attest continuity.
-  CHRONO_BRIDGE_WORKSPACE_PER_PARTITION_ENABLED: "false"
-  CHRONO_BRIDGE_WORKTREE_AGENT_PER_PARTITION_ENABLED: "false"
   # Admission-only protocol selector. Requires a compatible worker/rollback floor.
   CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED: "false"
   # Bounded policy pinned before each Sandbox/Workspace provisioning effect.
@@ -46,6 +29,8 @@ data:
   # Production must remain provider-authenticated. The trusted identity below
   # is read only in explicit local-development trusted mode.
   CHRONO_AUTH_MODE: "provider"
+  # Resource server audience for service-scoped NyxID agent key introspection.
+  CHRONO_NYXID_SERVICE_ID: "b48c8aff-02a6-43b6-87b5-98d3e66c1a06"
   CHRONO_TRUSTED_SUBJECT: "local-developer"
   # Browser auth callbacks and host-only cookies use the app origin; the
   # Gateway routes API/auth/discovery paths directly to this control plane.
@@ -73,6 +58,8 @@ data:
   CHRONO_NYXID_PUBLIC_URL: "https://nyx.chrono-ai.fun"
   CHRONO_CMAEG_BASE_URL: "http://cmaeg"
   CHRONO_CMAEG_PUBLIC_URL: "https://bot-gateway.chrono-ai.fun"
+  CHRONO_BOT_FATHER_BINDING_ID: "bnd_77fe02e529054f0086ce5d50a63bfe47"
+  CHRONO_BOT_FATHER_TELEGRAM_USERNAME: "CMA_Trureturing_Bot"
   # Provider-issued OAuth client identifier, not a secret or a chosen name.
   CHRONO_NYXID_CLIENT_ID: "c0cd33d2-27ba-4b8d-b38e-562364fadb72"
   # Must match the database authorized by the Secret's connection URI.
@@ -100,13 +87,13 @@ data:
   # Default for new allocations. Existing live Sandboxes retain their recorded
   # image across API upgrades and rollback; drift never admits rotation work.
   # Prove retained-runtime compatibility before deploying any new API image.
-  CHRONO_SANDBOX_IMAGE: "us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-runtime@sha256:bed09cb7956f948ae22af8992d38d2a1746f250ccc39db34b9ed8e175e3bc665"
+  CHRONO_SANDBOX_IMAGE: "us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-runtime@sha256:532a64cf193957991248d98d82b7a61f6d333a2b87f5e1db0a19ae55f598ed49"
   # Public Profile availability controls credential-free warm runtime counts
   # (1-5 per Profile) in MongoDB. The worker pins this image, the service floor
   # and install bounds; changed pins retire old unowned reservations before
   # replacement. Owned live runtimes are adopted using their durable image pin.
-  # Default resource profiles are seeded only when no corresponding default
-  # exists. Durable operator settings and published profiles own later choices.
+  # Seed system Profiles only while an operator-selected default still names one.
+  # Custom published defaults prevent removed system catalogue entries returning.
   CHRONO_SANDBOX_CPU: "1"
   CHRONO_SANDBOX_MEMORY: "1Gi"
   CHRONO_DEFAULT_AGENT_MODEL: "gpt-5.6-sol"

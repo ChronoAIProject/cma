@@ -11,7 +11,9 @@ use axum::{
 use layer2_core::StoreError;
 
 pub mod admin;
+mod bot_setups;
 mod bots;
+pub use bot_setups::bot_setup_router;
 pub use bots::bot_router;
 mod agent_artifacts;
 mod agent_openapi_shapes;
@@ -38,36 +40,10 @@ mod agent_provenance_tests;
 mod agents;
 #[cfg(test)]
 pub(crate) mod agents_tests;
-mod bridges;
-#[cfg(test)]
-mod bridges_tests;
-pub use bridges::bridge_router;
-mod bridge_invokes;
-pub use bridge_invokes::bridge_invoke_router;
-mod bridge_source_controls;
-pub use bridge_source_controls::bridge_source_control_router;
-mod bridge_cleanup;
-mod bridge_partition_commands;
-mod bridge_partitions;
-pub use bridge_partition_commands::bridge_partition_commands_router;
-#[cfg(test)]
-mod bridge_partitions_tests;
-pub use bridge_partitions::bridge_partitions_router;
-#[cfg(test)]
-mod bridge_source_controls_tests;
-pub use bridge_cleanup::bridge_cleanup_router;
-mod bridge_outbox;
-pub use bridge_outbox::bridge_outbox_router;
 mod badge;
 mod badge_mark;
 #[cfg(test)]
 mod badge_tests;
-#[cfg(test)]
-mod bridge_cleanup_tests;
-#[cfg(test)]
-mod bridge_invokes_tests;
-#[cfg(test)]
-mod bridge_outbox_tests;
 mod defaults;
 mod embed;
 #[cfg(test)]
@@ -111,8 +87,12 @@ mod trigger_assets_test_support;
 mod bindings;
 #[cfg(test)]
 mod bindings_tests;
-pub use bindings::binding_router;
+pub use bindings::{binding_router, binding_router_with_native_tools};
+mod gateway_connections;
+mod gateway_interactions;
 mod gateway_records;
+pub use gateway_connections::gateway_connection_record_router;
+pub use gateway_interactions::gateway_interaction_router;
 #[cfg(test)]
 mod gateway_records_tests;
 mod hierarchy_shared_shapes;
@@ -423,3 +403,5 @@ mod tests {
         assert!(request_id_from_headers(&headers).is_none());
     }
 }
+
+pub mod event_workers;

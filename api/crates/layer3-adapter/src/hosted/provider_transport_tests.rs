@@ -423,6 +423,7 @@ async fn open_pins_one_endpoint_and_retires_the_authenticated_link() {
                 permission_mode: None,
                 own_credential: false,
                 channel_tool: None,
+                provider_tool: None,
                 recovered_prompt: None,
             },
             updates,

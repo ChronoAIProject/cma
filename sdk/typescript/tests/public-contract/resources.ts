@@ -39,87 +39,21 @@ export const resourceDispatch: Record<string, Dispatch> = {
       param('record_id'),
       query.has('expected_version') ? Number(query.get('expected_version')) : undefined,
     ),
-  'GET /api/v1/bridge-creation-target': ({ client, query, command }) =>
-    client.bridges.creationTarget({
-      organization: query.get('organization') ?? undefined,
-      ...command,
+  'PUT /api/v1/gateway/connection-records/{record_id}': ({ client, param, body }) =>
+    client.gatewayConnectionRecords.put(param('record_id'), body),
+  'GET /api/v1/gateway/connection-records/{record_id}': ({ client, param }) =>
+    client.gatewayConnectionRecords.get(param('record_id')),
+  'GET /api/v1/gateway/connection-records': ({ client, query }) =>
+    client.gatewayConnectionRecords.list({
+      owner: query.get('owner') ?? undefined,
+      after: query.get('after') ?? undefined,
+      limit: query.has('limit') ? Number(query.get('limit')) : undefined,
     }),
-  'GET /api/v1/bridges/{id}/allocations/{allocation}/workspace-cleanup': ({ client, param }) =>
-    client.bridges.readWorkspaceCleanup(param('id'), param('allocation')),
-  'POST /api/v1/bridges/{id}/allocations/{allocation}/workspace-cleanup': ({
-    client,
-    param,
-    body,
-    command,
-  }) => client.bridges.requestWorkspaceCleanup(param('id'), param('allocation'), body, command),
-  'GET /api/v1/bridge-invoke-grants/{id}/source-controls': ({ client, param }) =>
-    client.bridges.readSourceControls(param('id')),
-  'PUT /api/v1/bridge-invoke-grants/{id}/source-controls': ({ client, param, body, command }) =>
-    client.bridges.setSourceControls(param('id'), body, command),
-  'POST /api/v1/bridges/{id}/partitions/{allocation}/reset': ({ client, param, body, command }) =>
-    client.bridges.resetPartition(param('id'), param('allocation'), body, command),
-  'POST /api/v1/bridges/{id}/partitions/{allocation}/detach': ({ client, param, body, command }) =>
-    client.bridges.detachPartition(param('id'), param('allocation'), body, command),
-  'GET /api/v1/bridges/{id}/usage': ({ client, param }) => client.bridges.usage(param('id')),
-  'GET /api/v1/bridges/{id}/partitions': ({ client, param, options }) =>
-    client.bridges.listPartitions(param('id'), options),
-  'GET /api/v1/bridges/{id}/partitions/{allocation}': ({ client, param }) =>
-    client.bridges.readPartition(param('id'), param('allocation')),
-  'GET /api/v1/bridges/{id}/partitions/{allocation}/pending-messages': ({ client, param }) =>
-    client.bridges.pendingMessages(param('id'), param('allocation')),
-  'GET /api/v1/bridges/{id}/allocations': ({ client, param, options }) =>
-    client.bridges.listAllocations(param('id'), options),
-  'GET /api/v1/bridges/{id}/allocations/{allocation}/child-cleanup': ({ client, param }) =>
-    client.bridges.readChildCleanup(param('id'), param('allocation')),
-  'POST /api/v1/bridges/{id}/allocations/{allocation}/child-cleanup': ({
-    client,
-    param,
-    body,
-    command,
-  }) => client.bridges.requestChildCleanup(param('id'), param('allocation'), body, command),
-  'GET /api/v1/bridges/{id}/deliveries': ({ client, param, options }) =>
-    client.bridges.listDeliveries(param('id'), options),
-  'GET /api/v1/bridges/{id}/deliveries/{item}': ({ client, param }) =>
-    client.bridges.readDelivery(param('id'), param('item')),
-  'POST /api/v1/bridges/{id}/delivery-recovery': ({ client, param, body, command }) =>
-    client.bridges.recoverDelivery(param('id'), body, command),
-  'GET /api/v1/bridges/{id}/invoke-grants': ({ client, param, options }) =>
-    client.bridges.listInvokeGrants(param('id'), options),
-  'GET /api/v1/bridges/{id}/invoke-readiness': ({ client, param }) =>
-    client.bridges.invokeReadiness(param('id')),
-  'GET /api/v1/bridge-invoke-grants/{id}': ({ client, param }) =>
-    client.bridges.readInvokeGrant(param('id')),
-  'POST /api/v1/bridges/{id}/invoke-grants': ({ client, param, body, command }) =>
-    client.bridges.issueInvokeGrant(param('id'), body, command),
-  'POST /api/v1/bridge-invoke-grants/{id}/revoke': ({ client, param, body, command }) =>
-    client.bridges.revokeInvokeGrant(param('id'), body, command),
-  'GET /api/v1/bridge-connectors/capabilities': ({ client, options }) =>
-    client.bridges.capabilities(options),
-  'GET /api/v1/bridge-connectors': ({ client, options }) => client.bridges.choices(options),
-  'GET /api/v1/bridges': ({ client, options }) => client.bridges.list(options),
-  'GET /api/v1/bridges/{id}': ({ client, param }) => client.bridges.read(param('id')),
-  'POST /api/v1/bridges': ({ client, body, command }) => client.bridges.create(body, command),
-  'GET /api/v1/bridges/{id}/configuration': ({ client, param }) =>
-    client.bridges.configuration(param('id')),
-  'PUT /api/v1/bridges/{id}/configuration': ({ client, param, body, command }) =>
-    client.bridges.update(param('id'), body, command),
-  'POST /api/v1/bridges/{id}/commands': ({ client, param, body, command }) =>
-    client.bridges.control(param('id'), body, command),
-  'POST /api/v1/bridges/{id}/validate': ({ client, param, body }) =>
-    client.bridges.validate(param('id'), (body as { expected_revision: number }).expected_revision),
-  'PUT /api/v1/bridges/{id}/credential': ({ client, param, body }) => {
-    const request = body as { expected_revision: number; key: string };
-    return client.bridges.importKey(param('id'), request.expected_revision, request.key);
-  },
-  'POST /api/v1/bridges/{id}/credential/revoke': ({ client, param, body, command }) => {
-    const request = body as { expected_revision: number; expected_custody_revision: number };
-    return client.bridges.revokeKey(
-      param('id'),
-      request.expected_revision,
-      request.expected_custody_revision,
-      command,
-    );
-  },
+  'DELETE /api/v1/gateway/connection-records/{record_id}': ({ client, param, query }) =>
+    client.gatewayConnectionRecords.delete(
+      param('record_id'),
+      query.has('expected_version') ? Number(query.get('expected_version')) : undefined,
+    ),
   'GET /api/v1/agents/{id}/channel-usage': ({ client, param }) =>
     client.agents.channelUsage(param('id')),
   'GET /api/v1/agents/{id}/channel-usage/history': ({ client, param, options }) =>

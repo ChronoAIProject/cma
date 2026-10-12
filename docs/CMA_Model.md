@@ -435,3 +435,7 @@ identity-outage fault matrix are specified by
 [#833](https://github.com/ChronoAIProject/cma/issues/833). Record their actual
 outcomes in the operations evidence register. A failed, missing or historical
 gate is not a passing final-release gate.
+
+Event ingress and channel delivery belong to the separate
+[CMA Event Gateway](CMAEG_Protocol.md). CMA owns provider bindings, environments
+and Agent conversations; the former in-CMA Bridge execution pipeline is retired.

@@ -8,6 +8,7 @@ import {
   integer,
   nullable,
   object,
+  optional,
   positiveInteger,
   tagged,
   text,
@@ -30,10 +31,14 @@ const admission = tagged({
     groups: enumeration('deny', 'all', 'mention', 'reply_to_bot', 'mention_or_reply_to_bot'),
   }),
 });
+export { admission as botAdmissionSchema };
 const createBot = object({
   name: text,
   nyxid_bot_id: text,
   profile,
+  sandbox_profile: optional(profile),
+  workspace_profile: optional(profile),
+  event_worker_profile: optional(profile),
   admission,
   reply: object({ auto_final: boolean, ack_after_ms: integer }),
 });
@@ -44,6 +49,9 @@ const bot = object({
   name: text,
   nyxid_bot_id: text,
   profile,
+  sandbox_profile: optional(profile),
+  workspace_profile: optional(profile),
+  event_worker_profile: optional(profile),
   provider: text,
   state: enumeration('creating', 'active', 'disabled', 'failed', 'deleting', 'deleted'),
   failure: nullable(text),

@@ -70,7 +70,12 @@ never belong in the provider allowlist or ConfigMap. Optional legacy file inputs
 remain available outside this deployment.
 
 Creator authentication calls NyxID `GET /api/v1/users/me` with a three-second
-deadline. Only token hashes are cached: successes for 60 seconds and failures for
+total deadline. Organization keys that receive 403 use `/oauth/userinfo` to
+authenticate their subject and must additionally prove that exact subject through
+`GET /api/v1/orgs/{subject}/authorization`; a personal subject cannot use this
+fallback. Older profiles without `user_type` also require the organization lookup
+to distinguish personal and organization ownership. Only token hashes are cached:
+successes for 60 seconds and failures for
 10 seconds, with oldest-entry eviction at 10,000 entries. A cached success can
 continue during a short NyxID outage; an uncached unreachable check returns 503.
 Invalid bearers return 401. The record client sends the service bearer only to
@@ -173,9 +178,10 @@ with all four tools requiring `event_ref`; updates also require `message_ref`.
 | `POST /v1/events/{event_ref}/typing` | `sendTyping` | `sent` or `unsupported`; Telegram relay typing is unsupported. |
 | `GET /v1/events/{event_ref}/context` | `readEventContext` | Public activity and reply capabilities, excluding credentials and the raw source envelope. |
 
-NyxID exposes these as `cmaeg__replyToEvent`, `cmaeg__updateMessage`,
-`cmaeg__sendTyping` and `cmaeg__readEventContext`. Reply/update REST bodies use
-`OutboundMessage`; their MCP arguments wrap that same body in `message`.
+CMA attaches the native MCP server as `cmaeg`; Codex exposes the four names
+under its `mcp__cmaeg__` prefix. This path requires no NyxID tools catalogue
+registration. Reply/update REST bodies use `OutboundMessage`; their MCP
+arguments wrap that same body in `message`.
 A 20 KiB text reply is supported; text over 32 KiB returns 413. Tool HTTP bodies
 are limited to 128 KiB. Delivery enqueue and receipt together have an eight-second
 deadline; expiry returns 504 `internal` with `delivery_timeout`. A timeout does
@@ -428,23 +434,29 @@ requires the owner to reconnect; it does not cause a fallback to the gateway
 service identity.
 
 The owner first registers a personal Telegram bot with NyxID and connects the
-profile's services, the managed model service, and the `cmaeg` tools service.
+profile's explicit services and the managed model service. CMA attaches CMAEG
+tools through the binding's native endpoint using that Bot's own agent key.
 CMA will refuse a bot that already has an active NyxID route, preserving existing
-bridge routing. The `cmaeg` catalogue service must expose CMAEG's protocol tools;
-its presence is a provisioning requirement, not something CMA creates implicitly.
+bridge routing. No separate `cmaeg` catalogue service or shared tool credential is
+required.
 
 `POST /api/v1/bots` accepts `{name,nyxid_bot_id,profile:{id,revision},admission,reply}`
 and an `Idempotency-Key`. It returns 201 with a durable `creating` resource;
 poll its GET route until `active` or `failed`. HTTP disconnects do not cancel
-admitted work. The selected Agent revision and the published platform-default
-Sandbox and Workspace revisions are pinned at admission. Managed model access is
+admitted work. Optional `sandbox_profile:{id,revision}` and
+`workspace_profile:{id,revision}` select personally owned published environments;
+each omitted reference uses its published platform default. All three profile
+revisions are pinned at admission and returned by the Bot read projection.
+Explicit environment references must belong to the owner, including when public;
+foreign public profiles require a personal fork before selection. This preserves
+custom resources, repository, installation and setup without changing global defaults. Managed model access is
 required. Environment resources, workspace location, setup commands, service
 scope, skills, prompt, permissions and thinking effort follow the CMAEG profile
 schema; unsupported access is explicitly refused.
 
 Creation mints separate 30-day agent and route keys in the exact
 `cma:bot:<bot_id>:<agent|route>:<generation>` namespace. The agent key has only the
-resolved profile/model/tool service grants. The route key has no service or node
+resolved profile and model service grants. The route key has no service or node
 grants. Plaintext exists only during bounded requests; Bot records retain IDs,
 hashes and the earliest expiry. The channel reserves a durable record UUID,
 starts with no admitted relay routes, then receives the exact route ID after
@@ -468,6 +480,83 @@ channel delivery, ingress latency or restart continuity for a real conversation.
 Local interoperability tests under `cma::gateway::tests` execute the compiled
 gateway binary with HTTP fixtures and CMA's actual profile mapper. Build `cmaeg`
 before running these tests in isolation; full CI builds the workspace first.
+
+The dashboard's personal **Bots** entry requires the `manage_own_bots` browser
+capability. `/bots/new` selects an available Telegram bot, an exact published
+Agent Profile revision, optional personally owned Sandbox and Workspace revisions,
+explicit message admission and reply settings, then reviews the request. Detail pages show durable setup checkpoints, provider level,
+callback URL, access expiry and the last synthetic test. They expose explicit
+enable/disable, key rotation and confirmed deletion. Credential values are never
+returned to the dashboard. Deletion is complete only after the accepted operation
+finishes and the public resource disappears; existing conversations are retained.
+
+Before sending a creation request, the dashboard retains its exact configuration
+and idempotency key in browser session storage, scoped to the origin and signed-in
+owner. After an uncertain response or reload, **Recover creation** resubmits that
+same request only on an explicit click. Other lifecycle commands are never
+automatically repeated after uncertainty. Visible pages poll every five seconds;
+stale observations disable actions, temporary read failures retain known data,
+and access denial clears protected records.
+
+For local browser verification, install the web dependencies and Playwright
+browser, build `web/` and `cmaeg`, then run from `api/`:
+`cargo test -p cma dashboard_creates_tests_and_deletes_through_real_cma_and_compiled_gateway -- --ignored --nocapture`.
+The browser drives real CMA Bot routes, its durable worker and compiled CMAEG
+through creation, synthetic test, disable/enable, rotation and confirmed cleanup.
+Identity, profile catalogue and provider execution use loopback fixtures and the
+Bot store is in memory. This test proves local integration, not production login,
+Telegram delivery, database durability or restart continuity.
+
+### Runtime tool credential transport
+
+The runtime has an optional fixed-endpoint HTTP proxy for provider tool
+connections. `CHRONO_TOOL_PROXY_URL` is unset by default. When supplied at runtime
+creation it must be one canonical HTTPS URL without credentials, query or
+fragment; literal loopback HTTP is accepted for local verification. The proxy
+binds only `127.0.0.1:9093` and accepts `POST /`, with a 128 KiB request limit,
+a five-second request-body deadline, a ten-second upstream deadline and a
+4 MiB response limit. The response bound accommodates full context in both the
+structured and escaped text representations of a tool result. Caller URLs
+cannot select another destination. Redirects,
+encoded responses and responses exposing the injected credential are refused.
+
+Each request uses the runtime's current in-memory Sandbox credential, so a
+credential delivery changes subsequent calls without reopening the conversation.
+No credential file or additional shared secret is used. Uncertain upstream
+results are not retried. This transport alone does not attach tools to an Agent:
+binding provenance, retained endpoint configuration and confirmed conversation
+setup are checked separately before a provider Agent can become ready.
+
+A provider binding can retain one tool endpoint as part of its immutable supplied
+credential authority. Exact replays and key rotation preserve that endpoint;
+changing or removing it under the same binding identity is refused. Binding
+Sandbox creation projects the retained endpoint into the runtime environment.
+Records created before this field existed deserialize with no endpoint, and
+ordinary Sandboxes omit the new field and environment variable, preserving their
+existing deployment fingerprints and runtime image pins. The public binding
+handler accepts native tools only at the exact `/mcp` endpoint derived from the
+configured CMAEG public origin. Deployments without gateway configuration retain
+the explicit refusal. A different advertised destination is refused before
+credential custody; enabling support never changes the destination on an old
+binding.
+
+A read-only `tool_proxy_status` supervisor operation proves the exact Sandbox,
+provision generation, configured destination and current credential generation.
+It succeeds only while the runtime's own listener is serving, and includes a
+process boot identity. It also works without a persistent home. Older runtimes
+cannot supply this proof and are refused before a tool-enabled Agent opens.
+
+Provider Agent attachment independently checks the durable binding conversation,
+creating manager, Agent creation identity, pinned profiles, complete lineage,
+current runtime and work authority. `provider_tool_opens` stores successful ACP
+opens under an exact creation/runtime/request digest using majority reads and
+writes. Confirmation rechecks and fences both lineage and binding authority.
+No key bytes enter that collection or the ACP descriptor. Fresh sessions require
+HTTP tool capability; loading supplies the local `cmaeg` server again. Rejoining
+an initialized process requires its confirmed conversation and matching boot
+identity. A requested resume ID alone is insufficient. Credential rotation keeps
+the local descriptor and successful-open identity while subsequent calls use the
+new key. This source is independent of legacy bridge records.
 
 ## Delivery Authority
 
@@ -503,249 +592,26 @@ implementation or verification remains outstanding.
 Controlled test enablement for the final journeys is distinct from public
 publication and must be withdrawn if verification fails.
 
-## Bridge Continuity Observation
+## Retired bridge compatibility
 
-The [owned continuity runners](CMA_Owned_Continuity.md) preserve the prepared
-active-turn, native-history and passive browser-reconnect checks as committed,
-parameterized tooling. They require successful disposable fixture receipts and
-never select ordinary user resources or perform a deployment.
+CMAEG owns event ingress, channel configuration and delivery. CMA no longer
+composes the legacy Bridge control plane, callback routes, worker pipeline,
+credential minting or renewal, reply tools, or Bridge SDK clients. Use owner Bots
+and the CMAEG provider binding contract described above.
 
-Issue #850 is a prerequisite for enabling milestone 17. Use
-`.github/scripts/cma-bridge-continuity-observer.mjs` to capture read-only public
-Agent and Kubernetes evidence for exact selected Agents. The observer issues no
-Agent commands, runtime exec, lifecycle calls, credential changes or cleanup.
-It stores hashes of durable events instead of message/tool bodies, and refuses
-gaps, duplicate sequences, incomplete pagination and unavailable observations.
+Persisted provenance, usage and history markers remain readable. Narrow Mongo
+compatibility checks retain retirement seals and late-upload references and
+prevent ordinary lifecycle operations from acquiring old channel authority.
+A historical shared-parent reservation or child-removal journal requires an
+explicit data migration before reuse or restore; the new worker cannot execute
+an old Bridge cleanup command. Retained records are not automatically purged.
 
-Keep the configuration and receipts outside Git. The saved NyxID access-token
-file must be owned by the operator and inaccessible to other users. Configuration
-selects the exact verified cluster context, namespace and deployment identity:
-
-```json
-{
-  "schema": "cma-bridge-continuity-config-v1",
-  "origin": "https://your-cma-origin.example",
-  "context": "your-verified-kubernetes-context",
-  "namespace": "your-cma-namespace",
-  "deploymentId": "your-cma-deployment-id",
-  "tokenFile": "/absolute/private/nyxid/access_token",
-  "agentIds": ["agt_selected_existing_agent"],
-  "watch": { "durationMs": 60000, "intervalMs": 2000, "sampleTimeoutMs": 15000 }
-}
-```
-
-```sh
-node .github/scripts/cma-bridge-continuity-observer.mjs capture /private/continuity.json /private/before.json
-node .github/scripts/cma-bridge-continuity-observer.mjs capture /private/continuity.json /private/after.json
-node .github/scripts/cma-bridge-continuity-observer.mjs compare /private/before.json /private/after.json
-node .github/scripts/cma-bridge-continuity-watch.mjs /private/continuity.json /private/watch.json
-```
-
-Capture refuses to overwrite receipts. A comparison fails on changed Agent
-ancestry, creation identity or profile pin, lost/changed historical event prefix,
-loss of live availability, replaced Pod, changed container/image or restart count.
-Normal appended history and transitions among Ready, Working and Waiting for
-approval are permitted. Review identity and history regressions against the
-requirement to resume the exact retained work. A temporary API interruption may
-be allowed by the deployment scope; an observer finding does not create a
-zero-outage permission gate or authorize repairs or cleanup. Record a failed
-command separately and use new receipt paths for its corrected rerun.
-
-The bounded watcher uses the same protected token and exact resource scope. It
-polls sequentially, retains intermediate read failures and later recoveries,
-compares each complete observation with the last complete observation, and
-records public read timings, hashed event prefixes, durable cursors and runtime
-identity. Each poll rereads the event prefix so changed historical records are
-detectable. The receipt explicitly records intervals between samples,
-incomplete samples and scheduled polls skipped by slow observations. Event and
-tool bodies and external exception text are excluded from the receipt.
-
-`durationMs` is between 1 second and 1 hour; `intervalMs` is between 250 ms and
-60 seconds; `sampleTimeoutMs` is between 250 ms and 60 seconds. Neither interval
-nor sample timeout may exceed the duration, and at most 1,200 polls may be
-scheduled. A sample timeout cancels the current read before a later poll starts.
-The total deadline, SIGINT or SIGTERM aborts active HTTP/body reads and kills and
-reaps the active `kubectl` process. No new poll starts after stopping. Cleanup
-and writing the receipt can finish after the sampling deadline.
-
-The watcher reserves a new mode-0600 output file before making reads. Existing
-files and symlinks are refused. Its `completed` status and zero exit code mean
-the bounded observation finished; inspect `assessment`, `findings`, `samples`
-and `gaps` for the recorded evidence. Temporary outages remain findings after
-recovery. Cancellation or setup failure writes an incomplete receipt and exits
-nonzero. These statuses do not decide deployment permission or establish exact
-resume by themselves.
-
-Successful sampled observations prove only their declared coverage. They do not
-prove availability between samples, native conversation identity, dirty-file
-preservation, exactly one runtime input, old-tab drafts, stream reconnect or safe
-cleanup. The result names these unproved properties explicitly. Complete them
-with the disposable previous-version live Agent upgrade/rollback campaign in
-#850/#873, including approval waits, sibling Agents, paused history and Trigger
-origin. Under the current delivery plan, broader live acceptance follows the
-initial production deployment. Keep accepted work and existing runtime cohorts
-intact through both feature disable and rollback; enable individual capabilities
-only within their demonstrated runtime and authority contracts.
-
-The shared IO admission ledger adds `agent_commands` and
-`agent_command_orders` collections without changing the retained Agent or log
-record schemas. Command input, response identity, immutable acceptance facts and
-queue order commit in one Mongo transaction, with unique authority/key and
-Agent/order indexes. Resource observations are fenced in the same transaction.
-There is no TTL on command keys. An unknown commit returns an unavailable
-outcome; only a retry with the same key may resolve that reservation. No runtime
-input is sent by the reservation adapter.
-
-Command workers claim one per-Agent dispatch lane with a bounded 1–60 second
-lease and a monotonic fence. Renewal, release and refusal require the exact live
-claim. A refusal of unclaimed queued work instead compares its exact observed
-revision and proves the absence of both a binding and a live lease atomically;
-this permits revoked/expired work to finish while an Agent is paused or busy.
-Normal messages retain their order while controls retain the active turn
-observed at admission. In one transaction, the conversation store binds the
-claimed command to its exact input, metadata, operation, turn and runtime
-generation, and commits the Agent and semantic logs. Runtime input follows only
-a confirmed commit. Ambiguous-commit verification includes the exact command
-binding, since identical controls can otherwise have identical Agent/log facts.
-A bound command cannot be claimed for dispatch again, including after lease
-expiry or release. Existing queued messages and Trigger first-message delivery
-retain priority. Production admission and credential custody currently accept
-matching personal callers; a channel envelope does not establish a personal caller.
-
-Command outcome recovery reads the complete authoritative Agent log in one
-snapshot and records the observed cursor and delivery separately from the
-immutable dispatch binding. It reconstructs turn completion, interruption and
-approval waits, retains unresolved delivery until runtime evidence arrives, and
-never clears a newer command's lease. Runtime loss preserves uncertain writes
-as typed failures even when retirement logs the turn interruption first. The
-durable Agent log provides the recovery source if the response projection write
-is interrupted; live fragments cannot establish completion.
-
-Initial conversation opening persists the native identity and its open receipt
-before Ready publication appends `ConversationOpened`. History readers accept
-that unpublished generation only when the completion log matches the exact
-Agent's durable open receipt and no Ready state or turn has been published. This
-keeps early Responses admission observable across that startup boundary without
-changing retained identities, log order or worker recovery. Published conversation
-identity and generation still have to match their semantic log.
-
-The production command scheduler scans nonterminal records in stable ID pages
-of 50 through the additive `agent_command_work_scan` index. Successful pages
-advance the cursor even if their work remains blocked. Up to eight tasks run
-concurrently; slow discovery occupies a separate task. Store IO is bounded to
-15 seconds, execution attempts to 45 seconds, and 30-second lane leases renew
-every 10 seconds with a five-second renewal bound. Any uncertain renewal stops
-the attempt. Settlement rereads the ledger before release or refusal: a binding
-always selects reconciliation, and an unavailable read cannot prove an absent
-dispatch. Shutdown stops new work, drains for up to 25 seconds, then cancels
-remaining attempts; their durable leases/bindings support the next replica.
-
-Unclaimed message preparation obtains fresh authority and checks the current
-record again before entering the existing Sandbox revival pipeline. It holds no
-short dispatch lease and sends no input. Preparation is bounded to 15 seconds;
-an admitted revival remains durable if the attempt is cancelled. The resource
-execution adapter checks current owner kind and target state, rereads the renewed
-claim after credential IO, and retains the actual actor. It obtains an opaque
-resource execution proof before dispatch. The proof binds the exact command,
-owner, policy revision, ancestry and pinned profile and has a monotonic lifetime
-of at most 60 seconds. Membership-dependent proof expires at the earlier
-membership deadline. Reads and retries cannot renew an existing proof.
-
-Both in-memory and Mongo conversation commits verify that proof against their
-own current resource snapshot. Mongo retains the real parent write that
-serializes policy changes with dispatch, and checks expiry again before commit.
-The ordered runtime writer checks held policy, lifetime, target conversation,
-runtime generation, operation and turn after queueing and before invoking the
-runtime handler. Refusal before handler invocation returns a pre-write failure
-and leaves the writer usable. Cancelling a pending send also prevents later
-handler invocation without retiring the writer; if its caller disappeared before
-recording the result, the durable binding still requires reconciliation. Once
-handler invocation begins, uncertain delivery retires the writer generation and
-requires reconciliation. Outcome evidence can commit after authority expires or
-is revoked.
-
-The production admission and execution boundaries support an independently
-authorized human actor on a shared or organization-owned Agent. The actor supplies
-their own retained sign-in; runtime and connector credentials remain with the
-resource owner. Preparation obtains separate Agent interaction and Sandbox
-management decisions, fences the exact pending command and schedules one durable
-revival step. Mongo writes a fresh command-row marker alongside the parent and
-event to serialize concurrent claim/refusal writers. Ambiguous commit recovery
-uses that exact marker and remains possible after the proof expires. Organization
-resource creation/credential provisioning and bridge delegation remain incomplete.
-Human command admission and replay use the [Responses v2 contract](API_Responses.md).
-
-`command_authorization_audits` is an additive collection with an immutable audit
-ID and a `(command_id, _id)` index. New human admission, resource dispatch binding
-and command-authorized Sandbox revival append evidence in the same transaction
-as the accepted effect. Admission retries and AlreadyScheduled/AlreadySatisfied
-revival observations retain prior evidence without appending another entry.
-Each entry separates credential custody from the actual resource policy revision,
-owner and actor, and records the capabilities supplied by personal ownership,
-operator authority, organization roles and exact share revisions/modes. Revival
-has separate Agent and Sandbox observations. These are historical observations,
-never current permission; revocation does not delete them or replay accepted work.
-
-No raw access/refresh token, input content, private runtime configuration or native
-conversation identity is copied into audit evidence. Audit persistence is internal
-and does not widen command status or recipient history projections. Audit IO is
-part of acceptance: an audit write failure or expiry before commit rolls back the
-whole effect. Old serialized command receipts and Agent/Sandbox aggregates retain
-their existing formats. Older code can continue reading them during rollback,
-while historical unaudited effects remain explicitly unaudited. There is no audit
-TTL or cleanup migration in this change. Release upgrade/rollback evidence still
-requires the disposable continuity campaign.
-
-New authenticated Trigger launches also retain an immutable initiating-actor
-sidecar, distinct from the Trigger identity that performs resource creation.
-This evidence is fenced with the exact Launch effect when Agent provenance is
-created. Older launches remain valid with an unknown initiating actor. Rollback
-acceptance for these new writes is still open: an older whole-document Launch
-writer can discard the sidecar, and an older provenance validator can reject a
-distinct initiating actor. Before rollout, a compatible rollback writer/reader
-and the previous-version disposable continuity campaign must preserve this
-evidence; deleting or relabeling it is not a recovery procedure.
-
-Ordinary CMA provider authentication refuses NyxID relay access, callback and
-reply tokens, including relay key/scope claims. NyxID userinfo can project the
-bot owner's subject and RBAC from a relay access token; that projection does not
-grant CMA dashboard or owner-operation authority. The local claims inspection
-only denies restricted credentials. Every other credential still goes through
-the existing provider verifier. Bridge ingress must validate its own callback
-and scoped execution authority before admitting work.
-
-The disposable cluster bootstrap is
-`.github/tools/cma-bridge-continuity/bootstrap.py`. Install its pinned Python
-requirements, then supply the repository, a fresh private directory outside Git,
-the verified cluster context and fixture owner subject. It creates a random
-`cma-bridge-e2e-<run>` namespace with a resource quota, a separate Mongo replica
-set Pod, provider server/key, namespace-scoped service accounts and roles, and a
-credential-free home seed. It reads the deployed component pins and copies only
-the existing NyxID application and storage client credentials; it never copies
-production database access, encryption keys, provider keys, user homes or history.
-Runtime NetworkPolicy blocks other namespaces and metadata endpoints.
-
-The bootstrap journal records exact namespace and resource UIDs before later
-mutation. Its guard refuses production namespaces, foreign markers, replacement
-resources, unjournaled resources and broader cluster roles. The only fixture
-cluster role permits reading the named `gvisor` RuntimeClass. `resume.py` accepts
-the same private directory and reconciles exact creation intents; an ambiguous
-create needs the same run marker and creation-spec fingerprint. A disappeared
-journaled object is not silently recreated. Neither tool exposes blanket cleanup.
-
-The operator needs ordinary workload creation plus permission to create/bind
-the declared fixture roles. Bootstrap checks these create permissions with
-SelfSubjectAccessReview before creating resources. A later admission denial
-leaves the completed journal intact and must not be worked around by borrowing
-a more privileged production service account. Resume requires the journaled
-create intent as well as the matching resource fingerprint and namespace UID.
-Initialize only the journaled Mongo Pod's replica set, wait for
-the new home seed, create its snapshot and pin its observed UID before creating
-the saved previous-version API manifests. Checkpoint objects for each run-owned
-Sandbox use the existing `cma/checkpoints/<sha256(sandbox_id)>/` prefix, recorded
-alongside the exact Sandbox identity. Existing-user checkpoint prefixes remain
-outside the campaign's cleanup authority. Creating the environment alone proves
-none of the live upgrade, rollback or browser acceptance cases.
+Before replacing an API that ran the legacy pipeline, verify there is no accepted
+or uncertain legacy work left to drain. Preserve live runtime identifiers,
+conversation state, image pins and all retained history during the rollout.
+The old Bridge continuity harness and switches have been retired with that
+pipeline. The normal lifecycle, checkpoint, Mongo, provider and runtime contracts
+remain required.
 
 ## Prerequisites
 
@@ -767,7 +633,9 @@ none of the live upgrade, rollback or browser acceptance cases.
 - External checkpoint bytes use the existing chrono-storage bucket
   `chrono-platform-bot`, not a renamed GridFS bucket. Verify the machine identity
   can upload, read and delete exact objects through the platform proxy and that
-  DELETE is independently confirmed by GET 404. Metadata remains in MongoDB.
+  versioned DELETE returns the durable fence receipt described below. Verify
+  GET 404 and rejection of a delayed upload on a disposable object. Metadata
+  remains in MongoDB.
 - The provider-facing model endpoint and baseline services must be usable for a
   fresh visitor. A successful admin account test does not establish that fact.
 - Build, label, scan and inspect all three immutable image digests. Check the
@@ -833,11 +701,6 @@ new successful CI run. SDK packages, release workflows, registry ACLs and tags
 are unaffected.
 
 ### Lifecycle Scheduling
-
-Bridge ingress, worker occupancy/results and outbound attempts emit bounded
-operational log fields through the existing sink. See
-[Bridge operational signals](BRIDGE_OPERATIONAL_SIGNALS.md) for dimensions,
-latency/age semantics, safe correlation and suggested log-based monitors.
 
 Sandbox lifecycle scheduling permits at most four concurrent sweeps, with
 one new sweep offered per second while capacity remains. Durable per-Sandbox
@@ -967,24 +830,7 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_SERVER_PUBLIC_URL` | CMA browser origin; default local `http://localhost:8080`, production explicit |
 | `CHRONO_SERVER_CORS_ORIGIN` | Comma-separated exact allowed origins; default local `http://localhost:5173` |
 | `CHRONO_AUTH_MODE` | `provider` in production; `trusted` is local fixed-subject development only |
-| `CHRONO_BRIDGE_MANAGEMENT_ENABLED` | Fresh Bridge setup/configuration/enable/grant/import/retry authority; false by default; retained reads, exact receipts and safe reductions stay available |
-| `CHRONO_BRIDGE_INGRESS_ENABLED` | Fresh signed callback acceptance; false by default; accepted input can drain through independently enabled stages |
-| `CHRONO_BRIDGE_CONTROL_ADMISSION_ENABLED` | Fresh signed cancel/steer admission selector; false by default; existing Message/refusal/control receipts recover first. Fresh admission and advertised operations additionally require current source consent/grants and the exact locally published runtime with Conversation plus Interrupt/Steer. Missing local ownership remains retryably unavailable; no remote owner proxy is composed. |
-| `CHRONO_BRIDGE_ALLOCATION_ENABLED` | New Channel allocation/provisioning/child/start effects; false by default; preserve current phases and in-flight outcomes |
-| `CHRONO_BRIDGE_EXECUTION_ENABLED` | New Channel command admission and held-command release; false by default; already Released commands drain in shared FIFO order |
-| `CHRONO_BRIDGE_OUTBOUND_ENABLED` | Fresh explicit reply-tool admission and provider send attempts; false by default; recover retained receipts/outcomes and never auto-retry Unknown |
-| `CHRONO_BRIDGE_TELEGRAM_ENABLED` | Telegram fresh-effect gate, independent of other platforms and stages; false by default |
-| `CHRONO_BRIDGE_TELEGRAM_NEW_ENABLED` | Telegram-new fresh-effect gate, independent of Telegram and other stages; false by default |
-| `CHRONO_BRIDGE_DISCORD_ENABLED` | Discord fresh-effect gate; false by default |
-| `CHRONO_BRIDGE_DISCORD_TEXT_ATTACHMENTS_ENABLED` | New single Discord text-file admission; false by default. Requires independent Discord/ingress gates and current authority; retrieval/Agent work also requires normal allocation/execution gates. Deploy supporting readers/workers before enablement. Disabling preserves original receipts and lets accepted work drain under normal gates; before rollback, drain it with a supporting worker or retain explicit suspension. See [attachment retrieval](BRIDGE_ATTACHMENT_RETRIEVAL.md). |
-| `CHRONO_BRIDGE_LARK_ENABLED` | Lark fresh-effect gate, independent of Feishu; false by default |
-| `CHRONO_BRIDGE_FEISHU_ENABLED` | Feishu fresh-effect gate, independent of Lark; false by default |
-| `CHRONO_BRIDGE_SLACK_ENABLED` | Slack boundary gate; false by default; missing human/loop evidence still refuses admission |
-| `CHRONO_BRIDGE_WHATSAPP_ENABLED` | WhatsApp boundary gate; false by default; missing human/loop evidence still refuses admission |
-| `CHRONO_BRIDGE_X_ENABLED` | X DM boundary gate; false by default; missing human/loop evidence still refuses admission |
-| `CHRONO_BRIDGE_WORKSPACE_PER_PARTITION_ENABLED` | Fresh shared-Sandbox Workspace placement selection and allocation; false by default; requires complete runtime support and management/allocation/execution gates. Independent operator rollout choice after canary, not continuity attestation; exact receipts, unchanged placement edits and retained work survive disabling. |
-| `CHRONO_BRIDGE_WORKTREE_AGENT_PER_PARTITION_ENABLED` | Fresh shared-Workspace Worktree/Agent placement selection and allocation; false by default; independent of Workspace-per-partition selection with the same runtime and stage requirements. Retained execution, reconciliation and cleanup stay authorized normally. |
-| `CHRONO_BRIDGE_V2_UI_TRANSPORT_ENABLED` | Eligibility for the separately integrated v2 browser transport; false by default; does not disable existing public v2 API routes or change an accepted request protocol |
+| `CHRONO_V2_UI_TRANSPORT_ENABLED` | Eligibility for the separately integrated v2 browser transport; false by default; does not disable existing public v2 API routes or change an accepted request protocol |
 | `CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED` | New authenticated Launch admission selects common first-message commands under retained personal ownership; false by default. Proven pre-write failure is terminal for new common prompts; ambiguous writes retain the same command/response and refuse legacy recovery. Accepted protocol is immutable; disabling the selector retains accepted common commands and legacy launches retain their original delivery/recovery behavior. Keep false until every worker and permitted rollback version recognizes and transactionally excludes common/legacy dispatch; older workers ignore additive sidecars. |
 | `CHRONO_TRUSTED_SUBJECT` | Local trusted-mode subject; default `local-developer`, irrelevant in provider mode |
 | `CHRONO_NYXID_BASE_URL` | Required API/OAuth HTTP(S) origin in provider mode |
@@ -997,13 +843,6 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_MONGODB_URI` | Required secret reference, `mongodb://` or `mongodb+srv://` |
 | `CHRONO_MONGODB_DATABASE` | Database name; code default `chrono_bot`, production explicitly `chrono-bot` |
 | `CHRONO_DEPLOYMENT_ID` | Required stable Kubernetes-label-compatible CMA ownership identity |
-| `CHRONO_SANDBOX_PROVIDER` | New allocation backend: `opensandbox` (compatibility default) or `agent-sandbox` |
-| `CHRONO_RETAIN_OPENSANDBOX` | Keep legacy provider available for persisted bindings; default true |
-| `CHRONO_AGENT_SANDBOX_ENABLED` | Keep direct agent-sandbox access available during coexistence/rollback; selecting it as allocation backend also enables it |
-| `CHRONO_AGENT_SANDBOX_CONTROL_KEY_FILE` | Dedicated mounted signing key, at least 32 bytes; required when agent-sandbox is enabled; retain across restarts |
-| `CHRONO_AGENT_SANDBOX_RUNTIME_CLASS` | Optional infra-provided RuntimeClass name |
-| `CHRONO_AGENT_SANDBOX_SERVICE_ACCOUNT` | Workload service account; default `cma-runtime`, API token automount disabled |
-| `CHRONO_AGENT_SANDBOX_IMAGE_PULL_SECRETS` | Comma-separated namespace-local image pull Secret names, or empty for node/infra registry pull identity |
 | `CHRONO_SANDBOX_BASE_URL` | Required canonical HTTP(S) provider origin |
 | `CHRONO_SANDBOX_API_KEY_FILE` | Required readable nonempty mounted provider key; never a ConfigMap value |
 | `CHRONO_SANDBOX_NAMESPACE` | Required DNS-label namespace for CMA-owned provider resources |
@@ -1045,76 +884,6 @@ fingerprint. A changed timeout or clone-depth environment value must not change
 an already admitted replay plan. Existing Sandboxes likewise keep their pinned
 profile and service scope. Startup defaults seed missing default profiles; they
 are not a live rewrite mechanism for published profiles or existing settings.
-
-## Bridge rollout switches
-
-See [Channel operational signals and alert definitions](CMA_Channel_Observability.md)
-for the existing text log format, durable queue/cleanup/authority observations,
-and disabled alert policy definitions. Health observations never authorize replay
-or replace retained recovery evidence.
-
-The registered feature switches are independent process-start booleans. Missing values
-mean false; only the exact strings `true` and `false` are accepted. A stage also
-requires its pinned platform switch. Enabling management does not enable ingress
-or workers. Disabling ingress lets previously accepted work drain when its other
-stages are enabled. Switches supply availability only; current caller, Bridge,
-grant, custody, resource and original-source checks still apply.
-
-Execution disable stops new Channel admission and held-command release. Commands
-already Released into an Agent's shared queue drain in original FIFO order;
-dispatch-bound commands reconcile their existing effect. Do not skip a retained
-Channel head to prioritize another caller, and do not pause the common command
-or lifecycle workers. Held reservations can temporarily consume shared capacity
-until their original deadline or a proven revocation. Immediate clearance needs
-an explicit audited cancellation operation, not a flag-induced silent reorder.
-
-Outbound disable preserves exact tool receipts, pending order, original
-custody/destination, deadlines and attempts. Recover the original receipt before
-refusing a new tool intent. In-flight sends may finish recording; expired Sending
-attempts become Unknown through local reconciliation. Reenabling never supplies
-retry consent or resets an attempt, deadline, source identity or reply token.
-Unknown delivery still requires the explicit recovery command and its duplicate
-risk acknowledgement. Local expiry and outcome bookkeeping must stay available.
-
-Retain accepted-input disposition evidence independently of payload TTL. An
-input paused past its original admission deadline expires truthfully; it must not
-silently disappear or obtain a fresh deadline on reenabling. An already accepted
-or uncertain browser submission retains its protocol, exact body and idempotency
-key even when v2 UI transport eligibility changes. The existing public v2 API
-continues serving SDK callers.
-
-A rollout is globally disabled only after every old replica has stopped starting
-new work and drained its in-flight effects. A process environment change is not
-an instantaneous global cancellation. No runtime image rotation, live Agent pause,
-provider-role expansion, database reset or retained-resource rewrite is required
-to change these control-plane switches.
-
-Channel-created active Sandboxes renew their runtime credential through a
-separate bounded scheduler. Each step verifies the original retained human
-control-plane grant, current selected-key custody, original allocation and
-current resource identity. Renewal replaces the key on the same runtime and
-revokes the previous key after replacement; it does not create another Agent or
-conversation. Renewal audit records retain the actual human actor and hashed
-grant identity without credentials. An unknown mint result stays held and must
-not cause a second mint request.
-
-This maintenance remains available when new-admission switches are disabled.
-The renewal lease prevents concurrent Sandbox lifecycle changes while accepted
-Agent commands continue through their shared queue. A retained Ready allocation
-can renew after reset only under the original resource identity and the current
-`DrainOriginal` policy. `SuspendOriginal`, removed or replaced human consent,
-and retired resources block renewal. Ordinary owner-token issuance never
-substitutes for missing Channel authority.
-
-Dedicated Channel revival and retirement use their retained original-human,
-allocation, resource and runtime authority. Renewal alone does not authorize
-restore or teardown. Fresh retirement can remove its exact owned runtime and
-PVC through existing namespaced authority, then publish Retired with sealed,
-retained history. Missing or ambiguous original receipts hold finalization.
-Underlying disk reclamation belongs to the storage provider; CMA requests no
-additional Kubernetes or cloud permissions. Image rotation remains held. See
-[Channel lifecycle recovery](CMA_Channel_Lifecycle_Recovery.md) for the implemented
-paths and their remaining verification boundaries.
 
 ## Platform Settings
 
@@ -1278,25 +1047,49 @@ leaves less than ten minutes for the remaining work and does not guarantee every
 large home can finish. Periodic capture claims renew every minute; the explicit
 lifecycle worker retains its configured 31-minute lease. Timeout preserves
 writer-recovery and cleanup authority rather than claiming publication.
+If lifecycle publication loses a revision comparison, the finished worker
+re-reads the aggregate and schedules a short retry only while its exact lease,
+operation, runtime, credential and status are unchanged. Concurrent metadata is
+preserved; a successor worker's lease is never released. An unrelated metadata
+write must not leave the Sandbox waiting for the full capture lease to expire.
 
 Publish only after bounded upload, size/digest verification and readable bytes.
 Use immutable physical object identities so cleanup of a losing upload cannot
-delete a concurrent winner. Retention preserves the two recorded checkpoints
-and does not remove an active recovery reference. Record deletion intent in the
+delete a concurrent winner. Retention keeps the latest completed checkpoint
+(accepting legacy two-generation records until replacement) and does not remove
+an active recovery reference. Record deletion intent in the
 same transaction that removes publication authority, then perform bounded HTTP
 cleanup after commit. Never keep a Mongo transaction open around external HTTP.
 
-A DELETE followed by GET 404 is necessary but insufficient while an earlier
-ambiguous upload can still finish. The client upload deadline is not a remote
-write-lifetime guarantee. Retain minimal `checkpoint_archive_tombstones`
-indefinitely for uncertain stages, containing only the exact opaque physical
-key, schema version and bounded retry state. Confirmed absence permits Sandbox
-purge to finish, but never relinquishes cleanup ownership of that key. Recheck
-with exponential backoff from one minute to one hour, in bounded pages, so a
-write arriving after any client deadline is still reclaimable. Restart must
-resume this cleanup; timeout or lost response must not silently erase the only
-record of an orphan. No tombstone contains credential fields. Final external
-storage and delayed-upload cleanup evidence remains a required deployment gate.
+A DELETE followed by GET 404 is insufficient while an earlier ambiguous upload
+can still finish. The client upload deadline is not a remote write-lifetime
+guarantee. Production cleanup uses chrono-storage's versioned deletion through
+`DELETE .../objects?key=<opaque-key>&mutationGeneration=2`; query transport
+survives the NyxID proxy's header filtering. Immutable UUID keys are never reused.
+Generation 2 supersedes legacy uploads (generation 0) and generation 1 uploads.
+Every part must be fenced before the manifest, with four concurrent requests.
+Accept completion only from a successful, bounded JSON response containing
+`error: null` and `data: {deleted: true, generation: 2, fenceVersion: 1}`. A plain
+204, missing receipt, wrong generation, timeout or partial success retains
+deletion work. Replaying the same fenced delete is idempotent.
+
+Existing `checkpoint_archive_tombstones` settle through this same operation.
+Once all keys are fenced, retain their immutable identity for historical
+references, set `deletion_fenced_at`, and remove `next_attempt_at`. They no
+longer generate recurring storage calls, including after restart. Newly fenced
+uncertain stages can complete without creating a retry tombstone. Backends that
+can only establish observed absence still retain and retry uncertain stages
+with bounded exponential backoff; elapsed time alone never settles them.
+No cleanup record contains credentials. Before deployment, verify delayed legacy
+and generation 1 uploads are rejected after deletion through the real proxy.
+
+The 2026-10-06 investigation measured 4,292,528 storage requests in seven days
+from `chrono-bot-storage`. The old cleanup path repeatedly deleted and read back
+already absent objects: 1,023 retry records described 52,893 physical keys, or
+105,786 DELETE/GET calls per complete pass before retries. This count describes
+the amplification mechanism, not an attribution of every measured request.
+After rollout, a final bounded pass must fence the existing keys; verify pending
+records drain and storage requests fall before claiming the incident resolved.
 
 ## Rollback And Alerts
 
@@ -1318,6 +1111,14 @@ Do not convert observation timeouts into permanent resource failure.
 Inspect operator inventories and durable event heads first. Do not repair a log
 by deleting one event, relabeling a checkpoint, editing a lease or changing an
 execution fingerprint. A worker may resume only from its recorded authority.
+
+An idle conversation can replay previous turn activity while reopening. CMA
+acknowledges those runtime output positions without duplicating history or
+opening a new turn when the adapter marks them as lacking prompt evidence.
+Conversation metadata still updates, and a recovered active turn still consumes
+its retained output. Repeated `no turn is active` recorder failures together with
+`queued_message_delivery` indicate this replay path is preventing revival from
+settling; preserve the conversation and deploy the corrected recorder.
 
 ## Restart Drills
 
@@ -1660,97 +1461,185 @@ bounded calls, complete owner-scoped discovery and idempotent deletion.
 The production adapter, worker scheduling, renewal, activity audit, public Bot
 routes and both Bot SDKs compose this foundation. Local interoperability tests
 run the compiled gateway through creation, restart recovery, policy updates,
-rotation and cleanup with fake NyxID and provider dependencies. The adapter uses
-the scoped NyxID tools service and accepts CMA's explicit refusal of the optional
-native MCP endpoint; refusals of requested profile fields fail creation and
-retain durable cleanup. These checks do not establish real Telegram delivery or
-authorize retiring the existing bridge.
-
-Direct agent-sandbox runtimes receive `CHRONO_RUNTIME_CONTROL_TOKEN` at bootstrap.
-The supervisor consumes it before preparing child environment maps and requires
-it on runtime control, checkpoint and WebSocket endpoints. Existing provider
-runtimes retain their proxy authentication. This change requires building the
-matching runtime image before selecting the direct backend.
+rotation and cleanup with fake NyxID and provider dependencies. The adapter
+refuses unsupported native tool or profile settings, retaining durable cleanup.
+Bot credentials include the pinned profile's explicit scopes and model service;
+CMA no longer adds an implicit NyxID tools catalogue service. These checks do
+not establish real Telegram delivery or authorize retiring the existing bridge.
 
 
-## Three-service local implementation and rollout prerequisites
+## Event Worker Profile catalogue and catalogue cleanup
 
-The web now has Event Gateway, Agent Manager and Image Manager service tabs.
-`/api/event-gateway/*` and `/api/image-manager/*` strip their prefixes to the
-independent services; `/api/agent-manager/*` maps to AM's existing `/api/*`.
-Existing Agent URLs, cookies and public REST/Responses endpoints remain valid.
-Both the managed Gateway HTTPRoute and nginx fallback implement this routing.
+The owner Profile library combines My profiles, Marketplace and Event workers.
+Saved workers compose owned published CMA revisions and keep their full immutable
+configuration in `event_worker_profiles` and `event_worker_profile_revisions`.
+Bots retain the exact selected worker snapshot. Revisions survive retirement;
+existing Bots are never repointed by an edit. See [public APIs](CMA_Public_APIs.md)
+and [gateway architecture](CMAEG_Architecture.md).
 
-Image Manager uses Cloud Build for an immutable public GitHub commit and pushes
-to `asia-northeast1-docker.pkg.dev/example-project-02/chronoai-registry`.
-Its GKE identity needs Cloud Build submission/read, Logging read, and permission
-to act as the dedicated build service account. That build account needs only the
-build's required logs/source and repository push permissions. Populate
-`CMA_IM_BUILDER_IMAGE` with a tested `gcr.io/cloud-builders/docker@sha256:...`.
-Private repository credential delivery and physical registry garbage collection
-are not implemented. Retirement is logical and retains images for live Agents.
-The IM manifest stays at zero replicas with an unreleased image until a real
-image digest, configured identities and migrated database are available.
+Provider binding plans now produce deterministic pinned instance configurations
+directly. They do not create imported drafts in the Profile catalogue. Historical
+binding profile identifiers and digests are preserved; existing immutable
+revisions and instance snapshots remain valid. When all three platform defaults
+are explicitly set to custom profiles, boot no longer recreates the system
+Profile catalogue entries.
 
-All services use separate Mongo credentials. Image Manager requires a replica
-set because build admission and the retirement fence share a transaction.
-Generate exact roles with each binary's `--print-runtime-role`; the image and
-gateway migrations run explicitly with their separate migration credentials.
-Existing AM stores retain their own startup schema/index initialization within
-the AM collection allowlist. Broad existing `readWrite`/admin credentials are
-rejected at startup and must be replaced before deployment.
+Before an explicitly authorized catalogue deletion, point platform defaults at
+retained published revisions and audit Trigger dependencies. Keep immutable
+published revisions and instance snapshots required by existing resources.
+For each retained Sandbox whose catalogue entry will be removed, persist its
+current `always_keep_alive` policy in `sandbox_retained_availability`. The row is
+fenced by Sandbox ID, owner, creation timestamp and pinned Profile ID, with the
+current `document_schema_version`. The original catalogue policy takes precedence
+while present. After removal, inactivity scheduling reads and fences the retained
+policy in the same transaction as the Sandbox evidence. Malformed identity
+refuses inactivity admission; it cannot authorize a pause. Deploy this reader
+before removing the catalogue entry. Do not mutate or pause the Sandbox itself.
 
-Deploy the adapter-capable AM first with `CHRONO_SANDBOX_PROVIDER=opensandbox` and
-`CHRONO_RETAIN_OPENSANDBOX=true`. It records existing generation choices in
-`runtime_backend_routes`. After all old workers are replaced and retained
-requests have durable routing, enable agent-sandbox for new generations. A route
-is written before external creation and never changes when the default changes.
-Existing runtime handles continue to use their original provider. A first
-cutover containing retained unbound Sandboxes without routing is refused, rather
-than replaying uncertain creation against a different provider. Fresh empty AM
-databases can enable agent-sandbox immediately. Rollback must retain the backend
-for every persisted route; do not disable OpenSandbox while its rows remain.
+Delete only an inventoried, owner- and draft-version-fenced set of catalogue rows
+in a transaction, with a mutation receipt and exact retained IDs. Verify restart
+does not reseed deleted system profiles and existing runtime Pod UIDs remain
+unchanged. A database-wide reset is outside this procedure.
 
-Before routing live Gateway traffic to its new database, copy the legacy sealed
-records with an operator-owned migration identity, preserving record ID, owner,
-blob and version exactly. Keep the stable master keys and canonical legacy
-pointer origin. Quiesce channel *management mutations* during this authority
-transfer, reconcile counts/versions/digests, then switch Gateway DB credentials.
-The runtime service must not retain access to the legacy AM collection. This
-local change does not perform the production data transfer or any rollout.
+### Ordinary NyxID agent API credentials
 
-agent-sandbox integration targets `agents.x-k8s.io/v1beta1` (upstream v1.0.6).
-Infra owns CRDs/controller; AM submits Sandbox objects with explicit CPU/memory,
-pinned runtime images and owned existing PVCs. Destructive operations use UID and
-resourceVersion preconditions. Controller-created Pods are discovered through
-CMA labels plus exact Sandbox controller UID, never by a namespace-wide cleanup.
-Lifecycle pause retains the existing writer-fenced checkpoint/teardown flow;
-the adapter also implements upstream Suspended mode, but the application does
-not bypass its conversation/checkpoint protocol to use that mode.
+`CHRONO_NYXID_SERVICE_ID` is an optional catalog UUID string (unset by default).
+When configured, CMA accepts ordinary `nyx_` and `nyxid_ag_` keys whose live
+NyxID introspection proves access to this exact catalog service. Register the
+existing confidential CMA OAuth client in that catalog's `introspection_client_ids`
+before enabling this setting. Use the existing client ID/secret; no additional
+shared token is required. Direct requests and NyxID proxy requests use the same
+verification. Unconfigured deployments reject ordinary agent keys.
 
-### Transfer retained Gateway records
+CMA validates `active`, `sub`, `token_type=api_key`, the exact `aud`, `proxy`
+scope, complete permissions and any expiry. Every new verification checks live
+NyxID grants; overlapping requests only share their in-flight verification. An
+identity alone never grants access. Inactive evidence returns 401; provider
+outages return 503. Browser cookies cannot override an explicitly supplied
+agent key. Existing binding keys retain their restricted conversation authority.
+Current/retired binding hashes and hashes retained by future rotations cannot
+fall back to ordinary owner authentication. Historical hashes rotated before
+this version still rely on NyxID revocation and service scope.
 
-Use a one-time read-only credential for the legacy `gateway_channel_records`
-collection to run `.github/scripts/export-gateway-records.js` with `mongosh`.
-Select the legacy database in the connection URI and set
-`CMA_GATEWAY_EXPORT_FILE` to a new private local file. Quiesce channel management
-mutations during export, verification and routing cutover; existing Agent turns
-must continue. The exporter creates the file with mode 0600 and prints only the
-record count. The service processes never receive that legacy credential.
+Deferred commands retain the exact encrypted agent key separately from browser
+logins and verify it again before execution. Expiring keys retain their exact
+provider expiry; verified nonexpiring keys store an explicit null expiry. The
+encrypted binding for existing finite-expiry records is unchanged. Older CMA
+versions cannot consume newly admitted nonexpiring-key commands, so deployments
+with such commands require this version or a compatible successor for rollback.
+Bot creation still requires the actual owner's renewable human login; accepting
+an agent key does not authorize borrowing that owner's stored login.
 
-Run `cmaeg --migrate` with the destination migrator credential, then
-`cmaeg --import-legacy-records <export-file>` using that same destination identity.
-Import preserves the record UUID, owner, sealed bytes and version, verifies each
-insert with majority reads, and supports exact replay. It refuses conflicts and
-never overwrites destination records. A partial failure is resumed with the same
-file after its cause is repaired. Keep the gateway's original master keys and
-canonical CMA base URL so existing callback/channel IDs remain valid. Verify
-counts and original callback resolution before enabling management writes, then
-remove the temporary export and credentials according to the operator's policy.
+## Organization-owned always-live event workers
 
-Image build dispatch records explicitly distinguish a definitive submission
-rejection from an unconfirmed outcome. Unknown Cloud Build POSTs are observed by
-their original unique tag and never resubmitted automatically. A crash before
-POST may therefore require operator reconciliation; elapsed time alone cannot
-prove that no build was accepted. Retirement blocks new builds/resolution but
-keeps existing immutable registry blobs for retained Agents.
+A gateway creator authenticated as an organization can prepare an Event Worker
+Profile with `metadata.owner.kind: organization`. The gateway verifies the NyxID
+subject type, using the authenticated organization authorization endpoint when
+older user profiles omit that type. CMA accepts the owner assertion only through
+the independently authenticated provider-binding manager. New binding sandbox
+admission atomically writes explicit organization ownership evidence; failed
+admission cannot leave an ownership sidecar behind. Existing personal bindings
+retain their original interpretation. Owner kind cannot change through reconfigure.
+
+The CMA provider accepts `environment.always_keep_alive: true`. The immutable
+binding plan retains this policy and automatic inactivity scheduling consults
+that exact binding and sandbox lineage. This prevents inactivity pause; it does
+not block an explicitly requested manual lifecycle operation. Existing retained
+availability policies continue to apply, including catalog-cleanup survivors.
+
+### Bot Father sender-authorized setup
+
+The expanded agent-owned requirements, channel target modes, delegated login
+continuation and current implementation gaps are recorded in
+[CMA Bot Father](CMA_Bot_Father.md). The setup API below is an intermediate
+capability and does not by itself implement that complete design.
+
+CMA Bot Father is an ordinary agent in the ChronoAI organization with the
+[CMA Bot Father skill](skills/cma-bot-father/SKILL.md). Its runtime uses
+`chrono-llm-public`, `ornn-api`, `cmaeg` and `cma`. The `cma` grant lets the skill
+call the existing CMA service through the runtime's credential-injecting NyxID
+proxy. It does not grant management authority over other users' resources.
+CMA recognizes the binding key and limits it to binding conversations and the
+sender-authorized setup and delegated-operation APIs. Adding this transport reach to an externally
+managed key does not require replacing its existing sandbox or changing the
+immutable environment snapshot. Credential service access must still be verified
+through the exact organization connection and NyxID key scope plan.
+
+CMAEG owns generic event, context and reply IO. It has no Bot Father configuration,
+slash-command interception, business workflow or setup renderer. Every Activity,
+including a login return or interaction result, reaches the normal provider.
+The skill interprets natural conversation and calls
+`POST /api/v1/bot-setups/actions`; the public contract is documented in
+[API REST](API_REST.md#bot-father-setup-workflow). Ordinary questions remain normal
+agent work, including during an unfinished setup.
+
+Enable the CMA workflow by setting `CHRONO_BOT_FATHER_BINDING_ID` and
+`CHRONO_BOT_FATHER_TELEGRAM_USERNAME` in CMA's environment. The binding must be a
+valid `bnd_` identifier and the username must be the exact Telegram username
+without `@`. An incomplete or malformed pair fails startup; absent values disable
+this CMA integration. These are not gateway settings or credentials.
+
+The agent supplies the current event reference and a typed action separately.
+CMA obtains the original retained Activity through the generic gateway context
+API, authenticates the configured binding, and derives the private-chat sender
+from the attested event. An action cannot replace that identity or rewrite the
+message. A sender without a linked identity receives a short-lived sign-in link.
+CMA retains the renewable NyxID credential and activates delegation only after
+fresh browser-bound PKCE login plus explicit consent for the displayed Telegram
+actor. The activation and pending callback are committed together. CMA resumes
+the exact initiating Agent through its leased durable outbox, recovers the same
+command after restart, and delivers the result through the gateway's 24-hour
+reply target. A callback never invents fresh human creation consent. The agent
+never receives an access token, refresh token, password or Telegram Bot token.
+
+The skill asks whether resources belong to Personal or an authorized organization,
+then offers defaults or customized Agent, Workspace and Sandbox settings.
+It prepares configuration from the user's preferences and executes typed CMA
+operations. Users do not copy commands or JSON. Organization choices use the exact
+organization's service inventory and connections; personal connections cannot
+satisfy them. Missing connections use the returned owner-scoped sign-in links.
+
+The user selects an owned Telegram Bot or follows the owner-scoped registration
+link. The skill displays the effective owner, Bot, services, admission rules,
+profiles and availability for final review. Creation requires a separate signed
+user message such as `Create Bot` or `确认创建`, or a matching generic interaction,
+received after that review. CMA checks the exact digest/revision and records the
+plan before its existing durable Bot worker admits provisioning. An agent's own
+request cannot stand in for the user's final confirmation.
+
+Typed operations have durable request IDs and revision checks, so one natural
+message can drive several authorized choices and retries do not duplicate work.
+Plans, login grants and receipts survive restarts. Bot Father enables
+`environment.session_affinity: "source_user"` and `environment.isolated_agents:
+true` in its CMA Event Worker Profile. The provider attests the source user,
+selects a durable per-user Agent/Worktree in the retained Sandbox, and isolates
+the process filesystem, network and platform routes. These profile flags do not
+change the projected Sandbox/Workspace or the stored service key. Workspace
+capacity remains bounded; exhausted users are never assigned a sibling's Agent.
+The agent reports completion
+only when CMA returns an active result with the resulting Bot URL.
+Legacy `advance` requests and encrypted pre-provider event snapshots remain
+compatible; new model turns use the ordinary provider context store.
+
+When moving an existing Telegram bot to Father, first disable its old CMA Bot
+connection with `POST /api/v1/bots/{bot_id}/disable` and wait for completion.
+The old provider binding, sandbox, conversations and credential renewal remain
+owned by the original user. Disabled Bot renewal updates the provider credential
+without updating an external route. It preserves the old route key while a
+complete owner-scoped inventory proves that key is still bound to the exact
+route; after retirement, obsolete keys can be revoked. Enabling a Bot reconciles
+the route to the current key before opening gateway admission. Keep the old
+connection disabled after migration: its retained runtime continues credential
+renewal independently. Do not enable a connection whose route was retired;
+that operation remains denied and retries under the existing worker semantics,
+which blocks scheduled rotation until the pending operation is resolved.
+
+### Opaque gateway connection record storage
+
+The service-authenticated `/api/v1/gateway/connection-records` namespace uses the
+same bounded opaque blob, majority persistence and optimistic concurrency
+contract as channel records, in the separate `gateway_connection_records`
+collection. CMA does not deserialize platform setup state or platform
+credentials. The gateway alone encrypts and interprets these records. The
+existing `cma:gateway:records` capability covers the namespace; no new shared
+credential, Secret Manager dependency or user credential store is introduced.

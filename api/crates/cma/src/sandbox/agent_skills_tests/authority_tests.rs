@@ -83,7 +83,7 @@ fn credential_material() -> CredentialMaterial {
 }
 
 pub(super) enum CredentialReply {
-    Present(CredentialMaterial),
+    Present(Box<CredentialMaterial>),
     Missing,
     Failed(String),
     Refused(String),
@@ -97,7 +97,7 @@ pub(super) struct TestCredentials {
 
 impl TestCredentials {
     pub(super) fn present() -> Arc<Self> {
-        Self::with(CredentialReply::Present(credential_material()))
+        Self::with(CredentialReply::Present(Box::new(credential_material())))
     }
     pub(super) fn with(reply: CredentialReply) -> Arc<Self> {
         Arc::new(Self {
@@ -121,7 +121,7 @@ impl SandboxCredentialController for TestCredentials {
             .unwrap()
             .push((sandbox_id.clone(), generation));
         match &self.reply {
-            CredentialReply::Present(material) => Ok(Some(material.clone())),
+            CredentialReply::Present(material) => Ok(Some(material.as_ref().clone())),
             CredentialReply::Missing => Ok(None),
             CredentialReply::Failed(error) => Err(CredentialError::Unavailable(error.clone())),
             CredentialReply::Refused(error) => Err(CredentialError::Security(error.clone())),
@@ -192,7 +192,7 @@ async fn mismatched_scoped_custody_fails_before_any_metadata_request() {
             8 => material.authority.provider_state_version = 4,
             _ => sandbox.credential.current = None,
         }
-        let credentials = TestCredentials::with(CredentialReply::Present(material));
+        let credentials = TestCredentials::with(CredentialReply::Present(Box::new(material)));
         let error = resolver(&registry, Some(credentials.clone()))
             .resolve(&sandbox, &[reference("skl_public", None)])
             .await

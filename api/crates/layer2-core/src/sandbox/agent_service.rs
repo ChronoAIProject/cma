@@ -1,4 +1,5 @@
 mod binding;
+mod creation;
 mod launch;
 mod support;
 use launch::CreationAttribution;
@@ -178,55 +179,6 @@ impl AgentService {
             runtimes: self.runtimes.clone(),
             runtime_capabilities: self.runtime_capabilities.clone(),
         })
-    }
-
-    pub async fn create(
-        &self,
-        caller: &Caller,
-        workspace_id: &WorkspaceId,
-        request: CreateAgent,
-    ) -> Result<Agent, AgentServiceError> {
-        self.create_as(
-            caller,
-            &crate::resource_access::ResourceActor::Human {
-                subject: caller.subject.clone(),
-            },
-            workspace_id,
-            request,
-        )
-        .await
-    }
-
-    /// Attribution is supplied by authentication, independently of ownership.
-    pub async fn create_as(
-        &self,
-        caller: &Caller,
-        actor: &crate::resource_access::ResourceActor,
-        workspace_id: &WorkspaceId,
-        request: CreateAgent,
-    ) -> Result<Agent, AgentServiceError> {
-        require(caller)?;
-        if !matches!(actor,
-            crate::resource_access::ResourceActor::Human { subject }
-            | crate::resource_access::ResourceActor::Api { subject, delegation_id: None }
-            if subject == &caller.subject)
-        {
-            return Err(AgentServiceError::Forbidden);
-        }
-        if !matches!(&request.origin, AgentOrigin::Manual) {
-            return Err(AgentServiceError::InvalidRequest(
-                "trigger origin requires launch admission".into(),
-            ));
-        }
-        self.create_with_profile(
-            caller,
-            workspace_id,
-            request,
-            false,
-            false,
-            CreationAttribution::ordinary(actor.clone()),
-        )
-        .await
     }
 
     async fn create_with_profile(

@@ -213,6 +213,7 @@ impl HostedBackend for InMemoryHostedBackend {
                     | RequestFrame::CaptureAgent(_)
                     | RequestFrame::Resources
                     | RequestFrame::RuntimeStatus(_)
+                    | RequestFrame::ToolProxyStatus(_)
             )
         {
             return refused(operation, "checkpoint_writers_held");
@@ -294,6 +295,9 @@ impl HostedBackend for InMemoryHostedBackend {
             }
             RequestFrame::Resources => checkpoint::resources(runtime),
             RequestFrame::RuntimeStatus(request) => status::inspect(runtime, request),
+            RequestFrame::ToolProxyStatus(_) => Err(AdapterError::Unsupported(
+                "this runtime has no credential tool proxy".into(),
+            )),
             RequestFrame::WorkspaceRemovalSupport(_)
             | RequestFrame::ReconcileWorkspaceRemoval(_) => Err(AdapterError::Unsupported(
                 "guarded Workspace removal is unavailable in this runtime".into(),

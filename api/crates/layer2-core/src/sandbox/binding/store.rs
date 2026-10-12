@@ -7,6 +7,8 @@ use crate::sandbox::store::SandboxStoreError;
 /// additionally fences the exact parent revision in the same transaction.
 #[async_trait::async_trait]
 pub trait BindingStore: Send + Sync {
+    /// Current and retained former binding keys cannot acquire ambient authority.
+    async fn contains_key_hash(&self, hash: &str) -> Result<bool, SandboxStoreError>;
     /// Unique hash lookup. Retired bindings never authenticate.
     async fn find_by_key_hash(
         &self,
@@ -73,7 +75,9 @@ pub fn validate_binding_write(
                 ) || matches!(
                     (&next.state, next.work),
                     (BindingState::Failed { .. }, BindingWork::Idle)
-                )) =>
+                ) || (next.existing_agent.is_some()
+                    && next.state == BindingState::Ready
+                    && next.work == BindingWork::Idle)) =>
         {
             Ok(())
         }
@@ -84,6 +88,8 @@ pub fn validate_binding_write(
             if current.binding_id != next.binding_id
                 || current.owner != next.owner
                 || current.manager != next.manager
+                || current.tool_endpoint != next.tool_endpoint
+                || current.existing_agent != next.existing_agent
                 || current.created_at != next.created_at
                 || crate::seconds_from_rfc3339(&next.updated_at)
                     < crate::seconds_from_rfc3339(&current.updated_at)
@@ -162,6 +168,12 @@ pub fn validate_conversation_write(
         || binding.binding_id != next.binding_id
         || binding.owner != next.owner
         || !parent_matches
+        || next.borrowed != binding.existing_agent.is_some()
+        || binding.existing_agent.as_ref().is_some_and(|agent| {
+            next.agent_id != agent.agent_id
+                || next.worktree_id != agent.worktree_id
+                || next.conversation_id != super::EXISTING_AGENT_CONVERSATION
+        })
         || (matches!(
             next.state,
             BindingConversationState::Provisioning | BindingConversationState::Ready
@@ -174,7 +186,9 @@ pub fn validate_conversation_write(
             if binding.state == BindingState::Ready
                 && next.generation == binding.generation
                 && next.revision == 1
-                && next.state == BindingConversationState::Provisioning =>
+                && (next.state == BindingConversationState::Provisioning
+                    || (binding.existing_agent.is_some()
+                        && next.state == BindingConversationState::Ready)) =>
         {
             Ok(())
         }

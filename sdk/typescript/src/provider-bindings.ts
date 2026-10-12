@@ -8,11 +8,22 @@ import {
   optional,
   positiveInteger,
   record,
+  tagged,
   text,
   type Output,
 } from './schema.js';
 
+export const BindingTargetSchema = tagged(
+  {
+    profile: object({ type: enumeration('profile') }),
+    existing_agent: object({ type: enumeration('existing_agent'), agent_id: text }),
+  },
+  'type',
+);
+export type BindingTarget = Output<typeof BindingTargetSchema>;
+
 const binding = object({
+  target: optional(BindingTargetSchema),
   binding_id: text,
   owner: text,
   profile_digest: text,
@@ -29,10 +40,11 @@ const binding = object({
 });
 const conversation = object({
   conversation_id: text,
-  agent_id: text,
+  agent_id: optional(text),
   state: enumeration('provisioning', 'ready', 'failed', 'retiring', 'retired'),
 });
 const putBinding = object({
+  target: optional(BindingTargetSchema),
   schema_version: positiveInteger,
   profile: record,
   profile_digest: text,

@@ -1,21 +1,27 @@
 //! Channel definitions and their stateless gateway policy.
 
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{collections::BTreeSet, fmt, str::FromStr};
+use std::{collections::BTreeSet, str::FromStr};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use utoipa::ToSchema;
 
 use crate::{
     ids::{BindingId, ProviderSlug, RecordId},
-    profile::{AgentProfileSnapshot, NyxIdIdentity},
+    profile::{EventWorkerProfile, NyxIdIdentity},
     require_string, ValidationError,
 };
 
+mod platform;
+mod secrets;
+mod telegram;
+pub use secrets::{ChannelSecrets, Secret};
 mod validation;
+pub use platform::Platform;
 pub(crate) use validation::validate_https_url;
 use validation::{
     validate_admission, validate_custom_auth, validate_hash, validate_nonempty_unique,
+    validate_relay_identity,
 };
 
 pub const CHANNEL_SCHEMA_VERSION: u16 = 1;
@@ -23,19 +29,6 @@ pub const MAX_SOURCES: usize = 4;
 pub const MAX_ROUTE_IDS: usize = 64;
 pub const MAX_SINKS: usize = 3;
 pub const MAX_PROMPT_TEMPLATE_BYTES: usize = 8 * 1_024;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum Platform {
-    Telegram,
-}
-impl Platform {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Telegram => "telegram",
-        }
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -51,13 +44,57 @@ pub enum ConformanceLevel {
 #[serde(deny_unknown_fields)]
 pub struct ProviderBinding {
     pub slug: ProviderSlug,
+    #[serde(default, skip_serializing_if = "ProviderTarget::is_profile")]
+    pub target: ProviderTarget,
     pub binding_id: BindingId,
     pub level: ConformanceLevel,
+}
+
+/// Generic provider target. Instance selection and authorization stay with the
+/// provider; the gateway only retains and forwards this declaration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
+pub enum ProviderTarget {
+    Profile {},
+    ExistingAgent { agent_id: String },
+}
+
+impl Default for ProviderTarget {
+    fn default() -> Self {
+        Self::Profile {}
+    }
+}
+
+impl ProviderTarget {
+    pub fn is_profile(&self) -> bool {
+        matches!(self, Self::Profile {})
+    }
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        if let Self::ExistingAgent { agent_id } = self {
+            require_string(agent_id, "/provider/target/agent_id", 1, 128)?;
+            if !agent_id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+            {
+                return Err(ValidationError::new(
+                    "/provider/target/agent_id",
+                    "must be a provider agent identifier",
+                ));
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 pub enum Source {
+    Telegram {
+        bot_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        bot_username: Option<String>,
+        admission: AdmissionPolicy,
+    },
     NyxidRelay {
         issuer: String,
         jwks_url: String,
@@ -66,6 +103,12 @@ pub enum Source {
         platform: Platform,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         bot_username: Option<String>,
+        // The bot's own platform user ID, such as a Lark bot `open_id`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        bot_id: Option<String>,
+        // Explicit opt-in to admit a platform without a raw-event verifier.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        trust_normalized: bool,
         admission: AdmissionPolicy,
     },
     Custom {
@@ -156,48 +199,6 @@ pub enum Sink {
     Sync {},
 }
 
-/// A secret that only appears in the encrypted channel blob.
-#[derive(Clone, PartialEq, Eq, ToSchema)]
-#[schema(value_type = String)]
-pub struct Secret(String);
-
-impl Secret {
-    pub fn new(value: impl Into<String>) -> Self {
-        Self(value.into())
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Debug for Secret {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("[redacted]")
-    }
-}
-
-impl<'de> Deserialize<'de> for Secret {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        Ok(Self(String::deserialize(deserializer)?))
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ChannelSecrets {
-    pub agent_key_hash: String,
-    #[serde(default, skip_serializing)]
-    pub channel_key: Option<Secret>,
-    #[serde(default, skip_serializing)]
-    pub hmac_secrets: Vec<(String, Secret)>,
-    #[serde(default, skip_serializing)]
-    pub provider_credential: Option<Secret>,
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ChannelDefinition {
@@ -208,10 +209,12 @@ pub struct ChannelDefinition {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub creation: Option<ChannelCreation>,
     pub owner: NyxIdIdentity,
-    pub profile: AgentProfileSnapshot,
+    pub profile: EventWorkerProfile,
     pub profile_digest: String,
     pub provider: ProviderBinding,
     pub sources: Vec<Source>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection_ref: Option<String>,
     pub partition: PartitionRule,
     pub reply: ReplyPolicy,
     #[serde(default, skip_serializing)]
@@ -239,6 +242,10 @@ impl ChannelDefinition {
             ));
         }
         require_string(&self.name, "/name", 0, 80)?;
+        if let Some(reference) = &self.connection_ref {
+            require_string(reference, "/connection_ref", 1, 4096)?;
+        }
+        self.provider.target.validate()?;
         self.profile.validate().map_err(|error| {
             ValidationError::new(format!("/profile{}", error.pointer), error.message)
         })?;
@@ -260,6 +267,25 @@ impl ChannelDefinition {
         for (index, source) in self.sources.iter().enumerate() {
             let pointer = format!("/sources/{index}");
             match source {
+                Source::Telegram {
+                    bot_id,
+                    bot_username,
+                    admission,
+                } => {
+                    if !variants.insert("telegram") {
+                        return Err(ValidationError::new(
+                            &pointer,
+                            "source variant is duplicated",
+                        ));
+                    }
+                    telegram::validate(
+                        bot_id,
+                        bot_username.as_deref(),
+                        admission,
+                        &self.secrets,
+                        &pointer,
+                    )?;
+                }
                 Source::NyxidRelay {
                     issuer,
                     jwks_url,
@@ -267,6 +293,8 @@ impl ChannelDefinition {
                     route_ids,
                     platform,
                     bot_username,
+                    bot_id,
+                    trust_normalized,
                     admission,
                 } => {
                     if !variants.insert("nyxid_relay") {
@@ -289,18 +317,13 @@ impl ChannelDefinition {
                             MAX_ROUTE_IDS,
                         )?;
                     }
-                    if let Some(username) = bot_username {
-                        if !(5..=32).contains(&username.len())
-                            || !username
-                                .bytes()
-                                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
-                        {
-                            return Err(ValidationError::new(
-                                format!("{pointer}/bot_username"),
-                                "must contain 5..=32 Telegram username characters without @",
-                            ));
-                        }
-                    }
+                    validate_relay_identity(
+                        *platform,
+                        bot_username.as_deref(),
+                        bot_id.as_deref(),
+                        *trust_normalized,
+                        &pointer,
+                    )?;
                     validate_admission(admission, &pointer)?;
                 }
                 Source::Custom {
@@ -382,6 +405,8 @@ impl ChannelDefinition {
                 json!([key, secret.as_str()])
             }).collect::<Vec<_>>(),
             "provider_credential": self.secrets.provider_credential.as_ref().map(Secret::as_str),
+            "telegram_bot_token": self.secrets.telegram_bot_token.as_ref().map(Secret::as_str),
+            "telegram_webhook_secret": self.secrets.telegram_webhook_secret.as_ref().map(Secret::as_str),
         }));
         Value::Object(object)
     }
@@ -414,7 +439,7 @@ impl PartitionRule {
             .any(|source| matches!(source, Source::Custom { .. }));
         let has_relay = sources
             .iter()
-            .any(|source| matches!(source, Source::NyxidRelay { .. }));
+            .any(|source| matches!(source, Source::NyxidRelay { .. } | Source::Telegram { .. }));
         if has_custom
             && !matches!(
                 self.key,
@@ -439,19 +464,9 @@ impl PartitionRule {
         if matches!(self.key, PartitionKey::Thread) && !has_relay {
             return Err(ValidationError::new(
                 "/partition/key",
-                "requires a NyxID relay source",
+                "requires a chat source",
             ));
         }
         Ok(())
-    }
-}
-
-impl FromStr for Platform {
-    type Err = ValidationError;
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            "telegram" => Ok(Self::Telegram),
-            _ => Err(ValidationError::new("/platform", "unsupported platform")),
-        }
     }
 }

@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
 import { ApiError, createClient } from '@chronoai/cma-sdk';
@@ -31,6 +31,16 @@ function fixture(initial = ['view_details', 'view_history']) {
         capabilities: state.capabilities,
         revalidate_at: new Date(Date.now() + 50_000).toISOString(),
         policy_revision: state.policy,
+      });
+    if (url.pathname.endsWith('/channel-usage'))
+      return Response.json({
+        agent_id: 'agt_1',
+        channel_usage: {
+          active: false,
+          has_history: false,
+          first_used_at: null,
+          last_used_at: null,
+        },
       });
     if (url.pathname.endsWith('/provenance'))
       return Response.json({
@@ -118,7 +128,8 @@ it('allows current admin interaction through the public SDK and removes it on do
   );
   expect(test.fetch.mock.calls.filter(([url]) => String(url).endsWith('/input'))).toHaveLength(1);
   test.state.capabilities = ['view_details', 'view_history'];
-  await user.click(screen.getByRole('button', { name: 'Refresh access' }));
+  await user.click(screen.getByRole('button', { name: 'Show Agent details' }));
+  await user.click(await screen.findByRole('button', { name: 'Refresh access' }));
   expect(
     await screen.findByText(/Your current access does not allow interaction/),
   ).toBeInTheDocument();
@@ -137,7 +148,8 @@ it('clears a revoked shared page and aborts its open stream without signing out'
   await screen.findByText(/Your current access does not allow interaction/);
   await waitFor(() => expect(streams.length).toBe(1));
   test.state.revoked = true;
-  await userEvent.setup().click(screen.getByRole('button', { name: 'Refresh access' }));
+  await userEvent.setup().click(screen.getByRole('button', { name: 'Show Agent details' }));
+  await userEvent.setup().click(await screen.findByRole('button', { name: 'Refresh access' }));
   expect(await screen.findByRole('heading', { name: 'Agent unavailable' })).toBeInTheDocument();
   expect(screen.queryByText(detail.title)).not.toBeInTheDocument();
   expect(streams.every((signal) => signal.aborted)).toBe(true);
@@ -320,7 +332,60 @@ it('discards personal classification as soon as a shared response arrives and ke
   );
   await screen.findByText(/Your current access does not allow interaction/);
   vi.spyOn(sdk.agents, 'readAccessible').mockImplementation(() => new Promise(() => {}));
-  await userEvent.setup().click(screen.getByRole('button', { name: 'Refresh access' }));
+  await userEvent.setup().click(screen.getByRole('button', { name: 'Show Agent details' }));
+  await userEvent.setup().click(await screen.findByRole('button', { name: 'Refresh access' }));
   expect(screen.queryByRole('textbox', { name: 'Message' })).not.toBeInTheDocument();
   expect(screen.getByRole('heading', { name: 'Opening Agent' })).toBeInTheDocument();
+});
+
+it('uses the personal details drawer without private reads and clears details after revocation', async () => {
+  const test = fixture();
+  test.show();
+  const user = userEvent.setup();
+  const toggle = await screen.findByRole('button', { name: 'Show Agent details' });
+  expect(screen.queryByRole('complementary', { name: 'Agent details' })).not.toBeInTheDocument();
+  expect(test.fetch.mock.calls.some(([url]) => String(url).endsWith('/channel-usage'))).toBe(false);
+  await user.click(toggle);
+  const panel = await screen.findByRole('complementary', { name: 'Agent details' });
+  expect(await within(panel).findByText(detail.title)).toBeInTheDocument();
+  expect(await within(panel).findByText('No channel activity recorded')).toBeInTheDocument();
+  expect(within(panel).queryByRole('button', { name: 'Artifacts' })).not.toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: 'Close Agent details' }));
+  expect(toggle).toHaveFocus();
+  await user.click(toggle);
+  expect(
+    await within(screen.getByRole('complementary', { name: 'Agent details' })).findByText(
+      detail.title,
+    ),
+  ).toBeInTheDocument();
+  test.state.revoked = true;
+  act(() => window.dispatchEvent(new Event('focus')));
+  expect(await screen.findByRole('heading', { name: 'Agent unavailable' })).toBeInTheDocument();
+  expect(screen.queryByText(detail.title)).not.toBeInTheDocument();
+  for (const read of [
+    test.readAgent,
+    test.readWorkspace,
+    test.readSandbox,
+    test.readAgentResources,
+  ])
+    expect(read).not.toHaveBeenCalled();
+});
+
+it.each([
+  ['2026-08-31T23:59:00Z', 'Ready'],
+  ['2026-09-01T00:01:00Z', 'Paused'],
+])('uses timestamped shared status instead of stale replay (%s)', async (appendedAt, label) => {
+  const test = fixture();
+  test.web.readAgentEvents = async () => ({
+    items: [
+      {
+        seq: 5,
+        appendedAt,
+        kind: { type: 'status_changed', to: 'paused' },
+      },
+    ],
+  });
+  test.show();
+  await screen.findByText(/Your current access does not allow interaction/);
+  expect(document.querySelector('.agent-header__status')).toHaveTextContent(label);
 });

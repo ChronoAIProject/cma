@@ -18,18 +18,22 @@
 mod macros;
 pub mod admin;
 pub mod agent_card;
+pub mod agent_delegations;
 pub mod agent_events_v2;
 pub mod agents;
 pub mod agui;
 pub mod assets;
 pub mod auth;
+pub mod bot_setups;
 pub mod bots;
-pub mod bridges;
 mod client;
+pub mod cmaeg;
 mod conformance;
 pub mod defaults;
 pub mod discovery;
 mod error;
+pub mod event_worker_profiles;
+pub mod gateway_interactions;
 pub mod gateway_records;
 mod http;
 pub mod instances;
@@ -56,8 +60,6 @@ pub mod guides {
     pub mod sandboxes {}
     #[doc = include_str!("../docs/agents.md")]
     pub mod agents {}
-    #[doc = include_str!("../docs/bridges.md")]
-    pub mod bridges {}
     #[doc = include_str!("../docs/profiles.md")]
     pub mod profiles {}
     #[doc = include_str!("../docs/streaming.md")]

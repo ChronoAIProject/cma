@@ -12,12 +12,6 @@ pub struct AgentConversationMutation {
     pub command_claim: Option<crate::sandbox::agent_io::CommandClaim>,
     /// Opaque current resource permission; never attached to outcome evidence.
     pub execution_fence: Option<std::sync::Arc<crate::sandbox::agent_io::CommandExecutionFence>>,
-    /// Exact Channel invoke authority, independently fenced with original source.
-    pub channel_execution_fence:
-        Option<std::sync::Arc<crate::sandbox::agent_io::ChannelExecutionFence>>,
-    /// Exact original-source control authority, mutually exclusive with Message authority.
-    pub channel_control_execution_fence:
-        Option<std::sync::Arc<crate::sandbox::agent_io::ChannelControlExecutionFence>>,
     /// Exact immutable Trigger first-message binding and current store proof.
     pub trigger_execution_fence:
         Option<std::sync::Arc<crate::sandbox::agent_io::TriggerExecutionFence>>,
@@ -42,8 +36,6 @@ pub fn validate_agent_conversation_admission(
     let admission = admits_input(current, mutation);
     if [
         mutation.execution_fence.is_some(),
-        mutation.channel_execution_fence.is_some(),
-        mutation.channel_control_execution_fence.is_some(),
         mutation.trigger_execution_fence.is_some(),
     ]
     .into_iter()
@@ -53,20 +45,8 @@ pub fn validate_agent_conversation_admission(
     {
         return Err(SandboxStoreError::Conflict);
     }
-    let supersession = mutation
-        .channel_execution_fence
-        .as_ref()
-        .filter(|fence| fence.superseding_command().is_some());
-    if let Some(fence) = supersession {
-        fence.validate_supersession(current, mutation)?;
-    }
-    if (mutation.execution_fence.is_some()
-        || mutation.channel_execution_fence.is_some()
-        || mutation.channel_control_execution_fence.is_some()
-        || mutation.trigger_execution_fence.is_some())
-        && ((mutation.command_claim.is_none() && supersession.is_none())
-            || mutation.admission_guard.is_none()
-            || !admission)
+    if (mutation.execution_fence.is_some() || mutation.trigger_execution_fence.is_some())
+        && (mutation.command_claim.is_none() || mutation.admission_guard.is_none() || !admission)
     {
         return Err(SandboxStoreError::Conflict);
     }
@@ -92,7 +72,7 @@ pub fn validate_agent_conversation_admission(
     // Recheck inside the dispatch transaction, even if a caller observed an
     // active parent before lifecycle work started. Legacy lifecycle queues do
     // not carry a common command claim and retain their existing admission.
-    if (mutation.command_claim.is_some() || supersession.is_some())
+    if mutation.command_claim.is_some()
         && !matches!(
             parent.status,
             SandboxStatus::Active | SandboxStatus::CredentialRotating

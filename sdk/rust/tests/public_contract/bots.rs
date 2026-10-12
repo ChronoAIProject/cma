@@ -9,6 +9,37 @@ fn check<T: Serialize>(c: &Context<'_>, result: Result<T>) -> Result<()> {
 pub async fn dispatch(c: &Context<'_>) -> Result<()> {
     let bots = c.client.bots();
     match c.case.operation.as_str() {
+        "POST /api/v1/agent-delegations/identity" => {
+            check(c, c.client.agent_delegations().identity(&c.body()?).await)
+        }
+        "POST /api/v1/agent-delegations/operations" => {
+            check(c, c.client.agent_delegations().operate(&c.body()?).await)
+        }
+        "POST /api/v1/bot-setups/advance" => {
+            check(c, c.client.bot_setups().advance(&c.body()?).await)
+        }
+        "POST /api/v1/bot-setups/actions" => check(c, c.client.bot_setups().act(&c.body()?).await),
+        "PUT /api/v1/gateway/interaction-records/{record_id}" => c.check(
+            c.client
+                .gateway_interactions()
+                .put(c.param("record_id"), &c.body()?)
+                .await,
+        ),
+        "GET /api/v1/gateway/interaction-records/{record_id}" => c.check(
+            c.client
+                .gateway_interactions()
+                .get(c.param("record_id"))
+                .await,
+        ),
+        "DELETE /api/v1/gateway/interaction-records/{record_id}" => c.check(
+            c.client
+                .gateway_interactions()
+                .delete(
+                    c.param("record_id"),
+                    c.query["expected_version"].parse().unwrap(),
+                )
+                .await,
+        ),
         "POST /api/v1/bots" => check(c, bots.create(&c.body()?, &c.key()?).await),
         "GET /api/v1/bots" => check(
             c,

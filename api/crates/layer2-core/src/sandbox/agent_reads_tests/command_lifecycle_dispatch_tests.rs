@@ -129,8 +129,6 @@ async fn transaction_refuses_claimed_input_before_active_publication() {
         let mutation = AgentConversationMutation {
             command_claim: Some(command.work.lease.unwrap().claim),
             execution_fence: None,
-            channel_execution_fence: None,
-            channel_control_execution_fence: None,
             trigger_execution_fence: None,
             admission_guard: Some(SandboxMutationGuard::capture(&parent)),
             expected_agent_revision: agent.revision,

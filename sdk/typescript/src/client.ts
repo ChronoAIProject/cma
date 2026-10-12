@@ -1,6 +1,10 @@
+import { EventWorkerProfiles } from './event-worker-profiles.js';
 import { ProviderBindings } from './provider-bindings.js';
 import { GatewayRecords } from './gateway-records.js';
 import { Bots } from './bots.js';
+import { BotSetups } from './bot-setups.js';
+import { AgentDelegations } from './agent-delegations.js';
+import { GatewayInteractions } from './gateway-interactions.js';
 import { readAgentCard } from './agent-card.js';
 import { resolveConfig, type ClientConfig, type ResolvedConfig } from './config.js';
 import {
@@ -26,7 +30,6 @@ import { Responses } from './responses.js';
 import { UnsupportedInterfaces } from './unsupported.js';
 import { ProfileAuthoring } from './profile-authoring/index.js';
 import { ResourceAccess } from './resource-access.js';
-import { Bridges } from './bridges.js';
 import { AgentEventsV2 } from './agent-events-v2/index.js';
 
 /** A configured client for the public CMA resource and discovery APIs. */
@@ -34,10 +37,14 @@ export class Cma {
   readonly #config: ResolvedConfig;
   readonly providerBindings: ProviderBindings;
   readonly gatewayRecords: GatewayRecords;
+  readonly gatewayConnectionRecords: GatewayRecords;
   readonly bots: Bots;
+  readonly botSetups: BotSetups;
+  readonly agentDelegations: AgentDelegations;
+  readonly gatewayInteractions: GatewayInteractions;
+  readonly eventWorkerProfiles: EventWorkerProfiles;
   readonly agents: Agents;
   readonly resourceAccess: ResourceAccess;
-  readonly bridges: Bridges;
   readonly sandboxes: Sandboxes;
   readonly workspaces: Workspaces;
   readonly worktrees: Worktrees;
@@ -65,10 +72,14 @@ export class Cma {
     this.#config = resolveConfig(config);
     this.providerBindings = new ProviderBindings(this.#config);
     this.gatewayRecords = new GatewayRecords(this.#config);
+    this.gatewayConnectionRecords = new GatewayRecords(this.#config, 'connection-records');
     this.bots = new Bots(this.#config);
+    this.botSetups = new BotSetups(this.#config);
+    this.agentDelegations = new AgentDelegations(this.#config);
+    this.gatewayInteractions = new GatewayInteractions(this.#config);
+    this.eventWorkerProfiles = new EventWorkerProfiles(this.#config);
     this.agents = new Agents(this.#config);
     this.resourceAccess = new ResourceAccess(this.#config);
-    this.bridges = new Bridges(this.#config);
     this.sandboxes = new Sandboxes(this.#config);
     this.workspaces = new Workspaces(this.#config);
     this.worktrees = new Worktrees(this.#config);

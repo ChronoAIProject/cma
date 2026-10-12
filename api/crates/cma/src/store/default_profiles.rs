@@ -57,6 +57,7 @@ impl DefaultProfileSpec {
             forked_from: None,
             uses_count: 0,
             draft: AgentProfileContent {
+                isolated_agent: false,
                 model: Some(self.agent_model.clone()),
                 thinking_effort: self.agent_effort,
                 permission_level: PermissionLevel::Guarded,

@@ -47,6 +47,9 @@ impl BindingCredentialCustody for Custody {
     }
 }
 pub(super) fn app() -> (Router, Arc<InMemorySandboxStore>) {
+    app_with_tools(None)
+}
+fn app_with_tools(endpoint: Option<&str>) -> (Router, Arc<InMemorySandboxStore>) {
     let store = Arc::new(InMemorySandboxStore::default());
     let profiles = Arc::new(InMemoryProfileStore::default());
     let resources = BindingResources {
@@ -65,25 +68,33 @@ pub(super) fn app() -> (Router, Arc<InMemorySandboxStore>) {
         ),
     };
     (
-        binding_router(BindingService::new(
-            store.clone(),
-            profiles,
-            resources,
-            Arc::new(Custody),
-            BindingPolicy {
-                provider: AgentProvider::default(),
-                supported_model_api: "responses".into(),
-                bounds: ProfileCapacityBounds {
-                    min_cpu_millis: 250,
-                    max_cpu_millis: 8000,
-                    min_memory_mib: 512,
-                    max_memory_mib: 16384,
+        route_service(
+            BindingService::new(
+                store.clone(),
+                resources,
+                Arc::new(Custody),
+                BindingPolicy {
+                    provider: AgentProvider::default(),
+                    supported_model_api: "responses".into(),
+                    bounds: ProfileCapacityBounds {
+                        min_cpu_millis: 250,
+                        max_cpu_millis: 8000,
+                        min_memory_mib: 512,
+                        max_memory_mib: 16384,
+                    },
+                    sandbox: Arc::new(SandboxPolicy::default()),
                 },
-                sandbox: Arc::new(SandboxPolicy::default()),
-            },
-        )),
+            ),
+            endpoint,
+        ),
         store,
     )
+}
+fn route_service(service: Arc<BindingService>, endpoint: Option<&str>) -> Router {
+    match endpoint {
+        Some(endpoint) => super::binding_router_with_native_tools(service, endpoint).unwrap(),
+        None => binding_router(service),
+    }
 }
 pub(super) fn request(
     method: &str,
@@ -220,4 +231,137 @@ async fn binding_routes_replay_binding_and_conversation_and_acknowledge_retireme
         .await
         .unwrap();
     assert_eq!(json_body(retired).await["state"], "retired");
+}
+
+#[tokio::test]
+async fn native_tools_accept_only_the_configured_destination_and_retain_it_on_replay() {
+    let (app, store) = app_with_tools(Some("https://gateway.example/mcp"));
+    let path = "/api/v1/cmaeg/bindings/binding-tools";
+    let input = body();
+    for destination in [
+        "https://other.example/mcp",
+        "https://gateway.example/mcp?leak=true",
+        "http://gateway.example/mcp",
+    ] {
+        let mut changed = input.clone();
+        changed["tools"]["native_mcp_url"] = json!(destination);
+        let response = app
+            .clone()
+            .oneshot(request("PUT", path, Some(changed), Some(authority())))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert!(store.binding("binding-tools").await.unwrap().is_none());
+    }
+    let mut first = None;
+    for _ in 0..2 {
+        let response = app
+            .clone()
+            .oneshot(request("PUT", path, Some(input.clone()), Some(authority())))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let value = json_body(response).await;
+        assert!(value["honoured"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("tools.native_mcp_url")));
+        assert!(!value["refused"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["field"] == "tools.native_mcp_url"));
+        let retained = store.binding("binding-tools").await.unwrap().unwrap();
+        if let Some(revision) = first {
+            assert_eq!(retained.revision, revision);
+        } else {
+            first = Some(retained.revision);
+        }
+    }
+    let retained = store.binding("binding-tools").await.unwrap().unwrap();
+    assert_eq!(
+        retained.tool_endpoint.as_deref(),
+        Some("https://gateway.example/mcp")
+    );
+}
+
+#[tokio::test]
+async fn source_user_transport_lifecycle_never_reserves_or_retires_an_agent() {
+    let (app, store) = app();
+    let path = "/api/v1/cmaeg/bindings/binding-users";
+    let mut input = body();
+    input["profile"]["environment"]["session_affinity"] = json!("source_user");
+    input["profile_digest"] = json!(format!(
+        "sha256:{}",
+        content_digest(&input["profile"]).unwrap()
+    ));
+    let response = app
+        .clone()
+        .oneshot(request("PUT", path, Some(input), Some(authority())))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut binding = store.binding("binding-users").await.unwrap().unwrap();
+    assert_eq!(
+        binding.profile.session_affinity,
+        SessionAffinity::SourceUser
+    );
+    let revision = binding.revision;
+    binding.state = BindingState::Ready;
+    binding.work = BindingWork::Idle;
+    binding
+        .advance_revision(layer2_core::now_rfc3339())
+        .unwrap();
+    let generation = binding.generation;
+    store.save_binding(Some(revision), binding).await.unwrap();
+    for transport in ["chat_one", "chat_two", "cma_user_untrusted_alias"] {
+        let target = format!("{path}/conversations/{transport}");
+        let response = app
+            .clone()
+            .oneshot(request("PUT", &target, None, Some(authority())))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            json_body(response).await,
+            json!({"conversation_id":transport,"state":"ready"})
+        );
+        for _ in 0..2 {
+            let response = app
+                .clone()
+                .oneshot(request("DELETE", &target, None, Some(authority())))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        }
+    }
+    assert!(store
+        .binding_conversations("binding-users", generation, None, 100)
+        .await
+        .unwrap()
+        .is_empty());
+    for method in ["PUT", "DELETE"] {
+        let response = app
+            .clone()
+            .oneshot(request(
+                method,
+                &format!("{path}/conversations/bad"),
+                None,
+                Some(authority()),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let response = app
+            .clone()
+            .oneshot(request(
+                method,
+                &format!("{path}/conversations/chat_one"),
+                None,
+                Some(Authorization::none()),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
 }

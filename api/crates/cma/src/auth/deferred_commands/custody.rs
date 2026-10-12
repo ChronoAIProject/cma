@@ -4,6 +4,7 @@ use crate::auth::persistence::ApiBearerCustody;
 pub(super) enum CommandCustody {
     Personal(SubjectAuthState),
     Api(ApiBearerCustody),
+    Delegated(Box<super::delegated::DelegatedCommandCustody>),
 }
 
 impl AuthState {
@@ -12,6 +13,16 @@ impl AuthState {
         actor: &AgentActor,
         authority: &AgentAuthorizationRevision,
     ) -> Result<CommandCustody, CommandAuthorizationError> {
+        if let AgentActor::Api {
+            subject,
+            delegation_id: Some(grant_id),
+        } = actor
+        {
+            return self
+                .retained_delegated_custody(subject, grant_id, authority)
+                .await
+                .map(|custody| CommandCustody::Delegated(Box::new(custody)));
+        }
         let subject = match actor {
             AgentActor::Api {
                 subject,
@@ -47,6 +58,7 @@ impl AuthState {
         match custody {
             CommandCustody::Personal(state) => self.verify_human_state(state.clone()).await,
             CommandCustody::Api(record) => self.verify_api_custody(record).await,
+            CommandCustody::Delegated(custody) => self.verify_delegated_custody(custody).await,
         }
     }
 
@@ -61,6 +73,7 @@ impl AuthState {
                     .map_err(|_| CommandAuthorizationError::Unavailable)
             }
             CommandCustody::Api(record) => self.require_api_custody(record).await,
+            CommandCustody::Delegated(custody) => self.require_delegated_custody(custody).await,
         }
     }
 }

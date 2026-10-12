@@ -4,6 +4,39 @@ use super::{Phase, Supervisor};
 use crate::failure::{Result, RuntimeError};
 
 impl Supervisor {
+    pub(super) async fn tool_proxy_status(
+        &self,
+        request: layer3_adapter::ToolProxyRequest,
+    ) -> Result<layer3_adapter::ToolProxyStatus> {
+        let invalid = || {
+            RuntimeError::rejected(
+                "tool_proxy_unavailable",
+                "runtime cannot prove the requested tool endpoint",
+            )
+        };
+        request.validate().map_err(|_| invalid())?;
+        if request.sandbox_id != self.config.sandbox_id
+            || request.generation != self.config.generation
+            || self
+                .config
+                .tool_proxy
+                .as_ref()
+                .map(|config| config.upstream.as_str())
+                != Some(request.endpoint.as_str())
+            || self.credential.tool_proxy_generation().await != Some(request.credential_generation)
+        {
+            return Err(invalid());
+        }
+        let status = layer3_adapter::ToolProxyStatus {
+            request,
+            boot_id: self.boot_id.clone(),
+        };
+        status
+            .validate_for(&status.request)
+            .map_err(|_| invalid())?;
+        Ok(status)
+    }
+
     pub(super) async fn runtime_status(
         &self,
         request: RuntimeStatusRequest,

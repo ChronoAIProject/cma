@@ -337,6 +337,8 @@ dependencies = [
  "async-trait",
  "axum",
  "base64",
+ "cmaeg",
+ "cmaeg-core",
  "flate2",
  "futures-util",
  "governor",
@@ -365,53 +367,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "cma-image-manager"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "axum",
- "cma-service-auth",
- "futures-util",
- "mongodb",
- "reqwest",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "thiserror 2.0.20",
- "time",
- "tokio",
- "tower-http",
- "tracing",
- "tracing-subscriber",
- "url",
- "uuid",
-]
-
-[[package]]
-name = "cma-service-auth"
-version = "0.1.0"
-dependencies = [
- "axum",
- "base64",
- "mongodb",
- "reqwest",
- "ring",
- "serde",
- "serde_json",
- "thiserror 2.0.20",
- "tokio",
- "url",
- "uuid",
-]
-
-[[package]]
 name = "cmaeg"
 version = "0.1.0"
 dependencies = [
  "axum",
  "base64",
  "bytes",
- "cma-service-auth",
  "cmaeg-core",
  "dashmap",
  "futures-util",
@@ -420,10 +381,11 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "libc",
  "meteroid-utoipa",
  "metrics",
  "metrics-exporter-prometheus",
- "mongodb",
+ "pulldown-cmark",
  "reqwest",
  "ring",
  "rustls",
@@ -1838,7 +1800,6 @@ dependencies = [
  "k8s-openapi",
  "kube",
  "reqwest",
- "ring",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -1863,10 +1824,8 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
- "subtle",
  "tokio",
  "tokio-tungstenite 0.24.0",
- "tower",
  "tracing",
  "tracing-subscriber",
  "url",
@@ -2452,6 +2411,24 @@ checksum = "985e7ec9bb745e6ce6535b544d84d6cd6f7ad8bd711c398938ae983b91a766d9"
 dependencies = [
  "unicode-ident",
 ]
+
+[[package]]
+name = "pulldown-cmark"
+version = "0.13.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e9f068eba8e7071c5f9511831b44f32c740d5adf574e990f946ddb53db2f314e"
+dependencies = [
+ "bitflags 2.13.1",
+ "memchr",
+ "pulldown-cmark-escape",
+ "unicase",
+]
+
+[[package]]
+name = "pulldown-cmark-escape"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "007d8adb5ddab6f8e3f491ac63566a7d5002cc7ed73901f72057943fa71ae1ae"
 
 [[package]]
 name = "quanta"

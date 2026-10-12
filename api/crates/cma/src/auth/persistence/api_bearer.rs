@@ -13,7 +13,7 @@ pub struct ApiBearerCustody {
     pub credential_id: String,
     pub access_token: SecretValue,
     /// Exact provider-verified token expiry. Repeated admission cannot extend it.
-    pub expires_at: SystemTime,
+    pub expires_at: Option<SystemTime>,
 }
 
 impl ApiBearerCustody {
@@ -22,7 +22,7 @@ impl ApiBearerCustody {
         subject: SubjectId,
         credential_id: String,
         access_token: SecretValue,
-        expires_at: SystemTime,
+        expires_at: impl Into<Option<SystemTime>>,
     ) -> Result<Self, StoreError> {
         let record = Self {
             id: Self::identity(&issuer, &subject, &credential_id)?,
@@ -30,7 +30,7 @@ impl ApiBearerCustody {
             subject,
             credential_id,
             access_token,
-            expires_at,
+            expires_at: expires_at.into(),
         };
         record.validate()?;
         Ok(record)
@@ -50,7 +50,8 @@ impl ApiBearerCustody {
     pub fn validate(&self) -> Result<(), StoreError> {
         let expiry = self
             .expires_at
-            .duration_since(SystemTime::UNIX_EPOCH)
+            .map(|value| value.duration_since(SystemTime::UNIX_EPOCH))
+            .transpose()
             .map_err(|_| invalid())?;
         if self.issuer.trim().is_empty()
             || self.issuer.len() > 2048
@@ -68,9 +69,11 @@ impl ApiBearerCustody {
                 .expose()
                 .bytes()
                 .any(|byte| byte.is_ascii_whitespace() || byte.is_ascii_control())
-            || expiry.is_zero()
-            || expiry.subsec_nanos() != 0
-            || expiry.as_secs() > i64::MAX as u64 / 1000
+            || expiry.is_some_and(|expiry| {
+                expiry.is_zero()
+                    || expiry.subsec_nanos() != 0
+                    || expiry.as_secs() > i64::MAX as u64 / 1000
+            })
             || self.id != Self::identity(&self.issuer, &self.subject, &self.credential_id)?
         {
             return Err(invalid());

@@ -628,6 +628,7 @@
       "CallbackPayload": {
         "additionalProperties": false,
         "properties": {
+          "activity": {},
           "agent": {
             "$ref": "#/components/schemas/RelayAgent"
           },
@@ -665,6 +666,7 @@
           "sender": {
             "$ref": "#/components/schemas/RelaySender"
           },
+          "thread_context": {},
           "thread_id": {
             "oneOf": [
               {
@@ -769,10 +771,40 @@
         ],
         "type": "object"
       },
+      "CapabilityView": {
+        "properties": {
+          "platforms": {
+            "items": {
+              "$ref": "#/components/schemas/PlatformCapability"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "platforms"
+        ],
+        "type": "object"
+      },
       "ChannelCreateRequest": {
         "additionalProperties": false,
         "description": "Request wrapper used by channel creation.",
         "properties": {
+          "connection_admission": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AdmissionPolicy"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "connection_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "credentials": {
             "$ref": "#/components/schemas/CredentialsRequest"
           },
@@ -783,7 +815,7 @@
             "$ref": "#/components/schemas/PartitionRule"
           },
           "profile": {
-            "$ref": "#/components/schemas/AgentProfileSnapshot"
+            "$ref": "#/components/schemas/EventWorkerProfile"
           },
           "provider": {
             "$ref": "#/components/schemas/ProviderRequest"
@@ -851,26 +883,6 @@
         "description": "An encrypted pointer to a CMA channel record.",
         "type": "string"
       },
-      "ChannelPage": {
-        "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/ChannelResponse"
-            },
-            "type": "array"
-          },
-          "next_cursor": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        },
-        "required": [
-          "items"
-        ],
-        "type": "object"
-      },
       "ChannelResponse": {
         "properties": {
           "channel_id": {
@@ -908,6 +920,22 @@
         "additionalProperties": false,
         "description": "Update body; credentials are retained when this field is absent.",
         "properties": {
+          "connection_admission": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AdmissionPolicy"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "connection_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "credentials": {
             "oneOf": [
               {
@@ -930,7 +958,7 @@
             "$ref": "#/components/schemas/PartitionRule"
           },
           "profile": {
-            "$ref": "#/components/schemas/AgentProfileSnapshot"
+            "$ref": "#/components/schemas/EventWorkerProfile"
           },
           "provider": {
             "$ref": "#/components/schemas/ProviderRequest"
@@ -970,6 +998,9 @@
           },
           "label": {
             "type": "string"
+          },
+          "selected": {
+            "type": "boolean"
           },
           "style": {
             "$ref": "#/components/schemas/OptionStyle"
@@ -1040,6 +1071,59 @@
         ],
         "type": "string"
       },
+      "ConnectionPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ConnectionView"
+            },
+            "type": "array"
+          },
+          "next_after": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "ConnectionView": {
+        "properties": {
+          "connection_ref": {
+            "type": "string"
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "setup_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/Status"
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "connection_ref",
+          "status"
+        ],
+        "type": "object"
+      },
       "ContextConfig": {
         "additionalProperties": false,
         "properties": {
@@ -1066,18 +1150,39 @@
           "activity": {
             "$ref": "#/components/schemas/PublicActivity"
           },
+          "activity_verified": {
+            "type": "boolean"
+          },
           "capabilities": {
             "$ref": "#/components/schemas/Capabilities"
+          },
+          "channel_id": {
+            "$ref": "#/components/schemas/ChannelId"
           },
           "conversation_id": {
             "$ref": "#/components/schemas/ConversationId"
           },
           "event_id": {
             "$ref": "#/components/schemas/EventId"
+          },
+          "expires_at": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "provider_binding_id": {
+            "$ref": "#/components/schemas/BindingId"
+          },
+          "source": {
+            "$ref": "#/components/schemas/SourceKind"
           }
         },
         "required": [
           "event_id",
+          "channel_id",
+          "provider_binding_id",
+          "source",
+          "activity_verified",
+          "expires_at",
           "conversation_id",
           "activity",
           "capabilities"
@@ -1096,6 +1201,28 @@
           "custom"
         ],
         "type": "string"
+      },
+      "CreateConnection": {
+        "additionalProperties": false,
+        "properties": {
+          "event_ref": {
+            "type": "string"
+          },
+          "record_id": {
+            "type": "string"
+          },
+          "suggested_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "record_id",
+          "event_ref"
+        ],
+        "type": "object"
       },
       "CredentialPatch": {
         "additionalProperties": false,
@@ -1128,6 +1255,26 @@
               "array",
               "null"
             ]
+          },
+          "telegram_bot_token": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Secret"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "telegram_webhook_secret": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Secret"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object"
@@ -1153,6 +1300,26 @@
               "$ref": "#/components/schemas/HmacSecretRequest"
             },
             "type": "array"
+          },
+          "telegram_bot_token": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Secret"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "telegram_webhook_secret": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Secret"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -1304,6 +1471,12 @@
           },
           "nyxid_callback_url": {
             "type": "string"
+          },
+          "telegram_webhook_url": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -1366,6 +1539,37 @@
       },
       "EventRef": {
         "type": "string"
+      },
+      "EventWorkerProfile": {
+        "additionalProperties": false,
+        "properties": {
+          "context": {
+            "$ref": "#/components/schemas/ContextConfig"
+          },
+          "environment": {},
+          "metadata": {
+            "$ref": "#/components/schemas/ProfileMetadata"
+          },
+          "model": {
+            "$ref": "#/components/schemas/ModelConfig"
+          },
+          "permission": {
+            "$ref": "#/components/schemas/PermissionConfig"
+          },
+          "schema_version": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "schema_version",
+          "metadata",
+          "model",
+          "permission",
+          "context"
+        ],
+        "type": "object"
       },
       "Field": {
         "additionalProperties": false,
@@ -1727,7 +1931,8 @@
         "enum": [
           "human",
           "service_account",
-          "agent_key"
+          "agent_key",
+          "organization"
         ],
         "type": "string"
       },
@@ -1816,9 +2021,43 @@
       },
       "Platform": {
         "enum": [
-          "telegram"
+          "telegram",
+          "lark",
+          "feishu",
+          "discord",
+          "slack",
+          "whatsapp"
         ],
         "type": "string"
+      },
+      "PlatformCapability": {
+        "properties": {
+          "connection_methods": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "optional_capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "connection_methods",
+          "optional_capabilities"
+        ],
+        "type": "object"
       },
       "Problem": {
         "additionalProperties": false,
@@ -1915,6 +2154,9 @@
           },
           "slug": {
             "$ref": "#/components/schemas/ProviderSlug"
+          },
+          "target": {
+            "$ref": "#/components/schemas/ProviderTarget"
           }
         },
         "required": [
@@ -1929,6 +2171,9 @@
         "properties": {
           "slug": {
             "$ref": "#/components/schemas/ProviderSlug"
+          },
+          "target": {
+            "$ref": "#/components/schemas/ProviderTarget"
           }
         },
         "required": [
@@ -1972,6 +2217,43 @@
       "ProviderSlug": {
         "type": "string"
       },
+      "ProviderTarget": {
+        "description": "Generic provider target. Instance selection and authorization stay with the\nprovider; the gateway only retains and forwards this declaration.",
+        "oneOf": [
+          {
+            "properties": {
+              "type": {
+                "enum": [
+                  "profile"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "agent_id": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "existing_agent"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "agent_id",
+              "type"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "PublicActivity": {
         "properties": {
           "actor": {
@@ -1997,6 +2279,12 @@
       },
       "PublicChannelDefinition": {
         "properties": {
+          "connection_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "created_at": {
             "type": "string"
           },
@@ -2020,7 +2308,7 @@
             "$ref": "#/components/schemas/PartitionRule"
           },
           "profile": {
-            "$ref": "#/components/schemas/AgentProfileSnapshot"
+            "$ref": "#/components/schemas/EventWorkerProfile"
           },
           "profile_digest": {
             "type": "string"
@@ -2091,6 +2379,7 @@
           "unknown_sender",
           "message_edit",
           "interactive_action_unsupported",
+          "interaction_expired_or_invalid",
           "system_event",
           "content_unsupported",
           "attachment_unsupported",
@@ -2099,7 +2388,8 @@
           "group_denied",
           "group_not_addressed",
           "addressing_evidence_unavailable",
-          "thread_evidence_unavailable"
+          "thread_evidence_unavailable",
+          "platform_verifier_unavailable"
         ],
         "type": "string"
       },
@@ -2137,6 +2427,13 @@
         "properties": {
           "content_type": {
             "type": "string"
+          },
+          "download_url": {
+            "description": "NyxID's own download endpoint for this attachment. Accepted for envelope\ncompatibility and never dereferenced: media fetches build their URL from\nCMAEG_NYXID_BASE_URL and the sealed message ID.",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "file_key": {
             "type": [
@@ -2298,6 +2595,25 @@
         ],
         "type": "object"
       },
+      "ReplyTargetRef": {
+        "type": "string"
+      },
+      "ReplyTargetResponse": {
+        "properties": {
+          "expires_at": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "reply_target_ref": {
+            "$ref": "#/components/schemas/ReplyTargetRef"
+          }
+        },
+        "required": [
+          "reply_target_ref",
+          "expires_at"
+        ],
+        "type": "object"
+      },
       "Secret": {
         "description": "A secret that only appears in the encrypted channel blob.",
         "type": "string"
@@ -2391,6 +2707,40 @@
               "admission": {
                 "$ref": "#/components/schemas/AdmissionPolicy"
               },
+              "bot_id": {
+                "type": "string"
+              },
+              "bot_username": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "type": {
+                "enum": [
+                  "telegram"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "bot_id",
+              "admission",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "admission": {
+                "$ref": "#/components/schemas/AdmissionPolicy"
+              },
+              "bot_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "bot_username": {
                 "type": [
                   "string",
@@ -2414,6 +2764,9 @@
                   "type": "string"
                 },
                 "type": "array"
+              },
+              "trust_normalized": {
+                "type": "boolean"
               },
               "type": {
                 "enum": [
@@ -2464,6 +2817,28 @@
         "oneOf": [
           {
             "properties": {
+              "bot_id": {
+                "type": "string"
+              },
+              "platform": {
+                "$ref": "#/components/schemas/Platform"
+              },
+              "type": {
+                "enum": [
+                  "telegram"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "platform",
+              "bot_id",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
               "platform": {
                 "$ref": "#/components/schemas/Platform"
               },
@@ -2507,6 +2882,40 @@
               "admission": {
                 "$ref": "#/components/schemas/AdmissionPolicy"
               },
+              "bot_id": {
+                "type": "string"
+              },
+              "bot_username": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "type": {
+                "enum": [
+                  "telegram"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "bot_id",
+              "admission",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "admission": {
+                "$ref": "#/components/schemas/AdmissionPolicy"
+              },
+              "bot_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "bot_username": {
                 "type": [
                   "string",
@@ -2527,6 +2936,9 @@
                   "type": "string"
                 },
                 "type": "array"
+              },
+              "trust_normalized": {
+                "type": "boolean"
               },
               "type": {
                 "enum": [
@@ -2571,6 +2983,16 @@
             "type": "object"
           }
         ]
+      },
+      "Status": {
+        "enum": [
+          "draft",
+          "awaiting_platform",
+          "ready",
+          "cancelled",
+          "expired"
+        ],
+        "type": "string"
       },
       "TestChannelResponse": {
         "properties": {
@@ -2744,10 +3166,274 @@
         ]
       }
     },
+    "/channel-capabilities": {
+      "get": {
+        "operationId": "getChannelCapabilities",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CapabilityView"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "connections"
+        ]
+      }
+    },
+    "/channel-connections": {
+      "get": {
+        "operationId": "listChannelConnections",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionPage"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "connections"
+        ]
+      },
+      "post": {
+        "operationId": "createChannelConnection",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "description": "Bearer authorizing the originating event's channel",
+            "in": "header",
+            "name": "X-CMAEG-Agent-Authorization",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateConnection"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionView"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "connections"
+        ]
+      }
+    },
+    "/channel-connections/{connection_ref}": {
+      "delete": {
+        "operationId": "cancelChannelConnection",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connection_ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "connections"
+        ]
+      },
+      "get": {
+        "operationId": "getChannelConnection",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connection_ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionView"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "connections"
+        ]
+      }
+    },
     "/channel-records/{record_id}": {
       "get": {
         "operationId": "recoverChannel",
         "parameters": [
+          {
+            "description": "Organization owner UUID; caller must be an authorized NyxID organization administrator",
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
           {
             "in": "path",
             "name": "record_id",
@@ -2790,52 +3476,21 @@
       }
     },
     "/channels": {
-      "get": {
-        "operationId": "listChannels",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "after",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ChannelPage"
-                }
-              }
-            },
-            "description": ""
-          },
-          "default": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            },
-            "description": ""
-          }
-        },
-        "security": [
-          {
-            "creatorBearer": []
-          }
-        ],
-        "tags": [
-          "channels"
-        ]
-      },
       "post": {
         "operationId": "createChannel",
         "parameters": [
+          {
+            "description": "Organization owner UUID; caller must be an authorized NyxID organization administrator",
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
           {
             "description": "1..=256 ASCII bytes; identical creates replay locally for ten minutes",
             "in": "header",
@@ -2896,6 +3551,18 @@
         "operationId": "deleteChannel",
         "parameters": [
           {
+            "description": "Organization owner UUID; caller must be an authorized NyxID organization administrator",
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
             "in": "path",
             "name": "channel_id",
             "required": true,
@@ -2942,6 +3609,18 @@
         "operationId": "getChannel",
         "parameters": [
           {
+            "description": "Organization owner UUID; caller must be an authorized NyxID organization administrator",
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
             "in": "path",
             "name": "channel_id",
             "required": true,
@@ -2984,6 +3663,18 @@
       "put": {
         "operationId": "updateChannel",
         "parameters": [
+          {
+            "description": "Organization owner UUID; caller must be an authorized NyxID organization administrator",
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
           {
             "in": "path",
             "name": "channel_id",
@@ -3249,6 +3940,18 @@
         "operationId": "rekeyChannel",
         "parameters": [
           {
+            "description": "Organization owner UUID; caller must be an authorized NyxID organization administrator",
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
             "in": "path",
             "name": "channel_id",
             "required": true,
@@ -3293,6 +3996,18 @@
       "post": {
         "operationId": "testChannel",
         "parameters": [
+          {
+            "description": "Organization owner UUID; caller must be an authorized NyxID organization administrator",
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
           {
             "in": "path",
             "name": "channel_id",
@@ -3377,6 +4092,59 @@
         "tags": [
           "tools"
         ]
+      },
+      "post": {
+        "operationId": "verifyEventContext",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "event_ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Activity"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContextResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "agentBearer": []
+          }
+        ],
+        "tags": [
+          "provider integration"
+        ]
       }
     },
     "/events/{event_ref}/replies": {
@@ -3431,6 +4199,59 @@
         ],
         "tags": [
           "tools"
+        ]
+      }
+    },
+    "/events/{event_ref}/reply-target": {
+      "post": {
+        "operationId": "createReplyTarget",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "event_ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {}
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplyTargetResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "agentBearer": []
+          }
+        ],
+        "tags": [
+          "provider integration"
         ]
       }
     },
@@ -3534,14 +4355,44 @@
         ]
       }
     },
-    "/permissions": {
-      "get": {
-        "operationId": "getPermissions",
+    "/reply-targets/{reply_target_ref}/messages": {
+      "post": {
+        "operationId": "replyToTarget",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "reply_target_ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OutboundMessage"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/IntentReceipt"
+                }
               }
             },
             "description": ""
@@ -3559,11 +4410,67 @@
         },
         "security": [
           {
-            "creatorBearer": []
+            "agentBearer": []
           }
         ],
         "tags": [
-          "identity"
+          "provider integration"
+        ]
+      }
+    },
+    "/telegram/{channel_id}": {
+      "post": {
+        "operationId": "receiveTelegramUpdate",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "channel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-telegram-bot-api-secret-token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {}
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CallbackResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "tags": [
+          "ingress"
         ]
       }
     }

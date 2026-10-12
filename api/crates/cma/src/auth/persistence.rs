@@ -87,6 +87,8 @@ pub struct LoginAttempt {
     pub verifier: SecretValue,
     /// Validated application-relative path restored after sign-in.
     pub return_to: Option<String>,
+    /// Server-created authority intent; never inferred from return_to.
+    pub actor_link_intent: Option<super::actor_links::ActorLoginIntent>,
     pub expires_at: SystemTime,
 }
 
@@ -173,6 +175,49 @@ pub(super) fn next_auth_counter(value: u64) -> Result<u64, StoreError> {
 
 #[async_trait::async_trait]
 pub trait AuthStore: Send + Sync {
+    async fn due_actor_wakeups(
+        &self,
+        _due_before: u64,
+        _limit: usize,
+    ) -> Result<Vec<super::actor_links::ActorLinkRecord>, StoreError> {
+        Err(StoreError::Unavailable(
+            "actor wakeups are not configured".into(),
+        ))
+    }
+    async fn due_actor_links(
+        &self,
+        _renewed_before: u64,
+        _limit: usize,
+    ) -> Result<Vec<super::actor_links::ActorLinkRecord>, StoreError> {
+        Err(StoreError::Unavailable(
+            "actor links are not configured".into(),
+        ))
+    }
+    async fn actor_link_for_actor(
+        &self,
+        _actor_key: &str,
+    ) -> Result<Option<super::actor_links::ActorLinkRecord>, StoreError> {
+        Err(StoreError::Unavailable(
+            "actor links are not configured".into(),
+        ))
+    }
+    async fn actor_link_by_id(
+        &self,
+        _link_id: &str,
+    ) -> Result<Option<super::actor_links::ActorLinkRecord>, StoreError> {
+        Err(StoreError::Unavailable(
+            "actor links are not configured".into(),
+        ))
+    }
+    async fn replace_actor_link(
+        &self,
+        _expected_revision: Option<u64>,
+        _link: super::actor_links::ActorLinkRecord,
+    ) -> Result<bool, StoreError> {
+        Err(StoreError::Unavailable(
+            "actor links are not configured".into(),
+        ))
+    }
     /// Immutable, independently held API credential; never replaces a login.
     async fn insert_api_bearer(&self, custody: ApiBearerCustody) -> Result<bool, StoreError>;
     async fn api_bearer(&self, id: &SecretDigest) -> Result<Option<ApiBearerCustody>, StoreError>;
@@ -206,6 +251,7 @@ pub struct MemoryAuthStore {
     browsers: Mutex<HashMap<SecretDigest, BrowserLogin>>,
     subjects: Mutex<HashMap<SubjectId, SubjectAuthState>>,
     api_bearers: Mutex<HashMap<SecretDigest, ApiBearerCustody>>,
+    actor_links: Mutex<HashMap<String, super::actor_links::ActorLinkRecord>>,
 }
 
 #[cfg(test)]
@@ -238,6 +284,80 @@ impl MemoryAuthStore {
 #[cfg(test)]
 #[async_trait::async_trait]
 impl AuthStore for MemoryAuthStore {
+    async fn due_actor_wakeups(
+        &self,
+        due_before: u64,
+        limit: usize,
+    ) -> Result<Vec<super::actor_links::ActorLinkRecord>, StoreError> {
+        self.available()?;
+        let rows = self.actor_links.lock().await;
+        let mut due = rows
+            .values()
+            .filter(|row| {
+                row.active
+                    && !row.revoked
+                    && row
+                        .wakeup
+                        .as_ref()
+                        .and_then(|wakeup| wakeup.due_at())
+                        .is_some_and(|at| at <= due_before)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        due.sort_by_key(|row| row.wakeup.as_ref().and_then(|wakeup| wakeup.due_at()));
+        due.truncate(limit.min(100));
+        Ok(due)
+    }
+    async fn due_actor_links(
+        &self,
+        renewed_before: u64,
+        limit: usize,
+    ) -> Result<Vec<super::actor_links::ActorLinkRecord>, StoreError> {
+        self.available()?;
+        Ok(self
+            .actor_links
+            .lock()
+            .await
+            .values()
+            .filter(|row| row.active && !row.revoked && row.renewed_at <= renewed_before)
+            .take(limit)
+            .cloned()
+            .collect())
+    }
+    async fn actor_link_for_actor(
+        &self,
+        actor_key: &str,
+    ) -> Result<Option<super::actor_links::ActorLinkRecord>, StoreError> {
+        self.available()?;
+        Ok(self.actor_links.lock().await.get(actor_key).cloned())
+    }
+    async fn actor_link_by_id(
+        &self,
+        link_id: &str,
+    ) -> Result<Option<super::actor_links::ActorLinkRecord>, StoreError> {
+        self.available()?;
+        Ok(self
+            .actor_links
+            .lock()
+            .await
+            .values()
+            .find(|row| row.link_id == link_id)
+            .cloned())
+    }
+    async fn replace_actor_link(
+        &self,
+        expected_revision: Option<u64>,
+        link: super::actor_links::ActorLinkRecord,
+    ) -> Result<bool, StoreError> {
+        self.available()?;
+        link.validate()?;
+        let mut rows = self.actor_links.lock().await;
+        if rows.get(&link.actor_key).map(|row| row.revision) != expected_revision {
+            return Ok(false);
+        }
+        rows.insert(link.actor_key.clone(), link);
+        Ok(true)
+    }
     async fn insert_api_bearer(&self, custody: ApiBearerCustody) -> Result<bool, StoreError> {
         self.available()?;
         custody.validate()?;
@@ -337,49 +457,5 @@ impl AuthStore for MemoryAuthStore {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::time::Duration;
-
-    use super::*;
-
-    #[test]
-    fn secrets_are_one_way_and_redacted() {
-        let first = SecretDigest::identify("cookie", "value");
-        let second = SecretDigest::identify("other", "value");
-        assert_ne!(first, second);
-        assert!(!format!("{first:?}").contains("value"));
-        assert!(!format!("{:?}", SecretValue::new("visible".into())).contains("visible"));
-    }
-
-    #[tokio::test]
-    async fn login_attempts_are_binding_checked_and_single_use() {
-        let store = MemoryAuthStore::default();
-        let id = SecretDigest::identify("attempt", "state");
-        let binding = SecretDigest::identify("binding", "browser");
-        store
-            .put_login_attempt(LoginAttempt {
-                id: id.clone(),
-                browser_binding: binding.clone(),
-                verifier: SecretValue::new("verifier".into()),
-                return_to: None,
-                expires_at: SystemTime::now() + Duration::from_secs(60),
-            })
-            .await
-            .unwrap();
-        assert!(store
-            .take_login_attempt(&id, &SecretDigest::identify("binding", "other"))
-            .await
-            .unwrap()
-            .is_none());
-        assert!(store
-            .take_login_attempt(&id, &binding)
-            .await
-            .unwrap()
-            .is_some());
-        assert!(store
-            .take_login_attempt(&id, &binding)
-            .await
-            .unwrap()
-            .is_none());
-    }
-}
+#[path = "persistence_tests.rs"]
+mod tests;

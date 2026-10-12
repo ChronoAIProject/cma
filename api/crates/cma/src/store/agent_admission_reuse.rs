@@ -1,20 +1,5 @@
 use super::*;
 
-#[cfg(test)]
-pub(in crate::store) async fn reuse_profile_agent_in_snapshot(
-    store: &MongoSandboxStore,
-    admission: &AgentAdmission,
-    workspace: &layer2_core::sandbox::Workspace,
-    sandbox: &layer2_core::sandbox::Sandbox,
-    session: &mut mongodb::ClientSession,
-) -> Result<(), mongodb::error::Error> {
-    match reuse_profile_agent(store, admission, workspace, sandbox, true, None, session).await {
-        Ok(_) => Ok(()),
-        Err(ApplyError::Driver(error)) => Err(error),
-        Err(_) => panic!("unexpected non-driver candidate failure"),
-    }
-}
-
 pub(super) async fn reuse_profile_agent(
     store: &MongoSandboxStore,
     admission: &AgentAdmission,

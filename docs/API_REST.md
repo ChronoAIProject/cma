@@ -6,8 +6,8 @@ security declarations and response media types. The operation inventory below
 is checked against that document, including its AG-UI and Responses projections.
 [CMA Model](CMA_Model.md) defines lifecycle and profile semantics;
 [CMA Trigger](CMA_Trigger.md) defines publishing, consent and visitor reuse.
-[NyxID bridge callbacks](BRIDGE_CALLBACKS.md) documents the dedicated signed
-connector endpoint, durable inbox receipts and explicit execution holds.
+[CMAEG protocol](CMAEG_Protocol.md) defines channel ingress, provider bindings
+and explicit outbound delivery through the separate Event Gateway.
 
 There are no `/sessions`, `/chats`, environment-profile, contribution,
 sponsorship or terminal-attachment APIs in this release. Resource management
@@ -120,6 +120,169 @@ record-id order and returns `{ items, next_after }`. The default limit is 100
 and valid limits are 1 through 200. Listing and all mutations require the same
 capability; an authenticated caller without it receives `403 forbidden`.
 
+The `/api/v1/gateway/connection-records` namespace provides the same list, read,
+compare-and-set write and delete contract in an independent collection. CMAEG
+uses it for encrypted platform connection setup, credential claims and durable
+completion notifications. The same `cma:gateway:records` permission applies;
+record IDs, versions and deletions are isolated from channel records. CMA treats
+these blobs as opaque and does not own platform credentials or setup logic.
+
+## Event Gateway Interaction Records
+
+`PUT`, `GET`, and `DELETE /api/v1/gateway/interaction-records/{record_id}` use a
+separate namespace for encrypted, expiring interaction state. They require
+`cma:gateway:records`, accept the same canonical UUID v4 record identifiers and
+1–65,536 decoded-byte blob limit as channel records, and return
+`Cache-Control: no-store`. The calling gateway owns encryption and interaction
+semantics; CMA stores opaque bytes with durable version and expiry checks.
+
+`PUT` accepts `{ owner, blob, expected_version, expires_at }`, where `blob` is
+base64 and `expires_at` is a Unix timestamp in seconds strictly after now and at
+most seven days in the future. An omitted/null `expected_version` creates
+version 1. Updates require the current version and exactly the same owner and
+expiry; neither ownership nor retention can change through an update. The
+response is `{ record_id, version, updated_at }`. Conflicting creation, stale
+versions, or changed ownership/expiry return `409 conflict`.
+
+`GET` returns `{ record_id, owner, blob, version, created_at, updated_at }`.
+`DELETE` requires the `expected_version` query parameter and returns `204` after
+deletion. Missing or expired records return an empty `404` for both operations;
+expiry is enforced before MongoDB's asynchronous TTL cleanup. These records are
+not included in the channel-record listing. Invalid identifiers, owners, base64
+or expiry return `400 invalid_gateway_record`; an invalid decoded blob size
+returns `413 gateway_record_too_large`. Insufficient authority returns
+`403 forbidden`, and unavailable storage returns `503 store_failed`.
+
+## Agent-delegated CMA operations
+
+These provider APIs require the configured Bot Father binding credential and a
+current event reference or CMA-issued callback continuation. User identity is
+resolved from the original admitted event, its retained agent/worktree and the
+current CMA consent grant. Request bodies cannot supply user credentials or a
+grant ID. A supplied organization owner selects the requested context; current
+membership and each operation's existing permissions determine access.
+
+`POST /api/v1/agent-delegations/identity` accepts
+`{"event_ref":"<current event or CMA continuation>"}` and returns the linked
+identity or CMA browser sign-in URL. The browser uses fresh PKCE authentication
+and explicit consent. Consent activation and the agent callback are durable and
+recover after API restarts. Ordinary questions do not require consent.
+
+`POST /api/v1/agent-delegations/operations` accepts:
+
+```json
+{
+  "event_ref": "<current event or CMA continuation>",
+  "owner": { "kind": "organization", "subject": "<organization ID>" },
+  "method": "GET",
+  "path": "/api/v1/sandboxes?organization=<organization ID>"
+}
+```
+
+Omit `owner` for Personal authority. `body` carries a mutation's ordinary API
+body and every mutation requires `idempotency_key`. The allowed operations cover
+organization discovery, ordinary sandbox/workspace/agent/profile reads and changes, Marketplace reads
+and forks, Responses execution and controls. Existing resource handlers enforce
+permissions and durable admission; deferred commands retain the original user
+and delegation. Administrative, authentication, gateway-record and arbitrary
+proxy destinations are not accepted. Bot creation uses the reviewed setup flow
+below. An organization owner cannot be used with legacy creation routes that
+implicitly create Personal resources: CMA refuses those calls before dispatch.
+Organization Bot creation remains available through the typed setup workflow.
+Paths must be canonical local API paths; no URLs or caller headers are forwarded.
+
+A completed operation returns `{"status":200,"body":<normal API result>}`; the
+inner status can also be the ordinary API's problem response. Responses
+admission returns an inner `202` with `response_id` and `command_id`, allowing
+normal polling without exposing the internal stream. Outer refusal means the
+binding, source, consent or requested operation could not be authorized.
+Responses never return the user's renewable credential. Request bodies are
+limited to 256 KiB and operation results to 1 MiB. Authority and source mapping
+are rechecked after dispatch; mutations must reuse their original idempotency
+key after an uncertain response.
+
+## Bot Father Setup Workflow
+
+Bot Father is an ordinary CMA agent with a specialized skill. CMAEG forwards all
+messages, commands, login returns and interaction events through its normal
+provider path; it contains no Bot Father dispatch, command parser or setup UI.
+The agent interprets the user's intent and calls CMA's public workflow API.
+
+`POST /api/v1/bot-setups/actions` applies an agent-selected operation to the
+verified sender's durable plan. It requires the configured Bot Father binding
+credential and the **current** sealed `event_ref` or a CMA callback continuation
+reference (at most 4096 bytes). CMA asks
+the gateway's generic context endpoint for the original Activity retained with
+the provider turn, verifies the binding/private-chat sender, and derives the
+actor identity from that event. The request cannot supply or rewrite Activity.
+
+```json
+{
+  "event_ref": "<current event reference>",
+  "request": {
+    "request_id": "<unique request UUID>",
+    "expected": { "setup_id": "<returned setup ID>", "revision": 2 },
+    "action": { "type": "choose", "choice_id": "personal" }
+  }
+}
+```
+
+The typed actions are:
+
+| Action | Additional fields | Behavior |
+| --- | --- | --- |
+| `view` | none; `expected` is optional | Open/resume the sender's plan, process a verified login return, and return current choices/progress. |
+| `draft` | `draft: {name?, instructions?}` | Record conversationally supplied name/instructions at Login, Owner or Name. |
+| `choose` | `choice_id` from the current view | Select an owner, defaults/customization, service, channel Bot, admission rule or navigation action. |
+| `customize` | `customization: {agent?, workspace?, sandbox?, availability?}` | Submit the complete profile for the current Customize step. The agent prepares JSON from the user's preferences. |
+| `confirm` | `plan_digest` from the review | Admit the reviewed plan only with separate signed user consent. |
+
+Every mutation requires the returned setup ID and revision. Several distinct
+operations can use the same human event, allowing the agent to apply a user's
+combined preferences without additional messages. Repeat an uncertain request
+with the same ID, event, revision and payload. A changed payload under a recorded
+mutation ID or a stale revision returns `409 setup_changed`; a matching replay
+returns the retained view without repeating the operation. An unchanged `view`
+is a repeatable read and does not reserve a mutation receipt.
+
+The sender follows the CMA-owned sign-in link, completes NyxID login and explicitly
+authorizes the displayed Telegram actor in the browser. CMA then automatically
+notifies the initiating agent through a durable callback; no chat proof or extra
+message is required. The callback continuation resolves the original signed
+human input, so login itself cannot confirm resource creation. CMA retains the
+renewable credential and verifies Personal or organization ownership, profiles,
+owner-specific services, connections and channel Bots. No user token is exposed
+to the agent.
+
+The response includes `setup_id`, `revision`, `step`, `interaction_id`,
+`identity`, `owner`, `name`, `configuration`, `choices`, `services`,
+`connection_url`, `external_bot_id`, `admission`, `confirmation_digest`, `result`
+and `notice`. The agent explains those choices naturally and uses the generic
+gateway reply/interaction tools when suitable. Users do not submit slash
+commands or configuration JSON.
+
+Before creation, show the complete effective plan and request explicit
+confirmation. `confirm` requires the exact plan digest and revision plus a new
+verified event created after the review. The original event must contain clear
+creation consent (for example `Create Bot` or `确认创建`) or the matching generic
+interaction action. An agent action alone, a greeting, an old event or the event
+that prepared the review cannot authorize provisioning. CMA records the plan
+before using the existing durable Bot worker to create resources. Report
+completion only when `result` confirms the Bot is active.
+
+`POST /api/v1/bot-setups/advance` remains a compatibility interface accepting
+`{event_ref, activity?, draft?, customization?}`. Supplied Activity must pass the
+gateway's generic digest attestation; text is retained verbatim. New agent
+integrations use `actions`. Legacy encrypted setup contexts remain readable until
+their event expires; ordinary model turns retain their context through the normal
+provider contract. Plans and action receipts survive replica restarts.
+
+Responses use `Cache-Control: no-store`. Named workflow failures are
+`400 invalid_setup`, `403 setup_authority_required`, `404 setup_not_found`,
+`409 setup_changed`, and `503 setup_unavailable`. Authentication failures are
+rejected before the handler. The gateway's independent event/reply integration
+protocol is hosted at https://bot-gateway.chrono-ai.fun/docs .
+
 ## Provider Bindings
 
 The CMAEG service principal manages bindings under `/api/v1/cmaeg/bindings`.
@@ -133,13 +296,28 @@ Responses use `Cache-Control: no-store` and never contain supplied key material.
 The digest is `sha256:` followed by the canonical profile digest. The response
 contains `binding_id`, `owner`, `profile_digest`, `sandbox_id`, `workspace_id`,
 `level`, `honoured`, `refused`, `state`, `generation`, and timestamps. The current
-turn-contract level is `l2` (text and informational activity items). Native external tool endpoints are explicitly refused. Resource
+turn-contract level is `l2` (text and informational activity items). Native tools
+require the exact configured CMAEG endpoint and a runtime with proven proxy
+support; unsupported endpoints are explicitly refused. Resource
 provisioning is asynchronous: `GET` reports `provisioning`, `ready`, `failed`
 (with a reason), or `retired`. Repeating the same digest and key returns the
 retained reservation. A supplied key hash can belong to only one binding;
 retired records retain that reservation. Reusing the key on another binding
 returns a conflict. A changed profile waits for prior work to settle, retires
 old conversation Agents, and keeps compatible Sandbox and Workspace snapshots.
+
+The optional `target` field selects `{"type":"profile"}` (the default) or
+`{"type":"existing_agent","agent_id":"agt_existing"}`. Existing-agent binding
+checks the actual personal/organization resource owner, retains all existing
+Agent configuration, and returns `level:"l1"` with automatic final replies.
+The required profile envelope still supplies the owner and digest; its model,
+environment and instruction settings are not applied. Every transport
+conversation resolves to that same Agent through the canonical provider
+conversation `existing_agent`. The response includes the non-default target.
+Changing the target or profile of this association is rejected. Key rotation
+changes only binding authentication, without changing the existing Sandbox
+credential. Deleting an existing-agent binding or conversation only removes
+the association and never retires the borrowed Agent or parent resources.
 
 `PUT /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}` accepts
 an empty body or `{}` and returns `{conversation_id,agent_id,state}` with 201
@@ -148,6 +326,33 @@ letters, digits, underscores or hyphens. Each generation retains exactly one
 Agent and Worktree per conversation id. Resource admission revives a paused
 Sandbox through the existing lifecycle transaction. A binding that is not ready
 returns `409 binding_not_ready`; malformed ids return `400 invalid_binding`.
+Once reserved, a conversation still provisioning its Agent returns
+`429 conversation_not_ready` and `Retry-After: 1` on Responses requests. Retry
+the same input and idempotency key; a preparation refusal admits no turn.
+Missing, foreign, failed or retired conversations remain 404.
+
+CMA's optional profile extension `environment.session_affinity:"source_user"`
+changes provider selection without changing gateway partitioning. CMA verifies
+the original human Activity with the gateway, then maps binding generation,
+platform and sender to one durable Agent/Worktree. Different chats from the same
+sender reuse that Agent while retaining their original event reply addresses.
+A transport conversation PUT returns `200 {conversation_id,state:"ready"}` without
+`agent_id`; provisioning waits for authenticated source identity on the first
+Responses call. Preparation returns `429 conversation_not_ready` with
+`Retry-After: 2`. Transport conversation DELETE acknowledges without retiring any
+user Agent; binding retirement owns their cleanup. The companion
+`environment.isolated_agents:true` enables private filesystem/process/network
+namespaces and constrained platform access for each new Agent. These are opaque
+CMA provider profile extensions, not gateway user-routing policies.
+
+`GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}`
+returns the retained full event context to the authenticated binding credential.
+For Father setup events it reads the encrypted workflow context described above;
+for normal provider turns it reads the existing durable model-turn ledger. A
+workflow context read rechecks the current binding before and after storage
+access. Gateway reference verification and the `expires_at` deadline remain
+part of the gateway's provider-integration protocol; these operations add no
+native MCP tool names.
 
 Both DELETE operations return 204 after durable retirement admission. Conversation
 cleanup stops the Agent and removes its Worktree through the existing workers;
@@ -736,7 +941,37 @@ above applies even when an operation annotates only its principal responses.
 
 <!-- openapi-operations:start -->
 
+### Event Worker Profiles
+
+These owner-scoped resources compose three published CMA profile revisions into
+one full, immutable gateway configuration. All operations require
+`manage_own_profiles`. Creation uses `Idempotency-Key`; updates and retirement
+compare `expected_revision`. Repeating an identical successful update recovers
+that revision; conflicting edits return 409. Retirement preserves revisions and
+existing Bot snapshots. The `profile` field contains the complete
+`EventWorkerProfile`; `source` records the three CMA references and authoring text.
+
+| Operation | Behavior |
+|---|---|
+| `GET /api/v1/event-worker-profiles` | List active owned profiles using `after` and `limit` (1–200). |
+| `POST /api/v1/event-worker-profiles` | Create and pin the complete configuration; return 201. |
+| `GET /api/v1/event-worker-profiles/{id}` | Read the current owned revision, including retirement. |
+| `PUT /api/v1/event-worker-profiles/{id}` | Save a new revision with `expected_revision` and `source`. |
+| `DELETE /api/v1/event-worker-profiles/{id}` | Retire with query `expected_revision`, preserving history. |
+| `GET /api/v1/event-worker-profiles/{id}/revisions/{revision}` | Read an immutable owned historical revision. |
+
+
 ### Bots
+
+Creation optionally accepts `sandbox_profile:{id,revision}` and
+`workspace_profile:{id,revision}` alongside the required Agent `profile`.
+Explicit environment profiles must be personally owned and published; an omitted
+reference pins the corresponding platform default. Bot responses expose all three
+pinned references. Alternatively, supply `event_worker_profile:{id,revision}`
+and the three matching source references to pin a saved full worker configuration.
+The Bot retains that snapshot even if the worker is later edited or retired.
+Reusing a creation key with different environment references
+returns 409, including changing an omitted default into an explicit reference.
 
 | Operation | Behavior |
 |---|---|
@@ -771,6 +1006,17 @@ above applies even when an operation annotates only its principal responses.
 | `PUT /api/v1/gateway/channel-records/{record_id}` | PutGatewayRecordRequest | - | 200 PutGatewayRecordView |
 | `GET /api/v1/gateway/channel-records/{record_id}` | - | - | 200 GatewayRecordView; 404 ProblemDocument |
 | `DELETE /api/v1/gateway/channel-records/{record_id}` | - | expected_version | 204 empty; 404/409 ProblemDocument |
+| `GET /api/v1/gateway/connection-records` | - | owner, after, limit | 200 GatewayRecordPageView |
+| `PUT /api/v1/gateway/connection-records/{record_id}` | PutGatewayRecordRequest | - | 200 PutGatewayRecordView |
+| `GET /api/v1/gateway/connection-records/{record_id}` | - | - | 200 GatewayRecordView; 404 ProblemDocument |
+| `DELETE /api/v1/gateway/connection-records/{record_id}` | - | expected_version | 204 empty; 404/409 ProblemDocument |
+| `PUT /api/v1/gateway/interaction-records/{record_id}` | PutInteraction | - | 200 PutGatewayRecordView; 400/403/409/413/503 ProblemDocument |
+| `GET /api/v1/gateway/interaction-records/{record_id}` | - | - | 200 GatewayRecordView; 404 empty; 400/403/503 ProblemDocument |
+| `DELETE /api/v1/gateway/interaction-records/{record_id}` | - | expected_version | 204 empty; 404 empty; 400/403/409/503 ProblemDocument |
+| `POST /api/v1/agent-delegations/identity` | AgentDelegationIdentityRequest | - | 200 identity or login URL; 400/401/403/404/409/503 problem |
+| `POST /api/v1/agent-delegations/operations` | AgentDelegationOperationRequest | - | 200 result envelope; 400/401/403/404/409/503 problem |
+| `POST /api/v1/bot-setups/actions` | AgentSetupAction | - | 200 SetupView; 400/403/404/409/503 ProblemDocument |
+| `POST /api/v1/bot-setups/advance` | AdvanceSetup (compatibility) | - | 200 SetupView; 400/403/404/409/503 ProblemDocument |
 
 ### Administration
 
@@ -1076,39 +1322,6 @@ SDKs expose this scope through their accessible Sandbox list method.
 | `GET /api/v1/workspaces/{id}/worktrees` | - | - | 200 AccessibleWorktreeListView |
 | `GET /api/v1/worktrees/{id}` | - | - | 200 AccessibleWorktreeView |
 
-| `GET /api/v1/bridge-connectors` | Bridge setup and management with current owner or organization authority. |
-| `GET /api/v1/bridge-creation-target` | Owner/admin callback preview using the required future create Idempotency-Key; no resource or reservation is created. |
-| `GET /api/v1/bridge-connectors/capabilities` | Owner/admin source capabilities and current deployment switches, including disabled connectors. |
-| `GET /api/v1/bridge-invoke-grants/{id}` | Read a retained-Agent invocation grant under current bridge management authority. |
-| `POST /api/v1/bridge-invoke-grants/{id}/revoke` | Revoke an exact invocation-grant revision with retained idempotent attribution. |
-| `GET /api/v1/bridges/{id}/invoke-grants` | Page current and revoked invocation grants for this bridge. |
-| `POST /api/v1/bridges/{id}/invoke-grants` | Explicitly authorize the selected retained Agent context for this saved bridge configuration. |
-| `GET /api/v1/bridges/{id}/invoke-readiness` | Observe current retained-Agent consent without granting execution or enable authority. |
-| `POST /api/v1/bridges/{id}/partitions/{allocation}/reset` | Exact Bridge/allocation revisions and retained Idempotency-Key; 202 reserves the next binding generation. |
-| `POST /api/v1/bridges/{id}/partitions/{allocation}/detach` | Exact Bridge/allocation revisions and retained Idempotency-Key; 202 blocks future partition input until explicit reset. |
-| `GET /api/v1/bridges/{id}/allocations` | Current Bridge and whole-parent management inventory; opaque cursor, limit 1–100. |
-| `GET /api/v1/bridges/{id}/usage` | Current Bridge management; bounded retained allocation totals and authorized distinct target-resource counts. |
-| `GET /api/v1/bridges/{id}/partitions` | Current Bridge management and per-target access; scoped cursor, limit 1–25. |
-| `GET /api/v1/bridges/{id}/partitions/{allocation}` | Exact retained partition generation, bounded pending commands and latest correlated response. |
-| `GET /api/v1/bridges/{id}/partitions/{allocation}/pending-messages` | Authorized text previews for accepted channel messages whose Agent turn has not started. |
-| `GET /api/v1/bridges/{id}/allocations/{allocation}/child-cleanup` | Retained child cleanup acceptance, proved progress and observed holds. |
-| `POST /api/v1/bridges/{id}/allocations/{allocation}/child-cleanup` | Explicit remove_child acceptance with current revisions and retained Idempotency-Key; 202 does not mean physical removal. |
-| `GET /api/v1/bridges/{id}/allocations/{allocation}/workspace-cleanup` | Exact allocation-owned Workspace status, reviewed consent inputs, current eligibility and retained completion. |
-| `POST /api/v1/bridges/{id}/allocations/{allocation}/workspace-cleanup` | Separately consented remove_owned_workspace with three revisions, exact completed child receipt and original Idempotency-Key; 202 confirms acceptance. |
-| `GET /api/v1/bridges/{id}/deliveries` | Current owner/admin delivery history; exclusive cursor, limit 1–100. |
-| `GET /api/v1/bridges/{id}/deliveries/{item}` | Safe original reply status and ordered attempts. |
-| `POST /api/v1/bridges/{id}/delivery-recovery` | Explicit retry, abandon or local reconciliation with durable idempotency and exact revisions. |
-| `GET /api/v1/bridges` | Bridge setup and management with current owner or organization authority. |
-| `GET /api/v1/bridges/{id}` | Bridge setup and management with current owner or organization authority. |
-| `GET /api/v1/bridges/{id}/configuration` | Bridge setup and management with current owner or organization authority. |
-| `POST /api/v1/bridges` | Bridge setup and management with current owner or organization authority. |
-| `POST /api/v1/bridges/{id}/commands` | Bridge setup and management with current owner or organization authority. |
-| `POST /api/v1/bridges/{id}/credential/revoke` | Bridge setup and management with current owner or organization authority. |
-| `POST /api/v1/bridges/{id}/validate` | Bridge setup and management with current owner or organization authority. |
-| `PUT /api/v1/bridges/{id}/configuration` | Bridge setup and management with current owner or organization authority. |
-| `PUT /api/v1/bridges/{id}/credential` | Bridge setup and management with current owner or organization authority. |
-| `GET /api/v1/bridge-invoke-grants/{id}/source-controls` | Observe separate original-sender consent; required nullable policy. |
-| `PUT /api/v1/bridge-invoke-grants/{id}/source-controls` | Explicitly allow or revoke original-sender consent using exact revisions and one retained idempotency key. |
 <!-- openapi-operations:end -->
 
 ## Contract Verification
@@ -1161,247 +1374,3 @@ membership is required even for an empty page; failures do not become a false
 successful empty scope. Ownership and whole-Sandbox grants are filtered and
 deduplicated before pagination. The hidden lookahead and held evidence are
 checked after count IO, before releasing either rows or `next`.
-
-
-### Channel bridge setup
-
-Bridge management uses `/api/v1/bridges`; `/api/v1/bridge-connectors?organization={id}` lists complete bounded existing NyxID bot/key/route choices only for the personal owner or current organization administrator. CMA performs read-only discovery. A deployment without a NyxID provider and HTTPS CMA public origin returns `503 bridge_setup_unavailable`.
-
-Before selecting a route, read `GET /api/v1/bridge-creation-target?organization={id}`
-with the `Idempotency-Key` that will be used for `POST /api/v1/bridges`. Omit
-`organization` for a personal Bridge. The required response fields are
-`bridge_id`, `owner`, and the deployment-owned HTTPS `callback_url`; responses
-are private and non-cacheable. Configure this exact callback on the dedicated
-NyxID Agent key, add its route, then refresh connection choices. The same human
-and creation key produce the same Bridge ID. Retain that key through setup,
-reloads and uncertain create recovery, and verify the create receipt matches
-the preview. Preview requires current management authority and available setup
-but performs no database write, provider request, reservation, or enablement.
-Creation still requires the complete valid configuration and starts disabled.
-
-Read `/api/v1/bridge-connectors/capabilities?organization={id}` for the versioned [connector capability matrix](BRIDGE_CAPABILITIES.md), source revision and current deployment switches. This owner/admin diagnostic remains available when switches are off, performs no provider requests and grants no execution or reply authority. Telegram-new retains a distinct signed platform identity and an independent default-off deployment gate. Live platform verification and attachment retrieval remain unavailable.
-
-Creation starts disabled. The caller selects an owner, existing bot/key/routes, partition and placement, sender/chat/group policy, reply policy, and bounded limits. CMA derives the issuer, provider endpoint, callback URL, and internal custody locator; these fields are rejected in client configuration. After creation, read `/bridges/{id}/configuration` as a manager to verify the prepared callback URL and selected configuration. Preserve unrelated NyxID routes, then PUT the exact selected key to `/bridges/{id}/credential` with `expected_revision`. The key is write-only and its response contains only custody revision/presence/revocation. Identical selected-key import is idempotent; different material under the retained selected custody identity conflicts. A replacement key selection creates distinct custody.
-
-Custody retains a versioned snapshot of the selected key's authority. Each use
-checks current ownership, active/expiry state, callback, routes and possession,
-and compares permission fields before and after the possession read within one
-bounded verification. NyxID's usage-driven row version may increase; it cannot
-fall below the import version or decrease between those reads, and it never
-replaces CMA's retained custody/outbox pin. Changes to
-the retained permissions or expiry require a new selection. Keys with credential
-bindings are unavailable because key metadata does not expose their contents.
-Historical custody without this snapshot requires an explicit same-key import
-while disabled; this verifies current authority and upgrades CMA's encrypted
-record without modifying NyxID. The row counter cannot prove that an authority
-change and reversal never occurred between observations.
-
-Complete the CMA API rollout before that reimport. Earlier API builds refuse
-upgraded custody on rollback, so recovery requires a forward repair. This
-custody upgrade preserves ordinary Sandbox/Agent instances and their histories.
-
-Background metadata and provisioning require explicit `retain_control_plane_authority: true` on key import. This additive boolean defaults to false. Consent authorizes only this Bridge, its exact owner and selected connector for 30 days, using the actual human's existing encrypted OAuth sign-in and refresh custody. The grant continues after browser logout; current account activity and exact organization admin access are checked for each operation. A new sign-in, removed provider authority, grant expiry or local key revocation stops this authority. Disable and reconnect the Bridge explicitly to attach or renew a grant; an unchanged retry preserves its original expiry. Historical key-only custody never borrows the importing actor's current login automatically.
-
-NyxID human-only metadata endpoints receive that human OAuth credential with the exact organization scope. The selected bot key is used only for its key-fenced possession check and permitted channel operations. Human OAuth tokens and the selected bridge key stay in CMA's control plane; organization Sandbox provisioning must issue a distinct organization-owned key for its pinned services. Missing grant or unsupported provisioning remains `409 bridge_renewable_authority_required`; consent alone does not prove that new-Sandbox provisioning is available.
-
-POST `/bridges/{id}/validate` with `expected_revision` performs current verification. Its success proves the current setup check only. POST `/bridges/{id}/commands` with an Idempotency-Key and expected revision applies `enable`, `disable`, `retire`, or independent emergency controls. Disable/retire require `accepted_work` (`drain_original` or `suspend_original`); retained Agents and historical resources are preserved. Configuration PUT also requires an idempotency key and expected revision; fixed-target rebinding requires an explicit previous-work policy. Retained generations keep their original routing. Retrying an unacknowledged management command uses the same key and body.
-
-Current organization members can list/read safe bridge summaries; configuration, selected identities, credential custody and provider choices require manager authority. None of these responses include key material or local custody references. Revocation uses `/bridges/{id}/credential/revoke` with both expected bridge and custody revisions plus an idempotency key.
-
-New partition configuration defaults to a sender in each actual chat, with explicit alternatives for shared chat/thread context, one fixed shared Agent, or a sender across chats. Existing-Agent placement requires the `fixed_shared_agent` selection. Sender/chat allowlists, deliberate open admission, and group addressing policy are separate. Unsupported platform addressing/thread evidence is refused. New Sandbox placement requires current retained human control-plane authority and verified distinct scoped key issuance; absent or unsupported authority returns `bridge_renewable_authority_required`. The staged background driver creates the pinned Sandbox, Workspace and Agent, confirms its runtime/tool connection, and publishes the original conversation. Automatic runtime credential renewal remains separate milestone work.
-
-The message path is channel platform → NyxID → CMA, with asynchronous CMA reply tool → durable outbox → NyxID channel-relay reply → the original bot/chat/thread. The callback HTTP body acknowledges durable acceptance. An eligible Agent can send multiple tool replies while its turn continues. Successful setup validation proves the current configuration check; live platform acceptance and production rollout remain pending.
-
-### Retained Agent invocation permission
-
-Fixed placement requires explicit `use_retained_agent_context` consent through
-POST `/api/v1/bridges/{id}/invoke-grants`. Supply `expected_bridge_revision`, the
-exact Sandbox/Workspace/Worktree/Agent `target`, `shared_context`, and an
-Idempotency-Key. Issuance is allowed while the bridge is disabled so permission
-can be reviewed before enabling. The actual manager must currently have both
-bridge-management and Agent-interaction authority. The resulting grant pins
-configuration, owner, full target lineage and retained resource creation facts.
-
-GET `/api/v1/bridges/{id}/invoke-readiness` returns `not_applicable`,
-`consent_required` or `consent_present`, with a candidate only for the latter.
-It observes consent only. Connection validation remains independent; fixed-Agent
-enable requires a separate opaque proof and transactionally checks the exact
-current grant and target. Revocation, reconfiguration or resource replacement
-between validation and commit refuses enable. A missing live grant produces
-`409 bridge_invoke_consent_required`.
-
-GET `/api/v1/bridges/{id}/invoke-grants` pages safe current and revoked grant
-records; GET `/api/v1/bridge-invoke-grants/{id}` reads one. POST
-`/api/v1/bridge-invoke-grants/{id}/revoke` requires both
-`expected_bridge_revision` and `expected_revision`, plus an Idempotency-Key.
-Revocation is terminal and preserves history. Issuing a new grant does not alter
-the authority or routing pinned to already accepted work. Safe public grant and
-receipt DTOs contain no credential or internal custody reference. All five
-operations require current bridge management authority.
-
-The separately authenticated callback endpoint is registered at
-`POST /api/v1/bridge-callbacks/{bridge_id}`. Its signed protocol, private response
-statuses, durable-before-ack behavior, capability refusals and retained
-`worker_unavailable` hold are documented in [Bridge callbacks](BRIDGE_CALLBACKS.md).
-
-Channel-created Agents send explicit mid-turn replies through the independently
-CMA-authenticated MCP endpoint `POST /api/v1/channel-tools`, documented in
-[Channel reply tools](CHANNEL_REPLY_TOOLS.md). Final answers are not forwarded
-automatically. Manual and Trigger sessions, including existing Agents later
-bound to a bridge, do not receive the reply tool.
-
-### Reply history and explicit recovery
-
-Current Bridge owners and organization admins can inspect deliveries through the
-three delivery management routes above. Organization members/viewers have no
-delivery-management access. `GET` returns private, noncacheable projections with
-original configuration generation, invocation receipt, sequence/chunks, state,
-bounded failure, retry time and ordered attempt history. Text, chat/thread
-identity, original inbound IDs and credential/custody references are omitted.
-The list uses ascending `bro_` identity order, an exclusive `cursor`, default
-limit 50 and maximum 100, and nullable `next_cursor`.
-
-Recovery requires `Idempotency-Key` and the closed body
-`{item_id, expected_revision, expected_bridge_revision, action}`. The action is
-`{kind: "retry", accept_duplicate_risk: true|false}`, `{kind: "abandon"}` or
-`{kind: "reconcile"}`. The server checks current actual owner/admin authority,
-exact Bridge/item revisions and immutable original source; retry also verifies
-the original retained matching key custody. It preserves the original tool
-invocation receipt and all earlier attempts. An Unknown retry requires explicit
-duplicate-risk acceptance (`400 bridge_delivery_duplicate_risk_required`) and
-sets `duplicate_risk`; queued still does not mean delivered. Retry cannot revive
-a sent/abandoned item or exceed sixteen retained attempts. Suspend and original
-audience expiry prevent retry; history and abandon remain usable when suspended.
-
-Reconcile recovers an expired local Claimed lease to Pending or an expired
-Sending lease to Unknown. Pinned NyxID exposes no trustworthy generic send
-reconciliation: `upstream_reconciliation_supported` is false, existing Unknown
-stays Unknown, and the request never accepts user-provided sent/message IDs.
-It makes no platform request. Abandon preserves prior ambiguous attempt history
-and is refused while a nonexpired Sending attempt is active.
-
-All recovery commands return HTTP 200 with a durable command receipt and original
-post-command result. A repeated identical key/body recovers that result before
-checking current item revision or provider availability, under fresh current
-manager authority. Changed input is `409 idempotency_key_reused`; stale state is
-`409 bridge_delivery_revision_conflict`. Storage/authority uncertainty returns a
-503 with Retry-After; explicitly repeat the exact key/body after response loss.
-These local receipts never imply end-to-end exactly-once platform delivery.
-
-### Explicit retained child cleanup
-
-The [child cleanup contract](BRIDGE_CHILD_CLEANUP.md) describes allocation listing,
-explicit acceptance and retained progress. Only retired allocations that created
-a child in a reused parent can admit `remove_child`. The command retains the
-Workspace, siblings and conversation history; it removes the selected child
-process, Agent home and Worktree and releases only the proved Agent reservation.
-Recover an uncertain POST using the original key, body, Bridge and allocation.
-GET and allocation listing require current Bridge management and whole-parent
-management. New acceptance additionally requires the actual original configuring
-actor and fresh retained authority; another administrator cannot impersonate that
-actor. Accepted work drains independently of new allocation and execution flags.
-
-
-### Separate allocation-owned Workspace cleanup
-
-The [owned Workspace cleanup contract](BRIDGE_WORKSPACE_CLEANUP.md) adds separate
-GET/POST operations after explicit child completion. The five-field consent pins
-Bridge, allocation and Workspace revisions plus the original child cleanup receipt.
-The original `remove_child` effect still retains its Workspace. New Workspace
-consent requires demonstrated runtime capability and exact original ownership;
-no inferred consent, cascading child removal or parent deletion is permitted.
-Only a separately proved `complete` status releases that Workspace reservation.
-
-## Source-control consent
-
-GET and PUT `/api/v1/bridge-invoke-grants/{id}/source-controls` manage separate original-sender consent. GET returns a required `policy` field: null means no consent was ever recorded. PUT returns exactly 200 with an immutable `{id, request, result}` receipt. See [Bridge source-control consent](BRIDGE_SOURCE_CONTROLS.md) for bounds, exact-request recovery and the distinction between recorded consent and demonstrated runtime support.
-
-## Partition status
-
-GET `/api/v1/bridges/{id}/partitions` lists retained allocation generations with
-an opaque scoped cursor and a default and maximum page size of 25. GET
-`/api/v1/bridges/{id}/partitions/{allocation}` adds at most 64 pending Channel
-commands and the latest correlated response. Both require current Bridge
-management authority; target details and activity also require the relevant
-Agent permissions. Responses distinguish reserved, available and redacted
-targets, unavailable source evidence, and truncated pending work. Source labels
-describe the first accepted message and must be rendered as text. These reads
-admit no work and do not assert current runtime connectivity.
-
-GET `/api/v1/bridges/{id}/partitions/{allocation}/pending-messages` returns
-`available`, `unavailable`, or `redacted`. Available results contain the exact
-Bridge, partition generation and Agent, its durable `through_sequence`, and up
-to 64 unstarted messages in Agent order. Each preview includes the command and
-response IDs, admission time, platform, original user text bounded to 1,024
-Unicode characters, and `text_truncated`. Result-level `pending_truncated` and
-`source_unavailable` report incomplete evidence. Current management and target
-authority are checked again before returning; redacted results expose no text.
-Delivery instructions, attachments and reply credentials are never included.
-This read admits no work.
-
-### Explicit partition reset and detach
-
-`reset` and `detach` require current Bridge owner/admin management authority,
-`Idempotency-Key`, and the closed JSON body
-`{"expected_bridge_revision":7,"expected_revision":5}`. The allocation ID and
-action are bound from the path. A successful request or exact replay returns
-202 with the same permanent `PartitionCommandReceipt`: actor, request digest,
-original generation/revision, retired result, optional successor, and acceptance
-time. Keep the exact path, body and key after cancellation or response loss.
-Current management authority is revalidated before receipt recovery; recovery
-precedes stale revision checks and live provider preflight. Reusing that key for
-different input conflicts.
-
-Reset reserves generation N+1 using the original accepted source and immutable
-configuration. Existing-Agent placement binds the same retained Agent and keeps
-its native conversation; new/shared placement reserves its configured successor
-and then ordinary workers provision it. The receipt does not claim provisioning
-has completed. Active allocation leases and unresolved creation effects prevent
-reset or detach.
-
-Detach retires the current allocation without creating a successor. Its head
-remains current and blocks fresh input until an explicit reset. Already accepted
-commands, explicit replies, resource identity, usage history and capacity remain
-retained under their original live authority. Reset and detach neither request
-cleanup nor release resource capacity; cleanup requires its separate explicit
-operation. Missing or inconsistent original source evidence refuses a new
-mutation, while an exact committed receipt remains recoverable.
-
-
-### Bridge allocation and resource usage
-
-`GET /api/v1/bridges/{id}/usage` requires fresh Bridge management authority and
-returns `bridge_revision`, `observed_at_ms`, current configured `limits`,
-`allocations`, `target_resources` and typed `capacity_reasons`. This read admits
-no work and performs no cleanup, delivery retry, capacity release or quota change.
-
-A complete observation contains at most 256 retained allocation generations.
-`allocations.retained` includes predecessor generations; `current` counts retained
-partition heads; `ready` and `retired` describe allocation lifecycle state.
-`sandbox_reservations` counts all retained allocations that create a Sandbox,
-including retired generations, matching count-based admission. Retirement alone
-does not release this reservation. The two returned limits are `max_partitions`
-and `max_sandbox_reservations` from the current Bridge configuration.
-
-`target_resources.status = available` supplies distinct retained and active counts
-for Sandboxes, Workspaces, Worktrees and Agents referenced by these allocations.
-Reused parents count once. Retained means a resource model record still exists,
-including retained tombstones; it does not establish exclusive Bridge ownership
-or a live provider resource. Active means an Active Sandbox, a Ready Workspace or
-Worktree under an Active Sandbox, or a Ready/Working/WaitingApproval Agent under
-an Active Sandbox. Paused resources remain retained and are inactive.
-
-Every present target requires current resource access. Any denied target makes
-all target counts `redacted` with `resource_access_required`; allocation counts
-remain available under Bridge management authority. If the inventory exceeds
-256 generations, `allocations` is null, target status is `inventory_limited`, and
-`inventory_limit` is present. The view never returns partial totals as complete.
-Concurrent changes can return 409; unavailable or corrupt authority returns 503.
-
-Capacity reasons are `partition_limit_reached`,
-`sandbox_reservation_limit_reached`, `retired_sandbox_reservations_retained`,
-`shared_parent_policy_applies`, `resource_access_required`, and `inventory_limit`.
-These are diagnostic facts, not admission promises. Shared-parent policy applies
-independently; this view does not compute parent spare capacity or owner-wide
-resource quotas. No message, source label, resource identifier, credential or
-runtime identity appears in this response. Responses use `private, no-store`.

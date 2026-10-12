@@ -44,7 +44,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: cmaeg
-          image: us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-cmaeg@sha256:3a573e6f1d1ee6f21f73a5ec573119e9936db693988c2b354d6afa172dc05f5a
+          image: us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-cmaeg@sha256:2665ab9fd1b7ab1c8d6607c8454c67cb4fa3acad8071bd165892891b5290cf4d
           imagePullPolicy: IfNotPresent
           ports:
             - name: http

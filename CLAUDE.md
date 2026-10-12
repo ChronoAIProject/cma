@@ -368,12 +368,28 @@ Nothing in `layer1-public`, `layer2-core`, `layer3-adapter`, `layer4-runtime` or
 `cma` may depend on the CMAEG crates, and CMAEG crates may not depend on them;
 CI enforces both directions.
 
+CMAEG owns event ingress, channel configuration and delivery; CMA exposes the
+provider binding contract and owner Bot management. Every admitted Activity uses
+the same provider turn interface. Gateway code must not interpret a product
+workflow, special-case an agent binding or reserve product-specific commands.
+Bot creation guidance and business operations belong to the agent skill and CMA.
+The legacy in-CMA Bridge execution pipeline and its public routes have been
+retired. Persisted history readers retain the original schemas and never
+authorize new legacy work.
+
 `docs/CMAEG_Protocol.md` is the normative CMAEG protocol authority. Changes under
 `/v1` must be additive: retained operations, fields, enum values and operation IDs
 remain compatible. A non-additive change requires `/v2`. The reviewed baseline
 `api/crates/cmaeg/openapi/v1.json` is a required exception to the generated-artifact
 rule in §8: regenerate it, review the diff against this rule, and commit it with
 the implementation and protocol documentation.
+
+The reviewed SVG diagrams under `api/crates/cmaeg/assets/docs` are another
+required exception to the generated-artifact rule: they are bundled source
+assets for the public document, which must render without browser JavaScript
+or external services. Their Mermaid sources remain in the protocol and
+architecture Markdown; regenerate and review the SVGs with
+`.github/scripts/render-cmaeg-diagrams.py`. CI verifies source freshness.
 
 ---
 

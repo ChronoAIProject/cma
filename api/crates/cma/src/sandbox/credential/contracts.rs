@@ -90,10 +90,6 @@ pub(crate) enum CredentialError {
     ServiceNotGranted(ServiceId),
     #[error("credential dependency unavailable: {0}")]
     Unavailable(String),
-    #[error("Channel retention is held")]
-    ChannelRetentionHeld(
-        Box<super::super::channel_retirement::assessment::FinalRetentionAssessment>,
-    ),
     #[error("credential authority was refused: {0}")]
     Security(String),
 }

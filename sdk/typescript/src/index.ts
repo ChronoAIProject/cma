@@ -2,8 +2,10 @@
 
 export { Cma, createClient } from './client.js';
 export * from './resource-access.js';
-export * from './bridges.js';
 export * from './bots.js';
+export * from './bot-setups.js';
+export * from './agent-delegations.js';
+export * from './gateway-interactions.js';
 export {
   Agents,
   type AgentListOptions,
@@ -94,3 +96,8 @@ export { readAgentCard, type ProviderAgentCard } from './agent-card.js';
 export * from './gateway-records.js';
 
 export * from './provider-bindings.js';
+
+export { Cmaeg, type CmaegConfig } from './cmaeg/index.js';
+export * as cmaeg from './cmaeg/index.js';
+
+export * from './event-worker-profiles.js';

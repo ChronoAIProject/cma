@@ -1,4 +1,4 @@
-use super::tests::{key, reserved};
+use super::tests::{key, reserved_with_owner};
 use super::*;
 use crate::auth::{persistence::MemoryAuthStore, AuthMode};
 use layer2_core::sandbox::agent_io::*;
@@ -9,6 +9,15 @@ use layer2_core::sandbox::InMemorySandboxStore;
 
 #[tokio::test]
 async fn binding_deferred_authority_stays_local_and_survives_key_rotation() {
+    deferred_authority("human").await;
+}
+
+#[tokio::test]
+async fn organization_binding_admits_turns_and_retains_narrow_deferred_authority() {
+    deferred_authority("organization").await;
+}
+
+async fn deferred_authority(owner_kind: &str) {
     let auth_store = Arc::new(MemoryAuthStore::default());
     auth_store.set_unavailable(true);
     let store = Arc::new(InMemorySandboxStore::default());
@@ -21,7 +30,7 @@ async fn binding_deferred_authority_stays_local_and_survives_key_rotation() {
     )
     .with_binding_store(store.clone());
     let original = key();
-    let mut binding = reserved(&original);
+    let mut binding = reserved_with_owner(&original, owner_kind);
     store.save_binding(None, binding.clone()).await.unwrap();
     binding.state = BindingState::Ready;
     binding.work = BindingWork::Idle;
@@ -51,9 +60,39 @@ async fn binding_deferred_authority_stays_local_and_survives_key_rotation() {
         .unwrap()
         .unwrap();
     let context = auth.resource_request_context(&request);
-    let owner = AgentOwner::Person {
-        subject: binding.owner.clone(),
+    let owner = if owner_kind == "organization" {
+        AgentOwner::Organization {
+            subject: binding.owner.clone(),
+        }
+    } else {
+        AgentOwner::Person {
+            subject: binding.owner.clone(),
+        }
     };
+    let wrong_kind = if owner_kind == "organization" {
+        AgentOwner::Person {
+            subject: binding.owner.clone(),
+        }
+    } else {
+        AgentOwner::Organization {
+            subject: binding.owner.clone(),
+        }
+    };
+    let wrong_subject = if owner_kind == "organization" {
+        AgentOwner::Organization {
+            subject: layer2_core::SubjectId::new("other-owner"),
+        }
+    } else {
+        AgentOwner::Person {
+            subject: layer2_core::SubjectId::new("other-owner"),
+        }
+    };
+    for forged in [&wrong_kind, &wrong_subject] {
+        assert!(auth
+            .command_admission_authority(&context, original.expose(), forged)
+            .await
+            .is_err());
+    }
     let authority = auth
         .command_admission_authority(&context, original.expose(), &owner)
         .await
@@ -99,7 +138,7 @@ async fn binding_deferred_authority_stays_local_and_survives_key_rotation() {
         .command_admission_authority(&context, original.expose(), &owner)
         .await
         .is_err());
-    for case in 0..4 {
+    for case in 0..6 {
         let mut forged = envelope.clone();
         match case {
             0 => {
@@ -109,7 +148,9 @@ async fn binding_deferred_authority_stays_local_and_survives_key_rotation() {
             }
             1 => forged.source.kind = AgentSourceKind::UserInterface,
             2 => forged.authorization.grant_revision = Some(binding.generation + 1),
-            _ => forged.agent_id = layer2_core::AgentId::generate(),
+            3 => forged.agent_id = layer2_core::AgentId::generate(),
+            4 => forged.owner = wrong_kind.clone(),
+            _ => forged.owner = wrong_subject.clone(),
         }
         assert!(auth.authorize_command(&forged).await.is_err());
     }

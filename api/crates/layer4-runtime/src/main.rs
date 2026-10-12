@@ -31,6 +31,7 @@ mod restore_bootstrap;
 mod skills;
 mod snapshot_export;
 mod supervisor;
+mod tool_proxy;
 mod upstream;
 mod upstream_guard;
 mod upstream_target;

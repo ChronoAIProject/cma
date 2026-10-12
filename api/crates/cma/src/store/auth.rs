@@ -28,14 +28,24 @@ pub(super) const BROWSER_LOGINS: &str = "auth_browser_logins";
 pub(super) const LOGIN_ATTEMPTS: &str = "auth_login_attempts";
 pub(super) const SUBJECTS: &str = "auth_subjects";
 pub(super) const API_BEARERS: &str = "auth_api_bearers";
-pub(super) const AUTH_COLLECTIONS: &[&str] =
-    &[BROWSER_LOGINS, LOGIN_ATTEMPTS, SUBJECTS, API_BEARERS];
+pub(super) const ACTOR_LINKS: &str = "auth_actor_links";
+pub(super) const AUTH_COLLECTIONS: &[&str] = &[
+    BROWSER_LOGINS,
+    LOGIN_ATTEMPTS,
+    SUBJECTS,
+    API_BEARERS,
+    ACTOR_LINKS,
+];
 const EXPIRY_INDEX: &str = "expires_at_ttl";
 const LOGIN_KIND: &str = "login-attempt";
 const SUBJECT_KIND: &str = "subject-auth";
 
+#[path = "auth_actor_links.rs"]
+mod actor_links;
 #[path = "auth_api_bearers.rs"]
 mod api_bearers;
+#[path = "auth_login_documents.rs"]
+mod login_documents;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct BrowserLoginDoc {
@@ -55,6 +65,8 @@ struct LoginAttemptDoc {
     verifier: CipherEnvelope,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     return_to: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    actor_link_intent: Option<CipherEnvelope>,
     expires_at: DateTime,
 }
 
@@ -94,6 +106,7 @@ pub struct MongoAuthStore {
     login_attempts: Collection<LoginAttemptDoc>,
     subjects: Collection<SubjectDoc>,
     api_bearers: Collection<api_bearers::ApiBearerDoc>,
+    actor_links: Collection<actor_links::ActorLinkDoc>,
     cipher: AuthCipher,
 }
 
@@ -111,6 +124,7 @@ impl MongoAuthStore {
             login_attempts: majority_collection(&database, LOGIN_ATTEMPTS),
             subjects: majority_collection(&database, SUBJECTS),
             api_bearers: majority_collection(&database, API_BEARERS),
+            actor_links: majority_collection(&database, ACTOR_LINKS),
             cipher: AuthCipher::new(deployment, encryption_key)?,
         };
         let expiry = || {
@@ -139,46 +153,26 @@ impl MongoAuthStore {
             .create_index(expiry())
             .await
             .map_err(|_| StoreError::Unavailable("API bearer custody expiry index".into()))?;
+        store
+            .actor_links
+            .create_index(
+                IndexModel::builder()
+                    .keys(doc! {"link_id":1})
+                    .options(IndexOptions::builder().unique(true).build())
+                    .build(),
+            )
+            .await
+            .map_err(|_| StoreError::Unavailable("actor link identity index".into()))?;
+        store
+            .actor_links
+            .create_index(
+                IndexModel::builder()
+                    .keys(doc! {"active":1,"wakeup_due_at":1,"_id":1})
+                    .build(),
+            )
+            .await
+            .map_err(|_| StoreError::Unavailable("actor wakeup index".into()))?;
         Ok(store)
-    }
-
-    fn login_to_doc(&self, attempt: LoginAttempt) -> Result<LoginAttemptDoc, StoreError> {
-        let id = *attempt.id.as_bytes();
-        Ok(LoginAttemptDoc {
-            id: binary(id),
-            document_schema_version: DOCUMENT_SCHEMA_VERSION,
-            browser_binding: binary(*attempt.browser_binding.as_bytes()),
-            verifier: self
-                .cipher
-                .seal(LOGIN_KIND, &id, "verifier", attempt.verifier.expose())?,
-            return_to: attempt.return_to,
-            expires_at: DateTime::from_system_time(attempt.expires_at),
-        })
-    }
-
-    fn browser_login_to_doc(login: BrowserLogin) -> BrowserLoginDoc {
-        BrowserLoginDoc {
-            id: binary(*login.id.as_bytes()),
-            document_schema_version: DOCUMENT_SCHEMA_VERSION,
-            subject: login.subject.0,
-            expires_at: DateTime::from_system_time(login.expires_at),
-        }
-    }
-
-    fn login_from_doc(&self, document: LoginAttemptDoc) -> Result<LoginAttempt, StoreError> {
-        schema::require_current(document.document_schema_version)?;
-        let id = digest(&document.id, "login attempt")?;
-        let browser_binding = digest(&document.browser_binding, "login browser binding")?;
-        let verifier =
-            self.cipher
-                .open(LOGIN_KIND, id.as_bytes(), "verifier", document.verifier)?;
-        Ok(LoginAttempt {
-            id,
-            browser_binding,
-            verifier: SecretValue::new(verifier),
-            return_to: document.return_to,
-            expires_at: document.expires_at.to_system_time(),
-        })
     }
 
     fn subject_to_doc(&self, state: SubjectAuthState) -> Result<SubjectDoc, StoreError> {
@@ -270,6 +264,39 @@ impl MongoAuthStore {
 
 #[async_trait::async_trait]
 impl AuthStore for MongoAuthStore {
+    async fn due_actor_wakeups(
+        &self,
+        due_before: u64,
+        limit: usize,
+    ) -> Result<Vec<crate::auth::actor_links::ActorLinkRecord>, StoreError> {
+        self.actor_wakeups_due(due_before, limit).await
+    }
+    async fn due_actor_links(
+        &self,
+        renewed_before: u64,
+        limit: usize,
+    ) -> Result<Vec<crate::auth::actor_links::ActorLinkRecord>, StoreError> {
+        self.actor_links_due(renewed_before, limit).await
+    }
+    async fn actor_link_for_actor(
+        &self,
+        actor_key: &str,
+    ) -> Result<Option<crate::auth::actor_links::ActorLinkRecord>, StoreError> {
+        self.read_actor_link(doc! {"_id":actor_key}).await
+    }
+    async fn actor_link_by_id(
+        &self,
+        link_id: &str,
+    ) -> Result<Option<crate::auth::actor_links::ActorLinkRecord>, StoreError> {
+        self.read_actor_link(doc! {"link_id":link_id}).await
+    }
+    async fn replace_actor_link(
+        &self,
+        expected_revision: Option<u64>,
+        link: crate::auth::actor_links::ActorLinkRecord,
+    ) -> Result<bool, StoreError> {
+        self.write_actor_link(expected_revision, link).await
+    }
     async fn insert_api_bearer(&self, custody: ApiBearerCustody) -> Result<bool, StoreError> {
         self.insert_api_bearer_record(custody).await
     }

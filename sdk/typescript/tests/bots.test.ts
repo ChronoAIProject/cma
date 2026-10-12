@@ -5,6 +5,8 @@ const body: CreateBot = {
   name: 'Test bot',
   nyxid_bot_id: 'external-bot',
   profile: { id: 'profile', revision: 1 },
+  sandbox_profile: { id: 'sbp_research', revision: 2 },
+  workspace_profile: { id: 'wkp_research', revision: 3 },
   admission: { type: 'scoped', senders: { type: 'open' }, chats: { type: 'open' }, groups: 'deny' },
   reply: { auto_final: true, ack_after_ms: 0 },
 };
@@ -14,6 +16,8 @@ const bot = {
   name: 'Test bot',
   nyxid_bot_id: 'external-bot',
   profile: body.profile,
+  sandbox_profile: body.sandbox_profile,
+  workspace_profile: body.workspace_profile,
   provider: 'cma_codex',
   state: 'creating',
   failure: null,

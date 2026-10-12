@@ -190,7 +190,50 @@ impl SandboxWorker {
         else {
             return Ok(false);
         };
-        Box::pin(self.execute(sandbox, now)).await?;
+        let started = tokio::time::Instant::now();
+        if let Err(error) = Box::pin(self.execute(sandbox.clone(), now)).await {
+            if error != SandboxStoreError::Conflict
+                || !self
+                    .retry_conflicted_lifecycle(&sandbox, now + started.elapsed())
+                    .await?
+            {
+                return Err(error);
+            }
+        }
+        Ok(true)
+    }
+
+    /// A finished attempt must not leave its long capture lease blocking a retry
+    /// after unrelated metadata cleanup wins the revision CAS. Re-read current
+    /// state, preserve its changes, and release only our unchanged operation.
+    async fn retry_conflicted_lifecycle(
+        &self,
+        claimed: &Sandbox,
+        now: SystemTime,
+    ) -> Result<bool, SandboxStoreError> {
+        if claimed.work.step != SandboxWorkStep::RunLifecycleOperation {
+            return Ok(false);
+        }
+        let Some(current) = self.dependencies.store.get_sandbox(&claimed.id).await? else {
+            return Ok(false);
+        };
+        if current.work.lease != claimed.work.lease
+            || current.work.step != claimed.work.step
+            || current.lifecycle.operation != claimed.lifecycle.operation
+            || current.runtime != claimed.runtime
+            || current.credential != claimed.credential
+            || current.status != claimed.status
+        {
+            return Ok(false);
+        }
+        self.handle_lifecycle_failure(
+            current,
+            support::WorkerFailure::retryable(
+                "lifecycle publication conflicted with concurrent metadata changes",
+            ),
+            now,
+        )
+        .await?;
         Ok(true)
     }
 

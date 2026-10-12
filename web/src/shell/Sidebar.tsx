@@ -12,6 +12,7 @@ interface SidebarProps {
   readonly onToggleCollapsed: () => void;
   readonly account: ReactNode;
   readonly navigation?: ReactNode;
+  readonly scope?: ReactNode;
   readonly canCreateAgent?: boolean;
   readonly onNewAgent?: () => void;
   readonly onHome?: () => void;
@@ -22,13 +23,14 @@ export function Sidebar({
   onToggleCollapsed,
   account,
   navigation,
+  scope,
   canCreateAgent = false,
   onNewAgent,
   onHome,
 }: SidebarProps) {
   return (
     <aside className={`sidebar${collapsed ? ' sidebar--collapsed' : ''}`}>
-      <div className="sidebar__head">
+      <div className={`sidebar__head${scope === undefined ? '' : ' sidebar__head--scoped'}`}>
         <a
           className="sidebar__brand"
           href="/"
@@ -48,7 +50,7 @@ export function Sidebar({
           }}
         >
           <span className="sidebar__mark" aria-hidden="true" dangerouslySetInnerHTML={markHtml} />
-          {collapsed ? null : <span className="sidebar__name">CMA</span>}
+          {collapsed || scope !== undefined ? null : <span className="sidebar__name">CMA</span>}
         </a>
         {collapsed ? null : (
           <span
@@ -59,6 +61,7 @@ export function Sidebar({
             {BUILD.replace(/^trureturing-/, '')}
           </span>
         )}
+        {collapsed ? null : scope}
         {canCreateAgent ? (
           <button
             type="button"

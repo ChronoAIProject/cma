@@ -9,6 +9,21 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeSet;
 
+/// CMA owns agent affinity. Gateway conversation identifiers remain transport context.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionAffinity {
+    #[default]
+    Conversation,
+    SourceUser,
+}
+
+impl SessionAffinity {
+    pub fn is_default(&self) -> bool {
+        *self == Self::Conversation
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BindingFieldRefusal {
@@ -19,6 +34,8 @@ pub struct BindingFieldRefusal {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BindingEnvironmentPlan {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub always_keep_alive: bool,
     pub sandbox: SandboxProfileContent,
     pub workspace: WorkspaceProfileContent,
 }
@@ -26,6 +43,10 @@ pub struct BindingEnvironmentPlan {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BindingProfilePlan {
+    #[serde(default, skip_serializing_if = "SessionAffinity::is_default")]
+    pub session_affinity: SessionAffinity,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub organization_owned: bool,
     pub owner: SubjectId,
     pub name: String,
     pub profile_digest: String,
@@ -74,7 +95,7 @@ pub fn map_profile(
     bounded(&input.metadata.provider, "metadata.provider", 1, 32)?;
     if !matches!(
         input.metadata.owner.kind.as_str(),
-        "human" | "service_account" | "agent_key"
+        "human" | "service_account" | "agent_key" | "organization"
     ) {
         return Err(invalid("invalid metadata.owner.kind"));
     }
@@ -106,13 +127,24 @@ pub fn map_profile(
         bounded(&service, "permission.service_scope", 1, 512)?;
         services.insert(ServiceId::new(service));
     }
+    let session_affinity = input
+        .environment
+        .as_ref()
+        .map_or(SessionAffinity::default(), |e| e.session_affinity);
     let agent = AgentProfileContent {
+        isolated_agent: input
+            .environment
+            .as_ref()
+            .is_some_and(|e| e.isolated_agents),
         model: Some(input.model.model),
         thinking_effort,
         permission_level,
         skills: input.context.skills,
         system_prompt: input.context.system_prompt,
     };
+    if agent.isolated_agent && model_access != ModelAccess::ChronoaiManaged {
+        return Err(invalid("isolated agents require managed model access"));
+    }
     agent.validate().map_err(invalid)?;
     for skill in &agent.skills {
         bounded(skill.id.as_str(), "context.skills.id", 1, 512)?;
@@ -121,6 +153,8 @@ pub fn map_profile(
         }
     }
     let mut plan = BindingProfilePlan {
+        session_affinity,
+        organization_owned: input.metadata.owner.kind == "organization",
         owner: SubjectId::new(input.metadata.owner.subject),
         name: input.metadata.name,
         profile_digest: digest,
@@ -141,6 +175,12 @@ pub fn map_profile(
         .collect(),
         refused: Vec::new(),
     };
+    if plan.agent.isolated_agent {
+        plan.honoured.push("environment.isolated_agents".into());
+    }
+    if plan.session_affinity == SessionAffinity::SourceUser {
+        plan.honoured.push("environment.session_affinity".into());
+    }
     if input.model.api_type == supported_model_api {
         plan.honoured.push("model.api_type".into());
     } else {
@@ -251,7 +291,14 @@ fn map_environment(
         ]
         .map(str::to_owned),
     );
-    Ok(BindingEnvironmentPlan { sandbox, workspace })
+    if input.always_keep_alive {
+        plan.honoured.push("environment.always_keep_alive".into());
+    }
+    Ok(BindingEnvironmentPlan {
+        sandbox,
+        workspace,
+        always_keep_alive: input.always_keep_alive,
+    })
 }
 
 impl BindingProfilePlan {

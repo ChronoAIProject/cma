@@ -3,7 +3,7 @@ use super::{
     BindingState, BindingWork, ProviderBinding,
 };
 use crate::sandbox::agent_io::{
-    AgentActor, AgentAuthorizationRevision, AgentCommandEnvelope, AgentOwner, AgentSourceKind,
+    AgentActor, AgentAuthorizationRevision, AgentCommandEnvelope, AgentSourceKind,
     CommandLedgerError, CommandReservation,
 };
 use crate::sandbox::store::SandboxStoreError;
@@ -49,19 +49,18 @@ impl BindingConversationAuthority {
     ) -> Result<(), CommandLedgerError> {
         self.require_current(&self.binding, &self.conversation)
             .map_err(|_| CommandLedgerError::Conflict)?;
-        if envelope
-            .command
-            .external_event()
-            .is_some_and(|context| context.conversation_id != self.conversation.conversation_id)
-        {
+        if envelope.command.external_event().is_some_and(|context| {
+            context
+                .provider_conversation_id
+                .as_deref()
+                .unwrap_or(&context.conversation_id)
+                != self.conversation.conversation_id
+        }) {
             return Err(CommandLedgerError::Invalid);
         }
         if envelope.authorization != authority(&self.binding.binding_id, self.binding.generation)
             || envelope.agent_id != self.conversation.agent_id
-            || envelope.owner
-                != (AgentOwner::Person {
-                    subject: self.binding.owner.clone(),
-                })
+            || envelope.owner != self.binding.resource_owner()
             || envelope.actor
                 != (AgentActor::Api {
                     subject: self.binding.owner.clone(),

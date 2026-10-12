@@ -2,10 +2,9 @@
 use super::problems::{problem, protocol_headers};
 use crate::ingress::{
     admission::{admit, AdmissionFacts, Refusal},
-    launch::LaunchOutcome,
     relay::{
         activity::launch_request,
-        telegram::{observe, Observation},
+        facts::{observe, Observation},
         verify::{self, CallbackHeaders},
         VerificationError,
     },
@@ -13,6 +12,7 @@ use crate::ingress::{
 };
 use crate::telemetry::{
     http::{EventOutcome, RefusalReason},
+    names,
     timing::IngressTiming,
 };
 use axum::{
@@ -32,6 +32,8 @@ use serde::Serialize;
 use std::time::Duration;
 use tracing::Instrument;
 use utoipa::ToSchema;
+
+const SOURCE: &str = "nyxid_relay";
 
 pub fn router(state: IngressState) -> Router {
     crate::telemetry::http::instrument(
@@ -68,7 +70,7 @@ pub async fn callback(
         .extensions()
         .get::<IngressTiming>()
         .cloned()
-        .unwrap_or_else(|| IngressTiming::new("nyxid_relay"));
+        .unwrap_or_else(|| IngressTiming::new(SOURCE));
     let Ok(_permit) = state.inflight.clone().try_acquire_owned() else {
         let mut response = problem(
             StatusCode::TOO_MANY_REQUESTS,
@@ -137,18 +139,36 @@ pub async fn callback(
     };
     let verify_time = timing.verify();
     let verify_span = tracing::info_span!("cmaeg.verify", channel = %crate::telemetry::channel_hash(&channel_id), event_id = tracing::field::Empty);
-    let platform = match verify::single(&parts.headers, "x-nyxid-platform", true) {
+    let wire_platform = match verify::single(&parts.headers, "x-nyxid-platform", true) {
         Ok(Some(platform)) => platform,
-        Err(error) => return invalid(error),
-        _ => return invalid(VerificationError("header_missing")),
+        Err(error) => return invalid(SOURCE, error),
+        _ => return invalid(SOURCE, VerificationError("header_missing")),
     };
-    let Some((index, Source::NyxidRelay { admission, bot_username, .. })) = channel.definition.sources.iter().enumerate()
-        .find(|(_, source)| matches!(source, Source::NyxidRelay { platform: candidate, .. } if candidate.as_str() == platform)) else {
-        return problem(StatusCode::BAD_REQUEST, ProblemCode::InvalidRequest, "no matching relay source");
+    let Some((index, source, admission, platform)) = channel
+        .definition
+        .sources
+        .iter()
+        .enumerate()
+        .find_map(|(index, source)| match source {
+            Source::NyxidRelay {
+                platform: candidate,
+                admission,
+                ..
+            } if candidate.matches_wire(wire_platform) => {
+                Some((index, source, admission, *candidate))
+            }
+            _ => None,
+        })
+    else {
+        return problem(
+            StatusCode::BAD_REQUEST,
+            ProblemCode::InvalidRequest,
+            "no matching relay source",
+        );
     };
     let headers = match CallbackHeaders::read(&parts.headers) {
         Ok(headers) => headers,
-        Err(error) => return invalid(error),
+        Err(error) => return invalid(SOURCE, error),
     };
     let verified = match verify::verify(
         &channel,
@@ -162,12 +182,12 @@ pub async fn callback(
     .await
     {
         Ok(verified) => verified,
-        Err(error) => return invalid(error),
+        Err(error) => return invalid(SOURCE, error),
     };
-    let facts = match observe(&verified.payload, bot_username.as_deref()) {
+    let facts = match observe(source, &verified.payload) {
         Ok(Observation::Message(facts)) => facts,
         Ok(Observation::Refused(reason)) => return refused(reason),
-        Err(error) => return invalid(error),
+        Err(error) => return invalid(SOURCE, error),
     };
     if let Err(reason) = admit(
         admission,
@@ -187,10 +207,13 @@ pub async fn callback(
     }
     let now = time::OffsetDateTime::now_utc().unix_timestamp();
     if verified.reply_expires_at <= now || verified.callback_deadline <= now {
-        return invalid(VerificationError("token_time"));
+        return invalid(SOURCE, VerificationError("token_time"));
     }
-    let mut request = match launch_request(
+    let callback = facts.callback.clone();
+    let route = verified.payload.conversation.id.clone();
+    let request = match launch_request(
         channel,
+        platform,
         verified,
         facts,
         &state.master_keys,
@@ -204,35 +227,10 @@ pub async fn callback(
     };
     verify_span.record("event_id", request.activity.event_id.as_str());
     drop(verify_time);
-    request.timing = Some(timing);
-    let event_id = request.activity.event_id.to_string();
-    let conversation_id = request.conversation_id.to_string();
-    match state.launcher.launch(request).await {
-        LaunchOutcome::Accepted { .. } | LaunchOutcome::Deferred => (
-            StatusCode::ACCEPTED,
-            Json(CallbackResponse::Accepted {
-                event_id,
-                conversation_id,
-            }),
-        )
-            .into_response(),
-        LaunchOutcome::Refused(error) => {
-            let retry = error.code == ProblemCode::ProviderBusy;
-            let mut response = problem(
-                StatusCode::from_u16(error.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
-                error.code,
-                error.detail.unwrap_or_default(),
-            );
-            if retry {
-                response
-                    .headers_mut()
-                    .insert(header::RETRY_AFTER, HeaderValue::from_static("2"));
-            }
-            response
-        }
-    }
+    super::chat_dispatch::dispatch(state, request, callback, route, timing, now).await
 }
-fn refused(reason: Refusal) -> Response {
+
+pub(crate) fn refused(reason: Refusal) -> Response {
     let mut response = (
         StatusCode::ACCEPTED,
         Json(CallbackResponse::Refused { reason }),
@@ -247,14 +245,18 @@ fn refused(reason: Refusal) -> Response {
     response.extensions_mut().insert(RefusalReason(label));
     response
 }
-fn invalid(error: VerificationError) -> Response {
+/// A rejected callback, counted by its bounded source and verification detail so
+/// envelope drift is visible: NyxID never retries a rejected relay callback.
+pub(crate) fn invalid(source: &'static str, error: VerificationError) -> Response {
+    metrics::counter!(names::CALLBACK_INVALID, names::SOURCE => source, names::DETAIL => error.0)
+        .increment(1);
     problem(
         StatusCode::UNAUTHORIZED,
         ProblemCode::CallbackInvalid,
         error.0,
     )
 }
-fn too_large() -> Response {
+pub(crate) fn too_large() -> Response {
     problem(
         StatusCode::PAYLOAD_TOO_LARGE,
         ProblemCode::PayloadTooLarge,

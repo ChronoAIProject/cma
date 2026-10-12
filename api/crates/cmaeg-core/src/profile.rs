@@ -1,4 +1,4 @@
-//! Provider-neutral Agent Profile snapshots.
+//! Provider-neutral Event Worker Profiles.
 
 use std::collections::BTreeMap;
 
@@ -24,6 +24,7 @@ pub enum NyxIdIdentityKind {
     Human,
     ServiceAccount,
     AgentKey,
+    Organization,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -124,7 +125,7 @@ pub struct ContextConfig {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
-pub struct AgentProfileSnapshot {
+pub struct EventWorkerProfile {
     pub schema_version: u16,
     pub metadata: ProfileMetadata,
     pub model: ModelConfig,
@@ -144,7 +145,7 @@ pub struct ProfileMetadata {
     pub provider: ProviderSlug,
 }
 
-impl AgentProfileSnapshot {
+impl EventWorkerProfile {
     /// Validate the snapshot before it is bound to a channel.
     pub fn validate(&self) -> Result<(), ValidationError> {
         if self.schema_version != PROFILE_SCHEMA_VERSION {
@@ -274,3 +275,6 @@ fn hex(bytes: &[u8]) -> String {
         })
         .collect()
 }
+
+/// Compatibility name for clients compiled against the original v1 SDK.
+pub type AgentProfileSnapshot = EventWorkerProfile;

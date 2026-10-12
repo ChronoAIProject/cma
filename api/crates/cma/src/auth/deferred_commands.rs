@@ -19,6 +19,7 @@ use super::{
 mod api_bearer;
 mod binding;
 mod custody;
+mod delegated;
 mod resource;
 mod sandbox_controls;
 
@@ -48,14 +49,24 @@ impl AgentCommandAdmissionAuthority for AuthState {
                 != Some(&context.credential)
             || !matches!(
                 &context.actor,
-                AgentActor::Human { .. }
-                    | AgentActor::Api {
-                        delegation_id: None,
-                        ..
-                    }
+                AgentActor::Human { .. } | AgentActor::Api { .. }
             )
         {
             return Err(CommandAuthorizationError::Revoked);
+        }
+        if matches!(
+            &context.actor,
+            AgentActor::Api {
+                delegation_id: Some(_),
+                ..
+            }
+        ) {
+            return tokio::time::timeout(
+                VERIFICATION_TIMEOUT,
+                self.delegated_command_authority(context, credential),
+            )
+            .await
+            .map_err(|_| CommandAuthorizationError::Unavailable)?;
         }
         if matches!(
             context.credential_source,
@@ -170,11 +181,7 @@ impl AgentCommandAuthorizer for AuthState {
                 .map_err(|_| CommandAuthorizationError::Revoked)?;
             let (
                 AgentOwner::Person { subject: owner },
-                AgentActor::Human { subject }
-                | AgentActor::Api {
-                    subject,
-                    delegation_id: None,
-                },
+                AgentActor::Human { subject } | AgentActor::Api { subject, .. },
             ) = (&envelope.owner, &envelope.actor)
             else {
                 return Err(CommandAuthorizationError::Revoked);

@@ -12,22 +12,20 @@ use tokio::sync::{Notify, RwLock};
 
 use super::*;
 use crate::auth::persistence::{AuthStore, DurableSubjectTokens, MemoryAuthStore, SecretValue};
-use crate::auth::{profile::Profile, AuthMode};
+use crate::auth::{profile::Profile, test_resources as resource_fixture, AuthMode};
 
+#[path = "cookie_authorization_tests/actor_link_tests.rs"]
+mod actor_link_tests;
 #[path = "cookie_authorization_tests/bearer_availability_tests.rs"]
 mod bearer_availability_tests;
 #[path = "cookie_authorization_tests/bots_tests.rs"]
 mod bots_tests;
-#[path = "cookie_authorization_tests/bridge_grants.rs"]
-mod bridge_grants;
 #[path = "cookie_authorization_tests/concurrency_tests.rs"]
 mod concurrency_tests;
 #[path = "cookie_authorization_tests/deferred_command_tests.rs"]
 mod deferred_command_tests;
 #[path = "cookie_authorization_tests/resource_command_tests.rs"]
 mod resource_command_tests;
-#[path = "cookie_authorization_tests/resource_fixture.rs"]
-mod resource_fixture;
 #[path = "cookie_authorization_tests/session_routes_tests.rs"]
 mod session_routes_tests;
 

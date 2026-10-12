@@ -1,5 +1,6 @@
 mod context;
 mod control;
+mod delegation;
 mod fixtures;
 mod profile_provisioning;
 

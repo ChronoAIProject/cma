@@ -37,9 +37,6 @@ impl CommandScheduleWork for AgentCommandWorker {
         page: &PageRequest,
     ) -> Result<Page<AgentCommandId>, CommandLedgerError> {
         let page = self.discover(page).await?;
-        for record in &page.items {
-            crate::bridge::operations::health::command(record);
-        }
         Ok(Page {
             items: page
                 .items

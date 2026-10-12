@@ -5,7 +5,7 @@ pub(super) async fn production_adapter(
     config: &Config,
     checkpoint_objects: Arc<crate::store::MongoCheckpointObjectStore>,
     subscriptions: Arc<dyn layer3_adapter::hosted::HostedSubscriptionSource>,
-    channel_tools: Arc<dyn layer3_adapter::hosted::HostedChannelToolSource>,
+    provider_tools: Arc<dyn layer3_adapter::hosted::HostedProviderToolSource>,
 ) -> Result<Arc<dyn layer3_adapter::SandboxAdapter>, String> {
     use layer3_adapter::codex::{CodexAdapter, CodexSandboxSpec};
     use layer3_adapter::hosted::{
@@ -86,7 +86,7 @@ pub(super) async fn production_adapter(
             ..CodexSandboxSpec::default()
         },
     )
-    .with_channel_tools(channel_tools);
+    .with_provider_tools(provider_tools);
     if let Some(policy) = &config.runtime.home_policy {
         let homes = layer3_adapter::provider::PersistentHomeVolumes::infer_namespaced(
             &config.runtime.sandbox_namespace,

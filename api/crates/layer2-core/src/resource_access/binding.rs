@@ -46,10 +46,7 @@ impl ResourceAccessService {
         else {
             return Err(ResourceAccessStoreError::Corrupt.into());
         };
-        if snapshot.scope(target)?.owner
-            != (ResourceOwner::Person {
-                subject: proof.binding.owner.clone(),
-            })
+        if snapshot.scope(target)?.owner != proof.binding.resource_owner()
             || lineage.sandbox.id != proof.binding.sandbox_id
             || workspace.id != proof.binding.workspace_id
             || worktree.id != proof.conversation.worktree_id

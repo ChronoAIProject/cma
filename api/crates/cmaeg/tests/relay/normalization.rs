@@ -105,8 +105,8 @@ async fn every_unsupported_telegram_event_is_an_explicit_refusal() {
         ("/raw_platform_data", Value::Null, "unknown_sender"),
         (
             "/raw_platform_data",
-            json!({"callback_query":{}}),
-            "interactive_action_unsupported",
+            json!({"callback_query":{"id":"cb-1","data":"ce1:bad:0","from":{"id":100,"is_bot":true}}}),
+            "bot_sender",
         ),
         (
             "/raw_platform_data",

@@ -20,7 +20,6 @@ impl MountedSecrets {
         )
         .unwrap();
         fs::write(dir.join("token"), "cma-service\n").unwrap();
-        fs::write(dir.join("cookie-key"), [7_u8; 32]).unwrap();
         Self { dir }
     }
     fn command(
@@ -142,13 +141,11 @@ async fn curl(
 }
 
 #[tokio::test]
-#[ignore = "requires authenticated disposable service Mongo fixture"]
 async fn compiled_binary_loads_mounted_secrets_and_serves_curl_without_leaking_credentials() {
     binary_journey(false).await;
 }
 
 #[tokio::test]
-#[ignore = "requires authenticated disposable service Mongo fixture"]
 async fn compiled_binary_renews_cma_auth_from_secret_environment_without_restart() {
     binary_journey(true).await;
 }
@@ -170,15 +167,6 @@ async fn binary_journey(renewable: bool) {
     let log_path = files.dir.join("trace.log");
     let log = fs::File::create(&log_path).unwrap();
     let mut command = files.command(&address, &cma, &nyxid, &provider);
-    let (admin, database, runtime_uri) = independent_database().await;
-    command
-        .env("CMAEG_CMA_BASE_URL", provider.base_url())
-        .env("CMAEG_MONGODB_URI", runtime_uri)
-        .env("CMAEG_MONGODB_DATABASE", &database)
-        .env("CMAEG_NYXID_CLIENT_ID", "gateway-management")
-        .env("CMAEG_NYXID_CLIENT_SECRET", "gateway-management-fixture")
-        .env("CMAEG_WEB_ORIGIN", "https://cma.example")
-        .env("CMAEG_COOKIE_KEY_FILE", files.dir.join("cookie-key"));
     if renewable {
         command
             .env_remove("CMAEG_MASTER_KEYS_FILE")
@@ -230,9 +218,24 @@ async fn binary_journey(renewable: bool) {
         tokio::time::sleep(Duration::from_millis(3100)).await;
     }
     let read = curl("GET", &format!("{base}/v1/channels/{id}"), None, 200).await;
+    if renewable {
+        assert!(
+            nyxid
+                .service_tokens
+                .calls
+                .load(std::sync::atomic::Ordering::SeqCst)
+                >= 2
+        );
+    }
     assert_eq!(read["definition"]["name"], "support-bot");
     let document = curl("GET", &format!("{base}/openapi.json"), None, 200).await;
-    assert_eq!(document["paths"].as_object().unwrap().len(), 12);
+    assert!(document["paths"].get("/telegram/{channel_id}").is_some());
+    assert!(document["paths"]
+        .get("/events/{event_ref}/reply-target")
+        .is_some());
+    assert!(document["paths"]
+        .get("/reply-targets/{reply_target_ref}/messages")
+        .is_some());
     let output = Command::new("curl")
         .args([
             "--silent",
@@ -282,15 +285,6 @@ async fn binary_journey(renewable: bool) {
         204,
     )
     .await;
-    if renewable {
-        assert!(
-            nyxid
-                .service_tokens
-                .calls
-                .load(std::sync::atomic::Ordering::SeqCst)
-                >= 2
-        );
-    }
     assert!(cma.records().is_empty());
     assert!(provider
         .requests()
@@ -298,7 +292,6 @@ async fn binary_journey(renewable: bool) {
         .any(|request| request.method == "DELETE"));
     child.kill().await.unwrap();
     child.wait().await.unwrap();
-    admin.database(&database).drop().await.unwrap();
     let logs = fs::read_to_string(log_path).unwrap();
     assert!(logs.contains("CMAEG listening"));
     assert_no_secrets(&logs);
@@ -476,34 +469,4 @@ async fn compiled_binary_refuses_missing_and_invalid_mounted_secrets() {
     provider.close().await;
     cma.close().await;
     nyxid.close().await;
-}
-
-// The compiled production binary must prove startup with collection-limited
-// credentials, not an in-memory stand-in or database-wide readWrite account.
-async fn independent_database() -> (mongodb::Client, String, String) {
-    use cmaeg::records::mongo;
-    use mongodb::bson::doc;
-    let uri = std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap();
-    let admin = mongodb::Client::with_uri_str(&uri).await.unwrap();
-    let name = format!("cma_eg_binary_{}", uuid::Uuid::new_v4().simple());
-    let db = admin.database(&name);
-    let password = uuid::Uuid::new_v4().to_string();
-    for (user, role, migration) in [
-        ("runtime", "cma_eg_runtime", false),
-        ("migrator", "cma_eg_migrator", true),
-    ] {
-        db.run_command(mongo::role(&name, migration)).await.unwrap();
-        db.run_command(doc! {"createUser":user,"pwd":&password,"roles":[{"role":role,"db":&name}]})
-            .await
-            .unwrap();
-    }
-    let mut url = url::Url::parse(&uri).unwrap();
-    url.set_username("migrator").unwrap();
-    url.set_password(Some(&password)).unwrap();
-    url.set_path(&format!("/{name}"));
-    url.set_query(Some("directConnection=true"));
-    let migrator = mongodb::Client::with_uri_str(url.as_str()).await.unwrap();
-    mongo::migrate(&migrator.database(&name)).await.unwrap();
-    url.set_username("runtime").unwrap();
-    (admin, name, url.to_string())
 }

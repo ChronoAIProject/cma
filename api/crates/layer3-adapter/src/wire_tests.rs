@@ -13,6 +13,7 @@ fn options() -> RuntimeOptions {
         reasoning_effort: ReasoningEffort::High,
         permission: PermissionLevel::Autonomous,
         own_credential: false,
+        isolated_agent: false,
         working_directory: "/home/cma/repo/.worktrees/wt-1".into(),
         home_directory: "/home/cma/.cma/agents/agent-1/home".into(),
         slot: AgentSlot("agent-1".into()),

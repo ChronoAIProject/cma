@@ -70,6 +70,7 @@ pub(in crate::store) fn ready_agent(sandbox: &Sandbox, id: &str) -> Agent {
             revision: 1,
             digest: "d".repeat(64),
             content: AgentProfileContent {
+                isolated_agent: false,
                 model: None,
                 thinking_effort: ThinkingEffort::Medium,
                 permission_level: PermissionLevel::Guarded,
@@ -533,8 +534,6 @@ async fn maintenance_agent_fence_conflicts_with_a_turn_after_the_evidence_snapsh
         .commit_agent_conversation(AgentConversationMutation {
             command_claim: None,
             execution_fence: None,
-            channel_control_execution_fence: None,
-            channel_execution_fence: None,
             trigger_execution_fence: None,
             admission_guard: Some(layer2_core::sandbox::store::SandboxMutationGuard::capture(
                 &sandbox,

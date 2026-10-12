@@ -72,8 +72,20 @@ pub(super) async fn ready_conversation(
 
 #[tokio::test]
 async fn binding_resource_access_grants_only_mapped_agent_interaction() {
+    mapped_agent_interaction("human").await;
+}
+
+#[tokio::test]
+async fn organization_binding_grants_mapped_agent_access_without_organization_or_parent_authority()
+{
+    mapped_agent_interaction("organization").await;
+}
+
+async fn mapped_agent_interaction(owner_kind: &str) {
     let f = fixture();
-    let binding = f.ready().await;
+    let mut profile = profile("Original instruction");
+    profile["metadata"]["owner"]["kind"] = owner_kind.into();
+    let binding = f.ready_with_profile(profile, None).await;
     let conversation = ready_conversation(&f, &binding).await;
     let bindings = BindingAccessService::new(f.store.clone());
     let context = context(
@@ -98,6 +110,18 @@ async fn binding_resource_access_grants_only_mapped_agent_interaction() {
         )
         .await
         .unwrap();
+    assert_eq!(
+        held.snapshot.scope(&target).unwrap().owner,
+        if owner_kind == "organization" {
+            ResourceOwner::Organization {
+                subject: binding.owner.clone(),
+            }
+        } else {
+            ResourceOwner::Person {
+                subject: binding.owner.clone(),
+            }
+        }
+    );
     assert_eq!(
         held.decision.capabilities().collect::<Vec<_>>(),
         vec![
@@ -199,6 +223,86 @@ async fn binding_resource_access_grants_only_mapped_agent_interaction() {
         .validate_read_result(&held, &target, ResourceCapability::Interact)
         .await
         .is_err());
+}
+
+#[tokio::test]
+async fn binding_access_rejects_owner_kind_mismatch_even_when_subject_and_lineage_match() {
+    for organization in [false, true] {
+        let f = fixture();
+        let mut profile = profile("Scoped binding");
+        profile["metadata"]["owner"]["kind"] = if organization {
+            "organization"
+        } else {
+            "human"
+        }
+        .into();
+        let binding = f.ready_with_profile(profile, None).await;
+        let conversation = ready_conversation(&f, &binding).await;
+        let bindings = BindingAccessService::new(f.store.clone());
+        let context = context(
+            &bindings
+                .authenticate(&f.key.sha256())
+                .await
+                .unwrap()
+                .unwrap(),
+        );
+        let access = ResourceAccessService::new(f.store.clone(), Arc::new(NoExternalAuthority))
+            .with_bindings(bindings);
+        let target = ResourceTarget::Agent {
+            agent_id: conversation.agent_id,
+        };
+        let held = access
+            .authorize(
+                &context,
+                None,
+                &target,
+                ResourceCapability::Interact,
+                AccessPurpose::Read,
+            )
+            .await
+            .unwrap();
+        let parent = &held.snapshot.lineage.sandbox;
+        // A retained record with the opposite owner kind must not be treated as
+        // equivalent merely because its subject string and all parent IDs agree.
+        f.store.set_resource_policy_for_test(ResourcePolicyRecord {
+            sandbox_id: parent.id.clone(),
+            sandbox_created_at: parent.created_at.clone(),
+            owner: if organization {
+                ResourceOwner::Person {
+                    subject: binding.owner.clone(),
+                }
+            } else {
+                ResourceOwner::Organization {
+                    subject: binding.owner.clone(),
+                }
+            },
+            organization_evidence: (!organization).then(|| OrganizationOwnershipEvidence {
+                issuer: "fixture-authority".into(),
+                organization: binding.owner.clone(),
+                admitted_by: ResourceActor::Human {
+                    subject: binding.manager.clone(),
+                },
+                verified_at: crate::now_rfc3339(),
+            }),
+            revision: 2,
+        });
+        assert!(matches!(
+            access
+                .authorize(
+                    &context,
+                    None,
+                    &target,
+                    ResourceCapability::Interact,
+                    AccessPurpose::Read
+                )
+                .await,
+            Err(ResourceAccessError::Access(AccessError::NotFound))
+        ));
+        assert!(access
+            .validate_read_result(&held, &target, ResourceCapability::Interact)
+            .await
+            .is_err());
+    }
 }
 
 #[tokio::test]

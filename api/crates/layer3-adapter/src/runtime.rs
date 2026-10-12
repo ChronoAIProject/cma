@@ -84,6 +84,8 @@ pub struct SandboxSpec {
     pub created_by: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub home_volume: Option<Box<crate::HomeVolumeAttachment>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_proxy_url: Option<String>,
 }
 
 impl Default for SandboxSpec {
@@ -99,6 +101,7 @@ impl Default for SandboxSpec {
             timeout_seconds: None,
             created_by: None,
             home_volume: None,
+            tool_proxy_url: None,
         }
     }
 }

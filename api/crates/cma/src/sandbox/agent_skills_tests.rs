@@ -11,8 +11,6 @@ use serde_json::json;
 use super::*;
 #[path = "agent_skills_tests/authority_tests.rs"]
 mod authority_tests;
-#[path = "agent_skills_tests/bridge_tests.rs"]
-mod bridge_tests;
 #[path = "agent_skills_tests/warmup_tests.rs"]
 mod warmup_tests;
 use authority_tests::{sandbox, CredentialReply, TestCredentials};

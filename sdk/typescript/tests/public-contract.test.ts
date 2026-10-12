@@ -15,6 +15,7 @@ import {
   type ContractCase,
 } from './public-contract/context.js';
 import { resourceDispatch } from './public-contract/resources.js';
+import { eventWorkerDispatch } from './public-contract/event-workers.js';
 import { botDispatch } from './public-contract/bots.js';
 import { operatorDispatch } from './public-contract/operator.js';
 import { triggerDispatch } from './public-contract/triggers.js';
@@ -32,6 +33,7 @@ import { browserOperations, verifyNavigation } from './public-contract/navigatio
 
 const dispatch = {
   ...botDispatch,
+  ...eventWorkerDispatch,
   ...resourceDispatch,
   ...operatorDispatch,
   ...triggerDispatch,
@@ -214,6 +216,9 @@ describe('shared public contract', () => {
           status: fixture.response.status,
           code: problemBody(fixture).code,
         });
+      } else if (fixture.response.status >= 400 && fixture.response.bodyKind === 'empty') {
+        await expect(invoke()).rejects.toBeInstanceOf(ProtocolError);
+        expect(fetch).toHaveBeenCalledOnce();
       } else if (
         fixture.response.status >= 400 &&
         !(fixture.operation === 'GET /auth/session' && fixture.response.status === 401)

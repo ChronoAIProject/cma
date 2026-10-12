@@ -56,7 +56,12 @@ test('LOCAL organization inventory, retained creation export and shared Agent co
         ],
       });
     }
-    if (path === '/api/v1/resource-access/agent/agt_shared')
+    if (
+      [
+        '/api/v1/resource-access/agent/agt_shared',
+        '/api/v1/resource-access/agent/agt_shared_retained',
+      ].includes(path)
+    )
       return reply({
         capabilities: [
           'view_details',
@@ -67,6 +72,16 @@ test('LOCAL organization inventory, retained creation export and shared Agent co
         policy_revision: 1,
       });
     if (path === '/api/v1/agents/agt_shared') return reply(agent);
+    if (path === '/api/v1/agents/agt_shared/channel-usage')
+      return reply({
+        agent_id: agent.id,
+        channel_usage: {
+          active: false,
+          has_history: false,
+          first_used_at: null,
+          last_used_at: null,
+        },
+      });
     if (path === '/api/v1/agents/agt_shared/provenance')
       return reply({ agent_id: agent.id, created_at: localTime, creation_origin: 'manual' });
     if (path === '/api/v1/agents/agt_shared/transcript')
@@ -148,13 +163,16 @@ test('LOCAL organization inventory, retained creation export and shared Agent co
     animations: 'disabled',
   });
   admin = true;
+  await page.getByRole('button', { name: 'Show Agent details' }).click();
   await page.getByRole('button', { name: 'Refresh access' }).click();
+  await page.getByRole('button', { name: 'Close Agent details' }).click();
   await page
     .getByRole('textbox', { name: 'Message', exact: true })
     .fill('Review from the current organization admin.');
   await page.getByRole('button', { name: 'Send message' }).click();
   await expect.poll(() => writes.length).toBe(1);
   expect(writes).toEqual([{ text: 'Review from the current organization admin.' }]);
+  await page.getByRole('button', { name: 'Show Agent details' }).click();
   revoked = true;
   await page.getByRole('button', { name: 'Refresh access' }).click();
   await expect(page.getByRole('heading', { name: 'Agent unavailable' })).toBeVisible();

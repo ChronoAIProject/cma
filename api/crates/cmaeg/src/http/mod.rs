@@ -1,14 +1,21 @@
 //! HTTP projections for CMAEG management operations.
 
 pub mod callbacks;
+mod chat_dispatch;
+pub(crate) mod connection_browser;
+pub mod connections;
+pub(crate) mod connections_ui;
 pub mod creation;
+pub(crate) mod docs;
 pub mod events;
 pub mod management;
 mod management_responses;
 pub mod metrics;
 pub mod problems;
 pub mod readiness;
+pub mod reply_targets;
 pub mod schema;
+pub mod telegram;
 pub mod tools;
 
 pub use crate::channels::management::ManagementState;

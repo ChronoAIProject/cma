@@ -1,4 +1,4 @@
-use super::profiles::{BindingProfileStore, BindingProfiles};
+use super::profiles::BindingProfiles;
 use super::*;
 use crate::profiles::{AgentProvider, ProfileCapacityBounds};
 use crate::sandbox::store::{AgentStore, SandboxStore, SandboxStoreError, WorkspaceStore};
@@ -6,8 +6,23 @@ use crate::sandbox::{AgentService, SandboxPolicySource, SandboxService, Workspac
 use crate::{now_rfc3339, Caller, Capability};
 use std::sync::Arc;
 
-pub trait BindingServiceStore: BindingStore + SandboxStore + WorkspaceStore + AgentStore {}
-impl<T: BindingStore + SandboxStore + WorkspaceStore + AgentStore> BindingServiceStore for T {}
+pub trait BindingServiceStore:
+    BindingStore
+    + SandboxStore
+    + WorkspaceStore
+    + AgentStore
+    + crate::resource_access::ResourceAccessStore
+{
+}
+impl<
+        T: BindingStore
+            + SandboxStore
+            + WorkspaceStore
+            + AgentStore
+            + crate::resource_access::ResourceAccessStore,
+    > BindingServiceStore for T
+{
+}
 
 pub struct BindingResources {
     pub sandboxes: Arc<SandboxService>,
@@ -27,7 +42,7 @@ pub struct BindingService {
     pub(super) profiles: BindingProfiles,
     pub(super) resources: BindingResources,
     pub(super) credentials: Arc<dyn BindingCredentialCustody>,
-    policy: BindingPolicy,
+    pub(super) policy: BindingPolicy,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -47,23 +62,18 @@ pub enum BindingError {
 }
 
 impl BindingService {
-    pub fn new<S, P>(
+    pub fn new<S>(
         store: Arc<S>,
-        profiles: Arc<P>,
         resources: BindingResources,
         credentials: Arc<dyn BindingCredentialCustody>,
         policy: BindingPolicy,
     ) -> Arc<Self>
     where
         S: BindingServiceStore + 'static,
-        P: BindingProfileStore + 'static,
     {
         Arc::new(Self {
             store,
-            profiles: BindingProfiles {
-                store: profiles,
-                bounds: policy.bounds,
-            },
+            profiles: BindingProfiles,
             resources,
             credentials,
             policy,
@@ -91,7 +101,28 @@ impl BindingService {
         digest: &str,
         credential: &ProvidedCredential,
     ) -> Result<ProviderBinding, BindingError> {
+        self.put_with_tool_endpoint(caller, id, profile, digest, credential, None)
+            .await
+    }
+
+    /// The interface must first prove support for the advertised endpoint. Its
+    /// destination becomes immutable authority for the entire binding lifetime.
+    pub async fn put_with_tool_endpoint(
+        &self,
+        caller: &Caller,
+        id: &str,
+        profile: serde_json::Value,
+        digest: &str,
+        credential: &ProvidedCredential,
+        tool_endpoint: Option<String>,
+    ) -> Result<ProviderBinding, BindingError> {
         require(caller)?;
+        if tool_endpoint
+            .as_deref()
+            .is_some_and(|value| !super::valid_tool_endpoint(value))
+        {
+            return Err(BindingError::InvalidRequest("invalid tool endpoint".into()));
+        }
         self.credentials
             .validate(credential)
             .map_err(credential_error)?;
@@ -114,10 +145,14 @@ impl BindingService {
             .current_sandbox_policy()
             .await
             .map_err(unavailable)?;
-        plan.refused.push(BindingFieldRefusal {
-            field: "tools.native_mcp_url".into(),
-            reason: "external tool endpoints are not supported".into(),
-        });
+        if tool_endpoint.is_some() {
+            plan.honoured.push("tools.native_mcp_url".into());
+        } else {
+            plan.refused.push(BindingFieldRefusal {
+                field: "tools.native_mcp_url".into(),
+                reason: "external tool endpoints are not supported".into(),
+            });
+        }
         if let Some(environment) = &mut plan.environment {
             // Pin the effective floor once. Replays keep the original reservation
             // even when the deployment policy changes between attempts.
@@ -139,6 +174,18 @@ impl BindingService {
                 .is_some_and(|value| value.manager != caller.subject)
             {
                 return Err(BindingError::NotFound);
+            }
+            if current
+                .as_ref()
+                .is_some_and(|value| value.existing_agent.is_some())
+            {
+                return Err(BindingError::Conflict);
+            }
+            if current
+                .as_ref()
+                .is_some_and(|value| value.tool_endpoint != tool_endpoint)
+            {
+                return Err(BindingError::Conflict);
             }
             let binding = match current {
                 Some(value) if value.state == BindingState::Retired => {
@@ -172,11 +219,12 @@ impl BindingService {
                     }
                 }
                 None => {
-                    let next = ProviderBinding::new(
+                    let next = ProviderBinding::new_with_tool_endpoint(
                         id.into(),
                         caller.subject.clone(),
                         plan.clone(),
                         credential.sha256(),
+                        tool_endpoint.clone(),
                         now_rfc3339(),
                     )
                     .map_err(BindingError::InvalidRequest)?;
@@ -256,6 +304,11 @@ impl BindingService {
         }
         for _ in 0..8 {
             let binding = self.read(caller, id).await?;
+            let conversation_id = if binding.existing_agent.is_some() {
+                EXISTING_AGENT_CONVERSATION
+            } else {
+                conversation_id
+            };
             if binding.state != BindingState::Ready {
                 return Err(BindingError::Conflict);
             }
@@ -300,6 +353,11 @@ impl BindingService {
         }
         for _ in 0..8 {
             let binding = self.read(caller, id).await?;
+            let conversation_id = if binding.existing_agent.is_some() {
+                EXISTING_AGENT_CONVERSATION
+            } else {
+                conversation_id
+            };
             let Some(value) = self
                 .store
                 .binding_conversation(id, binding.generation, conversation_id)
@@ -336,7 +394,7 @@ impl BindingService {
     }
 }
 
-fn require(caller: &Caller) -> Result<(), BindingError> {
+pub(super) fn require(caller: &Caller) -> Result<(), BindingError> {
     caller
         .require(Capability::ManageGatewayRecords)
         .map_err(|_| BindingError::Forbidden)?;
@@ -349,7 +407,7 @@ pub(super) fn unavailable(error: impl std::fmt::Display) -> BindingError {
     BindingError::Unavailable(error.to_string())
 }
 
-fn credential_error(error: crate::CoreError) -> BindingError {
+pub(super) fn credential_error(error: crate::CoreError) -> BindingError {
     match error {
         crate::CoreError::InvalidRequest(detail) => BindingError::InvalidRequest(detail),
         crate::CoreError::InvalidState(_) => BindingError::Conflict,
