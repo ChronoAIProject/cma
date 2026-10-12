@@ -71,24 +71,24 @@ describe('stored appearance', () => {
     expect(storedAppearance()).toBe('light');
   });
 
-  it('defaults to system when canonical data is invalid', () => {
+  it('defaults to dark when canonical data is invalid', () => {
     window.localStorage.setItem(STORAGE_KEY, 'sepia');
 
-    expect(storedAppearance()).toBe('system');
+    expect(storedAppearance()).toBe('dark');
   });
 
   it('does not read another product storage key', () => {
     window.localStorage.setItem('other-product:appearance', 'dark');
 
-    expect(storedAppearance()).toBe('system');
+    expect(storedAppearance()).toBe('dark');
   });
 
-  it('defaults to system instead of throwing when reads are blocked', () => {
+  it('defaults to dark instead of throwing when reads are blocked', () => {
     vi.spyOn(window.localStorage, 'getItem').mockImplementation(() => {
       throw new DOMException('denied', 'SecurityError');
     });
 
-    expect(storedAppearance()).toBe('system');
+    expect(storedAppearance()).toBe('dark');
   });
 });
 
@@ -141,9 +141,12 @@ describe('starting up', () => {
     expect(isDark()).toBe(true);
   });
 
-  it('follows the machine while the choice is system', () => {
+  it('uses the dark platform default until a system choice is explicit', () => {
     const system = stubSystem(false);
     const stop = startAppearance();
+    expect(isDark()).toBe(true);
+
+    setAppearance('system');
     expect(isDark()).toBe(false);
 
     system.flip(true);
@@ -221,13 +224,13 @@ describe('the pre-paint boot script', () => {
     expect(inline).toContain(STORAGE_KEY);
   });
 
-  it('ignores an unrecognised preference before first paint', () => {
+  it('uses the dark default for an unrecognised preference before first paint', () => {
     stubSystem(false);
     window.localStorage.setItem(STORAGE_KEY, 'sepia');
 
     boot();
 
-    expect(isDark()).toBe(false);
+    expect(isDark()).toBe(true);
   });
 
   it('survives storage it is not allowed to read', () => {

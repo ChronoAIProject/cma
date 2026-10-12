@@ -1,5 +1,12 @@
 import { ProtocolError, type Cma } from '@chronoai/cma-sdk';
-import type { CmaWebClient, ReadOptions } from './client';
+import { AgentLifecycleCreateError } from './client';
+import type {
+  AgentLifecycleConnectionRequired,
+  AgentLifecycleCreateInput,
+  CmaWebClient,
+  ReadOptions,
+} from './client';
+import type { ConnectionTarget } from '../connections/client';
 import type { ProfileReference } from './types';
 import { agentDetail, sandboxDetail, sandboxSummary, workspaceDetail } from './rest/hierarchy';
 import { createAgentTransport, type AgentTransportOptions } from '../agent/transport/client';
@@ -51,6 +58,59 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
     agentTransport: transport === undefined ? undefined : createAgentTransport(sdk, transport),
     resourceViews: sdk,
     bridgeViews: sdk,
+    createAgentLifecycle: async (input: AgentLifecycleCreateInput, options) => {
+      const response = await fetch('/api/agent-manager/v1/agents', {
+        method: 'POST',
+        credentials: 'same-origin',
+        cache: 'no-store',
+        signal: options.signal,
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': options.idempotencyKey,
+        },
+        body: JSON.stringify(input),
+      });
+      if (!response.ok) {
+        let detail = `Agent Manager could not create this Agent (${String(response.status)}).`;
+        let code: string | undefined;
+        let connection: AgentLifecycleConnectionRequired | undefined;
+        try {
+          const value = (await response.json()) as {
+            detail?: unknown;
+            code?: unknown;
+            services?: unknown;
+            connection_target?: unknown;
+          };
+          if (typeof value.detail === 'string') detail = value.detail;
+          if (typeof value.code === 'string') {
+            code = value.code;
+            if (value.detail === undefined) detail = value.code;
+          }
+          if (
+            code === 'connection_required' &&
+            Array.isArray(value.services) &&
+            value.services.every((service): service is string => typeof service === 'string') &&
+            isConnectionTarget(value.connection_target)
+          ) {
+            connection = {
+              code,
+              services: value.services,
+              target: value.connection_target,
+            };
+          }
+        } catch {
+          /* Keep the status-based message. */
+        }
+        throw new AgentLifecycleCreateError(detail, response.status, code, connection);
+      }
+      const value = (await response.json()) as { id?: unknown; status?: unknown };
+      if (typeof value.id !== 'string' || value.id.length === 0)
+        throw new Error('Agent Manager returned an invalid Agent identity.');
+      return {
+        id: value.id,
+        status: typeof value.status === 'string' ? value.status : undefined,
+      };
+    },
     listSandboxes: async (options) => {
       const page = await sdk.sandboxes.list(options);
       return { items: page.items.map(sandboxSummary), next: page.next };
@@ -197,4 +257,27 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
     stopAgent: (id, options) => sdk.agents.stop(id, {}, options),
     deleteAgent: (id, options) => sdk.agents.delete(id, options),
   };
+}
+
+function isConnectionTarget(value: unknown): value is ConnectionTarget {
+  if (typeof value !== 'object' || value === null) return false;
+  const candidate = value as { type?: unknown; id?: unknown; profile?: unknown };
+  if (
+    (candidate.type === 'sandbox' ||
+      candidate.type === 'workspace' ||
+      candidate.type === 'agent' ||
+      candidate.type === 'launch') &&
+    typeof candidate.id === 'string' &&
+    candidate.id.length > 0
+  )
+    return true;
+  if (candidate.type !== 'sandbox_profile' || typeof candidate.profile !== 'object') return false;
+  const profile = candidate.profile as { id?: unknown; revision?: unknown };
+  return (
+    typeof profile.id === 'string' &&
+    profile.id.length > 0 &&
+    typeof profile.revision === 'number' &&
+    Number.isSafeInteger(profile.revision) &&
+    profile.revision > 0
+  );
 }

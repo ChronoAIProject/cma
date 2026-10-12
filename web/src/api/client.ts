@@ -21,6 +21,7 @@ import type { AccessibleAgentSource, AgentProvenance, AgentResources } from '@ch
 import type { ResourceViewsClient } from '../resources/client';
 import type { BridgeViewsClient } from '../bridges/client';
 import type { createAgentTransport } from '../agent/transport/client';
+import type { ConnectionTarget } from '../connections/client';
 
 export interface ReadOptions {
   readonly signal?: AbortSignal;
@@ -39,11 +40,60 @@ export interface AgentStreamOptions extends ReadOptions {
   readonly onEvent: (event: AgentLiveEvent) => void;
 }
 
+export interface AgentLifecycleCreateInput {
+  readonly name: string;
+  readonly image?: { readonly id: string; readonly version?: string };
+  readonly repository?: { readonly url: string; readonly ref?: string };
+  readonly profile?: {
+    readonly model?: string;
+    readonly reasoning_effort?: string;
+    readonly permission_mode?: 'guarded' | 'autonomous';
+    readonly system_prompt?: string;
+    readonly skills?: readonly { readonly id: string; readonly version?: string }[];
+    readonly permissions?: { readonly services: readonly string[] };
+  };
+}
+
+export interface AgentLifecycleCreateReceipt {
+  readonly id: string;
+  readonly status?: string;
+}
+
+export interface AgentLifecycleConnectionRequired {
+  readonly code: 'connection_required';
+  readonly services: readonly string[];
+  readonly target: ConnectionTarget;
+}
+
+export class AgentLifecycleCreateError extends Error {
+  readonly status: number;
+  readonly code?: string;
+  readonly connection?: AgentLifecycleConnectionRequired;
+
+  constructor(
+    message: string,
+    status: number,
+    code?: string,
+    connection?: AgentLifecycleConnectionRequired,
+  ) {
+    super(message);
+    this.name = 'AgentLifecycleCreateError';
+    this.status = status;
+    this.code = code;
+    this.connection = connection;
+  }
+}
+
 /** A transport-free view of the public CMA operations consumed by the web app. */
 export interface CmaWebClient {
   readonly agentTransport?: ReturnType<typeof createAgentTransport>;
   readonly resourceViews?: ResourceViewsClient;
   readonly bridgeViews?: BridgeViewsClient;
+  /** New Agent Manager lifecycle facade; absent in compatibility-only clients. */
+  readonly createAgentLifecycle?: (
+    input: AgentLifecycleCreateInput,
+    options: CommandOptions,
+  ) => Promise<AgentLifecycleCreateReceipt>;
   listSandboxes(options?: PageOptions): Promise<ResourcePage<SandboxSummary>>;
   readSandbox(id: string, options?: ReadOptions): Promise<SandboxDetail>;
   readWorkspace(id: string, options?: ReadOptions): Promise<WorkspaceDetail>;

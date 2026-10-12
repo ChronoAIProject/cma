@@ -3,7 +3,6 @@ import type { ResourceViewsClient } from './client';
 import { CommandKeys } from '../api/client';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
-import { Picker } from '../ui/Picker';
 import { useAuthorizedRead } from './useAuthorizedRead';
 import { ShareScopeEditor } from './ShareScopeEditor';
 import type { ShareTarget } from './sharing';
@@ -39,9 +38,9 @@ function SharingEntry({
   readonly sandbox?: ShareTarget;
 }) {
   const [openedFor, setOpenedFor] = useState<ResourceViewsClient>();
-  const [scope, setScope] = useState<'agent' | 'sandbox'>(target.kind);
   const [keys] = useState(() => new CommandKeys());
-  const { kind, id } = target;
+  const selectedTarget = sandbox ?? target;
+  const { kind, id } = selectedTarget;
   const read = useMemo(
     () => async (signal: AbortSignal) => {
       const access = await client.resourceAccess.effective(kind, id, { signal });
@@ -54,13 +53,11 @@ function SharingEntry({
   );
   const authority = useAuthorizedRead(read);
   const allowed = authority.state.status === 'ready' && authority.state.value;
-  const selected = scope === 'sandbox' && sandbox !== undefined ? sandbox : target;
   return (
     <>
       {allowed ? (
         <Button
           onClick={() => {
-            setScope(target.kind);
             setOpenedFor(client);
           }}
         >
@@ -73,24 +70,14 @@ function SharingEntry({
         onClose={() => setOpenedFor(undefined)}
         description="Sharing preserves the owner, creation origin and conversation. Recipients cannot reshare your resource."
       >
-        {target.kind === 'agent' && sandbox !== undefined ? (
-          <div className="resource-sharing__scope">
-            <Picker
-              label="Share scope"
-              value={scope}
-              options={[
-                { value: 'agent', label: 'This Agent' },
-                { value: 'sandbox', label: 'Whole Sandbox' },
-              ]}
-              onChange={setScope}
-            />
-          </div>
+        {selectedTarget.kind === 'sandbox' ? (
+          <p className="resource-sharing__scope">Sharing applies to the whole Sandbox.</p>
         ) : null}
         {openedFor === client ? (
           <ShareScopeEditor
-            key={`${selected.kind}:${selected.id}`}
+            key={`${selectedTarget.kind}:${selectedTarget.id}`}
             client={client}
-            target={selected}
+            target={selectedTarget}
             keys={keys}
           />
         ) : null}
