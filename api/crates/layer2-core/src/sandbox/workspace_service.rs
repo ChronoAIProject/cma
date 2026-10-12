@@ -1,21 +1,5 @@
 mod binding;
 mod support;
-use support::{profile_error, require, require_launch, store_error, trust_error, workspace};
-
-use std::sync::Arc;
-
-use serde::{Deserialize, Serialize};
-
-use crate::profiles::store::{ProfileStoreError, ProfileUseRecorder, WorkspaceProfileStore};
-use crate::profiles::{
-    content_digest, require_trust_confirmation, MarketplaceError, MarketplaceLocator,
-    ProfileVisibility, WorkspaceLocation, WorkspaceProfileContent, WorkspaceProfileRef,
-    WorkspaceProfileRevision, WorkspaceProfileSnapshot,
-};
-use crate::{
-    now_rfc3339, Caller, Capability, SandboxId, SubjectId, WorkspaceId, WorkspaceProfileId,
-};
-
 use super::service_trust::{validate_workspace_profile, validate_workspace_revision};
 use super::store::{
     Page, PageRequest, SandboxStoreError, WorkspaceAdmission, WorkspaceAdmissionKind,
@@ -25,6 +9,18 @@ use super::{
     Sandbox, Workspace, WorkspaceOrigin, WorkspaceSource, WorkspaceStatus, WorkspaceWorkState,
     WorkspaceWorkStep,
 };
+use crate::profiles::store::{ProfileStoreError, ProfileUseRecorder, WorkspaceProfileStore};
+use crate::profiles::{
+    content_digest, require_trust_confirmation, MarketplaceError, MarketplaceLocator,
+    ProfileVisibility, WorkspaceLocation, WorkspaceProfileContent, WorkspaceProfileRef,
+    WorkspaceProfileRevision, WorkspaceProfileSnapshot,
+};
+use crate::{
+    now_rfc3339, Caller, Capability, SandboxId, SubjectId, WorkspaceId, WorkspaceProfileId,
+};
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use support::{profile_error, require, require_launch, store_error, trust_error, workspace};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -34,11 +30,7 @@ pub struct CreateWorkspace {
     pub confirmed_digest: Option<String>,
 }
 
-/// A workspace request admitted directly by Agent Manager.
-///
-/// This is deliberately independent of the user-facing Workspace Profile
-/// catalog. The resulting immutable snapshot is stored on the Workspace so
-/// the agent-sandbox worker receives the exact source selected by the caller.
+/// Inline workspace request admitted directly by Agent Manager.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CreateInlineWorkspace {
