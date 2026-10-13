@@ -208,38 +208,9 @@ function SettingsEditor({
           }
         />
       </section>
-      {draft.checkpoints === undefined ? null : (
-        <section>
-          <h3>Snapshots</h3>
-          <NumberField
-            label="Save progress every (minutes)"
-            value={draft.checkpoints.interval_seconds / 60}
-            minimum={1}
-            maximum={1440}
-            step="any"
-            error={fieldError('checkpoints.interval_seconds')}
-            disabled={disabled}
-            onChange={(value) =>
-              update({
-                ...draft,
-                checkpoints: { ...draft.checkpoints, interval_seconds: Math.round(value * 60) },
-              })
-            }
-          />
-        </section>
-      )}
       <section>
         <h3>Retention</h3>
         <div className="operator-settings-grid">
-          <NumberField
-            label="Checkpoint grace (days)"
-            value={draft.retention.checkpoint_grace_days}
-            error={fieldError('retention.checkpoint_grace_days')}
-            disabled={disabled}
-            onChange={(value) =>
-              update({ ...draft, retention: { ...draft.retention, checkpoint_grace_days: value } })
-            }
-          />
           <NumberField
             label="Agent log retention (days)"
             value={draft.retention.agent_log_days}

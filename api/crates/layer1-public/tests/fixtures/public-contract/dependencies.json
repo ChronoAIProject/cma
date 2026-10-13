@@ -1054,7 +1054,6 @@
               "pause_after_seconds": 900
             },
             "retention": {
-              "checkpoint_grace_days": 7,
               "agent_log_days": 90
             },
             "limits": {

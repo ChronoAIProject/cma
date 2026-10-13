@@ -3,9 +3,9 @@
 use axum::{extract::FromRequest, extract::Request, Json};
 use layer2_core::profiles::{AgentProfileRef, SandboxProfileRef, WorkspaceProfileRef};
 use layer2_core::{
-    AgentProfileId, CheckpointSettings, InactivitySettings, MarketplaceSettings, PlatformDefaults,
-    PlatformLimits, PlatformSettings, RetentionSettings, SandboxProfileId, StoredPlatformSettings,
-    TriggerSettings, WorkspaceProfileId,
+    AgentProfileId, InactivitySettings, MarketplaceSettings, PlatformDefaults, PlatformLimits,
+    PlatformSettings, RetentionSettings, SandboxProfileId, StoredPlatformSettings, TriggerSettings,
+    WorkspaceProfileId,
 };
 use serde::{de::DeserializeOwned, Deserialize, Deserializer, Serialize};
 use utoipa::ToSchema;
@@ -37,37 +37,7 @@ pub(crate) struct InactivitySettingsBody {
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct CheckpointSettingsBody {
-    #[schema(minimum = 60, maximum = 86400)]
-    interval_seconds: u64,
-}
-
-impl Default for CheckpointSettingsBody {
-    fn default() -> Self {
-        CheckpointSettings::default().into()
-    }
-}
-
-impl From<CheckpointSettings> for CheckpointSettingsBody {
-    fn from(value: CheckpointSettings) -> Self {
-        Self {
-            interval_seconds: value.interval_seconds,
-        }
-    }
-}
-
-impl From<CheckpointSettingsBody> for CheckpointSettings {
-    fn from(value: CheckpointSettingsBody) -> Self {
-        Self {
-            interval_seconds: value.interval_seconds,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
 pub(crate) struct RetentionSettingsBody {
-    checkpoint_grace_days: u32,
     agent_log_days: u32,
 }
 
@@ -97,8 +67,6 @@ pub(crate) struct MarketplaceSettingsBody {
 pub(crate) struct PlatformSettingsBody {
     defaults: PlatformDefaultsBody,
     inactivity: InactivitySettingsBody,
-    #[serde(default)]
-    checkpoints: CheckpointSettingsBody,
     retention: RetentionSettingsBody,
     limits: PlatformLimitsBody,
     triggers: TriggerSettingsBody,
@@ -110,7 +78,7 @@ impl From<PlatformSettingsBody> for PlatformSettings {
         Self {
             defaults: value.defaults.into(),
             inactivity: value.inactivity.into(),
-            checkpoints: value.checkpoints.into(),
+            checkpoints: Default::default(),
             retention: value.retention.into(),
             limits: value.limits.into(),
             triggers: value.triggers.into(),
@@ -139,9 +107,7 @@ impl From<PlatformSettings> for PlatformSettingsBody {
             inactivity: InactivitySettingsBody {
                 pause_after_seconds: value.inactivity.pause_after_seconds,
             },
-            checkpoints: value.checkpoints.into(),
             retention: RetentionSettingsBody {
-                checkpoint_grace_days: value.retention.checkpoint_grace_days,
                 agent_log_days: value.retention.agent_log_days,
             },
             limits: PlatformLimitsBody {
@@ -190,7 +156,7 @@ impl From<InactivitySettingsBody> for InactivitySettings {
 impl From<RetentionSettingsBody> for RetentionSettings {
     fn from(value: RetentionSettingsBody) -> Self {
         Self {
-            checkpoint_grace_days: value.checkpoint_grace_days,
+            checkpoint_grace_days: RetentionSettings::default().checkpoint_grace_days,
             agent_log_days: value.agent_log_days,
         }
     }
@@ -273,9 +239,6 @@ pub(crate) struct PatchRequest {
     #[schema(required = false, value_type = InactivitySettingsBody)]
     inactivity: PatchField<InactivitySettingsBody>,
     #[serde(default)]
-    #[schema(required = false, value_type = CheckpointSettingsBody)]
-    checkpoints: PatchField<CheckpointSettingsBody>,
-    #[serde(default)]
     #[schema(required = false, value_type = RetentionSettingsBody)]
     retention: PatchField<RetentionSettingsBody>,
     #[serde(default)]
@@ -297,7 +260,6 @@ impl PatchRequest {
         let mut changed = false;
         changed |= apply(self.defaults, &mut settings.defaults, "defaults")?;
         changed |= apply(self.inactivity, &mut settings.inactivity, "inactivity")?;
-        changed |= apply(self.checkpoints, &mut settings.checkpoints, "checkpoints")?;
         changed |= apply(self.retention, &mut settings.retention, "retention")?;
         changed |= apply(self.limits, &mut settings.limits, "limits")?;
         changed |= apply(self.triggers, &mut settings.triggers, "triggers")?;
@@ -342,8 +304,7 @@ const DEFAULTS: &[FieldSpec] = &[
     branch("agent_profile", REF),
 ];
 const INACTIVITY: &[FieldSpec] = &[leaf("pause_after_seconds")];
-const CHECKPOINTS: &[FieldSpec] = &[leaf("interval_seconds")];
-const RETENTION: &[FieldSpec] = &[leaf("checkpoint_grace_days"), leaf("agent_log_days")];
+const RETENTION: &[FieldSpec] = &[leaf("agent_log_days")];
 const LIMITS: &[FieldSpec] = &[
     leaf("max_sandboxes_per_user"),
     leaf("visitor_max_sandboxes"),
@@ -354,7 +315,6 @@ const MARKETPLACE: &[FieldSpec] = &[leaf("enabled")];
 const PLATFORM: &[FieldSpec] = &[
     branch("defaults", DEFAULTS),
     branch("inactivity", INACTIVITY),
-    branch("checkpoints", CHECKPOINTS),
     branch("retention", RETENTION),
     branch("limits", LIMITS),
     branch("triggers", TRIGGERS),
@@ -365,7 +325,6 @@ const PATCH: &[FieldSpec] = &[
     leaf("expected_revision"),
     branch("defaults", DEFAULTS),
     branch("inactivity", INACTIVITY),
-    branch("checkpoints", CHECKPOINTS),
     branch("retention", RETENTION),
     branch("limits", LIMITS),
     branch("triggers", TRIGGERS),
