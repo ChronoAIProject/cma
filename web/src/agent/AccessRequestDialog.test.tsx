@@ -186,3 +186,74 @@ it('replays an uncertain denial as the original denial after reload', async () =
   ]);
   expect(decide.mock.calls[1]?.slice(0, 5)).toEqual(decide.mock.calls[0]?.slice(0, 5));
 });
+
+it('recovers a revoked service while applying and waits for durable success after the popup closes', async () => {
+  vi.useFakeTimers();
+  const target = { type: 'agent_access_request' as const, id: request.id };
+  vi.mocked(accessRequests.list).mockResolvedValue([
+    { ...request, status: 'connecting', connection: { target } },
+  ]);
+  let ready = true;
+  vi.spyOn(connectionClient, 'check').mockImplementation(async () => ({
+    owner: 'owner',
+    ready,
+    checked_at: new Date().toISOString(),
+    services: [
+      {
+        service: 'api-github',
+        display_name: 'GitHub',
+        kind: 'nyxid',
+        state: ready ? 'satisfied' : 'inactive',
+        connection_mode: 'hosted',
+      },
+    ],
+  }));
+  const start = vi.spyOn(connectionClient, 'start').mockImplementation(async (_, active) => ({
+    ...active,
+    owner: 'owner',
+    hosted_url: 'https://identity.example.test/reconnect',
+    expires_at: new Date(Date.now() + 600000).toISOString(),
+  }));
+  const popup = {
+    opener: {},
+    closed: false,
+    location: { href: '' },
+    focus: vi.fn(),
+    close: vi.fn(),
+  };
+  vi.spyOn(window, 'open').mockReturnValue(popup as unknown as Window);
+  const decide = vi.spyOn(accessRequests, 'decide');
+  show();
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  expect(screen.getByText(/Verifying the updated Agent key/)).toBeVisible();
+
+  vi.mocked(accessRequests.list).mockResolvedValue([
+    { ...request, status: 'applying', connection: { target } },
+  ]);
+  await act(() => vi.advanceTimersByTimeAsync(2000));
+  ready = false;
+  await act(() => vi.advanceTimersByTimeAsync(2000));
+  expect(screen.getByRole('dialog', { name: 'Connect Agent services' })).toBeVisible();
+  expect(screen.getByText('Connection needed')).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: 'Connect all' }));
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  expect(start).toHaveBeenCalledOnce();
+  expect(start.mock.calls[0]?.[0]).toEqual(target);
+  expect(start.mock.calls[0]?.[1].service_id).toBe('api-github');
+  expect(popup.location.href).toBe('https://identity.example.test/reconnect');
+
+  popup.closed = true;
+  await act(() => vi.advanceTimersByTimeAsync(2000));
+  expect(screen.getByRole('dialog', { name: 'Connect Agent services' })).toBeVisible();
+  expect(screen.queryByText(/Verifying the updated Agent key/)).not.toBeInTheDocument();
+  ready = true;
+  await act(() => vi.advanceTimersByTimeAsync(2000));
+  expect(screen.getByRole('dialog', { name: 'Agent key access' })).toBeVisible();
+  expect(screen.getByText(/Verifying the updated Agent key/)).toBeVisible();
+  expect(decide).not.toHaveBeenCalled();
+  expect(start).toHaveBeenCalledOnce();
+
+  vi.mocked(accessRequests.list).mockResolvedValue([{ ...request, status: 'succeeded' }]);
+  await act(() => vi.advanceTimersByTimeAsync(2000));
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+});

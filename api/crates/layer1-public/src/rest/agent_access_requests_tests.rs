@@ -337,3 +337,25 @@ fn access_request_openapi_declares_approval_identity_and_durable_progress() {
             .is_object()
     );
 }
+
+#[test]
+fn approved_connection_recovery_remains_available_until_the_request_is_terminal() {
+    use super::agent_access_requests::AgentAccessRequestView;
+    for status in [AgentAccessStatus::Connecting, AgentAccessStatus::Applying] {
+        let value = serde_json::to_value(AgentAccessRequestView::from(receipt(status))).unwrap();
+        assert_eq!(
+            value["connection"],
+            json!({"target":{"type":"agent_access_request","id":"access-one"}})
+        );
+        assert_eq!(value["services"], json!(["api-github"]));
+    }
+    for status in [
+        AgentAccessStatus::Pending,
+        AgentAccessStatus::Succeeded,
+        AgentAccessStatus::Denied,
+        AgentAccessStatus::Failed,
+    ] {
+        let value = serde_json::to_value(AgentAccessRequestView::from(receipt(status))).unwrap();
+        assert!(value.get("connection").is_none());
+    }
+}

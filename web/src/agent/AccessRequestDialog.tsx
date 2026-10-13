@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { ConnectionWizard } from '../connections/ConnectionWizard';
+import { connectionClient } from '../connections/client';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 import { ScopePicker } from './ScopePicker';
@@ -105,7 +106,42 @@ function AccessRequestDialog({
   const [error, setError] = useState<string>();
   const active = useRef<AbortController | undefined>(undefined);
   const [connected, setConnected] = useState(false);
+  const connectionTargetId =
+    request.status === 'connecting' || request.status === 'applying'
+      ? request.connection?.target.id
+      : undefined;
   useEffect(() => () => active.current?.abort(), []);
+  useEffect(() => {
+    if (!connected || !connectionTargetId) return;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const check = async () => {
+      try {
+        const report = await connectionClient.check(
+          { type: 'agent_access_request', id: connectionTargetId },
+          undefined,
+          controller.signal,
+        );
+        if (controller.signal.aborted) return;
+        if (!report.ready || (owner !== undefined && report.owner !== owner)) {
+          setConnected(false);
+          return;
+        }
+      } catch {
+        if (controller.signal.aborted) return;
+        // The wizard rechecks authority and presents connection or sign-in failures.
+        setConnected(false);
+        return;
+      }
+      timer = setTimeout(() => void check(), 2000);
+    };
+    // A ready connection can expire while the durable workflow is still applying.
+    timer = setTimeout(() => void check(), 2000);
+    return () => {
+      controller.abort();
+      clearTimeout(timer);
+    };
+  }, [connected, connectionTargetId, owner]);
   const decide = async (action: 'approve' | 'deny') => {
     if (active.current || saved.error) return;
     const selected = intent ?? {
@@ -157,7 +193,7 @@ function AccessRequestDialog({
       if (!abort.signal.aborted) setPending(false);
     }
   };
-  if (request.status === 'connecting' && request.connection && !connected)
+  if (connectionTargetId && request.connection && !connected)
     return (
       <ConnectionWizard
         target={request.connection.target}
