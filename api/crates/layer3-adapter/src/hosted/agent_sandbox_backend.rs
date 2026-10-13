@@ -83,9 +83,13 @@ impl HostedBackend for AgentSandboxBackend {
     async fn select_native_pool(
         &self,
         request: &ProviderSandboxRequest,
+        image: &crate::RuntimeImage,
         home: &crate::HomeVolumeRequest,
     ) -> Result<Option<crate::agent_sandbox::NativePoolBinding>> {
-        self.client.warm_pools().select_runtime(request, home).await
+        self.client
+            .warm_pools()
+            .select_runtime(request, image, home)
+            .await
     }
     async fn provision(&self, request: ProviderSandboxRequest) -> Result<RuntimeHandle> {
         let handle = match self.client.provision_pool_runtime(&request).await? {
@@ -291,7 +295,7 @@ impl HostedBackend for RuntimeBackends {
             .routing
             .select(&identity.sandbox_id, identity.generation, native)
             .await?;
-        if native != selected {
+        if native != selected && !(home.scope.is_none() && routes.shares_legacy_authority()) {
             return Err(AdapterError::Rejected(
                 "runtime provider conflicts with its recorded home authority".into(),
             ));
@@ -311,7 +315,9 @@ impl HostedBackend for RuntimeBackends {
     ) -> Result<()> {
         self.require_home_routes(home)?;
         if let Some(routes) = &self.home_routes {
-            if routes.is_native(home)? != handle.0.starts_with("agent-sandbox:") {
+            if routes.is_native(home)? != handle.0.starts_with("agent-sandbox:")
+                && !(home.scope.is_none() && routes.shares_legacy_authority())
+            {
                 return Err(AdapterError::Rejected(
                     "retained runtime conflicts with its recorded home authority".into(),
                 ));
@@ -326,7 +332,9 @@ impl HostedBackend for RuntimeBackends {
     ) -> Result<Option<&dyn crate::agent_sandbox::NativePoolControl>> {
         self.require_home_routes(home)?;
         if let Some(routes) = &self.home_routes {
-            if !routes.is_native(home)? {
+            if !(routes.is_native(home)?
+                || home.scope.is_none() && routes.shares_legacy_authority())
+            {
                 return Ok(None);
             }
         }
@@ -335,6 +343,7 @@ impl HostedBackend for RuntimeBackends {
     async fn select_native_pool(
         &self,
         request: &ProviderSandboxRequest,
+        image: &crate::RuntimeImage,
         home: &crate::HomeVolumeRequest,
     ) -> Result<Option<crate::agent_sandbox::NativePoolBinding>> {
         self.require_home_routes(home)?;
@@ -348,7 +357,7 @@ impl HostedBackend for RuntimeBackends {
             )
             .await?;
         self.select(selected)?
-            .select_native_pool(request, home)
+            .select_native_pool(request, image, home)
             .await
     }
     async fn provision(&self, request: ProviderSandboxRequest) -> Result<RuntimeHandle> {

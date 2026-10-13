@@ -13,10 +13,9 @@ export const nativeResources = [
 ];
 const authority = [
   ...nativeResources.map(([plural, group]) => [`${plural}.${group}`, ['get', 'list', 'create', 'patch', 'delete']]),
-  ['persistentvolumeclaims', ['get', 'list', 'create', 'patch', 'delete']],
+  ['persistentvolumeclaims', ['get', 'list']],
   ['pods', ['get', 'list']],
   ['pods/exec', ['get', 'create']],
-  ['volumesnapshots.snapshot.storage.k8s.io', ['get']],
 ];
 
 export function validateCrd(crd, [plural, group, required]) {
@@ -58,12 +57,20 @@ const principalName = (value) => typeof value === 'string' && /^[a-zA-Z0-9][a-zA
 export function homePolicy(config) {
   const fields = ['STORAGE_CLASS', 'CAPACITY_GIB', 'TEMPLATE', 'TEMPLATE_UID'];
   const native = fields.map((field) => config[`CHRONO_AGENT_SANDBOX_HOME_${field}`]);
-  const values = native.some(Boolean) ? native : fields.map((field) => config[`CHRONO_SANDBOX_HOME_${field}`]);
+  const legacy = fields.map((field) => config[`CHRONO_SANDBOX_HOME_${field}`]);
+  const explicit = config.CHRONO_AGENT_SANDBOX_HOME_MODE || undefined;
+  assert.ok(explicit === undefined || ['native_vct_empty_v1', 'legacy_snapshot'].includes(explicit));
+  const mode = explicit ?? (native.some(Boolean) && !native[2] && !native[3] ? 'native_vct_empty_v1' : 'legacy_snapshot');
+  if (mode === 'native_vct_empty_v1') assert.ok(!native[2] && !native[3]);
+  const values = mode === 'native_vct_empty_v1'
+    ? native.slice(0, 2).map((value, index) => value || (explicit ? legacy[index] : undefined))
+    : native.some(Boolean) ? native : legacy;
   assert.ok(values.every((value) => typeof value === 'string' && value.length > 0));
   const [storageClass, capacity, template, templateUid] = values;
-  assert.ok(dns(storageClass) && dns(template));
-  assert.ok(/^\d+$/.test(capacity) && Number(capacity) >= 1 && Number(capacity) <= 1024);
-  return { storageClass, capacity, template, templateUid };
+  assert.ok(dns(storageClass));
+  assert.ok(/^[1-9]\d*$/.test(capacity) && Number(capacity) <= 1024);
+  if (mode === 'legacy_snapshot') assert.ok(dns(template) && dns(templateUid));
+  return { mode, storageClass, capacity, template, templateUid };
 }
 
 export function preflight(options = {}, command = (args) => execFileSync('kubectl', args, {
@@ -139,7 +146,14 @@ export function preflight(options = {}, command = (args) => execFileSync('kubect
     const name = `${resource[0]}.${resource[1]}`;
     check(`API ${name}/v1beta1`, () => validateCrd(get('customresourcedefinition', name), resource));
   }
-  for (const [resource, verbs] of authority) {
+  let policy;
+  check('native home policy is valid', () => { policy = homePolicy(config); });
+  const requiredAuthority = [...authority];
+  if (policy?.mode === 'legacy_snapshot') {
+    requiredAuthority.push(['persistentvolumeclaims', ['create', 'patch', 'delete']],
+      ['volumesnapshots.snapshot.storage.k8s.io', ['get']]);
+  }
+  for (const [resource, verbs] of requiredAuthority) {
     for (const verb of verbs) {
       check(`RBAC ${resource} ${verb}`, () => {
         assert.equal(command([...runtimeBase, 'auth', 'can-i', verb, resource,
@@ -152,9 +166,11 @@ export function preflight(options = {}, command = (args) => execFileSync('kubect
     assert.ok(dns(name));
     assert.equal(get('serviceaccount', name).automountServiceAccountToken, false);
   });
-  check('ready retained-home seed and storage class', () => {
-    const policy = homePolicy(config);
-    validateSeed(get('volumesnapshots.snapshot.storage.k8s.io', policy.template), policy.templateUid);
+  check(policy?.mode === 'native_vct_empty_v1' ? 'native home storage class' : 'ready retained-home seed and storage class', () => {
+    assert.ok(policy);
+    if (policy.mode === 'legacy_snapshot') {
+      validateSeed(get('volumesnapshots.snapshot.storage.k8s.io', policy.template), policy.templateUid);
+    }
     assert.equal(get('storageclass', policy.storageClass).provisioner, 'pd.csi.storage.gke.io');
   });
   return {

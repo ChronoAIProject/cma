@@ -10,7 +10,11 @@ pub(super) const VOLUME: &str =
     "/api/v1/namespaces/cma-test/persistentvolumeclaims/home-warm-member";
 
 pub(super) async fn assigned(fixture: &Fixture) -> NativePoolClaim {
-    let binding = fixture.client.configure(&spec(), 1).await.unwrap().binding;
+    assigned_spec(fixture, &spec()).await
+}
+
+pub(super) async fn assigned_spec(fixture: &Fixture, spec: &NativePoolSpec) -> NativePoolClaim {
+    let binding = fixture.client.configure(spec, 1).await.unwrap().binding;
     let original = fixture
         .client
         .claim(&request(binding.clone()))

@@ -26,6 +26,7 @@ fn target() -> PoolTarget {
         cpu_millis: 1000,
         memory_mib: 1024,
         home: HomeVolumePolicy {
+            mode: Default::default(),
             storage_class: "premium-rwo".into(),
             capacity_gib: 20,
             template_name: "seed".into(),

@@ -5,6 +5,9 @@ mod cleanup_inventory;
 mod control;
 mod home;
 mod home_origin;
+mod native_home;
+mod native_home_store;
+pub use native_home_store::NativeHomeVolumes;
 mod management;
 mod model;
 mod reconciliation;
@@ -122,6 +125,10 @@ impl AgentSandboxPools {
     }
 
     async fn verify_seed(&self, policy: &HomeVolumePolicy) -> Result<()> {
+        policy.validate()?;
+        if policy.is_native_vct() {
+            return Ok(());
+        }
         let seed = self
             .seeds
             .get(&policy.template_name)
@@ -211,3 +218,6 @@ mod backend_tests;
 mod cleanup_tests;
 #[cfg(test)]
 mod management_tests;
+
+#[cfg(test)]
+mod native_home_tests;

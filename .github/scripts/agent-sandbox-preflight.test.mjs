@@ -198,3 +198,37 @@ test('native Secret environment inputs fail without reading Secret values', () =
   assert.equal(preflight(remoteOptions, command).passed, false);
   assert.ok(calls.every((args) => !args.includes('secret') && !args.includes('secrets')));
 });
+
+const emptyConfig = {
+  ...remoteConfig,
+  CHRONO_AGENT_SANDBOX_HOME_MODE: 'native_vct_empty_v1',
+  CHRONO_AGENT_SANDBOX_HOME_TEMPLATE: '', CHRONO_AGENT_SANDBOX_HOME_TEMPLATE_UID: '',
+};
+test('empty native homes need no snapshot API or PVC mutation authority', () => {
+  const denied = (args) => args.some((arg) => arg.includes('snapshot.storage.k8s.io'))
+    || (args[8] === 'persistentvolumeclaims' && ['create', 'patch', 'delete'].includes(args[7]));
+  const { command, calls } = fixture(denied, emptyConfig, remoteOptions);
+  const result = preflight(remoteOptions, command);
+  assert.equal(result.passed, true);
+  assert.ok(calls.every((args) => !denied(args)));
+  assert.ok(calls.some((args) => args[8] === 'persistentvolumeclaims' && args[7] === 'get'));
+  assert.ok(calls.some((args) => args[6] === 'storageclass' && args[7] === 'remote-disk'));
+  for (const deniedResource of ['persistentvolumeclaims', 'pods', 'pods/exec']) {
+    const fixtureArgs = fixture((args) => args[8] === deniedResource, emptyConfig, remoteOptions);
+    assert.equal(preflight(remoteOptions, fixtureArgs.command).passed, false, deniedResource);
+  }
+});
+
+test('empty native mode uses explicit storage pair and rejects seed mixing or malformed capacity', () => {
+  assert.equal(homePolicy(emptyConfig).mode, 'native_vct_empty_v1');
+  assert.equal(homePolicy({ ...emptyConfig, CHRONO_AGENT_SANDBOX_HOME_MODE: '' }).mode, 'native_vct_empty_v1');
+  const borrowed = homePolicy({ ...legacyConfig, CHRONO_AGENT_SANDBOX_HOME_MODE: 'native_vct_empty_v1' });
+  assert.equal(borrowed.storageClass, 'cma-home-v1');
+  assert.equal(borrowed.template, undefined);
+  for (const change of [
+    { CHRONO_AGENT_SANDBOX_HOME_TEMPLATE: 'forbidden' },
+    { CHRONO_AGENT_SANDBOX_HOME_TEMPLATE_UID: 'forbidden-uid' },
+    { CHRONO_AGENT_SANDBOX_HOME_MODE: 'unknown' },
+    { CHRONO_AGENT_SANDBOX_HOME_CAPACITY_GIB: '032' },
+  ]) assert.throws(() => homePolicy({ ...emptyConfig, ...change }));
+});

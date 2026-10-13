@@ -33,9 +33,7 @@ impl AgentSandboxClient {
                 .get(&volume.pvc.claim_name)
                 .await
                 .map_err(api_error)?;
-            if let Some(encoded) = claim.annotations().get(super::NATIVE_HOME_ANNOTATION) {
-                let origin: super::NativePoolHomeOrigin = serde_json::from_str(encoded)
-                    .map_err(|_| rejected("invalid native home origin"))?;
+            if let Some(origin) = self.pools.volume_origin(&claim).await? {
                 return self.pools.runtime_desired(&origin, request, name).await;
             }
             let allocation: crate::HomeVolumeRequest = claim
@@ -55,6 +53,7 @@ impl AgentSandboxClient {
             }
             let attachment = crate::HomeVolumeAttachment {
                 receipt: crate::HomeVolumeReceipt {
+                    native_authority: None,
                     volume_id: allocation.volume_id.clone(),
                     request_sha256: allocation.computed_sha256(),
                     storage_reference: claim.name_any(),

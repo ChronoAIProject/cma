@@ -62,7 +62,12 @@ pub(super) async fn production_adapter(
             .runtime
             .agent_sandbox
             .as_ref()
-            .is_some_and(|settings| settings.namespace != config.runtime.sandbox_namespace);
+            .is_some_and(|settings| settings.namespace != config.runtime.sandbox_namespace)
+        || config
+            .runtime
+            .agent_sandbox_home_policy
+            .as_ref()
+            .is_some_and(|policy| policy.is_native_vct());
     if let Some(settings) = &config.runtime.agent_sandbox {
         let connection = layer3_adapter::agent_sandbox::resolve_kubernetes_connection(
             config.runtime.agent_sandbox_connection.as_ref(),
@@ -71,21 +76,33 @@ pub(super) async fn production_adapter(
         .map_err(|e| e.to_string())?;
         if separate_native {
             if let Some(policy) = &config.runtime.agent_sandbox_home_policy {
-                let homes = layer3_adapter::provider::PersistentHomeVolumes::namespaced(
-                    connection.client.clone(),
-                    &settings.namespace,
-                    &config.deployment_id,
-                    &connection.authority,
-                )
-                .map_err(|e| e.to_string())?;
-                homes
-                    .preflight(policy)
-                    .await
-                    .map_err(|e| format!("native home seed is not usable: {e}"))?;
-                native_homes = Some((
-                    Arc::new(homes) as Arc<dyn layer3_adapter::HomeVolumeStore>,
-                    policy.clone(),
-                ));
+                let homes: Arc<dyn layer3_adapter::HomeVolumeStore> = if policy.is_native_vct() {
+                    let homes = layer3_adapter::agent_sandbox::NativeHomeVolumes::new(
+                        connection.client.clone(),
+                        settings.clone(),
+                        &connection.authority,
+                    )
+                    .map_err(|e| e.to_string())?;
+                    homes
+                        .preflight(policy)
+                        .await
+                        .map_err(|e| format!("native VCT authority is not usable: {e}"))?;
+                    Arc::new(homes)
+                } else {
+                    let homes = layer3_adapter::provider::PersistentHomeVolumes::namespaced(
+                        connection.client.clone(),
+                        &settings.namespace,
+                        &config.deployment_id,
+                        &connection.authority,
+                    )
+                    .map_err(|e| e.to_string())?;
+                    homes
+                        .preflight(policy)
+                        .await
+                        .map_err(|e| format!("retained native seed is not usable: {e}"))?;
+                    Arc::new(homes)
+                };
+                native_homes = Some((homes, policy.clone()));
             }
         }
         let client = layer3_adapter::agent_sandbox::AgentSandboxClient::new(

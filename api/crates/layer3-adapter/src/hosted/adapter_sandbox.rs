@@ -36,7 +36,9 @@ impl SandboxAdapter for HostedAdapter {
         let rendered = self
             .deployment
             .render_runtime(&request.spec, request.generation)?;
-        self.backend.select_native_pool(&rendered, home).await
+        self.backend
+            .select_native_pool(&rendered, &self.deployment.image, home)
+            .await
     }
     fn capabilities(&self) -> AdapterCapabilities {
         self.deployment.capabilities()

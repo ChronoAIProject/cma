@@ -262,10 +262,13 @@ fn respond(state: &Mutex<State>, method: &str, path: &str, body: Value) -> (u16,
                 .iter()
                 .filter(|(key, value)| {
                     key.starts_with(&format!("{path}/"))
-                        && selector.split(',').all(|term| {
-                            let (key, expected) = term.split_once('=').unwrap();
-                            value["metadata"]["labels"][key] == expected
-                        })
+                        && selector
+                            .split(',')
+                            .filter(|term| !term.is_empty())
+                            .all(|term| {
+                                let (key, expected) = term.split_once('=').unwrap();
+                                value["metadata"]["labels"][key] == expected
+                            })
                 })
                 .map(|(_, v)| v.clone())
                 .collect();

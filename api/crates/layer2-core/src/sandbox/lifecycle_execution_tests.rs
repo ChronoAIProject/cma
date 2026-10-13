@@ -12,6 +12,7 @@ fn retained_home_pause_skips_checkpoint_capture_and_keeps_pv_recovery_authority(
     let mut home = SandboxHome::reserve(
         &value.id,
         HomeVolumePolicy {
+            mode: Default::default(),
             storage_class: "storage".into(),
             capacity_gib: 64,
             template_name: "empty".into(),
@@ -20,6 +21,7 @@ fn retained_home_pause_skips_checkpoint_capture_and_keeps_pv_recovery_authority(
     )
     .unwrap();
     home.bind(HomeVolumeReceipt {
+        native_authority: None,
         volume_id: home.request.volume_id.clone(),
         request_sha256: home.request.computed_sha256(),
         storage_reference: "sandbox-home".into(),

@@ -42,6 +42,11 @@ pub struct PersistentHomeVolumes {
 impl PersistentHomeVolumes {
     fn validate_request_scope(&self, request: &HomeVolumeRequest) -> Result<()> {
         request.validate()?;
+        if request.policy.is_native_vct() {
+            return Err(AdapterError::Rejected(
+                "controller-owned homes cannot use direct PVC effects".into(),
+            ));
+        }
         if request
             .scope
             .as_ref()

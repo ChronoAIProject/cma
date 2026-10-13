@@ -73,6 +73,7 @@ pub trait HostedBackend: Send + Sync {
         _request: &ProviderSandboxRequest,
         _home: &crate::HomeVolumeRequest,
     ) -> Result<Option<crate::agent_sandbox::NativePoolBinding>> {
+        _image: &crate::RuntimeImage,
         Ok(None)
     }
     async fn provision(&self, request: ProviderSandboxRequest) -> Result<RuntimeHandle>;

@@ -39,14 +39,18 @@ impl AgentSandboxPools {
             .await
             .map_err(api_error)?;
         self.volume_candidate(&volume, origin, true)?;
-        let home = HomeVolumeAttachment {
-            request: origin.claim.request.home.clone(),
-            receipt: PersistentHomeVolumes::native_home_receipt(
-                &self.config.namespace,
-                &self.config.deployment,
-                &origin.claim.request.home,
-                &volume,
-            )?,
+        let home = if origin.claim.request.home.policy.is_native_vct() {
+            self.native_attachment(origin, &volume)?
+        } else {
+            HomeVolumeAttachment {
+                request: origin.claim.request.home.clone(),
+                receipt: PersistentHomeVolumes::native_home_receipt(
+                    &self.config.namespace,
+                    &self.config.deployment,
+                    &origin.claim.request.home,
+                    &volume,
+                )?,
+            }
         };
         validate_request(&self.config.deployment, origin, &home, request)?;
         let config = model::binding_config(&self.config, &origin.claim.request.pool);
@@ -55,8 +59,10 @@ impl AgentSandboxPools {
         spec.as_object_mut()
             .unwrap()
             .remove("volumeClaimTemplatesPolicy");
-        spec["volumeClaimTemplates"] = json!([]);
-        spec["podTemplate"]["spec"]["volumes"] = super::home::explicit_volumes(origin)?;
+        if !origin.claim.request.home.policy.is_native_vct() {
+            spec["volumeClaimTemplates"] = json!([]);
+            spec["podTemplate"]["spec"]["volumes"] = super::home::explicit_volumes(origin)?;
+        }
         spec["operatingMode"] = json!("Running");
         let mut annotations = request.metadata.clone();
         annotations.insert(

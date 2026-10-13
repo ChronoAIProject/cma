@@ -272,6 +272,7 @@ async fn fixture() -> (Harness, Sandbox, SystemTime, Arc<SnapshotProvider>) {
     let mut home = SandboxHome::reserve(
         &active.id,
         HomeVolumePolicy {
+            mode: Default::default(),
             storage_class: "cma-home-v1".into(),
             capacity_gib: 64,
             template_name: "seed".into(),
@@ -280,6 +281,7 @@ async fn fixture() -> (Harness, Sandbox, SystemTime, Arc<SnapshotProvider>) {
     )
     .unwrap();
     home.bind(HomeVolumeReceipt {
+        native_authority: None,
         volume_id: home.request.volume_id.clone(),
         request_sha256: home.request.computed_sha256(),
         storage_reference: "home-pvc".into(),
