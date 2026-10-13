@@ -351,3 +351,30 @@ async fn native_buttons_deliver_and_consume_with_durable_original_actor_fences()
     drop(commands);
     assert!(engine.drain(Instant::now() + Duration::from_secs(2)).await);
 }
+
+#[tokio::test]
+async fn native_update_releases_request_body_before_launch() {
+    let app = Native::new(None).await;
+    let (body, dropped) = crate::support::probed_body(serde_json::to_vec(&message()).unwrap());
+    app.fixture.recorder.expect_released(dropped.clone());
+    let request = axum::http::Request::post(format!("/v1/telegram/{}", app.fixture.id))
+        .header("content-type", "application/json")
+        .header("x-telegram-bot-api-secret-token", "native-webhook-fixture")
+        .body(body)
+        .unwrap();
+    let response = cmaeg::http::telegram::callback(
+        State(app.fixture.state.clone()),
+        Path(app.fixture.id.to_string()),
+        request,
+    )
+    .await;
+    assert_eq!(response.status(), 202);
+    assert_eq!(
+        app.fixture
+            .recorder
+            .probed
+            .load(std::sync::atomic::Ordering::SeqCst),
+        1
+    );
+    assert!(dropped.load(std::sync::atomic::Ordering::SeqCst));
+}

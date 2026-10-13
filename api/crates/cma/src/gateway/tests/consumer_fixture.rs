@@ -83,6 +83,7 @@ impl ConsumerGateway {
             management: cmaeg::ManagementConfig { public_url: PUBLIC.into(), master_keys: keys.clone(),
                 cma_base_url: server.base.clone(), cma_service_token: Secret::new("fixture-service"),
                 nyxid_base_url: server.base.clone(), tools_nyxid_slug: "cmaeg".into() },
+            media: Default::default(), stt: Default::default(), transformer: Default::default(), console: Default::default(), routing: Default::default(),
             channel_cache: Default::default(), ingress: Default::default(), turns: Default::default(), delivery: Default::default(),
         };
         let providers = Arc::new(cmaeg::providers::ProviderClient::from_config(&config).unwrap());
@@ -102,9 +103,11 @@ impl ConsumerGateway {
             resolver: state.resolver.clone(),
             keys,
             providers,
-            delivery,
+            delivery: Arc::new(cmaeg::delivery::router::ShardedScheduler::new(delivery)),
             tracker: cmaeg::turns::TurnTracker::new(state.readiness.clone()),
             public_origin: PUBLIC.into(),
+            media: None,
+            downloads: Default::default(),
         };
         let connections = cmaeg::connections::ConnectionService::new(state.clone(), tools);
         let app =
@@ -158,6 +161,8 @@ fn ready_connection() -> Connection {
         origin: Origin {
             event: EventRefPayload {
                 v: 1,
+                consumer: None,
+                lineage: None,
                 activity_sha256: Some("fixture-activity".into()),
                 channel_id: "cmaeg1.ch.fixture".parse().unwrap(),
                 record_id: uuid::Uuid::new_v4().to_string().parse().unwrap(),

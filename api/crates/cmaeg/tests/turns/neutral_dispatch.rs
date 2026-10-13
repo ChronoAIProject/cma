@@ -30,6 +30,7 @@ async fn every_message_command_and_interaction_reaches_the_provider_unchanged() 
                 attachments: vec![],
                 mentions_bot: false,
                 reply_to: None,
+                album_id: None,
             },
             text.to_owned(),
         )

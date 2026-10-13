@@ -7,9 +7,14 @@ mod generic;
 pub mod jwks;
 mod jwt;
 mod lark;
+mod lark_media;
+mod lark_post;
 pub mod payload;
+#[cfg(test)]
+mod seeded_rng;
 pub(crate) mod telegram;
 mod telegram_managed;
+pub(crate) mod telegram_media;
 pub mod verify;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

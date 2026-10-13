@@ -115,6 +115,8 @@ async fn context_reads_full_provider_activity_after_a_cold_replica_restore_witho
     assert_eq!(value["activity"]["actor"]["id"], "7");
     assert_eq!(value["capabilities"]["typing"], false);
     assert!(value["activity"].get("source").is_none());
+    // An unrouted activity projects exactly as before: no routing key.
+    assert!(value["activity"].get("routing").is_none());
     let resolved = app
         .state
         .resolver
@@ -359,4 +361,28 @@ async fn attested_context_rejects_mismatch_and_legacy_context_is_explicitly_unve
         response.json::<Value>().await.unwrap()["activity_verified"],
         false
     );
+}
+
+#[tokio::test]
+async fn context_projects_the_routing_decision_of_a_routed_activity() {
+    let routing = json!({
+        "source_id": "relay_telegram",
+        "resolution": "rule",
+        "rule_id": "triage",
+        "targets": [{"id": "default", "name": "assistant"}, {"id": "csm_00000000000a", "name": "reviewer"}],
+        "addressing_bytes": 1
+    });
+    let app = App::routed(serde_json::from_value(routing.clone()).unwrap()).await;
+    let response = app
+        .fixture
+        .client
+        .get(app.event_url("context"))
+        .bearer_auth(&app.key)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let value: Value = response.json().await.unwrap();
+    assert_eq!(value["activity_verified"], true);
+    assert_eq!(value["activity"]["routing"], routing);
 }

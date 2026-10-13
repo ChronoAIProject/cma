@@ -1,6 +1,6 @@
 //! Shared admitted chat dispatch for relay and native transports.
 use super::{
-    callbacks::{invalid, refused, CallbackResponse},
+    callbacks::{authenticated_refusal, invalid, CallbackResponse},
     problems::problem,
 };
 use crate::ingress::{
@@ -16,17 +16,43 @@ use axum::{
     Json,
 };
 use cmaeg_core::problem::ProblemCode;
+use tokio::sync::OwnedSemaphorePermit;
+/// Everything an admitted chat turn needs once its request has been released.
+///
+/// Admission helpers return this instead of dispatching themselves so that the
+/// raw body, its headers and every parsed copy are dropped before the
+/// acceptance wait; a waiting handler then holds only this small context.
+pub(crate) struct AdmittedChat {
+    pub request: LaunchRequest,
+    pub callback: Option<CallbackFacts>,
+    pub route: String,
+    pub now: i64,
+}
+/// Dispatch an admitted chat turn. `hold` is the handler's ingress permit:
+/// every early return drops it, and the launcher decides how long a launched
+/// turn keeps it.
 pub(crate) async fn dispatch(
     state: IngressState,
-    mut request: LaunchRequest,
-    callback: Option<CallbackFacts>,
-    route: String,
+    admitted: AdmittedChat,
     timing: IngressTiming,
-    now: i64,
+    hold: OwnedSemaphorePermit,
 ) -> Response {
+    let AdmittedChat {
+        mut request,
+        callback,
+        route,
+        now,
+    } = admitted;
     if let Some(callback) = callback {
+        let record = &request.channel.definition.record_id;
+        let source = timing.source();
         let Some(store) = &state.interactions else {
-            return refused(Refusal::InteractiveActionUnsupported);
+            return authenticated_refusal(
+                &state,
+                record,
+                source,
+                Refusal::InteractiveActionUnsupported,
+            );
         };
         let interaction = match store
             .consume(
@@ -36,12 +62,20 @@ pub(crate) async fn dispatch(
                 &callback.id,
                 &callback.data,
                 &callback.message_id,
+                // Only default cards can exist until ingress routes clicks to
+                // the consumer that owns the card.
+                &|consumer| consumer.is_none(),
             )
             .await
         {
             Ok(value) => value,
             Err(crate::interactions::Error::Denied) => {
-                return refused(Refusal::InteractionExpiredOrInvalid)
+                return authenticated_refusal(
+                    &state,
+                    record,
+                    source,
+                    Refusal::InteractionExpiredOrInvalid,
+                )
             }
             Err(crate::interactions::Error::Unavailable) => {
                 return problem(
@@ -77,7 +111,7 @@ pub(crate) async fn dispatch(
     request.timing = Some(timing);
     let event_id = request.activity.event_id.to_string();
     let conversation_id = request.conversation_id.to_string();
-    match state.launcher.launch(request).await {
+    match state.launcher.launch_holding(request, hold).await {
         LaunchOutcome::Accepted { .. } | LaunchOutcome::Deferred => (
             StatusCode::ACCEPTED,
             Json(CallbackResponse::Accepted {
