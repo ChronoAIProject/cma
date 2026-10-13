@@ -1960,6 +1960,7 @@ dependencies = [
  "flate2",
  "futures-util",
  "http",
+ "ipnet",
  "k8s-openapi",
  "kube",
  "reqwest",

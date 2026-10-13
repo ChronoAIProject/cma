@@ -24,10 +24,16 @@ pub(super) async fn assigned_spec(fixture: &Fixture, spec: &NativePoolSpec) -> N
         row["status"] = json!({"sandbox":{"name":"warm-member"}})
     });
     let mut blueprint = fixture.row("sandboxtemplates", &binding.template_name)["spec"].clone();
-    blueprint
-        .as_object_mut()
-        .unwrap()
-        .remove("volumeClaimTemplatesPolicy");
+    // Mirror the controller shared-blueprint projection, not the full Template.
+    for field in [
+        "volumeClaimTemplatesPolicy",
+        "networkPolicyManagement",
+        "networkPolicy",
+    ] {
+        blueprint.as_object_mut().unwrap().remove(field);
+    }
+    blueprint["podTemplate"]["metadata"]["labels"]["agents.x-k8s.io/sandbox-template-ref-hash"] =
+        json!(super::super::pods::name_hash(&binding.template_name));
     blueprint["operatingMode"] = json!("Running");
     let mut volume = blueprint["volumeClaimTemplates"][0].clone();
     volume["apiVersion"] = json!("v1");

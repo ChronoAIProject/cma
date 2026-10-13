@@ -22,15 +22,8 @@ impl NativePoolHomeOrigin {
     ) -> Result<()> {
         self.claim.request.validate()?;
         let pool = &self.claim.request.pool;
-        let config_sha256 = crate::provider_request_digest(&(
-            "native-pool-v1",
-            namespace,
-            controller,
-            &pool.pod_policy.runtime_class,
-            &pool.pod_policy.service_account,
-            &pool.pod_policy.image_pull_secrets,
-            &pool.spec,
-        ))?;
+        let config_sha256 =
+            super::model::policy_digest(namespace, controller, &pool.pod_policy, &pool.spec)?;
         let claim_name = format!(
             "cma-claim-{}",
             &crate::provider_request_digest(&(
