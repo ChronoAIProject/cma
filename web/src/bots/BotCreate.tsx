@@ -123,6 +123,8 @@ export function BotCreate({
   );
   const choices = useBotRead(read);
   const selected = choices.value?.find((connection) => connection.connection_ref === botId);
+  const historicalRevision =
+    intent?.body.event_worker_profile?.revision ?? intent?.body.profile?.revision;
   const image = useMemo(
     () => images.find((candidate) => candidate.id === selectedImage) ?? SYSTEM_IMAGE,
     [images, selectedImage],
@@ -397,20 +399,29 @@ export function BotCreate({
                 <dt>
                   {intent?.body.event_worker_profile
                     ? 'Historical Event Worker Profile'
-                    : 'Agent setup'}
+                    : intent?.body.profile
+                      ? 'Historical Agent Profile'
+                      : 'Agent setup'}
                 </dt>
-                <dd>{intent?.profileName ?? image.name}</dd>
-                <dt>Sandbox profile</dt>
+                <dd>
+                  {intent?.profileName ?? image.name}
+                  {historicalRevision === undefined ? '' : ` · Version ${historicalRevision}`}
+                </dd>
+                <dt>{intent?.body.sandbox_profile ? 'Historical Sandbox Profile' : 'Sandbox'}</dt>
                 <dd>
                   {intent?.body.sandbox_profile
                     ? `${intent.sandboxProfileName ?? intent.body.sandbox_profile.id} · Version ${intent.body.sandbox_profile.revision}`
-                    : 'Created from inline Agent setup'}
+                    : intent?.body.profile
+                      ? 'Created from historical Agent setup'
+                      : 'Created from inline Agent setup'}
                 </dd>
-                <dt>Workspace profile</dt>
+                <dt>
+                  {intent?.body.workspace_profile ? 'Historical Workspace Profile' : 'Workspace'}
+                </dt>
                 <dd>
                   {intent?.body.workspace_profile
                     ? `${intent.workspaceProfileName ?? intent.body.workspace_profile.id} · Version ${intent.body.workspace_profile.revision}`
-                    : repository.trim() || 'Empty workspace'}
+                    : (intent?.body.repository?.url ?? repository.trim()) || 'Empty workspace'}
                 </dd>
                 <dt>Message access</dt>
                 <dd>
@@ -428,9 +439,8 @@ export function BotCreate({
                 <dd>{(intent?.body.reply.ack_after_ms ?? ack) / 1000} seconds</dd>
               </dl>
               <p>
-                The consumer uses your account and the inline Agent setup. Connect any selected
-                services in NyxID before creating it; Agent Manager will materialize private runtime
-                revisions for this consumer.
+                The consumer uses your account and the Agent setup shown above. Connect any selected
+                services in NyxID so the Agent can use them when responding to messages.
               </p>
               {intent === undefined ? null : (
                 <p role="status">
