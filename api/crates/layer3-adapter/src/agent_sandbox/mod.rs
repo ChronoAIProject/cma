@@ -203,7 +203,7 @@ fn api_error(error: kube::Error) -> AdapterError {
                 response.code
             ))
         }
-        _ => unavailable("Kubernetes Sandbox operation failed"),
+        error => unavailable(&format!("Kubernetes Sandbox operation failed: {error}")),
     }
 }
 
