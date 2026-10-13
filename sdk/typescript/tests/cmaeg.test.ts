@@ -47,6 +47,12 @@ describe('independent CMAEG client', () => {
         status: 201,
       },
       {
+        run: () => client.listChannels({ after: 'cursor/one' }),
+        method: 'GET',
+        path: '/v1/channels?after=cursor%2Fone',
+        response: sample('ChannelPage'),
+      },
+      {
         run: () => client.getChannel(id),
         method: 'GET',
         path: `/v1/channels/${segment}`,

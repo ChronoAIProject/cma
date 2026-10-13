@@ -3,6 +3,7 @@ import { ValidationError } from '../errors.js';
 import { requestVoid, type OperationOptions } from '../http.js';
 import { input, query, read, segment } from '../resources.js';
 import {
+  ChannelPageSchema,
   ChannelCreateRequestSchema,
   ChannelUpdateRequestSchema,
   ChannelResponseSchema,
@@ -15,6 +16,11 @@ import {
 export interface CreateChannelOptions extends OperationOptions {
   /** Replica-local replay key; reserve a record_id in the body for durable recovery. */
   readonly idempotencyKey?: string;
+}
+
+export interface ListChannelOptions extends OperationOptions {
+  /** Opaque owner-scoped cursor returned by the previous page. */
+  readonly after?: string;
 }
 
 export class CmaegChannels {
@@ -31,6 +37,15 @@ export class CmaegChannels {
       body: input(ChannelCreateRequestSchema, body),
       headers: key === undefined ? {} : { 'Idempotency-Key': key },
     });
+  }
+
+  listChannels(options: ListChannelOptions = {}) {
+    return read(
+      this.config,
+      query('/v1/channels', { after: options.after }),
+      ChannelPageSchema,
+      options,
+    );
   }
 
   getChannel(channelId: string, options: OperationOptions = {}) {
