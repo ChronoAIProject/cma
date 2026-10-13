@@ -195,5 +195,4 @@ fn validate_defaults(value: &SettingsDefaults) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
 }
