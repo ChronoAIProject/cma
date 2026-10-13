@@ -119,13 +119,14 @@ impl RuntimeConfig {
             &mut process_env,
             platform_proxy.as_ref(),
         )?;
+        let checkpoint_root = checkpoint_root(&process_env, &home, home_identity.is_some())?;
 
         Ok(Self {
             bind,
             sandbox_id,
             generation,
             home_identity,
-            checkpoint_root: std::env::temp_dir().join("cma-checkpoints"),
+            checkpoint_root,
             home,
             state_root,
             install_env,
@@ -175,6 +176,33 @@ impl RuntimeConfig {
             allow_local_git: true,
         }
     }
+}
+
+fn checkpoint_root(
+    environment: &BTreeMap<String, String>,
+    home: &Path,
+    persistent_home: bool,
+) -> Result<PathBuf, String> {
+    let Some(temporary) = environment.get("TMPDIR") else {
+        // Legacy runtimes without an assigned TMPDIR retain their original
+        // platform-specific temporary directory and installation recovery path.
+        return Ok(std::env::temp_dir().join("cma-checkpoints"));
+    };
+    let temporary_path = Path::new(temporary);
+    if persistent_home
+        && (!temporary_path.is_absolute()
+            || temporary_path == Path::new("/")
+            || temporary_path.starts_with(home)
+            || temporary.split('/').any(|part| matches!(part, "." | "..")))
+    {
+        return Err(
+            "TMPDIR must be a normalized absolute directory outside the sandbox home".into(),
+        );
+    }
+    // A waiting pool process has not installed assignment variables into its
+    // ambient environment. Use the assigned transfer mount for checkpoints and
+    // installation journals, preserving their existing on-disk layout.
+    Ok(temporary_path.join("cma-checkpoints"))
 }
 
 fn validate_state_root(state_root: &Path, home: &Path) -> Result<(), String> {
@@ -257,6 +285,100 @@ fn reserved(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn runtime_environment() -> BTreeMap<String, String> {
+        BTreeMap::from([
+            ("CHRONO_SANDBOX_ID".into(), "sandbox-test".into()),
+            ("CHRONO_RUNTIME_HOME".into(), "/home/cma".into()),
+            ("CHRONO_RUNTIME_HOME_IDENTITY".into(), "a".repeat(43)),
+        ])
+    }
+
+    #[test]
+    fn assigned_tmpdir_controls_checkpoint_and_installation_storage() {
+        let mut environment = runtime_environment();
+        environment.insert("TMPDIR".into(), "/var/lib/cma-transfer".into());
+        let config = RuntimeConfig::from_values(environment).unwrap();
+        assert_eq!(
+            config.checkpoint_root,
+            Path::new("/var/lib/cma-transfer/cma-checkpoints")
+        );
+        assert_eq!(config.process_env["TMPDIR"], "/var/lib/cma-transfer");
+        assert_eq!(config.install_env["TMPDIR"], "/var/lib/cma-transfer");
+    }
+
+    #[test]
+    fn absent_tmpdir_preserves_legacy_temporary_directory() {
+        let mut environment = runtime_environment();
+        for persistent in [true, false] {
+            if !persistent {
+                environment.remove("CHRONO_RUNTIME_HOME_IDENTITY");
+            }
+            let config = RuntimeConfig::from_values(environment.clone()).unwrap();
+            assert_eq!(
+                config.checkpoint_root,
+                std::env::temp_dir().join("cma-checkpoints")
+            );
+        }
+    }
+
+    #[test]
+    fn nonpersistent_runtime_preserves_custom_home_local_tmpdir() {
+        let mut environment = runtime_environment();
+        environment.remove("CHRONO_RUNTIME_HOME_IDENTITY");
+        environment.insert("TMPDIR".into(), "/home/cma/tmp".into());
+        let config = RuntimeConfig::from_values(environment).unwrap();
+        assert_eq!(
+            config.checkpoint_root,
+            Path::new("/home/cma/tmp/cma-checkpoints")
+        );
+        assert_eq!(config.install_env["TMPDIR"], "/home/cma/tmp");
+    }
+
+    #[test]
+    fn invalid_assigned_tmpdir_is_rejected_without_ambient_fallback() {
+        for temporary in [
+            "",
+            "relative",
+            "/",
+            "/tmp/../transfer",
+            "/tmp/./transfer",
+            "/home/cma",
+            "/home/cma/tmp",
+        ] {
+            let mut environment = runtime_environment();
+            environment.insert("TMPDIR".into(), temporary.into());
+            assert!(RuntimeConfig::from_values(environment)
+                .unwrap_err()
+                .contains("TMPDIR"));
+        }
+    }
+
+    #[test]
+    fn assigned_storage_keeps_foreign_installation_journals_rejected() {
+        let temporary = std::env::temp_dir().join(format!(
+            "cma-assigned-install-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let mut environment = runtime_environment();
+        environment.insert("TMPDIR".into(), temporary.to_string_lossy().into_owned());
+        let config = RuntimeConfig::from_values(environment).unwrap();
+        let foreign = RuntimeConfig {
+            sandbox_id: "another-sandbox".into(),
+            ..config.clone()
+        };
+        let request = layer3_adapter::InstallRequest::new("foreign-install", vec![]);
+        let record = crate::install_state::InstallRecord::started(&foreign, &request);
+        assert!(crate::install_state::write_initial(&foreign, &record).unwrap());
+        let path = temporary.join("cma-checkpoints/runtime-state/install-v2.json");
+        let original = std::fs::read(&path).unwrap();
+        assert_eq!(
+            crate::install_state::recover(&config).unwrap_err().code,
+            "install_state_invalid"
+        );
+        assert_eq!(std::fs::read(path).unwrap(), original);
+        std::fs::remove_dir_all(temporary).unwrap();
+    }
 
     #[test]
     fn reserved_variables_are_not_install_environment() {

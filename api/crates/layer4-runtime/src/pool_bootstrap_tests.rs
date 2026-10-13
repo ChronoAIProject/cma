@@ -32,6 +32,10 @@ impl Directory {
                     "CHRONO_RUNTIME_STATE_ROOT".into(),
                     self.0.join("state").to_string_lossy().into_owned(),
                 ),
+                (
+                    "TMPDIR".into(),
+                    self.0.join("transfer").to_string_lossy().into_owned(),
+                ),
                 ("CHRONO_RUNTIME_BIND".into(), "127.0.0.1:0".into()),
             ]),
         }
@@ -63,6 +67,10 @@ async fn exact_pod_assignment_is_replayable_and_keeps_control_credentials_out_of
     assert_eq!(assigned.config.sandbox_id, "sbx_claimed");
     assert_eq!(assigned.config.generation, 3);
     assert_eq!(assigned.config.home_identity, Some("a".repeat(43)));
+    assert_eq!(
+        assigned.config.checkpoint_root,
+        directory.0.join("transfer/cma-checkpoints")
+    );
     assert!(!assigned
         .config
         .process_env
