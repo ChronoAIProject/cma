@@ -65,3 +65,6 @@ mod cleanup_tests;
 #[cfg(test)]
 #[path = "recovery_tests.rs"]
 mod recovery_tests;
+
+mod access_tools;
+pub use access_tools::{HostedAccessToolBinding, HostedAccessToolSource};
