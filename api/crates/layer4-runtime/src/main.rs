@@ -25,6 +25,7 @@ mod mutation_journal;
 mod mutation_scope;
 mod paths;
 mod persistent_home;
+mod pool_bootstrap;
 mod resource_cgroup;
 mod resource_network;
 mod resources;
@@ -51,6 +52,7 @@ mod writer_process;
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
@@ -63,16 +65,27 @@ async fn main() {
 
 async fn run() -> Result<(), String> {
     let arguments = std::env::args_os().skip(1).collect::<Vec<_>>();
+    if arguments.len() == 1 && arguments[0] == "--assign-runtime" {
+        return pool_bootstrap::assign_from_stdio().await;
+    }
+    let waiting = arguments.len() == 1 && arguments[0] == "--wait-for-assignment";
     if let Some(command) = arguments.first() {
         if command == "--export-home-snapshot" {
             return snapshot_export::run(&arguments[1..])
                 .await
                 .map_err(|error| error.to_string());
         }
-        return Err("unknown runtime command".into());
+        if !waiting {
+            return Err("unknown runtime command".into());
+        }
     }
-    let control_auth = control_auth::ControlAuth::from_environment()?;
-    let config = config::RuntimeConfig::from_environment()?;
+    let (config, control_auth, _assignment_server) = if waiting {
+        let (assigned, server) = pool_bootstrap::wait_for_assignment().await?;
+        (assigned.config, Some(assigned.auth), Some(server))
+    } else {
+        let auth = control_auth::ControlAuth::from_environment()?;
+        (config::RuntimeConfig::from_environment()?, auth, None)
+    };
     let bind = config.bind;
     let writer_boundary = writer_fence::SupervisorBoundary::install()?;
     let supervisor = supervisor::Supervisor::start(config, writer_boundary)

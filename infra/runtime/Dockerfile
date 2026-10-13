@@ -370,4 +370,5 @@ ARG CHRONO_BUILD=development
 LABEL org.opencontainers.image.source="https://github.com/ChronoAIProject/cma" \
       org.opencontainers.image.revision="${CHRONO_BUILD_SHA}" \
       org.opencontainers.image.version="${CHRONO_BUILD}" \
-      dev.chrono.cma.runtime-contract="3"
+      dev.chrono.cma.runtime-contract="3" \
+      dev.chrono.cma.runtime-bootstrap="1"

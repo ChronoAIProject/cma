@@ -21,6 +21,7 @@ mod home_volume;
 mod prompt_identity;
 mod provider_finality;
 mod runtime;
+pub mod runtime_bootstrap;
 mod runtime_output;
 mod runtime_status;
 mod tool_proxy;
