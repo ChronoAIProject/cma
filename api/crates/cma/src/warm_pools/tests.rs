@@ -288,3 +288,25 @@ fn ordinary_and_inventory_only_users_cannot_manage_pools() {
 
 #[path = "mongo_tests.rs"]
 mod mongo;
+
+#[test]
+fn deployment_owned_image_admits_native_cold_and_warm_contracts() {
+    let original = target().plan.spec;
+    let image = deployment_image(original.image.uri.clone());
+    layer3_adapter::runtime_bootstrap::admit_pool_image(&image).unwrap();
+    let mut cold = original.clone();
+    cold.image = image.clone();
+    cold.home.mode = layer3_adapter::HomeVolumeMode::NativeVctEmptyV1;
+    cold.home.template_name.clear();
+    cold.home.template_generation.clear();
+    cold.validate().unwrap();
+    assert_eq!(
+        image, original.image,
+        "cold and warm templates share image identity"
+    );
+    let deployment = layer3_adapter::hosted::HostedDeployment {
+        image,
+        ..Default::default()
+    };
+    deployment.contract().unwrap();
+}
