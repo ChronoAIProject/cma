@@ -12,6 +12,7 @@ impl AgentAccessWorker {
             .pause_operation_id
             .as_deref()
             .ok_or(AgentAccessError::Invalid)?;
+        require_latest_operation(sandbox, expected)?;
         if let Some(operation) = &sandbox.lifecycle.operation {
             return if matches!(operation, SandboxLifecycleOperation::Pause { .. })
                 && operation.authority().operation_id == expected
@@ -30,7 +31,29 @@ impl AgentAccessWorker {
         Ok(())
     }
 
-    pub(super) async fn grant(&self, record: &AgentAccessRecord) -> Result<(), AgentAccessError> {
+    pub(super) async fn grant(
+        &self,
+        record: &AgentAccessRecord,
+        sandbox: &Sandbox,
+    ) -> Result<(), AgentAccessError> {
+        require_latest_operation(
+            sandbox,
+            record
+                .progress
+                .pause_operation_id
+                .as_deref()
+                .ok_or(AgentAccessError::Invalid)?,
+        )?;
+        let approved = record.approved_services()?;
+        if sandbox.status != SandboxStatus::Paused
+            || sandbox
+                .credential
+                .effective_reaches()
+                .iter()
+                .any(|service| !approved.contains(service))
+        {
+            return Err(AgentAccessError::Invalid);
+        }
         if !self.connections_ready(record).await? {
             return Ok(());
         }
@@ -47,6 +70,13 @@ impl AgentAccessWorker {
         record: &AgentAccessRecord,
         sandbox: &Sandbox,
     ) -> Result<(), AgentAccessError> {
+        let expected = record
+            .progress
+            .revive_operation_id
+            .as_ref()
+            .or(record.progress.pause_operation_id.as_ref())
+            .ok_or(AgentAccessError::Invalid)?;
+        require_latest_operation(sandbox, expected)?;
         if !self.connections_ready(record).await? {
             return Ok(());
         }
@@ -69,6 +99,9 @@ impl AgentAccessWorker {
             } else {
                 Err(AgentAccessError::Invalid)
             };
+        }
+        if sandbox.status == SandboxStatus::CredentialRotating {
+            return Ok(());
         }
         if sandbox.status != SandboxStatus::Active {
             return Err(AgentAccessError::Invalid);
@@ -110,6 +143,18 @@ impl AgentAccessWorker {
     }
 }
 
+fn require_latest_operation(sandbox: &Sandbox, expected: &str) -> Result<(), AgentAccessError> {
+    let latest = format!(
+        "sandbox-lifecycle-v1:{}:{}",
+        sandbox.id,
+        sandbox.lifecycle.next_authority.saturating_sub(1)
+    );
+    if latest != expected {
+        return Err(AgentAccessError::Invalid);
+    }
+    Ok(())
+}
+
 pub(super) fn settled(sandbox: &Sandbox) -> bool {
     (sandbox.work.step == SandboxWorkStep::None
         || (sandbox.status == SandboxStatus::Active
@@ -118,4 +163,28 @@ pub(super) fn settled(sandbox: &Sandbox) -> bool {
         && sandbox.lifecycle.operation.is_none()
         && sandbox.lifecycle.checkpoint_capture.is_none()
         && sandbox.credential.pending.is_none()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::store::agent_access_fixtures;
+
+    #[test]
+    fn a_newer_completed_lifecycle_cannot_leave_old_access_work_applying() {
+        let mut sandbox = agent_access_fixtures::sandbox("superseded");
+        sandbox.lifecycle.next_authority = 3;
+        let expected = format!("sandbox-lifecycle-v1:{}:2", sandbox.id);
+        assert!(require_latest_operation(&sandbox, &expected).is_ok());
+        // Same resulting status and no active operation still represent a
+        // different owner decision when the lifecycle generation advanced.
+        for status in [SandboxStatus::Active, SandboxStatus::Paused] {
+            sandbox.status = status;
+            sandbox.lifecycle.next_authority = 4;
+            assert_eq!(
+                require_latest_operation(&sandbox, &expected),
+                Err(AgentAccessError::Invalid)
+            );
+        }
+    }
 }
