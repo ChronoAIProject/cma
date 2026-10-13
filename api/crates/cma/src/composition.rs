@@ -91,6 +91,11 @@ impl ControlPlaneComposition {
         ));
         let subscriptions =
             crate::connections::CodexSubscriptions::new(stores.codex_subscriptions.clone());
+        let access_tools = crate::store::MongoAgentAccessToolSource::new(
+            stores.sandbox_model.clone(),
+            &config.public_url,
+            &config.auth_encryption_key,
+        )?;
         let adapter = production_adapter(
             config,
             crate::connections::RuntimeSubscriptions::new(
@@ -98,6 +103,7 @@ impl ControlPlaneComposition {
                 subscriptions.clone(),
             ),
             crate::store::MongoProviderToolSource::new(stores.sandbox_model.clone()),
+            access_tools.clone(),
         )
         .await?;
         let auth = AuthState::with_store_and_nyxid_public_url(

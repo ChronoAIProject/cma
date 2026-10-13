@@ -1,6 +1,7 @@
 //! Durable adapters that do not depend on a resource aggregate.
 
 pub mod activity;
+mod agent_access_tools;
 mod agent_admission;
 mod agent_admission_records;
 mod agent_channel_usage;
@@ -114,6 +115,7 @@ mod workspaces;
 mod worktrees;
 
 pub use activity::MongoActivityStore;
+pub(crate) use agent_access_tools::{AuthenticatedAgentAccess, MongoAgentAccessToolSource};
 #[cfg(test)]
 pub(crate) use agent_lifecycle_operations::LifecycleRecord;
 pub(crate) use agent_lifecycle_operations::{
