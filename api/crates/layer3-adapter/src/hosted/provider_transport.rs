@@ -27,6 +27,7 @@ pub enum NativeRuntimeTransport {
     #[default]
     Direct,
     KubernetesPortforward,
+    KubernetesExec,
 }
 
 /// Concrete authenticated control and ACP transport for provider-hosted runtimes.
