@@ -18,8 +18,8 @@ use layer2_core::profiles::{
 use layer2_core::profiles::{SandboxProfileRef, WorkspaceProfileRef};
 use layer2_core::resource_access::{CallerContext, ResourceOwner};
 use layer2_core::sandbox::{
-    AgentOrigin, AgentService, CreateAgent, CreateSandbox, SandboxOrigin, SandboxService,
-    SandboxServiceError, SandboxStatus, WorkspaceService, WorkspaceStatus,
+    AgentOrigin, AgentService, CreateAgent, SandboxService, SandboxServiceError, SandboxStatus,
+    WorkspaceService, WorkspaceStatus,
 };
 use layer2_core::{
     AgentId, Authorization, Caller, Capability, SandboxId, SandboxProfileId, SubjectId,
@@ -217,20 +217,14 @@ impl InlineAgentLifecycle {
         let sandbox_id = if let Some(id) = existing_sandbox_id {
             SandboxId(id)
         } else {
-            let sandbox = match self
-                .sandbox
-                .create_for_lifecycle(
-                    caller,
-                    CreateSandbox {
-                        profile: sandbox_profile.clone(),
-                        name: Some(validation::sandbox_name(&request.name)),
-                        confirmed_digest: None,
-                        origin: SandboxOrigin::Lifecycle {
-                            operation_id: lease.id.clone(),
-                        },
-                    },
-                )
-                .await
+            let sandbox = match validation::create_sandbox(
+                self.sandbox.as_ref(),
+                caller,
+                sandbox_profile.clone(),
+                &request.name,
+                &lease.id,
+            )
+            .await
             {
                 Ok(value) => value,
                 Err(SandboxServiceError::ConnectionsRequired { services }) => {

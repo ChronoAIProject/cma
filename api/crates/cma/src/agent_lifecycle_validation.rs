@@ -313,12 +313,51 @@ pub(super) fn operation_error(error: layer2_core::StoreError) -> AgentLifecycleP
     }
 }
 
-pub(super) fn sandbox_name(agent_name: &str) -> String {
+pub(super) async fn create_sandbox(
+    service: &layer2_core::sandbox::SandboxService,
+    caller: &layer2_core::Caller,
+    profile: layer2_core::profiles::SandboxProfileRef,
+    agent_name: &str,
+    operation_id: &str,
+) -> Result<layer2_core::sandbox::Sandbox, SandboxServiceError> {
+    let mut request = layer2_core::sandbox::CreateSandbox {
+        profile,
+        name: Some(sandbox_name(agent_name, operation_id)),
+        confirmed_digest: None,
+        origin: layer2_core::sandbox::SandboxOrigin::Lifecycle {
+            operation_id: operation_id.into(),
+        },
+    };
+    match service.create_for_lifecycle(caller, request.clone()).await {
+        // A pre-update worker may have committed the old name, then lost the
+        // response before persisting its child ID. Replay still verifies the
+        // exact owner, operation, profile and historical name in the service.
+        Err(SandboxServiceError::SandboxOriginConflict) => {
+            request.name = Some(legacy_sandbox_name(agent_name));
+            service.create_for_lifecycle(caller, request).await
+        }
+        result => result,
+    }
+}
+
+fn legacy_sandbox_name(agent_name: &str) -> String {
     let mut end = agent_name.len().min(56);
     while !agent_name.is_char_boundary(end) {
         end -= 1;
     }
     format!("{} sandbox", &agent_name[..end])
+}
+
+fn sandbox_name(agent_name: &str, operation_id: &str) -> String {
+    // The durable operation's full UUID keeps repeated titles distinct and a
+    // lost admission response replayable. Reserve its bytes before truncating
+    // the display prefix to the Sandbox's 64-byte name limit.
+    let suffix = format!(" sandbox {operation_id}");
+    let mut end = agent_name.len().min(64_usize.saturating_sub(suffix.len()));
+    while !agent_name.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}{suffix}", &agent_name[..end])
 }
 
 pub(super) fn profile_error(
@@ -336,3 +375,7 @@ pub(super) fn profile_error(
         _ => AgentLifecycleProvisioningError::Invalid(error.to_string()),
     }
 }
+
+#[cfg(test)]
+#[path = "agent_lifecycle_sandbox_name_tests.rs"]
+mod sandbox_name_tests;
