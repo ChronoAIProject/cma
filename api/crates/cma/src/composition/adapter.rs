@@ -66,10 +66,9 @@ pub(super) async fn production_adapter(
             .inventory()
             .await
             .map_err(|e| format!("agent-sandbox API unavailable: {e}"))?;
-        let transport =
-            ProviderHostedControlTransport::for_agent_sandbox(client.clone(), archive_factory)
-                .map_err(|e| e.to_string())?
-                .with_subscriptions(subscriptions);
+        let transport = ProviderHostedControlTransport::for_agent_sandbox(client.clone())
+            .map_err(|e| e.to_string())?
+            .with_subscriptions(subscriptions);
         backends.agent_sandbox = Some(Arc::new(layer3_adapter::hosted::AgentSandboxBackend::new(
             client,
             Arc::new(transport),

@@ -15,6 +15,8 @@ use crate::hosted::{
 use crate::wire::{AgentOpenReceipt, FencedReceipt, FencedRequest, ResponseFrame};
 use crate::{AgentLaunch, AgentSlot, ResourceReading};
 
+#[path = "provider_transport_agent_sandbox_tests.rs"]
+mod agent_sandbox;
 #[path = "provider_transport_checkpoint_tests.rs"]
 mod checkpoint;
 #[path = "provider_transport_restore_tests.rs"]

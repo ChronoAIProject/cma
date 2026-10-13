@@ -25,7 +25,7 @@ const CONTROL_DEADLINE: Duration = Duration::from_secs(60 * 60);
 pub struct ProviderHostedControlTransport {
     client: RuntimeDiscovery,
     http: reqwest::Client,
-    archive_factory: Arc<dyn CheckpointArchiveStoreFactory>,
+    archive_factory: Option<Arc<dyn CheckpointArchiveStoreFactory>>,
     state: Arc<Mutex<TransportState>>,
     subscriptions: Option<Arc<dyn super::HostedSubscriptionSource>>,
 }
@@ -41,14 +41,14 @@ struct TransportState {
     next_link_id: u64,
     runtime_epochs: BTreeMap<RuntimeHandle, u64>,
     slot_epochs: BTreeMap<(RuntimeHandle, AgentSlot), u64>,
-    archives: BTreeMap<RuntimeHandle, BoundArchive>,
+    bindings: BTreeMap<RuntimeHandle, BoundRuntime>,
     links: BTreeMap<(RuntimeHandle, AgentSlot), ActiveLink>,
 }
 
 #[derive(Clone)]
-struct BoundArchive {
+struct BoundRuntime {
     sandbox_id: String,
-    store: Arc<dyn CheckpointArchiveStore>,
+    store: Option<Arc<dyn CheckpointArchiveStore>>,
 }
 
 #[derive(Clone)]
@@ -71,21 +71,6 @@ impl ProviderHostedControlTransport {
     pub fn with_subscriptions(mut self, source: Arc<dyn super::HostedSubscriptionSource>) -> Self {
         self.subscriptions = Some(source);
         self
-    }
-
-    async fn archive(&self, handle: &RuntimeHandle) -> crate::Result<BoundArchive> {
-        self.state
-            .lock()
-            .await
-            .archives
-            .get(handle)
-            .cloned()
-            .ok_or_else(|| {
-                AdapterError::Unavailable(format!(
-                    "runtime {} has no sandbox-bound checkpoint store",
-                    handle.0
-                ))
-            })
     }
 
     async fn control(
@@ -121,6 +106,7 @@ impl ProviderHostedControlTransport {
         endpoint: &RuntimeEndpoint,
         request: RequestFrame,
     ) -> crate::Result<ResponseFrame> {
+        self.require_supported_operation(&request)?;
         if let Some(restore) = restore_request(&request) {
             let archive = self.archive(handle).await?;
             checkpoint_transport::import(
@@ -128,7 +114,7 @@ impl ProviderHostedControlTransport {
                 endpoint.checkpoint(&restore.object_reference)?,
                 self.auth_header(endpoint),
                 restore,
-                &archive.store,
+                &archive,
             )
             .await?;
         }
@@ -142,7 +128,7 @@ impl ProviderHostedControlTransport {
                 endpoint.checkpoint(&checkpoint.object_reference)?,
                 self.auth_header(endpoint),
                 checkpoint,
-                &archive.store,
+                &archive,
             )
             .await;
             if let Err(error) = exported {
@@ -329,33 +315,7 @@ impl ProviderHostedControlTransport {
 #[async_trait::async_trait]
 impl super::HostedControlTransport for ProviderHostedControlTransport {
     async fn bind_runtime(&self, handle: &RuntimeHandle, sandbox_id: &str) -> crate::Result<()> {
-        if sandbox_id.is_empty()
-            || sandbox_id.len() > 256
-            || sandbox_id.trim() != sandbox_id
-            || sandbox_id.chars().any(char::is_control)
-        {
-            return Err(AdapterError::Rejected(
-                "checkpoint sandbox identity is invalid".into(),
-            ));
-        }
-        let mut state = self.state.lock().await;
-        if let Some(existing) = state.archives.get(handle) {
-            if existing.sandbox_id != sandbox_id {
-                return Err(AdapterError::Rejected(
-                    "runtime handle is already bound to another sandbox".into(),
-                ));
-            }
-            return Ok(());
-        }
-        let store = self.archive_factory.for_sandbox(sandbox_id)?;
-        state.archives.insert(
-            handle.clone(),
-            BoundArchive {
-                sandbox_id: sandbox_id.into(),
-                store,
-            },
-        );
-        Ok(())
+        self.bind_sandbox(handle, sandbox_id).await
     }
 
     async fn exchange(
@@ -363,6 +323,7 @@ impl super::HostedControlTransport for ProviderHostedControlTransport {
         handle: &RuntimeHandle,
         request: RequestFrame,
     ) -> crate::Result<ResponseFrame> {
+        self.require_supported_operation(&request)?;
         let endpoint = self.endpoint(handle).await?;
         self.exchange_at(handle, &endpoint, request).await
     }
@@ -417,7 +378,7 @@ impl super::HostedControlTransport for ProviderHostedControlTransport {
             match &self.subscriptions {
                 Some(source) => Some(super::subscriptions::HostedSubscriptionBinding {
                     source: source.clone(),
-                    sandbox_id: self.archive(handle).await?.sandbox_id,
+                    sandbox_id: self.binding(handle).await?.sandbox_id,
                     runtime: handle.clone(),
                     agent: launch.request.agent_id.clone(),
                 }),
@@ -447,7 +408,7 @@ impl super::HostedControlTransport for ProviderHostedControlTransport {
             let mut state = self.state.lock().await;
             let epoch = state.runtime_epochs.entry(handle.clone()).or_default();
             *epoch = epoch.wrapping_add(1);
-            state.archives.remove(handle);
+            state.bindings.remove(handle);
             state
                 .slot_epochs
                 .retain(|(runtime, _), _| runtime != handle);
@@ -477,3 +438,6 @@ mod discovery;
 
 #[path = "provider_history.rs"]
 mod history;
+
+#[path = "provider_binding.rs"]
+mod binding;
