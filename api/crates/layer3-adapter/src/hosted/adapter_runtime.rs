@@ -104,15 +104,21 @@ impl HostedAdapter {
     pub(super) async fn resume_exact(
         &self,
         request: &RuntimeAdoptionRequest,
-        generation: u64,
+        successor: &crate::RuntimeProvisionRequest,
     ) -> crate::Result<RuntimeHandle> {
-        if generation <= request.generation {
+        let mut allowed = request.spec.clone();
+        allowed.reaches.clone_from(&successor.spec.reaches);
+        if successor.generation <= request.generation || successor.spec != allowed {
             return Err(AdapterError::Rejected(
-                "resume generation must advance".into(),
+                "resume must advance generation and may change only service scope".into(),
             ));
         }
         let previous = self.retained_request(request, request.generation)?;
-        let next = self.retained_request(request, generation)?;
+        // Preserve the persisted image even when the deployment default changed.
+        let mut resumed = request.clone();
+        resumed.spec = successor.spec.clone();
+        resumed.generation = successor.generation;
+        let next = self.retained_request(&resumed, successor.generation)?;
         let previous_identity = provider_request_identity(&previous)?;
         let next_identity = provider_request_identity(&next)?;
         self.verify_spec_home(&request.spec).await?;
@@ -132,7 +138,7 @@ impl HostedAdapter {
             .resume(&request.handle, &previous, &next)
             .await?;
         self.verify_spec_home(&request.spec).await?;
-        self.attach_state(request.handle.clone(), &request.spec, next_identity)
+        self.attach_state(request.handle.clone(), &successor.spec, next_identity)
             .await
     }
 

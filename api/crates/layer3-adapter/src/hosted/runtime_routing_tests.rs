@@ -417,7 +417,13 @@ async fn retained_runtime_adoption_suspension_and_resume_refuse_cross_cluster_ho
             adapter.adopt_runtime(&retained).await.map(|_| ()),
             adapter.suspend_runtime(&retained).await,
             adapter.verify_suspended_runtime(&retained).await,
-            adapter.resume_runtime(&retained, 2).await.map(|_| ()),
+            adapter
+                .resume_runtime(
+                    &retained,
+                    &RuntimeProvisionRequest::new(2, retained.spec.clone()),
+                )
+                .await
+                .map(|_| ()),
         ] {
             assert!(
                 matches!(result, Err(AdapterError::Rejected(message)) if message == "retained runtime conflicts with its recorded home authority")
