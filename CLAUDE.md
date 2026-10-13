@@ -155,11 +155,13 @@ infra/storage/home-template.yaml
 
 No additional manifests, no Helm charts, no kustomize overlays.
 
-The two `infra/storage/` manifests initialize the persistent-home StorageClass,
-snapshot class, credential-free seed Pod/PVC and its VolumeSnapshot. Operators
-apply them explicitly before enabling persistent homes; CI validates them but
-merging or publishing never runs them. They are initialization resources, not
-another continuously running application deployment.
+The two `infra/storage/` manifests initialize the legacy persistent-home
+StorageClass, snapshot class, credential-free seed Pod/PVC and its VolumeSnapshot.
+Operators apply them explicitly for that retained storage mode; CI validates
+them but merging or publishing never runs them. New native agent-sandbox homes
+use controller-owned volume claims and the runtime image's empty-volume
+initializer, so they do not require these legacy seed resources. These manifests
+are initialization resources, not another continuously running application deployment.
 
 `infra/web/gcpbackendpolicy.yaml` was added after a missing backend timeout was
 measured rather than predicted. The browser still uses one origin, but the
@@ -468,8 +470,9 @@ releasing its PVC and completing database cleanup.
 Production CMA no longer manages S3 checkpoint storage or runs scheduled or
 manual archive capture. Historical checkpoint schemas and provider bindings
 remain readable for recovery; archive-only paused resources require an explicit
-external migration. The initialized VolumeSnapshot used to seed fresh homes
-is an infra prerequisite, not per-user backup scheduling. See
+external migration. The initialized VolumeSnapshot remains a prerequisite only
+for retained legacy snapshot-seeded homes; new native homes use controller-owned
+empty volumes and the pinned runtime initializer. See
 `docs/CMA_Deployment_Readiness.md` for activation, acceptance and rollback.
 
 Lifecycle transitions are never silent. The record names the runtime version
