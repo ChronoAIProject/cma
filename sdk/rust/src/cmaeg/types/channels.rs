@@ -88,6 +88,15 @@ pub struct ChannelResponse {
     pub version: u64,
 }
 
+/// CMAEG owner-scoped channel listing with an opaque continuation cursor.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct ChannelPage {
+    /// Channels visible to the authenticated creator.
+    pub items: Vec<ChannelResponse>,
+    /// Cursor for the next page, when more channels remain.
+    pub next_cursor: Option<String>,
+}
+
 /// CMAEG `ChannelUpdateRequest` wire shape.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChannelUpdateRequest {

@@ -3,6 +3,18 @@ use crate::{Result, http::Request};
 use reqwest::{Method, StatusCode};
 
 impl Cmaeg {
+    /// List owner-visible channels with an opaque continuation cursor.
+    pub async fn list_channels(&self, after: Option<&str>) -> Result<ChannelPage> {
+        let query: Vec<_> = after
+            .map(|value| ("after", value.to_owned()))
+            .into_iter()
+            .collect();
+        let mut request = Request::get(&["v1", "channels"]);
+        request.root = true;
+        request.query = &query;
+        self.client.request(request).await
+    }
+
     /// Create a channel; reserve `record_id` for recovery across replicas/restarts.
     pub async fn create_channel(
         &self,

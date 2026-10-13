@@ -1,6 +1,6 @@
 import { resolveConfig, type ClientConfig, type ResolvedConfig } from '../config.js';
 import type { OperationOptions } from '../http.js';
-import { CmaegChannels, type CreateChannelOptions } from './channels.js';
+import { CmaegChannels, type CreateChannelOptions, type ListChannelOptions } from './channels.js';
 import {
   CmaegConnections,
   type ConnectionOptions,
@@ -57,6 +57,9 @@ export class Cmaeg {
   createChannel(body: ChannelCreateRequest, options?: CreateChannelOptions) {
     return this.#channels.createChannel(body, options);
   }
+  listChannels(options?: ListChannelOptions) {
+    return this.#channels.listChannels(options);
+  }
   getChannel(id: string, options?: OperationOptions) {
     return this.#channels.getChannel(id, options);
   }
@@ -107,7 +110,7 @@ export class Cmaeg {
 }
 
 export { signWebhook, type WebhookHeaders } from './signing.js';
-export type { CreateChannelOptions } from './channels.js';
+export type { CreateChannelOptions, ListChannelOptions } from './channels.js';
 export type { EventOptions } from './events.js';
 export type { GatewayStreamEvent } from './stream.js';
 export type * from './types.js';

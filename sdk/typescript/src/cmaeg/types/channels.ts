@@ -247,6 +247,12 @@ export const ChannelResponseSchema = object({
 });
 export type ChannelResponse = Output<typeof ChannelResponseSchema>;
 
+export const ChannelPageSchema = object({
+  items: array(ChannelResponseSchema),
+  next_cursor: optional(nullable(text)),
+});
+export type ChannelPage = Output<typeof ChannelPageSchema>;
+
 export const CredentialPatchSchema = object({
   agent_key: optional(nullable(SecretSchema)),
   channel_key: optional(nullable(SecretSchema)),
