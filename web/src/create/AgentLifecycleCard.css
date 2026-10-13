@@ -31,6 +31,12 @@
   color: var(--dsw-alias-label-secondary);
 }
 
+.agent-lifecycle-location {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
 .agent-lifecycle-location select {
   width: 100%;
   min-height: 36px;
