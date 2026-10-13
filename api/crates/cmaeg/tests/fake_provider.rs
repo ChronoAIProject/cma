@@ -24,6 +24,9 @@ pub struct FakeProviderConfig {
     pub response_delay: Duration,
     pub terminal_delay: Duration,
     pub header_delay: Duration,
+    /// A header delay for turns whose input carries an attachment block only,
+    /// so a test can hold media turns while text turns answer at once.
+    pub attachment_delay: Duration,
     pub missing_turn_once: bool,
     pub busy_always: bool,
     pub frames: Option<Vec<Value>>,
@@ -36,6 +39,8 @@ pub struct FakeProviderConfig {
     pub text: String,
     pub unknown_event: bool,
     pub in_progress_first: bool,
+    /// Statuses that binding deletions answer instead of 204, by binding ID.
+    pub unbind_status: std::collections::BTreeMap<String, u16>,
 }
 
 impl Default for FakeProviderConfig {
@@ -44,6 +49,7 @@ impl Default for FakeProviderConfig {
             response_delay: Duration::ZERO,
             terminal_delay: Duration::ZERO,
             header_delay: Duration::ZERO,
+            attachment_delay: Duration::ZERO,
             missing_turn_once: false,
             busy_always: false,
             frames: None,
@@ -56,6 +62,7 @@ impl Default for FakeProviderConfig {
             text: "hello".into(),
             unknown_event: false,
             in_progress_first: false,
+            unbind_status: std::collections::BTreeMap::new(),
         }
     }
 }
@@ -67,11 +74,13 @@ pub struct ReceivedRequest {
     pub path: String,
     pub authorization: Option<String>,
     pub idempotency_key: Option<String>,
+    pub content_type: Option<String>,
     pub body: String,
 }
 
 struct StateData {
     config: FakeProviderConfig,
+    /// Every request in arrival order, event-context reads included.
     requests: Mutex<Vec<ReceivedRequest>>,
     busy_once: AtomicBool,
     conversation_missing_once: AtomicBool,
@@ -131,7 +140,18 @@ impl FakeProvider {
         &self.base_url
     }
 
+    /// The requests that change provider state, in arrival order. Event-context
+    /// reads are left out, so the call counts tests assert stay independent
+    /// of the agent's own context lookups.
     pub fn requests(&self) -> Vec<ReceivedRequest> {
+        self.log()
+            .into_iter()
+            .filter(|request| request.method != "GET")
+            .collect()
+    }
+
+    /// Every request in arrival order, including event-context reads.
+    pub fn log(&self) -> Vec<ReceivedRequest> {
         self.state.requests.lock().unwrap().clone()
     }
 
@@ -185,7 +205,10 @@ async fn unbind(
         headers,
         body,
     );
-    StatusCode::NO_CONTENT.into_response()
+    match state.config.unbind_status.get(&binding_id) {
+        Some(status) => StatusCode::from_u16(*status).unwrap().into_response(),
+        None => StatusCode::NO_CONTENT.into_response(),
+    }
 }
 
 async fn ensure_conversation(
@@ -235,9 +258,13 @@ async fn responses(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
+    let attachments = String::from_utf8_lossy(&body).contains("[Attachments:");
     record(&state, "POST", "/api/v2/responses".into(), headers, body);
     if !state.config.header_delay.is_zero() {
         sleep(state.config.header_delay).await;
+    }
+    if attachments && !state.config.attachment_delay.is_zero() {
+        sleep(state.config.attachment_delay).await;
     }
     if state.missing_turn_once.swap(false, Ordering::SeqCst) {
         return (
@@ -305,7 +332,12 @@ async fn responses(
 }
 
 fn record(state: &StateData, method: &str, path: String, headers: HeaderMap, body: Bytes) {
-    state.requests.lock().unwrap().push(ReceivedRequest {
+    let request = received(method, path, &headers, &body);
+    state.requests.lock().unwrap().push(request);
+}
+
+fn received(method: &str, path: String, headers: &HeaderMap, body: &[u8]) -> ReceivedRequest {
+    ReceivedRequest {
         received_at: Instant::now(),
         method: method.into(),
         path,
@@ -317,15 +349,25 @@ fn record(state: &StateData, method: &str, path: String, headers: HeaderMap, bod
             .get("idempotency-key")
             .and_then(|value| value.to_str().ok())
             .map(str::to_owned),
-        body: String::from_utf8_lossy(&body).into_owned(),
-    });
+        content_type: headers
+            .get("content-type")
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned),
+        body: String::from_utf8_lossy(body).into_owned(),
+    }
 }
 
 async fn event_context(
     State(state): State<Arc<StateData>>,
-    Path((_binding, conversation, event)): Path<(String, String, String)>,
+    Path((binding, conversation, event)): Path<(String, String, String)>,
     headers: HeaderMap,
 ) -> Response {
+    state.requests.lock().unwrap().push(received(
+        "GET",
+        format!("/api/v1/cmaeg/bindings/{binding}/conversations/{conversation}/events/{event}"),
+        &headers,
+        &[],
+    ));
     let authorization = headers
         .get("authorization")
         .and_then(|value| value.to_str().ok());

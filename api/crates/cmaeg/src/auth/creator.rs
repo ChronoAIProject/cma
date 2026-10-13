@@ -3,7 +3,7 @@
 use std::{
     fmt,
     sync::atomic::{AtomicU64, Ordering},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use axum::{
@@ -17,6 +17,10 @@ use dashmap::DashMap;
 use reqwest::Client;
 use ring::digest::{digest, SHA256};
 use serde::Deserialize;
+// Tokio's clock is the process clock outside tests; under a paused test
+// runtime it lets a caller's test move the cache past its TTLs without
+// waiting a real minute.
+use tokio::time::Instant;
 
 const SUCCESS_TTL: Duration = Duration::from_secs(60);
 const FAILURE_TTL: Duration = Duration::from_secs(10);
@@ -177,6 +181,17 @@ impl CreatorAuthenticator {
         }
         let token = bearer(headers).ok_or(CreatorAuthError::NotAuthenticated)?;
         let owner = selected_owner(headers)?;
+        self.authenticate_token(token, owner).await
+    }
+
+    /// Identify a NyxID bearer and, when `owner` is given, verify the bearer may act
+    /// for that organization, through the shared 60 s cache. REST calls it after parsing
+    /// headers; the console calls it with a session's token on every request.
+    pub async fn authenticate_token(
+        &self,
+        token: &str,
+        owner: Option<&str>,
+    ) -> Result<Creator, CreatorAuthError> {
         let token_hash = token_hash(token);
         let cache_key = owner.map_or_else(
             || token_hash.clone(),
@@ -194,11 +209,12 @@ impl CreatorAuthenticator {
             self.cache.remove(&cache_key);
         }
         let started = Instant::now();
-        let result = tokio::time::timeout(Duration::from_secs(3), self.fetch_creator(token, owner))
-            .await
-            .unwrap_or(Err(CreatorAuthError::ProviderUnavailable));
+        let result = self.fetch_verified(token, owner).await;
         let (ttl, cached) = match &result {
-            Ok(subject) => (SUCCESS_TTL, Ok(subject.clone())),
+            Ok(creator) => (
+                SUCCESS_TTL,
+                Ok((creator.subject.clone(), creator.organization)),
+            ),
             Err(error) => (FAILURE_TTL, Err(error.clone())),
         };
         self.insert_cache(
@@ -209,10 +225,23 @@ impl CreatorAuthenticator {
                 sequence: self.sequence.fetch_add(1, Ordering::Relaxed),
             },
         );
+        result
+    }
+
+    // The one identity and organization-admin rule, under its 3 s timeout; only
+    // `authenticate_token` calls it, so every caller shares the cache.
+    async fn fetch_verified(
+        &self,
+        token: &str,
+        owner: Option<&str>,
+    ) -> Result<Creator, CreatorAuthError> {
+        let result = tokio::time::timeout(Duration::from_secs(3), self.fetch_creator(token, owner))
+            .await
+            .unwrap_or(Err(CreatorAuthError::ProviderUnavailable));
         result.map(|(subject, organization)| Creator {
             subject,
             organization,
-            token_hash,
+            token_hash: token_hash(token),
         })
     }
 

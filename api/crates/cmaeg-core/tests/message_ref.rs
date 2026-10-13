@@ -20,6 +20,7 @@ fn payload(keys: &MasterKeyRing) -> MessageRefPayload {
         platform_message_id: "platform-message-1".into(),
         route_id: "route-1".into(),
         interaction_record_id: None,
+        consumer: None,
     }
 }
 #[test]

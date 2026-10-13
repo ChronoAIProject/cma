@@ -3,7 +3,7 @@ mod database;
 #[path = "fake_cma.rs"]
 pub mod fake_cma;
 #[path = "fake_nyxid.rs"]
-mod fake_nyxid;
+pub mod fake_nyxid;
 #[path = "fake_provider.rs"]
 mod fake_provider;
 
@@ -156,6 +156,14 @@ async fn created(client: &Client, base: &str) -> serde_json::Value {
 
 #[path = "management/binary.rs"]
 mod binary;
+#[path = "management/binary_independent.rs"]
+mod binary_independent;
+#[path = "management/binary_media.rs"]
+mod binary_media;
+#[path = "management/binary_routing.rs"]
+mod binary_routing;
+#[path = "management/binary_support.rs"]
+mod binary_support;
 #[path = "management/boundaries.rs"]
 mod boundaries;
 #[path = "management/lifecycle.rs"]
@@ -168,6 +176,9 @@ mod platforms;
 #[path = "management/invalidation.rs"]
 mod invalidation;
 
+#[path = "management/index_hooks.rs"]
+mod index_hooks;
+
 #[path = "management/creation.rs"]
 mod creation;
 
@@ -176,3 +187,15 @@ mod reconciliation;
 
 #[path = "management/targets.rs"]
 mod targets;
+
+#[path = "management/custom_attachments.rs"]
+mod custom_attachments;
+
+#[path = "management/audit.rs"]
+mod audit;
+
+#[path = "management/write_gate.rs"]
+mod write_gate;
+
+#[path = "management/routing.rs"]
+mod routing;

@@ -1,7 +1,10 @@
 use super::*;
-use cmaeg::channels::definition::{
-    build_definition, build_update, validate_create_request, validate_update_request,
-    ChannelCreateRequest, ChannelUpdateRequest,
+use cmaeg::channels::{
+    definition::{
+        build_definition, build_update, validate_create_request, validate_update_request,
+        ChannelCreateRequest, ChannelUpdateRequest,
+    },
+    write_gate::WriteFlags,
 };
 use cmaeg_core::{
     channel::{ConformanceLevel, Platform, Source},
@@ -16,6 +19,7 @@ fn build(body: serde_json::Value) -> Result<Source, cmaeg_core::ValidationError>
         RecordId::new("record").unwrap(),
         BindingId::new("binding").unwrap(),
         ConformanceLevel::L1,
+        WriteFlags::default(),
     )
     .map(|definition| definition.sources[0].clone())
 }
@@ -90,6 +94,7 @@ fn unverified_platforms_are_refused_on_create_and_update_without_the_opt_in() {
             RecordId::new("record").unwrap(),
             BindingId::new("binding").unwrap(),
             ConformanceLevel::L1,
+            WriteFlags::default(),
         )
         .unwrap()
     };
@@ -105,7 +110,7 @@ fn unverified_platforms_are_refused_on_create_and_update_without_the_opt_in() {
                 validate_create_request(&create).unwrap_err(),
                 build(relay_body(platform, trust)).unwrap_err(),
                 validate_update_request(&update).unwrap_err(),
-                build_update(&update, &current).unwrap_err(),
+                build_update(&update, &current, WriteFlags::default()).unwrap_err(),
             ] {
                 assert_eq!(error.pointer, "/sources/0/trust_normalized", "{platform}");
                 assert!(error.message.contains("no raw-event verifier"), "{error}");

@@ -140,6 +140,18 @@ Reserve and retain the request's `record_id` for durable retries. Listing return
 one page; follow `next_after` even when `items` is empty. Channel creation/update
 includes optional `connection_ref` and `connection_admission`. Native Telegram
 source, credential and webhook endpoint fields are available in the wire types.
+A channel read with several consumers carries the read-only
+`definition.routing` (`RoutingPolicy`), with each consumer's public key hash and
+never a key; it is `None` on every other channel, and no request type sets it.
+A routed event's `Activity`, and the `PublicActivity` that `read_event_context`
+returns, carry `routing` (`ActivityRouting`): the source slot, how the targets
+were resolved, the targets with the primary consumer first and, on a hand-off,
+its `Causation`. It is `None` on every unrouted event. Keep an activity you
+persist as the JSON you received, so fields this SDK does not know survive.
+On a routed channel `ContextResponse.consumer` (`ConsumerSummary`) names the
+consumer whose agent key made the call, and `provider_binding_id` is that
+consumer's binding; it is `None` on every other channel. A hand-off event reports
+`capabilities.buttons` and `capabilities.cards` as `"none"`.
 
 ```rust
 use cma_sdk::cmaeg::{Cmaeg, types::OutboundMessage};

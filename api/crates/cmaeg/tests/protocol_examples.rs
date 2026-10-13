@@ -1,7 +1,8 @@
 //! Exercise the published examples through the actual channel and signature validators.
 use base64::{engine::general_purpose::STANDARD, Engine as _};
-use cmaeg::channels::definition::{
-    build_definition, validate_create_request, ChannelCreateRequest,
+use cmaeg::channels::{
+    definition::{build_definition, validate_create_request, ChannelCreateRequest},
+    write_gate::WriteFlags,
 };
 use cmaeg_core::{
     channel::{ConformanceLevel, Secret},
@@ -70,6 +71,7 @@ fn protocol_create_example_validates_with_runtime_credentials() {
         RecordId::new("record").unwrap(),
         BindingId::new("binding").unwrap(),
         ConformanceLevel::L1,
+        WriteFlags::default(),
     )
     .unwrap();
     let mut expected = definition.to_public_json();

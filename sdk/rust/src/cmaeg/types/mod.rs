@@ -1,6 +1,8 @@
 //! Typed management, event and tool protocol documents.
 mod channels;
 pub use channels::*;
+mod sources;
+pub use sources::*;
 mod messages;
 pub use messages::*;
 mod relay;
@@ -13,3 +15,7 @@ mod activities;
 pub use activities::*;
 mod connections;
 pub use connections::*;
+mod media;
+pub use media::*;
+mod routing;
+pub use routing::*;

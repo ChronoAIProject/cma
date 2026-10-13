@@ -26,7 +26,7 @@ use futures_util::future::BoxFuture;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::sync::{
-    atomic::{AtomicUsize, Ordering},
+    atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc, Mutex,
 };
 use tokio::task::JoinHandle;
@@ -37,9 +37,27 @@ pub struct Recorder {
     pub requests: Mutex<Vec<LaunchRequest>>,
     pub outcome: AtomicUsize,
     pub wait: tokio::sync::Notify,
+    /// When set, each launch first asserts the request body was already released.
+    pub released: Mutex<Option<Arc<AtomicBool>>>,
+    /// Launches that observed a released request body.
+    pub probed: AtomicUsize,
+}
+impl Recorder {
+    /// Accept every launch, asserting first that `dropped` reports the body gone.
+    pub fn expect_released(&self, dropped: Arc<AtomicBool>) {
+        *self.released.lock().unwrap() = Some(dropped);
+        self.outcome.store(1, Ordering::SeqCst);
+    }
 }
 impl TurnLauncher for Recorder {
     fn launch(&self, request: LaunchRequest) -> BoxFuture<'_, LaunchOutcome> {
+        if let Some(dropped) = self.released.lock().unwrap().as_ref() {
+            assert!(
+                dropped.load(Ordering::SeqCst),
+                "the request body is still retained while the handler waits for acceptance"
+            );
+            self.probed.fetch_add(1, Ordering::SeqCst);
+        }
         self.requests.lock().unwrap().push(request);
         Box::pin(async {
             match self.outcome.load(Ordering::SeqCst) {
@@ -114,8 +132,28 @@ impl Fixture {
     pub async fn new(edit: impl FnOnce(&mut Value), config: IngressConfig) -> Self {
         Self::on("telegram", edit, config).await
     }
+    /// A Telegram relay channel served with `CMAEG_MEDIA_ENABLED=true`.
+    pub async fn with_media(edit: impl FnOnce(&mut Value), config: IngressConfig) -> Self {
+        Self::build("telegram", edit, config, true).await
+    }
     /// A channel whose single relay source serves `platform` (a protocol value).
     pub async fn on(platform: &str, edit: impl FnOnce(&mut Value), config: IngressConfig) -> Self {
+        Self::build(platform, edit, config, false).await
+    }
+    /// [`Fixture::on`] served with `CMAEG_MEDIA_ENABLED=true`.
+    pub async fn on_with_media(
+        platform: &str,
+        edit: impl FnOnce(&mut Value),
+        config: IngressConfig,
+    ) -> Self {
+        Self::build(platform, edit, config, true).await
+    }
+    async fn build(
+        platform: &str,
+        edit: impl FnOnce(&mut Value),
+        config: IngressConfig,
+        media_enabled: bool,
+    ) -> Self {
         let signer = Signer::shared();
         let backend = Backend {
             jwks: Arc::new(Mutex::new(signer.jwks())),
@@ -164,7 +202,9 @@ impl Fixture {
             seal_blob(&keys, definition.to_blob_json().to_string().as_bytes()).unwrap();
         let resolver = ChannelResolver::new(records, keys.clone(), ChannelCacheConfig::default());
         let recorder = Arc::new(Recorder::default());
-        let state = IngressState::new(resolver, keys, config, recorder.clone()).unwrap();
+        let state = IngressState::new(resolver, keys, config, recorder.clone())
+            .unwrap()
+            .with_media_enabled(media_enabled);
         let (gateway, app) = serve(callbacks::router(state.clone())).await;
         Self {
             platform: platform.to_owned(),
@@ -186,6 +226,17 @@ impl Fixture {
             .header("x-nyxid-message-id", "message-1")
             .header("x-nyxid-timestamp", now_rfc3339())
             .body(body)
+    }
+    /// The same signed callback as [`Fixture::request`], for in-process handler calls.
+    pub fn local_request(&self, body: axum::body::Body, token: &str) -> axum::extract::Request {
+        axum::http::Request::post(format!("/v1/callbacks/{}", self.id))
+            .header("content-type", "application/json")
+            .header("x-nyxid-callback-token", token)
+            .header("x-nyxid-platform", &self.platform)
+            .header("x-nyxid-message-id", "message-1")
+            .header("x-nyxid-timestamp", now_rfc3339())
+            .body(body)
+            .unwrap()
     }
     pub async fn send(&self, envelope: &Envelope) -> reqwest::Response {
         let (body, token) = envelope.signed();
@@ -287,6 +338,36 @@ impl Envelope {
         self.payload["content"]["text"] = text.into();
         self.lark_message()["content"] = json!({ "text": text }).to_string().into();
     }
+}
+/// Owns a request body's bytes and records when the last reference to them is dropped.
+pub struct DropProbe {
+    bytes: Vec<u8>,
+    dropped: Arc<AtomicBool>,
+}
+impl AsRef<[u8]> for DropProbe {
+    fn as_ref(&self) -> &[u8] {
+        &self.bytes
+    }
+}
+impl Drop for DropProbe {
+    fn drop(&mut self) {
+        self.dropped.store(true, Ordering::SeqCst);
+    }
+}
+/// An in-process request body whose flag turns true once nothing retains its bytes.
+///
+/// Buffering a single-chunk body shares the probe's allocation instead of
+/// copying it, so the flag stays false while any parsed or buffered view lives.
+pub fn probed_body(bytes: Vec<u8>) -> (axum::body::Body, Arc<AtomicBool>) {
+    let dropped = Arc::new(AtomicBool::new(false));
+    let probe = DropProbe {
+        bytes,
+        dropped: dropped.clone(),
+    };
+    (
+        axum::body::Body::from(bytes::Bytes::from_owner(probe)),
+        dropped,
+    )
 }
 pub async fn problem(response: reqwest::Response, status: u16, reason: &str) {
     assert_eq!(response.status().as_u16(), status);
