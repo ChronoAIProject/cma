@@ -15,7 +15,17 @@ pub struct Store {
 
 impl Store {
     pub async fn open(db: Database) -> Result<Self> {
-        schema::verify_runtime(&db).await?;
+        Self::open_with_authority(
+            db,
+            cma_service_auth::mongodb_authority::MongoAuthorityMode::Isolated,
+        )
+        .await
+    }
+    pub async fn open_with_authority(
+        db: Database,
+        authority: cma_service_auth::mongodb_authority::MongoAuthorityMode,
+    ) -> Result<Self> {
+        schema::verify_runtime_with_authority(&db, authority).await?;
         let options = mongodb::options::CollectionOptions::builder()
             .read_concern(ReadConcern::majority())
             .write_concern(WriteConcern::builder().w(Acknowledgment::Majority).build())

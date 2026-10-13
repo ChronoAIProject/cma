@@ -62,6 +62,7 @@ pub struct RecordClient {
     client: Client,
     base_url: Url,
     record_path: &'static str,
+    record_kind: super::RecordKind,
     service_token: crate::service_auth::ServiceAuth,
 }
 
@@ -98,6 +99,7 @@ impl RecordClient {
             client,
             base_url,
             record_path: RECORD_PATH,
+            record_kind: super::RecordKind::Channel,
             service_token: crate::service_auth::ServiceAuth::Static(Secret::new(service_token)),
         })
     }
@@ -132,11 +134,13 @@ impl RecordClient {
 
     pub fn connections(mut self) -> Self {
         self.record_path = "/api/v1/gateway/connection-records";
+        self.record_kind = super::RecordKind::Connection;
         self
     }
 
     pub fn interactions(mut self) -> Self {
         self.record_path = "/api/v1/gateway/interaction-records";
+        self.record_kind = super::RecordKind::Interaction;
         self
     }
 
@@ -181,7 +185,14 @@ impl RecordClient {
         let url = self.record_url(record_id.as_str())?;
         if let Some(db) = &self.database {
             return db
-                .put(record_id.as_str(), owner, blob, expected_version)
+                .for_kind(self.record_kind)
+                .put_expiring(
+                    record_id.as_str(),
+                    owner,
+                    blob,
+                    expected_version,
+                    expires_at,
+                )
                 .await;
         }
         let response = self
@@ -230,7 +241,7 @@ impl RecordClient {
             ));
         }
         if let Some(db) = &self.database {
-            return db.get(id).await;
+            return db.for_kind(self.record_kind).get(id).await;
         }
         let response = self
             .client
@@ -270,7 +281,10 @@ impl RecordClient {
     ) -> Result<bool, RecordError> {
         let url = self.record_url(record_id.as_str())?;
         if let Some(db) = &self.database {
-            return db.delete(record_id.as_str(), expected_version).await;
+            return db
+                .for_kind(self.record_kind)
+                .delete(record_id.as_str(), expected_version)
+                .await;
         }
         let response = self
             .client
@@ -303,7 +317,10 @@ impl RecordClient {
         limit: usize,
     ) -> Result<Vec<RecordHead>, RecordError> {
         if let Some(db) = &self.database {
-            return db.list(owner, after, limit).await;
+            return db
+                .for_kind(self.record_kind)
+                .list(owner, after, limit)
+                .await;
         }
         let url = self
             .base_url

@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url';
 
 export const upstreamRevision = '86ad94178a85aa26788077a55894cdc234c5ea6a';
 export const productionContext = 'gke_example-project-02_asia-northeast1_example-cluster-02';
+export const productionRuntimeContext = 'gke_example-project-02_asia-southeast1-b_example-cluster-01';
 export const nativeResources = [
   ['sandboxes', 'agents.x-k8s.io', ['podTemplate', 'volumeClaimTemplates', 'operatingMode']],
   ['sandboxtemplates', 'extensions.agents.x-k8s.io', ['podTemplate', 'volumeClaimTemplates', 'volumeClaimTemplatesPolicy']],
@@ -51,6 +52,19 @@ export function validateSeed(seed, expectedUid) {
 }
 
 const dns = (value) => typeof value === 'string' && /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(value);
+const contextName = (value) => typeof value === 'string' && value.length > 0 && !value.startsWith('-') && !/\s/.test(value);
+const principalName = (value) => typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9:._@-]{0,252}$/.test(value);
+
+export function homePolicy(config) {
+  const fields = ['STORAGE_CLASS', 'CAPACITY_GIB', 'TEMPLATE', 'TEMPLATE_UID'];
+  const native = fields.map((field) => config[`CHRONO_AGENT_SANDBOX_HOME_${field}`]);
+  const values = native.some(Boolean) ? native : fields.map((field) => config[`CHRONO_SANDBOX_HOME_${field}`]);
+  assert.ok(values.every((value) => typeof value === 'string' && value.length > 0));
+  const [storageClass, capacity, template, templateUid] = values;
+  assert.ok(dns(storageClass) && dns(template));
+  assert.ok(/^\d+$/.test(capacity) && Number(capacity) >= 1 && Number(capacity) <= 1024);
+  return { storageClass, capacity, template, templateUid };
+}
 
 export function preflight(options = {}, command = (args) => execFileSync('kubectl', args, {
   encoding: 'utf8', timeout: 15000, maxBuffer: 16 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'],
@@ -58,15 +72,69 @@ export function preflight(options = {}, command = (args) => execFileSync('kubect
   const context = options.context ?? productionContext;
   const namespace = options.namespace ?? 'chrono-bot';
   const serviceAccount = options.serviceAccount ?? 'chrono-bot-ksa';
-  assert.ok(typeof context === 'string' && context.length > 0 && !context.startsWith('-') && !/\s/.test(context));
+  const runtimeContext = options.runtimeContext ?? context;
+  assert.ok(contextName(context) && contextName(runtimeContext));
   assert.ok(dns(namespace) && dns(serviceAccount));
-  const base = ['--context', context, '--namespace', namespace, '--request-timeout=10s'];
+  if (options.runtimeNamespace !== undefined) assert.ok(dns(options.runtimeNamespace));
+  if (options.runtimePrincipal !== undefined) assert.ok(principalName(options.runtimePrincipal));
+  assert.ok(runtimeContext === context || options.runtimePrincipal, 'cross-cluster checks require the actual remote principal');
+  const base = (target, scope) => ['--context', target, '--namespace', scope, '--request-timeout=10s'];
   const checks = [];
   const check = (name, operation) => {
     try { operation(); checks.push({ name, passed: true }); }
     catch { checks.push({ name, passed: false }); }
   };
-  const get = (kind, name) => JSON.parse(command([...base, 'get', kind, name, '-o', 'json']));
+  let config = {};
+  const configMaps = new Map();
+  const readConfigMap = (name, optional = false) => {
+    assert.ok(dns(name));
+    if (configMaps.has(name)) return configMaps.get(name);
+    const raw = command([...base(context, namespace), 'get', 'configmap', name, ...(optional ? ['--ignore-not-found'] : []), '-o', 'json']);
+    const data = raw.trim() ? JSON.parse(raw).data : undefined;
+    assert.ok((optional && data === undefined) || (data && typeof data === 'object' && !Array.isArray(data)));
+    configMaps.set(name, data);
+    return data;
+  };
+  check('CMA deployment ConfigMap is readable', () => {
+    config = { ...readConfigMap('cma-agent-manager') };
+  });
+  check('native environment matches the CMA Deployment overrides', () => {
+    const deployment = JSON.parse(command([...base(context, namespace), 'get', 'deployment', 'cma-agent-manager', '-o', 'json']));
+    const containers = deployment.spec?.template?.spec?.containers;
+    assert.ok(Array.isArray(containers) && containers.length === 1 && containers[0].name === 'api');
+    for (const env of containers[0].env ?? []) {
+      if (!env.name.startsWith('CHRONO_AGENT_SANDBOX_')) continue;
+      if (Object.hasOwn(env, 'value')) { config[env.name] = env.value; continue; }
+      const source = env.valueFrom?.configMapKeyRef;
+      assert.ok(source, 'native settings must use literal or ConfigMap inputs');
+      const data = readConfigMap(source.name, source.optional === true);
+      if (data?.[source.key] !== undefined) config[env.name] = data[source.key];
+      else assert.equal(source.optional, true);
+    }
+  });
+  const configuredNamespace = config.CHRONO_AGENT_SANDBOX_NAMESPACE || config.CHRONO_SANDBOX_NAMESPACE || namespace;
+  const runtimeNamespace = options.runtimeNamespace ?? configuredNamespace;
+  assert.ok(dns(runtimeNamespace));
+  const runtimePrincipal = options.runtimePrincipal ?? `system:serviceaccount:${namespace}:${serviceAccount}`;
+  const runtimeBase = base(runtimeContext, runtimeNamespace);
+  const get = (kind, name) => JSON.parse(command([...runtimeBase, 'get', kind, name, '-o', 'json']));
+  check('native namespace matches CMA configuration', () => assert.equal(runtimeNamespace, configuredNamespace));
+  check('native Kubernetes connection matches the selected runtime cluster', () => {
+    const mode = config.CHRONO_AGENT_SANDBOX_AUTH_MODE || 'token-file';
+    assert.ok(['token-file', 'google-metadata'].includes(mode));
+    const remote = ['API_SERVER', 'CA_FILE', 'TOKEN_FILE'].map((field) => config[`CHRONO_AGENT_SANDBOX_${field}`]);
+    if (runtimeContext === context && mode === 'token-file' && remote.every((value) => !value)) return;
+    const [server, caFile, tokenFile] = remote;
+    const required = mode === 'google-metadata' ? [server, caFile] : remote;
+    assert.ok(required.every((value) => typeof value === 'string' && value.length > 0));
+    if (mode === 'google-metadata') assert.ok(!tokenFile);
+    const url = new URL(server);
+    assert.ok(url.protocol === 'https:' && !url.username && !url.password && server === url.origin);
+    const paths = mode === 'google-metadata' ? [caFile] : [caFile, tokenFile];
+    assert.ok(paths.every((path) => path.startsWith('/') && path.length <= 4096 && !/[\x00-\x1f\x7f]/.test(path)));
+    const selectedServer = command(['--context', runtimeContext, 'config', 'view', '--minify', '-o', 'jsonpath={.clusters[0].cluster.server}']).trim();
+    assert.equal(new URL(selectedServer).origin, server);
+  });
   for (const resource of nativeResources) {
     const name = `${resource[0]}.${resource[1]}`;
     check(`API ${name}/v1beta1`, () => validateCrd(get('customresourcedefinition', name), resource));
@@ -74,28 +142,24 @@ export function preflight(options = {}, command = (args) => execFileSync('kubect
   for (const [resource, verbs] of authority) {
     for (const verb of verbs) {
       check(`RBAC ${resource} ${verb}`, () => {
-        assert.equal(command([...base, 'auth', 'can-i', verb, resource,
-          '--as', `system:serviceaccount:${namespace}:${serviceAccount}`]).trim(), 'yes');
+        assert.equal(command([...runtimeBase, 'auth', 'can-i', verb, resource,
+          '--as', runtimePrincipal]).trim(), 'yes');
       });
     }
   }
   check('runtime ServiceAccount has no automatic API token', () => {
-    const config = get('configmap', 'cma-api').data;
     const name = config.CHRONO_AGENT_SANDBOX_SERVICE_ACCOUNT || 'cma-runtime';
     assert.ok(dns(name));
     assert.equal(get('serviceaccount', name).automountServiceAccountToken, false);
   });
   check('ready retained-home seed and storage class', () => {
-    const config = get('configmap', 'cma-api').data;
-    assert.ok(dns(config.CHRONO_SANDBOX_HOME_TEMPLATE));
-    assert.ok(dns(config.CHRONO_SANDBOX_HOME_STORAGE_CLASS));
-    assert.ok(config.CHRONO_SANDBOX_HOME_TEMPLATE_UID);
-    validateSeed(get('volumesnapshots.snapshot.storage.k8s.io', config.CHRONO_SANDBOX_HOME_TEMPLATE), config.CHRONO_SANDBOX_HOME_TEMPLATE_UID);
-    assert.equal(get('storageclass', config.CHRONO_SANDBOX_HOME_STORAGE_CLASS).provisioner, 'pd.csi.storage.gke.io');
+    const policy = homePolicy(config);
+    validateSeed(get('volumesnapshots.snapshot.storage.k8s.io', policy.template), policy.templateUid);
+    assert.equal(get('storageclass', policy.storageClass).provisioner, 'pd.csi.storage.gke.io');
   });
   return {
-    context, namespace, serviceAccount, upstreamRevision,
-    scope: 'read-only API schema, RBAC and home prerequisites; controller version and live behavior require separate acceptance',
+    context, namespace, serviceAccount, runtimeContext, runtimeNamespace, runtimePrincipal, upstreamRevision,
+    scope: 'read-only CMA configuration and runtime API schema, RBAC and home prerequisites; mounted credential identity, controller version and live behavior require separate acceptance',
     passed: checks.every((value) => value.passed), checks,
   };
 }
@@ -104,7 +168,10 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   try {
     const args = process.argv.slice(2);
     const options = {};
-    const flags = { '--context': 'context', '--namespace': 'namespace', '--service-account': 'serviceAccount' };
+    const flags = {
+      '--context': 'context', '--namespace': 'namespace', '--service-account': 'serviceAccount',
+      '--runtime-context': 'runtimeContext', '--runtime-namespace': 'runtimeNamespace', '--runtime-principal': 'runtimePrincipal',
+    };
     assert.equal(args.length % 2, 0);
     for (let index = 0; index < args.length; index += 2) {
       const name = flags[args[index]];
@@ -115,7 +182,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     if (!result.passed) process.exitCode = 1;
   } catch {
-    process.stderr.write('Preflight arguments invalid; use --context, --namespace and --service-account. Raw cluster data withheld.\n');
+    process.stderr.write('Preflight arguments invalid; use --context, --namespace, --service-account, --runtime-context, --runtime-namespace and --runtime-principal. Cross-cluster checks require the remote principal. Raw cluster data withheld.\n');
     process.exitCode = 1;
   }
 }

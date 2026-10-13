@@ -40,6 +40,19 @@ pub struct PersistentHomeVolumes {
 }
 
 impl PersistentHomeVolumes {
+    fn validate_request_scope(&self, request: &HomeVolumeRequest) -> Result<()> {
+        request.validate()?;
+        if request
+            .scope
+            .as_ref()
+            .is_some_and(|scope| scope != &self.scope)
+        {
+            return Err(AdapterError::Rejected(
+                "home allocation belongs to another Kubernetes authority".into(),
+            ));
+        }
+        Ok(())
+    }
     pub(crate) fn validate_pool_storage(
         namespace: &str,
         controller: &str,
@@ -138,6 +151,7 @@ impl PersistentHomeVolumes {
     }
 
     async fn read(&self, request: &HomeVolumeRequest) -> Result<Option<PersistentVolumeClaim>> {
+        self.validate_request_scope(request)?;
         self.claims
             .get_opt(&identity::claim_name(request))
             .await
@@ -149,6 +163,7 @@ impl PersistentHomeVolumes {
         request: &HomeVolumeRequest,
         receipt: Option<&HomeVolumeReceipt>,
     ) -> Result<Option<PersistentVolumeClaim>> {
+        self.validate_request_scope(request)?;
         if let Some(receipt) = receipt {
             receipt.validate_for(request)?;
             // The receipt pins an adopted pool PVC's actual name and UID. The
@@ -180,6 +195,7 @@ impl PersistentHomeVolumes {
         request: &HomeVolumeRequest,
         claim: &PersistentVolumeClaim,
     ) -> Result<HomeVolumeReceipt> {
+        self.validate_request_scope(request)?;
         identity::validate_claim(&self.namespace, &self.controller, request, claim)
     }
 }
@@ -213,6 +229,7 @@ impl HomeVolumeStore for PersistentHomeVolumes {
     async fn remove_captures(&self, attachment: &HomeVolumeAttachment) -> Result<()> {
         use crate::{HomeSnapshotExportJobStore, HomeSnapshotStore, HomeSnapshotViewStore};
         attachment.receipt.validate_for(&attachment.request)?;
+        self.validate_request_scope(&attachment.request)?;
         for entry in self.export_job_inventory().await? {
             if entry.request.export.snapshot.home == *attachment {
                 self.remove_export_job(&entry.request, Some(&entry.receipt))
@@ -271,7 +288,7 @@ impl HomeVolumeStore for PersistentHomeVolumes {
     }
 
     async fn prepare(&self, request: &HomeVolumeRequest) -> Result<HomeVolumeReceipt> {
-        request.validate()?;
+        self.validate_request_scope(request)?;
         self.verify_template(&request.policy).await?;
         let claim = match self.read(request).await? {
             Some(claim) => claim,
@@ -300,6 +317,7 @@ impl HomeVolumeStore for PersistentHomeVolumes {
 
     async fn verify(&self, attachment: &HomeVolumeAttachment) -> Result<()> {
         attachment.receipt.validate_for(&attachment.request)?;
+        self.validate_request_scope(&attachment.request)?;
         self.verify_template(&attachment.request.policy).await?;
         let claim = self
             .read_receipt(&attachment.request, Some(&attachment.receipt))
@@ -322,7 +340,7 @@ impl HomeVolumeStore for PersistentHomeVolumes {
         request: &HomeVolumeRequest,
         receipt: Option<&HomeVolumeReceipt>,
     ) -> Result<()> {
-        request.validate()?;
+        self.validate_request_scope(request)?;
         if let Some(receipt) = receipt {
             receipt.validate_for(request)?;
         }

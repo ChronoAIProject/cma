@@ -1,19 +1,21 @@
 # CMA independent services
 
-Status: revised implementation target, 2026-10-12. This replaces the earlier
+Status: revised implementation and deployment target, 2026-10-13. This replaces the earlier
 Sandbox Manager design. Local code is not evidence of production deployment.
 
 ## Services and ownership
 
 | Service | Owns |
 |---|---|
-| Event Gateway | Channels, sealed credentials, ingress normalization, routing, reply delivery and its durable records |
-| Agent Manager | Agents, inline configuration, messages, turns, approvals, runtime bindings, workspaces, native pool targets, persistent homes and recovery |
-| Image Manager | Image catalog, builds, immutable versions, lifecycle, sharing and Artifact Registry integration |
+| `cma-event-gateway` | Channels, sealed credentials, ingress normalization, routing, reply delivery and its durable records |
+| `cma-agent-manager` | Agents, inline configuration, messages, turns, approvals, runtime bindings, workspaces, native pool targets, persistent homes and recovery |
+| `cma-image-manager` | Image catalog, builds, immutable versions, lifecycle, sharing and Artifact Registry integration |
 
 Each is separately deployable with its own NyxID client, permissions, roles,
-schema, migrations and MongoDB credential. Shared MongoDB infrastructure does
-not grant cross-service collection access. Existing `web/` provides three
+schema and migrations. The current deployment shares the existing `chrono-bot`
+database and credential through explicit `shared-schema` mode while each service
+uses only its own collection catalog. Default `isolated` mode requires separate
+collection-scoped credentials; see [service isolation](CMA_Service_Isolation.md). Existing `web/` provides three
 entrances with separate backend clients. Agent Manager stays simple for users.
 
 There is no CMA Sandbox Manager service. Infra deploys the upstream
@@ -52,7 +54,7 @@ Creation uses deterministic resource names and persisted specification identity,
 so a lost create response cannot create a second environment. Runtime bindings
 pin image digests. Publishing or changing image defaults never rotates live
 Agents. CPU/memory, runtime class, workload service account and storage are
-explicit. Registry pull identity is separate from the image build identity;
+explicit. Registry pull identity is separate from Image Manager's workload/build identity;
 neither credential is delivered to Agent processes. Persistent-home ownership
 and writer fencing remain required. Native pause/resume retains the original
 PVC; CMA no longer schedules or manages Sandbox snapshots or S3 archives.
@@ -62,7 +64,7 @@ optional tools). Model, prompt and conversation state never enter Image Manager.
 
 ## Images
 
-Registry: `asia-northeast1-docker.pkg.dev/example-project-02/chronoai-registry`.
+Registry: `asia-southeast1-docker.pkg.dev/example-project-02/example-registry-01`.
 Image Manager uses its own Google service identity. No account key is committed
 or accepted as a user API field. Source revisions and output digests are pinned.
 Mutable catalog tags are not runtime identity. The catalog provides authorized

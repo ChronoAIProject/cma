@@ -1,16 +1,16 @@
 apiVersion: networking.gke.io/v1
 kind: HealthCheckPolicy
 metadata:
-  name: cmaeg
+  name: cma-event-gateway
   namespace: chrono-bot
   labels:
-    app.kubernetes.io/name: cmaeg
+    app.kubernetes.io/name: cma-event-gateway
     app.kubernetes.io/part-of: cma
 spec:
   targetRef:
     group: ""
     kind: Service
-    name: cmaeg
+    name: cma-event-gateway
   default:
     config:
       type: HTTP

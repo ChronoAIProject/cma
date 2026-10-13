@@ -32,6 +32,12 @@ impl SandboxWorker {
             None
         };
         if let Some(binding) = binding {
+            if let Some(home) = &sandbox.lifecycle.home {
+                self.dependencies.adapter.verify_retained_home_route(
+                    &RuntimeHandle::new(&binding.runtime_id),
+                    &home.request,
+                )?;
+            }
             self.dependencies
                 .adapter
                 .teardown_retained_runtime(&RuntimeHandle::new(&binding.runtime_id))

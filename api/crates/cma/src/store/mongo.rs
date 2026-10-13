@@ -39,6 +39,7 @@ pub struct MongoStores {
 }
 
 impl MongoStores {
+    #[cfg(test)]
     pub async fn connect(
         uri: &str,
         database: &str,
@@ -47,10 +48,31 @@ impl MongoStores {
         activity_retention: Duration,
         runtime: (&str, Option<&layer3_adapter::HomeVolumePolicy>),
     ) -> Result<Self, StoreError> {
+        Self::connect_with_authority(
+            uri,
+            database,
+            deployment,
+            auth_encryption_key,
+            activity_retention,
+            runtime,
+            cma_service_auth::mongodb_authority::MongoAuthorityMode::Isolated,
+        )
+        .await
+    }
+
+    pub async fn connect_with_authority(
+        uri: &str,
+        database: &str,
+        deployment: &str,
+        auth_encryption_key: &AuthEncryptionKey,
+        activity_retention: Duration,
+        runtime: (&str, Option<&layer3_adapter::HomeVolumePolicy>),
+        authority: cma_service_auth::mongodb_authority::MongoAuthorityMode,
+    ) -> Result<Self, StoreError> {
         let client = Client::with_uri_str(uri)
             .await
             .map_err(|error| StoreError::Unavailable(format!("connect to MongoDB: {error}")))?;
-        super::isolation::verify(&client.database(database)).await?;
+        super::isolation::verify_with_authority(&client.database(database), authority).await?;
         Self::open(
             client,
             database,

@@ -24,8 +24,34 @@ pub trait SandboxAdapter: Send + Sync {
         None
     }
 
+    /// Persist the returned storage authority before allocating a home. Runtime
+    /// selection and storage policy must remain stable across retries.
+    async fn reserve_home_request(
+        &self,
+        _runtime: &RuntimeProvisionRequest,
+        home: &crate::HomeVolumeRequest,
+    ) -> Result<crate::HomeVolumeRequest> {
+        Ok(home.clone())
+    }
+
+    /// Verify retained home authority before provider operations that only take a handle.
+    fn verify_retained_home_route(
+        &self,
+        _handle: &RuntimeHandle,
+        _home: &crate::HomeVolumeRequest,
+    ) -> Result<()> {
+        Ok(())
+    }
+
     fn native_pools(&self) -> Option<&dyn crate::agent_sandbox::NativePoolControl> {
         None
+    }
+    /// Resolve pool authority from the durable home before claim recovery or cleanup.
+    fn native_pools_for_home(
+        &self,
+        _home: &crate::HomeVolumeRequest,
+    ) -> Result<Option<&dyn crate::agent_sandbox::NativePoolControl>> {
+        Ok(self.native_pools())
     }
 
     /// Select a provider and an eligible pool before any home allocation. The

@@ -64,6 +64,7 @@ applies with all media flags off.
 | `CMAEG_NYXID_BASE_URL` | origin URL | Required | NyxID origin for creator authentication, with the same URL restrictions as the CMA origin. |
 | `CMAEG_MONGODB_URI` | connection URI | Required by the management integration tests and the independent gateway store | MongoDB connection for Event Gateway channel and credential records; keep it in a Secret. |
 | `CMAEG_MONGODB_DATABASE` | database name | Required by the management integration tests and the independent gateway store | Database name for Event Gateway records. |
+| `CMAEG_MONGODB_AUTHORITY_MODE` | `isolated` or `shared-schema` | Defaults to `isolated`; production uses `shared-schema` in `chrono-bot` | Shared mode admits a database-scoped credential while migrations and stores remain confined to `eg_*` collections. |
 | `CMAEG_NYXID_CLIENT_ID` | string | Required when browser service authentication is enabled | NyxID OAuth client ID used by the Event Gateway management surface. |
 | `CMAEG_NYXID_CLIENT_SECRET` | secret string | Required with the client ID | NyxID OAuth client secret; inject through a Secret and never a ConfigMap. |
 | `CMAEG_WEB_ORIGIN` | origin URL | Required when browser service authentication is enabled | Exact browser origin accepted by Event Gateway authentication and callback checks. |

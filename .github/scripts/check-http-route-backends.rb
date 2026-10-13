@@ -33,14 +33,14 @@ end
 https_routes = routes.select do |route|
   route.dig("spec", "parentRefs").any? { |parent| parent["sectionName"] != "http" }
 end
-expected_names = %w[cma-api cma-web]
+expected_names = %w[cma-agent-manager cma-web]
 actual_names = https_routes.map { |route| route.dig("metadata", "name") }.sort
 abort("unexpected competing HTTPS routes: #{actual_names.inspect}") unless actual_names == expected_names
 
-api = ownership(route!(routes, "cma-api", "bot-api.chrono-ai.fun"))
+api = ownership(route!(routes, "cma-agent-manager", "bot-api.chrono-ai.fun"))
 web = ownership(route!(routes, "cma-web", "bot.chrono-ai.fun"))
 
-api_backend = [{ "group" => "", "kind" => "Service", "name" => "cma-api", "port" => 80, "weight" => 1 }]
+api_backend = [{ "group" => "", "kind" => "Service", "name" => "cma-agent-manager", "port" => 80, "weight" => 1 }]
 web_backend = [{ "group" => "", "kind" => "Service", "name" => "cma-web", "port" => 80, "weight" => 1 }]
 expected_api = { ["PathPrefix", "/"] => api_backend }
 expected_web = {
@@ -54,9 +54,9 @@ expected_web = {
 expected_api.transform_values! { |backend| { "backends" => backend, "filters" => [] } }
 expected_web.transform_values! { |backend| { "backends" => backend, "filters" => [] } }
 {
-  "/api/event-gateway" => ["cmaeg", "/"],
+  "/api/event-gateway" => ["cma-event-gateway", "/"],
   "/api/image-manager" => ["cma-image-manager", "/"],
-  "/api/agent-manager" => ["cma-api", "/api"],
+  "/api/agent-manager" => ["cma-agent-manager", "/api"],
 }.each do |prefix, (service, replacement)|
   expected_web[["PathPrefix", prefix]] = {
     "backends" => [{ "group" => "", "kind" => "Service", "name" => service, "port" => 80, "weight" => 1 }],

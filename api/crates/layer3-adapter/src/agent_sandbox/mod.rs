@@ -2,6 +2,7 @@
 //! The controller creates Pods; CMA submits and observes only its own resources.
 
 mod assignment;
+mod connection;
 mod lifecycle;
 mod model;
 mod pods;
@@ -16,6 +17,10 @@ use kube::core::{ApiResource, GroupVersionKind};
 use kube::{Api, Client, ResourceExt};
 use std::collections::BTreeSet;
 
+pub use connection::{
+    resolve_kubernetes_connection, NativeKubernetesConnection, RemoteKubernetesAuth,
+    RemoteKubernetesConfig,
+};
 pub(crate) use model::{handle, parse_handle};
 pub use model::{AgentSandboxConfig, PodBinding};
 pub use pool::NativePoolHomeOrigin;
@@ -43,13 +48,8 @@ pub struct AgentSandboxClient {
 
 impl AgentSandboxClient {
     pub async fn infer(config: AgentSandboxConfig) -> Result<Self> {
-        let connection = kube::Config::infer()
-            .await
-            .map_err(|_| unavailable("Kubernetes configuration is unavailable"))?;
-        let authority = connection.cluster_url.to_string();
-        let client = Client::try_from(connection)
-            .map_err(|_| unavailable("Kubernetes client could not be initialized"))?;
-        Self::new(client, config, &authority)
+        let connection = resolve_kubernetes_connection(None).await?;
+        Self::new(connection.client, config, &connection.authority)
     }
 
     pub fn new(client: Client, config: AgentSandboxConfig, authority: &str) -> Result<Self> {

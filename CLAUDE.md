@@ -187,8 +187,10 @@ infrastructure this repository consumes rather than owns.
 
 `infra/runtime/` is an image and nothing else. It carries no `deployment.yaml`, no `service.yaml` and no config, and that absence is the point: the Sandbox pod is scheduled by the sandbox provider, not by this repository. CMA hands the provider an image URI and an entrypoint and gets an isolated runtime back. A Deployment here would mean the control plane was scheduling agent workloads itself, which §1 forbids.
 
-`infra/cmaeg/` is the CMA Event Gateway, a separate service with its own sealed-record database in the
-same namespace. CMA and CMAEG each run one replica. Kubernetes Secrets inject
+`infra/cmaeg/` is the CMA Event Gateway, a separate service with its own sealed-record schema in the shared `chrono-bot`
+database and Kubernetes namespace. The explicit `shared-schema` deployment mode
+uses the existing database credential; service collection ownership, validators
+and migrations remain separate. Default `isolated` mode retains exact grant checks. CMA and CMAEG each run one replica. Kubernetes Secrets inject
 the gateway's master keys and CMA service credential as environment variables.
 
 ### `docs/`
@@ -356,10 +358,14 @@ including resources, persistent mounts and exact CMA Sandbox/Pod UID authority.
 It never adopts, pauses or reclaims another application's workloads.
 
 Image Manager owns builds, catalog versions, sharing and image lifecycle in
-`asia-northeast1-docker.pkg.dev/example-project-02/chronoai-registry`, using its own
-Google identity. Each service has independent NyxID permissions, schema, runtime
-DB credentials and migrations. No cross-service collection access or domain/store
-implementation dependency is allowed. The old local `cma-sandbox-manager`
+`asia-southeast1-docker.pkg.dev/example-project-02/example-registry-01`, using its own
+Google identity. The service names are `cma-agent-manager`,
+`cma-event-gateway` and `cma-image-manager`. Each has independent NyxID
+permissions, schema and migrations. The current authorized deployment shares the
+existing `chrono-bot` database credential through explicit `shared-schema` mode;
+service stores still access only their named collections. Default `isolated` mode
+requires separate collection-scoped credentials. No cross-service collection
+access or domain/store implementation dependency is allowed. The old local `cma-sandbox-manager`
 foundation is superseded and must not become a fourth deployment.
 
 Agent Manager retains repository setup, Agent homes, models, prompts, ACP and

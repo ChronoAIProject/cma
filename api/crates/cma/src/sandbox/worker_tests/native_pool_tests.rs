@@ -86,7 +86,7 @@ impl NativePoolControl for Pools {
     }
     async fn cleanup_retained_home(&self, _: &HomeVolumeAttachment) -> layer3_adapter::Result<()> {
         assert!(self.claim.lock().unwrap().is_none());
-        Ok(())
+        self.lose("retained")
     }
     fn plan(&self, _: &NativePoolSpec) -> layer3_adapter::Result<NativePoolConfiguration> {
         Err(unavailable())
@@ -230,6 +230,15 @@ impl NativePoolControl for Pools {
 
 #[async_trait::async_trait]
 impl HomeVolumeStore for Pools {
+    fn allocation_scope(&self) -> Option<layer3_adapter::HomeVolumeScope> {
+        Some(
+            layer3_adapter::HomeVolumeScope::from_authority(
+                "kubernetes-pvc-v1",
+                &["remote", "runtime", "deployment"],
+            )
+            .unwrap(),
+        )
+    }
     async fn inventory(&self) -> layer3_adapter::Result<Vec<HomeVolumeAttachment>> {
         Ok(self.disk.lock().unwrap().iter().cloned().collect())
     }
@@ -272,6 +281,20 @@ struct Backend {
 
 #[async_trait::async_trait]
 impl HostedBackend for Backend {
+    async fn reserve_home_request(
+        &self,
+        _: &layer3_adapter::provider::ProviderSandboxRequest,
+        home: &HomeVolumeRequest,
+    ) -> layer3_adapter::Result<HomeVolumeRequest> {
+        let mut home = home.clone();
+        home.scope = Some(layer3_adapter::HomeVolumeScope::from_authority(
+            "kubernetes-pvc-v1",
+            &["remote", "runtime", "deployment"],
+        )?);
+        home.policy.template_name = "remote-seed".into();
+        home.policy.template_generation = "remote-seed-uid".into();
+        Ok(home)
+    }
     fn native_pools(&self) -> Option<&dyn NativePoolControl> {
         Some(self.pools.as_ref())
     }
@@ -403,6 +426,13 @@ async fn native_claim_restart_replays_every_persisted_stage_and_pins_default_ima
     let active = harness.stored(&created.id).await;
     assert_eq!(active.status, SandboxStatus::Active);
     let home = active.lifecycle.home.as_ref().unwrap();
+    assert!(home.request.scope.is_some());
+    assert_eq!(home.request.policy.template_name, "remote-seed");
+    assert_eq!(home.request.policy.template_generation, "remote-seed-uid");
+    assert_eq!(
+        home.native_pool.as_ref().unwrap().request.home,
+        home.request
+    );
     assert_eq!(home.receipt.as_ref().unwrap().storage_generation, "pvc-uid");
     assert_eq!(
         active.runtime.as_ref().unwrap().runtime_version,
@@ -533,3 +563,6 @@ async fn claim_created_after_deletion_loses_database_cas_and_is_reconciled_witho
         .iter()
         .any(|v| v.starts_with("mint:")));
 }
+
+#[path = "native_home_routing_tests.rs"]
+mod routing;
