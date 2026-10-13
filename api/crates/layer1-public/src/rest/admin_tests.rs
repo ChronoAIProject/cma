@@ -831,7 +831,10 @@ async fn profile_routes_filter_retire_and_protect_deployment_defaults() {
     let protected = send(
         &fixture.app,
         Method::POST,
-        "/api/v1/admin/profiles/agent/agp_default/retire",
+        &format!(
+            "/api/v1/admin/profiles/agent/{}/retire",
+            layer2_core::DEFAULT_AGENT_PROFILE_ID
+        ),
         None,
         [Capability::ControlAnySandbox],
     )

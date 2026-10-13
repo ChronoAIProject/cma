@@ -30,6 +30,7 @@ const DEFAULT_PUBLIC_URL: &str = "http://localhost:8080";
 const DEFAULT_CORS_ORIGIN: &str = "http://localhost:5173";
 const DEFAULT_DATABASE: &str = "chrono_bot";
 const DEFAULT_ACTIVITY_RETENTION_DAYS: u64 = 90;
+pub(crate) const REQUIRED_BASELINE_SERVICES: &[&str] = &["chrono-llm-public", "ornn-api"];
 const DEFAULT_BASELINE_SERVICES: &str = "chrono-llm-public,ornn-api";
 const DEFAULT_TRUSTED_PROXY_HOPS: usize = 1;
 const MAX_TRUSTED_PROXY_HOPS: usize = 16;
@@ -245,7 +246,7 @@ impl Config {
         let deployment_id = runtime::deployment_id_from_lookup(&mut lookup)?;
         let runtime = RuntimeConfig::from_lookup(&mut lookup)?;
         let execution = execution::from_lookup(&mut lookup)?;
-        let baseline_services = parse_service_ids(
+        let mut baseline_services = parse_service_ids(
             "CHRONO_BASELINE_SERVICES",
             &value_or(
                 &mut lookup,
@@ -253,6 +254,13 @@ impl Config {
                 DEFAULT_BASELINE_SERVICES,
             )?,
         )?;
+        baseline_services.extend(
+            REQUIRED_BASELINE_SERVICES
+                .iter()
+                .map(|id| ServiceId::new(*id)),
+        );
+        baseline_services.sort();
+        baseline_services.dedup();
         let auth_encryption_key =
             AuthEncryptionKey::from_base64(&required(&mut lookup, "CHRONO_AUTH_ENCRYPTION_KEY")?)?;
         let activity_retention_days = parse_u64(
