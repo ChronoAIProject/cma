@@ -9,6 +9,27 @@ use super::{
 };
 
 impl AgentSandboxPools {
+    pub(crate) async fn wait_claim_absent(&self, original: &NativePoolClaim) -> Result<()> {
+        tokio::time::timeout(std::time::Duration::from_secs(120), async {
+            loop {
+                let Some(claim) = self
+                    .claims
+                    .get_opt(&original.name)
+                    .await
+                    .map_err(api_error)?
+                else {
+                    return Ok(());
+                };
+                if claim.uid().as_deref() != Some(&original.uid) {
+                    return Err(rejected("native claim UID changed during retirement"));
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            }
+        })
+        .await
+        .map_err(|_| unavailable("native claim retirement is still pending"))?
+    }
+
     /// Only call after storing the request. Name derives from logical Sandbox and
     /// generation, so a changed image/pool cannot allocate a second claim on retry.
     pub async fn claim(&self, request: &NativePoolClaimRequest) -> Result<NativePoolClaim> {

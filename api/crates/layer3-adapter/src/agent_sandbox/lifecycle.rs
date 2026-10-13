@@ -33,6 +33,11 @@ impl AgentSandboxClient {
                 .get(&volume.pvc.claim_name)
                 .await
                 .map_err(api_error)?;
+            if let Some(encoded) = claim.annotations().get(super::NATIVE_HOME_ANNOTATION) {
+                let origin: super::NativePoolHomeOrigin = serde_json::from_str(encoded)
+                    .map_err(|_| rejected("invalid native home origin"))?;
+                return self.pools.runtime_desired(&origin, request, name).await;
+            }
             let allocation: crate::HomeVolumeRequest = claim
                 .annotations()
                 .get("cma/home-allocation")
@@ -66,6 +71,14 @@ impl AgentSandboxClient {
 
     pub(super) fn matches(&self, actual: &DynamicObject, desired: &DynamicObject) -> Result<()> {
         self.owned(actual)?;
+        if let Some(encoded) = desired.annotations().get(super::NATIVE_HOME_ANNOTATION) {
+            let origin: super::NativePoolHomeOrigin = serde_json::from_str(encoded)
+                .map_err(|_| rejected("invalid native runtime origin"))?;
+            self.pools.member_owned(actual, &origin.claim)?;
+            if actual.uid().as_deref() != Some(&origin.sandbox_uid) {
+                return Err(rejected("native Sandbox UID differs from its adopted home"));
+            }
+        }
         if actual.name_any() != desired.name_any()
             || actual.metadata.deletion_timestamp.is_some()
             || desired
@@ -81,7 +94,7 @@ impl AgentSandboxClient {
         }
         // API defaults may add fields. Require all submitted values recursively;
         // changes to the pinned image/resources/mounts/identity are never adopted.
-        if !contains(&actual.data["spec"], &desired.data["spec"]) {
+        if !super::pool::contains_spec(&actual.data["spec"], &desired.data["spec"]) {
             return Err(rejected(
                 "Sandbox spec differs from its admitted configuration",
             ));
@@ -171,7 +184,14 @@ impl AgentSandboxClient {
     }
 
     pub async fn delete(&self, runtime: &RuntimeHandle) -> Result<()> {
-        if let Some(object) = self.get(runtime).await? {
+        let object = self.get(runtime).await?;
+        let origin = self
+            .retirement_pool_origin(runtime, object.as_ref())
+            .await?;
+        if let Some(origin) = &origin {
+            self.pools.delete_claim(&origin.claim).await?;
+        }
+        if let Some(object) = object {
             match self
                 .sandboxes
                 .delete(&object.name_any(), &delete_parameters(&object))
@@ -185,6 +205,9 @@ impl AgentSandboxClient {
         // A missing CRD does not prove that its Pod stopped writing to the PV.
         // Retried deletion must establish both absences before home release.
         self.wait_absent(runtime).await?;
+        if let Some(origin) = origin {
+            self.pools.wait_claim_absent(&origin.claim).await?;
+        }
         Ok(())
     }
 
@@ -365,19 +388,5 @@ fn delete_parameters(object: &DynamicObject) -> DeleteParams {
             resource_version: object.resource_version(),
         }),
         ..Default::default()
-    }
-}
-
-fn contains(actual: &serde_json::Value, expected: &serde_json::Value) -> bool {
-    match expected {
-        serde_json::Value::Object(fields) => actual.as_object().is_some_and(|a| {
-            fields
-                .iter()
-                .all(|(k, v)| a.get(k).is_some_and(|x| contains(x, v)))
-        }),
-        serde_json::Value::Array(values) => actual.as_array().is_some_and(|a| {
-            a.len() == values.len() && a.iter().zip(values).all(|(a, e)| contains(a, e))
-        }),
-        _ => actual == expected,
     }
 }
