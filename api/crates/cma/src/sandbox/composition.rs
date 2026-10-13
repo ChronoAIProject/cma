@@ -50,7 +50,7 @@ pub(crate) struct SandboxLifecycleConfig {
 }
 
 pub(crate) struct SandboxLifecycleComposition {
-    warmup: super::warmup::WarmSandboxWorker,
+    warmup: super::warmup::LegacyWarmSandboxCleanup,
     reconciliation: SandboxReconciler,
     sandbox: SandboxScheduler,
     workspace: SandboxScheduler,
@@ -64,15 +64,9 @@ impl SandboxLifecycleComposition {
         dependencies: SandboxLifecycleDependencies,
         config: SandboxLifecycleConfig,
     ) -> Self {
-        let warmup = super::warmup::WarmSandboxWorker {
-            skills: dependencies.skills.clone(),
-            home_policy: config.home_policy.clone(),
+        let warmup = super::warmup::LegacyWarmSandboxCleanup {
             store: dependencies.store.clone(),
             adapter: dependencies.adapter.clone(),
-            policy: dependencies.policy.clone(),
-            execution: config.execution,
-            deployment_id: config.deployment_id.clone(),
-            runtime_version: config.runtime_version.clone(),
         };
         let reconciliation = SandboxReconciler::new(
             dependencies.store.clone(),

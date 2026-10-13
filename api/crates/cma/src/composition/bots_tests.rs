@@ -1,0 +1,124 @@
+use super::*;
+use layer2_core::bots::{BotProfileResolver, InMemoryBotStore};
+use layer2_core::profiles::InMemoryProfileStore;
+use layer2_core::sandbox::FixedSandboxCredentialPrerequisite;
+use layer2_core::{Authorization, Caller, Capability};
+use layer3_adapter::SandboxCapacity;
+
+struct NoExternalResolver;
+#[async_trait::async_trait]
+impl ImageResolver for NoExternalResolver {
+    async fn resolve(
+        &self,
+        _: Option<&str>,
+        _: &AgentLifecycleImageReference,
+    ) -> Result<String, AgentLifecycleProvisioningError> {
+        panic!("system default image needs no catalog resolution")
+    }
+}
+#[async_trait::async_trait]
+impl BotProfileResolver for NoExternalResolver {
+    async fn resolve(&self, _: &SubjectId, _: &CreateBot) -> Result<BotProfiles, BotError> {
+        panic!("inline consumers cannot use legacy profile selection")
+    }
+}
+
+fn resolver(
+    store: Arc<InMemoryProfileStore>,
+    capacity: SandboxCapacity,
+) -> Arc<InlineBotProfileResolver> {
+    Arc::new(InlineBotProfileResolver {
+        profiles: PrivateProfileCreationService::new(
+            store,
+            ProfileCapacityBounds {
+                min_cpu_millis: 100,
+                max_cpu_millis: 8000,
+                min_memory_mib: 128,
+                max_memory_mib: 16384,
+            },
+            Arc::new([] as [String; 0]),
+        ),
+        image_resolver: Arc::new(NoExternalResolver),
+        connections: Arc::new(FixedSandboxCredentialPrerequisite::Ready),
+        capacity,
+        default_model: "model".into(),
+    })
+}
+
+fn input() -> CreateBot {
+    serde_json::from_value(serde_json::json!({
+        "name":"Consumer", "external_bot_id":uuid::Uuid::new_v4().to_string(),
+        "profile":{"id":"__inline__","revision":1},
+        "inline_agent":{"model":"model"},
+        "admission":{"type":"scoped","senders":{"type":"open"},"chats":{"type":"open"},"groups":"deny"},
+        "reply":{"auto_final":true,"ack_after_ms":2000}
+    })).unwrap()
+}
+
+#[tokio::test]
+async fn consumer_defaults_match_native_pool_and_admitted_replay_keeps_original_capacity() {
+    let profiles = Arc::new(InMemoryProfileStore::default());
+    let store = Arc::new(InMemoryBotStore::default());
+    let original = resolver(profiles.clone(), SandboxCapacity::default());
+    let service = BotService::new(
+        store.clone(),
+        Arc::new(NoExternalResolver),
+        "cma_codex".into(),
+    )
+    .with_inline_profiles(original);
+    let caller = Caller::new(
+        SubjectId::new("owner"),
+        Authorization::new([Capability::ManageOwnBots]),
+    );
+    let request = input();
+    let first = service
+        .create(&caller, "creation", request.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        (
+            first.profiles.sandbox.content.cpu_millis,
+            first.profiles.sandbox.content.memory_mib
+        ),
+        (1000, 1024)
+    );
+    assert_eq!(first.profiles.sandbox.content.max_workspaces, 16);
+    assert_eq!(first.profiles.sandbox.content.max_agents_per_workspace, 16);
+    let changed = resolver(
+        profiles,
+        SandboxCapacity {
+            cpu_millis: 2000,
+            memory_mib: 4096,
+        },
+    );
+    let service = BotService::new(store, Arc::new(NoExternalResolver), "cma_codex".into())
+        .with_inline_profiles(changed.clone());
+    assert_eq!(
+        service
+            .create(&caller, "creation", request.clone())
+            .await
+            .unwrap(),
+        first
+    );
+    // A pre-admission partial materialization has no runtime. Its retry can
+    // safely receive new default capacity without conflicting with old profiles.
+    let next = changed
+        .resolve_inline(&caller.subject, &request, None, "creation")
+        .await
+        .unwrap();
+    assert_ne!(next.sandbox.profile_id, first.profiles.sandbox.profile_id);
+    assert_eq!(
+        (
+            next.sandbox.content.cpu_millis,
+            next.sandbox.content.memory_mib
+        ),
+        (2000, 4096)
+    );
+    assert_eq!(
+        changed
+            .resolve_inline(&caller.subject, &request, None, "creation")
+            .await
+            .unwrap(),
+        next
+    );
+}

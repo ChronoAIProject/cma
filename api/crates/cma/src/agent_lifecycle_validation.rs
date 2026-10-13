@@ -21,6 +21,20 @@ pub(super) fn validate_request(
             "name must contain 1-80 non-control bytes".into(),
         ));
     }
+    if let Some(workspace) = &request.workspace_id {
+        if workspace.is_empty()
+            || workspace.len() > 256
+            || !workspace
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+            || request.image.is_some()
+            || request.repository.is_some()
+        {
+            return Err(AgentLifecycleProvisioningError::Invalid(
+                "an existing workspace requires a valid workspace_id and inherits its image and repository".into(),
+            ));
+        }
+    }
     if let Some(image) = &request.image {
         if image.id.trim().is_empty() || image.id.len() > 256 {
             return Err(AgentLifecycleProvisioningError::Invalid(

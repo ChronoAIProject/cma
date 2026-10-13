@@ -262,6 +262,29 @@ async fn persistent_warm_retirement_releases_capacity_with_historical_boot_ident
 }
 
 #[tokio::test]
+async fn legacy_cleanup_refuses_preparation_and_claimed_runtime_ownership() {
+    let harness = Harness::new(vec![], 0, Duration::from_secs(60)).await;
+    let (adapter, record) = persistent_warm(&harness).await;
+    let before = adapter.runtime_inventory().await.unwrap();
+    for state in [
+        WarmSandboxState::Preparing,
+        WarmSandboxState::Installing,
+        WarmSandboxState::Ready,
+        WarmSandboxState::Claimed,
+    ] {
+        let mut invalid = record.clone();
+        invalid.state = state;
+        assert!(
+            crate::sandbox::warmup::retire_environment(adapter.as_ref(), &invalid)
+                .await
+                .is_err()
+        );
+        assert_eq!(adapter.runtime_inventory().await.unwrap(), before);
+        assert!(!invalid.home.as_ref().unwrap().released);
+    }
+}
+
+#[tokio::test]
 async fn restarted_warm_process_is_retired_even_when_provider_handle_is_still_running() {
     let harness = Harness::new(vec![], 0, Duration::from_secs(60)).await;
     let (adapter, ready) = persistent_warm(&harness).await;

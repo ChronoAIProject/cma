@@ -21,6 +21,7 @@ pub(super) async fn verify(db: &Database) {
         }),
         request: request.clone(),
         resolved_image: Some("pinned-first".into()),
+        capacity: Some(layer3_adapter::SandboxCapacity::default()),
         capabilities: vec![Capability::UseOwnSandboxes],
     };
     let CreateResult::Created(id) = store
@@ -34,6 +35,10 @@ pub(super) async fn verify(db: &Database) {
     // or the ordering/content of capabilities captured by another HTTP attempt.
     let mut changed = input.clone();
     changed.resolved_image = Some("latest-now-points-elsewhere".into());
+    changed.capacity = Some(layer3_adapter::SandboxCapacity {
+        cpu_millis: 2000,
+        memory_mib: 4096,
+    });
     changed.capabilities.clear();
     changed.actor = None;
     let CreateResult::Existing(replayed) =
@@ -44,6 +49,7 @@ pub(super) async fn verify(db: &Database) {
     assert_eq!(replayed.id, id);
     assert_eq!(replayed.input.resolved_image, input.resolved_image);
     assert_eq!(replayed.input.capabilities, input.capabilities);
+    assert_eq!(replayed.input.capacity, input.capacity);
     assert_eq!(replayed.input.actor, input.actor);
     assert_eq!(
         store
@@ -58,6 +64,39 @@ pub(super) async fn verify(db: &Database) {
     other_request.name = "Different".into();
     assert!(store
         .replay(&owner, "exact-intent", &other_request)
+        .await
+        .is_err());
+    let mut contextual = input.clone();
+    contextual.request.image = None;
+    contextual.request.workspace_id = Some("wk_context".into());
+    contextual.resolved_image = None;
+    let CreateResult::Created(context_id) = store
+        .create(&owner, "contextual-intent", contextual.clone())
+        .await
+        .unwrap()
+    else {
+        panic!("new contextual intent")
+    };
+    let restarted_context = MongoAgentLifecycleStore::open(db).await.unwrap();
+    let context_record = restarted_context
+        .replay(&owner, "contextual-intent", &contextual.request)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(context_record.id, context_id);
+    assert_eq!(
+        context_record.input.request.workspace_id.as_deref(),
+        Some("wk_context")
+    );
+    let mut changed_context = contextual.request.clone();
+    changed_context.workspace_id = Some("wk_another".into());
+    assert!(restarted_context
+        .replay(&owner, "contextual-intent", &changed_context)
+        .await
+        .is_err());
+    changed_context.workspace_id = None;
+    assert!(restarted_context
+        .replay(&owner, "contextual-intent", &changed_context)
         .await
         .is_err());
     let other_owner = SubjectId::new("another-owner");
@@ -126,6 +165,7 @@ pub(super) async fn verify(db: &Database) {
     assert!(restarted.pending().await.unwrap().contains(&id));
     let second_record = restarted.claim(&id).await.unwrap().unwrap();
     let second = second_record.lease().unwrap();
+    assert_eq!(second_record.input.capacity, input.capacity);
     assert_ne!(first.token, second.token);
     assert_eq!(
         second_record.sandbox_id.as_deref(),

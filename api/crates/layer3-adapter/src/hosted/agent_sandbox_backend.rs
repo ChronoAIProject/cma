@@ -77,6 +77,16 @@ fn observation(object: &DynamicObject) -> Result<RuntimeObservation> {
 
 #[async_trait::async_trait]
 impl HostedBackend for AgentSandboxBackend {
+    fn native_pools(&self) -> Option<&dyn crate::agent_sandbox::NativePoolControl> {
+        Some(self.client.warm_pools())
+    }
+    async fn select_native_pool(
+        &self,
+        request: &ProviderSandboxRequest,
+        home: &crate::HomeVolumeRequest,
+    ) -> Result<Option<crate::agent_sandbox::NativePoolBinding>> {
+        self.client.warm_pools().select_runtime(request, home).await
+    }
     async fn provision(&self, request: ProviderSandboxRequest) -> Result<RuntimeHandle> {
         let handle = match self.client.provision_pool_runtime(&request).await? {
             Some(handle) => handle,
@@ -236,6 +246,29 @@ impl RuntimeBackends {
 
 #[async_trait::async_trait]
 impl HostedBackend for RuntimeBackends {
+    fn native_pools(&self) -> Option<&dyn crate::agent_sandbox::NativePoolControl> {
+        self.agent_sandbox
+            .as_deref()
+            .and_then(|backend| backend.native_pools())
+    }
+    async fn select_native_pool(
+        &self,
+        request: &ProviderSandboxRequest,
+        home: &crate::HomeVolumeRequest,
+    ) -> Result<Option<crate::agent_sandbox::NativePoolBinding>> {
+        let identity = super::deployment::provider_request_identity(request)?;
+        let selected = self
+            .routing
+            .select(
+                &identity.sandbox_id,
+                identity.generation,
+                self.allocate_agent_sandbox,
+            )
+            .await?;
+        self.select(selected)?
+            .select_native_pool(request, home)
+            .await
+    }
     async fn provision(&self, request: ProviderSandboxRequest) -> Result<RuntimeHandle> {
         let identity = super::deployment::provider_request_identity(&request)?;
         let selected = self
@@ -374,50 +407,5 @@ impl HostedBackend for RuntimeBackends {
 mod history_tests;
 
 #[cfg(test)]
-mod routing_tests {
-    use super::*;
-    use std::collections::BTreeMap;
-    #[derive(Default)]
-    struct Routes(tokio::sync::Mutex<BTreeMap<(String, u64), bool>>);
-    #[async_trait::async_trait]
-    impl RuntimeRoutingStore for Routes {
-        async fn select(&self, id: &str, generation: u64, default_new: bool) -> Result<bool> {
-            Ok(*self
-                .0
-                .lock()
-                .await
-                .entry((id.into(), generation))
-                .or_insert(default_new))
-        }
-    }
-    #[tokio::test]
-    async fn unknown_creation_retry_keeps_original_backend_across_default_change() {
-        let old = Arc::new(super::super::InMemoryHostedBackend::default());
-        let new = Arc::new(super::super::InMemoryHostedBackend::default());
-        let routes = Arc::new(Routes::default());
-        let mut backend = RuntimeBackends {
-            agent_sandbox: Some(new.clone()),
-            opensandbox: Some(old.clone()),
-            allocate_agent_sandbox: false,
-            routing: routes,
-        };
-        let spec = SandboxSpec {
-            sandbox_id: "owned-runtime".into(),
-            created_by: Some("deployment".into()),
-            ..Default::default()
-        };
-        let request = super::super::HostedDeployment::default()
-            .render(&spec)
-            .unwrap();
-        let original = backend.provision(request.clone()).await.unwrap();
-        backend.allocate_agent_sandbox = true;
-        assert_eq!(original, backend.provision(request.clone()).await.unwrap());
-        assert_eq!(old.inventory().await.unwrap().len(), 1);
-        assert!(new.inventory().await.unwrap().is_empty());
-        let next = super::super::HostedDeployment::default()
-            .render_runtime(&spec, 2)
-            .unwrap();
-        backend.provision(next).await.unwrap();
-        assert_eq!(new.inventory().await.unwrap().len(), 1);
-    }
-}
+#[path = "runtime_routing_tests.rs"]
+mod routing_tests;

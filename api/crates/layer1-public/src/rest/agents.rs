@@ -112,7 +112,8 @@ pub(crate) async fn read_lifecycle_operation(
 
 /// Create an Agent from one inline lifecycle request.  The provisioning port
 /// owns the sandbox/workspace/agent orchestration; this boundary never accepts
-/// profile, workspace, worktree, pod, or runtime identifiers from the caller.
+/// profile, worktree, pod, or runtime identifiers. An optional owned workspace
+/// selects an existing context; the service verifies its creation authority.
 #[utoipa::path(
     post,
     path = "/api/v1/agents",

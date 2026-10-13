@@ -19,6 +19,7 @@ mod sandbox;
 mod shutdown;
 mod store;
 mod trigger;
+mod warm_pools;
 
 use std::{future::IntoFuture, net::SocketAddr, sync::Arc, time::Duration};
 
@@ -123,6 +124,7 @@ async fn serve() -> Result<(), String> {
             .sandbox_control_scheduler
             .spawn(shutdown.subscribe()),
     );
+    shutdown.push(composition.native_warm_pools.spawn(shutdown.subscribe()));
     composition.sandbox_lifecycle.spawn(&mut shutdown);
     shutdown.push(composition.provenance_backfill.spawn(shutdown.subscribe()));
     let http_signal = shutdown.subscribe();

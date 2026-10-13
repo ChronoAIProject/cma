@@ -1,22 +1,29 @@
 //! Native extension resources; pool members carry no tenant configuration.
 mod claims;
+mod cleanup;
+mod cleanup_inventory;
+mod control;
 mod home;
 mod home_origin;
+mod management;
 mod model;
+mod reconciliation;
 mod recovery;
 mod runtime;
 
 use kube::{
-    api::{DynamicObject, Patch, PatchParams, PostParams},
+    api::{DynamicObject, PostParams},
     core::{ApiResource, GroupVersionKind},
     Api, Client, ResourceExt,
 };
-use serde_json::json;
 
 use super::{api_error, rejected, unavailable, AgentSandboxConfig, OWNER_LABEL};
 use crate::{HomeVolumePolicy, Result};
 
+pub use cleanup::{NativePoolCleanup, NativePoolMember};
+pub use control::NativePoolControl;
 pub use home_origin::NativePoolHomeOrigin;
+pub use management::NativePoolConfiguration;
 pub use model::{
     NativePoolBinding, NativePoolClaim, NativePoolClaimRequest, NativePoolPodPolicy,
     NativePoolSpec, NativePoolStatus,
@@ -28,6 +35,7 @@ pub(super) use runtime::RUNTIME_REQUEST_ANNOTATION;
 
 const API_VERSION: &str = "extensions.agents.x-k8s.io/v1beta1";
 const DIGEST_ANNOTATION: &str = "cma/native-pool-config";
+const DEFINITION_ANNOTATION: &str = "cma/native-pool-definition";
 
 #[derive(Clone)]
 pub struct AgentSandboxPools {
@@ -36,6 +44,7 @@ pub struct AgentSandboxPools {
     claims: Api<DynamicObject>,
     seeds: Api<DynamicObject>,
     members: Api<DynamicObject>,
+    pods: Api<DynamicObject>,
     volumes: Api<k8s_openapi::api::core::v1::PersistentVolumeClaim>,
     config: AgentSandboxConfig,
 }
@@ -72,6 +81,7 @@ impl AgentSandboxPools {
                 "Sandbox",
                 "sandboxes",
             ),
+            pods: resource(client.clone(), &config.namespace, "", "v1", "Pod", "pods"),
             volumes: Api::namespaced(client.clone(), &config.namespace),
             config,
         }
@@ -102,87 +112,13 @@ impl AgentSandboxPools {
             .map_err(api_error)?
         {
             None => create(&self.pools, &desired).await?,
-            Some(actual) => {
-                let mut prior = desired.clone();
-                prior.data["spec"]["replicas"] = actual.data["spec"]["replicas"].clone();
-                if prior.data["spec"]["replicas"]
-                    .as_u64()
-                    .is_none_or(|v| v > 1000)
-                {
-                    return Err(rejected("native warm pool has an invalid replica target"));
-                }
-                model::verify(&actual, &prior)?;
-                if actual.data["spec"]["replicas"] == replicas {
-                    actual
-                } else {
-                    let patch = json!({"metadata":{"uid":actual.uid(),"resourceVersion":actual.resource_version()},
-                        "spec":{"replicas":replicas}});
-                    match self
-                        .pools
-                        .patch(
-                            &actual.name_any(),
-                            &PatchParams::default(),
-                            &Patch::Merge(patch),
-                        )
-                        .await
-                    {
-                        Ok(updated) => {
-                            if updated.uid() != actual.uid() {
-                                return Err(rejected("native pool UID changed during scaling"));
-                            }
-                            model::verify(&updated, &desired)?;
-                            updated
-                        }
-                        Err(error) => {
-                            // A lost PATCH acknowledgement is replayable only against
-                            // that exact pool UID and the requested final target.
-                            let recovered = self
-                                .pools
-                                .get_opt(&actual.name_any())
-                                .await
-                                .map_err(api_error)?;
-                            match recovered {
-                                Some(recovered)
-                                    if recovered.uid() == actual.uid()
-                                        && model::verify(&recovered, &desired).is_ok() =>
-                                {
-                                    recovered
-                                }
-                                _ => return Err(api_error(error)),
-                            }
-                        }
-                    }
-                }
-            }
+            Some(actual) => self.apply_target(actual, &desired).await?,
         };
         model::verify(&pool, &desired)?;
-        let observed = pool.metadata.generation.is_some_and(|g| {
-            g > 0 && pool.data["status"]["observedGeneration"].as_i64() == Some(g)
-        });
-        let ready = if observed {
-            pool.data["status"]["readyReplicas"].as_u64().unwrap_or(0)
-        } else {
-            0
-        };
-        Ok(NativePoolStatus {
-            binding: NativePoolBinding {
-                spec: spec.clone(),
-                pod_policy: NativePoolPodPolicy::from(&self.config),
-                name: pool.name_any(),
-                uid: pool
-                    .uid()
-                    .ok_or_else(|| rejected("native pool UID missing"))?,
-                template_name: template.name_any(),
-                template_uid: template
-                    .uid()
-                    .ok_or_else(|| rejected("native template UID missing"))?,
-                config_sha256: model::digest(&self.config, spec)?,
-            },
-            desired_replicas: replicas,
-            ready_replicas: u32::try_from(ready)
-                .map_err(|_| unavailable("native pool readiness is invalid"))?,
-            observed,
-        })
+        management::status(
+            management::binding(&self.config, spec, &template, &pool)?,
+            &pool,
+        )
     }
 
     async fn verify_seed(&self, policy: &HomeVolumePolicy) -> Result<()> {
@@ -208,27 +144,7 @@ impl AgentSandboxPools {
     }
 
     async fn verify_binding(&self, binding: &NativePoolBinding) -> Result<()> {
-        let original_config = model::binding_config(&self.config, binding);
-        let desired = model::template(&original_config, &binding.spec)?;
-        let template = self
-            .templates
-            .get(&binding.template_name)
-            .await
-            .map_err(api_error)?;
-        model::verify(&template, &desired)?;
-        if template.uid().as_deref() != Some(&binding.template_uid) {
-            return Err(rejected("native pool template UID changed"));
-        }
-        let pool = self.pools.get(&binding.name).await.map_err(api_error)?;
-        let replicas = pool.data["spec"]["replicas"]
-            .as_u64()
-            .and_then(|n| u32::try_from(n).ok())
-            .ok_or_else(|| rejected("native pool has no replica target"))?;
-        let desired = model::pool(&original_config, &binding.spec, &template, replicas)?;
-        model::verify(&pool, &desired)?;
-        if pool.uid().as_deref() != Some(&binding.uid) {
-            return Err(rejected("native pool UID changed"));
-        }
+        self.bound_resources(binding).await?;
         self.verify_seed(&binding.spec.home).await
     }
 }
@@ -290,3 +206,8 @@ mod runtime_tests;
 
 #[cfg(test)]
 mod backend_tests;
+
+#[cfg(test)]
+mod cleanup_tests;
+#[cfg(test)]
+mod management_tests;

@@ -166,7 +166,7 @@ fn every_admin_route_is_documented_and_authenticated() {
         .iter()
         .filter(|(path, _)| path.starts_with("/api/v1/admin/"))
         .collect();
-    assert_eq!(admin.len(), 12);
+    assert_eq!(admin.len(), 14);
     for (_, item) in admin {
         for operation in [
             item.get.as_ref(),
@@ -181,7 +181,7 @@ fn every_admin_route_is_documented_and_authenticated() {
             assert_eq!(operation.security.as_ref().map(Vec::len), Some(2));
         }
     }
-    assert_eq!(operation_ids.len(), 14);
+    assert_eq!(operation_ids.len(), 17);
     assert!(document
         .paths
         .paths
@@ -190,6 +190,11 @@ fn every_admin_route_is_documented_and_authenticated() {
         .paths
         .paths
         .contains_key("/api/v1/admin/runtime-inventory"));
+    let pools = &document.paths.paths["/api/v1/admin/warm-pools"];
+    assert!(pools.get.is_some() && pools.post.is_some());
+    assert!(document.paths.paths["/api/v1/admin/warm-pools/{id}"]
+        .put
+        .is_some());
 }
 
 #[test]
