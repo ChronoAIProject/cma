@@ -86,14 +86,15 @@ async fn home_selection_persists_provider_before_allocation_and_keeps_it_on_retr
     assert_eq!(new.inventory().await.unwrap().len(), 1);
 }
 
-#[test]
-fn missing_home_routes_reject_a_persisted_remote_scope() {
+#[tokio::test]
+async fn missing_home_routes_reject_a_persisted_remote_scope() {
+    let routes = Arc::new(Routes::default());
     let backend = RuntimeBackends {
         home_routes: None,
         agent_sandbox: Some(Arc::new(super::super::InMemoryHostedBackend::default())),
         opensandbox: Some(Arc::new(super::super::InMemoryHostedBackend::default())),
         allocate_agent_sandbox: true,
-        routing: Arc::new(Routes::default()),
+        routing: routes.clone(),
     };
     let home = HomeVolumeRequest {
         scope: Some(
@@ -111,6 +112,20 @@ fn missing_home_routes_reject_a_persisted_remote_scope() {
     let handle = RuntimeHandle::new("agent-sandbox:remote-sandbox");
     assert!(backend.verify_retained_home_route(&handle, &home).is_err());
     assert!(backend.native_pools_for_home(&home).is_err());
+    let request = super::super::HostedDeployment::default()
+        .render(&SandboxSpec {
+            sandbox_id: home.sandbox_id.clone(),
+            created_by: Some("deployment".into()),
+            ..Default::default()
+        })
+        .unwrap();
+    assert!(backend.reserve_home_request(&request, &home).await.is_err());
+    assert!(backend.verify_home_route(&request, &home).await.is_err());
+    assert!(backend.select_native_pool(&request, &home).await.is_err());
+    assert!(
+        routes.0.lock().await.is_empty(),
+        "unavailable home authority cannot reserve a replacement runtime provider"
+    );
 }
 
 use crate::codex::{CodexAdapter, CodexSandboxSpec};
