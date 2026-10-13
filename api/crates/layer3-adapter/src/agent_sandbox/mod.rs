@@ -9,7 +9,7 @@ mod network_policy;
 mod pods;
 mod pool;
 mod pool_runtime;
-mod proxy;
+mod runtime_stream;
 mod suspension;
 
 use crate::{AdapterError, HomeVolumeScope, Result, RuntimeHandle};
@@ -35,6 +35,7 @@ pub use pool::{NativeHomeVolumes, NativePoolHomeOrigin};
 pub use pool::{NativePoolCleanup, NativePoolMember};
 pub use pool::{NativePoolConfiguration, NativePoolControl};
 pub(crate) use pool::{NATIVE_HOME_ANNOTATION, NATIVE_HOME_REQUEST_LABEL};
+pub(crate) use runtime_stream::{RuntimeStream, RuntimeStreamKind};
 pub(crate) const OWNER_LABEL: &str = "cma/control-plane";
 const RUNTIME_LABEL: &str = "cma/runtime-name";
 const SPEC_ANNOTATION: &str = "cma/agent-sandbox-spec";
@@ -47,7 +48,8 @@ pub struct AgentSandboxClient {
     claims: Api<PersistentVolumeClaim>,
     config: AgentSandboxConfig,
     scope: HomeVolumeScope,
-    proxies: std::sync::Arc<proxy::RuntimeProxies>,
+    runtime_streams: std::sync::Arc<tokio::sync::Semaphore>,
+    runtime_requests: std::sync::Arc<tokio::sync::Semaphore>,
 }
 
 impl AgentSandboxClient {
@@ -73,7 +75,8 @@ impl AgentSandboxClient {
             claims: Api::namespaced(client, &config.namespace),
             config,
             scope,
-            proxies: std::sync::Arc::new(proxy::RuntimeProxies::default()),
+            runtime_streams: std::sync::Arc::new(tokio::sync::Semaphore::new(64)),
+            runtime_requests: std::sync::Arc::new(tokio::sync::Semaphore::new(32)),
         })
     }
 
@@ -174,16 +177,6 @@ impl AgentSandboxClient {
         model::pod_binding(&object, &pod)
     }
 
-    /// Return a loopback address that tunnels runtime traffic through the
-    /// remote Kubernetes API's authorized `pods/portforward` subresource.
-    pub(crate) async fn runtime_proxy_address(
-        &self,
-        runtime: &RuntimeHandle,
-        binding: &PodBinding,
-    ) -> Result<std::net::SocketAddr> {
-        self.proxies.address(runtime, binding, &self.pods).await
-    }
-
     pub(crate) fn control_token(&self, runtime_name: &str) -> String {
         use ring::hmac;
         let key = hmac::Key::new(hmac::HMAC_SHA256, self.config.control_key.as_bytes());
@@ -216,7 +209,7 @@ fn api_error(error: kube::Error) -> AdapterError {
                 response.code
             ))
         }
-        error => unavailable(&format!("Kubernetes Sandbox operation failed: {error}")),
+        _ => unavailable("Kubernetes Sandbox operation failed"),
     }
 }
 

@@ -6,7 +6,7 @@ use tokio::sync::Mutex;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest as _;
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 
-use super::acp::{Bridge, OpenedBridge, MAX_FRAME_BYTES};
+use super::acp::{Bridge, OpenedBridge, Socket, MAX_FRAME_BYTES};
 use super::checkpoint_store::{CheckpointArchiveStore, CheckpointArchiveStoreFactory};
 use super::checkpoint_transport::{restore_request, successful_checkpoint};
 use super::provider_endpoint::RuntimeEndpoint;
@@ -21,6 +21,14 @@ const SUPERVISOR_PORT: u16 = 9090;
 const CONNECT_DEADLINE: Duration = Duration::from_secs(10);
 const CONTROL_DEADLINE: Duration = Duration::from_secs(60 * 60);
 
+/// Runtime data path, independent of Kubernetes resource allocation.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum NativeRuntimeTransport {
+    #[default]
+    Direct,
+    KubernetesPortforward,
+}
+
 /// Concrete authenticated control and ACP transport for provider-hosted runtimes.
 pub struct ProviderHostedControlTransport {
     client: RuntimeDiscovery,
@@ -28,6 +36,7 @@ pub struct ProviderHostedControlTransport {
     archive_factory: Option<Arc<dyn CheckpointArchiveStoreFactory>>,
     state: Arc<Mutex<TransportState>>,
     subscriptions: Option<Arc<dyn super::HostedSubscriptionSource>>,
+    native_transport: NativeRuntimeTransport,
 }
 
 #[derive(Clone)]
@@ -81,6 +90,28 @@ impl ProviderHostedControlTransport {
         let url = endpoint.control()?;
         let auth = self.auth_header(endpoint);
         let exchange = async {
+            if endpoint.native_binding().is_some() {
+                let body = serde_json::to_vec(request).map_err(|_| {
+                    AdapterError::Rejected("runtime request could not be encoded".into())
+                })?;
+                let (status, bytes) = self
+                    .native_http(
+                        endpoint,
+                        http::Method::POST,
+                        url,
+                        body,
+                        super::provider_http::CONTROL_RESPONSE_BYTES,
+                    )
+                    .await?;
+                let mut response = super::provider_http::decode_control_bytes(status, &bytes)?;
+                if let ResponseFrame::Failure(failure) = &mut response {
+                    if !auth.1.is_empty() {
+                        failure.code = failure.code.replace(auth.1, "[redacted]");
+                        failure.detail = failure.detail.replace(auth.1, "[redacted]");
+                    }
+                }
+                return Ok(response);
+            }
             let response = self
                 .http
                 .post(url)
@@ -278,11 +309,7 @@ impl ProviderHostedControlTransport {
         &self,
         endpoint: &RuntimeEndpoint,
         agent_id: &AgentSlot,
-    ) -> crate::Result<
-        tokio_tungstenite::WebSocketStream<
-            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-        >,
-    > {
+    ) -> crate::Result<Socket> {
         let mut url = endpoint.conversation(agent_id.as_str())?;
         url.query_pairs_mut().append_pair("outputAck", "1");
         let mut request = url
@@ -290,15 +317,40 @@ impl ProviderHostedControlTransport {
             .into_client_request()
             .map_err(|_| AdapterError::Rejected("runtime WebSocket URL is invalid".into()))?;
         let (name, value) = self.auth_header(endpoint);
-        let value = value
+        let mut value: http::HeaderValue = value
             .parse()
             .map_err(|_| AdapterError::Rejected("provider API key is not a valid header".into()))?;
+        value.set_sensitive(true);
         request.headers_mut().insert(name, value);
         let config = WebSocketConfig {
             max_message_size: Some(MAX_FRAME_BYTES + 25),
             max_frame_size: Some(MAX_FRAME_BYTES + 25),
             ..WebSocketConfig::default()
         };
+        if endpoint.native_binding().is_some() {
+            let connected = async {
+                let stream = self
+                    .native_stream(
+                        endpoint,
+                        crate::agent_sandbox::RuntimeStreamKind::Conversation,
+                    )
+                    .await?;
+                let (socket, _) =
+                    tokio_tungstenite::client_async_with_config(request, stream, Some(config))
+                        .await
+                        .map_err(|_| {
+                            AdapterError::Unavailable(
+                                "runtime WebSocket over Kubernetes failed".into(),
+                            )
+                        })?;
+                Ok(Box::new(socket) as Socket)
+            };
+            return tokio::time::timeout(CONNECT_DEADLINE, connected)
+                .await
+                .map_err(|_| {
+                    AdapterError::Unavailable("runtime WebSocket connection timed out".into())
+                })?;
+        }
         let connected = tokio_tungstenite::connect_async_with_config(request, Some(config), false);
         let (stream, _) = tokio::time::timeout(CONNECT_DEADLINE, connected)
             .await
@@ -308,9 +360,12 @@ impl ProviderHostedControlTransport {
             .map_err(|error| {
                 AdapterError::Unavailable(format!("runtime WebSocket connection failed: {error}"))
             })?;
-        Ok(stream)
+        Ok(Box::new(stream))
     }
 }
+
+#[path = "native_transport.rs"]
+mod native_transport;
 
 #[async_trait::async_trait]
 impl super::HostedControlTransport for ProviderHostedControlTransport {

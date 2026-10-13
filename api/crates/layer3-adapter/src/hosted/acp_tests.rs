@@ -40,7 +40,10 @@ async fn socket_pair() -> (Socket, ServerSocket) {
     };
     let client = tokio_tungstenite::connect_async(format!("ws://{address}/conversation"));
     let (client, server) = tokio::join!(client, server);
-    (client.expect("client handshake succeeds").0, server)
+    (
+        Box::new(client.expect("client handshake succeeds").0),
+        server,
+    )
 }
 
 async fn send_ready(server: &mut ServerSocket, agent_id: &str) {
