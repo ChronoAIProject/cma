@@ -1,14 +1,14 @@
-//! The process launcher end to end: deadlines, the CPU limit, stdout caps,
+//! The media wrapper and launcher end to end: deadlines, the CPU limit, stdout caps,
 //! stderr draining, exit classification and cancellation.
-use super::support::{bin_dir, TempDir};
+use super::support::{bin_dir, observe_cpu_limited_job, TempDir};
 use bytes::Bytes;
 use cmaeg::media::transform::{
     argv::{AudioSeconds, FrameTime, JobOp},
     jobdir::{JobDir, MediaRoot},
     launcher::{JobLauncher, JobResult, JobSpec, ProcessLauncher},
-    outcome::{StderrClass, TransformOutcome},
+    outcome::{classify, ClassifyInput, Exit, StderrClass, TransformOutcome},
 };
-use std::time::Duration;
+use std::{os::unix::process::ExitStatusExt, time::Duration};
 use tokio::time::Instant;
 
 struct Fixture {
@@ -105,24 +105,28 @@ async fn sleep_is_killed_at_deadline() {
     assert!(group_members(pid).is_empty());
 }
 
-/// Nextest runs this alone (`api/.config/nextest.toml`): the SCHED_IDLE spin
-/// spends its CPU limit before the equal wall clock runs out only while no
-/// other test competes for the CPUs.
+/// Test the raw wrapper's CPU enforcement without racing the launcher's equal
+/// wall limit. SCHED_IDLE may receive less than one CPU even with four threads.
 #[tokio::test]
-async fn spin_yields_cpu_limit() {
+async fn raw_wrapper_spin_is_killed_at_its_cpu_limit() {
     let fixture = Fixture::new();
-    let result = run(
-        &fixture,
-        "spin",
-        JobOp::Probe,
-        Duration::from_secs(30),
-        16_384,
-    )
-    .await;
-    assert_eq!(result.outcome, TransformOutcome::CpuLimit, "{result:?}");
+    let dir = fixture.job("spin");
+    let (status, cpu) = observe_cpu_limited_job(fixture.bin.path(), dir.path()).await;
+    assert_eq!(status.signal(), Some(libc::SIGKILL), "{status:?}");
     assert!(
-        result.cpu >= Duration::from_millis(19_500) && result.cpu < Duration::from_secs(25),
-        "{result:?}"
+        cpu >= Duration::from_millis(19_500) && cpu < Duration::from_secs(25),
+        "{cpu:?}"
+    );
+    assert_eq!(
+        classify(&ClassifyInput {
+            deadline_killed: false,
+            watchdog_killed: false,
+            overflow_killed: false,
+            exit: Exit::Signal(status.signal().unwrap()),
+            cpu,
+            output_valid: true,
+        }),
+        TransformOutcome::CpuLimit
     );
 }
 
