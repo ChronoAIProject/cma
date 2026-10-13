@@ -102,7 +102,7 @@ function fixture(fail = () => false, config = legacyConfig, options = {}, deploy
       return '';
     }
     if (kind === 'deployment') return JSON.stringify({ spec: { template: { spec: { containers: [{ name: 'api', env: deploymentEnv }] } } } });
-    if (kind === 'serviceaccount') return JSON.stringify({ automountServiceAccountToken: false });
+    if (kind === 'serviceaccount') return JSON.stringify({ metadata: { name, namespace }, automountServiceAccountToken: false });
     if (kind === 'storageclass') return JSON.stringify({ provisioner: 'pd.csi.storage.gke.io' });
     assert.equal(kind, 'volumesnapshots.snapshot.storage.k8s.io');
     return JSON.stringify(seed());
@@ -131,6 +131,39 @@ test('missing APIs or denied rights fail readiness with bounded static diagnosti
     { runtimeContext: productionRuntimeContext },
   ]) {
     assert.throws(() => preflight(options, () => { throw new Error('must not execute'); }));
+  }
+});
+
+test('runtime Pod token isolation does not require a disabled ServiceAccount default', () => {
+  for (const automount of [undefined, false, true]) {
+    const { command } = fixture(() => false, remoteConfig, remoteOptions);
+    const result = preflight(remoteOptions, (args) => {
+      const raw = command(args);
+      if (args[6] !== 'serviceaccount') return raw;
+      return JSON.stringify({ ...JSON.parse(raw), automountServiceAccountToken: automount });
+    });
+    assert.equal(result.passed, true, `ServiceAccount automount default ${automount}`);
+  }
+});
+
+test('runtime identity still requires the configured live ServiceAccount in its namespace', () => {
+  for (const changed of [
+    undefined,
+    {},
+    { name: 'other-runtime', namespace: remoteOptions.runtimeNamespace },
+    { name: 'cma-runtime', namespace: 'other-namespace' },
+    { name: 'cma-runtime', namespace: remoteOptions.runtimeNamespace, deletionTimestamp: '2026-10-13T00:00:00Z' },
+  ]) {
+    const { command } = fixture(() => false, remoteConfig, remoteOptions);
+    const result = preflight(remoteOptions, (args) => {
+      const raw = command(args);
+      if (args[6] !== 'serviceaccount') return raw;
+      if (changed === undefined) throw new Error('ServiceAccount not found');
+      return JSON.stringify({ metadata: changed });
+    });
+    assert.equal(result.passed, false);
+    assert.deepEqual(result.checks.filter((check) => !check.passed).map((check) => check.name),
+      ['configured runtime ServiceAccount exists and is not deleting']);
   }
 });
 

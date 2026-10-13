@@ -161,10 +161,15 @@ export function preflight(options = {}, command = (args) => execFileSync('kubect
       });
     }
   }
-  check('runtime ServiceAccount has no automatic API token', () => {
+  check('configured runtime ServiceAccount exists and is not deleting', () => {
     const name = config.CHRONO_AGENT_SANDBOX_SERVICE_ACCOUNT || 'cma-runtime';
     assert.ok(dns(name));
-    assert.equal(get('serviceaccount', name).automountServiceAccountToken, false);
+    const account = get('serviceaccount', name);
+    assert.equal(account.metadata?.name, name);
+    assert.equal(account.metadata?.namespace, runtimeNamespace);
+    assert.ok(!account.metadata?.deletionTimestamp);
+    // Both CMA Pod templates explicitly disable automount. That Pod setting
+    // overrides the ServiceAccount default, which need not itself be false.
   });
   check(policy?.mode === 'native_vct_empty_v1' ? 'native home storage class' : 'ready retained-home seed and storage class', () => {
     assert.ok(policy);
