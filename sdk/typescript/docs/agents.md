@@ -28,6 +28,15 @@ owner verifies those connections, repeat the original `createLifecycle` call
 with its exact request and key to resume the same operation and child resources.
 `failed` is terminal; surface its safe error to the caller.
 
+Set `workspace_id` to add an Agent to an existing Workspace owned by the caller.
+The Workspace must be ready. Omit `image` and `repository` because the selected
+Workspace supplies both. This mode requires permission to use the Workspace;
+permission to create a new Sandbox is unnecessary. The Agent inherits its parent
+Sandbox's key scope. Omit `profile.permissions.services`, or provide a subset of
+the inherited services; additional services are rejected and a subset does not
+reduce the inherited scope. Reusing the same idempotency key with another
+Workspace is a conflict.
+
 One Agent belongs to one Worktree in a Workspace and Sandbox. Its REST,
 AG-UI and Responses interfaces project the same conversation, not separate chats.
 REST detail, transcript, events and usage also support current organization or

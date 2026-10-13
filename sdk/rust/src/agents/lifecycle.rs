@@ -14,6 +14,9 @@ use serde::{Deserialize, Serialize};
 pub struct AgentLifecycleCreateRequest {
     /// Agent display name.
     pub name: String,
+    /// Existing owned Workspace; inherits its image, repository and Sandbox scope.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,
     /// Image Manager catalogue selection.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub image: Option<AgentLifecycleImage>,

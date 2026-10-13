@@ -51,3 +51,47 @@ recorded value and the authority of already admitted Launches.
 `read_openapi` and `read_conformance` inspect anonymous deployment declarations.
 `unsupported().mcp()`, `a2a()`, and `agent_card()` expose named refusal evidence;
 they do not invent Agent tools, tasks, or an executable terminal plane.
+
+## Native warm pools
+
+Native pools reserve the deployment's pinned system runtime image and CPU/memory
+allocation. The server owns the initialized home seed and runtime admission
+policy. Inventory and writes require `configure_platform`.
+The Rust and TypeScript SDKs expose the same three pool routes and replay the
+shared backend contract corpus for accepted operations and API errors.
+
+```rust,no_run
+use cma_sdk::{Client, IdempotencyKey, admin::{ConfigureWarmPoolBody, ResizeWarmPoolBody}};
+# async fn run(client: Client) -> Result<(), Box<dyn std::error::Error>> {
+let inventory = client.admin().list_warm_pools().await?;
+let target = client.admin().configure_warm_pool(
+    &ConfigureWarmPoolBody {
+        cpu_millis: inventory.default_cpu_millis,
+        memory_mib: inventory.default_memory_mib,
+        target_replicas: 2,
+    },
+    &IdempotencyKey::new("operator-pool-create-2026-10-13")?,
+).await?;
+
+// A 202 receipt acknowledges durable intent. Poll inventory for readiness.
+let refreshed = client.admin().list_warm_pools().await?;
+if let Some(current) = refreshed.items.iter().find(|pool| pool.id == target.id) {
+    client.admin().resize_warm_pool(&current.id, &ResizeWarmPoolBody {
+        expected_revision: current.revision,
+        target_replicas: 0,
+    }).await?;
+}
+# Ok(())
+# }
+```
+
+Reuse the same key and request after an uncertain creation response. Pool keys
+are limited to 128 visible ASCII bytes, narrower than the shared
+`IdempotencyKey` type. Resize requires the current positive revision below
+`i64::MAX`; refresh after a conflict before evaluating another command. Targets
+range from zero to 1,000; zero stops replenishment while claimed Agent runtimes keep their homes
+and lifecycle.
+
+`available: false` means provider inventory could not be observed. Recorded
+targets remain visible with their original images. `ready_replicas: None` means
+readiness is unknown; inspect `status` and `observed` for reconciliation progress.

@@ -12,6 +12,7 @@ use cma_sdk::agents::{AgentLifecycleCreateRequest, AgentLifecycleStatus};
 # async fn provision(client: Client) -> Result<(), Box<dyn std::error::Error>> {
 let key = IdempotencyKey::new(std::env::var("CMA_CREATE_KEY")?)?;
 let request = AgentLifecycleCreateRequest {
+    workspace_id: None,
     name: "Research".into(), image: None, repository: None, profile: None,
 };
 let receipt = client.agents().create_lifecycle(&request, &key).await?;
@@ -29,6 +30,13 @@ supplies missing services and an owner-bound connection target. After the owner
 verifies those connections, repeat `create_lifecycle` with the original request
 and key to resume the same operation. `Failed` is terminal and includes a safe
 error when available.
+
+Set `workspace_id: Some(existing_id)` to add an Agent to an owned, ready Workspace.
+Omit `image` and `repository` in this mode. The Agent inherits the existing
+Sandbox key scope; extra service scopes are refused and selecting a subset does
+not reduce the inherited scope. This path requires permission to use the
+Workspace and does not require permission to create a new Sandbox. Reusing the
+same idempotency key with another Workspace is a conflict.
 
 One Agent belongs to one allocated Worktree in an owned Workspace and Sandbox.
 Its frozen Agent profile controls model, reasoning effort, permissions, and

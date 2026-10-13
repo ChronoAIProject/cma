@@ -1,3 +1,11 @@
+import {
+  warmPoolList,
+  warmPoolView,
+  validateWarmPoolTarget,
+  type ConfigureWarmPoolBody,
+  type ResizeWarmPoolBody,
+} from './warm-pools.js';
+export type * from './warm-pools.js';
 import type { ResolvedConfig } from '../config.js';
 import { ProtocolError, ValidationError } from '../errors.js';
 import type { OperationOptions } from '../http.js';
@@ -78,6 +86,42 @@ function bound(options: { readonly limit?: number; readonly cursor?: string }) {
 export class Administration {
   constructor(readonly config: ResolvedConfig) {}
 
+  listWarmPools(options: OperationOptions = {}) {
+    return read(this.config, '/api/v1/admin/warm-pools', warmPoolList, options);
+  }
+  configureWarmPool(
+    body: ConfigureWarmPoolBody,
+    options: OperationOptions & { readonly idempotencyKey: string },
+  ) {
+    validateWarmPoolTarget(body);
+    if (
+      !options.idempotencyKey ||
+      options.idempotencyKey.length > 128 ||
+      !/^[\x21-\x7e]+$/.test(options.idempotencyKey)
+    )
+      throw new ValidationError('a valid Idempotency-Key is required');
+    return read(this.config, '/api/v1/admin/warm-pools', warmPoolView, {
+      ...options,
+      method: 'POST',
+      expectedStatus: 202,
+      body,
+      headers: { 'Idempotency-Key': options.idempotencyKey },
+    });
+  }
+  resizeWarmPool(id: string, body: ResizeWarmPoolBody, options: OperationOptions = {}) {
+    validateWarmPoolTarget(body);
+    return read(
+      this.config,
+      `/api/v1/admin/warm-pools/${segment(id)}`,
+      identity(warmPoolView, id),
+      {
+        ...options,
+        method: 'PUT',
+        expectedStatus: 202,
+        body,
+      },
+    );
+  }
   listSandboxes(options: AdminSandboxListOptions = {}) {
     bound(options);
     return read(
