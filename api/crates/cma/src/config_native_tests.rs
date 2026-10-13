@@ -1,0 +1,211 @@
+use super::*;
+
+#[test]
+fn native_namespace_and_connection_do_not_replace_legacy_configuration() {
+    let key = TemporaryEntry::file(b"native-control-key-fixture-padding-0000");
+    let config = configured(&[
+        ("CHRONO_AGENT_SANDBOX_ENABLED", "true"),
+        ("CHRONO_AGENT_SANDBOX_CONTROL_KEY_FILE", key.path_str()),
+        ("CHRONO_AGENT_SANDBOX_NAMESPACE", "remote-cma"),
+        (
+            "CHRONO_AGENT_SANDBOX_API_SERVER",
+            "https://remote-api.example",
+        ),
+        ("CHRONO_AGENT_SANDBOX_CA_FILE", "/var/run/native/ca.crt"),
+        ("CHRONO_AGENT_SANDBOX_TOKEN_FILE", "/var/run/native/token"),
+    ])
+    .unwrap();
+    assert_eq!(config.runtime.sandbox_namespace, "chrono-bot");
+    assert_eq!(
+        config.runtime.agent_sandbox.as_ref().unwrap().namespace,
+        "remote-cma"
+    );
+    assert_eq!(
+        config
+            .runtime
+            .agent_sandbox_connection
+            .as_ref()
+            .unwrap()
+            .server,
+        "https://remote-api.example"
+    );
+    assert!(config.runtime.retain_opensandbox);
+    assert!(!config.runtime.allocate_agent_sandbox);
+}
+
+#[test]
+fn native_configuration_preserves_local_defaults_and_rejects_partial_remote_credentials() {
+    let key = TemporaryEntry::file(b"native-control-key-fixture-padding-0000");
+    let config = configured(&[
+        ("CHRONO_AGENT_SANDBOX_ENABLED", "true"),
+        ("CHRONO_AGENT_SANDBOX_CONTROL_KEY_FILE", key.path_str()),
+    ])
+    .unwrap();
+    assert_eq!(
+        config.runtime.agent_sandbox.unwrap().namespace,
+        "chrono-bot"
+    );
+    assert!(config.runtime.agent_sandbox_connection.is_none());
+    let fields = [
+        (
+            "CHRONO_AGENT_SANDBOX_API_SERVER",
+            "https://remote-api.example",
+        ),
+        ("CHRONO_AGENT_SANDBOX_CA_FILE", "/var/run/native/ca.crt"),
+        ("CHRONO_AGENT_SANDBOX_TOKEN_FILE", "/var/run/native/token"),
+    ];
+    for bits in 1..7 {
+        let subset: Vec<_> = fields
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| bits & (1 << i) != 0)
+            .map(|(_, field)| *field)
+            .collect();
+        assert!(configured(&subset)
+            .unwrap_err()
+            .contains("must be configured together"));
+    }
+    assert!(configured(&[
+        ("CHRONO_AGENT_SANDBOX_ENABLED", "true"),
+        ("CHRONO_AGENT_SANDBOX_CONTROL_KEY_FILE", key.path_str()),
+        ("CHRONO_AGENT_SANDBOX_NAMESPACE", "bad/namespace"),
+    ])
+    .is_err());
+}
+
+#[test]
+fn native_home_override_keeps_the_legacy_seed_and_requires_all_fields() {
+    let legacy = [
+        ("CHRONO_SANDBOX_HOME_STORAGE_CLASS", "local-disk"),
+        ("CHRONO_SANDBOX_HOME_CAPACITY_GIB", "64"),
+        ("CHRONO_SANDBOX_HOME_TEMPLATE", "local-seed"),
+        ("CHRONO_SANDBOX_HOME_TEMPLATE_UID", "local-seed-uid"),
+    ];
+    let native = [
+        ("CHRONO_AGENT_SANDBOX_HOME_STORAGE_CLASS", "remote-disk"),
+        ("CHRONO_AGENT_SANDBOX_HOME_CAPACITY_GIB", "32"),
+        ("CHRONO_AGENT_SANDBOX_HOME_TEMPLATE", "remote-seed"),
+        ("CHRONO_AGENT_SANDBOX_HOME_TEMPLATE_UID", "remote-seed-uid"),
+    ];
+    let defaults = configured(&legacy).unwrap();
+    assert_eq!(
+        defaults.runtime.home_policy,
+        defaults.runtime.agent_sandbox_home_policy
+    );
+    let config = configured(&[legacy, native].concat()).unwrap();
+    assert_eq!(
+        config
+            .runtime
+            .home_policy
+            .as_ref()
+            .unwrap()
+            .template_generation,
+        "local-seed-uid"
+    );
+    let remote = config.runtime.agent_sandbox_home_policy.unwrap();
+    assert_eq!(remote.template_generation, "remote-seed-uid");
+    assert_eq!(remote.storage_class, "remote-disk");
+    assert_eq!(remote.capacity_gib, 32);
+    for bits in 1..15 {
+        let mut values = legacy.to_vec();
+        values.extend(
+            native
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| bits & (1 << i) != 0)
+                .map(|(_, field)| *field),
+        );
+        assert!(configured(&values).is_err());
+    }
+    let mut empty = legacy.to_vec();
+    empty.extend(native.iter().map(|(key, _)| (*key, "")));
+    assert_eq!(
+        configured(&empty)
+            .unwrap()
+            .runtime
+            .agent_sandbox_home_policy,
+        defaults.runtime.home_policy
+    );
+}
+
+#[test]
+fn different_native_home_policy_requires_independent_authority_when_enabled() {
+    let key = TemporaryEntry::file(b"native-control-key-fixture-padding-0000");
+    let native = [
+        ("CHRONO_AGENT_SANDBOX_ENABLED", "true"),
+        ("CHRONO_AGENT_SANDBOX_CONTROL_KEY_FILE", key.path_str()),
+        ("CHRONO_AGENT_SANDBOX_HOME_STORAGE_CLASS", "remote-disk"),
+        ("CHRONO_AGENT_SANDBOX_HOME_CAPACITY_GIB", "32"),
+        ("CHRONO_AGENT_SANDBOX_HOME_TEMPLATE", "remote-seed"),
+        ("CHRONO_AGENT_SANDBOX_HOME_TEMPLATE_UID", "remote-seed-uid"),
+    ];
+    assert!(configured(&native)
+        .unwrap_err()
+        .contains("requires an independent"));
+
+    let mut separate_namespace = native.to_vec();
+    separate_namespace.push(("CHRONO_AGENT_SANDBOX_NAMESPACE", "native-cma"));
+    assert!(configured(&separate_namespace).is_ok());
+
+    let mut separate_connection = native.to_vec();
+    separate_connection.extend([
+        (
+            "CHRONO_AGENT_SANDBOX_API_SERVER",
+            "https://remote-api.example",
+        ),
+        ("CHRONO_AGENT_SANDBOX_CA_FILE", "/var/run/native/ca.crt"),
+        ("CHRONO_AGENT_SANDBOX_TOKEN_FILE", "/var/run/native/token"),
+    ]);
+    assert!(configured(&separate_connection).is_ok());
+
+    let mut same_policy = native.to_vec();
+    same_policy.extend([
+        ("CHRONO_SANDBOX_HOME_STORAGE_CLASS", "remote-disk"),
+        ("CHRONO_SANDBOX_HOME_CAPACITY_GIB", "32"),
+        ("CHRONO_SANDBOX_HOME_TEMPLATE", "remote-seed"),
+        ("CHRONO_SANDBOX_HOME_TEMPLATE_UID", "remote-seed-uid"),
+    ]);
+    assert!(configured(&same_policy).is_ok());
+}
+
+#[test]
+fn metadata_auth_is_explicit_and_cannot_mix_with_token_file_or_partial_target() {
+    let fields = [
+        (
+            "CHRONO_AGENT_SANDBOX_API_SERVER",
+            "https://remote-api.example",
+        ),
+        ("CHRONO_AGENT_SANDBOX_CA_FILE", "/etc/singapore/ca.crt"),
+        ("CHRONO_AGENT_SANDBOX_AUTH_MODE", "google-metadata"),
+    ];
+    let config = configured(&fields).unwrap();
+    assert_eq!(
+        config.runtime.agent_sandbox_connection.unwrap().auth,
+        layer3_adapter::agent_sandbox::RemoteKubernetesAuth::GoogleMetadata
+    );
+    for missing in 0..fields.len() {
+        let subset: Vec<_> = fields
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i != missing)
+            .map(|(_, v)| *v)
+            .collect();
+        assert!(configured(&subset).is_err());
+    }
+    let mut mixed = fields.to_vec();
+    mixed.push(("CHRONO_AGENT_SANDBOX_TOKEN_FILE", "/var/run/native/token"));
+    assert!(configured(&mixed).unwrap_err().contains("must be unset"));
+    assert!(configured(&[("CHRONO_AGENT_SANDBOX_AUTH_MODE", "auto")]).is_err());
+}
+
+#[test]
+fn disabled_native_provider_does_not_require_projected_remote_connection() {
+    let values = [
+        ("CHRONO_AGENT_SANDBOX_ENABLED", "false"),
+        ("CHRONO_AGENT_SANDBOX_AUTH_MODE", "google-metadata"),
+        ("CHRONO_AGENT_SANDBOX_CA_FILE", "/etc/example-registry-01/ca.crt"),
+    ];
+    let config = configured(&values).expect("disabled native target is optional");
+    assert!(config.runtime.agent_sandbox.is_none());
+    assert!(config.runtime.agent_sandbox_connection.is_none());
+}

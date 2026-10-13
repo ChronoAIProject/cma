@@ -96,6 +96,7 @@ async fn history_follows_existing_handles_through_both_production_backends() {
     for default_new in [false, true] {
         let adapter = CodexAdapter::with_backend(
             RuntimeBackends {
+                home_routes: None,
                 agent_sandbox: Some(native(native_history.clone())),
                 opensandbox: Some(legacy(legacy_history.clone())),
                 allocate_agent_sandbox: default_new,
@@ -145,6 +146,7 @@ async fn unavailable_history_provider_does_not_fall_back_to_another_provider() {
     });
     for native_missing in [true, false] {
         let backend = RuntimeBackends {
+            home_routes: None,
             agent_sandbox: (!native_missing).then(|| native(transport.clone())),
             opensandbox: native_missing.then(|| legacy(transport.clone())),
             allocate_agent_sandbox: !native_missing,

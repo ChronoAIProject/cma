@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 pub const DOCUMENT_VERSION: i32 = 1;
-pub const REGISTRY: &str = "asia-northeast1-docker.pkg.dev/example-project-02/chronoai-registry";
+pub const REGISTRY: &str = "asia-southeast1-docker.pkg.dev/example-project-02/example-registry-01";
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

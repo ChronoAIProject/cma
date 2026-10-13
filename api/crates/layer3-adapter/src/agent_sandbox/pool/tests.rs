@@ -29,6 +29,7 @@ pub(super) fn spec() -> NativePoolSpec {
 pub(super) fn request(binding: NativePoolBinding) -> NativePoolClaimRequest {
     NativePoolClaimRequest {
         home: crate::HomeVolumeRequest {
+            scope: None,
             volume_id: "home-one".into(),
             sandbox_id: "sbx_one".into(),
             policy: binding.spec.home.clone(),

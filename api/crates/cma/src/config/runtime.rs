@@ -12,6 +12,7 @@ const SHA256_SEPARATOR: &str = "@sha256:";
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) struct RuntimeConfig {
     pub agent_sandbox: Option<layer3_adapter::agent_sandbox::AgentSandboxConfig>,
+    pub agent_sandbox_connection: Option<layer3_adapter::agent_sandbox::RemoteKubernetesConfig>,
     pub allocate_agent_sandbox: bool,
     pub retain_opensandbox: bool,
     pub sandbox_base_url: String,
@@ -19,6 +20,7 @@ pub(crate) struct RuntimeConfig {
     pub sandbox_image: String,
     pub sandbox_namespace: String,
     pub home_policy: Option<layer3_adapter::HomeVolumePolicy>,
+    pub agent_sandbox_home_policy: Option<layer3_adapter::HomeVolumePolicy>,
     pub upstream_base_url: String,
     pub upstream_wire_api: String,
     pub platform_base_url: String,
@@ -92,16 +94,43 @@ impl RuntimeConfig {
         )?;
         let agent_sandbox =
             super::agent_sandbox::from_lookup(lookup, &sandbox_namespace, allocate_agent_sandbox)?;
+        let home_policy = super::home::from_lookup(lookup)?;
+        let agent_sandbox_home_policy =
+            super::home::native_from_lookup(lookup, home_policy.as_ref())?;
+        // The deployment keeps the remote ConfigMap projected while native
+        // allocation is disabled so it can be enabled without a manifest
+        // rewrite. Do not validate or compose that optional remote target until
+        // the native provider is explicitly enabled; otherwise the disabled
+        // legacy OpenSandbox startup would require a remote token/CA it cannot
+        // use.
+        let agent_sandbox_connection = if agent_sandbox.is_some() {
+            super::agent_sandbox::connection_from_lookup(lookup)?
+        } else {
+            None
+        };
+        if agent_sandbox.as_ref().is_some_and(|settings| {
+            settings.namespace == sandbox_namespace
+                && agent_sandbox_connection.is_none()
+                && agent_sandbox_home_policy != home_policy
+        }) {
+            return Err(concat!(
+                "a distinct CHRONO_AGENT_SANDBOX_HOME policy requires an independent ",
+                "CHRONO_AGENT_SANDBOX_NAMESPACE or CHRONO_AGENT_SANDBOX_API_SERVER"
+            )
+            .into());
+        }
 
         Ok(Self {
             agent_sandbox,
+            agent_sandbox_connection,
             allocate_agent_sandbox,
             retain_opensandbox,
             sandbox_base_url,
             sandbox_api_key,
             sandbox_image,
             sandbox_namespace,
-            home_policy: super::home::from_lookup(lookup)?,
+            home_policy,
+            agent_sandbox_home_policy,
             upstream_base_url,
             upstream_wire_api,
             platform_base_url,

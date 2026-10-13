@@ -1,4 +1,6 @@
-use layer3_adapter::agent_sandbox::AgentSandboxConfig;
+use layer3_adapter::agent_sandbox::{
+    AgentSandboxConfig, RemoteKubernetesAuth, RemoteKubernetesConfig,
+};
 
 pub(super) fn from_lookup(
     lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
@@ -19,7 +21,9 @@ pub(super) fn from_lookup(
         .trim()
         .to_owned();
     let value = AgentSandboxConfig {
-        namespace: namespace.into(),
+        namespace: lookup("CHRONO_AGENT_SANDBOX_NAMESPACE")?
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| namespace.into()),
         deployment: super::runtime::deployment_id_from_lookup(lookup)?,
         runtime_class: lookup("CHRONO_AGENT_SANDBOX_RUNTIME_CLASS")?.filter(|s| !s.is_empty()),
         service_account: lookup("CHRONO_AGENT_SANDBOX_SERVICE_ACCOUNT")?
@@ -34,4 +38,47 @@ pub(super) fn from_lookup(
     };
     value.validate().map_err(|e| e.to_string())?;
     Ok(Some(value))
+}
+
+pub(super) fn connection_from_lookup(
+    lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
+) -> Result<Option<RemoteKubernetesConfig>, String> {
+    let server = lookup("CHRONO_AGENT_SANDBOX_API_SERVER")?.filter(|value| !value.is_empty());
+    let ca_file = lookup("CHRONO_AGENT_SANDBOX_CA_FILE")?.filter(|value| !value.is_empty());
+    let token_file = lookup("CHRONO_AGENT_SANDBOX_TOKEN_FILE")?.filter(|value| !value.is_empty());
+    let mode = lookup("CHRONO_AGENT_SANDBOX_AUTH_MODE")?;
+    let google = match mode.as_deref() {
+        None | Some("token-file") => false,
+        Some("google-metadata") => true,
+        _ => {
+            return Err(
+                "CHRONO_AGENT_SANDBOX_AUTH_MODE must be token-file or google-metadata".into(),
+            )
+        }
+    };
+    if server.is_none() && ca_file.is_none() && token_file.is_none() && !google {
+        return Ok(None);
+    }
+    if google && token_file.is_some() {
+        return Err(
+            "CHRONO_AGENT_SANDBOX_TOKEN_FILE must be unset for google-metadata authentication"
+                .into(),
+        );
+    }
+    if server.is_none() || ca_file.is_none() || (!google && token_file.is_none()) {
+        return Err("native API_SERVER and CA_FILE must be configured together with TOKEN_FILE for token-file authentication or AUTH_MODE=google-metadata".into());
+    }
+    let connection = RemoteKubernetesConfig {
+        server: server.unwrap(),
+        ca_file: ca_file.unwrap(),
+        auth: if google {
+            RemoteKubernetesAuth::GoogleMetadata
+        } else {
+            RemoteKubernetesAuth::TokenFile {
+                path: token_file.unwrap(),
+            }
+        },
+    };
+    connection.validate().map_err(|error| error.to_string())?;
+    Ok(Some(connection))
 }

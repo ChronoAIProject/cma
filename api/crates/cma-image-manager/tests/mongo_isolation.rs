@@ -11,6 +11,8 @@ use mongodb::{
 };
 #[path = "support/public_images.rs"]
 mod public_images;
+#[path = "support/shared_schema.rs"]
+mod shared_schema;
 #[tokio::test]
 #[ignore = "requires the authenticated image-manager Mongo contract fixture"]
 async fn isolated_credentials_preserve_owner_idempotency_shares_and_build_fences() {

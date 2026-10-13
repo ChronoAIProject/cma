@@ -2,8 +2,31 @@ use super::*;
 
 #[async_trait::async_trait]
 impl SandboxAdapter for HostedAdapter {
+    async fn reserve_home_request(
+        &self,
+        runtime: &RuntimeProvisionRequest,
+        home: &crate::HomeVolumeRequest,
+    ) -> crate::Result<crate::HomeVolumeRequest> {
+        let rendered = self
+            .deployment
+            .render_runtime(&runtime.spec, runtime.generation)?;
+        self.backend.reserve_home_request(&rendered, home).await
+    }
+    fn verify_retained_home_route(
+        &self,
+        handle: &RuntimeHandle,
+        home: &crate::HomeVolumeRequest,
+    ) -> crate::Result<()> {
+        self.backend.verify_retained_home_route(handle, home)
+    }
     fn native_pools(&self) -> Option<&dyn crate::agent_sandbox::NativePoolControl> {
         self.backend.native_pools()
+    }
+    fn native_pools_for_home(
+        &self,
+        home: &crate::HomeVolumeRequest,
+    ) -> crate::Result<Option<&dyn crate::agent_sandbox::NativePoolControl>> {
+        self.backend.native_pools_for_home(home)
     }
     async fn select_native_pool(
         &self,

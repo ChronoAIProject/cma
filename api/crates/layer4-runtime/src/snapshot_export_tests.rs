@@ -21,6 +21,7 @@ impl Fixture {
         std::fs::create_dir_all(&root).unwrap();
         let root = std::fs::canonicalize(root).unwrap();
         let home = HomeVolumeRequest {
+            scope: None,
             volume_id: "volume-one".into(),
             sandbox_id: "sandbox-test".into(),
             policy: HomeVolumePolicy {

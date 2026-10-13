@@ -136,6 +136,16 @@ impl SandboxWorker {
             })
         });
         if let Some(binding) = retained {
+            if let Some(home) = &sandbox.lifecycle.home {
+                if let Err(error) = self.dependencies.adapter.verify_retained_home_route(
+                    &RuntimeHandle::new(&binding.runtime_id),
+                    &home.request,
+                ) {
+                    return self
+                        .retry_failure(sandbox, adapter_failure(error), now)
+                        .await;
+                }
+            }
             if let Err(error) = self
                 .dependencies
                 .adapter
