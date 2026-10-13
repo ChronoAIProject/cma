@@ -8,7 +8,7 @@ use layer2_core::sandbox::agent_access_tool::{
     AgentAccessProposal, AgentAccessRequester, AgentAccessToolAdmission,
 };
 use layer2_core::sandbox::agent_io::{
-    CommandAuthorizationError, PersonalCommandAdmissionAuthority,
+    AgentAuthorizationRevision, CommandAuthorizationError, PersonalCommandAdmissionAuthority,
 };
 use layer2_core::sandbox::SandboxPolicySource;
 use layer2_core::{AgentId, Caller, Capability, ServiceId};
@@ -71,21 +71,8 @@ impl AgentAccessRequests for AgentAccessService {
         services: Vec<String>,
         key: &str,
     ) -> Result<AgentAccessRequest, AgentAccessError> {
-        require_owner_capability(&context.caller)?;
-        if !context.validate_principal()
-            || context.credential_source != CredentialSource::Retained
-            || !matches!(&context.actor,ResourceActor::Human{subject} if subject==&context.caller.subject)
-        {
-            return Err(AgentAccessError::Forbidden);
-        }
-        let authorization = self
-            .authority
-            .personal_command_authority(&context.caller, credential)
-            .await
-            .map_err(|error| match error {
-                CommandAuthorizationError::Revoked => AgentAccessError::Forbidden,
-                CommandAuthorizationError::Unavailable => AgentAccessError::Unavailable,
-            })?;
+        let authorization =
+            retained_owner_authority(context, credential, self.authority.as_ref()).await?;
         let baseline = self
             .policy
             .current_sandbox_policy()
@@ -120,6 +107,33 @@ impl AgentAccessRequests for AgentAccessService {
             .await?
             .view())
     }
+}
+async fn retained_owner_authority(
+    context: &CallerContext,
+    credential: &str,
+    authority: &dyn PersonalCommandAdmissionAuthority,
+) -> Result<AgentAuthorizationRevision, AgentAccessError> {
+    require_owner_capability(&context.caller)?;
+    // Browser cookies project to direct API attribution. Retained custody and
+    // the exact current personal credential establish consent authority.
+    if !context.validate_principal()
+        || context.credential_source != CredentialSource::Retained
+        || !matches!(
+            &context.actor,
+            ResourceActor::Human { subject }
+                | ResourceActor::Api { subject, delegation_id: None }
+                if subject == &context.caller.subject
+        )
+    {
+        return Err(AgentAccessError::Forbidden);
+    }
+    authority
+        .personal_command_authority(&context.caller, credential)
+        .await
+        .map_err(|error| match error {
+            CommandAuthorizationError::Revoked => AgentAccessError::Forbidden,
+            CommandAuthorizationError::Unavailable => AgentAccessError::Unavailable,
+        })
 }
 fn require_owner_capability(caller: &Caller) -> Result<(), AgentAccessError> {
     caller
