@@ -242,6 +242,11 @@ async fn apply_admission(
                 "origin_type": "trigger",
                 "origin_launch_id": launch_id,
             },
+            WorkspaceOrigin::Lifecycle { operation_id } => doc! {
+                "sandbox_id": candidate.sandbox_id.as_str(),
+                "origin_type": "lifecycle",
+                "origin_operation_id": operation_id,
+            },
             WorkspaceOrigin::Manual => {
                 return Err(ApplyError::Domain(
                     SandboxStoreError::WorkspaceOriginConflict,
@@ -393,6 +398,10 @@ fn validate_fresh(
     let origin_matches = matches!(
         (&workspace.origin, kind),
         (WorkspaceOrigin::Manual, WorkspaceAdmissionKind::Manual)
+            | (
+                WorkspaceOrigin::Lifecycle { .. },
+                WorkspaceAdmissionKind::Lifecycle
+            )
             | (
                 WorkspaceOrigin::SandboxProfile { .. },
                 WorkspaceAdmissionKind::SandboxProfile

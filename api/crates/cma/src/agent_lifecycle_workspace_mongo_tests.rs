@@ -12,6 +12,7 @@ mod fixture;
 
 fn work(record: &crate::store::LifecycleRecord, existing: bool) -> ProvisionInput {
     ProvisionInput {
+        behavior: record.input.behavior,
         request: record.input.request.clone(),
         runtime_image: None,
         capacity: layer3_adapter::SandboxCapacity::default(),

@@ -87,7 +87,11 @@ pub(super) async fn seed(store: &InMemorySandboxStore) -> Workspace {
                 runtime_image: None,
                 cpu_millis: 1000,
                 memory_mib: 1024,
-                nyxid_services: vec![ServiceId::new("github")],
+                nyxid_services: vec![
+                    ServiceId::new("github"),
+                    ServiceId::new("chrono-llm-public"),
+                    ServiceId::new("ornn-api"),
+                ],
                 agent_provider: AgentProvider::default(),
                 model_access: ModelAccess::ChronoaiManaged,
                 max_workspaces: 4,
@@ -103,7 +107,11 @@ pub(super) async fn seed(store: &InMemorySandboxStore) -> Workspace {
         credential: SandboxCredentialState {
             source: Default::default(),
             service_grants: vec![],
-            reaches: vec![ServiceId::new("github")],
+            reaches: vec![
+                ServiceId::new("github"),
+                ServiceId::new("chrono-llm-public"),
+                ServiceId::new("ornn-api"),
+            ],
             key_generation: 0,
             delivered: false,
             current: None,

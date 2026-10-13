@@ -1,3 +1,4 @@
+use crate::store::LifecycleBehavior;
 use layer1_public::rest::{
     AgentLifecycleCreateRequest, AgentLifecyclePermissions, AgentLifecycleProfile,
     AgentLifecycleProvisioningError,
@@ -21,17 +22,24 @@ pub(super) fn validate_request(
             "name must contain 1-80 non-control bytes".into(),
         ));
     }
-    if let Some(workspace) = &request.workspace_id {
-        if workspace.is_empty()
-            || workspace.len() > 256
-            || !workspace
+    if request.workspace_id.is_some() && request.sandbox_id.is_some() {
+        return Err(AgentLifecycleProvisioningError::Invalid(
+            "choose either sandbox_id or workspace_id".into(),
+        ));
+    }
+    for context in [&request.workspace_id, &request.sandbox_id]
+        .into_iter()
+        .flatten()
+    {
+        if context.is_empty()
+            || context.len() > 256
+            || !context
                 .bytes()
                 .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
             || request.image.is_some()
-            || request.repository.is_some()
         {
             return Err(AgentLifecycleProvisioningError::Invalid(
-                "an existing workspace requires a valid workspace_id and inherits its image and repository".into(),
+                "an existing Sandbox or Workspace requires a valid id and inherits its runtime image".into(),
             ));
         }
     }
@@ -73,19 +81,36 @@ pub(super) fn validate_request(
 pub(super) fn agent_content(
     profile: &AgentLifecycleProfile,
 ) -> Result<AgentProfileContent, AgentLifecycleProvisioningError> {
-    let thinking_effort = match profile.reasoning_effort.as_deref().unwrap_or("medium") {
-        "minimal" => ThinkingEffort::Minimal,
-        "low" => ThinkingEffort::Low,
-        "medium" => ThinkingEffort::Medium,
-        "high" => ThinkingEffort::High,
-        "x_high" => ThinkingEffort::XHigh,
-        other => {
-            return Err(AgentLifecycleProvisioningError::Invalid(format!(
-                "unsupported reasoning_effort {other}"
-            )))
-        }
-    };
-    let permission_level = match profile.permission_mode.as_deref().unwrap_or("guarded") {
+    agent_content_for(profile, LifecycleBehavior::PromptRepository)
+}
+
+pub(super) fn agent_content_for(
+    profile: &AgentLifecycleProfile,
+    behavior: LifecycleBehavior,
+) -> Result<AgentProfileContent, AgentLifecycleProvisioningError> {
+    let legacy = behavior == LifecycleBehavior::Legacy;
+    let thinking_effort =
+        match profile
+            .reasoning_effort
+            .as_deref()
+            .unwrap_or(if legacy { "medium" } else { "high" })
+        {
+            "minimal" => ThinkingEffort::Minimal,
+            "low" => ThinkingEffort::Low,
+            "medium" => ThinkingEffort::Medium,
+            "high" => ThinkingEffort::High,
+            "x_high" => ThinkingEffort::XHigh,
+            other => {
+                return Err(AgentLifecycleProvisioningError::Invalid(format!(
+                    "unsupported reasoning_effort {other}"
+                )))
+            }
+        };
+    let permission_level = match profile.permission_mode.as_deref().unwrap_or(if legacy {
+        "guarded"
+    } else {
+        "autonomous"
+    }) {
         "guarded" => PermissionLevel::Guarded,
         "autonomous" => PermissionLevel::Autonomous,
         other => {
@@ -112,7 +137,10 @@ pub(super) fn agent_content(
         .collect::<Result<Vec<_>, _>>()?;
     let value = AgentProfileContent {
         isolated_agent: false,
-        model: profile.model.clone(),
+        model: profile
+            .model
+            .clone()
+            .or_else(|| (!legacy).then(|| "gpt-6".into())),
         thinking_effort,
         permission_level,
         skills,
@@ -127,12 +155,24 @@ pub(super) fn agent_content(
 pub(super) fn services(
     permissions: &AgentLifecyclePermissions,
 ) -> Result<Vec<layer2_core::ServiceId>, AgentLifecycleProvisioningError> {
+    services_for(permissions, LifecycleBehavior::PromptRepository)
+}
+
+pub(super) fn services_for(
+    permissions: &AgentLifecyclePermissions,
+    behavior: LifecycleBehavior,
+) -> Result<Vec<layer2_core::ServiceId>, AgentLifecycleProvisioningError> {
     if permissions.services.len() > 64 {
         return Err(AgentLifecycleProvisioningError::Invalid(
             "at most 64 services may be selected".into(),
         ));
     }
-    let mut values = Vec::with_capacity(permissions.services.len());
+    let mut values = crate::config::REQUIRED_BASELINE_SERVICES
+        .iter()
+        .filter(|_| behavior != LifecycleBehavior::Legacy)
+        .copied()
+        .map(layer2_core::ServiceId::new)
+        .collect::<Vec<_>>();
     for service in &permissions.services {
         if service.trim().is_empty() || service.len() > 256 || service.chars().any(char::is_control)
         {
@@ -140,23 +180,43 @@ pub(super) fn services(
                 "service id is invalid".into(),
             ));
         }
-        values.push(layer2_core::ServiceId::new(service.clone()));
+        let service = layer2_core::ServiceId::new(service.clone());
+        if behavior == LifecycleBehavior::Legacy || !values.contains(&service) {
+            values.push(service);
+        }
     }
     Ok(values)
 }
 
 pub(super) fn repository_location(
     request: &AgentLifecycleCreateRequest,
+    behavior: LifecycleBehavior,
 ) -> Result<WorkspaceLocation, AgentLifecycleProvisioningError> {
-    Ok(match &request.repository {
-        Some(repository) => WorkspaceLocation::GitRepository {
-            url: repository.url.clone(),
-            reference: repository.reference.clone(),
-        },
-        None => WorkspaceLocation::Directory {
-            name: "workspace".into(),
-        },
+    if behavior == LifecycleBehavior::Legacy {
+        if let Some(repository) = &request.repository {
+            return Ok(WorkspaceLocation::GitRepository {
+                url: repository.url.clone(),
+                reference: repository.reference.clone(),
+            });
+        }
+    }
+    Ok(WorkspaceLocation::Directory {
+        name: "workspace".into(),
     })
+}
+
+pub(super) fn first_message(request: &AgentLifecycleCreateRequest) -> String {
+    let mut message =
+        "You are running in a CMA workspace. Preserve existing files and changes. ".to_string();
+    if let Some(repository) = &request.repository {
+        // JSON quotation keeps user supplied URL/ref data distinct from instructions.
+        let repository = serde_json::to_string(repository).expect("repository is serializable");
+        message.push_str(&format!("The user selected this GitHub repository: {repository}. Set up this repository in your current workspace using your available tools. Preserve any existing files and changes. "));
+    } else {
+        message.push_str("Keep this workspace ready for the user's next task. ");
+    }
+    message.push_str("If a required NyxID service or GitHub access is missing, call the agent_key_scope_revision MCP tool to request access. Do not ask the user to paste a secret. Wait for CMA to confirm updated access before retrying. Briefly report readiness or the required access.");
+    message
 }
 
 pub(super) fn sandbox_error(error: SandboxServiceError) -> AgentLifecycleProvisioningError {
@@ -180,7 +240,15 @@ pub(super) fn sandbox_error(error: SandboxServiceError) -> AgentLifecycleProvisi
 
 pub(super) fn workspace_error(error: WorkspaceServiceError) -> AgentLifecycleProvisioningError {
     match error {
-        WorkspaceServiceError::Forbidden => AgentLifecycleProvisioningError::Forbidden,
+        WorkspaceServiceError::Forbidden | WorkspaceServiceError::NotFound => {
+            AgentLifecycleProvisioningError::Forbidden
+        }
+        WorkspaceServiceError::SandboxNotReady
+        | WorkspaceServiceError::NameConflict
+        | WorkspaceServiceError::LimitReached { .. }
+        | WorkspaceServiceError::OriginConflict => {
+            AgentLifecycleProvisioningError::Conflict(error.to_string())
+        }
         WorkspaceServiceError::Connection(_) => AgentLifecycleProvisioningError::Unavailable,
         WorkspaceServiceError::ProfileNotFound
         | WorkspaceServiceError::InvalidProfile(_)

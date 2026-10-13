@@ -31,11 +31,15 @@ use std::{
     time::Duration,
 };
 
-use crate::store::{CreateResult, LifecycleInput, LifecycleLease, MongoAgentLifecycleStore};
+use crate::store::{
+    CreateResult, LifecycleBehavior, LifecycleInput, LifecycleLease, MongoAgentLifecycleStore,
+};
 
 #[path = "agent_lifecycle_profiles.rs"]
 mod profiles;
 
+#[path = "agent_lifecycle_sandbox.rs"]
+mod existing_sandbox;
 #[path = "agent_lifecycle_worker.rs"]
 mod worker;
 #[path = "agent_lifecycle_workspace.rs"]
@@ -65,6 +69,7 @@ pub(crate) struct InlineAgentLifecycle {
 }
 
 struct ProvisionInput {
+    behavior: LifecycleBehavior,
     request: AgentLifecycleCreateRequest,
     runtime_image: Option<String>,
     capacity: layer3_adapter::SandboxCapacity,
@@ -168,12 +173,16 @@ impl InlineAgentLifecycle {
     async fn provision(
         &self,
         caller: &Caller,
-        input: ProvisionInput,
+        mut input: ProvisionInput,
     ) -> Result<String, AgentLifecycleProvisioningError> {
+        if input.request.sandbox_id.is_some() {
+            self.prepare_existing_sandbox(caller, &mut input).await?;
+        }
         if input.request.workspace_id.is_some() {
             return self.provision_in_workspace(caller, &input).await;
         }
         let ProvisionInput {
+            behavior,
             request,
             runtime_image,
             capacity,
@@ -192,6 +201,7 @@ impl InlineAgentLifecycle {
             &key,
             capacity,
             limits,
+            behavior,
         )
         .await?;
         self.operations
@@ -277,8 +287,9 @@ impl InlineAgentLifecycle {
                             agent_revision.profile_id.clone(),
                             agent_revision.revision,
                         ),
-                        title: Some(request.name),
-                        first_message: None,
+                        title: Some(request.name.clone()),
+                        first_message: (behavior == LifecycleBehavior::PromptRepository)
+                            .then(|| validation::first_message(&request)),
                         origin: AgentOrigin::Lifecycle {
                             operation_id: lease.id.clone(),
                         },
@@ -307,7 +318,7 @@ impl InlineAgentLifecycle {
                 3,
                 "workspace_runtime",
                 "ready",
-                "Workspace, skills, model, reasoning effort, system prompt and permission level are ready",
+                "Agent runtime is ready; initial instructions are queued for the Agent",
             )
             .await
             .map_err(|_| AgentLifecycleProvisioningError::Unavailable)?;
@@ -341,15 +352,13 @@ impl AgentLifecycleProvisioner for InlineAgentLifecycle {
             .allows(Capability::UseOwnSandboxes)
             .then_some(())
             .ok_or(AgentLifecycleProvisioningError::Forbidden)?;
-        if request.workspace_id.is_none() && !caller.authorization.allows(Capability::CreateSandbox)
+        if request.workspace_id.is_none()
+            && request.sandbox_id.is_none()
+            && !caller.authorization.allows(Capability::CreateSandbox)
         {
             return Err(AgentLifecycleProvisioningError::Forbidden);
         }
         let _authority = self.authority(caller, context)?;
-        if request.workspace_id.is_some() {
-            self.contextual_workspace(caller, context.map(|context| &context.actor), &request)
-                .await?;
-        }
         if let Some(record) = self
             .operations
             .replay(&caller.subject, idempotency_key, &request)
@@ -366,6 +375,14 @@ impl AgentLifecycleProvisioner for InlineAgentLifecycle {
                 status: "provisioning".into(),
             });
         }
+        if request.sandbox_id.is_some() {
+            self.contextual_sandbox(caller, context.map(|context| &context.actor), &request)
+                .await?;
+        }
+        if request.workspace_id.is_some() {
+            self.contextual_workspace(caller, context.map(|context| &context.actor), &request)
+                .await?;
+        }
         let profile = request.profile.clone().unwrap_or_default();
         agent_content(&profile)?;
         services(&profile.permissions)?;
@@ -380,6 +397,7 @@ impl AgentLifecycleProvisioner for InlineAgentLifecycle {
             None => None,
         };
         let input = LifecycleInput {
+            behavior: LifecycleBehavior::PromptRepository,
             request,
             resolved_image,
             capacity: Some(self.capacity),

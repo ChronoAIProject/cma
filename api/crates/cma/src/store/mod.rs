@@ -119,8 +119,8 @@ pub(crate) use agent_access_tools::{AuthenticatedAgentAccess, MongoAgentAccessTo
 #[cfg(test)]
 pub(crate) use agent_lifecycle_operations::LifecycleRecord;
 pub(crate) use agent_lifecycle_operations::{
-    CreateResult, LifecycleInput, LifecycleLease, MongoAgentLifecycleStore, DISCOVERY_BATCH,
-    HEARTBEAT,
+    CreateResult, LifecycleBehavior, LifecycleInput, LifecycleLease, MongoAgentLifecycleStore,
+    DISCOVERY_BATCH, HEARTBEAT,
 };
 pub use auth::MongoAuthStore;
 pub(crate) use bindings::{MongoBindingCredentials, MongoProviderToolSource};
