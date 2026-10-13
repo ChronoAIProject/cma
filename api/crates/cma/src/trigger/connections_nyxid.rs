@@ -264,9 +264,7 @@ impl ServiceConnectionBroker for NyxidServiceConnectionBroker {
                 if requirement.state != ServiceRequirementState::Satisfied {
                     return None;
                 }
-                let Some(row) = selected_service(&requirement.service, &rows) else {
-                    return None;
-                };
+                let row = selected_service(&requirement.service, &rows)?;
                 Some((index, row.id.clone(), row.slug.clone()))
             })
             .collect::<Vec<_>>();
