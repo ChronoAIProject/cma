@@ -5,6 +5,7 @@ pub(super) async fn production_adapter(
     config: &Config,
     subscriptions: Arc<dyn layer3_adapter::hosted::HostedSubscriptionSource>,
     provider_tools: Arc<dyn layer3_adapter::hosted::HostedProviderToolSource>,
+    access_tools: Arc<dyn layer3_adapter::hosted::HostedAccessToolSource>,
 ) -> Result<Arc<dyn layer3_adapter::SandboxAdapter>, String> {
     use layer3_adapter::codex::{CodexAdapter, CodexSandboxSpec};
     use layer3_adapter::hosted::{
@@ -145,7 +146,8 @@ pub(super) async fn production_adapter(
             ..CodexSandboxSpec::default()
         },
     )
-    .with_provider_tools(provider_tools);
+    .with_provider_tools(provider_tools)
+    .with_access_tools(access_tools);
     if let Some(homes) = home_store {
         adapter = adapter.with_home_volumes(homes);
     }
