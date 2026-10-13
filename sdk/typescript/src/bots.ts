@@ -18,6 +18,17 @@ import {
 } from './schema.js';
 
 const profile = object({ id: text, revision: positiveInteger });
+const image = object({ id: text, version: optional(text) });
+const repository = object({ url: text, ref: optional(text) });
+const inlineSkill = object({ id: text, version: optional(text) });
+const inlineAgent = object({
+  model: optional(text),
+  reasoning_effort: optional(text),
+  permission_mode: optional(enumeration('guarded', 'autonomous')),
+  system_prompt: optional(text),
+  skills: array(inlineSkill),
+  permissions: object({ services: array(text) }),
+});
 const identityPolicy = tagged({
   deny: variant('deny', {}),
   open: variant('open', {}),
@@ -37,7 +48,10 @@ const createBotFields = object({
   name: text,
   nyxid_bot_id: optional(text),
   connection_ref: optional(text),
-  profile,
+  image: optional(image),
+  repository: optional(repository),
+  agent: optional(inlineAgent),
+  profile: optional(profile),
   sandbox_profile: optional(profile),
   workspace_profile: optional(profile),
   event_worker_profile: optional(profile),
@@ -48,6 +62,8 @@ const createBot = (value: unknown) => {
   const parsed = createBotFields(value);
   if (Boolean(parsed.nyxid_bot_id) === Boolean(parsed.connection_ref))
     throw new ProtocolError('choose exactly one connection_ref or legacy nyxid_bot_id');
+  if (Boolean(parsed.profile) === Boolean(parsed.agent))
+    throw new ProtocolError('choose exactly one profile or inline agent configuration');
   return parsed;
 };
 const test = object({ accepted_after_ms: integer, first_text: text, level: text, tested_at: text });

@@ -1,15 +1,8 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import corpus from '../../../api/crates/layer1-public/tests/fixtures/public-contract/event-worker-profiles.json';
-import type { EventWorkerProfileRecord } from '@chronoai/cma-sdk';
 import { ApiError } from '@chronoai/cma-sdk';
-import { expect, it, vi } from 'vitest';
-import {
-  creationClient,
-  CREATION_AGENT,
-  CREATION_SANDBOX,
-  CREATION_WORKSPACE,
-} from '../test/creation';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { creationClient } from '../test/creation';
 import { chooseOption } from '../test/select';
 import { BotCreate } from './BotCreate';
 import { useCreationIntent } from './creationIntent';
@@ -28,33 +21,32 @@ function Form({ client, navigate }: { client: BotClient; navigate: () => void })
     />
   );
 }
-async function fill(custom = false) {
+
+beforeEach(() => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ items: [] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    ),
+  );
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+async function fill() {
   const user = userEvent.setup();
   await screen.findByRole('button', { name: 'Event Gateway connection' });
   expect(screen.getByRole('button', { name: 'Continue' })).toBeDisabled();
   await user.type(screen.getByLabelText('Consumer name'), 'Research bot');
   await chooseOption(user, 'Event Gateway connection', 'Research channel');
   await user.click(screen.getByRole('button', { name: 'Continue' }));
-  expect(screen.getByRole('button', { name: 'Continue' })).toBeDisabled();
-  await user.click(
-    await screen.findByRole('button', { name: `Select ${CREATION_AGENT.name} Version 1` }),
-  );
-  if (custom) {
-    await user.click(screen.getByRole('radio', { name: 'Choose my published profiles' }));
-    expect(screen.getByRole('button', { name: 'Continue' })).toBeDisabled();
-    await user.click(
-      await screen.findByRole('button', { name: `Select ${CREATION_SANDBOX.name} Version 1` }),
-    );
-    expect(screen.getByRole('button', { name: 'Continue' })).toBeDisabled();
-    await user.click(
-      await screen.findByRole('button', { name: `Select ${CREATION_WORKSPACE.name} Version 1` }),
-    );
-    for (const checkbox of screen.getAllByRole('checkbox', { name: 'I trust this profile' })) {
-      await user.click(checkbox);
-    }
-  }
+  await screen.findByRole('heading', { name: 'Configure the Agent inline' });
   await user.click(screen.getByRole('button', { name: 'Continue' }));
-  expect(screen.getByRole('button', { name: 'Continue' })).toBeDisabled();
   await chooseOption(user, 'Admission policy', 'Selected senders in private chats');
   await user.type(screen.getByLabelText('Sender IDs'), '111,111');
   expect(screen.getByRole('button', { name: 'Continue' })).toBeDisabled();
@@ -65,7 +57,8 @@ async function fill(custom = false) {
   await user.click(screen.getByRole('button', { name: 'Continue' }));
   return user;
 }
-it('requires all choices and preserves the exact create request after an uncertain response', async () => {
+
+it('requires all choices and preserves the exact inline create request after an uncertain response', async () => {
   const create = vi
     .fn()
     .mockRejectedValueOnce(new TypeError('connection lost'))
@@ -73,7 +66,7 @@ it('requires all choices and preserves the exact create request after an uncerta
   const navigate = vi.fn();
   const client = botClient({ create });
   const view = render(<Form client={client} navigate={navigate} />);
-  const user = await fill(true);
+  const user = await fill();
   await user.click(screen.getByRole('button', { name: 'Create consumer' }));
   await screen.findByRole('button', { name: 'Recover creation' });
   view.unmount();
@@ -83,7 +76,15 @@ it('requires all choices and preserves the exact create request after an uncerta
   expect(create).toHaveBeenCalledTimes(2);
   expect(create.mock.calls[0]?.[0]).toEqual(create.mock.calls[1]?.[0]);
   expect(create.mock.calls[0]?.[0].connection_ref).toBe('connection-fixture');
-  expect(create.mock.calls[0]?.[0]).not.toHaveProperty('nyxid_bot_id');
+  expect(create.mock.calls[0]?.[0]).not.toHaveProperty('profile');
+  expect(create.mock.calls[0]?.[0].agent).toEqual({
+    model: undefined,
+    reasoning_effort: 'medium',
+    permission_mode: 'guarded',
+    system_prompt: '',
+    skills: [],
+    permissions: { services: [] },
+  });
   expect(create.mock.calls[0]?.[1].idempotencyKey).toBe(create.mock.calls[1]?.[1].idempotencyKey);
   expect(create.mock.calls[0]?.[0].admission).toEqual({
     type: 'scoped',
@@ -92,17 +93,10 @@ it('requires all choices and preserves the exact create request after an uncerta
     groups: 'deny',
   });
   expect(create.mock.calls[0]?.[0].reply.ack_after_ms).toBe(1001);
-  expect(create.mock.calls[0]?.[0].sandbox_profile).toEqual({
-    id: CREATION_SANDBOX.revision.profileId,
-    revision: 1,
-  });
-  expect(create.mock.calls[0]?.[0].workspace_profile).toEqual({
-    id: CREATION_WORKSPACE.revision.profileId,
-    revision: 1,
-  });
   expect(navigate).toHaveBeenCalledWith({ kind: 'bot', botId: bot.bot_id });
   expect(sessionStorage.length).toBe(0);
 });
+
 it('shows the public problem detail and permits correction after an explicit refusal', async () => {
   render(
     <Form
@@ -122,35 +116,36 @@ it('shows the public problem detail and permits correction after an explicit ref
   expect(screen.getByRole('button', { name: 'Back' })).toBeEnabled();
 });
 
-it('pins the complete worker revision and all three source references in Bot creation', async () => {
-  const worker = corpus.cases[0]!.response.body as unknown as EventWorkerProfileRecord;
+it('submits image-free inline Agent setup without any profile authoring choice', async () => {
   const create = vi.fn().mockResolvedValue(bot);
-  const base = botClient({ create });
-  const client = {
-    ...base,
-    eventWorkerProfiles: { list: vi.fn().mockResolvedValue({ items: [worker], next_after: null }) },
-  } as unknown as BotClient;
+  const client = botClient({ create });
   const user = userEvent.setup();
   render(<Form client={client} navigate={vi.fn()} />);
   await screen.findByRole('button', { name: 'Event Gateway connection' });
-  await user.type(screen.getByLabelText('Consumer name'), 'Worker bot');
+  await user.type(screen.getByLabelText('Consumer name'), 'Inline worker');
   await chooseOption(user, 'Event Gateway connection', 'Research channel');
   await user.click(screen.getByRole('button', { name: 'Continue' }));
-  await user.click(screen.getByRole('radio', { name: 'Event Worker Profile' }));
-  await chooseOption(
-    user,
-    'Event Worker Profile',
-    `${worker.source.name} · Revision ${worker.revision}`,
+  await user.type(screen.getByLabelText('Model'), 'gpt-5');
+  await user.selectOptions(screen.getByRole('combobox', { name: 'Reasoning effort' }), 'high');
+  await user.selectOptions(
+    screen.getByRole('combobox', { name: 'Permission level' }),
+    'autonomous',
   );
+  await user.type(screen.getByLabelText('System prompt'), 'Respond with concise updates.');
   await user.click(screen.getByRole('button', { name: 'Continue' }));
-  await chooseOption(user, 'Admission policy', 'Selected senders in private chats');
-  await user.type(screen.getByLabelText('Sender IDs'), '111');
+  await chooseOption(user, 'Admission policy', 'Private chats only');
   await user.click(screen.getByRole('button', { name: 'Continue' }));
   await user.click(screen.getByRole('button', { name: 'Create consumer' }));
   expect(create.mock.calls[0]?.[0]).toMatchObject({
-    event_worker_profile: { id: worker.id, revision: worker.revision },
-    profile: worker.source.agent_profile,
-    workspace_profile: worker.source.workspace_profile,
-    sandbox_profile: worker.source.sandbox_profile,
+    connection_ref: 'connection-fixture',
+    agent: {
+      model: 'gpt-5',
+      reasoning_effort: 'high',
+      permission_mode: 'autonomous',
+      system_prompt: 'Respond with concise updates.',
+      skills: [],
+      permissions: { services: [] },
+    },
   });
+  expect(create.mock.calls[0]?.[0]).not.toHaveProperty('profile');
 });

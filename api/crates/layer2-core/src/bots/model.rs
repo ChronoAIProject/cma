@@ -50,6 +50,49 @@ pub struct BotReply {
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct BotImageReference {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BotRepository {
+    pub url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference: Option<String>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BotInlineSkill {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct BotInlinePermissions {
+    #[serde(default)]
+    pub services: Vec<String>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct BotInlineAgentProfile {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission_mode: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system_prompt: Option<String>,
+    #[serde(default)]
+    pub skills: Vec<BotInlineSkill>,
+    #[serde(default)]
+    pub permissions: BotInlinePermissions,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CreateBot {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub event_worker_profile: Option<crate::event_workers::EventWorkerProfileRef>,
@@ -59,6 +102,14 @@ pub struct CreateBot {
     /// Opaque gateway-owned channel connection. Mutually exclusive with legacy external_bot_id.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub connection_ref: Option<String>,
+    /// Immutable Image Manager selection used by the inline consumer authoring path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<BotImageReference>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository: Option<BotRepository>,
+    /// Inline Agent configuration. Profile references remain for historical Bot records.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inline_agent: Option<BotInlineAgentProfile>,
     pub profile: AgentProfileRef,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sandbox_profile: Option<SandboxProfileRef>,
@@ -161,6 +212,7 @@ pub struct Bot {
 }
 impl CreateBot {
     pub fn validate(&self) -> Result<(), super::BotError> {
+        let inline = self.inline_agent.is_some();
         if self.name.trim().is_empty()
             || self.name.len() > 80
             || self.name.chars().any(char::is_control)
@@ -171,6 +223,56 @@ impl CreateBot {
             || self.external_bot_id.len() > 512
             || self.external_bot_id.chars().any(char::is_control)
             || self.profile.revision == 0
+            || (!inline && (self.image.is_some() || self.repository.is_some()))
+            || self.image.as_ref().is_some_and(|image| {
+                image.id.trim().is_empty()
+                    || image.id.len() > 256
+                    || image.id.chars().any(char::is_control)
+                    || image.version.as_ref().is_some_and(|version| {
+                        version.is_empty()
+                            || version.len() > 256
+                            || version.chars().any(char::is_control)
+                    })
+            })
+            || self.repository.as_ref().is_some_and(|repository| {
+                repository.url.trim().is_empty()
+                    || repository.url.len() > 2048
+                    || repository.url.chars().any(char::is_control)
+                    || repository.reference.as_ref().is_some_and(|reference| {
+                        reference.is_empty()
+                            || reference.len() > 255
+                            || reference.chars().any(char::is_control)
+                    })
+            })
+            || self.inline_agent.as_ref().is_some_and(|profile| {
+                profile.model.as_ref().is_some_and(|model| {
+                    model.is_empty() || model.len() > 128 || model.chars().any(char::is_control)
+                }) || profile.reasoning_effort.as_ref().is_some_and(|effort| {
+                    effort.is_empty() || effort.len() > 32 || effort.chars().any(char::is_control)
+                }) || profile.permission_mode.as_ref().is_some_and(|mode| {
+                    mode.is_empty() || mode.len() > 32 || mode.chars().any(char::is_control)
+                }) || profile
+                    .system_prompt
+                    .as_ref()
+                    .is_some_and(|prompt| prompt.len() > 32768)
+                    || profile.skills.len() > 128
+                    || profile.skills.iter().any(|skill| {
+                        skill.id.trim().is_empty()
+                            || skill.id.len() > 256
+                            || skill.id.chars().any(char::is_control)
+                            || skill.version.as_ref().is_some_and(|version| {
+                                version.is_empty()
+                                    || version.len() > 256
+                                    || version.chars().any(char::is_control)
+                            })
+                    })
+                    || profile.permissions.services.len() > 64
+                    || profile.permissions.services.iter().any(|service| {
+                        service.trim().is_empty()
+                            || service.len() > 256
+                            || service.chars().any(char::is_control)
+                    })
+            })
             || self
                 .sandbox_profile
                 .as_ref()

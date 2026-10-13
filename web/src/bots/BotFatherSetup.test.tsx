@@ -95,19 +95,23 @@ it('requires current-account review, creates a private profile, then creates the
   expect(screen.getByLabelText('Consumer name')).toHaveValue(draft.name);
   await chooseOption(user, 'Event Gateway connection', 'Research channel');
   await user.click(screen.getByRole('button', { name: 'Continue' }));
-  // The newly published private profile is selected; the normal picker still permits a change.
+  // The historical setup link supplies initial inline Agent values; no profile picker is shown.
   expect(screen.getByRole('button', { name: 'Continue' })).toBeEnabled();
   await user.click(screen.getByRole('button', { name: 'Continue' }));
   await chooseOption(user, 'Admission policy', 'Private chats only');
   await user.click(screen.getByRole('button', { name: 'Continue' }));
-  expect(screen.getByText(/Paper helper · Version 2/)).toBeInTheDocument();
+  expect(screen.getByText('System default image')).toBeInTheDocument();
   expect(client.bots.create).not.toHaveBeenCalled();
   await user.click(screen.getByRole('button', { name: 'Create consumer' }));
   expect(client.bots.create).toHaveBeenCalledWith(
     expect.objectContaining({
       name: draft.name,
       connection_ref: 'connection-fixture',
-      profile: { id: AGENT_PROFILE.id, revision: 2 },
+      agent: expect.objectContaining({
+        system_prompt: 'My reviewed instructions.',
+        reasoning_effort: 'medium',
+        permission_mode: 'guarded',
+      }),
     }),
     expect.objectContaining({ idempotencyKey: expect.any(String) }),
   );
