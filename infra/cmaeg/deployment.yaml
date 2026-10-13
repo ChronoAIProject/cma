@@ -44,7 +44,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: cmaeg
-          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-cmaeg@sha256:2665ab9fd1b7ab1c8d6607c8454c67cb4fa3acad8071bd165892891b5290cf4d
+          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-cmaeg@sha256:540c5e73f923e9379b99eec76223c3d9a5fc84119c9bac5d8b24ec6d9dbc11a1
           imagePullPolicy: IfNotPresent
           ports:
             - name: http

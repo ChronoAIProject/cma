@@ -7,12 +7,12 @@ metadata:
     app.kubernetes.io/name: cma-agent-manager
     app.kubernetes.io/part-of: cma
 data:
-  CHRONO_SANDBOX_PROVIDER: "opensandbox"
+  CHRONO_SANDBOX_PROVIDER: "agent-sandbox"
   CHRONO_RETAIN_OPENSANDBOX: "true"
-  CHRONO_AGENT_SANDBOX_ENABLED: "false"
-  # Explicit data path: direct Pod IP, or authenticated Kubernetes API streams.
-  # Enable kubernetes-portforward or kubernetes-exec after the remote stream canary passes.
-  CHRONO_AGENT_SANDBOX_RUNTIME_TRANSPORT: "direct"
+  CHRONO_AGENT_SANDBOX_ENABLED: "true"
+  # Verified remote microvm path; exec reaches the guest's loopback runtime.
+  # Native Pod lifecycle and persistent homes remain controller-owned.
+  CHRONO_AGENT_SANDBOX_RUNTIME_TRANSPORT: "kubernetes-exec"
   CHRONO_AGENT_SANDBOX_CONTROL_KEY_FILE: "/var/run/cma-agent-sandbox/control-key"
   # Remote chrono-pod admission requires microvm or gvisor; use its existing class.
   CHRONO_AGENT_SANDBOX_RUNTIME_CLASS: "microvm"
@@ -32,7 +32,7 @@ data:
   CHRONO_AGENT_SANDBOX_TOKEN_FILE: ""
   # Native CRDs own empty VCT PVCs; the runtime image initializes their layout.
   # Existing hyperdisk class supports the microvm pool's N4 nodes; keep 64 GiB.
-  # Snapshot fields stay empty; live RWOP allocation must pass before activation.
+  # Empty-home RWOP allocation and same-PVC suspend/resume passed in production.
   # Retained historical allocations keep their persisted policy and authority.
   CHRONO_AGENT_SANDBOX_HOME_MODE: "native_vct_empty_v1"
   CHRONO_AGENT_SANDBOX_HOME_STORAGE_CLASS: "home-a"
@@ -113,10 +113,10 @@ data:
   # Default for new allocations. Existing live Sandboxes retain their recorded
   # image across API upgrades and rollback; drift never admits rotation work.
   # Prove retained-runtime compatibility before deploying any new API image.
-  CHRONO_SANDBOX_IMAGE: "us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-runtime@sha256:532a64cf193957991248d98d82b7a61f6d333a2b87f5e1db0a19ae55f598ed49"
+  CHRONO_SANDBOX_IMAGE: "asia-southeast1-docker.pkg.dev/chronoai-501608/chrono-pod/cma-runtime@sha256:028aca56ea54349300433d0bcf0d45b48a9ce83f7e6697207fb5dd8b4184bc5b"
   # Native warm pools are managed by immutable image/resources/home policy.
-  # Keep native provider flags disabled until infra installs the pinned APIs
-  # and the deployment preflight in docs/CMA_Deployment_Readiness.md passes.
+  # The installed APIs and cold allocation path passed deployment acceptance.
+  # Verify new pool templates independently before adding operator capacity.
   # Seed system Profiles only while an operator-selected default still names one.
   # Custom published defaults prevent removed system catalogue entries returning.
   CHRONO_SANDBOX_CPU: "1"
