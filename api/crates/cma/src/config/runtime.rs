@@ -13,6 +13,7 @@ const SHA256_SEPARATOR: &str = "@sha256:";
 pub(crate) struct RuntimeConfig {
     pub agent_sandbox: Option<layer3_adapter::agent_sandbox::AgentSandboxConfig>,
     pub agent_sandbox_connection: Option<layer3_adapter::agent_sandbox::RemoteKubernetesConfig>,
+    pub agent_sandbox_runtime_transport: layer3_adapter::hosted::NativeRuntimeTransport,
     pub allocate_agent_sandbox: bool,
     pub retain_opensandbox: bool,
     pub sandbox_base_url: String,
@@ -94,6 +95,7 @@ impl RuntimeConfig {
         )?;
         let agent_sandbox =
             super::agent_sandbox::from_lookup(lookup, &sandbox_namespace, allocate_agent_sandbox)?;
+        let agent_sandbox_runtime_transport = super::agent_sandbox::transport_from_lookup(lookup)?;
         let home_policy = super::home::from_lookup(lookup)?;
         let agent_sandbox_home_policy =
             super::home::native_from_lookup(lookup, home_policy.as_ref())?;
@@ -126,6 +128,7 @@ impl RuntimeConfig {
         Ok(Self {
             agent_sandbox,
             agent_sandbox_connection,
+            agent_sandbox_runtime_transport,
             allocate_agent_sandbox,
             retain_opensandbox,
             sandbox_base_url,

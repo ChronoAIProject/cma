@@ -7,7 +7,6 @@ use futures_util::{stream::SplitSink, SinkExt as _, StreamExt as _};
 use serde::Deserialize;
 use tokio::sync::{mpsc, Mutex};
 use tokio_tungstenite::tungstenite::Message;
-use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 use super::update_relay::UpdateRelay;
 use super::HostedAgentOpenSettings;
@@ -29,7 +28,21 @@ pub(super) const LANE_CONVERSATION_GAP: u8 = 0x03;
 const LANE_RETAINED_OUTPUT: u8 = 0x04;
 const LANE_OUTPUT_ACK: u8 = 0x05;
 
-type Socket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
+pub(super) trait ConversationSocket:
+    futures_util::Stream<Item = Result<Message, tokio_tungstenite::tungstenite::Error>>
+    + futures_util::Sink<Message, Error = tokio_tungstenite::tungstenite::Error>
+    + Unpin
+    + Send
+{
+}
+impl<T> ConversationSocket for T where
+    T: futures_util::Stream<Item = Result<Message, tokio_tungstenite::tungstenite::Error>>
+        + futures_util::Sink<Message, Error = tokio_tungstenite::tungstenite::Error>
+        + Unpin
+        + Send
+{
+}
+pub(super) type Socket = Box<dyn ConversationSocket>;
 type Sink = SplitSink<Socket, Message>;
 type Pending = Arc<Mutex<HashMap<String, PendingCall>>>;
 
