@@ -220,9 +220,6 @@ export function SandboxOverview({
                       </Button>
                     ) : null}
                   </header>
-                  <p>
-                    Profile: <ReferenceLink kind="workspace" id={workspace.profile.id} />
-                  </p>
                   {workspace.status === 'removing' ? null : (
                     <ul className="sandbox-page__agents">
                       {workspace.agents
@@ -256,12 +253,6 @@ export function SandboxOverview({
                                 <p>Agent settings unavailable</p>
                               ) : (
                                 <dl>
-                                  <div>
-                                    <dt>Profile</dt>
-                                    <dd>
-                                      <ReferenceLink kind="agent" id={detail.profile.id} />
-                                    </dd>
-                                  </div>
                                   <div>
                                     <dt>Model</dt>
                                     <dd>{detail.profile.model ?? 'Provider default'}</dd>

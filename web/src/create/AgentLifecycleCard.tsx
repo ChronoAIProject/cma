@@ -30,6 +30,7 @@ type Step = 'image' | 'profile' | 'review';
 interface AgentLifecycleCardProps {
   readonly client: CmaWebClient;
   readonly viewerId?: string;
+  readonly workspaceId?: string;
   readonly onClose: () => void;
   readonly onCreated: (receipt: AgentLifecycleCreateReceipt) => void;
 }
@@ -37,11 +38,12 @@ interface AgentLifecycleCardProps {
 export function AgentLifecycleCard({
   client,
   viewerId,
+  workspaceId,
   onClose,
   onCreated,
 }: AgentLifecycleCardProps) {
   const catalog = useProfileViewsClient()?.authoring;
-  const lifecycle = useLifecycleIntent(client, viewerId);
+  const lifecycle = useLifecycleIntent(client, viewerId, workspaceId);
   const { pending, failure, operation, connection: connectionRequest } = lifecycle;
   const createdReceipt = lifecycle.intent?.receipt;
   const [step, setStep] = useState<Step>('image');
@@ -61,8 +63,19 @@ export function AgentLifecycleCard({
     () => images.find((image) => image.id === selectedImage) ?? SYSTEM_IMAGE,
     [images, selectedImage],
   );
+  const [workspaceName, setWorkspaceName] = useState<string>();
   useEffect(() => {
     const request = new AbortController();
+    if (workspaceId !== undefined) {
+      void client
+        .readWorkspace(workspaceId, { signal: request.signal })
+        .then((workspace) => {
+          if (!request.signal.aborted && workspace.id === workspaceId)
+            setWorkspaceName(workspace.name);
+        })
+        .catch(() => undefined);
+      return () => request.abort();
+    }
     void listAgentImages(request.signal)
       .then((catalogue) => {
         if (request.signal.aborted) return;
@@ -79,19 +92,23 @@ export function AgentLifecycleCard({
         if (!request.signal.aborted) setImagesLoading(false);
       });
     return () => request.abort();
-  }, []);
+  }, [client, workspaceId]);
   const submit = () => {
     const input: AgentLifecycleCreateInput = {
       name: name.trim(),
-      ...(selected.id === SYSTEM_IMAGE.id ? {} : { image: { id: selected.id } }),
-      ...(repository.trim() === '' ? {} : { repository: { url: repository.trim() } }),
+      ...(workspaceId !== undefined
+        ? { workspace_id: workspaceId }
+        : {
+            ...(selected.id === SYSTEM_IMAGE.id ? {} : { image: { id: selected.id } }),
+            ...(repository.trim() === '' ? {} : { repository: { url: repository.trim() } }),
+          }),
       profile: {
         model: model.trim() || undefined,
         reasoning_effort: effort,
         permission_mode: permission,
         system_prompt: systemPrompt,
         skills: skills.map(({ id, version }) => ({ id, version })),
-        permissions: { services: scopes },
+        ...(workspaceId === undefined ? { permissions: { services: scopes } } : {}),
       },
     };
     void lifecycle.submit(input);
@@ -109,7 +126,11 @@ export function AgentLifecycleCard({
       <Modal
         open={connectionRequest === undefined}
         title="New agent"
-        description="Agent Manager provisions the sandbox, workspace and runtime from this request."
+        description={
+          workspaceId === undefined
+            ? 'Agent Manager provisions the sandbox, workspace and runtime from this request.'
+            : `Create an Agent in ${workspaceName ?? 'the selected workspace'} using its existing runtime image.`
+        }
         onClose={() => {
           if (operation?.status === 'succeeded' || operation?.status === 'failed')
             lifecycle.clear();
@@ -189,7 +210,13 @@ export function AgentLifecycleCard({
             {(['image', 'profile', 'review'] as const).map((item, index) => (
               <li key={item} aria-current={step === item ? 'step' : undefined}>
                 <span>{index + 1}</span>{' '}
-                {item === 'image' ? 'Image' : item === 'profile' ? 'Agent setup' : 'Review'}
+                {item === 'image'
+                  ? workspaceId === undefined
+                    ? 'Image'
+                    : 'Workspace'
+                  : item === 'profile'
+                    ? 'Agent setup'
+                    : 'Review'}
               </li>
             ))}
           </ol>
@@ -209,55 +236,64 @@ export function AgentLifecycleCard({
                 A clear name helps you find this Agent in the navigation tree.
               </p>
             </div>
-            <fieldset className="agent-lifecycle-choices">
-              <legend>Runtime image</legend>
-              <p className="profile-field__help">
-                Image Manager provides private and public images. The system default is always
-                available.
+            {workspaceId !== undefined ? (
+              <p role="status">
+                Workspace: {workspaceName ?? 'Selected workspace'}. This Agent uses the existing
+                Sandbox and workspace.
               </p>
-              {imagesLoading ? <p role="status">Loading images…</p> : null}
-              {imagesError ? (
-                <p role="status">{imagesError} Using the system default image.</p>
-              ) : null}
-              {images.map((image) => (
-                <label key={image.id} className="agent-lifecycle-choice">
-                  <input
-                    type="radio"
-                    name="agent-image"
-                    value={image.id}
-                    checked={selectedImage === image.id}
-                    onChange={() => setSelectedImage(image.id)}
-                  />
-                  <span>
-                    <strong>{image.name}</strong>
-                    <small>
-                      {image.description ?? 'No description'}
-                      {image.id === SYSTEM_IMAGE.id
-                        ? ''
-                        : ` · ${imageVisibilityLabel(image.visibility)}`}
-                    </small>
-                  </span>
-                </label>
-              ))}
-            </fieldset>
+            ) : (
+              <fieldset className="agent-lifecycle-choices">
+                <legend>Runtime image</legend>
+                <p className="profile-field__help">
+                  Image Manager provides private and public images. The system default is always
+                  available.
+                </p>
+                {imagesLoading ? <p role="status">Loading images…</p> : null}
+                {imagesError ? (
+                  <p role="status">{imagesError} Using the system default image.</p>
+                ) : null}
+                {images.map((image) => (
+                  <label key={image.id} className="agent-lifecycle-choice">
+                    <input
+                      type="radio"
+                      name="agent-image"
+                      value={image.id}
+                      checked={selectedImage === image.id}
+                      onChange={() => setSelectedImage(image.id)}
+                    />
+                    <span>
+                      <strong>{image.name}</strong>
+                      <small>
+                        {image.description ?? 'No description'}
+                        {image.id === SYSTEM_IMAGE.id
+                          ? ''
+                          : ` · ${imageVisibilityLabel(image.visibility)}`}
+                      </small>
+                    </span>
+                  </label>
+                ))}
+              </fieldset>
+            )}
           </div>
         ) : null}
         {createdReceipt === undefined && lifecycle.intent === undefined && step === 'profile' ? (
           <div className="agent-lifecycle-step">
-            <div className="create-form__field">
-              <label htmlFor="agent-repository">GitHub repository workspace (optional)</label>
-              <Input
-                id="agent-repository"
-                type="url"
-                placeholder="https://github.com/org/repository"
-                value={repository}
-                onChange={(event) => setRepository(event.target.value)}
-              />
-              <p className="profile-field__help">
-                Agent Manager asks agent-sandbox to create the workspace directly from this
-                repository.
-              </p>
-            </div>
+            {workspaceId === undefined ? (
+              <div className="create-form__field">
+                <label htmlFor="agent-repository">GitHub repository workspace (optional)</label>
+                <Input
+                  id="agent-repository"
+                  type="url"
+                  placeholder="https://github.com/org/repository"
+                  value={repository}
+                  onChange={(event) => setRepository(event.target.value)}
+                />
+                <p className="profile-field__help">
+                  Agent Manager asks agent-sandbox to create the workspace directly from this
+                  repository.
+                </p>
+              </div>
+            ) : null}
             <div className="agent-lifecycle-grid">
               <label>
                 Model
@@ -307,12 +343,16 @@ export function AgentLifecycleCard({
             </label>
             <fieldset className="agent-lifecycle-checks">
               <legend>Agent key scope</legend>
-              <ServicePicker
-                catalog={catalog}
-                value={scopes}
-                onChange={setScopes}
-                disabled={pending}
-              />
+              {workspaceId !== undefined ? (
+                <p>This Agent inherits the existing Sandbox’s connected services and key scope.</p>
+              ) : (
+                <ServicePicker
+                  catalog={catalog}
+                  value={scopes}
+                  onChange={setScopes}
+                  disabled={pending}
+                />
+              )}
             </fieldset>
             <fieldset className="agent-lifecycle-checks">
               <legend>Skills</legend>
@@ -331,11 +371,15 @@ export function AgentLifecycleCard({
             <dl>
               <div>
                 <dt>Image</dt>
-                <dd>{selected.name}</dd>
+                <dd>{workspaceId === undefined ? selected.name : 'Existing Sandbox image'}</dd>
               </div>
               <div>
                 <dt>Workspace</dt>
-                <dd>{repository.trim() || 'Empty workspace'}</dd>
+                <dd>
+                  {workspaceId === undefined
+                    ? repository.trim() || 'Empty workspace'
+                    : (workspaceName ?? 'Selected workspace')}
+                </dd>
               </div>
               <div>
                 <dt>Agent setup</dt>
@@ -345,7 +389,13 @@ export function AgentLifecycleCard({
               </div>
               <div>
                 <dt>Key scope</dt>
-                <dd>{scopes.length === 0 ? 'None selected' : scopes.join(', ')}</dd>
+                <dd>
+                  {workspaceId !== undefined
+                    ? 'Inherited from the existing Sandbox'
+                    : scopes.length === 0
+                      ? 'None selected'
+                      : scopes.join(', ')}
+                </dd>
               </div>
               <div>
                 <dt>Skills</dt>

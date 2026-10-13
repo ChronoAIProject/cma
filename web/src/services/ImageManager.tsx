@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Button } from '../ui/Button';
+import { Input } from '../ui/Input';
 import { can, segment, serviceRequest, ServiceError, type ServiceSession } from './client';
 import { PageStatus, usePage, WriteForm } from './data';
 import { imageVisibilityLabel } from '../create/imageCatalog';
@@ -31,7 +32,7 @@ export function ImageManager({
   const [scope, setScope] = useState('all');
   return (
     <>
-      <label>
+      <label className="service-field">
         Image catalog
         <select value={scope} onChange={(event) => setScope(event.target.value)}>
           <option value="all">All accessible images</option>
@@ -326,7 +327,7 @@ function ImageDetails({
           >
             <label>
               NyxID account ID
-              <input
+              <Input
                 value={subject}
                 onChange={(e) => setSubject(e.target.value)}
                 required

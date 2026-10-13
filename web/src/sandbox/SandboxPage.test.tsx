@@ -67,6 +67,9 @@ it('explains provider persistence while workspace, pause and delete actions rema
   expect(screen.getByRole('button', { name: 'New workspace' })).toBeEnabled();
   expect(screen.getByRole('button', { name: 'Pause' })).toBeEnabled();
   expect(screen.getByRole('button', { name: 'Delete' })).toBeEnabled();
+  expect(screen.queryByText('Profile')).not.toBeInTheDocument();
+  expect(screen.queryByText('Profile:')).not.toBeInTheDocument();
+  expect(document.querySelector('a[href^="/profiles/"]')).toBeNull();
 });
 
 it.each(['active', 'paused'] as const)(

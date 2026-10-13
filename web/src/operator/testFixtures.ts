@@ -6,6 +6,7 @@ import type {
   PlatformSettings,
   ProfileKind,
   StoredPlatformSettings,
+  WarmPoolView,
 } from '@chronoai/cma-sdk';
 import type { OperatorClient } from './client';
 
@@ -82,6 +83,19 @@ export const settings: PlatformSettings = {
   future: { preserved: true },
 };
 export const stored: StoredPlatformSettings = { revision: 4, settings };
+export const warmPool: WarmPoolView = {
+  id: 'pool-1',
+  revision: 1,
+  image: `registry.example/cma-runtime@sha256:${'a'.repeat(64)}`,
+  cpu_millis: 1000,
+  memory_mib: 4096,
+  target_replicas: 3,
+  ready_replicas: 2,
+  observed: true,
+  status: 'pending',
+  resource_name: 'cma-pool-1',
+  error: null,
+};
 export const publicProfile = (kind: ProfileKind) => ({
   kind,
   id: `${kind}-public`,
@@ -94,6 +108,24 @@ export const publicProfile = (kind: ProfileKind) => ({
 });
 export function operatorClient() {
   const admin = {
+    listWarmPools: vi.fn<OperatorClient['admin']['listWarmPools']>().mockResolvedValue({
+      items: [warmPool],
+      default_cpu_millis: 1000,
+      default_memory_mib: 1024,
+      default_image: warmPool.image,
+      available: true,
+    }),
+    configureWarmPool: vi
+      .fn<OperatorClient['admin']['configureWarmPool']>()
+      .mockImplementation(async (body) => ({ ...warmPool, ...body, revision: 2 })),
+    resizeWarmPool: vi
+      .fn<OperatorClient['admin']['resizeWarmPool']>()
+      .mockImplementation(async (id, body) => ({
+        ...warmPool,
+        id,
+        target_replicas: body.target_replicas,
+        revision: body.expected_revision + 1,
+      })),
     listSandboxes: vi
       .fn<OperatorClient['admin']['listSandboxes']>()
       .mockResolvedValue({ items: [sandboxRow], next: null }),
