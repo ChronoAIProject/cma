@@ -1,5 +1,11 @@
 # C-001 deployment handoff
 
+For the current deployed artifacts and measured user-flow results, see
+[CMA native Sandbox production verification](CMA_Native_Production_Verification.md).
+The prerequisite observations below are the historical 2026-10-13 handoff; the
+verification report records which were subsequently resolved and the measured
+acceptance coverage and limits.
+
 The three portals ship from one web image: Agent Manager (`/agent-manager`),
 Image Manager (`/image-manager`) and Event Gateway (`/event-gateway`). Their
 backends remain separate services with their own collection schemas. This handoff prepares
@@ -38,8 +44,9 @@ NyxID service identities and protocol paths remain valid.
 Compatibility Services `cma-api` and `cmaeg` select the corresponding canonical
 workloads. Existing Nyx ChannelPointers and sealed channel records bind the
 exact `http://example-host-01.example-namespace.svc` authority, so `CMAEG_CMA_BASE_URL` retains
-that origin while provider dispatch and new internal references use canonical
-names. The `cmaeg` alias preserves retained CMA configurations during the staged
+that origin. The CMA provider registry uses the same origin so outbound binding
+management receives the dedicated service credential under its exact-origin
+authentication rule. Other internal references use canonical names. The `cmaeg` alias preserves retained CMA configurations during the staged
 rename. Do not rewrite stored pointer identities to match a cosmetic name.
 
 Before the first deployment under canonical names, copy the existing Secret
