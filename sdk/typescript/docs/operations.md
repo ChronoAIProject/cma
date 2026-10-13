@@ -55,3 +55,35 @@ no public setting for snapshot scheduling or checkpoint archive retention.
 `unsupported.mcp()`, `.a2a()` and `.agentCard()` preserve typed interface refusals
 as `ApiError`; they are probes, not implementations of those protocols. Agent
 terminal requests are likewise refused by `agents.terminal(id)`.
+
+## Native warm pools
+
+Native pools reserve the deployment's pinned system runtime image and a CPU/memory allocation. The server owns the home seed and runtime admission policy. `configure_platform` is required for inventory and writes.
+
+```ts
+import { createClient } from '@chronoai/cma-sdk';
+
+const cma = createClient({ baseUrl: 'https://cma.example' });
+const inventory = await cma.admin.listWarmPools();
+const target = await cma.admin.configureWarmPool(
+  {
+    cpu_millis: inventory.default_cpu_millis,
+    memory_mib: inventory.default_memory_mib,
+    target_replicas: 2,
+  },
+  { idempotencyKey: 'operator-pool-create-2026-10-13' },
+);
+
+// Accepted targets reconcile asynchronously. Keep the same key and request
+// when retrying an uncertain creation response.
+const refreshed = await cma.admin.listWarmPools();
+const current = refreshed.items.find((pool) => pool.id === target.id);
+if (current) {
+  await cma.admin.resizeWarmPool(current.id, {
+    expected_revision: current.revision,
+    target_replicas: 0,
+  });
+}
+```
+
+`available: false` means provider inventory could not be observed. Recorded targets remain visible, and `ready_replicas: null` means readiness is unknown. A 202 response acknowledges durable intent; check `status` and `observed` for reconciliation progress. Refresh after a resize conflict before submitting a new revision. Setting the target to zero stops replenishment; claimed Agent runtimes keep their existing homes and lifecycle.
