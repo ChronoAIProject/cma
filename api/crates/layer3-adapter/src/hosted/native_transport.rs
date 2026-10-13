@@ -26,7 +26,9 @@ impl ProviderHostedControlTransport {
                 "runtime stream has no native authority".into(),
             ));
         };
-        client.runtime_stream(handle, binding, kind).await
+        client
+            .runtime_stream(handle, binding, kind, self.native_transport)
+            .await
     }
 
     pub(super) async fn native_http(

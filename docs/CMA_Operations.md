@@ -856,7 +856,7 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_SANDBOX_PROVIDER` | Runtime provider selector: `opensandbox` (default) or `agent-sandbox`; selects the direct agent-sandbox backend for new allocations |
 | `CHRONO_RETAIN_OPENSANDBOX` | Whether to retain the legacy OpenSandbox endpoint configuration; `true` by default, and required while existing OpenSandbox runtimes remain addressable |
 | `CHRONO_AGENT_SANDBOX_ENABLED` | Optional boolean override for the direct agent-sandbox adapter; defaults to the provider selection |
-| `CHRONO_AGENT_SANDBOX_RUNTIME_TRANSPORT` | `direct` (default) connects to the owned Pod IP on TCP 9090. `kubernetes-portforward` carries runtime control, history and conversation WebSockets through authenticated in-process Kubernetes API streams to port 9090, using the same pinned CA and renewable credentials as CRD operations. Requires `get`/`create` on `pods/portforward` in the runtime namespace. No local listening port, external process, router or `pods/proxy` permission is used. |
+| `CHRONO_AGENT_SANDBOX_RUNTIME_TRANSPORT` | `direct` (default) connects to the owned Pod IP on TCP 9090. `kubernetes-portforward` uses authenticated Kubernetes `pods/portforward` streams to port 9090. `kubernetes-exec` uses `pods/exec` and the runtime image's `/usr/bin/python3` to relay stdio to fixed `127.0.0.1:9090`. Both carry control, history and conversation WebSockets with the same pinned CA and renewable credentials as CRD operations. The selected subresource needs `get`/`create` authorization. No local listening port, local subprocess, router or `pods/proxy` permission is used. |
 | `CHRONO_AGENT_SANDBOX_CONTROL_KEY_FILE` | Required readable secret file when the direct agent-sandbox adapter is enabled; never store the control key in a ConfigMap |
 | `CHRONO_AGENT_SANDBOX_RUNTIME_CLASS` | Optional Kubernetes RuntimeClass passed to agent-sandbox Pods |
 | `CHRONO_AGENT_SANDBOX_SERVICE_ACCOUNT` | Kubernetes ServiceAccount for agent-sandbox Pods; defaults to `cma-runtime` |
@@ -1045,11 +1045,20 @@ and gates remain unchanged.
 Native runtime transport is selected independently of allocation. Keep
 `CHRONO_AGENT_SANDBOX_RUNTIME_TRANSPORT=direct` where CMA can reach the runtime
 Pod IP. With `kubernetes-portforward`, CMA opens a Kubernetes API stream to the
-owned Pod's fixed port 9090 for each HTTP request or conversation. The existing
+owned Pod's fixed port 9090 for each HTTP request or conversation.
+`kubernetes-exec` instead opens the `runtime` container's stdio with fixed
+`/usr/bin/python3 -I -u -c` arguments, running a checked-in relay to
+`127.0.0.1:9090`. This supports RuntimeClasses whose CRI port-forward cannot
+reach the guest's network namespace, provided their exec stream works. Python
+must already exist in the admitted runtime image; no runtime image or package
+installation is performed by this mode. The relay connects once, confirms
+readiness before receiving a request, and bounds each directional buffer to
+64 KiB. Its arguments contain only static code, never tokens or request bytes.
+The existing
 runtime token remains an inner HTTP/WebSocket header; the Kubernetes bearer
 credential authenticates only the outer API connection. Neither credential is
 placed in request URLs, and transport errors exclude upstream response bodies.
-The mode has no automatic direct-IP or proxy fallback.
+Neither stream mode falls back to another transport automatically.
 
 Each stream validates the exact Sandbox UID, Pod UID, owner reference, address
 and readiness before and after opening, before sending runtime credentials.
@@ -1058,16 +1067,21 @@ and 32 HTTP requests can be active, with separate shared budgets so long-lived
 conversations cannot consume control capacity. Exhaustion returns AtCapacity
 without queuing. Control exchanges retain the one-hour deadline; history reads
 have a 120-second deadline and existing response-size bounds. Completion,
-cancellation, refusal and stream drop close the forwarding task. A lost response
+cancellation, refusal and stream drop close the local streaming task. The exec
+relay exits when its stdin or stdout closes, including under backpressure;
+a successful exec exit preserves buffered response bytes for the caller.
+A lost response
 does not trigger transport-level replay or discovery of a replacement Pod.
 
-Enable this mode only after a canary using the deployment's actual remote
+Enable a stream mode only after a canary using the deployment's actual remote
 identity proves control, history, long-lived WebSocket communication and cleanup
 on the configured RuntimeClass. The API server and kubelet carry this traffic;
 validate their capacity and connection limits for the intended concurrency.
 The checked-in default remains `direct`. Changing this setting does not create
 a router, alter NetworkPolicy or grant RBAC; the runtime namespace must already
-authorize `get`/`create` on `pods/portforward` for CMA.
+authorize `get`/`create` on the selected `pods/portforward` or `pods/exec`
+subresource for CMA. Exec also runs one small Python process per active stream;
+include that cost and disconnect cleanup in the runtime capacity canary.
 
 For native agent-sandbox runtimes, pause retains the original Sandbox CRD and
 home PVC, patches `operatingMode: Suspended` and waits for all Pods owned by its
