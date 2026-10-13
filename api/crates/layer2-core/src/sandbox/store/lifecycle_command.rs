@@ -103,8 +103,8 @@ where
             current.validate().map_err(|error| {
                 SandboxStoreError::Corrupt(format!("stored sandbox is invalid: {error}"))
             })?;
-            let application = apply_command(current, &command)?;
-            let PendingApplication::Commit {
+            let application = apply_sandbox_lifecycle_command(current, &command)?;
+            let SandboxLifecycleCommandApplication::Commit {
                 expected_revision,
                 sandbox,
                 event,
@@ -140,7 +140,9 @@ where
     }
 }
 
-pub(crate) enum PendingApplication {
+/// Pure lifecycle admission for stores that atomically persist additional authority.
+#[doc(hidden)]
+pub enum SandboxLifecycleCommandApplication {
     Commit {
         expected_revision: u64,
         sandbox: Sandbox,
@@ -150,7 +152,7 @@ pub(crate) enum PendingApplication {
     NotEligible(Sandbox),
 }
 
-impl PendingApplication {
+impl SandboxLifecycleCommandApplication {
     pub(super) fn result(self) -> SandboxLifecycleCommandResult {
         match self {
             Self::Accepted(outcome) => SandboxLifecycleCommandResult::Accepted(outcome),
@@ -160,10 +162,19 @@ impl PendingApplication {
     }
 }
 
-pub(crate) fn apply_command(
+/// Validate and apply lifecycle policy without performing storage effects.
+#[doc(hidden)]
+pub fn apply_sandbox_lifecycle_command(
     current: Sandbox,
     command: &SandboxLifecycleCommand,
-) -> Result<PendingApplication, SandboxStoreError> {
+) -> Result<SandboxLifecycleCommandApplication, SandboxStoreError> {
+    validate_command(command)?;
+    if current.id != command.sandbox_id || current.owner != command.owner {
+        return Err(SandboxStoreError::NotFound);
+    }
+    current
+        .validate()
+        .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
     match &command.kind {
         SandboxLifecycleCommandKind::Pause { notice } => apply_pause(current, command, notice),
         SandboxLifecycleCommandKind::Revive { cause } => apply_revive(current, command, *cause),
@@ -174,7 +185,7 @@ fn apply_pause(
     current: Sandbox,
     command: &SandboxLifecycleCommand,
     notice: &Option<String>,
-) -> Result<PendingApplication, SandboxStoreError> {
+) -> Result<SandboxLifecycleCommandApplication, SandboxStoreError> {
     if current.status == SandboxStatus::Pausing
         && matches!(
             current.lifecycle.operation,
@@ -193,7 +204,7 @@ fn apply_pause(
         ));
     }
     if current.status != SandboxStatus::Active {
-        return Ok(PendingApplication::NotEligible(current));
+        return Ok(SandboxLifecycleCommandApplication::NotEligible(current));
     }
     let expected_revision = current.revision;
     let previous = current.status;
@@ -202,10 +213,10 @@ fn apply_pause(
         .begin_pause(command.requested_at.clone(), notice.clone())
         .is_err()
     {
-        return Ok(PendingApplication::NotEligible(current));
+        return Ok(SandboxLifecycleCommandApplication::NotEligible(current));
     }
     validate_candidate(&sandbox)?;
-    Ok(PendingApplication::Commit {
+    Ok(SandboxLifecycleCommandApplication::Commit {
         expected_revision,
         event: SandboxEventKind::StatusChanged {
             from: previous,
@@ -219,7 +230,7 @@ fn apply_revive(
     current: Sandbox,
     command: &SandboxLifecycleCommand,
     cause: SandboxReviveCause,
-) -> Result<PendingApplication, SandboxStoreError> {
+) -> Result<SandboxLifecycleCommandApplication, SandboxStoreError> {
     if current.status == SandboxStatus::Pausing {
         let mut sandbox = current.clone();
         if sandbox
@@ -227,7 +238,7 @@ fn apply_revive(
             .is_ok()
         {
             validate_candidate(&sandbox)?;
-            return Ok(PendingApplication::Commit {
+            return Ok(SandboxLifecycleCommandApplication::Commit {
                 expected_revision: current.revision,
                 sandbox,
                 event: SandboxEventKind::WorkStepCompleted {
@@ -247,7 +258,7 @@ fn apply_revive(
                 SandboxLifecycleCommandDisposition::AlreadyScheduled,
             ));
         }
-        return Ok(PendingApplication::NotEligible(current));
+        return Ok(SandboxLifecycleCommandApplication::NotEligible(current));
     }
     if current.status == SandboxStatus::Reviving
         && matches!(
@@ -260,7 +271,7 @@ fn apply_revive(
             .cancel_recovery_pause(&command.requested_at)
             .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?
         {
-            return Ok(PendingApplication::Commit {
+            return Ok(SandboxLifecycleCommandApplication::Commit {
                 expected_revision: current.revision,
                 sandbox,
                 event: SandboxEventKind::WorkStepCompleted {
@@ -292,7 +303,7 @@ fn apply_revive(
         ));
     }
     if current.status != SandboxStatus::Paused {
-        return Ok(PendingApplication::NotEligible(current));
+        return Ok(SandboxLifecycleCommandApplication::NotEligible(current));
     }
     let expected_revision = current.revision;
     let previous = current.status;
@@ -301,10 +312,10 @@ fn apply_revive(
         .begin_revive(cause, command.requested_at.clone())
         .is_err()
     {
-        return Ok(PendingApplication::NotEligible(current));
+        return Ok(SandboxLifecycleCommandApplication::NotEligible(current));
     }
     validate_candidate(&sandbox)?;
-    Ok(PendingApplication::Commit {
+    Ok(SandboxLifecycleCommandApplication::Commit {
         expected_revision,
         event: SandboxEventKind::StatusChanged {
             from: previous,
@@ -317,8 +328,8 @@ fn apply_revive(
 fn accepted(
     sandbox: Sandbox,
     disposition: SandboxLifecycleCommandDisposition,
-) -> PendingApplication {
-    PendingApplication::Accepted(SandboxLifecycleCommandOutcome {
+) -> SandboxLifecycleCommandApplication {
+    SandboxLifecycleCommandApplication::Accepted(SandboxLifecycleCommandOutcome {
         sandbox,
         disposition,
     })
