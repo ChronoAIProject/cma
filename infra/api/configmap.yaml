@@ -10,6 +10,9 @@ data:
   CHRONO_SANDBOX_PROVIDER: "opensandbox"
   CHRONO_RETAIN_OPENSANDBOX: "true"
   CHRONO_AGENT_SANDBOX_ENABLED: "false"
+  # Explicit data path: direct Pod IP, or authenticated Kubernetes API streams.
+  # Enable kubernetes-portforward only after the actual remote stream canary passes.
+  CHRONO_AGENT_SANDBOX_RUNTIME_TRANSPORT: "direct"
   CHRONO_AGENT_SANDBOX_CONTROL_KEY_FILE: "/var/run/cma-agent-sandbox/control-key"
   # Remote chrono-pod admission requires microvm or gvisor; use its existing class.
   CHRONO_AGENT_SANDBOX_RUNTIME_CLASS: "microvm"

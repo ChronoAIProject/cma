@@ -1,6 +1,35 @@
 use super::*;
 
 #[test]
+fn native_runtime_transport_requires_explicit_valid_selection() {
+    use layer3_adapter::hosted::NativeRuntimeTransport;
+    assert_eq!(
+        configured(&[])
+            .unwrap()
+            .runtime
+            .agent_sandbox_runtime_transport,
+        NativeRuntimeTransport::Direct
+    );
+    assert_eq!(
+        configured(&[(
+            "CHRONO_AGENT_SANDBOX_RUNTIME_TRANSPORT",
+            "kubernetes-portforward"
+        )])
+        .unwrap()
+        .runtime
+        .agent_sandbox_runtime_transport,
+        NativeRuntimeTransport::KubernetesPortforward
+    );
+    for invalid in ["", "proxy", "portforward", "kubernetes-portforward "] {
+        assert!(
+            configured(&[("CHRONO_AGENT_SANDBOX_RUNTIME_TRANSPORT", invalid)])
+                .unwrap_err()
+                .contains("CHRONO_AGENT_SANDBOX_RUNTIME_TRANSPORT")
+        );
+    }
+}
+
+#[test]
 fn native_namespace_and_connection_do_not_replace_legacy_configuration() {
     let key = TemporaryEntry::file(b"native-control-key-fixture-padding-0000");
     let config = configured(&[

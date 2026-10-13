@@ -24,7 +24,17 @@ impl ProviderHostedControlTransport {
     pub fn for_agent_sandbox(
         client: crate::agent_sandbox::AgentSandboxClient,
     ) -> crate::Result<Self> {
-        Self::with_discovery(RuntimeDiscovery::AgentSandbox(Arc::new(client)), None)
+        Self::for_agent_sandbox_with_transport(client, NativeRuntimeTransport::Direct)
+    }
+
+    pub fn for_agent_sandbox_with_transport(
+        client: crate::agent_sandbox::AgentSandboxClient,
+        mode: NativeRuntimeTransport,
+    ) -> crate::Result<Self> {
+        let mut transport =
+            Self::with_discovery(RuntimeDiscovery::AgentSandbox(Arc::new(client)), None)?;
+        transport.native_transport = mode;
+        Ok(transport)
     }
 
     fn with_discovery(
@@ -46,6 +56,7 @@ impl ProviderHostedControlTransport {
             archive_factory,
             state: Arc::new(Mutex::new(TransportState::default())),
             subscriptions: None,
+            native_transport: NativeRuntimeTransport::Direct,
         })
     }
 
@@ -78,8 +89,16 @@ impl ProviderHostedControlTransport {
             RuntimeDiscovery::AgentSandbox(client) => {
                 let binding = client.pod_binding(handle).await?;
                 let address = std::net::SocketAddr::new(binding.pod_ip, SUPERVISOR_PORT);
-                RuntimeEndpoint::parse("http://runtime.invalid", &format!("http://{address}"))
-                    .map(|e| e.with_control_token(client.control_token(&binding.sandbox_name)))
+                let endpoint =
+                    RuntimeEndpoint::parse("http://runtime.invalid", &format!("http://{address}"))?
+                        .with_control_token(client.control_token(&binding.sandbox_name));
+                Ok(
+                    if self.native_transport == NativeRuntimeTransport::KubernetesPortforward {
+                        endpoint.with_native_binding(handle.clone(), binding)
+                    } else {
+                        endpoint
+                    },
+                )
             }
         }
     }
