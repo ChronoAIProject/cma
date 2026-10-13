@@ -23,7 +23,7 @@ mod fixtures;
 mod operations;
 mod records;
 #[cfg(test)]
-mod tests;
+pub(in crate::store) mod tests;
 mod validation;
 use records::{OpenRecord, Scope};
 

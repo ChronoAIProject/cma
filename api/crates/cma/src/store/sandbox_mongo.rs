@@ -58,6 +58,7 @@ const SANDBOX_COLLECTIONS: &[&str] = &[
     WORKTREES,
     AGENTS,
     super::agent_access_tools::COLLECTION,
+    super::agent_access_requests::COLLECTION,
     AGENT_REUSE_BINDINGS,
     super::trigger_first_messages::COLLECTION,
     AGENT_LOG,
@@ -96,6 +97,7 @@ pub struct MongoSandboxStore {
     pub(super) worktrees: Collection<Document>,
     pub(super) agents: Collection<Document>,
     pub(super) agent_access_tools: Collection<Document>,
+    pub(super) agent_access_requests: Collection<Document>,
     pub(super) agent_reuse_bindings: Collection<Document>,
     pub(super) agent_log: Collection<Document>,
     pub(super) agent_creation_provenance: Collection<Document>,
@@ -153,6 +155,10 @@ impl MongoSandboxStore {
                 &database,
                 super::agent_access_tools::COLLECTION,
             ),
+            agent_access_requests: majority_collection(
+                &database,
+                super::agent_access_requests::COLLECTION,
+            ),
             agent_reuse_bindings: majority_collection(&database, AGENT_REUSE_BINDINGS),
             agent_log: majority_collection(&database, AGENT_LOG),
             agent_creation_provenance: majority_collection(&database, "agent_creation_provenance"),
@@ -188,6 +194,7 @@ impl MongoSandboxStore {
         super::workspaces::ensure_indexes(&store.workspaces).await?;
         super::worktrees::ensure_indexes(&store.worktrees).await?;
         super::agents::ensure_indexes(&store.agents).await?;
+        super::agent_access_requests::ensure_indexes(&store).await?;
         store
             .agent_access_tools
             .create_index(

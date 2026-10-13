@@ -225,7 +225,7 @@ fn access_rollout_enrolls_only_initial_open_and_capability_parser_is_exact() {
     }
 }
 
-async fn persisted() -> (
+pub(in crate::store) async fn persisted() -> (
     mongodb::Client,
     String,
     Arc<MongoSandboxStore>,
@@ -259,7 +259,7 @@ async fn persisted() -> (
     (client, database, store, state)
 }
 
-async fn publish(store: &MongoSandboxStore, id: &AgentId) {
+pub(in crate::store) async fn publish(store: &MongoSandboxStore, id: &AgentId) {
     let mut agent = store.get_agent(id).await.unwrap().unwrap();
     let mut tree = store
         .get_worktree(&agent.worktree_id)
