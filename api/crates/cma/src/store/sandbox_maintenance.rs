@@ -16,6 +16,7 @@ use super::sandbox_mongo::{
 use super::sandboxes::read_sandbox;
 use transaction::{apply, reconcile, ApplyError, MaintenanceRequest};
 
+mod consented;
 mod evidence;
 #[cfg(test)]
 pub(super) mod mongo_integration_tests;
