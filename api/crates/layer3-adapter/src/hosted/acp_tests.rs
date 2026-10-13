@@ -12,6 +12,8 @@ use crate::{
 
 type ServerSocket = tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>;
 
+#[path = "acp_access_tool_tests.rs"]
+mod access_tool_tests;
 #[path = "acp_channel_tool_tests.rs"]
 mod channel_tool_tests;
 #[path = "acp_provider_tool_tests.rs"]
@@ -112,6 +114,7 @@ fn settings(permission_mode: Option<&str>, own_credential: bool) -> HostedAgentO
         own_credential,
         channel_tool: None,
         provider_tool: None,
+        access_tool: None,
         recovered_prompt: None,
     }
 }
