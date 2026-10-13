@@ -264,7 +264,6 @@ mod tests {
             "refused-bootstrap",
             &key,
             std::time::Duration::from_secs(86_400),
-            super::super::checkpoint_storage::test_storage(&name),
             ("runtime-isolation-contract", None),
         )
         .await;
@@ -279,7 +278,7 @@ mod tests {
                 "isolated-bootstrap",
                 &key,
                 std::time::Duration::from_secs(86_400),
-                super::super::checkpoint_storage::test_storage(&name),
+                std::sync::Arc::new(super::super::checkpoint_storage::RetiredCheckpointStorage),
                 ("runtime-isolation-contract", None),
             )
             .await

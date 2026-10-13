@@ -50,11 +50,6 @@ pub(crate) struct ControlPlaneComposition {
 
 impl ControlPlaneComposition {
     pub(crate) async fn build(config: &Config) -> Result<Self, String> {
-        let checkpoint_storage = crate::store::ChronoStorage::new(
-            &config.runtime.platform_base_url,
-            &config.checkpoint_storage,
-        )
-        .map_err(|error| format!("checkpoint storage is not usable: {error}"))?;
         let stores = Arc::new(
             MongoStores::connect(
                 &config.mongodb_uri,
@@ -62,7 +57,6 @@ impl ControlPlaneComposition {
                 &config.deployment_id,
                 &config.auth_encryption_key,
                 config.activity_retention,
-                checkpoint_storage,
                 (
                     &config.runtime.sandbox_image,
                     config.runtime.home_policy.as_ref(),
@@ -97,7 +91,6 @@ impl ControlPlaneComposition {
             crate::connections::CodexSubscriptions::new(stores.codex_subscriptions.clone());
         let adapter = production_adapter(
             config,
-            Arc::clone(&stores.checkpoint_objects),
             crate::connections::RuntimeSubscriptions::new(
                 stores.sandbox_model.clone(),
                 subscriptions.clone(),

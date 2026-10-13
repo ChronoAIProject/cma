@@ -121,7 +121,7 @@ pub(crate) use agent_lifecycle_operations::{
 pub use auth::MongoAuthStore;
 pub(crate) use bindings::{MongoBindingCredentials, MongoProviderToolSource};
 pub use checkpoint_objects::MongoCheckpointObjectStore;
-pub(crate) use checkpoint_storage::{CheckpointBlobStore, ChronoStorage};
+pub(crate) use checkpoint_storage::CheckpointBlobStore;
 pub(crate) use codex_subscriptions::MongoSubscriptionStore;
 pub(crate) use default_profiles::DefaultProfileSpec;
 pub use directory::MongoUserDirectoryStore;
