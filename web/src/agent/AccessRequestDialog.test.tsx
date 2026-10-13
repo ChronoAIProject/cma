@@ -73,7 +73,7 @@ it('retains the exact approval after a lost response and locks edits during reco
   first.unmount();
   show();
   await screen.findByRole('button', { name: 'Retry access decision' });
-  expect(await screen.findByRole('checkbox', { name: 'GitHub' })).toBeDisabled();
+  expect(await screen.findByRole('checkbox', { name: 'api-github Requested' })).toBeDisabled();
   await userEvent.click(screen.getByRole('button', { name: 'Retry access decision' }));
   await waitFor(() => expect(decide).toHaveBeenCalledTimes(2));
   expect(decide.mock.calls[1]?.slice(0, 5)).toEqual(decide.mock.calls[0]?.slice(0, 5));
@@ -122,4 +122,67 @@ it('never displays another Agent’s access request', async () => {
     'invalid access request',
   );
   expect(fetch).toHaveBeenCalledOnce();
+});
+it('refuses oversized additive approval before saving an unchangeable decision', async () => {
+  const decide = vi.spyOn(accessRequests, 'decide');
+  vi.mocked(accessRequests.list).mockResolvedValue([
+    { ...request, services: Array.from({ length: 31 }, (_, index) => `service-${index}`) },
+  ]);
+  show();
+  await screen.findByRole('dialog');
+  await userEvent.click(screen.getByRole('button', { name: 'Approve and connect' }));
+  await screen.findByText(
+    'Choose up to 32 services. Existing Sandbox access must remain included.',
+  );
+  expect(decide).not.toHaveBeenCalled();
+  expect(sessionStorage.length).toBe(0);
+  expect(screen.getByRole('button', { name: 'Approve and connect' })).toBeEnabled();
+});
+it('rejects invalid service projections and approval bodies before network effects', async () => {
+  vi.mocked(accessRequests.list).mockRestore();
+  const fetch = vi.spyOn(globalThis, 'fetch');
+  for (const services of [
+    [],
+    ['github/read'],
+    ['x'.repeat(129)],
+    Array<string>(33).fill('service'),
+  ]) {
+    fetch.mockResolvedValue(new Response(JSON.stringify({ items: [{ ...request, services }] })));
+    await expect(accessRequests.list('agent-one', new AbortController().signal)).rejects.toThrow(
+      'invalid access request',
+    );
+  }
+  fetch.mockClear();
+  await expect(
+    accessRequests.decide(
+      'agent-one',
+      'access-one',
+      'approve',
+      'key',
+      [],
+      new AbortController().signal,
+    ),
+  ).rejects.toThrow('Choose 1 to 32');
+  expect(fetch).not.toHaveBeenCalled();
+});
+it('replays an uncertain denial as the original denial after reload', async () => {
+  const decide = vi
+    .spyOn(accessRequests, 'decide')
+    .mockRejectedValue(new Error('Lost denial response'));
+  const first = show();
+  await screen.findByRole('dialog');
+  await userEvent.click(screen.getByRole('button', { name: 'Deny' }));
+  await screen.findByText('Lost denial response');
+  first.unmount();
+  show();
+  await userEvent.click(await screen.findByRole('button', { name: 'Retry access decision' }));
+  await waitFor(() => expect(decide).toHaveBeenCalledTimes(2));
+  expect(decide.mock.calls[0]?.slice(0, 5)).toEqual([
+    'agent-one',
+    'access-one',
+    'deny',
+    expect.any(String),
+    [],
+  ]);
+  expect(decide.mock.calls[1]?.slice(0, 5)).toEqual(decide.mock.calls[0]?.slice(0, 5));
 });
