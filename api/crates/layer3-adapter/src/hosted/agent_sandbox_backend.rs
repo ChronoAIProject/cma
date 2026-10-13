@@ -252,6 +252,16 @@ impl RuntimeBackends {
             AdapterError::Unavailable("recorded runtime provider is not configured".into())
         })
     }
+    async fn allocation_provider(&self, request: &ProviderSandboxRequest) -> Result<bool> {
+        let identity = super::deployment::provider_request_identity(request)?;
+        self.routing
+            .select(
+                &identity.sandbox_id,
+                identity.generation,
+                self.allocate_agent_sandbox,
+            )
+            .await
+    }
     fn for_handle(&self, handle: &RuntimeHandle) -> Result<&dyn HostedBackend> {
         self.select(handle.0.starts_with("agent-sandbox:"))
     }
@@ -265,15 +275,7 @@ impl HostedBackend for RuntimeBackends {
         home: &crate::HomeVolumeRequest,
     ) -> Result<crate::HomeVolumeRequest> {
         self.require_home_routes(home)?;
-        let identity = super::deployment::provider_request_identity(request)?;
-        let selected = self
-            .routing
-            .select(
-                &identity.sandbox_id,
-                identity.generation,
-                self.allocate_agent_sandbox,
-            )
-            .await?;
+        let selected = self.allocation_provider(request).await?;
         self.select(selected)?;
         match &self.home_routes {
             Some(routes) => routes.reserve_for(selected, home),
@@ -347,29 +349,13 @@ impl HostedBackend for RuntimeBackends {
         home: &crate::HomeVolumeRequest,
     ) -> Result<Option<crate::agent_sandbox::NativePoolBinding>> {
         self.require_home_routes(home)?;
-        let identity = super::deployment::provider_request_identity(request)?;
-        let selected = self
-            .routing
-            .select(
-                &identity.sandbox_id,
-                identity.generation,
-                self.allocate_agent_sandbox,
-            )
-            .await?;
+        let selected = self.allocation_provider(request).await?;
         self.select(selected)?
             .select_native_pool(request, image, home)
             .await
     }
     async fn provision(&self, request: ProviderSandboxRequest) -> Result<RuntimeHandle> {
-        let identity = super::deployment::provider_request_identity(&request)?;
-        let selected = self
-            .routing
-            .select(
-                &identity.sandbox_id,
-                identity.generation,
-                self.allocate_agent_sandbox,
-            )
-            .await?;
+        let selected = self.allocation_provider(&request).await?;
         self.select(selected)?.provision(request).await
     }
     async fn teardown_retained(&self, handle: &RuntimeHandle) -> Result<()> {
@@ -407,15 +393,7 @@ impl HostedBackend for RuntimeBackends {
         op: &str,
         digest: &str,
     ) -> Result<RuntimeProvisionReceipt> {
-        let identity = super::deployment::provider_request_identity(&request)?;
-        let selected = self
-            .routing
-            .select(
-                &identity.sandbox_id,
-                identity.generation,
-                self.allocate_agent_sandbox,
-            )
-            .await?;
+        let selected = self.allocation_provider(&request).await?;
         self.select(selected)?
             .provision_receipted(request, op, digest)
             .await
