@@ -4,7 +4,7 @@ import { ApiError } from '@chronoai/cma-sdk';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { creationClient } from '../test/creation';
 import { chooseOption } from '../test/select';
-import { BotCreate } from './BotCreate';
+import { BotCreate, type CreationIntent } from './BotCreate';
 import { useCreationIntent } from './creationIntent';
 import { bot, botClient } from './fixtures.test-support';
 import type { BotClient } from './model';
@@ -46,6 +46,10 @@ async function fill() {
   await chooseOption(user, 'Event Gateway connection', 'Research channel');
   await user.click(screen.getByRole('button', { name: 'Continue' }));
   await screen.findByRole('heading', { name: 'Configure the Agent inline' });
+  await user.type(
+    screen.getByLabelText('GitHub repository workspace (optional)'),
+    'https://github.com/example/project',
+  );
   await user.click(screen.getByRole('button', { name: 'Continue' }));
   await chooseOption(user, 'Admission policy', 'Selected senders in private chats');
   await user.type(screen.getByLabelText('Sender IDs'), '111,111');
@@ -72,6 +76,9 @@ it('requires all choices and preserves the exact inline create request after an 
   view.unmount();
   render(<Form client={client} navigate={navigate} />);
   expect(create).toHaveBeenCalledTimes(1);
+  expect(
+    screen.getByText('https://github.com/example/project', { selector: 'dd' }),
+  ).toBeInTheDocument();
   await user.click(await screen.findByRole('button', { name: 'Recover creation' }));
   expect(create).toHaveBeenCalledTimes(2);
   expect(create.mock.calls[0]?.[0]).toEqual(create.mock.calls[1]?.[0]);
@@ -135,6 +142,11 @@ it('submits image-free inline Agent setup without any profile authoring choice',
   await user.click(screen.getByRole('button', { name: 'Continue' }));
   await chooseOption(user, 'Admission policy', 'Private chats only');
   await user.click(screen.getByRole('button', { name: 'Continue' }));
+  expect(screen.getByText('Agent setup', { selector: 'dt' })).toBeInTheDocument();
+  expect(screen.getByText('Sandbox', { selector: 'dt' })).toBeInTheDocument();
+  expect(screen.getByText('Workspace', { selector: 'dt' })).toBeInTheDocument();
+  expect(screen.queryByText(/profile/i, { selector: 'dt' })).not.toBeInTheDocument();
+  expect(screen.queryByText(/materialize|private runtime revisions/i)).not.toBeInTheDocument();
   await user.click(screen.getByRole('button', { name: 'Create consumer' }));
   expect(create.mock.calls[0]?.[0]).toMatchObject({
     connection_ref: 'connection-fixture',
@@ -149,3 +161,54 @@ it('submits image-free inline Agent setup without any profile authoring choice',
   });
   expect(create.mock.calls[0]?.[0]).not.toHaveProperty('profile');
 });
+
+it.each([false, true])(
+  'retains accurate historical setup labels during recovery (event worker %s)',
+  async (eventWorker) => {
+    const intent: CreationIntent = {
+      key: 'original-consumer-request',
+      profileName: eventWorker ? 'Legacy worker' : 'Legacy Agent',
+      botName: 'Original channel',
+      sandboxProfileName: 'Legacy Sandbox',
+      workspaceProfileName: 'Legacy Workspace',
+      body: {
+        name: 'Original consumer',
+        nyxid_bot_id: 'external-original',
+        profile: { id: 'agp_old', revision: 2 },
+        sandbox_profile: { id: 'sbp_old', revision: 3 },
+        workspace_profile: { id: 'wkp_old', revision: 4 },
+        ...(eventWorker ? { event_worker_profile: { id: 'ewp_old', revision: 5 } } : {}),
+        admission: { type: 'all' },
+        reply: { auto_final: true, ack_after_ms: 2000 },
+      },
+    };
+    const create = vi.fn().mockResolvedValue(bot);
+    render(
+      <BotCreate
+        client={botClient({ create })}
+        profiles={creationClient()}
+        intent={intent}
+        retain={vi.fn()}
+        onNavigate={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByText(
+        eventWorker ? 'Historical Event Worker Profile' : 'Historical Agent Profile',
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(eventWorker ? 'Legacy worker · Version 5' : 'Legacy Agent · Version 2'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Historical Sandbox Profile')).toBeInTheDocument();
+    expect(screen.getByText('Legacy Sandbox · Version 3')).toBeInTheDocument();
+    expect(screen.getByText('Historical Workspace Profile')).toBeInTheDocument();
+    expect(screen.getByText('Legacy Workspace · Version 4')).toBeInTheDocument();
+    expect(screen.queryByText('Created from inline Agent setup')).not.toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Recover creation' }));
+    expect(create).toHaveBeenCalledWith(
+      intent.body,
+      expect.objectContaining({ idempotencyKey: intent.key }),
+    );
+  },
+);
