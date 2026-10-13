@@ -10,6 +10,8 @@ use cmaeg_core::{
 };
 use std::{collections::BTreeMap, time::Duration};
 
+const MIN_BUSY_RETRY_DELAY: Duration = Duration::from_millis(500);
+
 #[derive(Debug, serde::Serialize)]
 pub struct TestResult {
     pub accepted_after_ms: u64,
@@ -59,14 +61,38 @@ async fn run(
         )
         .await
         .map_err(ManagementError::Provider)?;
-    let mut stream = state.providers.start_turn(&provider.slug, TurnRequest {
-                timing: None,
+    let request = TurnRequest {
+        timing: None,
         conversation_id,
-        input: vec![serde_json::json!({"role":"user","content":[{"type":"input_text","text":"CMAEG channel test"}]})],
+        input: vec![
+            serde_json::json!({"role":"user","content":[{"type":"input_text","text":"CMAEG channel test"}]}),
+        ],
         idempotency_key: IdempotencyKey::new(format!("test_{}", uuid::Uuid::new_v4().simple()))
             .map_err(ManagementError::Invalid)?,
-        metadata: BTreeMap::new(), agent_key: credential.clone(), event_context: None,
-    }).await.map_err(ManagementError::Provider)?;
+        metadata: BTreeMap::new(),
+        agent_key: credential.clone(),
+        event_context: None,
+    };
+    let mut stream = loop {
+        match state
+            .providers
+            .start_turn(&provider.slug, request.clone())
+            .await
+        {
+            Ok(stream) => break stream,
+            Err(ProviderError::Busy { retry_after }) => {
+                // Only an explicit refusal permits replay. Keep the same key and
+                // body while the outer deadline also bounds this readiness wait.
+                tokio::time::sleep(
+                    retry_after
+                        .unwrap_or(MIN_BUSY_RETRY_DELAY)
+                        .max(MIN_BUSY_RETRY_DELAY),
+                )
+                .await;
+            }
+            Err(error) => return Err(ManagementError::Provider(error)),
+        }
+    };
     let accepted = stream
         .accepted
         .await
