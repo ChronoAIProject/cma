@@ -57,6 +57,7 @@ const SANDBOX_COLLECTIONS: &[&str] = &[
     WORKSPACES,
     WORKTREES,
     AGENTS,
+    super::agent_access_tools::COLLECTION,
     AGENT_REUSE_BINDINGS,
     super::trigger_first_messages::COLLECTION,
     AGENT_LOG,
@@ -94,6 +95,7 @@ pub struct MongoSandboxStore {
     pub(super) workspaces: Collection<Document>,
     pub(super) worktrees: Collection<Document>,
     pub(super) agents: Collection<Document>,
+    pub(super) agent_access_tools: Collection<Document>,
     pub(super) agent_reuse_bindings: Collection<Document>,
     pub(super) agent_log: Collection<Document>,
     pub(super) agent_creation_provenance: Collection<Document>,
@@ -147,6 +149,10 @@ impl MongoSandboxStore {
             workspaces: majority_collection(&database, WORKSPACES),
             worktrees: majority_collection(&database, WORKTREES),
             agents: majority_collection(&database, AGENTS),
+            agent_access_tools: majority_collection(
+                &database,
+                super::agent_access_tools::COLLECTION,
+            ),
             agent_reuse_bindings: majority_collection(&database, AGENT_REUSE_BINDINGS),
             agent_log: majority_collection(&database, AGENT_LOG),
             agent_creation_provenance: majority_collection(&database, "agent_creation_provenance"),
@@ -182,6 +188,15 @@ impl MongoSandboxStore {
         super::workspaces::ensure_indexes(&store.workspaces).await?;
         super::worktrees::ensure_indexes(&store.worktrees).await?;
         super::agents::ensure_indexes(&store.agents).await?;
+        store
+            .agent_access_tools
+            .create_index(
+                mongodb::IndexModel::builder()
+                    .keys(doc! {"agent_id": 1, "record.conversation": 1})
+                    .build(),
+            )
+            .await
+            .map_err(|error| unavailable("Agent access tool index", error))?;
         super::trigger_first_messages::ensure_indexes(&store).await?;
         super::agent_log::ensure_indexes(&store.agent_log).await?;
         super::agent_channel_usage::ensure_indexes(&store.channel_usage_events).await?;
