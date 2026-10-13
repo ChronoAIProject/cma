@@ -345,8 +345,10 @@ async fn approve_services(
 ```
 
 Use the same body and key after an uncertain reply: the durable service returns
-current progress on replay. `AgentAccessStatus::Connecting` includes a connection
-target naming this access request for the owner's service connection flow.
+current progress on replay. `AgentAccessStatus::Connecting` and `Applying` include
+a connection target naming this access request for the owner's service connection
+flow. Recheck that target if a connection expires while access is being applied;
+reconnecting preserves the approved scope and the current request.
 `Applying` awaits runtime verification; only `Succeeded` confirms applied access.
 Read the list again after connecting services. `Denied` and `Failed` are terminal,
 with an optional safe `error` detail. The SDK rejects crossed Agent/request

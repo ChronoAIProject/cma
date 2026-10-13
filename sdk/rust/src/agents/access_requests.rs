@@ -40,7 +40,7 @@ pub struct AgentAccessRequest {
     pub services: Vec<String>,
     /// Explanation supplied by the originating Agent.
     pub reason: String,
-    /// Present when services must be connected.
+    /// Connection recovery while an approved request is connecting or applying.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub connection: Option<AgentAccessConnection>,
     /// Safe terminal failure detail.
