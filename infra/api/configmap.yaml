@@ -114,7 +114,7 @@ data:
   # Custom published defaults prevent removed system catalogue entries returning.
   CHRONO_SANDBOX_CPU: "1"
   CHRONO_SANDBOX_MEMORY: "1Gi"
-  CHRONO_DEFAULT_AGENT_MODEL: "gpt-5.6-sol"
+  CHRONO_DEFAULT_AGENT_MODEL: "gpt-6"
   CHRONO_DEFAULT_AGENT_EFFORT: "high"
   # Read-only Secret Manager projection, resolved once at startup.
   CHRONO_SANDBOX_API_KEY_FILE: "/var/secrets/opensandbox-api-key"
