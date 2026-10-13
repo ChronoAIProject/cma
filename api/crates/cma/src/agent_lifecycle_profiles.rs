@@ -1,6 +1,7 @@
 //! Immutable inline profiles use the capacity captured at operation admission.
 use super::*;
 
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn create_profiles(
     profiles: &PrivateProfileCreationService,
     caller: &Caller,
@@ -9,12 +10,13 @@ pub(super) async fn create_profiles(
     key: &str,
     capacity: layer3_adapter::SandboxCapacity,
     limits: layer2_core::sandbox::SandboxLimits,
+    behavior: LifecycleBehavior,
 ) -> Result<
     (AgentProfileRevision, WorkspaceProfileRef, SandboxProfileRef),
     AgentLifecycleProvisioningError,
 > {
     let profile = request.profile.clone().unwrap_or_default();
-    let agent = agent_content(&profile)?;
+    let agent = validation::agent_content_for(&profile, behavior)?;
     let agent_revision = profiles
         .create_agent_for_owner(
             &caller.subject,
@@ -27,8 +29,8 @@ pub(super) async fn create_profiles(
         .map_err(validation::profile_error)?;
 
     let workspace_content = WorkspaceProfileContent {
-        location: repository_location(request)?,
-        name: if request.repository.is_some() {
+        location: repository_location(request, behavior)?,
+        name: if behavior == LifecycleBehavior::Legacy && request.repository.is_some() {
             String::new()
         } else {
             "workspace".into()
@@ -51,7 +53,7 @@ pub(super) async fn create_profiles(
         revision: workspace_revision.revision,
     };
 
-    let permissions = services(&profile.permissions)?;
+    let permissions = validation::services_for(&profile.permissions, behavior)?;
     let sandbox_content = SandboxProfileContent {
         runtime_image,
         cpu_millis: capacity.cpu_millis,

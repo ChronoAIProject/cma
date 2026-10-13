@@ -23,6 +23,9 @@ pub struct AgentLifecycleCreateRequest {
     /// Add an Agent to this owned, ready Workspace using its existing Sandbox.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_id: Option<String>,
+    /// Create an empty Workspace and Agent inside this owned Sandbox.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sandbox_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image: Option<AgentLifecycleImageReference>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

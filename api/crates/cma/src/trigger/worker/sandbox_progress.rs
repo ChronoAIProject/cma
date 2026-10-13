@@ -278,6 +278,7 @@ fn valid_workspace_origin(origin: &WorkspaceOrigin, context: &FrozenLaunchContex
     match origin {
         WorkspaceOrigin::Manual => true,
         WorkspaceOrigin::Trigger { launch_id } => valid_origin_id(launch_id),
+        WorkspaceOrigin::Lifecycle { operation_id } => valid_origin_id(operation_id),
         WorkspaceOrigin::SandboxProfile { index } => context
             .profiles
             .sandbox

@@ -84,6 +84,7 @@ impl InlineAgentLifecycle {
         let work = self.provision(
             &caller,
             ProvisionInput {
+                behavior: record.input.behavior,
                 request: record.input.request,
                 runtime_image: record.input.resolved_image,
                 capacity,
