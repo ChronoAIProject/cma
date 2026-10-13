@@ -10,16 +10,7 @@ import { AgentLifecycleCard } from './AgentLifecycleCard';
 import { lifecycleStorageKey } from './lifecycleIntent';
 import { CreationFlow } from './CreationFlow';
 
-const catalog = vi.hoisted(() => ({ listServices: vi.fn(), searchSkills: vi.fn() }));
-vi.mock('../api/context', () => ({ useProfileViewsClient: () => ({ authoring: catalog }) }));
-vi.mock('./imageCatalog', () => ({ listAgentImages: async () => [] }));
-beforeEach(() => {
-  sessionStorage.clear();
-  catalog.listServices.mockResolvedValue([{ id: 'api-github', name: 'GitHub' }]);
-  catalog.searchSkills.mockResolvedValue({
-    items: [{ id: 'ornn-review-id', name: 'Review changes', versions: ['1.2'] }],
-  });
-});
+beforeEach(() => sessionStorage.clear());
 afterEach(() => {
   vi.restoreAllMocks();
   sessionStorage.clear();
@@ -48,23 +39,15 @@ function show(client: CmaWebClient, viewerId = 'owner', onCreated = vi.fn()) {
     />,
   );
 }
-async function review(contextual = false) {
+async function review() {
   const user = userEvent.setup();
-  await user.type(screen.getByLabelText('Agent name'), 'Research');
-  await user.click(screen.getByRole('button', { name: 'Continue' }));
-  if (!contextual) {
-    await screen.findByRole('checkbox', { name: 'GitHub' });
-    await user.click(screen.getByRole('checkbox', { name: 'GitHub' }));
-  } else {
-    expect(screen.queryByRole('checkbox', { name: 'GitHub' })).not.toBeInTheDocument();
-    expect(screen.getByText(/inherits the existing Sandbox’s/)).toBeInTheDocument();
-  }
-  await user.click(await screen.findByRole('button', { name: 'Add Review changes' }));
-  await user.type(screen.getByLabelText('Model'), 'custom-model');
-  await user.click(screen.getByRole('button', { name: 'Continue' }));
+  await user.type(
+    screen.getByLabelText('GitHub repository (optional)'),
+    'https://github.com/org/Research',
+  );
   return user;
 }
-it('uses catalog identities and a pinned skill release; retries the exact request after remount', async () => {
+it('creates from only the optional repository and retries the exact request after remount', async () => {
   const create = vi
     .fn()
     .mockRejectedValueOnce(new TypeError('connection lost'))
@@ -78,12 +61,11 @@ it('uses catalog identities and a pinned skill release; retries the exact reques
   await user.click(screen.getByRole('button', { name: 'Create agent' }));
   await screen.findByText('connection lost');
   const [body, options] = create.mock.calls[0]!;
-  expect(body.profile).toMatchObject({
-    model: 'custom-model',
-    permissions: { services: ['api-github'] },
-    skills: [{ id: 'ornn-review-id', version: '1.2' }],
+  expect(body).toEqual({
+    name: 'Research',
+    repository: { url: 'https://github.com/org/Research' },
   });
-  expect(screen.queryByLabelText('Agent name')).not.toBeInTheDocument();
+  expect(screen.queryByLabelText('GitHub repository (optional)')).not.toBeInTheDocument();
   first.unmount();
   show(client);
   await user.click(screen.getByRole('button', { name: 'Recover creation' }));
@@ -244,23 +226,21 @@ it('keeps contextual Agent creation in the selected workspace and recovers only 
       />,
     );
   const first = draw();
-  expect(await screen.findByText(/Workspace: chrono-bot/)).toBeInTheDocument();
+  expect(await screen.findByText(/Existing Sandbox · chrono-bot/)).toBeInTheDocument();
   expect(screen.queryByRole('group', { name: 'Runtime image' })).not.toBeInTheDocument();
-  const user = await review(true);
-  expect(screen.queryByLabelText('GitHub repository workspace (optional)')).not.toBeInTheDocument();
+  const user = await review();
   await user.click(screen.getByRole('button', { name: 'Create agent' }));
   await screen.findByText('Lost create response');
   const [body, options] = create.mock.calls[0]!;
   expect(body.workspace_id).toBe('wsp_1');
   expect(body).not.toHaveProperty('image');
-  expect(body).not.toHaveProperty('repository');
-  expect(body.profile.model).toBe('custom-model');
-  expect(body.profile).not.toHaveProperty('permissions');
+  expect(body.repository).toEqual({ url: 'https://github.com/org/Research' });
+  expect(body).not.toHaveProperty('profile');
   expect(sessionStorage.getItem(lifecycleStorageKey('owner'))).toBeNull();
   expect(sessionStorage.getItem(lifecycleStorageKey('owner', 'wsp_1'))).toContain('wsp_1');
   first.unmount();
   const global = show(client);
-  expect(screen.getByLabelText('Agent name')).toHaveValue('');
+  expect(screen.getByLabelText('GitHub repository (optional)')).toHaveValue('');
   expect(screen.queryByRole('button', { name: 'Recover creation' })).not.toBeInTheDocument();
   global.unmount();
   draw();
@@ -287,7 +267,7 @@ it('isolates a global creation from contextual creation and rejects a mismatched
       onCreated={vi.fn()}
     />,
   );
-  expect(screen.getByLabelText('Agent name')).toHaveValue('');
+  expect(screen.getByLabelText('GitHub repository (optional)')).toHaveValue('');
   expect(screen.queryByText(/Creation of “Global”/)).not.toBeInTheDocument();
   first.unmount();
   sessionStorage.setItem(lifecycleStorageKey('owner', 'wsp_1'), global);
@@ -301,7 +281,59 @@ it('isolates a global creation from contextual creation and rejects a mismatched
     />,
   );
   expect(screen.getByRole('alert')).toHaveTextContent('saved Agent request could not be read');
-  expect(screen.getByRole('button', { name: 'Continue' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Create agent' })).toBeDisabled();
   expect(create).not.toHaveBeenCalled();
-  await waitFor(() => expect(screen.getByText(/Workspace: chrono-bot/)).toBeInTheDocument());
+  await waitFor(() =>
+    expect(screen.getByText(/Existing Sandbox · chrono-bot/)).toBeInTheDocument(),
+  );
+});
+
+it('uses server defaults without image, workspace or profile selectors and allows an empty repository', async () => {
+  const create = vi.fn().mockResolvedValue({ id: running.id });
+  show(agentClient({ createAgentLifecycle: create, readAgentLifecycle: async () => running }));
+  expect(screen.getAllByRole('textbox')).toHaveLength(1);
+  for (const label of [
+    'Agent name',
+    'Model',
+    'Reasoning effort',
+    'Permission mode',
+    'System prompt',
+  ])
+    expect(screen.queryByLabelText(label)).not.toBeInTheDocument();
+  expect(screen.queryByText('Detailed settings')).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole('button', { name: 'Create agent' }));
+  await waitFor(() => expect(create).toHaveBeenCalledOnce());
+  expect(create.mock.calls[0]?.[0]).toEqual({ name: 'New agent' });
+});
+
+it('selects an existing Sandbox and keeps its recovery separate from new Sandbox creation', async () => {
+  const create = vi.fn().mockRejectedValue(new Error('Lost response'));
+  const client = agentClient({ createAgentLifecycle: create });
+  const first = show(client);
+  const user = userEvent.setup();
+  await screen.findByRole('option', { name: 'Existing Sandbox: Atlas' });
+  await user.selectOptions(screen.getByLabelText('Agent location'), 'sbx_1');
+  await user.click(screen.getByRole('button', { name: 'Create agent' }));
+  await screen.findByText('Lost response');
+  expect(create.mock.calls[0]?.[0]).toEqual({ name: 'New agent', sandbox_id: 'sbx_1' });
+  expect(sessionStorage.getItem(lifecycleStorageKey('owner'))).toBeNull();
+  expect(sessionStorage.getItem(lifecycleStorageKey('owner', undefined, 'sbx_1'))).toContain(
+    'sbx_1',
+  );
+  first.unmount();
+  show(client);
+  expect(screen.queryByRole('button', { name: 'Recover creation' })).not.toBeInTheDocument();
+  await screen.findByRole('option', { name: 'Existing Sandbox: Atlas' });
+  await user.selectOptions(screen.getByLabelText('Agent location'), 'sbx_1');
+  expect(screen.getByRole('button', { name: 'Recover creation' })).toBeEnabled();
+});
+
+it('refuses invalid repository URLs before admission', async () => {
+  const create = vi.fn();
+  show(agentClient({ createAgentLifecycle: create }));
+  const input = screen.getByLabelText('GitHub repository (optional)');
+  fireEvent.change(input, { target: { value: 'https://github.com/org/repo/tree/main' } });
+  expect(screen.getByRole('button', { name: 'Create agent' })).toBeDisabled();
+  expect(screen.getByRole('alert')).toHaveTextContent('HTTPS GitHub repository URL');
+  expect(create).not.toHaveBeenCalled();
 });

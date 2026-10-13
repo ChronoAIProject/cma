@@ -11,6 +11,7 @@ import type { ConnectionTarget } from '../connections/client';
 import type { CreateInlineWorkspaceInput, ProfileReference } from './types';
 import { agentDetail, sandboxDetail, sandboxSummary, workspaceDetail } from './rest/hierarchy';
 import { createAgentTransport, type AgentTransportOptions } from '../agent/transport/client';
+import { agentSettingsClient } from './rest/agentSettings';
 
 /** The write succeeded; a failed detail read must not release its command key. */
 export class CreatedResourceReadError extends Error {
@@ -56,6 +57,10 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
     return profile.content;
   };
   return {
+    ...agentSettingsClient(),
+    grantSandboxServiceAccess: async (id, services, options) => {
+      await sdk.sandboxes.grantServiceAccess(id, { services: [...services] }, options);
+    },
     agentTransport: transport === undefined ? undefined : createAgentTransport(sdk, transport),
     resourceViews: sdk,
     createAgentLifecycle: async (input: AgentLifecycleCreateInput, options) => {
@@ -323,7 +328,8 @@ function isConnectionTarget(value: unknown): value is ConnectionTarget {
     (candidate.type === 'sandbox' ||
       candidate.type === 'workspace' ||
       candidate.type === 'agent' ||
-      candidate.type === 'launch') &&
+      candidate.type === 'launch' ||
+      candidate.type === 'agent_access_request') &&
     typeof candidate.id === 'string' &&
     candidate.id.length > 0
   )

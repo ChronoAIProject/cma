@@ -44,6 +44,7 @@ export interface AgentStreamOptions extends ReadOptions {
 export interface AgentLifecycleCreateInput {
   readonly name: string;
   readonly workspace_id?: string;
+  readonly sandbox_id?: string;
   readonly image?: { readonly id: string; readonly version?: string };
   readonly repository?: { readonly url: string; readonly ref?: string };
   readonly profile?: {
@@ -54,6 +55,13 @@ export interface AgentLifecycleCreateInput {
     readonly skills?: readonly { readonly id: string; readonly version?: string }[];
     readonly permissions?: { readonly services: readonly string[] };
   };
+}
+
+export interface AgentSettingsView {
+  readonly pending?: boolean;
+  readonly model: string;
+  readonly reasoning_effort: 'minimal' | 'low' | 'medium' | 'high' | 'x_high';
+  readonly permission_mode: 'guarded' | 'autonomous';
 }
 
 export interface AgentLifecycleCreateReceipt {
@@ -117,6 +125,17 @@ export interface CmaWebClient {
     operationId: string,
     options?: ReadOptions,
   ) => Promise<AgentLifecycleOperationView>;
+  readonly readAgentSettings?: (id: string, options?: ReadOptions) => Promise<AgentSettingsView>;
+  readonly updateAgentSettings?: (
+    id: string,
+    settings: AgentSettingsView,
+    options: CommandOptions,
+  ) => Promise<AgentSettingsView>;
+  readonly grantSandboxServiceAccess?: (
+    id: string,
+    services: readonly string[],
+    options: CommandOptions,
+  ) => Promise<void>;
   readonly botViews?: BotClient;
   listSandboxes(options?: PageOptions): Promise<ResourcePage<SandboxSummary>>;
   readSandbox(id: string, options?: ReadOptions): Promise<SandboxDetail>;

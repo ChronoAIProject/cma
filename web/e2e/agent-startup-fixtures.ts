@@ -87,7 +87,12 @@ export class LocalStartup {
             first_message: { state: 'queued', queued_at: localTime },
           };
           this.creation ??= structuredClone(this.agent);
-        } else if (url.pathname === '/api/v1/sandboxes/sbx_route/workspaces') {
+        } else if (
+          [
+            '/api/v1/sandboxes/sbx_route/workspaces',
+            '/api/v1/sandboxes/sbx_route/workspaces/inline',
+          ].includes(url.pathname)
+        ) {
           if (!this.createdWorkspace) {
             const created = recorded<Workspace>(
               'instances-state.json',
@@ -150,6 +155,15 @@ export class LocalStartup {
         );
       }
       switch (url.pathname) {
+        case '/api/agent-manager/v1/agents/agt_contract/access-requests':
+          return reply({ items: [] });
+        case '/api/agent-manager/v1/agents/agt_contract/settings':
+          return reply({
+            model: 'gpt-6',
+            reasoning_effort: 'high',
+            permission_mode: 'autonomous',
+            pending: false,
+          });
         case '/api/v2/ui/transport':
           // This legacy boundary intentionally models a server without v2 selection.
           return reply({ code: 'not_found', detail: 'Unknown optional endpoint.' }, 404);
@@ -159,6 +173,7 @@ export class LocalStartup {
         case '/api/v1/resource-access/sandbox/sbx_route':
           return reply({
             capabilities: ['view_details', 'view_history', 'manage_sharing'],
+            owner: { kind: 'person', is_current_person: true },
             revalidate_at: null,
             policy_revision: 1,
           });
