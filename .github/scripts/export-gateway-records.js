@@ -68,7 +68,9 @@ try {
     const cursor = db.getCollection(collection).find({}).sort({ _id: 1 }).batchSize(100);
     let previousId;
     try {
-      for (const row of cursor) {
+      // mongosh cursors expose hasNext/next, not JavaScript iteration.
+      while (cursor.hasNext()) {
+        const row = cursor.next();
         const record = exportRecord(kind, row);
         if (previousId !== undefined && record.record_id <= previousId) invalid();
         previousId = record.record_id;
