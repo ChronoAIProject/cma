@@ -213,12 +213,13 @@ pub enum WorkspaceAdmissionKind {
     Manual,
     SandboxProfile,
     Trigger,
+    Lifecycle,
 }
 
 impl WorkspaceAdmissionKind {
     pub const fn allowed_status(self) -> SandboxStatus {
         match self {
-            Self::Manual | Self::Trigger => SandboxStatus::Active,
+            Self::Manual | Self::Trigger | Self::Lifecycle => SandboxStatus::Active,
             Self::SandboxProfile => SandboxStatus::Installing,
         }
     }

@@ -15,6 +15,7 @@ pub(super) async fn verify(db: &Database) {
     }))
     .unwrap();
     let input = LifecycleInput {
+        behavior: LifecycleBehavior::PromptRepository,
         actor: Some(layer2_core::resource_access::ResourceActor::Api {
             subject: owner.clone(),
             delegation_id: Some("original-grant".into()),
@@ -41,6 +42,7 @@ pub(super) async fn verify(db: &Database) {
     });
     changed.capabilities.clear();
     changed.actor = None;
+    changed.behavior = LifecycleBehavior::Legacy;
     let CreateResult::Existing(replayed) =
         store.create(&owner, "exact-intent", changed).await.unwrap()
     else {
@@ -51,6 +53,7 @@ pub(super) async fn verify(db: &Database) {
     assert_eq!(replayed.input.capabilities, input.capabilities);
     assert_eq!(replayed.input.capacity, input.capacity);
     assert_eq!(replayed.input.actor, input.actor);
+    assert_eq!(replayed.input.behavior, input.behavior);
     assert_eq!(
         store
             .replay(&owner, "exact-intent", &request)

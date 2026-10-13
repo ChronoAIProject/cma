@@ -1,4 +1,5 @@
 mod binding;
+mod lifecycle;
 mod support;
 use super::service_trust::{validate_workspace_profile, validate_workspace_revision};
 use super::store::{

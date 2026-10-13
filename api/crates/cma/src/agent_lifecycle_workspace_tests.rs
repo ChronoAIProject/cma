@@ -9,10 +9,18 @@ fn request(value: serde_json::Value) -> AgentLifecycleCreateRequest {
 }
 
 #[test]
-fn contextual_requests_inherit_image_repository_and_only_existing_key_scope() {
+fn contextual_requests_inherit_image_and_only_existing_key_scope() {
     let valid = request(json!({"name":"Second Agent", "workspace_id":"wk_existing"}));
     validate_request(&valid).unwrap();
-    validate_scopes(&valid, &[layer2_core::ServiceId::new("github")]).unwrap();
+    validate_scopes(
+        &valid,
+        &[
+            layer2_core::ServiceId::new("github"),
+            layer2_core::ServiceId::new("chrono-llm-public"),
+            layer2_core::ServiceId::new("ornn-api"),
+        ],
+    )
+    .unwrap();
     let subset = request(
         json!({"name":"Second Agent","workspace_id":"wk_existing", "profile":{"permissions":{"services":["github"]}}}),
     );
@@ -21,6 +29,8 @@ fn contextual_requests_inherit_image_repository_and_only_existing_key_scope() {
         &[
             layer2_core::ServiceId::new("github"),
             layer2_core::ServiceId::new("calendar"),
+            layer2_core::ServiceId::new("chrono-llm-public"),
+            layer2_core::ServiceId::new("ornn-api"),
         ],
     )
     .unwrap();
@@ -30,7 +40,7 @@ fn contextual_requests_inherit_image_repository_and_only_existing_key_scope() {
     ));
     for invalid in [
         json!({"name":"Second Agent","workspace_id":"wk_existing","image":{"id":"image"}}),
-        json!({"name":"Second Agent","workspace_id":"wk_existing","repository":{"url":"https://github.com/org/repo"}}),
+        json!({"name":"Second Agent","workspace_id":"wk_existing","sandbox_id":"sbx_existing"}),
         json!({"name":"Second Agent","workspace_id":""}),
         json!({"name":"Second Agent","workspace_id":"wk /other"}),
     ] {

@@ -33,8 +33,19 @@ pub(crate) const HEARTBEAT: Duration = Duration::from_secs(20);
 pub(crate) const DISCOVERY_BATCH: usize = 16;
 const MAX_EVENTS: i32 = 32;
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum LifecycleBehavior {
+    #[default]
+    Legacy,
+    PromptRepository,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct LifecycleInput {
+    /// Replaying an admitted operation must preserve its original profile and setup.
+    #[serde(default)]
+    pub behavior: LifecycleBehavior,
     pub request: AgentLifecycleCreateRequest,
     pub resolved_image: Option<String>,
     /// New admissions pin deployment capacity; legacy records used policy minima.

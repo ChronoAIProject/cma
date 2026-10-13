@@ -18,6 +18,9 @@ use super::*;
 
 const NOW: &str = "2026-09-05T00:00:00Z";
 
+#[path = "workspace_lifecycle_tests.rs"]
+mod lifecycle;
+
 #[derive(Clone, Copy, Debug)]
 enum ProfileCorruption {
     AggregateId,
