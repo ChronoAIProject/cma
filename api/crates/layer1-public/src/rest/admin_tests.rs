@@ -406,7 +406,10 @@ async fn settings_support_read_replace_presence_aware_patch_and_reset() {
     assert_eq!(initial.status(), StatusCode::OK);
     let initial = response_json(initial).await;
     assert_eq!(initial["revision"], 0);
-    assert_eq!(initial["settings"]["checkpoints"]["interval_seconds"], 1800);
+    assert!(initial["settings"].get("checkpoints").is_none());
+    assert!(initial["settings"]["retention"]
+        .get("checkpoint_grace_days")
+        .is_none());
 
     let changed = send(
         &fixture.app,
@@ -414,8 +417,7 @@ async fn settings_support_read_replace_presence_aware_patch_and_reset() {
         "/api/v1/admin/settings",
         Some(json!({
             "expected_revision": 0,
-            "marketplace": {"enabled": false},
-            "checkpoints": {"interval_seconds": 600}
+            "marketplace": {"enabled": false}
         })),
         capability,
     )
@@ -424,7 +426,10 @@ async fn settings_support_read_replace_presence_aware_patch_and_reset() {
     let changed = response_json(changed).await;
     assert_eq!(changed["revision"], 1);
     assert_eq!(changed["settings"]["marketplace"]["enabled"], false);
-    assert_eq!(changed["settings"]["checkpoints"]["interval_seconds"], 600);
+    assert!(changed["settings"].get("checkpoints").is_none());
+    assert!(changed["settings"]["retention"]
+        .get("checkpoint_grace_days")
+        .is_none());
     assert_eq!(
         changed["settings"]["inactivity"],
         initial["settings"]["inactivity"]
@@ -486,9 +491,7 @@ async fn settings_refusals_are_confidential_specific_and_revision_safe() {
         json!({"expected_revision": 0}),
         json!({"expected_revision": 0, "marketplace": null}),
         json!({"expected_revision": 0, "inactivity": {"pause_after_seconds": 59}}),
-        json!({"expected_revision": 0, "checkpoints": {"interval_seconds": 59}}),
-        json!({"expected_revision": 0, "checkpoints": {"interval_seconds": 86401}}),
-        json!({"expected_revision": 0, "checkpoints": null}),
+        json!({"expected_revision": 0, "checkpoints": {"interval_seconds": 1800}}),
     ] {
         let response = send(
             &fixture.app,

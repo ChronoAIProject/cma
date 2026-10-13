@@ -7,31 +7,13 @@ import { operatorClient, settings, stored } from './testFixtures';
 import { reviewSettingsDraft } from './settingsDraft';
 
 describe('platform settings', () => {
-  it('edits snapshot minutes as seconds and preserves the draft across conflicts', async () => {
+  it('does not expose CMA snapshot scheduling controls', async () => {
     const client = operatorClient();
-    const current = {
-      ...stored,
-      settings: { ...settings, checkpoints: { interval_seconds: 1800 } },
-    };
-    client.admin.readSettings.mockResolvedValue(current);
-    const user = userEvent.setup();
     render(<PlatformSettings client={client} />);
-    const interval = await screen.findByLabelText('Save progress every (minutes)');
-    expect(interval).toHaveValue(30);
-    await user.clear(interval);
-    await user.type(interval, '10');
-    await user.click(screen.getByRole('button', { name: 'Save settings' }));
-    expect(client.admin.replaceSettings).toHaveBeenCalledWith({
-      expected_revision: stored.revision,
-      settings: { ...current.settings, checkpoints: { interval_seconds: 600 } },
-    });
-    expect(
-      reviewSettingsDraft(
-        current.settings,
-        { ...current.settings, checkpoints: { interval_seconds: 600 } },
-        { ...current.settings, checkpoints: { interval_seconds: 3600 } },
-      ).checkpoints,
-    ).toEqual({ interval_seconds: 600 });
+    await screen.findByLabelText('Pause after (seconds)');
+    expect(screen.queryByText('Snapshots')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Save progress every (minutes)')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Checkpoint grace (days)')).not.toBeInTheDocument();
   });
   it('rebases an explicitly selected profile and revision as one atomic reference', () => {
     const current = {
