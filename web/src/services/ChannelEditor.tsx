@@ -12,6 +12,9 @@ export interface Channel {
     sources: unknown[];
     schema_version?: number;
     profile?: unknown;
+    provider?: {
+      target?: { type: 'profile' } | { type: 'existing_agent'; agent_id: string };
+    };
     partition?: unknown;
     reply?: unknown;
   };
@@ -36,7 +39,7 @@ function policy(channel?: Channel): string {
       schema_version: d.schema_version,
       name: d.name,
       profile: d.profile,
-      provider: { slug: channel.provider.slug },
+      provider: { slug: channel.provider.slug, target: d.provider?.target },
       sources: d.sources.map((source) => {
         if (typeof source !== 'object' || source === null) return source;
         return Object.fromEntries(Object.entries(source).filter(([key]) => key !== 'jwks_url'));
