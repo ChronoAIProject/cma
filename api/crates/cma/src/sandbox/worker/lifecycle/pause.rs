@@ -193,7 +193,24 @@ impl SandboxWorker {
                 )
                 .await;
         };
-        if let Err(error) = self.dependencies.adapter.teardown(&handle).await {
+        let suspend = crate::sandbox::runtime_attachment::native_pause_teardown(&sandbox);
+        let stopped = if suspend {
+            if !self.lifecycle_state_matches(&sandbox).await? {
+                return Err(SandboxStoreError::Conflict);
+            }
+            let request = crate::sandbox::runtime_attachment::retained_runtime_request(
+                &sandbox,
+                sandbox.runtime.as_ref().expect("bound runtime"),
+                &self.config.deployment_id,
+            );
+            match request {
+                Ok(request) => self.dependencies.adapter.suspend_runtime(&request).await,
+                Err(error) => Err(error),
+            }
+        } else {
+            self.dependencies.adapter.teardown(&handle).await
+        };
+        if let Err(error) = stopped {
             return if retained_home {
                 self.handle_lifecycle_failure(sandbox, adapter_failure(error), now)
                     .await
@@ -205,8 +222,12 @@ impl SandboxWorker {
         let stamp = rfc3339_at(now);
         let lease = lifecycle_lease(&sandbox, &self.config.holder)?;
         let mut next = sandbox.clone();
-        next.complete_lifecycle_runtime_teardown(&lease.holder, lease.fence, stamp.clone())
-            .map_err(model_error)?;
+        if suspend {
+            next.complete_lifecycle_runtime_suspension(&lease.holder, lease.fence, stamp.clone())
+        } else {
+            next.complete_lifecycle_runtime_teardown(&lease.holder, lease.fence, stamp.clone())
+        }
+        .map_err(model_error)?;
         let committed = self
             .complete_sandbox_only_phase(sandbox, next.clone(), stamp)
             .await;

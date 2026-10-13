@@ -298,3 +298,6 @@ async fn pvc_mount_requires_the_exact_admitted_uid_even_with_identical_labels() 
     assert!(fixture.client.create(&request).await.is_err());
     assert_eq!(fixture.calls.lock().unwrap().len(), 1);
 }
+
+#[path = "suspension_http_tests.rs"]
+mod suspension;

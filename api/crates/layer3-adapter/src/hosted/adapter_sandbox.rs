@@ -41,6 +41,28 @@ impl SandboxAdapter for HostedAdapter {
         Ok(receipt)
     }
 
+    async fn teardown_retained_runtime(&self, handle: &RuntimeHandle) -> crate::Result<()> {
+        self.backend.teardown_retained(handle).await?;
+        self.states.lock().await.remove(handle);
+        Ok(())
+    }
+    async fn suspend_runtime(&self, request: &RuntimeAdoptionRequest) -> crate::Result<()> {
+        self.suspend_exact(request, false).await
+    }
+    async fn verify_suspended_runtime(
+        &self,
+        request: &RuntimeAdoptionRequest,
+    ) -> crate::Result<()> {
+        self.suspend_exact(request, true).await
+    }
+    async fn resume_runtime(
+        &self,
+        request: &RuntimeAdoptionRequest,
+        generation: u64,
+    ) -> crate::Result<RuntimeHandle> {
+        self.resume_exact(request, generation).await
+    }
+
     async fn runtime_status(&self, handle: &RuntimeHandle) -> crate::Result<crate::RuntimeStatus> {
         self.inspect_runtime_status(handle).await
     }

@@ -38,6 +38,39 @@ pub trait HostedAgentRuntime: Send + Sync {
 #[async_trait::async_trait]
 pub trait HostedBackend: Send + Sync {
     async fn provision(&self, request: ProviderSandboxRequest) -> Result<RuntimeHandle>;
+    async fn teardown_retained(&self, _handle: &RuntimeHandle) -> Result<()> {
+        Err(crate::AdapterError::Unsupported(
+            "retained provider deletion is unavailable".into(),
+        ))
+    }
+    async fn suspend(
+        &self,
+        _handle: &RuntimeHandle,
+        _request: &ProviderSandboxRequest,
+    ) -> Result<()> {
+        Err(crate::AdapterError::Unsupported(
+            "provider suspension is unavailable".into(),
+        ))
+    }
+    async fn verify_suspended(
+        &self,
+        _handle: &RuntimeHandle,
+        _request: &ProviderSandboxRequest,
+    ) -> Result<()> {
+        Err(crate::AdapterError::Unsupported(
+            "provider suspension observation is unavailable".into(),
+        ))
+    }
+    async fn resume(
+        &self,
+        _handle: &RuntimeHandle,
+        _previous: &ProviderSandboxRequest,
+        _next: &ProviderSandboxRequest,
+    ) -> Result<()> {
+        Err(crate::AdapterError::Unsupported(
+            "provider resumption is unavailable".into(),
+        ))
+    }
     async fn provision_receipted(
         &self,
         _request: ProviderSandboxRequest,

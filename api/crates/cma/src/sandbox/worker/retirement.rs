@@ -15,9 +15,14 @@ use super::SandboxWorker;
 impl SandboxWorker {
     pub(super) async fn stop_agents(
         &self,
-        sandbox: Sandbox,
+        mut sandbox: Sandbox,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        if let Err(error) = self.remove_stopped_native_runtime(&mut sandbox).await {
+            return self
+                .retry_failure(sandbox, adapter_failure(error), now)
+                .await;
+        }
         let runtime = sandbox
             .runtime
             .as_ref()
@@ -123,6 +128,27 @@ impl SandboxWorker {
         mut sandbox: Sandbox,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        // Suspension may have reached Kubernetes before its database acknowledgement.
+        // Native deletion proves CRD and Pod absence without a running process.
+        let retained = sandbox.lifecycle.suspended_runtime.as_deref().or_else(|| {
+            sandbox.runtime.as_ref().filter(|binding| {
+                sandbox.lifecycle.home.is_some() && binding.runtime_id.starts_with("agent-sandbox:")
+            })
+        });
+        if let Some(binding) = retained {
+            if let Err(error) = self
+                .dependencies
+                .adapter
+                .teardown_retained_runtime(&RuntimeHandle::new(&binding.runtime_id))
+                .await
+            {
+                return self
+                    .retry_failure(sandbox, adapter_failure(error), now)
+                    .await;
+            }
+            sandbox.lifecycle.suspended_runtime = None;
+            sandbox.runtime = None;
+        }
         if let Some(binding) = &sandbox.runtime {
             if let Err(error) = crate::sandbox::runtime_attachment::adopt_bound_runtime(
                 self.dependencies.adapter.as_ref(),
@@ -188,7 +214,7 @@ impl SandboxWorker {
                 .await;
         }
         if let Some(home) = &mut sandbox.lifecycle.home {
-            if sandbox.runtime.is_some() {
+            if sandbox.runtime.is_some() || sandbox.lifecycle.suspended_runtime.is_some() {
                 return Err(SandboxStoreError::Corrupt(
                     "home release still has a bound runtime".into(),
                 ));

@@ -282,3 +282,5 @@ mod title_store_tests;
 mod title_value_tests;
 #[cfg(test)]
 mod workspace_service_tests;
+
+mod suspended_runtime;

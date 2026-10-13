@@ -156,7 +156,11 @@ fn advance_phase(
                 expected.complete_lifecycle_agent_pause(holder, fence, at.into())
             }
             SandboxPausePhase::TeardownRuntime => {
-                expected.complete_lifecycle_runtime_teardown(holder, fence, at.into())
+                if submitted.lifecycle.suspended_runtime.is_some() {
+                    expected.complete_lifecycle_runtime_suspension(holder, fence, at.into())
+                } else {
+                    expected.complete_lifecycle_runtime_teardown(holder, fence, at.into())
+                }
             }
             SandboxPausePhase::PublishPaused => {
                 expected.publish_lifecycle_paused(holder, fence, at.into())

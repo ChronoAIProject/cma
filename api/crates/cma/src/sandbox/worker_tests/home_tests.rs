@@ -4,7 +4,7 @@ use layer3_adapter::{
     HomeVolumeStore,
 };
 
-fn home_policy() -> HomeVolumePolicy {
+pub(super) fn home_policy() -> HomeVolumePolicy {
     HomeVolumePolicy {
         storage_class: "storage".into(),
         capacity_gib: 64,
