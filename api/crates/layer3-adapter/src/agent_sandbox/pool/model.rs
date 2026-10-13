@@ -389,20 +389,93 @@ fn network_policy_matches(actual: &serde_json::Value, desired: &serde_json::Valu
 
 // API defaults may add ordinary fields; all submitted values and array cardinality stay exact.
 pub(crate) fn contains(actual: &serde_json::Value, desired: &serde_json::Value) -> bool {
+    contains_field(actual, desired, None)
+}
+
+fn contains_field(
+    actual: &serde_json::Value,
+    desired: &serde_json::Value,
+    field: Option<&str>,
+) -> bool {
     match desired {
         serde_json::Value::Object(fields) => actual.as_object().is_some_and(|a| {
             fields.iter().all(|(k, v)| {
                 a.get(k).map_or_else(
-                    || v.as_array().is_some_and(Vec::is_empty),
-                    |x| contains(x, v),
+                    || {
+                        v.as_array().is_some_and(Vec::is_empty)
+                            || v.as_bool() == Some(false) && omitted_false_defaults(k)
+                    },
+                    |x| contains_field(x, v, Some(k)),
                 )
             })
         }),
         serde_json::Value::Array(values) => actual.as_array().is_some_and(|a| {
-            a.len() == values.len() && a.iter().zip(values).all(|(x, v)| contains(x, v))
+            a.len() == values.len()
+                && a.iter()
+                    .zip(values)
+                    .all(|(x, v)| contains_field(x, v, field))
         }),
+        serde_json::Value::String(expected) if quantity_field(field) => actual
+            .as_str()
+            .is_some_and(|found| quantity_equal(found, expected)),
         _ => actual == desired,
     }
+}
+
+/// The Kubernetes API server stores equivalent resource quantities in a
+/// canonical form. For example, `1000m` becomes `1` and `1024Mi` becomes
+/// `1Gi`. These are the only string fields for which CMA accepts equivalent
+/// representations; identity-bearing strings remain exact.
+fn quantity_field(field: Option<&str>) -> bool {
+    matches!(field, Some("cpu" | "memory" | "storage"))
+}
+
+fn omitted_false_defaults(field: &str) -> bool {
+    matches!(
+        field,
+        "hostNetwork" | "hostPID" | "hostIPC" | "shareProcessNamespace" | "privileged" | "readOnly"
+    )
+}
+
+fn quantity_equal(found: &str, expected: &str) -> bool {
+    let Some(found) = parse_quantity(found) else {
+        return false;
+    };
+    let Some(expected) = parse_quantity(expected) else {
+        return false;
+    };
+    let scale = found.abs().max(expected.abs()).max(1.0);
+    (found - expected).abs() <= scale * 1e-12
+}
+
+fn parse_quantity(value: &str) -> Option<f64> {
+    let split = value
+        .char_indices()
+        .find(|(_, ch)| !ch.is_ascii_digit() && *ch != '.' && *ch != '+' && *ch != '-')
+        .map(|(index, _)| index)
+        .unwrap_or(value.len());
+    let (number, suffix) = value.split_at(split);
+    let number = number.parse::<f64>().ok()?;
+    let multiplier = match suffix {
+        "" => 1.0,
+        "n" => 1e-9,
+        "u" => 1e-6,
+        "m" => 1e-3,
+        "k" => 1e3,
+        "M" => 1e6,
+        "G" => 1e9,
+        "T" => 1e12,
+        "P" => 1e15,
+        "E" => 1e18,
+        "Ki" => 1024.0,
+        "Mi" => 1024.0 * 1024.0,
+        "Gi" => 1024.0 * 1024.0 * 1024.0,
+        "Ti" => 1024.0 * 1024.0 * 1024.0 * 1024.0,
+        "Pi" => 1024.0 * 1024.0 * 1024.0 * 1024.0 * 1024.0,
+        "Ei" => 1024.0 * 1024.0 * 1024.0 * 1024.0 * 1024.0 * 1024.0,
+        _ => return None,
+    };
+    Some(number * multiplier)
 }
 
 fn decode(value: serde_json::Value) -> Result<DynamicObject> {
