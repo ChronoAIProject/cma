@@ -55,10 +55,13 @@ export function LaunchProgress({ record }: { readonly record: Launch }) {
   };
   const sandboxId =
     record.resolution.sandbox.state === 'pending' ? undefined : record.resolution.sandbox.id;
+  const signInNotice = notice('signing_in');
+  const requirementsNotice = notice('checking_requirements');
+  const firstMessageNotice = notice('first_message');
   return (
     <>
-      {notice('signing_in')}
-      {notice('checking_requirements')}
+      {signInNotice}
+      {requirementsNotice}
       <ol className="public-timeline" aria-label="Agent provisioning progress">
         {phases.map((phase) => {
           const state = stateFor(phase.status);
@@ -98,7 +101,7 @@ export function LaunchProgress({ record }: { readonly record: Launch }) {
           );
         })}
       </ol>
-      {notice('first_message')}
+      {firstMessageNotice}
     </>
   );
 }
