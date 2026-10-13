@@ -52,6 +52,24 @@ plane before enabling its replacement so there is only one Agent Manager;
 verify routing and retained-runtime recovery before retiring old resources.
 Applying a new name alone does not perform this migration.
 
+Create the three canonical Service objects before starting the new web image.
+Nginx resolves their static upstream names at startup, including
+`cma-image-manager`; its Service must exist even while its Deployment remains
+absent or at zero replicas. This creates no Image Manager worker. The API and
+Gateway Service files also contain compatibility aliases: prepare the new
+canonical Services first, and retarget the aliases only when the replacement
+Pods are ready to receive traffic. Do not apply the complete bundled files
+early and strand the old workloads behind selectors they do not match.
+
+Attach the canonical health/backend policies before sending traffic to their
+Services. Retain the old routes and policies while they use the compatibility
+aliases; creating a differently named HTTPRoute does not replace an older
+route with the same matches. During the rename, verify both the canonical and
+alias endpoint sets, route conditions and stream timeout behavior. Stop and
+drain the old writers before the Gateway record transfer and replacement
+startup; the new Agent Manager's `Recreate` strategy cannot stop an independently
+named old Deployment.
+
 ## Observed deployment prerequisites
 
 These observations were recorded on 2026-10-13. They distinguish current access
@@ -63,7 +81,7 @@ from the remaining application activation steps.
 | Native target | `chrono-bot/chrono-pod-configmap` currently supplies `https://35.240.157.32` and namespace `chrono-pod` | Use these current values; do not use the earlier `cma-test` namespace or infer configuration from last-applied annotations |
 | Native authorization | Fresh CMA Pod metadata token confirms Sandbox get, Claim create, PVC get, and `pods/exec` get/create; PVC create/patch remain denied | VCT integration passes native adapter tests. Verify live allocation with the final image; PVC writes and snapshot reads are not required for new empty native homes |
 | Native persistent home | Installed templates support `volumeClaimTemplates`; the controller creates and owns each member's PVC | New native homes use an empty VCT volume initialized by the pinned CMA runtime image. Validate suspend/resume and deletion through the controller; a mandatory seed snapshot is a superseded implementation choice |
-| Runtime network path | `chrono-pod-default` selects all remote Pods and admits ingress only on TCP 8080 from local `sandbox-router` Pods; no `sandbox-router` namespace is deployed | Infra must provide a runtime path before live acceptance. Current CMA discovery connects directly to Pod IP TCP 9090 for authenticated HTTP and WebSocket. Kubernetes API access alone does not satisfy this requirement |
+| Runtime network path | `chrono-pod-default` selects all remote Pods and admits ingress only on TCP 8080, from Pods in the `sandbox-router` namespace or local Pods labeled `app=sandbox-router`; no `sandbox-router` namespace is deployed | Infra must provide a runtime path before live acceptance. Current CMA discovery connects directly to Pod IP TCP 9090 for authenticated HTTP and WebSocket. Kubernetes API access alone does not satisfy this requirement |
 | Runtime ServiceAccount and storage | Remote `default` ServiceAccount exists, is active and has no GSA annotation; infra's existing template also uses it with token automount disabled. `standard-rwo` is the existing PD CSI default StorageClass | CMA's production configuration selects `default` with Pod token automount disabled and `standard-rwo` with the existing 64 GiB home default. A new dedicated runtime ServiceAccount is not required. Live RWOP provisioning remains unverified |
 | CMA runtime signing key | `chrono-bot/cma-agent-sandbox-control` has been created and read-verified in the northeast CMA cluster, without printing or storing its value locally | Mount the existing Secret during activation and preserve its value across restarts; it is separate from infra's Kubernetes access identity |
 | Shared MongoDB | Existing `chrono-bot` credentials have been copied to and verified in the canonical application Secrets; original Secrets are retained | Select each service's shared-schema mode and run only its own migration/startup initialization |
