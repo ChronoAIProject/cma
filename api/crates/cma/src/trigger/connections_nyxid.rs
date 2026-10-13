@@ -21,8 +21,8 @@ mod protocol;
 mod response;
 
 use protocol::{
-    canonical_browser_origin, canonical_provider_timestamp, malformed, matching_services,
-    requirement_state, valid_connect_path, valid_provider_id, ConnectLinkResponse,
+    canonical_browser_origin, canonical_provider_timestamp, malformed, requirement_state,
+    selected_service, valid_connect_path, valid_provider_id, ConnectLinkResponse,
     ConnectLinkStatus, ConnectedService, CreateConnectLinkRequest, CreateConnectLinkResponse,
     UserServiceCredentialSource, UserServiceListing, UserServiceRow,
 };
@@ -264,8 +264,7 @@ impl ServiceConnectionBroker for NyxidServiceConnectionBroker {
                 if requirement.state != ServiceRequirementState::Satisfied {
                     return None;
                 }
-                let matches = matching_services(&requirement.service, &rows);
-                let [row] = matches.as_slice() else {
+                let Some(row) = selected_service(&requirement.service, &rows) else {
                     return None;
                 };
                 Some((index, row.id.clone(), row.slug.clone()))

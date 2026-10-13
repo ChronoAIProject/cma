@@ -102,6 +102,24 @@ impl UserServiceListing {
     }
 }
 
+fn service_row_rank(row: &UserServiceRow) -> u8 {
+    let active = row.is_active == Some(true);
+    match (&row.credential_source, active, row.is_allowed()) {
+        (Some(UserServiceCredentialSource::Personal), true, true) => 0,
+        (Some(UserServiceCredentialSource::Org { allowed: true }), true, true) => 1,
+        (None, true, true) => 2,
+        (Some(UserServiceCredentialSource::Personal), false, true) => 3,
+        (Some(UserServiceCredentialSource::Org { allowed: true }), false, true) => 4,
+        (None, false, true) => 5,
+        // A denied organization row is retained as the last fallback so a
+        // single denied binding remains Unknown and is never probed.
+        (Some(UserServiceCredentialSource::Org { allowed: false }), _, _) => 6,
+        // Keep the selector total if the policy predicate grows new source
+        // variants in the future.
+        (_, _, false) => 6,
+    }
+}
+
 pub(super) fn matching_services<'a>(
     service: &ServiceId,
     rows: &'a [UserServiceRow],
@@ -119,20 +137,49 @@ pub(super) fn matching_services<'a>(
     }
 }
 
+/// Select the user-service row that represents a slug request.
+///
+/// NyxID can legitimately expose both a personal and an organization row for
+/// the same slug. Exact IDs remain strict: duplicate exact bindings are
+/// rejected by returning `None`. Slug lookups use the same deterministic
+/// preference everywhere in CMA so requirement checks, catalog metadata, and
+/// credential probes cannot disagree about which binding is active.
+pub(super) fn selected_service<'a>(
+    service: &ServiceId,
+    rows: &'a [UserServiceRow],
+) -> Option<&'a UserServiceRow> {
+    let exact = rows
+        .iter()
+        .filter(|row| row.id == service.as_str())
+        .collect::<Vec<_>>();
+    if !exact.is_empty() {
+        return (exact.len() == 1).then_some(exact[0]);
+    }
+
+    rows.iter()
+        .filter(|row| row.slug == service.as_str())
+        .min_by_key(|row| (service_row_rank(row), row.id.as_str()))
+}
+
 pub(super) fn requirement_state(
     service: &ServiceId,
     rows: &[UserServiceRow],
 ) -> ServiceRequirementState {
     let matches = matching_services(service, rows);
-    match matches.as_slice() {
-        [] => ServiceRequirementState::Missing,
-        [row] if !row.is_allowed() => ServiceRequirementState::Unknown,
-        [row] => match row.is_active {
-            Some(true) => ServiceRequirementState::Satisfied,
-            Some(false) => ServiceRequirementState::Inactive,
-            None => ServiceRequirementState::Unknown,
-        },
-        _ => ServiceRequirementState::Unknown,
+    let Some(row) = selected_service(service, rows) else {
+        return if matches.is_empty() {
+            ServiceRequirementState::Missing
+        } else {
+            ServiceRequirementState::Unknown
+        };
+    };
+    if !row.is_allowed() {
+        return ServiceRequirementState::Unknown;
+    }
+    match row.is_active {
+        Some(true) => ServiceRequirementState::Satisfied,
+        Some(false) => ServiceRequirementState::Inactive,
+        None => ServiceRequirementState::Unknown,
     }
 }
 
@@ -190,4 +237,141 @@ pub(super) fn valid_provider_id(value: &str) -> bool {
 
 pub(super) fn malformed() -> ServiceConnectionError {
     ServiceConnectionError::Malformed(PROVIDER_MALFORMED.to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(
+        id: &str,
+        slug: &str,
+        is_active: Option<bool>,
+        credential_source: Option<UserServiceCredentialSource>,
+    ) -> UserServiceRow {
+        UserServiceRow {
+            id: id.to_owned(),
+            slug: slug.to_owned(),
+            is_active,
+            credential_source,
+        }
+    }
+
+    #[test]
+    fn slug_prefers_active_personal_over_allowed_organization() {
+        let rows = vec![
+            row(
+                "org-row",
+                "chrono-llm-public",
+                Some(true),
+                Some(UserServiceCredentialSource::Org { allowed: true }),
+            ),
+            row(
+                "personal-row",
+                "chrono-llm-public",
+                Some(true),
+                Some(UserServiceCredentialSource::Personal),
+            ),
+        ];
+        let service = ServiceId::new("chrono-llm-public");
+        assert_eq!(
+            selected_service(&service, &rows).map(|row| row.id.as_str()),
+            Some("personal-row")
+        );
+        assert_eq!(
+            requirement_state(&service, &rows),
+            ServiceRequirementState::Satisfied
+        );
+    }
+
+    #[test]
+    fn slug_falls_back_to_allowed_organization_when_personal_is_unusable() {
+        let rows = vec![
+            row(
+                "personal-row",
+                "ornn-api",
+                Some(false),
+                Some(UserServiceCredentialSource::Personal),
+            ),
+            row(
+                "org-row",
+                "ornn-api",
+                Some(true),
+                Some(UserServiceCredentialSource::Org { allowed: true }),
+            ),
+        ];
+        let service = ServiceId::new("ornn-api");
+        assert_eq!(
+            selected_service(&service, &rows).map(|row| row.id.as_str()),
+            Some("org-row")
+        );
+        assert_eq!(
+            requirement_state(&service, &rows),
+            ServiceRequirementState::Satisfied
+        );
+    }
+
+    #[test]
+    fn denied_organization_is_never_preferred_over_personal() {
+        let rows = vec![
+            row(
+                "denied-org",
+                "ornn-api",
+                Some(true),
+                Some(UserServiceCredentialSource::Org { allowed: false }),
+            ),
+            row(
+                "personal-row",
+                "ornn-api",
+                Some(true),
+                Some(UserServiceCredentialSource::Personal),
+            ),
+        ];
+        let service = ServiceId::new("ornn-api");
+        assert_eq!(
+            selected_service(&service, &rows).map(|row| row.id.as_str()),
+            Some("personal-row")
+        );
+        assert_eq!(
+            requirement_state(&service, &rows),
+            ServiceRequirementState::Satisfied
+        );
+    }
+
+    #[test]
+    fn duplicate_exact_ids_remain_unknown() {
+        let rows = vec![
+            row("same-id", "first", Some(true), None),
+            row("same-id", "second", Some(true), None),
+        ];
+        let service = ServiceId::new("same-id");
+        assert!(selected_service(&service, &rows).is_none());
+        assert_eq!(
+            requirement_state(&service, &rows),
+            ServiceRequirementState::Unknown
+        );
+    }
+
+    #[test]
+    fn same_rank_slug_rows_are_selected_by_id_for_stability() {
+        let rows = vec![
+            row(
+                "z-org",
+                "service",
+                Some(true),
+                Some(UserServiceCredentialSource::Org { allowed: true }),
+            ),
+            row(
+                "a-org",
+                "service",
+                Some(true),
+                Some(UserServiceCredentialSource::Org { allowed: true }),
+            ),
+        ];
+        let service = ServiceId::new("service");
+        assert_eq!(
+            selected_service(&service, &rows).map(|row| row.id.as_str()),
+            Some("a-org")
+        );
+    }
 }
