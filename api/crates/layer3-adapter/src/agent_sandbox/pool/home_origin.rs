@@ -2,8 +2,9 @@ use super::{rejected, NativePoolClaim, Result};
 use crate::HomeVolumeRequest;
 use serde::{Deserialize, Serialize};
 
-/// Physical identities locked on the claim before removing controller-owned PVC
-/// templates. This record also remains on the retained PVC after claim deletion.
+/// Physical identities frozen on the Claim and Sandbox before runtime admission.
+/// Legacy adoption also records this on the detached PVC; native VCT homes keep
+/// the controller owner chain and persist this authority in the home receipt.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativePoolHomeOrigin {

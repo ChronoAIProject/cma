@@ -82,6 +82,15 @@ impl RoutedHomeVolumes {
         Ok(reserved)
     }
 
+    /// An unscoped historical native home is valid only when both routes
+    /// explicitly recognize the same original API/namespace authority.
+    pub(crate) fn shares_legacy_authority(&self) -> bool {
+        self.local
+            .as_ref()
+            .zip(self.native.as_ref())
+            .is_some_and(|(local, native)| native.store.accepts_scope(&local.scope))
+    }
+
     pub fn is_native(&self, request: &HomeVolumeRequest) -> Result<bool> {
         request.validate()?;
         match &request.scope {
@@ -93,7 +102,7 @@ impl RoutedHomeVolumes {
                 if self
                     .local
                     .as_ref()
-                    .is_some_and(|route| &route.scope == scope) =>
+                    .is_some_and(|route| route.store.accepts_scope(scope)) =>
             {
                 Ok(false)
             }
@@ -101,7 +110,7 @@ impl RoutedHomeVolumes {
                 if self
                     .native
                     .as_ref()
-                    .is_some_and(|route| &route.scope == scope) =>
+                    .is_some_and(|route| route.store.accepts_scope(scope)) =>
             {
                 Ok(true)
             }
@@ -126,7 +135,7 @@ impl RoutedHomeVolumes {
     fn original_route(&self, original: &HomeProvisionReceipt) -> Result<&Route> {
         original.validate()?;
         let route = self.route(&original.home().request)?;
-        if original.provider_scope() != &route.scope {
+        if !route.store.accepts_scope(original.provider_scope()) {
             return Err(rejected(
                 "original home receipt conflicts with its allocation authority",
             ));
@@ -145,6 +154,12 @@ impl HomeVolumeStore for RoutedHomeVolumes {
             for attachment in route.store.inventory().await? {
                 attachment.validate_for(&attachment.request.sandbox_id)?;
                 if self.is_native(&attachment.request)? != native {
+                    // A migration store may retain the same legacy API scope as
+                    // the local route. Only an identical earlier observation can
+                    // be shared; a different disk or lineage remains a conflict.
+                    if all.iter().any(|prior| prior == &attachment) {
+                        continue;
+                    }
                     return Err(rejected("home inventory is outside its recorded cluster"));
                 }
                 if !volumes.insert(attachment.request.volume_id.clone()) {

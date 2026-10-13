@@ -328,6 +328,7 @@ async fn foreign_home_claim_is_refused_before_creating_sandbox() {
         volume_id: "home-one".into(),
         sandbox_id: "someone-elses-sandbox".into(),
         policy: HomeVolumePolicy {
+            mode: Default::default(),
             storage_class: "standard".into(),
             capacity_gib: 10,
             template_name: "seed".into(),
@@ -367,6 +368,7 @@ async fn pvc_mount_requires_the_exact_admitted_uid_even_with_identical_labels() 
         volume_id: "home-one".into(),
         sandbox_id: "logical-sandbox".into(),
         policy: HomeVolumePolicy {
+            mode: Default::default(),
             storage_class: "standard".into(),
             capacity_gib: 10,
             template_name: "seed".into(),
@@ -375,6 +377,7 @@ async fn pvc_mount_requires_the_exact_admitted_uid_even_with_identical_labels() 
     };
     let attachment = crate::HomeVolumeAttachment {
         receipt: crate::HomeVolumeReceipt {
+            native_authority: None,
             volume_id: allocation.volume_id.clone(),
             request_sha256: allocation.computed_sha256(),
             storage_reference: "cma-home-test".into(),

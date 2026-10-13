@@ -180,6 +180,7 @@ impl NativePoolControl for Pools {
         let disk = HomeVolumeAttachment {
             request: original.request.home.clone(),
             receipt: HomeVolumeReceipt {
+                native_authority: None,
                 volume_id: original.request.home.volume_id.clone(),
                 request_sha256: original.request.home.computed_sha256(),
                 storage_reference: "home-warm-member".into(),
@@ -205,6 +206,7 @@ impl NativePoolControl for Pools {
             .is_some_and(|claim| claim.sandbox_name.is_some())
         {
             next.members = vec![NativePoolMember {
+                pvc_uid: None,
                 name: "warm-member".into(),
                 uid: "member-uid".into(),
             }];
@@ -301,6 +303,7 @@ impl HostedBackend for Backend {
     async fn select_native_pool(
         &self,
         _: &layer3_adapter::provider::ProviderSandboxRequest,
+        _: &layer3_adapter::RuntimeImage,
         home: &HomeVolumeRequest,
     ) -> layer3_adapter::Result<Option<NativePoolBinding>> {
         self.pools.lose("select")?;

@@ -19,6 +19,7 @@ fn parent() -> Sandbox {
     let mut home = SandboxHome::reserve(
         &sandbox.id,
         HomeVolumePolicy {
+            mode: Default::default(),
             storage_class: "cma-home-v1".into(),
             capacity_gib: 64,
             template_name: "seed".into(),
@@ -27,6 +28,7 @@ fn parent() -> Sandbox {
     )
     .unwrap();
     home.bind(HomeVolumeReceipt {
+        native_authority: None,
         volume_id: home.request.volume_id.clone(),
         request_sha256: home.request.computed_sha256(),
         storage_reference: "home-pvc".into(),

@@ -92,6 +92,28 @@ impl AgentSandboxPools {
 
     pub async fn cleanup_retained_home(&self, home: &crate::HomeVolumeAttachment) -> Result<()> {
         home.validate_for(&home.request.sandbox_id)?;
+        if home.request.policy.is_native_vct() {
+            let origin = home
+                .receipt
+                .native_authority
+                .as_deref()
+                .ok_or_else(|| rejected("native home authority is missing"))?;
+            origin.validate_for(
+                &self.config.namespace,
+                &self.config.deployment,
+                &home.request,
+            )?;
+            let plan = NativePoolCleanup {
+                request: origin.claim.request.clone(),
+                claim: Some(origin.claim.clone()),
+                members: vec![NativePoolMember {
+                    name: origin.claim.sandbox_name.clone().unwrap(),
+                    uid: origin.sandbox_uid.clone(),
+                    pvc_uid: Some(origin.pvc_uid.clone()),
+                }],
+            };
+            return self.cleanup(&plan).await;
+        }
         let Some(volume) = self
             .volumes
             .get_opt(&home.receipt.storage_reference)
@@ -121,6 +143,7 @@ impl AgentSandboxPools {
         let plan = NativePoolCleanup {
             request: origin.claim.request.clone(),
             members: vec![NativePoolMember {
+                pvc_uid: None,
                 name: origin.claim.sandbox_name.clone().unwrap(),
                 uid: origin.sandbox_uid,
             }],

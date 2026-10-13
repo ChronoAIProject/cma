@@ -16,6 +16,7 @@ fn retained(
         volume_id: "home-one".into(),
         sandbox_id: "logical-sandbox".into(),
         policy: HomeVolumePolicy {
+            mode: Default::default(),
             storage_class: "standard".into(),
             capacity_gib: 10,
             template_name: "seed".into(),
@@ -24,6 +25,7 @@ fn retained(
     };
     let attachment = crate::HomeVolumeAttachment {
         receipt: crate::HomeVolumeReceipt {
+            native_authority: None,
             volume_id: allocation.volume_id.clone(),
             request_sha256: allocation.computed_sha256(),
             storage_reference: "cma-home-test".into(),

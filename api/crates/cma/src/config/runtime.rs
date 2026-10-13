@@ -112,6 +112,9 @@ impl RuntimeConfig {
             settings.namespace == sandbox_namespace
                 && agent_sandbox_connection.is_none()
                 && agent_sandbox_home_policy != home_policy
+                && !agent_sandbox_home_policy
+                    .as_ref()
+                    .is_some_and(|policy| policy.is_native_vct())
         }) {
             return Err(concat!(
                 "a distinct CHRONO_AGENT_SANDBOX_HOME policy requires an independent ",

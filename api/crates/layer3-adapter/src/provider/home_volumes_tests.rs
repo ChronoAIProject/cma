@@ -39,6 +39,7 @@ pub(super) fn request() -> HomeVolumeRequest {
         volume_id: "home-fixture".into(),
         sandbox_id: "sandbox-fixture".into(),
         policy: HomeVolumePolicy {
+            mode: Default::default(),
             storage_class: "standard-rwo".into(),
             capacity_gib: 64,
             template_name: "empty-home".into(),
@@ -356,6 +357,7 @@ async fn foreign_allocation_scope_is_rejected_before_any_kubernetes_request() {
         Some(crate::HomeVolumeScope::from_authority("kubernetes-pvc-v1", &["foreign"]).unwrap());
     let attachment = crate::HomeVolumeAttachment {
         receipt: crate::HomeVolumeReceipt {
+            native_authority: None,
             volume_id: home.volume_id.clone(),
             request_sha256: home.computed_sha256(),
             storage_reference: "original-pvc".into(),

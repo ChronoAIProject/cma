@@ -29,6 +29,7 @@ impl HomeVolumeStore for Homes {
     ) -> layer3_adapter::Result<HomeVolumeReceipt> {
         request.validate()?;
         let receipt = HomeVolumeReceipt {
+            native_authority: None,
             volume_id: request.volume_id.clone(),
             request_sha256: request.computed_sha256(),
             storage_reference: format!("fixture-{}", request.volume_id),
@@ -73,6 +74,7 @@ async fn home(homes: &Homes, id: &SandboxId) -> SandboxHome {
     let mut home = SandboxHome::reserve(
         id,
         HomeVolumePolicy {
+            mode: Default::default(),
             storage_class: "fixture-home".into(),
             capacity_gib: 1,
             template_name: "fixture-seed".into(),

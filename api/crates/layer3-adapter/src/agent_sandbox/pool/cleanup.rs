@@ -14,6 +14,8 @@ use super::{
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativePoolMember {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pvc_uid: Option<String>,
     pub name: String,
     pub uid: String,
 }
@@ -38,6 +40,10 @@ impl NativePoolCleanup {
             || self.members.iter().any(|member| {
                 !super::super::model::dns_label(&member.name)
                     || !super::super::model::dns_label(&member.uid)
+                    || member
+                        .pvc_uid
+                        .as_ref()
+                        .is_some_and(|v| !super::super::model::dns_label(v))
             })
         {
             return Err(rejected("native cleanup authority is invalid"));
@@ -88,12 +94,53 @@ impl AgentSandboxPools {
         }
         if let Some(claim) = &next.claim {
             for member in self.cleanup_members(claim).await? {
-                if let Some(prior) = next.members.iter().find(|v| v.name == member.name) {
-                    if prior != &member {
+                if let Some(prior) = next.members.iter_mut().find(|v| v.name == member.name) {
+                    if prior.uid != member.uid
+                        || prior.pvc_uid.as_ref().is_some_and(|uid| {
+                            member.pvc_uid.as_ref().is_some_and(|next| next != uid)
+                        })
+                    {
                         return Err(rejected("native cleanup member was replaced"));
+                    }
+                    if prior.pvc_uid.is_none() {
+                        prior.pvc_uid = member.pvc_uid;
                     }
                 } else {
                     next.members.push(member);
+                }
+            }
+        }
+        // A PVC can appear after the first plan, including after its Sandbox
+        // disappeared. Capture its exact controller UID before cleanup effects.
+        if next.request.home.policy.is_native_vct() {
+            if let Some(claim) = &next.claim {
+                for member in &mut next.members {
+                    let Some(mut volume) = self
+                        .volumes
+                        .get_opt(&format!("home-{}", member.name))
+                        .await
+                        .map_err(api_error)?
+                    else {
+                        continue;
+                    };
+                    let uid = volume
+                        .uid()
+                        .ok_or_else(|| rejected("native PVC UID missing"))?;
+                    if member.pvc_uid.as_ref().is_some_and(|prior| prior != &uid) {
+                        return Err(rejected("native cleanup PVC was replaced"));
+                    }
+                    let mut original_claim = claim.clone();
+                    original_claim.sandbox_name = Some(member.name.clone());
+                    volume.metadata.deletion_timestamp = None;
+                    self.validate_native_volume(
+                        &volume,
+                        &super::NativePoolHomeOrigin {
+                            claim: original_claim,
+                            sandbox_uid: member.uid.clone(),
+                            pvc_uid: uid.clone(),
+                        },
+                    )?;
+                    member.pvc_uid = Some(uid);
                 }
             }
         }
@@ -176,6 +223,29 @@ impl AgentSandboxPools {
             let Some(volume) = self.volumes.get_opt(&name).await.map_err(api_error)? else {
                 continue;
             };
+            if original.request.home.policy.is_native_vct() {
+                if member.pvc_uid.as_deref() != volume.uid().as_deref() || member.pvc_uid.is_none()
+                {
+                    return Err(rejected(
+                        "native cleanup PVC identity was not durably captured or changed",
+                    ));
+                }
+                let mut assigned = claim.clone();
+                assigned.sandbox_name = Some(member.name.clone());
+                let origin = super::NativePoolHomeOrigin {
+                    claim: assigned,
+                    sandbox_uid: member.uid.clone(),
+                    pvc_uid: member.pvc_uid.clone().unwrap(),
+                };
+                let mut observed = volume.clone();
+                observed.metadata.deletion_timestamp = None;
+                self.validate_native_volume(&observed, &origin)?;
+                // The CRD controller/garbage collector owns deletion. Repeated
+                // reads must observe absence before namespaced home finality.
+                return Err(unavailable(
+                    "controller-owned PVC garbage collection remains pending",
+                ));
+            }
             if volume
                 .metadata
                 .owner_references
