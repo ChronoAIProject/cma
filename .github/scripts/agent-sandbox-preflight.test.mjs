@@ -75,9 +75,12 @@ const remoteConfig = {
 
 function fixture(fail = () => false, config = legacyConfig, options = {}, deploymentEnv = [], extraConfigMaps = {}) {
   const calls = [];
-  return { calls, command(args) {
+  const reviews = [];
+  return { calls, reviews, command(args, input) {
     calls.push(args);
-    if (fail(args)) throw new Error('sensitive raw cluster detail');
+    const review = input === undefined ? undefined : JSON.parse(input);
+    if (review) reviews.push(review.spec.resourceAttributes);
+    if (fail(args, review?.spec.resourceAttributes)) throw new Error('sensitive raw cluster detail');
     if (args[2] === 'config') {
       assert.deepEqual(args, ['--context', options.runtimeContext, 'config', 'view', '--minify', '-o', 'jsonpath={.clusters[0].cluster.server}']);
       return 'https://runtime.invalid';
@@ -87,11 +90,16 @@ function fixture(fail = () => false, config = legacyConfig, options = {}, deploy
     const context = control ? productionContext : options.runtimeContext ?? productionContext;
     const namespace = control ? 'chrono-bot' : options.runtimeNamespace ?? 'chrono-bot';
     assert.deepEqual(args.slice(0, 5), ['--context', context, '--namespace', namespace, '--request-timeout=10s']);
-    if (operation === 'auth') {
-      assert.equal(kind, 'can-i');
-      assert.deepEqual(args.slice(-2), ['--as', options.runtimePrincipal ?? 'system:serviceaccount:chrono-bot:chrono-bot-ksa']);
-      return 'yes\n';
+    if (operation === 'create') {
+      assert.deepEqual(args.slice(5), ['create', '--raw', '/apis/authorization.k8s.io/v1/selfsubjectaccessreviews',
+        '-f', '-', '--as', options.runtimePrincipal ?? 'system:serviceaccount:chrono-bot:chrono-bot-ksa']);
+      assert.equal(review.apiVersion, 'authorization.k8s.io/v1');
+      assert.equal(review.kind, 'SelfSubjectAccessReview');
+      assert.deepEqual(Object.keys(review.spec), ['resourceAttributes']);
+      assert.equal(review.spec.resourceAttributes.namespace, namespace);
+      return JSON.stringify({ ...review, status: { allowed: true } });
     }
+    assert.equal(input, undefined);
     assert.equal(operation, 'get');
     assert.deepEqual(args.slice(-2), ['-o', 'json']);
     if (kind === 'customresourcedefinition') return JSON.stringify(crd(nativeResources.find(([plural, group]) => name === `${plural}.${group}`)));
@@ -109,18 +117,34 @@ function fixture(fail = () => false, config = legacyConfig, options = {}, deploy
   } };
 }
 
-test('preflight only reads a pinned context and checks exact native assignment/adoption permissions', () => {
-  const { calls, command } = fixture();
+test('preflight checks exact native assignment/adoption permissions without persisted writes', () => {
+  const { calls, reviews, command } = fixture();
   const result = preflight({}, command);
   assert.equal(result.passed, true);
-  for (const [resource, verb] of [['pods/exec', 'get'], ['persistentvolumeclaims', 'patch'], ['sandboxclaims.extensions.agents.x-k8s.io', 'delete']]) {
-    assert.ok(calls.some((args) => args[5] === 'auth' && args[7] === verb && args[8] === resource));
+  for (const [resource, group] of nativeResources) {
+    assert.deepEqual(reviews.filter((review) => review.resource === resource),
+      ['get', 'list', 'create', 'patch', 'delete'].map((verb) => ({
+        namespace: 'chrono-bot', group, resource, subresource: '', verb,
+      })));
+  }
+  for (const [resource, group, subresource, verb] of [
+    ['pods', '', 'exec', 'get'], ['pods', '', 'exec', 'create'],
+    ['persistentvolumeclaims', '', '', 'patch'],
+    ['sandboxclaims', 'extensions.agents.x-k8s.io', '', 'delete'],
+    ['sandboxes', 'agents.x-k8s.io', '', 'get'],
+    ['volumesnapshots', 'snapshot.storage.k8s.io', '', 'get'],
+  ]) {
+    assert.ok(reviews.some((review) => review.resource === resource && review.group === group
+      && review.subresource === subresource && review.verb === verb));
   }
   assert.ok(calls.every((args) => !args.includes('secrets')));
+  assert.ok(calls.every((args) => ['get', 'create'].includes(args[5])));
+  assert.ok(reviews.every((review) => !review.resource.includes('.') && !review.resource.includes('/')
+    && !Object.hasOwn(review, 'name')));
 });
 
 test('missing APIs or denied rights fail readiness with bounded static diagnostics', () => {
-  const { command } = fixture((args) => args[6] === 'customresourcedefinition' || args[8] === 'pods/exec');
+  const { command } = fixture((args, review) => args[6] === 'customresourcedefinition' || review?.subresource === 'exec');
   const result = preflight({}, command);
   assert.equal(result.passed, false);
   assert.equal(result.checks.filter((value) => !value.passed).length, 6);
@@ -134,11 +158,36 @@ test('missing APIs or denied rights fail readiness with bounded static diagnosti
   }
 });
 
+test('raw authorization reviews preserve the explicit remote principal and fail closed on uncertain replies', () => {
+  const options = { ...remoteOptions, runtimePrincipal: 'native-controller@example.iam.gserviceaccount.com' };
+  for (const reply of [
+    () => JSON.stringify({ status: { allowed: false, denied: true, reason: 'sensitive denial detail' } }),
+    () => JSON.stringify({ status: { allowed: true, denied: true } }),
+    () => JSON.stringify({ status: { allowed: 'true' } }),
+    () => JSON.stringify({ status: {} }),
+    () => JSON.stringify({}),
+    () => 'malformed sensitive reply',
+    () => { throw new Error('sensitive impersonation or transport failure'); },
+  ]) {
+    const { command } = fixture(() => false, remoteConfig, options);
+    const result = preflight(options, (args, input) => {
+      const raw = command(args, input);
+      const review = input && JSON.parse(input).spec.resourceAttributes;
+      return review?.resource === 'pods' && review.subresource === 'exec' && review.verb === 'create'
+        ? reply() : raw;
+    });
+    assert.equal(result.passed, false);
+    assert.deepEqual(result.checks.filter((check) => !check.passed).map((check) => check.name),
+      ['RBAC pods/exec create']);
+    assert.ok(!JSON.stringify(result).includes('sensitive'));
+  }
+});
+
 test('runtime Pod token isolation does not require a disabled ServiceAccount default', () => {
   for (const automount of [undefined, false, true]) {
     const { command } = fixture(() => false, remoteConfig, remoteOptions);
-    const result = preflight(remoteOptions, (args) => {
-      const raw = command(args);
+    const result = preflight(remoteOptions, (args, input) => {
+      const raw = command(args, input);
       if (args[6] !== 'serviceaccount') return raw;
       return JSON.stringify({ ...JSON.parse(raw), automountServiceAccountToken: automount });
     });
@@ -155,8 +204,8 @@ test('runtime identity still requires the configured live ServiceAccount in its 
     { name: 'cma-runtime', namespace: remoteOptions.runtimeNamespace, deletionTimestamp: '2026-10-13T00:00:00Z' },
   ]) {
     const { command } = fixture(() => false, remoteConfig, remoteOptions);
-    const result = preflight(remoteOptions, (args) => {
-      const raw = command(args);
+    const result = preflight(remoteOptions, (args, input) => {
+      const raw = command(args, input);
       if (args[6] !== 'serviceaccount') return raw;
       if (changed === undefined) throw new Error('ServiceAccount not found');
       return JSON.stringify({ metadata: changed });
@@ -238,16 +287,19 @@ const emptyConfig = {
   CHRONO_AGENT_SANDBOX_HOME_TEMPLATE: '', CHRONO_AGENT_SANDBOX_HOME_TEMPLATE_UID: '',
 };
 test('empty native homes need no snapshot API or PVC mutation authority', () => {
-  const denied = (args) => args.some((arg) => arg.includes('snapshot.storage.k8s.io'))
-    || (args[8] === 'persistentvolumeclaims' && ['create', 'patch', 'delete'].includes(args[7]));
-  const { command, calls } = fixture(denied, emptyConfig, remoteOptions);
+  const denied = (args, review) => args.some((arg) => arg.includes('snapshot.storage.k8s.io'))
+    || review?.group === 'snapshot.storage.k8s.io'
+    || (review?.resource === 'persistentvolumeclaims' && ['create', 'patch', 'delete'].includes(review.verb));
+  const { command, calls, reviews } = fixture(denied, emptyConfig, remoteOptions);
   const result = preflight(remoteOptions, command);
   assert.equal(result.passed, true);
   assert.ok(calls.every((args) => !denied(args)));
-  assert.ok(calls.some((args) => args[8] === 'persistentvolumeclaims' && args[7] === 'get'));
+  assert.ok(reviews.every((review) => !denied([], review)));
+  assert.ok(reviews.some((review) => review.resource === 'persistentvolumeclaims' && review.verb === 'get'));
   assert.ok(calls.some((args) => args[6] === 'storageclass' && args[7] === 'remote-disk'));
-  for (const deniedResource of ['persistentvolumeclaims', 'pods', 'pods/exec']) {
-    const fixtureArgs = fixture((args) => args[8] === deniedResource, emptyConfig, remoteOptions);
+  for (const [deniedResource, subresource] of [['persistentvolumeclaims', ''], ['pods', ''], ['pods', 'exec']]) {
+    const fixtureArgs = fixture((args, review) => review?.resource === deniedResource
+      && review.subresource === subresource, emptyConfig, remoteOptions);
     assert.equal(preflight(remoteOptions, fixtureArgs.command).passed, false, deniedResource);
   }
 });
