@@ -22,6 +22,8 @@ pub const WEBHOOK_SECRET: &str = "native-webhook-fixture";
 const ORIGIN: &str = "https://files.example";
 /// Far above any test's provider delay, so a delayed start is never a timeout.
 const PROVIDER_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+/// Allow the 300-callback burst to establish its concurrent localhost connections.
+const PROVIDER_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const PROVIDER_CAPACITY: usize = 512;
 
 /// The transport the channel's single source serves.
@@ -87,7 +89,7 @@ impl MediaApp {
         let providers = Arc::new(
             ProviderClient::new(
                 registry,
-                Duration::from_secs(1),
+                PROVIDER_CONNECT_TIMEOUT,
                 PROVIDER_REQUEST_TIMEOUT,
                 PROVIDER_CAPACITY,
             )
