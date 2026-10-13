@@ -30,6 +30,7 @@ use super::{
     },
     CmaServiceConnectionBroker, LiveLaunchPolicy,
 };
+use crate::agent_lifecycle::ImageResolver;
 use crate::{rate_limit::CmaLaunchQuota, rate_limit::RateLimiters, store::MongoStores};
 
 pub(crate) struct TriggerCompositionDependencies {
@@ -49,6 +50,7 @@ pub(crate) struct TriggerCompositionDependencies {
     pub worker_holder: String,
     pub profile_bounds: ProfileCapacityBounds,
     pub profile_scanner: Arc<dyn PublicValueScanner>,
+    pub image_resolver: Arc<dyn ImageResolver>,
 }
 
 pub(crate) struct TriggerComposition {
@@ -66,6 +68,7 @@ impl TriggerComposition {
             dependencies.stores.sandbox_profiles.clone(),
             dependencies.profile_bounds,
             dependencies.profile_scanner,
+            dependencies.image_resolver,
         );
         let triggers = TriggerService::new_with_inline_materializer(
             definitions.clone(),

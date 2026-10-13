@@ -255,17 +255,31 @@ fn profile_error(error: layer2_core::profiles::ProfileCreationError) -> BotError
         layer2_core::profiles::ProfileCreationError::Store(_) => BotError::Unavailable,
     }
 }
+pub(super) struct BotCompositionDependencies<'a> {
+    pub config: &'a Config,
+    pub stores: &'a MongoStores,
+    pub auth: Arc<AuthState>,
+    pub profiles: Arc<layer2_core::event_workers::EventWorkerProfileService>,
+    pub image_resolver: Arc<dyn ImageResolver>,
+    pub connections: Arc<dyn SandboxCredentialPrerequisite>,
+    pub profile_bounds: ProfileCapacityBounds,
+    pub profile_scanner: Arc<dyn layer2_core::profiles::PublicValueScanner>,
+}
+
 impl BotComposition {
     pub(super) fn build(
-        config: &Config,
-        stores: &MongoStores,
-        auth: Arc<AuthState>,
-        profiles: Arc<layer2_core::event_workers::EventWorkerProfileService>,
-        image_resolver: Arc<dyn ImageResolver>,
-        connections: Arc<dyn SandboxCredentialPrerequisite>,
-        profile_bounds: ProfileCapacityBounds,
-        profile_scanner: Arc<dyn layer2_core::profiles::PublicValueScanner>,
+        dependencies: BotCompositionDependencies<'_>,
     ) -> Result<(Router, Option<Self>), String> {
+        let BotCompositionDependencies {
+            config,
+            stores,
+            auth,
+            profiles,
+            image_resolver,
+            connections,
+            profile_bounds,
+            profile_scanner,
+        } = dependencies;
         let Some(gateway) = &config.gateway else {
             return Ok((Router::new(), None));
         };

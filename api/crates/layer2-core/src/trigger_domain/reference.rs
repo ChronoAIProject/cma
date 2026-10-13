@@ -23,6 +23,10 @@ pub enum TriggerReferenceError {
     Unavailable { field: &'static str },
     #[error("trigger_reference_not_public: {field}")]
     NotPublic { field: &'static str },
+    #[error("trigger_image_access_denied: {field}")]
+    ImageAccessDenied { field: &'static str },
+    #[error("trigger_image_sign_in_required: {field}")]
+    ImageSignInRequired { field: &'static str },
 }
 
 impl TriggerReferenceError {
@@ -30,12 +34,17 @@ impl TriggerReferenceError {
         match self {
             Self::Unavailable { .. } => "trigger_reference_unavailable",
             Self::NotPublic { .. } => "trigger_reference_not_public",
+            Self::ImageAccessDenied { .. } => "trigger_image_access_denied",
+            Self::ImageSignInRequired { .. } => "trigger_image_sign_in_required",
         }
     }
 
     pub fn field(&self) -> &'static str {
         match self {
-            Self::Unavailable { field } | Self::NotPublic { field } => field,
+            Self::Unavailable { field }
+            | Self::NotPublic { field }
+            | Self::ImageAccessDenied { field }
+            | Self::ImageSignInRequired { field } => field,
         }
     }
 }
@@ -76,6 +85,18 @@ pub trait TriggerInlineTargetMaterializer: Send + Sync {
         owner: &SubjectId,
         target: &TriggerTarget,
     ) -> Result<TriggerTarget, TriggerReferenceError>;
+
+    /// Materialize an inline target with the caller's delegated service
+    /// credential when an external resolver needs to verify Image Manager
+    /// authority. Compatibility implementations may use the legacy method.
+    async fn materialize_with_credential(
+        &self,
+        owner: &SubjectId,
+        target: &TriggerTarget,
+        _delegated_credential: Option<&str>,
+    ) -> Result<TriggerTarget, TriggerReferenceError> {
+        self.materialize(owner, target).await
+    }
 }
 
 #[async_trait]
