@@ -65,6 +65,8 @@ pub struct NativePoolPodPolicy {
     pub runtime_class: Option<String>,
     pub service_account: String,
     pub image_pull_secrets: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub template_network_policy: Option<super::super::NativeTemplateNetworkPolicy>,
 }
 
 impl From<&AgentSandboxConfig> for NativePoolPodPolicy {
@@ -73,6 +75,7 @@ impl From<&AgentSandboxConfig> for NativePoolPodPolicy {
             runtime_class: config.runtime_class.clone(),
             service_account: config.service_account.clone(),
             image_pull_secrets: config.image_pull_secrets.clone(),
+            template_network_policy: config.template_network_policy.clone(),
         }
     }
 }
@@ -99,6 +102,9 @@ pub struct NativePoolClaimRequest {
 impl NativePoolClaimRequest {
     pub fn validate(&self) -> Result<()> {
         self.pool.spec.validate()?;
+        if let Some(policy) = &self.pool.pod_policy.template_network_policy {
+            policy.validate()?;
+        }
         self.home.validate()?;
         if self.runtime_generation == 0
             || self.home.policy != self.pool.spec.home
@@ -144,16 +150,34 @@ pub struct NativePoolClaim {
 pub(super) fn digest(config: &AgentSandboxConfig, spec: &NativePoolSpec) -> Result<String> {
     config.validate()?;
     spec.validate()?;
-    // Rotation of the deployment-only HMAC secret does not replace pool Pods.
-    crate::provider_request_digest(&(
-        "native-pool-v1",
+    policy_digest(
         &config.namespace,
         &config.deployment,
-        &config.runtime_class,
-        &config.service_account,
-        &config.image_pull_secrets,
+        &NativePoolPodPolicy::from(config),
         spec,
-    ))
+    )
+}
+
+pub(super) fn policy_digest(
+    namespace: &str,
+    deployment: &str,
+    policy: &NativePoolPodPolicy,
+    spec: &NativePoolSpec,
+) -> Result<String> {
+    // Preserve the original tuple and serialized records for historical definitions.
+    let original = (
+        "native-pool-v1",
+        namespace,
+        deployment,
+        &policy.runtime_class,
+        &policy.service_account,
+        &policy.image_pull_secrets,
+        spec,
+    );
+    match &policy.template_network_policy {
+        None => crate::provider_request_digest(&original),
+        Some(network) => crate::provider_request_digest(&("native-pool-v2", original, network)),
+    }
 }
 
 pub(super) fn template(
@@ -229,7 +253,33 @@ pub(super) fn template(
             "volumeMounts":[{"name":"home","mountPath":"/mnt/cma-home","readOnly":false}]
         }]);
     }
+    if let Some(policy) = &config.template_network_policy {
+        template["spec"]["networkPolicyManagement"] = json!("Managed");
+        template["spec"]["networkPolicy"] = serde_json::to_value(policy)
+            .map_err(|_| rejected("invalid native Template network policy"))?;
+    }
     decode(template)
+}
+
+/// Template-only extension fields are never submitted to the core Sandbox CRD.
+/// New explicit policies pin the controller selector label on the Pod template.
+pub(super) fn sandbox_spec(
+    template: &DynamicObject,
+    binding: &NativePoolBinding,
+) -> serde_json::Value {
+    let mut spec = template.data["spec"].clone();
+    for key in [
+        "volumeClaimTemplatesPolicy",
+        "networkPolicyManagement",
+        "networkPolicy",
+    ] {
+        spec.as_object_mut().unwrap().remove(key);
+    }
+    if binding.pod_policy.template_network_policy.is_some() {
+        spec["podTemplate"]["metadata"]["labels"]["agents.x-k8s.io/sandbox-template-ref-hash"] =
+            json!(super::super::pods::name_hash(&binding.template_name));
+    }
+    spec
 }
 
 pub(super) fn pool(
@@ -292,6 +342,7 @@ pub(super) fn binding_config(
         runtime_class: binding.pod_policy.runtime_class.clone(),
         service_account: binding.pod_policy.service_account.clone(),
         image_pull_secrets: binding.pod_policy.image_pull_secrets.clone(),
+        template_network_policy: binding.pod_policy.template_network_policy.clone(),
         ..current.clone()
     }
 }
@@ -319,6 +370,7 @@ pub(super) fn verify(actual: &DynamicObject, desired: &DynamicObject) -> Result<
             .annotations()
             .iter()
             .any(|(k, v)| actual.annotations().get(k) != Some(v))
+        || !network_policy_matches(&actual.data["spec"], &desired.data["spec"])
         || !contains(&actual.data["spec"], &desired.data["spec"])
     {
         return Err(rejected(
@@ -326,6 +378,13 @@ pub(super) fn verify(actual: &DynamicObject, desired: &DynamicObject) -> Result<
         ));
     }
     Ok(())
+}
+
+fn network_policy_matches(actual: &serde_json::Value, desired: &serde_json::Value) -> bool {
+    desired.get("networkPolicy").is_none_or(|policy| {
+        actual.get("networkPolicy") == Some(policy)
+            && actual.get("networkPolicyManagement") == desired.get("networkPolicyManagement")
+    })
 }
 
 // API defaults may add ordinary fields; all submitted values and array cardinality stay exact.

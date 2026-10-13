@@ -12,6 +12,7 @@ pub(super) fn config() -> AgentSandboxConfig {
         runtime_class: Some("gvisor".into()),
         service_account: "cma-runtime".into(),
         image_pull_secrets: vec!["registry-pull".into()],
+        template_network_policy: None,
         control_key: "fixture".repeat(8),
     }
 }

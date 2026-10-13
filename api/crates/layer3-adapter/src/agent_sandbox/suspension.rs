@@ -54,6 +54,7 @@ impl AgentSandboxClient {
         let mut before = self.desired_at(previous, name).await?;
         before.data["spec"]["operatingMode"] = json!("Suspended");
         let desired = self.desired_at(next, name).await?;
+        self.verify_explicit_runtime_policy(&desired).await?;
         let actual = self
             .get(runtime)
             .await?

@@ -16,6 +16,9 @@ data:
   # Existing remote runtime identity; Pod templates disable API token automount.
   CHRONO_AGENT_SANDBOX_SERVICE_ACCOUNT: "default"
   CHRONO_AGENT_SANDBOX_IMAGE_PULL_SECRETS: ""
+  # Operator-reviewed ingress AND egress JSON for controller-managed Template policy.
+  # Empty preserves controller defaults; fill only after actual network canary proof.
+  CHRONO_AGENT_SANDBOX_TEMPLATE_NETWORK_POLICY: ""
   # Deployment env refs take the API and namespace from example-namespace-02.
   # Metadata mode uses the annotated KSA's short-lived Google identity; the
   # projected CA verifies the remote cluster, and no static token is mounted.

@@ -124,6 +124,9 @@ impl AgentSandboxClient {
         request: &ProviderSandboxRequest,
     ) -> Result<RuntimeHandle> {
         home.receipt.validate_for(&home.request)?;
+        self.pools
+            .verify_explicit_network_policy(&original.request.pool)
+            .await?;
         if self.pools.recover_home(original).await?.as_ref() != Some(home)
             || request.metadata.get("cma/runtime-generation")
                 != Some(&original.request.runtime_generation.to_string())
@@ -197,6 +200,26 @@ impl AgentSandboxClient {
         handle(&updated)
     }
 
+    /// Recheck Template authority only before transitions that admit work or keys.
+    pub(super) async fn verify_explicit_runtime_policy(
+        &self,
+        object: &kube::api::DynamicObject,
+    ) -> Result<()> {
+        if let Some(encoded) = object.annotations().get(NATIVE_HOME_ANNOTATION) {
+            let origin: NativePoolHomeOrigin = serde_json::from_str(encoded)
+                .map_err(|_| rejected("invalid native runtime origin"))?;
+            origin.validate_for(
+                &self.config.namespace,
+                &self.config.deployment,
+                &origin.claim.request.home,
+            )?;
+            self.pools
+                .verify_explicit_network_policy(&origin.claim.request.pool)
+                .await?;
+        }
+        Ok(())
+    }
+
     /// Called by the hosted backend before binding transport on initial creation,
     /// adoption or resume. Ordinary cold runtimes already carry their environment.
     pub async fn assign_pool_runtime(
@@ -212,6 +235,7 @@ impl AgentSandboxClient {
         if !object.annotations().contains_key(NATIVE_HOME_ANNOTATION) {
             return Ok(None);
         }
+        self.verify_explicit_runtime_policy(&object).await?;
         self.validate_request(runtime, request)
             .await?
             .ok_or_else(|| unavailable("native Sandbox disappeared before assignment"))?;

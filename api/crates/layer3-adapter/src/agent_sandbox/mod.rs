@@ -5,6 +5,7 @@ mod assignment;
 mod connection;
 mod lifecycle;
 mod model;
+mod network_policy;
 mod pods;
 mod pool;
 mod pool_runtime;
@@ -23,6 +24,7 @@ pub use connection::{
 };
 pub(crate) use model::{handle, parse_handle};
 pub use model::{AgentSandboxConfig, PodBinding};
+pub use network_policy::NativeTemplateNetworkPolicy;
 pub use pool::NativePoolPodPolicy;
 pub use pool::{
     AgentSandboxPools, NativePoolBinding, NativePoolClaim, NativePoolClaimRequest, NativePoolSpec,

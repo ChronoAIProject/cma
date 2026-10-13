@@ -49,6 +49,7 @@ fn target() -> PoolTarget {
                 runtime_class: None,
                 service_account: "original-service".into(),
                 image_pull_secrets: vec![],
+                template_network_policy: None,
             },
             namespace: "sandboxes".into(),
             deployment: "test".into(),

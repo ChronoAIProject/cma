@@ -81,7 +81,7 @@ from the remaining application activation steps.
 | Native target | `chrono-bot/example-namespace-02` currently supplies `https://35.240.157.32` and namespace `example-registry-01` | Use these current values; do not use the earlier `cma-test` namespace or infer configuration from last-applied annotations |
 | Native authorization | Fresh CMA Pod metadata token confirms Sandbox get, Claim create, PVC get, and `pods/exec` get/create; PVC create/patch remain denied | VCT integration passes native adapter tests. Verify live allocation with the final image; PVC writes and snapshot reads are not required for new empty native homes |
 | Native persistent home | A pinned diagnostic Python image passed controller-owned 64 GiB RWOP allocation/mount on `home-a`, suspend/resume with the same PVC and saved marker, and Claim deletion with Sandbox/PVC GC | This proves the infrastructure substrate. Verify the final CMA runtime initializer, authenticated assignment/bootstrap and lifecycle before activation; a mandatory seed snapshot is a superseded implementation choice |
-| Runtime network path | `chrono-pod-default` admits ingress only on TCP 8080 from the undeployed `sandbox-router` namespace or local Pods labeled `app=sandbox-router`. Northeast CMA connection attempts to the ready diagnostic Pod on both TCP 9090 and 8080 timed out after four seconds | Infra must provide and verify the runtime path. Current CMA discovery connects directly to Pod IP TCP 9090 for authenticated HTTP and WebSocket. The measured timeouts do not isolate policy from routing; Kubernetes API access alone does not satisfy this requirement |
+| Runtime network path | `chrono-pod-default` admits TCP 8080 from a single peer combining namespace `sandbox-router` **and** Pod label `app=sandbox-router`; that router is not deployed. Initial northeast connection attempts timed out on TCP 9090 and 8080. A subsequent controller-owned Managed Template policy explicitly allowed the northeast Pod CIDR on TCP 9090, but all 15 allow-phase requests still timed out | Infra must provide and verify the runtime path. Current CMA discovery connects directly to Pod IP TCP 9090 for authenticated HTTP and WebSocket. The measured timeouts do not isolate policy from routing or VPC firewall enforcement; Kubernetes API access alone does not satisfy this requirement. See the Native Template network policy evidence below |
 | Runtime ServiceAccount and storage | Remote `default` exists, is active and has no GSA annotation. A `standard-rwo` canary disk could not attach to the selected N4 node because it uses `pd-balanced`; `home-a` (`hyperdisk-balanced`, CMEK) passed the diagnostic 64 GiB RWOP lifecycle | CMA selects `default` with Pod token automount disabled and `home-a` with the existing 64 GiB home default. A new runtime ServiceAccount is not required; final CMA image/bootstrap acceptance remains separate |
 | Runtime isolation class | The southeast `example-namespace-01` policy enforces `microvm` or `gvisor`; an isolated Sandbox without `runtimeClassName` was rejected. The diagnostic `microvm`/`home-a` Pod ran successfully | CMA explicitly selects the existing `microvm` RuntimeClass. Class existence and policy compatibility are checked before activation; final CMA image and connection acceptance remain separate |
 | CMA runtime signing key | `chrono-bot/cma-agent-sandbox-control` has been created and read-verified in the northeast CMA cluster, without printing or storing its value locally | Mount the existing Secret during activation and preserve its value across restarts; it is separate from infra's Kubernetes access identity |
@@ -274,9 +274,12 @@ connectivity. Verify the cluster CNI enforces NetworkPolicy and that an
 unrelated Pod cannot reach the runtime port.
 On 2026-10-13, connection attempts from northeast CMA to the ready diagnostic
 Pod at `10.57.0.97` timed out after four seconds on both TCP 9090 and TCP 8080.
-The diagnostic used a pinned Python image, not the final CMA runtime. This is
-an observed remote network blocker; the measurements do not distinguish
-NetworkPolicy rejection from routing or other network enforcement.
+That diagnostic used a pinned Python image and an Unmanaged Template. The
+subsequent Managed Template diagnostic described below also timed out after
+the controller reconciled an explicit TCP 9090 allow rule. Neither diagnostic
+used the final CMA runtime. The remote network blocker remains unresolved;
+these measurements do not distinguish NetworkPolicy rejection from routing or
+other network enforcement.
 The policy intentionally does not rely on `cma/runtime-name`, which claimed
 warm Pods do not carry. Workload network egress and runtime scheduling remain
 infra policy; check the selected RuntimeClass can schedule the requested image,
@@ -757,3 +760,72 @@ native backend enabled while any native runtime, suspended binding, pending
 claim or retained cleanup debt exists. Roll back only to an application image
 that understands the persisted native lifecycle stages and runtime protocol;
 changing an image tag cannot migrate or safely erase that state.
+
+
+### Native Template network policy
+
+`CHRONO_AGENT_SANDBOX_TEMPLATE_NETWORK_POLICY` is an operator-only JSON object
+with explicit `ingress` and `egress` arrays. CMA submits these rules only through
+its owned SandboxTemplate, with `networkPolicyManagement: Managed`. The native
+controller owns the resulting NetworkPolicy, its pod selector and policy types;
+CMA needs no NetworkPolicy write permission. CMA requires both directions because
+the controller replaces its complete default policy with the custom rules. An
+empty array grants no traffic in that direction from this policy. NetworkPolicy
+allows are additive: other policies selecting the same Pod can still allow
+traffic. CMA rejects an omitted direction. Named ports are not accepted; use
+explicit TCP/UDP protocols and numeric ports.
+
+The checked-in value remains empty pending an actual cross-cluster network proof.
+The controller's managed default ingress admits its local sandbox-router only,
+so an empty value does not establish direct CMA control-plane connectivity. A
+reviewed custom policy must admit the observed control-plane source on TCP 9090,
+retain the required DNS path and allow the runtime's approved public egress. A
+source CIDR identifies addresses, not an individual CMA deployment; runtime
+authentication remains required. Use the actual runtime image and
+controller-created managed policy in the rollout canary.
+
+On 2026-10-13, diagnostic `cma-managed-net-1aa0c364` tested the pinned Python
+runtime using a controller-owned Managed Template policy. The runner verified
+the Template owner UID, exact Pod selector, both policy types and complete rules
+before each phase. The initial custom policy had no ingress allowances. Its
+egress matched `chrono-pod-default`: UDP/TCP 53 to Pods labeled
+`k8s-app=kube-dns` **in** namespace `kube-system`, plus public IPv4 excluding
+`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `100.64.0.0/10` and
+`169.254.0.0/16`. No IPv6 allowance was added.
+
+The baseline requests from northeast Pod `10.41.0.104` to ready southeast Pod
+`10.57.0.99:9090` timed out. The diagnostic then added ingress from
+`10.254.0.0/16` on TCP 9090. After the same generated NetworkPolicy advanced to
+generation 2 and its exact rules were verified, all 15 allow-phase requests
+still timed out after four seconds each. The post-allow TCP 8080 check was not
+reached. The source Pod, Claim, Pool and Template were removed with UID
+preconditions, the generated policy was garbage-collected, and the infra policy
+UID and spec were unchanged. This proves custom-policy reconciliation and
+cleanup, but does not establish runtime connectivity or production acceptance.
+
+Both clusters use `ADVANCED_DATAPATH`. [Google's Dataplane V2
+documentation](https://docs.cloud.google.com/kubernetes-engine/docs/how-to/network-policy#ipblock-dpv2)
+states that Pod traffic is never covered by an `ipBlock` rule. This is a material
+limitation of using a Pod CIDR as the source selector; it does not establish how
+the southeast dataplane classified this particular remote-cluster source or
+prove the cause of these timeouts. Effective VPC firewall rules could not be
+read because the current account lacks `compute.firewalls.list` and
+`compute.instances.get`; the narrow firewall-flow log query also lacked access.
+Missing cross-cluster firewall rules therefore remain unconfirmed. Infra must
+verify effective ingress to destination node
+`gke-chronoai-prod-asia-south-egress-a-bd6f4de5-bhd9` in
+`asia-southeast1-b` and effective egress from the northeast source for this
+TCP 9090 path before rollout.
+
+Policy is frozen in durable pool plans, bindings and claim/home authority. A
+changed deployment policy selects a new pool identity; existing reservations
+retain their original policy. Historical definitions without this field keep
+the exact previous digest and serialization. CMA refuses drift in an explicit
+Template policy and verifies its original controller template-ref hash on the
+assigned Pod template during adoption and resume. Template-only fields are never
+copied into the core Sandbox spec, and resume preserves the selector label.
+
+The pinned agent-sandbox v1.0.2 controller does not inject public DNS when custom
+rules are configured. Explicitly review cluster DNS reachability in the selected
+egress policy; do not copy only the ingress exception and accidentally drop DNS
+or public endpoint access.

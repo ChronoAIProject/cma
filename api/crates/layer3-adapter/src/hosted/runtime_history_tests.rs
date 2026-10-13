@@ -61,6 +61,7 @@ fn native(transport: Arc<dyn HostedControlTransport>) -> Arc<dyn HostedBackend> 
             runtime_class: None,
             service_account: "cma-runtime".into(),
             image_pull_secrets: vec![],
+            template_network_policy: None,
             control_key: "fixture".repeat(8),
         },
         "fixture",
