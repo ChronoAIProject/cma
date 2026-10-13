@@ -22,9 +22,11 @@ data:
   CHRONO_AGENT_SANDBOX_AUTH_MODE: "google-metadata"
   CHRONO_AGENT_SANDBOX_CA_FILE: "/etc/example-registry-01/ca.crt"
   CHRONO_AGENT_SANDBOX_TOKEN_FILE: ""
-  # All four native home fields override the legacy seed policy together.
-  # Empty preserves the existing policy for same-cluster deployments.
-  # A distinct policy needs a separate native namespace or API connection.
+  # Native CRDs own empty VCT PVCs; the runtime image initializes their layout.
+  # Set the target cluster storage class/capacity before enabling native allocation.
+  # Empty storage fields borrow legacy class/capacity; snapshot fields stay empty.
+  # Retained historical allocations keep their persisted policy and authority.
+  CHRONO_AGENT_SANDBOX_HOME_MODE: "native_vct_empty_v1"
   CHRONO_AGENT_SANDBOX_HOME_STORAGE_CLASS: ""
   CHRONO_AGENT_SANDBOX_HOME_CAPACITY_GIB: ""
   CHRONO_AGENT_SANDBOX_HOME_TEMPLATE: ""

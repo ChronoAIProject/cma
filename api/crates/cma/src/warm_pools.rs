@@ -89,6 +89,24 @@ pub(crate) trait PoolTargetStore: Send + Sync {
     async fn finish(&self, target: &PoolTarget, success: bool) -> Result<(), WarmPoolError>;
 }
 
+/// Build metadata for the deployment-owned pinned CMA runtime, never a user image.
+/// Both cold allocation and administrated warm pools use this same contract.
+pub(crate) fn deployment_image(uri: String) -> RuntimeImage {
+    RuntimeImage {
+        uri,
+        labels: BTreeMap::from([
+            (
+                layer3_adapter::RUNTIME_CONTRACT_LABEL.into(),
+                layer3_adapter::RUNTIME_CONTRACT_VERSION.to_string(),
+            ),
+            (
+                layer3_adapter::runtime_bootstrap::RUNTIME_BOOTSTRAP_LABEL.into(),
+                "1".into(),
+            ),
+        ]),
+    }
+}
+
 pub(crate) struct NativeWarmPools {
     store: Arc<dyn PoolTargetStore>,
     adapter: Arc<dyn SandboxAdapter>,
@@ -105,21 +123,10 @@ impl NativeWarmPools {
         home: Option<HomeVolumePolicy>,
         default_capacity: layer3_adapter::SandboxCapacity,
     ) -> Arc<Self> {
-        // This is the deployment-owned CMA runtime build contract, never user-supplied labels.
-        let labels = BTreeMap::from([
-            (
-                layer3_adapter::RUNTIME_CONTRACT_LABEL.into(),
-                layer3_adapter::RUNTIME_CONTRACT_VERSION.to_string(),
-            ),
-            (
-                layer3_adapter::runtime_bootstrap::RUNTIME_BOOTSTRAP_LABEL.into(),
-                "1".into(),
-            ),
-        ]);
         Arc::new(Self {
             store,
             adapter,
-            image: RuntimeImage { uri: image, labels },
+            image: deployment_image(image),
             home,
             default_capacity,
         })
