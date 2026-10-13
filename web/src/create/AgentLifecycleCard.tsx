@@ -53,7 +53,7 @@ export function AgentLifecycleCard(props: AgentLifecycleCardProps) {
   }, [contextual, props.client]);
   if (contextual) return <AgentLifecycleForm {...props} />;
   const picker = (
-    <div className="create-form__field agent-lifecycle-location">
+    <div className="agent-lifecycle-location">
       <label htmlFor="agent-sandbox">Agent location</label>
       <select id="agent-sandbox" value={target} onChange={(event) => setTarget(event.target.value)}>
         {props.canCreateSandbox === false ? (
