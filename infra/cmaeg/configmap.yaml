@@ -21,7 +21,7 @@ data:
   CMAEG_NYXID_BASE_URL: "https://nyx-api.chrono-ai.fun"
   CMAEG_TOOLS_NYXID_SLUG: "cmaeg"
   CMAEG_PROVIDERS: >-
-    [{"slug":"cma_codex","base_url":"http://cma-agent-manager.chrono-bot.svc","kind":"responses_http","paths":{"agent_card":"/.well-known/agent-card.json","binding":"/api/v1/cmaeg/bindings/{binding_id}","conversation":"/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}","responses":"/api/v2/responses"},"max_inflight":256},{"slug":"nyxbot","base_url":"https://nyx-api.chrono-ai.fun","kind":"responses_http","paths":{"agent_card":"/api/v1/nyxbot/agent-card","binding":"/api/v1/nyxbot/bindings/{binding_id}","conversation":"/api/v1/nyxbot/bindings/{binding_id}/conversations/{conversation_id}","responses":"/api/v1/nyxbot/responses"},"max_inflight":256}]
+    [{"slug":"cma_codex","base_url":"http://cma-api.chrono-bot.svc","kind":"responses_http","paths":{"agent_card":"/.well-known/agent-card.json","binding":"/api/v1/cmaeg/bindings/{binding_id}","conversation":"/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}","responses":"/api/v2/responses"},"max_inflight":256},{"slug":"nyxbot","base_url":"https://nyx-api.chrono-ai.fun","kind":"responses_http","paths":{"agent_card":"/api/v1/nyxbot/agent-card","binding":"/api/v1/nyxbot/bindings/{binding_id}","conversation":"/api/v1/nyxbot/bindings/{binding_id}/conversations/{conversation_id}","responses":"/api/v1/nyxbot/responses"},"max_inflight":256}]
   CMAEG_MEDIA_TOOL_PROVIDERS: "cma_codex"
   CMAEG_NON_HUMAN_PROVIDERS: "cma_codex"
   CMAEG_MEDIA_ENABLED: "true"
