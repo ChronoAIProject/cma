@@ -12,10 +12,10 @@ export const nativeResources = [
   ['sandboxclaims', 'extensions.agents.x-k8s.io', ['warmPoolRef']],
 ];
 const authority = [
-  ...nativeResources.map(([plural, group]) => [`${plural}.${group}`, ['get', 'list', 'create', 'patch', 'delete']]),
-  ['persistentvolumeclaims', ['get', 'list']],
-  ['pods', ['get', 'list']],
-  ['pods/exec', ['get', 'create']],
+  ...nativeResources.map(([plural, group]) => [plural, group, '', ['get', 'list', 'create', 'patch', 'delete']]),
+  ['persistentvolumeclaims', '', '', ['get', 'list']],
+  ['pods', '', '', ['get', 'list']],
+  ['pods', '', 'exec', ['get', 'create']],
 ];
 
 export function validateCrd(crd, [plural, group, required]) {
@@ -73,8 +73,8 @@ export function homePolicy(config) {
   return { mode, storageClass, capacity, template, templateUid };
 }
 
-export function preflight(options = {}, command = (args) => execFileSync('kubectl', args, {
-  encoding: 'utf8', timeout: 15000, maxBuffer: 16 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'],
+export function preflight(options = {}, command = (args, input) => execFileSync('kubectl', args, {
+  input, encoding: 'utf8', timeout: 15000, maxBuffer: 16 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe'],
 })) {
   const context = options.context ?? productionContext;
   const namespace = options.namespace ?? 'chrono-bot';
@@ -150,14 +150,24 @@ export function preflight(options = {}, command = (args) => execFileSync('kubect
   check('native home policy is valid', () => { policy = homePolicy(config); });
   const requiredAuthority = [...authority];
   if (policy?.mode === 'legacy_snapshot') {
-    requiredAuthority.push(['persistentvolumeclaims', ['create', 'patch', 'delete']],
-      ['volumesnapshots.snapshot.storage.k8s.io', ['get']]);
+    requiredAuthority.push(['persistentvolumeclaims', '', '', ['create', 'patch', 'delete']],
+      ['volumesnapshots', 'snapshot.storage.k8s.io', '', ['get']]);
   }
-  for (const [resource, verbs] of requiredAuthority) {
+  for (const [resource, group, subresource, verbs] of requiredAuthority) {
+    const target = `${resource}${group ? `.${group}` : ''}${subresource ? `/${subresource}` : ''}`;
     for (const verb of verbs) {
-      check(`RBAC ${resource} ${verb}`, () => {
-        assert.equal(command([...runtimeBase, 'auth', 'can-i', verb, resource,
-          '--as', runtimePrincipal]).trim(), 'yes');
+      check(`RBAC ${target} ${verb}`, () => {
+        // Raw non-persistent authorization reviews avoid kubectl discovery and
+        // resource/name parsing (which can mistake pods/exec for a named Pod).
+        const review = {
+          apiVersion: 'authorization.k8s.io/v1', kind: 'SelfSubjectAccessReview',
+          spec: { resourceAttributes: { namespace: runtimeNamespace, group, resource, subresource, verb } },
+        };
+        const result = JSON.parse(command([...runtimeBase, 'create', '--raw',
+          '/apis/authorization.k8s.io/v1/selfsubjectaccessreviews', '-f', '-',
+          '--as', runtimePrincipal], JSON.stringify(review)));
+        assert.equal(result.status?.allowed, true);
+        assert.notEqual(result.status?.denied, true);
       });
     }
   }
