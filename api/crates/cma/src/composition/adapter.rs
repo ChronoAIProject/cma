@@ -149,7 +149,7 @@ pub(super) async fn production_adapter(
         home_store = Some(routes);
     }
     let mut deployment = HostedDeployment::default();
-    deployment.image.uri = config.runtime.sandbox_image.clone();
+    deployment.image = crate::warm_pools::deployment_image(config.runtime.sandbox_image.clone());
     deployment.upstream_base_url = config.runtime.upstream_base_url.clone();
     deployment.upstream_wire_api = config.runtime.upstream_wire_api.clone();
     deployment.platform_base_url = config.runtime.platform_base_url.clone();

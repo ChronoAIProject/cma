@@ -71,9 +71,9 @@ pub trait HostedBackend: Send + Sync {
     async fn select_native_pool(
         &self,
         _request: &ProviderSandboxRequest,
+        _image: &crate::RuntimeImage,
         _home: &crate::HomeVolumeRequest,
     ) -> Result<Option<crate::agent_sandbox::NativePoolBinding>> {
-        _image: &crate::RuntimeImage,
         Ok(None)
     }
     async fn provision(&self, request: ProviderSandboxRequest) -> Result<RuntimeHandle>;
