@@ -163,7 +163,11 @@ impl AgentSandboxPools {
         })
     }
 
-    fn member_owned(&self, member: &DynamicObject, claim: &NativePoolClaim) -> Result<()> {
+    pub(crate) fn member_owned(
+        &self,
+        member: &DynamicObject,
+        claim: &NativePoolClaim,
+    ) -> Result<()> {
         let references = member
             .metadata
             .owner_references
@@ -193,7 +197,7 @@ impl AgentSandboxPools {
         Ok(())
     }
 
-    fn member_spec(
+    pub(crate) fn member_spec(
         &self,
         member: &DynamicObject,
         origin: &NativePoolHomeOrigin,
@@ -232,7 +236,7 @@ impl AgentSandboxPools {
         }
     }
 
-    fn volume_candidate(
+    pub(super) fn volume_candidate(
         &self,
         volume: &PersistentVolumeClaim,
         origin: &NativePoolHomeOrigin,
@@ -297,7 +301,7 @@ impl AgentSandboxPools {
     }
 }
 
-fn explicit_volumes(origin: &NativePoolHomeOrigin) -> Result<Value> {
+pub(super) fn explicit_volumes(origin: &NativePoolHomeOrigin) -> Result<Value> {
     Ok(
         json!([{"name":"home","persistentVolumeClaim":{"claimName":origin.storage_reference()?,"readOnly":false}}]),
     )

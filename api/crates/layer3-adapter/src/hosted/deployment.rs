@@ -22,7 +22,7 @@ pub(super) const RUNTIME_IMAGE_METADATA: &str = "cma/image-sha256";
 pub(super) const RUNTIME_CONTRACT_METADATA: &str = "cma/runtime-contract";
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub(super) struct ProviderIdentity {
+pub(crate) struct ProviderIdentity {
     pub sandbox_id: String,
     pub generation: u64,
     pub image_sha256: String,
@@ -267,7 +267,7 @@ fn validate_runtime_image(image: &str) -> crate::Result<()> {
     Ok(())
 }
 
-pub(super) fn provider_request_fingerprint(
+pub(crate) fn provider_request_fingerprint(
     request: &ProviderSandboxRequest,
 ) -> crate::Result<String> {
     request.validate_volumes()?;
@@ -317,7 +317,7 @@ pub(super) fn provider_request_fingerprint(
     Ok(URL_SAFE_NO_PAD.encode(digest.finalize()))
 }
 
-pub(super) fn provider_request_identity(
+pub(crate) fn provider_request_identity(
     request: &ProviderSandboxRequest,
 ) -> crate::Result<ProviderIdentity> {
     let identity = provider_metadata_identity(&request.metadata)?;

@@ -20,8 +20,12 @@ impl AgentSandboxBackend {
     }
 
     async fn bind(&self, handle: &RuntimeHandle, request: &ProviderSandboxRequest) -> Result<()> {
-        self.client
+        let pod = self
+            .client
             .wait_ready(handle, Duration::from_secs(180))
+            .await?;
+        self.client
+            .assign_pool_runtime(handle, &pod, request)
             .await?;
         let identity = super::deployment::provider_request_identity(request)?;
         self.transport
@@ -74,7 +78,10 @@ fn observation(object: &DynamicObject) -> Result<RuntimeObservation> {
 #[async_trait::async_trait]
 impl HostedBackend for AgentSandboxBackend {
     async fn provision(&self, request: ProviderSandboxRequest) -> Result<RuntimeHandle> {
-        let handle = self.client.create(&request).await?;
+        let handle = match self.client.provision_pool_runtime(&request).await? {
+            Some(handle) => handle,
+            None => self.client.create(&request).await?,
+        };
         self.bind(&handle, &request).await?;
         Ok(handle)
     }
