@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ApiError, type ShareReceipt, type ResourceShare } from '@chronoai/cma-sdk';
+import type { ShareReceipt, ResourceShare } from '@chronoai/cma-sdk';
 import type { ResourceViewsClient } from './client';
 import type { CommandKeys } from '../api/client';
 import { Button } from '../ui/Button';
@@ -108,15 +108,12 @@ export function ShareScopeEditor({
       sharing.reload();
     } catch (error) {
       if (!request.signal.aborted) {
-        const unsafe = error instanceof ApiError && error.code === 'unsafe_interactive_share';
         setFailure(
-          unsafe
-            ? 'This Agent does not have proven execution isolation. Choose View only, or explicitly review Whole Sandbox sharing. Separate Worktrees do not provide isolation.'
-            : error instanceof Error
-              ? error.message
-              : 'Sharing could not be updated. Retry the same action.',
+          error instanceof Error
+            ? error.message
+            : 'Sharing could not be updated. Retry the same action.',
         );
-        if (!unsafe) sharing.reload();
+        sharing.reload();
       }
     } finally {
       clearTimeout(timer);
@@ -130,14 +127,8 @@ export function ShareScopeEditor({
   const existing = shares?.some((share) => share.target_org_id === organization);
   return (
     <div className="resource-sharing">
-      <h3>
-        {kind === 'agent' ? 'Agent' : 'Whole Sandbox'} · {target.name}
-      </h3>
-      <p>
-        {kind === 'agent'
-          ? 'These are direct Agent grants. Whole-Sandbox grants may also provide access; review that scope separately.'
-          : 'This scope includes every current and future Workspace and Agent in the Sandbox.'}
-      </p>
+      <h3>Whole Sandbox · {target.name}</h3>
+      <p>This scope includes every current and future Workspace and Agent in the Sandbox.</p>
       <Button
         size="sm"
         disabled={busy}
@@ -217,19 +208,17 @@ export function ShareScopeEditor({
             }}
           />
           <div className="resource-sharing__preview" aria-label="Sharing exposure preview">
-            <p>{shareExposure(kind, mode)}</p>
+            <p>{shareExposure(mode)}</p>
           </div>
-          {kind === 'sandbox' ? (
-            <label className="resource-sharing__acknowledgement">
-              <input
-                type="checkbox"
-                checked={acknowledged}
-                disabled={busy}
-                onChange={(event) => setAcknowledged(event.target.checked)}
-              />
-              I intend to share the whole Sandbox, including its current and future resources.
-            </label>
-          ) : null}
+          <label className="resource-sharing__acknowledgement">
+            <input
+              type="checkbox"
+              checked={acknowledged}
+              disabled={busy}
+              onChange={(event) => setAcknowledged(event.target.checked)}
+            />
+            I intend to share the whole Sandbox, including its current and future resources.
+          </label>
           {existing ? (
             <p>
               This organization already has a direct grant. Use its controls above to change access.
@@ -237,9 +226,7 @@ export function ShareScopeEditor({
           ) : null}
           <Button
             variant="primary"
-            disabled={
-              busy || selected === undefined || existing || (kind === 'sandbox' && !acknowledged)
-            }
+            disabled={busy || selected === undefined || existing || !acknowledged}
             onClick={() =>
               void run({
                 key: `create:${organization}:${mode}`,

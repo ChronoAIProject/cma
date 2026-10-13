@@ -11,36 +11,24 @@ import './Sharing.css';
 export function SharingButton({
   client,
   target,
-  sandbox,
 }: {
   readonly client: ResourceViewsClient;
   readonly target: ShareTarget;
-  readonly sandbox?: ShareTarget;
 }) {
   // The button and dialog belong to one resource/client. A new route starts closed.
-  return (
-    <SharingEntry
-      key={`${target.kind}:${target.id}`}
-      client={client}
-      target={target}
-      sandbox={sandbox}
-    />
-  );
+  return <SharingEntry key={`${target.kind}:${target.id}`} client={client} target={target} />;
 }
 
 function SharingEntry({
   client,
   target,
-  sandbox,
 }: {
   readonly client: ResourceViewsClient;
   readonly target: ShareTarget;
-  readonly sandbox?: ShareTarget;
 }) {
   const [openedFor, setOpenedFor] = useState<ResourceViewsClient>();
   const [keys] = useState(() => new CommandKeys());
-  const selectedTarget = sandbox ?? target;
-  const { kind, id } = selectedTarget;
+  const { kind, id } = target;
   const read = useMemo(
     () => async (signal: AbortSignal) => {
       const access = await client.resourceAccess.effective(kind, id, { signal });
@@ -66,18 +54,16 @@ function SharingEntry({
       ) : null}
       <Modal
         open={openedFor === client}
-        title="Resource sharing"
+        title="Sandbox sharing"
         onClose={() => setOpenedFor(undefined)}
-        description="Sharing preserves the owner, creation origin and conversation. Recipients cannot reshare your resource."
+        description="Share access to this Sandbox and its Workspaces and Agents. Recipients cannot reshare it."
       >
-        {selectedTarget.kind === 'sandbox' ? (
-          <p className="resource-sharing__scope">Sharing applies to the whole Sandbox.</p>
-        ) : null}
+        <p className="resource-sharing__scope">Sharing applies to the whole Sandbox.</p>
         {openedFor === client ? (
           <ShareScopeEditor
-            key={`${selectedTarget.kind}:${selectedTarget.id}`}
+            key={`${target.kind}:${target.id}`}
             client={client}
-            target={selectedTarget}
+            target={target}
             keys={keys}
           />
         ) : null}
