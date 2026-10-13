@@ -130,11 +130,11 @@ async fn initial_hold_still_publishes_the_complete_archive() {
     .unwrap();
     let handle = RuntimeHandle::new("runtime-1");
     let store = Arc::new(CaptureStore::default());
-    transport.state.lock().await.archives.insert(
+    transport.state.lock().await.bindings.insert(
         handle.clone(),
-        BoundArchive {
+        BoundRuntime {
             sandbox_id: "sandbox-a".into(),
-            store: store.clone(),
+            store: Some(store.clone()),
         },
     );
 

@@ -6,19 +6,18 @@ impl ProviderHostedControlTransport {
         archive_factory: Arc<dyn CheckpointArchiveStoreFactory>,
     ) -> crate::Result<Self> {
         RuntimeEndpoint::parse(client.base_url(), "runtime.invalid")?;
-        Self::with_discovery(RuntimeDiscovery::Provider(client), archive_factory)
+        Self::with_discovery(RuntimeDiscovery::Provider(client), Some(archive_factory))
     }
 
     pub fn for_agent_sandbox(
         client: crate::agent_sandbox::AgentSandboxClient,
-        archive_factory: Arc<dyn CheckpointArchiveStoreFactory>,
     ) -> crate::Result<Self> {
-        Self::with_discovery(RuntimeDiscovery::AgentSandbox(client), archive_factory)
+        Self::with_discovery(RuntimeDiscovery::AgentSandbox(client), None)
     }
 
     fn with_discovery(
         client: RuntimeDiscovery,
-        archive_factory: Arc<dyn CheckpointArchiveStoreFactory>,
+        archive_factory: Option<Arc<dyn CheckpointArchiveStoreFactory>>,
     ) -> crate::Result<Self> {
         let http = reqwest::Client::builder()
             .connect_timeout(CONNECT_DEADLINE)
@@ -36,6 +35,25 @@ impl ProviderHostedControlTransport {
             state: Arc::new(Mutex::new(TransportState::default())),
             subscriptions: None,
         })
+    }
+
+    pub(super) fn require_supported_operation(&self, request: &RequestFrame) -> crate::Result<()> {
+        if self.archive_factory.is_none()
+            && matches!(
+                request,
+                RequestFrame::Checkpoint(_)
+                    | RequestFrame::CheckpointForTeardown(_)
+                    | RequestFrame::ResumeCheckpointWriters(_)
+                    | RequestFrame::BootstrapRestore(_)
+                    | RequestFrame::Restore(_)
+            )
+        {
+            return Err(AdapterError::Unsupported(
+                "agent-sandbox persists its home on the attached volume; CMA archives are retired"
+                    .into(),
+            ));
+        }
+        Ok(())
     }
 
     pub(super) async fn endpoint(&self, handle: &RuntimeHandle) -> crate::Result<RuntimeEndpoint> {
