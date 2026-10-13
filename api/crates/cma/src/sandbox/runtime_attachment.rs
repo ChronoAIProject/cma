@@ -6,6 +6,38 @@ use layer3_adapter::{
 
 use super::runtime_mapping::sandbox_spec;
 
+pub(crate) fn native_pause_teardown(sandbox: &Sandbox) -> bool {
+    sandbox.lifecycle.home.is_some()
+        && sandbox
+            .runtime
+            .as_ref()
+            .is_some_and(|binding| binding.runtime_id.starts_with("agent-sandbox:"))
+        && matches!(
+            sandbox.lifecycle.operation,
+            Some(layer2_core::sandbox::SandboxLifecycleOperation::Pause {
+                phase: layer2_core::sandbox::SandboxPausePhase::TeardownRuntime,
+                ..
+            })
+        )
+}
+
+pub(crate) fn retained_runtime_request(
+    sandbox: &Sandbox,
+    binding: &layer2_core::sandbox::RuntimeBinding,
+    deployment: &str,
+) -> layer3_adapter::Result<RuntimeAdoptionRequest> {
+    let generation = binding
+        .provision_generation
+        .filter(|generation| *generation > 0)
+        .ok_or_else(|| AdapterError::Rejected("retained runtime generation is absent".into()))?;
+    Ok(RuntimeAdoptionRequest::new(
+        generation,
+        RuntimeHandle::new(&binding.runtime_id),
+        sandbox_spec(sandbox, deployment),
+    )
+    .with_expected_image(&binding.runtime_version))
+}
+
 /// Attach this replica to durable authority without allocating another runtime.
 pub(crate) async fn adopt_bound_runtime(
     adapter: &dyn SandboxAdapter,

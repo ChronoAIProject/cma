@@ -57,6 +57,7 @@ pub fn retired_sandbox_cleanup_is_absent(agent: &Agent, sandbox: &Sandbox) -> bo
         && sandbox.status == SandboxStatus::Retired
         && sandbox.retired_at.is_some()
         && sandbox.runtime.is_none()
+        && sandbox.lifecycle.suspended_runtime.is_none()
         && sandbox.lifecycle.runtime_provision.is_none()
         && sandbox.lifecycle.operation.is_none()
         && sandbox.lifecycle.checkpoint_capture.is_none()
@@ -76,6 +77,7 @@ pub fn retiring_sandbox_process_is_absent(agent: &Agent, sandbox: &Sandbox) -> b
         && sandbox.status == SandboxStatus::Retiring
         && sandbox.work.step == SandboxWorkStep::StopAgents
         && sandbox.runtime.is_none()
+        && sandbox.lifecycle.suspended_runtime.is_none()
         && sandbox.lifecycle.runtime_provision.is_none()
         && sandbox.lifecycle.operation.is_none()
         && sandbox.lifecycle.checkpoint_capture.is_none()
@@ -93,18 +95,23 @@ pub fn retiring_sandbox_process_is_absent(agent: &Agent, sandbox: &Sandbox) -> b
                         .is_some_and(|ceiling| generation <= ceiling)
             })
         && sandbox.validate().is_ok()
-        && sandbox
+        && (sandbox
             .lifecycle
-            .checkpoints
-            .latest
+            .home
             .as_ref()
-            .is_some_and(|checkpoint| {
-                checkpoint.conversations.iter().any(|conversation| {
-                    conversation.agent_id == agent.id
-                        && Some(&conversation.conversation_id)
-                            == agent.conversation.conversation_id.as_ref()
-                })
-            })
+            .is_some_and(|home| !home.released && home.attachment().is_some())
+            || sandbox
+                .lifecycle
+                .checkpoints
+                .latest
+                .as_ref()
+                .is_some_and(|checkpoint| {
+                    checkpoint.conversations.iter().any(|conversation| {
+                        conversation.agent_id == agent.id
+                            && Some(&conversation.conversation_id)
+                                == agent.conversation.conversation_id.as_ref()
+                    })
+                }))
 }
 
 fn validate_mutation(

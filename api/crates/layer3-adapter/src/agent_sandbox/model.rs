@@ -104,12 +104,25 @@ pub(super) fn name(request: &ProviderSandboxRequest) -> Result<String> {
     ))
 }
 
+#[cfg(test)]
 pub(super) fn desired(
     config: &AgentSandboxConfig,
     request: &ProviderSandboxRequest,
     control_token: &str,
 ) -> Result<DynamicObject> {
+    desired_at(config, request, control_token, &name(request)?)
+}
+
+pub(super) fn desired_at(
+    config: &AgentSandboxConfig,
+    request: &ProviderSandboxRequest,
+    control_token: &str,
+    name: &str,
+) -> Result<DynamicObject> {
     config.validate()?;
+    if !dns_label(name) {
+        return Err(rejected("invalid retained Sandbox name"));
+    }
     request.validate_volumes()?;
     if request.metadata.get(OWNER_LABEL) != Some(&config.deployment)
         || request.entrypoint.is_empty()
@@ -130,7 +143,6 @@ pub(super) fn desired(
     }
     let cpu = resource(request, "cpu", "m")?;
     let memory = resource(request, "memory", "Mi")?;
-    let name = name(request)?;
     let labels = json!({OWNER_LABEL: config.deployment, RUNTIME_LABEL: name});
     let env: Vec<_> = request
         .env

@@ -36,6 +36,22 @@ readable; blob upload, download and deletion return Unsupported. CMA does not
 claim historical objects were deleted, and archive-only paused Sandboxes need an
 explicit migration outside CMA before revival.
 
+Native pause patches the admitted `agents.x-k8s.io/v1beta1` Sandbox to
+`operatingMode: Suspended` and waits for all Pods owned by that CRD UID to
+disappear, including terminating Pods. CMA persists the retained runtime binding
+separately from a live runtime and preserves it during reconciliation and
+retirement. Resume patches that same CRD name and UID to `Running` with a newly
+reserved runtime generation. The pinned image, original PVC UID and configuration
+remain exact; the replacement process must report a different boot identity.
+Changing the default image does not change a suspended Sandbox on resume.
+
+The native adapter accepts a retry after a lost pause or resume response only
+when the provider still has the exact old suspended or exact next running spec.
+It rejects replacement UIDs, image changes, incomplete Pod inventories and stale
+resource versions. Retirement deletes the retained CRD and proves Pod absence
+before releasing the home. It can also finish when deletion preempts a pause or
+resume whose response was lost, without contacting the stopped runtime process.
+
 Local HTTP transport tests cover native operation without archive storage,
 cross-Sandbox binding refusal, rejection of archive operations before I/O and
 legacy writer-release recovery without an archive store.

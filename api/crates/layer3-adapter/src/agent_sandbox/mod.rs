@@ -3,6 +3,7 @@
 
 mod lifecycle;
 mod model;
+mod suspension;
 
 use crate::{AdapterError, HomeVolumeScope, Result, RuntimeHandle};
 use k8s_openapi::api::core::v1::{PersistentVolumeClaim, Pod};

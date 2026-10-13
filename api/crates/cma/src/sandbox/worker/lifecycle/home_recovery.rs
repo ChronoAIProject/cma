@@ -65,6 +65,11 @@ impl SandboxWorker {
         let old = |observation: &layer3_adapter::RuntimeObservation| {
             observation.sandbox_id == sandbox.id.as_str()
                 && observation.generation <= source.source_generation
+                && sandbox
+                    .lifecycle
+                    .suspended_runtime
+                    .as_ref()
+                    .is_none_or(|binding| binding.runtime_id != observation.handle.0)
         };
         for observation in self
             .dependencies
@@ -93,6 +98,21 @@ impl SandboxWorker {
             return Err(WorkerFailure::retryable(
                 "previous runtime removal is still in progress",
             ));
+        }
+        if sandbox.lifecycle.runtime_provision.is_none() {
+            if let Some(binding) = sandbox.lifecycle.suspended_runtime.as_deref() {
+                let request = crate::sandbox::runtime_attachment::retained_runtime_request(
+                    sandbox,
+                    binding,
+                    &self.config.deployment_id,
+                )
+                .map_err(adapter_failure)?;
+                self.dependencies
+                    .adapter
+                    .verify_suspended_runtime(&request)
+                    .await
+                    .map_err(adapter_failure)?;
+            }
         }
         volumes.verify(&attachment).await.map_err(adapter_failure)
     }

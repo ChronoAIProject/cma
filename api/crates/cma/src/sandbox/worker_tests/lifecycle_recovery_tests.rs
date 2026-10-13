@@ -202,6 +202,10 @@ fn image() -> String {
 
 mod connection_recovery_tests;
 mod creation_revival;
+
+pub(super) fn workspace_for(agent: &Agent, now: SystemTime) -> layer2_core::sandbox::Workspace {
+    creation_revival::workspace_for(agent, now)
+}
 mod service_access;
 
 pub(super) async fn restarted_worker(harness: &Harness, now: SystemTime) -> Arc<SandboxWorker> {

@@ -45,6 +45,13 @@ fn observation(object: &DynamicObject) -> Result<RuntimeObservation> {
         });
     let state = if object.metadata.deletion_timestamp.is_some() {
         "terminating"
+    } else if object
+        .data
+        .pointer("/spec/operatingMode")
+        .and_then(|value| value.as_str())
+        == Some("Suspended")
+    {
+        "suspended"
     } else if ready {
         "running"
     } else {
@@ -70,6 +77,33 @@ impl HostedBackend for AgentSandboxBackend {
         let handle = self.client.create(&request).await?;
         self.bind(&handle, &request).await?;
         Ok(handle)
+    }
+    async fn teardown_retained(&self, handle: &RuntimeHandle) -> Result<()> {
+        self.teardown(handle).await
+    }
+    async fn suspend(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+    ) -> Result<()> {
+        self.client.suspend(handle, request).await?;
+        self.transport.retire(handle).await
+    }
+    async fn verify_suspended(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+    ) -> Result<()> {
+        self.client.verify_suspended(handle, request).await
+    }
+    async fn resume(
+        &self,
+        handle: &RuntimeHandle,
+        previous: &ProviderSandboxRequest,
+        next: &ProviderSandboxRequest,
+    ) -> Result<()> {
+        self.client.resume(handle, previous, next).await?;
+        self.bind(handle, next).await
     }
     async fn provision_receipted(
         &self,
@@ -206,6 +240,35 @@ impl HostedBackend for RuntimeBackends {
             )
             .await?;
         self.select(selected)?.provision(request).await
+    }
+    async fn teardown_retained(&self, handle: &RuntimeHandle) -> Result<()> {
+        self.for_handle(handle)?.teardown_retained(handle).await
+    }
+    async fn suspend(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+    ) -> Result<()> {
+        self.for_handle(handle)?.suspend(handle, request).await
+    }
+    async fn verify_suspended(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+    ) -> Result<()> {
+        self.for_handle(handle)?
+            .verify_suspended(handle, request)
+            .await
+    }
+    async fn resume(
+        &self,
+        handle: &RuntimeHandle,
+        previous: &ProviderSandboxRequest,
+        next: &ProviderSandboxRequest,
+    ) -> Result<()> {
+        self.for_handle(handle)?
+            .resume(handle, previous, next)
+            .await
     }
     async fn provision_receipted(
         &self,
