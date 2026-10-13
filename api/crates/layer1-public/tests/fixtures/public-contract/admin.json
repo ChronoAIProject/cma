@@ -35,11 +35,7 @@
             "inactivity": {
               "pause_after_seconds": 900
             },
-            "checkpoints": {
-              "interval_seconds": 1800
-            },
             "retention": {
-              "checkpoint_grace_days": 7,
               "agent_log_days": 90
             },
             "limits": {
@@ -102,11 +98,7 @@
             "inactivity": {
               "pause_after_seconds": 900
             },
-            "checkpoints": {
-              "interval_seconds": 1800
-            },
             "retention": {
-              "checkpoint_grace_days": 7,
               "agent_log_days": 90
             },
             "limits": {
@@ -191,7 +183,6 @@
               "pause_after_seconds": 900
             },
             "retention": {
-              "checkpoint_grace_days": 7,
               "agent_log_days": 90
             },
             "limits": {
@@ -234,11 +225,7 @@
             "inactivity": {
               "pause_after_seconds": 900
             },
-            "checkpoints": {
-              "interval_seconds": 1800
-            },
             "retention": {
-              "checkpoint_grace_days": 7,
               "agent_log_days": 90
             },
             "limits": {
@@ -298,11 +285,7 @@
             "inactivity": {
               "pause_after_seconds": 900
             },
-            "checkpoints": {
-              "interval_seconds": 1800
-            },
             "retention": {
-              "checkpoint_grace_days": 7,
               "agent_log_days": 90
             },
             "limits": {
@@ -426,11 +409,7 @@
             "inactivity": {
               "pause_after_seconds": 900
             },
-            "checkpoints": {
-              "interval_seconds": 1800
-            },
             "retention": {
-              "checkpoint_grace_days": 7,
               "agent_log_days": 90
             },
             "limits": {
@@ -485,11 +464,7 @@
             "inactivity": {
               "pause_after_seconds": 900
             },
-            "checkpoints": {
-              "interval_seconds": 1800
-            },
             "retention": {
-              "checkpoint_grace_days": 7,
               "agent_log_days": 90
             },
             "limits": {
