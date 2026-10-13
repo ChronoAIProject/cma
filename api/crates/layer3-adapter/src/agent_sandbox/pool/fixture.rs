@@ -14,6 +14,8 @@ pub(super) struct State {
     pub lose: Vec<String>,
     pub list_replies: VecDeque<(u16, Value)>,
     pub list_queries: Vec<String>,
+    pub assignments: Vec<crate::runtime_bootstrap::RuntimeBootstrapRequest>,
+    pub fail_exec: bool,
     version: u64,
 }
 
@@ -44,6 +46,24 @@ impl Fixture {
         let task = tokio::spawn(async move {
             loop {
                 let (mut socket, _) = listener.accept().await.unwrap();
+                let mut preview = vec![0; 8192];
+                let length = loop {
+                    let count = socket.peek(&mut preview).await.unwrap();
+                    assert_ne!(count, 0);
+                    if preview[..count].windows(4).any(|v| v == b"\r\n\r\n") {
+                        break count;
+                    }
+                    tokio::task::yield_now().await;
+                };
+                if String::from_utf8_lossy(&preview[..length])
+                    .lines()
+                    .next()
+                    .unwrap()
+                    .contains("/exec?")
+                {
+                    super::fixture_exec::serve(socket, &owned).await;
+                    continue;
+                }
                 let mut input = Vec::new();
                 let (end, length) = loop {
                     let mut buffer = [0; 8192];
@@ -141,6 +161,51 @@ fn respond(state: &Mutex<State>, method: &str, path: &str, body: Value) -> (u16,
     let missing = json!({"apiVersion":"v1","kind":"Status","status":"Failure","reason":"NotFound","message":"missing","code":404});
     let conflict = json!({"apiVersion":"v1","kind":"Status","status":"Failure","reason":"Conflict","message":"conflict","code":409});
     let (status, result) = match method {
+        "GET" if path == "/apis/agents.x-k8s.io/v1beta1/namespaces/cma-test/sandboxes" => {
+            let selector = url
+                .query_pairs()
+                .find(|(k, _)| k == "fieldSelector")
+                .map(|(_, v)| v.into_owned())
+                .unwrap_or_default();
+            let items: Vec<_> = state
+                .rows
+                .iter()
+                .filter(|(key, value)| {
+                    key.starts_with(&format!("{path}/"))
+                        && selector
+                            .strip_prefix("metadata.name=")
+                            .is_none_or(|name| value["metadata"]["name"] == name)
+                })
+                .map(|(_, v)| v.clone())
+                .collect();
+            (
+                200,
+                json!({"apiVersion":"agents.x-k8s.io/v1beta1","kind":"SandboxList","metadata":{"resourceVersion":state.version.to_string()},"items":items}),
+            )
+        }
+        "GET" if path == "/api/v1/namespaces/cma-test/pods" => {
+            let selector = url
+                .query_pairs()
+                .find(|(k, _)| k == "labelSelector")
+                .map(|(_, v)| v.into_owned())
+                .unwrap_or_default();
+            let items: Vec<_> = state
+                .rows
+                .iter()
+                .filter(|(key, value)| {
+                    key.starts_with(&format!("{path}/"))
+                        && selector.split(',').all(|term| {
+                            let (key, expected) = term.split_once('=').unwrap();
+                            value["metadata"]["labels"][key] == expected
+                        })
+                })
+                .map(|(_, v)| v.clone())
+                .collect();
+            (
+                200,
+                json!({"apiVersion":"v1","kind":"PodList","metadata":{"resourceVersion":state.version.to_string()},"items":items}),
+            )
+        }
         "GET" if path == "/api/v1/namespaces/cma-test/persistentvolumeclaims" => {
             state
                 .list_queries

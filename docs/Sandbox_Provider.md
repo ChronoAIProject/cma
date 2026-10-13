@@ -102,9 +102,22 @@ owner UID. This supports claimed warm Pods without claim-specific CMA labels
 that upstream metadata reconciliation would remove. The hash is only a search
 hint; matching labels alone never grant runtime ownership. CRD deletion
 observation uses name and UID without filtering on a mutable management label.
-These APIs are not yet wired into production lifecycle workers. Pool selection,
-runtime assignment/resume, claim and Pod retirement finality, administration
-and real cluster acceptance remain required before enabling native warm pools.
+The production native backend recognizes an adopted home and admits its original
+claim-owned Sandbox with a metadata-only runtime binding. It validates the
+original image/resources/mounts and the complete request fingerprint, preserves
+the waiting Pod template and sends assignment before binding transport. Retries
+and resume keep the original CRD/PVC and Pod policy; resumed Pods receive the
+reserved newer generation through exec. Claim ownership is checked again around
+credential delivery. Runtime deletion first deletes the original claim, then
+waits for the CRD, owned Pods and claim to disappear; lost deletion replies can
+recover claim identity from the retained PVC.
+
+Kube-rs HTTP/WebSocket fixtures exercise this backend with failed exec, exact
+replay, a restarted control-plane client and a new Pod on resume. They emulate
+controller observations and the assignment receiver, not a real cluster. The
+lifecycle worker still needs durable pool selection/claim/home stages before it
+can use this path, including retirement of claims that never reached runtime
+admission. Pool administration and real cluster acceptance also remain pending.
 
 The historical provider observations in sections 1-7 below remain unchanged.
 They establish only behavior on their recorded versions. Section 8 records
