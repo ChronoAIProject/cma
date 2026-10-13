@@ -221,3 +221,6 @@ async fn retained_v3_runtime_without_live_removal_protocol_cannot_claim_capabili
             | crate::wire::RequestFrame::WorkspaceRemovalSupport(_)
     )));
 }
+
+#[path = "resume_tests.rs"]
+mod resume;

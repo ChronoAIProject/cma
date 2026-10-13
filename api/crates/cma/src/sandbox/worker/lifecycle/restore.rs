@@ -102,7 +102,7 @@ impl SandboxWorker {
                 Ok(retained) => {
                     self.dependencies
                         .adapter
-                        .resume_runtime(&retained, generation)
+                        .resume_runtime(&retained, &request)
                         .await
                 }
                 Err(error) => Err(error),

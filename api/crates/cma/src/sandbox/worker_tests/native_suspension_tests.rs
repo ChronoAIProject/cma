@@ -3,6 +3,7 @@ use crate::sandbox::reconciliation::SandboxReconciler;
 use layer2_core::sandbox::store::{AgentStore, WorkspaceStore};
 use layer2_core::sandbox::{AgentStatus, SandboxLifecycleOperation, SandboxRevivePhase};
 mod backend;
+mod service_access;
 use backend::NativeBackend;
 
 struct Fixture {

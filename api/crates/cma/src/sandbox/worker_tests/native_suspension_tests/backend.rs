@@ -36,6 +36,9 @@ impl NativeBackend {
             .await
             .unwrap()
     }
+    pub async fn request(&self) -> ProviderSandboxRequest {
+        self.row.lock().await.as_ref().unwrap().request.clone()
+    }
     async fn pod(&self, handle: &RuntimeHandle) -> layer3_adapter::Result<RuntimeHandle> {
         let rows = self.row.lock().await;
         let row = rows.as_ref().ok_or_else(absent)?;

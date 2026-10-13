@@ -189,9 +189,9 @@ impl SandboxAdapter for CodexAdapter {
     async fn resume_runtime(
         &self,
         request: &RuntimeAdoptionRequest,
-        generation: u64,
+        next: &RuntimeProvisionRequest,
     ) -> crate::Result<RuntimeHandle> {
-        self.hosted.resume_runtime(request, generation).await
+        self.hosted.resume_runtime(request, next).await
     }
 
     async fn runtime_status(&self, handle: &RuntimeHandle) -> crate::Result<crate::RuntimeStatus> {
