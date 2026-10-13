@@ -84,6 +84,8 @@ mod lifecycle_execution;
 pub use lifecycle_execution::*;
 mod maintenance;
 pub use maintenance::*;
+mod quiet_pause;
+pub use quiet_pause::apply_consented_quiet_pause;
 #[cfg(test)]
 mod agent_work_validation_tests;
 mod lifecycle_agent_validation;
