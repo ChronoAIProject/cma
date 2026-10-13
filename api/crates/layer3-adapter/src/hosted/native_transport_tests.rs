@@ -1,0 +1,627 @@
+//! A local Kubernetes WebSocket fixture carries real HTTP and nested WebSocket bytes.
+use super::*;
+use crate::agent_sandbox::{AgentSandboxClient, AgentSandboxConfig};
+use crate::ResourceReading;
+use futures_util::{SinkExt, StreamExt};
+use serde_json::{json, Value};
+use std::sync::{
+    atomic::{AtomicBool, AtomicUsize, Ordering},
+    Mutex as StdMutex,
+};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
+use tokio_tungstenite::{
+    accept_hdr_async,
+    tungstenite::{
+        handshake::server::{Request, Response},
+        Message,
+    },
+};
+
+const API_TOKEN: &str = "fixture-api-credential";
+const ERROR_SECRET: &str = "fixture-sensitive-error-body";
+
+#[derive(Clone, Copy)]
+enum Mode {
+    Success,
+    ReplaceOnOpen,
+    Forbidden,
+    Throttled,
+    ErrorChannel,
+    SilentClose,
+    LostResponse,
+    Stall,
+    StallAfterOpen,
+    LargeBody,
+    HttpError,
+    WireError,
+}
+
+#[derive(Default)]
+struct State {
+    replaced: AtomicBool,
+    wrong_owner: AtomicBool,
+    opened: AtomicUsize,
+    active: AtomicUsize,
+    requests: StdMutex<Vec<String>>,
+}
+struct Active(Arc<State>);
+impl Drop for Active {
+    fn drop(&mut self) {
+        self.0.active.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+struct Fixture {
+    transport: ProviderHostedControlTransport,
+    state: Arc<State>,
+    task: tokio::task::JoinHandle<()>,
+}
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+fn handle() -> RuntimeHandle {
+    RuntimeHandle::new("agent-sandbox:claimed:sandbox-uid")
+}
+fn object() -> Value {
+    json!({"apiVersion":"agents.x-k8s.io/v1beta1","kind":"Sandbox",
+        "metadata":{"name":"claimed","namespace":"fixture","uid":"sandbox-uid","resourceVersion":"7","generation":1,
+            "labels":{"cma/control-plane":"fixture"}},
+        "status":{"conditions":[{"type":"Ready","status":"True","observedGeneration":1}]}})
+}
+fn pods(state: &State) -> Value {
+    let hash = "claimed".bytes().fold(2_166_136_261u32, |hash, byte| {
+        (hash ^ u32::from(byte)).wrapping_mul(16_777_619)
+    });
+    json!({"apiVersion":"v1","kind":"PodList","metadata":{"resourceVersion":"8"},"items":[{
+        "metadata":{"name":"claimed-pod","namespace":"fixture","uid":if state.replaced.load(Ordering::SeqCst) {"replacement-pod"} else {"original-pod"},
+            "labels":{"cma/control-plane":"fixture","agents.x-k8s.io/sandbox-name-hash":format!("{hash:08x}")},
+            "ownerReferences":[{"apiVersion":"agents.x-k8s.io/v1beta1","kind":"Sandbox","name":"claimed",
+                "uid":if state.wrong_owner.load(Ordering::SeqCst) {"foreign-owner"} else {"sandbox-uid"},"controller":true}]},
+        "status":{"phase":"Running","podIP":"10.0.0.1","conditions":[{"type":"Ready","status":"True"}]}}]})
+}
+
+impl Fixture {
+    async fn start(mode: Mode) -> Self {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let mut configuration = kube::Config::new(format!("http://{address}").parse().unwrap());
+        // Classify an individual upgrade response deterministically. Production
+        // retains the shared kube client's retry policy within the open deadline.
+        configuration.default_retry = false;
+        configuration.auth_info.token = Some(API_TOKEN.into());
+        let client = AgentSandboxClient::new(
+            kube::Client::try_from(configuration).unwrap(),
+            AgentSandboxConfig {
+                namespace: "fixture".into(),
+                deployment: "fixture".into(),
+                runtime_class: None,
+                service_account: "default".into(),
+                image_pull_secrets: vec![],
+                template_network_policy: None,
+                control_key: "fixture".repeat(8),
+            },
+            "fixture",
+        )
+        .unwrap();
+        let token = client.control_token("claimed");
+        let transport = ProviderHostedControlTransport::for_agent_sandbox_with_transport(
+            client,
+            NativeRuntimeTransport::KubernetesPortforward,
+        )
+        .unwrap();
+        let state = Arc::new(State::default());
+        let served = state.clone();
+        let task = tokio::spawn(async move {
+            let mut tasks = tokio::task::JoinSet::new();
+            loop {
+                tokio::select! {
+                    accepted = listener.accept() => {
+                        let (socket, _) = accepted.unwrap();
+                        let (state, token) = (served.clone(), token.clone());
+                        tasks.spawn(async move { api_request(socket, mode, state, token).await; });
+                    }
+                    result = tasks.join_next(), if !tasks.is_empty() => { result.unwrap().unwrap(); }
+                }
+            }
+        });
+        Self {
+            transport,
+            state,
+            task,
+        }
+    }
+    async fn endpoint(&self) -> RuntimeEndpoint {
+        self.transport.endpoint(&handle()).await.unwrap()
+    }
+    async fn drained(&self) {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while self.state.active.load(Ordering::SeqCst) != 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("forwarding task closed after drop/cancellation");
+        assert!(!self.task.is_finished(), "fixture task failed");
+    }
+}
+
+async fn api_request(
+    mut socket: tokio::net::TcpStream,
+    mode: Mode,
+    state: Arc<State>,
+    token: String,
+) {
+    let mut header = vec![0; 8192];
+    let count = loop {
+        let count = socket.peek(&mut header).await.unwrap();
+        if count == 0 {
+            return;
+        }
+        if header[..count].windows(4).any(|w| w == b"\r\n\r\n") {
+            break count;
+        }
+        assert!(count < header.len());
+        tokio::task::yield_now().await;
+    };
+    let text = String::from_utf8_lossy(&header[..count]);
+    let path = text
+        .lines()
+        .next()
+        .unwrap()
+        .split_whitespace()
+        .nth(1)
+        .unwrap();
+    assert!(text
+        .to_ascii_lowercase()
+        .contains(&format!("authorization: bearer {API_TOKEN}")));
+    assert!(
+        !text.contains(&token),
+        "runtime token cannot enter Kubernetes request headers or URLs"
+    );
+    if path.contains("/portforward?") {
+        assert!(path.starts_with("/api/v1/namespaces/fixture/pods/claimed-pod/portforward?"));
+        let url = url::Url::parse(&format!("http://fixture{path}")).unwrap();
+        assert_eq!(
+            url.query_pairs()
+                .filter(|(key, _)| key == "ports")
+                .map(|(_, value)| value.into_owned())
+                .collect::<Vec<_>>(),
+            ["9090"]
+        );
+        state.opened.fetch_add(1, Ordering::SeqCst);
+        if matches!(mode, Mode::Forbidden | Mode::Throttled) {
+            let status = if matches!(mode, Mode::Forbidden) {
+                403
+            } else {
+                429
+            };
+            let body = json!({"apiVersion":"v1","kind":"Status","status":"Failure","reason":"Forbidden","message":ERROR_SECRET,"code":status}).to_string();
+            let _ = socket.write_all(format!("HTTP/1.1 {status} Rejected\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).as_bytes()).await;
+            return;
+        }
+        if matches!(mode, Mode::ReplaceOnOpen) {
+            state.replaced.store(true, Ordering::SeqCst);
+        }
+        #[allow(clippy::result_large_err)]
+        let ws = accept_hdr_async(socket, |_request: &Request, mut response: Response| {
+            response.headers_mut().insert(
+                "sec-websocket-protocol",
+                "v5.channel.k8s.io".parse().unwrap(),
+            );
+            Ok(response)
+        })
+        .await
+        .unwrap();
+        state.active.fetch_add(1, Ordering::SeqCst);
+        let _active = Active(state.clone());
+        serve_forwarder(ws, mode, state, token).await;
+    } else {
+        if matches!(mode, Mode::StallAfterOpen) && state.opened.load(Ordering::SeqCst) > 0 {
+            std::future::pending::<()>().await;
+        }
+        let body = if path.ends_with("/sandboxes/claimed") {
+            object()
+        } else {
+            assert!(path.starts_with("/api/v1/namespaces/fixture/pods?"));
+            pods(&state)
+        }
+        .to_string();
+        let _ = socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await;
+    }
+}
+
+async fn serve_forwarder(
+    mut ws: tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
+    mode: Mode,
+    state: Arc<State>,
+    token: String,
+) {
+    for channel in [0, 1] {
+        let mut bytes = vec![channel];
+        bytes.extend(9090u16.to_le_bytes());
+        if ws.send(Message::Binary(bytes)).await.is_err() {
+            return;
+        }
+    }
+    if matches!(mode, Mode::SilentClose) {
+        let _ = ws.close(None).await;
+        return;
+    }
+    if matches!(mode, Mode::ErrorChannel) {
+        let mut error = vec![1];
+        error.extend_from_slice(ERROR_SECRET.as_bytes());
+        let _ = ws.send(Message::Binary(error)).await;
+        while ws.next().await.is_some_and(|value| value.is_ok()) {}
+        return;
+    }
+    let (runtime, forward) = tokio::io::duplex(64 * 1024);
+    let (mut source, mut sink) = tokio::io::split(forward);
+    let bridge = async {
+        let mut buffer = vec![0; 8192];
+        loop {
+            tokio::select! {
+                incoming = ws.next() => {
+                    let Some(Ok(Message::Binary(bytes))) = incoming else { return; };
+                    assert_eq!(bytes[0], 0);
+                    if sink.write_all(&bytes[1..]).await.is_err() { return; }
+                }
+                read = source.read(&mut buffer) => {
+                    let Ok(count) = read else { return; };
+                    if count == 0 { let _ = ws.close(None).await; return; }
+                    let mut bytes = vec![0]; bytes.extend_from_slice(&buffer[..count]);
+                    if ws.send(Message::Binary(bytes)).await.is_err() { return; }
+                }
+            }
+        }
+    };
+    // Runtime completion still lets the bridge drain its final response bytes.
+    let runtime = serve_runtime(runtime, mode, state, token);
+    tokio::pin!(bridge, runtime);
+    tokio::select! {
+        _ = &mut bridge => {},
+        _ = &mut runtime => { bridge.await; }
+    }
+}
+
+async fn read_request(stream: &mut (impl AsyncRead + Unpin)) -> Option<String> {
+    let mut request = Vec::new();
+    let mut buffer = [0; 4096];
+    loop {
+        let count = stream.read(&mut buffer).await.ok()?;
+        if count == 0 {
+            return None;
+        }
+        request.extend_from_slice(&buffer[..count]);
+        assert!(request.len() < 64 * 1024);
+        if let Some(end) = request.windows(4).position(|w| w == b"\r\n\r\n") {
+            let head = String::from_utf8_lossy(&request[..end]);
+            let length = head
+                .lines()
+                .find_map(|line| {
+                    line.to_ascii_lowercase()
+                        .strip_prefix("content-length: ")
+                        .map(str::to_owned)
+                })
+                .map(|s| s.parse::<usize>().unwrap())
+                .unwrap_or(0);
+            if request.len() >= end + 4 + length {
+                return String::from_utf8(request).ok();
+            }
+        }
+    }
+}
+
+async fn serve_runtime(
+    mut stream: tokio::io::DuplexStream,
+    mode: Mode,
+    state: Arc<State>,
+    token: String,
+) {
+    let Some(request) = read_request(&mut stream).await else {
+        return;
+    };
+    assert!(request
+        .to_ascii_lowercase()
+        .contains(&format!("x-cma-runtime-token: {token}")));
+    assert!(!request.to_ascii_lowercase().contains("authorization:"));
+    assert!(!request.contains(API_TOKEN));
+    state.requests.lock().unwrap().push(request.clone());
+    match mode {
+        Mode::LostResponse => return,
+        Mode::Stall => {
+            std::future::pending::<()>().await;
+            return;
+        }
+        Mode::HttpError => {
+            let body = format!("{ERROR_SECRET} {token}");
+            let _ = stream
+                .write_all(
+                    format!(
+                        "HTTP/1.1 500 Internal Server Error\r\nContent-Length: {}\r\n\r\n{body}",
+                        body.len()
+                    )
+                    .as_bytes(),
+                )
+                .await;
+            return;
+        }
+        Mode::LargeBody => {
+            let _ = stream
+                .write_all(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n40\r\n")
+                .await;
+            let _ = stream.write_all(&[b'x'; 64]).await;
+            let _ = stream.write_all(b"\r\n").await;
+            std::future::pending::<()>().await;
+        }
+        _ => {}
+    }
+    if request.to_ascii_lowercase().contains("upgrade: websocket") {
+        assert!(request.starts_with("GET /runtime/agents/agent-a/conversation?outputAck=1 "));
+        let key = request
+            .lines()
+            .find_map(|line| {
+                line.split_once(':')
+                    .filter(|(k, _)| k.eq_ignore_ascii_case("sec-websocket-key"))
+                    .map(|(_, v)| v.trim())
+            })
+            .unwrap();
+        let accept = tokio_tungstenite::tungstenite::handshake::derive_accept_key(key.as_bytes());
+        stream.write_all(format!("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n").as_bytes()).await.unwrap();
+        let mut socket = tokio_tungstenite::WebSocketStream::from_raw_socket(
+            stream,
+            tokio_tungstenite::tungstenite::protocol::Role::Server,
+            None,
+        )
+        .await;
+        while let Some(Ok(message)) = socket.next().await {
+            if socket.send(message).await.is_err() {
+                return;
+            }
+        }
+    } else {
+        let body = if request.starts_with("POST /runtime/control ") {
+            if matches!(mode, Mode::WireError) {
+                serde_json::to_string(&ResponseFrame::Failure(crate::wire::WireFailure {
+                    operation: crate::wire::WireOperation::Resources,
+                    code: "runtime_failure".into(),
+                    detail: format!("echoed credential {token}"),
+                    retryable: false,
+                }))
+                .unwrap()
+            } else {
+                serde_json::to_string(&ResponseFrame::Resources(ResourceReading::default()))
+                    .unwrap()
+            }
+        } else {
+            assert!(request.starts_with("GET /runtime/agents/agent-a/history "));
+            "{\"history\":[]}".into()
+        };
+        let _ = stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await;
+    }
+}
+
+#[tokio::test]
+async fn native_api_stream_carries_authenticated_control_history_and_websocket() {
+    let fixture = Fixture::start(Mode::Success).await;
+    let endpoint = fixture.endpoint().await;
+    assert_eq!(
+        fixture
+            .transport
+            .control(&endpoint, &RequestFrame::Resources)
+            .await
+            .unwrap(),
+        ResponseFrame::Resources(ResourceReading::default())
+    );
+    assert_eq!(
+        fixture
+            .transport
+            .export_agent_history(&handle(), &AgentSlot::new("agent-a"))
+            .await
+            .unwrap(),
+        b"{\"history\":[]}"
+    );
+    let mut socket = fixture
+        .transport
+        .connect(&endpoint, &AgentSlot::new("agent-a"))
+        .await
+        .unwrap();
+    socket
+        .send(Message::Binary(vec![0x02, 1, 2, 3]))
+        .await
+        .unwrap();
+    assert_eq!(
+        socket.next().await.unwrap().unwrap(),
+        Message::Binary(vec![0x02, 1, 2, 3])
+    );
+    drop(socket);
+    fixture.drained().await;
+    assert_eq!(fixture.state.opened.load(Ordering::SeqCst), 3);
+    assert_eq!(fixture.state.requests.lock().unwrap().len(), 3);
+}
+
+#[tokio::test]
+async fn native_api_stream_rejects_replaced_pod_before_open_and_wrong_ownership() {
+    for ownership in [false, true] {
+        let fixture = Fixture::start(Mode::Success).await;
+        let endpoint = fixture.endpoint().await;
+        if ownership {
+            fixture.state.wrong_owner.store(true, Ordering::SeqCst);
+        } else {
+            fixture.state.replaced.store(true, Ordering::SeqCst);
+        }
+        assert!(fixture
+            .transport
+            .control(&endpoint, &RequestFrame::Resources)
+            .await
+            .is_err());
+        assert_eq!(fixture.state.opened.load(Ordering::SeqCst), 0);
+        assert!(fixture.state.requests.lock().unwrap().is_empty());
+    }
+}
+
+#[tokio::test]
+async fn native_api_stream_rejects_replacement_during_open_before_sending_token() {
+    let fixture = Fixture::start(Mode::ReplaceOnOpen).await;
+    let endpoint = fixture.endpoint().await;
+    assert!(fixture
+        .transport
+        .control(&endpoint, &RequestFrame::Resources)
+        .await
+        .unwrap_err()
+        .to_string()
+        .contains("Pod changed"));
+    fixture.drained().await;
+    assert!(fixture.state.requests.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn native_api_stream_scrubs_refusals_channel_errors_and_runtime_error_bodies() {
+    for mode in [
+        Mode::Forbidden,
+        Mode::Throttled,
+        Mode::ErrorChannel,
+        Mode::HttpError,
+    ] {
+        let fixture = Fixture::start(mode).await;
+        let endpoint = fixture.endpoint().await;
+        let error = fixture
+            .transport
+            .control(&endpoint, &RequestFrame::Resources)
+            .await
+            .unwrap_err();
+        let text = format!("{error:?}");
+        assert!(!text.contains(ERROR_SECRET));
+        assert!(!text.contains(API_TOKEN));
+        assert!(!text.contains(endpoint.control_token().unwrap()));
+        if matches!(mode, Mode::Forbidden) {
+            assert!(matches!(error, AdapterError::Rejected(_)));
+        }
+        if matches!(mode, Mode::Throttled) {
+            assert!(matches!(error, AdapterError::AtCapacity(_)));
+        }
+        fixture.drained().await;
+        assert_eq!(fixture.state.opened.load(Ordering::SeqCst), 1);
+    }
+}
+
+#[tokio::test]
+async fn native_api_stream_never_retries_a_control_request_after_lost_response() {
+    let fixture = Fixture::start(Mode::LostResponse).await;
+    let endpoint = fixture.endpoint().await;
+    let mutation = RequestFrame::Install(crate::InstallRequest::new(
+        "install-once",
+        vec!["echo side-effect".into()],
+    ));
+    assert!(fixture
+        .transport
+        .control(&endpoint, &mutation)
+        .await
+        .is_err());
+    fixture.drained().await;
+    assert_eq!(fixture.state.opened.load(Ordering::SeqCst), 1);
+    assert_eq!(fixture.state.requests.lock().unwrap().len(), 1);
+    assert!(fixture.state.requests.lock().unwrap()[0].contains("install-once"));
+}
+
+#[tokio::test]
+async fn native_api_stream_cancellation_and_oversized_chunked_body_close_forwarder() {
+    for mode in [Mode::Stall, Mode::StallAfterOpen, Mode::LargeBody] {
+        let fixture = Fixture::start(mode).await;
+        let endpoint = fixture.endpoint().await;
+        let operation = fixture.transport.native_http(
+            &endpoint,
+            http::Method::POST,
+            endpoint.control().unwrap(),
+            b"{}".to_vec(),
+            32,
+        );
+        let result = tokio::time::timeout(Duration::from_millis(250), operation).await;
+        if matches!(mode, Mode::Stall | Mode::StallAfterOpen) {
+            assert!(result.is_err());
+        } else {
+            assert!(matches!(result.unwrap(), Err(AdapterError::Rejected(_))));
+        }
+        fixture.drained().await;
+        assert_eq!(fixture.state.opened.load(Ordering::SeqCst), 1);
+    }
+}
+
+#[tokio::test]
+async fn native_api_stream_scrubs_runtime_token_from_typed_failure() {
+    let fixture = Fixture::start(Mode::WireError).await;
+    let endpoint = fixture.endpoint().await;
+    let response = fixture
+        .transport
+        .control(&endpoint, &RequestFrame::Resources)
+        .await
+        .unwrap();
+    let ResponseFrame::Failure(failure) = response else {
+        panic!("expected typed failure");
+    };
+    assert_eq!(failure.detail, "echoed credential [redacted]");
+    fixture.drained().await;
+}
+
+#[tokio::test]
+async fn native_api_stream_silent_upstream_close_refuses_further_writes() {
+    let fixture = Fixture::start(Mode::SilentClose).await;
+    let endpoint = fixture.endpoint().await;
+    let mut stream = fixture
+        .transport
+        .native_stream(&endpoint, RuntimeStreamKind::Conversation)
+        .await
+        .unwrap();
+    let mut bytes = [0; 1];
+    let closed = tokio::time::timeout(Duration::from_secs(2), stream.read(&mut bytes))
+        .await
+        .unwrap();
+    assert!(closed.is_err() || closed.unwrap() == 0);
+    assert!(stream
+        .write_all(b"must-not-reach-a-closed-runtime")
+        .await
+        .is_err());
+    drop(stream);
+    fixture.drained().await;
+    assert!(fixture.state.requests.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn native_api_stream_conversations_have_a_shared_bound_and_reserve_control_capacity() {
+    let fixture = Fixture::start(Mode::Success).await;
+    let endpoint = fixture.endpoint().await;
+    let mut streams = Vec::new();
+    for _ in 0..64 {
+        streams.push(
+            fixture
+                .transport
+                .native_stream(&endpoint, RuntimeStreamKind::Conversation)
+                .await
+                .unwrap(),
+        );
+    }
+    assert!(matches!(
+        fixture
+            .transport
+            .native_stream(&endpoint, RuntimeStreamKind::Conversation)
+            .await,
+        Err(AdapterError::AtCapacity(_))
+    ));
+    fixture
+        .transport
+        .control(&endpoint, &RequestFrame::Resources)
+        .await
+        .unwrap();
+    drop(streams.pop());
+    streams.push(
+        fixture
+            .transport
+            .native_stream(&endpoint, RuntimeStreamKind::Conversation)
+            .await
+            .unwrap(),
+    );
+    drop(streams);
+    fixture.drained().await;
+    assert_eq!(fixture.state.opened.load(Ordering::SeqCst), 66);
+}

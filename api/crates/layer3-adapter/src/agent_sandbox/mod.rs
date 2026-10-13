@@ -9,6 +9,7 @@ mod network_policy;
 mod pods;
 mod pool;
 mod pool_runtime;
+mod runtime_stream;
 mod suspension;
 
 use crate::{AdapterError, HomeVolumeScope, Result, RuntimeHandle};
@@ -34,6 +35,7 @@ pub use pool::{NativeHomeVolumes, NativePoolHomeOrigin};
 pub use pool::{NativePoolCleanup, NativePoolMember};
 pub use pool::{NativePoolConfiguration, NativePoolControl};
 pub(crate) use pool::{NATIVE_HOME_ANNOTATION, NATIVE_HOME_REQUEST_LABEL};
+pub(crate) use runtime_stream::{RuntimeStream, RuntimeStreamKind};
 pub(crate) const OWNER_LABEL: &str = "cma/control-plane";
 const RUNTIME_LABEL: &str = "cma/runtime-name";
 const SPEC_ANNOTATION: &str = "cma/agent-sandbox-spec";
@@ -46,6 +48,8 @@ pub struct AgentSandboxClient {
     claims: Api<PersistentVolumeClaim>,
     config: AgentSandboxConfig,
     scope: HomeVolumeScope,
+    runtime_streams: std::sync::Arc<tokio::sync::Semaphore>,
+    runtime_requests: std::sync::Arc<tokio::sync::Semaphore>,
 }
 
 impl AgentSandboxClient {
@@ -71,6 +75,8 @@ impl AgentSandboxClient {
             claims: Api::namespaced(client, &config.namespace),
             config,
             scope,
+            runtime_streams: std::sync::Arc::new(tokio::sync::Semaphore::new(64)),
+            runtime_requests: std::sync::Arc::new(tokio::sync::Semaphore::new(32)),
         })
     }
 

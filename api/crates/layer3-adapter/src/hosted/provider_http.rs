@@ -3,7 +3,7 @@ use futures_util::StreamExt as _;
 use crate::wire::{ResponseFrame, WireFailure};
 use crate::AdapterError;
 
-const CONTROL_RESPONSE_BYTES: usize = 384 * 1024 * 1024;
+pub(super) const CONTROL_RESPONSE_BYTES: usize = 384 * 1024 * 1024;
 
 pub(super) async fn decode_control(response: reqwest::Response) -> crate::Result<ResponseFrame> {
     let status = response.status();
@@ -28,8 +28,15 @@ pub(super) async fn decode_control(response: reqwest::Response) -> crate::Result
         }
         bytes.extend_from_slice(&chunk);
     }
+    decode_control_bytes(status, &bytes)
+}
+
+pub(super) fn decode_control_bytes(
+    status: http::StatusCode,
+    bytes: &[u8],
+) -> crate::Result<ResponseFrame> {
     if !status.is_success() {
-        let detail = String::from_utf8_lossy(&bytes);
+        let detail = String::from_utf8_lossy(bytes);
         let message = format!("runtime control returned {status}: {detail}");
         return if status.is_server_error() || status == reqwest::StatusCode::TOO_MANY_REQUESTS {
             Err(AdapterError::Unavailable(message))
@@ -37,7 +44,7 @@ pub(super) async fn decode_control(response: reqwest::Response) -> crate::Result
             Err(AdapterError::Rejected(message))
         };
     }
-    serde_json::from_slice(&bytes)
+    serde_json::from_slice(bytes)
         .map_err(|_| AdapterError::Rejected("runtime control response is malformed".into()))
 }
 
