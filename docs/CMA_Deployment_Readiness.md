@@ -7,6 +7,15 @@ application deployment against the infra-owned native runtime cluster. It does
 not record a successful production rollout or authorize changes to that cluster's
 controllers, RBAC, storage or network policy.
 
+The current rollout scope is Agent Manager, Event Gateway and their shared web
+image, with the tested CMA runtime as the system default. Image Manager is
+deferred: leave its Deployment at zero replicas and do not require its Cloud
+Build identity, OAuth client, migrations or builder digest to activate Agent
+Manager. Default-image Agent, Trigger and consumer creation does not call Image
+Manager. Its catalog may be unavailable while the system default remains
+selectable; custom image selection and builds require the later Image Manager
+activation described below.
+
 | Authority | Kubernetes context | Namespace |
 |---|---|---|
 | CMA application, ConfigMap and retained OpenSandbox resources | `gke_example-project-02_asia-northeast1_example-cluster-02` | `chrono-bot` |
@@ -51,13 +60,16 @@ from the remaining application activation steps.
 | Prerequisite | Observed state | Remaining work |
 |---|---|---|
 | Native Kubernetes authentication | Actual CMA Pod received the `example-sa-01@example-project-02.iam.gserviceaccount.com` metadata identity; Sandbox and claim reads returned HTTP 200 with the remote CA verified | Exercise the application token refresh path and native lifecycle after required grants are present |
-| Native target | `chrono-bot/example-namespace-02` currently supplies `https://35.240.157.32` and namespace `example-registry-01` | Infra confirms this formal workload target; old last-applied annotations are not authoritative |
-| Native authorization | Remote Role `chrono-cma` permits native resource operations but lacks PVC `create`/`patch`, `pods/exec` `get` and VolumeSnapshot `get` | Infra adds the required namespaced permissions and the explicit-principal preflight passes |
-| Native retained-home seed | No seed snapshot was observed in the intended remote target during the earlier inspection | Infra supplies an initialized ready format-1 seed, its exact UID, StorageClass and capacity; configure the four native home overrides |
-| Shared MongoDB | Existing `chrono-bot` credentials have been provisioned through the current application Secrets | Copy those values to the canonical Secret names, select each service's shared-schema mode and run only its own migration/startup initialization |
-| Existing Event Gateway feature settings | Live `cmaeg` has Console and Media enabled, `cma_codex` non-human/media providers and `gpt-transcribe` STT settings, with optional STT/console Secret refs and a 32 MiB in-memory media volume | The current source candidate has no corresponding Console, Media or STT configuration modules. Keep the old Gateway deployment and Secrets intact; do not activate the canonical replacement until those feature settings are implemented and their behavior is accepted, or an explicit retirement decision is recorded |
-| Image Manager build identity | Lookups for the single `cma-image-manager` Google service account returned 404; current operator IAM tests did not grant account creation, policy changes or Cloud Build submission | Infra provisions that one identity and grants it the Image Manager API, Cloud Build, logging and registry permissions described below before builds are activated |
+| Native target | `chrono-bot/example-namespace-02` currently supplies `https://35.240.157.32` and namespace `example-registry-01` | Use these current values; do not use the earlier `cma-test` namespace or infer configuration from last-applied annotations |
+| Native authorization | Fresh CMA Pod metadata token confirms Sandbox get, Claim create, PVC get, and `pods/exec` get/create; PVC create/patch remain denied | VCT integration passes native adapter tests. Verify live allocation with the final image; PVC writes and snapshot reads are not required for new empty native homes |
+| Native persistent home | Installed templates support `volumeClaimTemplates`; the controller creates and owns each member's PVC | New native homes use an empty VCT volume initialized by the pinned CMA runtime image. Validate suspend/resume and deletion through the controller; a mandatory seed snapshot is a superseded implementation choice |
+| Runtime network path | `chrono-pod-default` selects all remote Pods and admits ingress only on TCP 8080 from local `sandbox-router` Pods; no `sandbox-router` namespace is deployed | Infra must provide a runtime path before live acceptance. Current CMA discovery connects directly to Pod IP TCP 9090 for authenticated HTTP and WebSocket. Kubernetes API access alone does not satisfy this requirement |
+| Runtime ServiceAccount and storage | Remote namespace has `default` and `chrono-cma`, but no `cma-runtime`; default StorageClass is `standard-rwo`, and `home-a` also exists | Select a runtime identity with API token automount disabled and explicitly configure native storage class/capacity. Do not assume the control-plane identity belongs in user runtimes. Live RWOP provisioning remains unverified |
+| Shared MongoDB | Existing `chrono-bot` credentials have been copied to and verified in the canonical application Secrets; original Secrets are retained | Select each service's shared-schema mode and run only its own migration/startup initialization |
+| Existing Event Gateway feature settings | Live `cmaeg` has Console and Media enabled, `cma_codex` non-human/media providers and `gpt-transcribe` STT settings, with optional STT/console Secret refs and a 32 MiB in-memory media volume | The controlled Gateway integration restores live source `976e8773` Console/Media/STT code while retaining independent Mongo and portal authentication. Gateway/Core 1,556 tests, strict Clippy and the authenticated Mongo Console/media/portal composition contract pass locally. Keep the old deployment and Secrets until the final integrated source passes native CI and image gates, all three record domains are migrated, and the replacement passes real Console/media/consumer acceptance; empty STT URL and FFmpeg directory preserve the live disabled transcription/transform settings |
+| Image Manager build identity (deferred) | Lookups for the single `cma-image-manager` Google service account returned 404; current operator IAM tests did not grant account creation, policy changes or Cloud Build submission | Does not block the current Agent Manager/Event Gateway rollout. Infra provisions this identity and the permissions below before later Image Manager activation |
 | Application image registry | Upload/download authority was observed on `us-central1-docker.pkg.dev/example-project-01/example-registry-02` | Import the tested release images, verify the immutable digests and update application manifests before deployment |
+| Native runtime image registry | The destination is `asia-southeast1-docker.pkg.dev/example-project-02/example-registry-01/cma-runtime`; the operator has now verified repository download/upload/tag permissions and a real Docker upload start/cancel (202/204) | Import and verify the exact tested runtime after its final source CI succeeds. Registry authorization is confirmed; no image publication is implied by the permission/upload probe, and native nodes also need reader access |
 
 ## C-001 implementation map
 
@@ -67,7 +79,7 @@ still require the deployment acceptance in this document.
 
 | User flows | Prepared application behavior |
 |---|---|
-| UF-01, UF-13, UF-19, UF-20 | Agent Manager landing with three service descriptions and shared service navigation, image plus inline Agent settings, durable three-stage provisioning and a NyxID connection modal |
+| UF-01, UF-13, UF-19, UF-20 | Agent Manager landing with three service descriptions and shared service navigation; optional repository with new, existing or contextual Sandbox creation; deployment runtime/model/scope defaults; settings in Agent details; durable three-stage provisioning and a NyxID connection modal |
 | UF-03, UF-10, UF-11 | User Profile creation and marketplace routes retired; private immutable configuration records remain internal persistence details |
 | UF-04 | Add an empty or GitHub workspace through the inline workspace API; contextual Agent creation retains that workspace and inherits its Sandbox image/key scope |
 | UF-05 | Agent menu downloads authenticated JSONL history from its recorded runtime provider |
@@ -126,12 +138,60 @@ claim and disk identity. Template labels include
 `cma/control-plane: chrono-bot-prod`; the controller preserves these labels on
 claimed Pods. No change to the default additional-Pod-label allowlist is needed.
 
-CMA relies on the upstream `agents.x-k8s.io/sandbox-name-hash` Pod label for
-discovery and verifies the Sandbox owner UID separately. Home adoption converts
-the claimed Sandbox from a volume template to an explicit mount of the same
-PVC, waits for the controller to observe that generation, then removes the PVC
-owner reference. Verify this conversion preserves the existing Pod. Removing
-the owner reference alone is unsafe because upstream can adopt the PVC again.
+The installed controller creates and owns PVCs from `volumeClaimTemplates`.
+Its `reconcilePVCs` creates `<template-name>-<sandbox-name>` and sets the Sandbox
+controller reference. `operatingMode: Suspended` removes the owned Pod while
+retaining the Sandbox and its PVCs; `Running` can mount those same volumes again.
+CMA does not inherently need PVC/PV write access for this lifecycle. New homes
+use the runtime's credential-free empty-volume initializer; a seed VolumeSnapshot
+is only a retained legacy mode, not an agent-sandbox API requirement.
+Claim `lifecycle.shutdownPolicy: Retain` retains the **claim**
+after expiry and still deletes its Sandbox; it must not be used as a promise of
+home retention. Suspension without expiring/deleting the claim is the applicable
+pause operation.
+
+The current CMA implementation discovers Pods with the upstream
+`agents.x-k8s.io/sandbox-name-hash` label and verifies their owner UID. New native
+homes preserve the volume template and the PVC's Sandbox owner reference. Their
+receipt pins the original Claim, Sandbox and PVC UIDs; controller GC owns disk
+deletion. Conversion to detached PVC mounts exists only for already-admitted
+legacy homes and must not expand the new flow's permission requirements.
+
+The other current non-CRD dependency is `pods/exec` for authenticated assignment
+of an unclaimed runtime. Ordinary runtime operations and conversations already
+use the runtime's HTTP/WebSocket interface. A CRD-only client would need a tested
+replacement for bootstrap authentication, Pod-incarnation verification and
+deletion finality. The served Sandbox status includes Pod IPs, readiness and
+suspension conditions, but no Pod/PVC UID. Access to the remote Kubernetes API
+alone does not prove that the CMA cluster can reach runtime Pod IPs or that a
+remote Service FQDN resolves locally. Keep these as explicit acceptance checks;
+do not remove working identity checks or assume an IP establishes identity.
+
+The installed API consists of the core `Sandbox` plus the three extension
+resources `SandboxTemplate`, `SandboxWarmPool` and `SandboxClaim`. The three
+extension resources alone do not expose suspension: CMA must patch the bound
+Sandbox's `spec.operatingMode` and observe its conditions. This remains within
+the agent-sandbox API and does not require direct Pod mutation.
+
+For the currently requested product flows, there is no unavoidable need for
+CMA to write Pod, PVC, PV, Secret or VolumeSnapshot resources directly. Templates
+declare the runtime image, init container, mounts and volume claims; controllers
+own allocation and cleanup. Conversations, model/settings changes, history
+export and scoped-key delivery are CMA runtime HTTP/WebSocket operations, not
+Kubernetes exec operations. A future requirement to resize an existing disk,
+manage independent snapshots or retain a disk after deleting its Sandbox would
+need capabilities beyond this lifecycle, but those are outside the current
+requested CMA flows.
+
+The current exec bootstrap avoids putting credentials into CRD specs: it sends
+the bounded assignment over authenticated Kubernetes stdin before the runtime
+starts its ordinary control listener. Replacing it with HTTP requires an
+authenticated first-assignment protocol with replay and runtime-incarnation
+checks; the later control token cannot authenticate the request that first
+installs that same token. A shared warm-pool secret or an unauthenticated Pod IP
+is not an equivalent replacement. Pod/PVC reads currently verify exact UID
+ownership and cleanup independently of controller status; treat removal of
+these reads as a separate, tested contract change rather than a storage blocker.
 
 ## CMA identities, storage and network
 
@@ -141,16 +201,19 @@ local Role/RoleBinding and the same-cluster native policy. Those local grants
 do not confer authority in the remote cluster. Infra must provide a separate
 remote identity and namespaced authorization in the assigned native namespace.
 Validate the actual remote principal's grants; do not apply the northeast
-application manifests to southeast as a substitute. The native path requires:
+application manifests to southeast as a substitute. The table below describes
+the **current implementation**, not the minimum permissions intrinsic to
+agent-sandbox. PVC/snapshot and exec rows are under CMA-side simplification;
+they are not an outstanding request for infra to extend its Role:
 
 | API/resource | Required verbs | Purpose |
 |---|---|---|
 | `agents.x-k8s.io/sandboxes` | get, list, create, patch, delete | Provision, observe, suspend, resume and retire |
 | `extensions.agents.x-k8s.io/{sandboxtemplates,sandboxwarmpools,sandboxclaims}` | get, list, create, patch, delete | Native pool administration and claims |
-| core `persistentvolumeclaims` | get, list, create, patch, delete | Retained homes, original-PVC adoption and cleanup |
+| core `persistentvolumeclaims` | get, list for new native homes; create, patch, delete only for legacy detached-home paths | Exact owned-volume receipt and cleanup verification; controllers own new VCT volumes |
 | core `pods` | get, list | Verify exact Pod identity and deletion finality |
 | core `pods/exec` | get, create | kube-rs WebSocket assignment over stdin |
-| `snapshot.storage.k8s.io/volumesnapshots` | get | Verify the pinned initialized seed |
+| `snapshot.storage.k8s.io/volumesnapshots` | get only for legacy snapshot-seeded home mode | Verify a historically pinned initialized seed; not used for new empty native homes |
 
 The checked-in local Role retains permissions needed by previous OpenSandbox and
 storage cleanup paths. Native controllers own runtime Pod creation/deletion;
@@ -259,20 +322,25 @@ The ConfigMap also names warm pool `python-a`; CMA does not adopt it automatical
 Its ownership, immutable runtime contract and retained-home policy have not
 been verified as a CMA pool binding.
 
-The inspected remote Role still lacks PVC `create`/`patch`, VolumeSnapshot
-`get`, and Pod exec `get` permissions required by the table above. Infra must
-complete those grants and confirm the formal namespace before native workload
-creation. These successful authenticated reads do not prove allocation,
-assignment, remote runtime connectivity or persistent-home acceptance.
+The later 2026-10-13 recheck used a fresh token obtained from the actual northeast
+CMA Pod's metadata server and remote TLS CA to perform SelfSubjectAccessReviews.
+The principal `example-sa-01@example-project-02.iam.gserviceaccount.com` is allowed
+Sandbox get, Claim create, PVC get and Pod exec get/create. PVC create/patch
+remain denied. This supersedes the earlier missing-exec observation; no Role or
+RoleBinding was changed by CMA. New native allocation delegates empty VCT
+creation to the controller, so those denied PVC writes are not an infra blocker.
+Exec currently provides the authenticated initial assignment channel. Successful
+authorization checks alone do not prove allocation, assignment, remote runtime
+connectivity or persistent-home acceptance.
 
-## Build and configure all application images
+## Build and configure the selected application images
 
-Publish the tested `api`, `web`, `runtime`, `cmaeg` and `image-manager` images
-from the same reviewed source revision using the existing release workflow.
-Transfer them to the approved registry if required by the cluster. Pin the final
-registry digests in the release manifests; Image Manager currently has
-`replicas: 0` and an `:unreleased` placeholder, which must be replaced before
-activation. The publication workflow does not deploy to Kubernetes.
+For the current rollout, import the tested `api`, `web`, `runtime` and `cmaeg`
+images from the same reviewed source tree. The existing release workflow still
+publishes all five components when used for a complete release; its publication
+does not deploy to Kubernetes. Pin the final registry digests in the selected
+application manifests. Image Manager remains at `replicas: 0`; its `:unreleased`
+placeholder must be replaced only before its later activation.
 
 For an authorized direct application rollout, the CI `ci-native-image-*`
 artifacts provide the already tested Linux amd64 images. Require passing checks
@@ -284,6 +352,48 @@ label must match that recorded checkout. Import those exact bytes and verify
 the destination digests before updating manifests. Images from the separate
 CI tooling fix or an earlier passing portal tree do not validate later
 authentication, database, service-name or registry changes.
+
+Use these destinations for the current direct rollout:
+
+| CI component | Destination repository | Deployment use |
+|---|---|---|
+| `api` | `us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-api` | `cma-agent-manager` Deployment |
+| `cmaeg` | `us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-cmaeg` | `cma-event-gateway` Deployment |
+| `web` | `us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-web` | Shared portal Deployment |
+| `runtime` | `asia-southeast1-docker.pkg.dev/example-project-02/example-registry-01/cma-runtime` | `CHRONO_SANDBOX_IMAGE` system default and rollout annotation |
+
+The exact artifact names are
+`ci-native-image-COMPONENT-SOURCE_REVISION-RUN_ID-RUN_ATTEMPT`. Obtain them from
+the successful candidate run's artifact inventory, rather than constructing
+`SOURCE_REVISION` from the PR head. Each contains `metadata.json` and
+`cma-COMPONENT-linux-amd64.docker.tar.gz`; download each into its own directory
+with `gh run download RUN_ID --repo ChronoAIProject/cma --name ARTIFACT_NAME
+--dir COMPONENT_DIRECTORY`. Download the same run's
+`runtime-image-evidence-RUN_ID-RUN_ATTEMPT` as well. Native image artifacts expire
+after one day, so preserve verified bundles with the deployment evidence.
+
+Before any registry write, require the full run to pass and confirm its head
+matches the selected candidate. Check the artifact run ID/attempt, component,
+repository, source revision/tree, Linux amd64 platform, archive size and SHA-256
+against `metadata.json`. Inspect the Docker archive's config and require its
+SHA-256 to equal `imageId`; verify the source/revision/version labels and both
+runtime labels above. The runtime evidence must bind the same source revision
+and immutable image ID and report passing execution checks. The four artifacts
+must agree on source revision and tree. A failed or superseded run is not a
+deployment source even if one image job succeeded.
+
+Decompress each verified archive into a private evidence directory and import
+with `skopeo copy --dest-authfile AUTH_FILE --digestfile DIGEST_FILE
+docker-archive:ARCHIVE docker://REPOSITORY:UNIQUE_CANDIDATE_TAG`. `AUTH_FILE` is an
+operator-managed private file; never include bearer values in command arguments
+or the journal. The tag should include the candidate SHA, run ID and attempt.
+Then read the destination by the returned digest, verify its manifest/config
+identity and source/platform/runtime labels, and record the immutable
+`REPOSITORY@sha256:...` reference. Docker-save transfer establishes a registry
+manifest digest at import; the Docker image ID is its config identity, not the
+registry manifest digest. Keep both in the evidence. The release OCI importer
+`.github/import-release-images.sh` expects a different five-component release
+bundle and must not be used for these four native Docker archives.
 
 Every native pool runtime image must actually implement runtime contract 3 and
 bootstrap assignment version 1, with these final-image labels:
@@ -340,9 +450,13 @@ Agent Manager initializes its own collections and indexes and has no separate
 migration role. Every selected credential mode must still supply the required
 operations for those collections.
 
-## Image Manager / Cloud Build activation
+## Deferred Image Manager / Cloud Build activation
 
-For the requested production deployment, select the existing `chrono-bot`
+This is a separate later activation, outside the current Agent Manager/Event
+Gateway rollout. Keep Image Manager at zero replicas until its prerequisites
+are available. Its absence does not block the system-default runtime path.
+
+When Image Manager is activated, select the existing `chrono-bot`
 database and explicit shared-schema authority mode for Image Manager as well
 as Agent Manager and Event Gateway. Run the released
 `cma-image-manager --migrate` before starting the service; schema marker 2 is
@@ -451,29 +565,70 @@ image and grow only after the checks below pass.
 
 ## Deployment acceptance still required
 
-Record source SHA, five final image digests, controller digest/revision, native
-API preflight, seed UID and test resource identities. Execute these checks after
+Agent access-request tools use the existing auth encryption key to derive a
+separate, deployment-scoped `cma_at_` capability. The `agent_access_tools`
+collection stores only its hash, exact Agent creation/runtime identity and
+confirmed native conversation. This capability can request owner consent; it
+cannot approve a request or grant a NyxID service scope. Keep the encryption key
+and public HTTPS origin stable across an ordinary API rollout so the same live
+conversation keeps its installed bearer. The collection belongs only to Agent
+Manager and is included in its collection authority contract.
+
+`agent_access_requests` stores the owner's exact approved scope, personal
+sign-in incarnation, original conversation and resumable workflow progress. The
+popup callback verifies every approved service connection. The worker then
+waits until every live Agent in the Sandbox is quiet before atomically admitting
+the consented pause. Scope grant and revival have separate leased transactions
+that preserve their exact lifecycle operation identities. The request reaches
+Succeeded only after replacement key delivery and confirmed delivery of the
+idempotent continuation command to the original conversation. A closed popup,
+an OAuth redirect, or a queued command alone is insufficient. Revoked owner
+authority, a changed Agent identity or a later incompatible manual lifecycle
+must not be borrowed as authorization to continue the workflow.
+
+New Agents negotiate explicit ACP HTTP MCP support before tool installation.
+Retained Agents without a confirmed tool-open receipt continue without the new
+tool; deploying an API image does not modify their live conversations. A worker
+takeover for a previously enrolled Agent preserves its bearer and exact native
+conversation. A replacement runtime receives a distinct bearer through a fresh
+ACP handshake; an existing bridge cannot claim installation without its exact
+durable receipt. Old runtime, changed creation and retired-Agent credentials
+must fail authentication.
+
+Record source SHA, the four current final image digests, controller digest/revision, native
+API preflight, native home mode and Claim/Sandbox/Pod/PVC UIDs. Record a seed UID
+only when testing the retained legacy mode. Execute these checks after
 deployment; local fixtures do not substitute for them:
 
-- Sign into each portal with its own NyxID session. Verify the unified dark UI,
-  service navigation, connection popup, private/public image selection and
+- Sign into Agent Manager and Event Gateway with their own NyxID sessions.
+  Verify the unified dark UI, service navigation, connection popup, the
+  selectable system default while Image Manager is unavailable, and
   permission denial for an unconnected or unauthorized service.
 - Prove direct authenticated native API access from the northeast CMA Pod into
   the assigned southeast namespace, with CA validation and credential rotation.
   Record both cluster contexts and verify native CRD/Pod/PVC creation remains in
   southeast while retained OpenSandbox recovery and cleanup remain in northeast.
-- Run both a repository Dockerfile build and an imported Dockerfile build.
+- Deferred Image Manager acceptance: sign into its own NyxID session and verify
+  private/public image selection. Run both a repository Dockerfile build and an imported Dockerfile build.
   Observe running/success, owner-only bounded logs, exact Artifact Registry
   digest, authorized resolution, private/share/public visibility and a failed
   build that never publishes a version. Check unknown-response recovery without
   duplicate Cloud Build submissions.
-- Create an Agent with default image and with an authorized custom image;
+- Create an Agent with the tested system default image; repeat with an
+  authorized custom image after Image Manager activation. For the default,
   verify the three stages (Sandbox, Agent/workspace, scoped key), exact CRD/Pod/
-  PVC identities, GitHub workspace, skills/model/reasoning/prompt/permission
-  configuration, and a real turn. Export JSONL from the Agent menu.
+  PVC identities, empty workspace, gpt-6/high/autonomous defaults and required
+  chrono-llm-public/ornn-api scope. With an optional GitHub URL, verify it reaches
+  the first prompt and repository setup is performed by the Agent. Verify a
+  real turn and export JSONL from the Agent menu.
 - Add empty and GitHub workspaces to that Sandbox, then create an Agent from
   an existing Workspace. Verify the original Sandbox/Workspace identities and
   inherited service scope, with no new Sandbox allocation.
+- From an enrolled Agent, request a missing NyxID service through its MCP tool.
+  Verify explicit owner approval, additive scopes, callback recovery and a
+  follow-up to the same native conversation. Repeat across an Agent Manager
+  restart; reject a stale runtime bearer and prove that an unrelated or
+  previously unenrolled retained Agent continues its existing conversation.
 - Create a native pool through Operations, observe controller readiness, resize
   at the current revision, and set its target to zero. Verify stale revisions
   are refused and claimed Agents retain their runtime and disk when the pool
