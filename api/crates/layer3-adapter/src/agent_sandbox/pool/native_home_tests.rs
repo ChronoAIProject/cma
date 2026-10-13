@@ -38,6 +38,7 @@ async fn empty_vct_initializes_root_once_and_adopts_without_seed_or_pvc_writes()
     let claim = assigned_spec(&fixture, &spec()).await;
     let template = fixture.row("sandboxtemplates", &claim.request.pool.template_name);
     let pod = &template["spec"]["podTemplate"]["spec"];
+    assert_eq!(pod["automountServiceAccountToken"], false);
     let init = &pod["initContainers"][0];
     assert_eq!(init["image"], spec().image.uri);
     assert_eq!(
