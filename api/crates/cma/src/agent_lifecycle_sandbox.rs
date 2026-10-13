@@ -55,7 +55,7 @@ impl InlineAgentLifecycle {
             .create_workspace_for_owner(
                 &caller.subject,
                 &format!("agent-manager:{}:workspace", input.key),
-                format!("{} workspace", input.request.name),
+                profiles::display_name(&input.request.name, " workspace"),
                 "Empty Agent workspace".into(),
                 content,
             )

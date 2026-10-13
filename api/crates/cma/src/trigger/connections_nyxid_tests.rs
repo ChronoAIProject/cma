@@ -62,6 +62,7 @@ struct CreateRequest {
 }
 
 struct ProviderState {
+    registered_callback: Mutex<Option<String>>,
     create_reply: Mutex<Reply>,
     link_reply: Mutex<Reply>,
     services_reply: Mutex<Reply>,
@@ -78,6 +79,7 @@ struct ProviderState {
 impl ProviderState {
     fn new() -> Self {
         Self {
+            registered_callback: Mutex::new(None),
             create_reply: Mutex::new(Reply::json(json!({
                 "id": "link-one",
                 "connect_url": trusted_connect_url(),
@@ -159,13 +161,25 @@ async fn create_link(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
+    let body = serde_json::from_slice(&body).unwrap_or(Value::Null);
+    if state
+        .registered_callback
+        .lock()
+        .unwrap()
+        .as_deref()
+        .is_some_and(|registered| {
+            body.get("callback_url").and_then(Value::as_str) != Some(registered)
+        })
+    {
+        return Reply::error(StatusCode::BAD_REQUEST, "invalid_redirect_uri").response();
+    }
     state
         .creates
         .lock()
         .expect("create requests lock")
         .push(CreateRequest {
             authorization: authorization(&headers),
-            body: serde_json::from_slice(&body).unwrap_or(Value::Null),
+            body,
         });
     state
         .create_reply
@@ -908,25 +922,37 @@ async fn handoff_creation_is_visitor_scoped_callback_free_and_exactly_fifteen_mi
 }
 
 #[tokio::test]
-async fn handoff_creation_adds_a_cma_return_callback_when_configured() {
+async fn handoff_creation_uses_the_registered_static_callback_for_distinct_intents() {
     let provider = Provider::start().await;
-    broker_with_callback(&provider, Tokens::available())
-        .create_handoff(
-            &SubjectId::new("visitor-one"),
-            &ServiceId::new("github"),
-            "intent-one",
-        )
-        .await
-        .expect("handoff is created");
+    *provider.state.registered_callback.lock().unwrap() =
+        Some("https://cma.example/connection-return".into());
+    let broker = broker_with_callback(&provider, Tokens::available());
+    for intent in ["intent-one", "intent-two"] {
+        broker
+            .create_handoff(
+                &SubjectId::new("visitor-one"),
+                &ServiceId::new("github"),
+                intent,
+            )
+            .await
+            .expect("the provider accepts the exact registered callback for every intent");
+    }
     let creates = provider.state.creates.lock().expect("create requests lock");
-    assert_eq!(
-        creates[0].body,
-        json!({
-            "service_slug": "github",
-            "expires_in": 900,
-            "callback_url": "https://cma.example/connection-return?cma_connection=intent-one"
-        })
-    );
+    assert_eq!(creates.len(), 2);
+    for request in creates.iter() {
+        assert_eq!(
+            request.authorization.as_deref(),
+            Some("Bearer visitor-access-secret")
+        );
+        assert_eq!(
+            request.body,
+            json!({
+                "service_slug": "github",
+                "expires_in": 900,
+                "callback_url": "https://cma.example/connection-return"
+            })
+        );
+    }
 }
 
 #[tokio::test]

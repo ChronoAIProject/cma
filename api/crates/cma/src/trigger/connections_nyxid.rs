@@ -219,13 +219,14 @@ impl NyxidServiceConnectionBroker {
         })
     }
 
-    fn callback_url(&self, intent_id: &str) -> Option<String> {
+    fn callback_url(&self) -> Option<String> {
         let mut origin = self.callback_origin.clone()?;
         origin.set_path("/connection-return");
         origin.set_query(None);
-        origin
-            .query_pairs_mut()
-            .append_pair("cma_connection", intent_id);
+        // NyxID matches this URI against the OAuth client's registered redirects
+        // exactly. Per-attempt query parameters would make every handoff invalid.
+        // This page is inert: the authenticated target and durable owner workflow
+        // keep the intent, and independently verified requirements release work.
         Some(origin.to_string())
     }
 }
@@ -306,7 +307,7 @@ impl ServiceConnectionBroker for NyxidServiceConnectionBroker {
                     .json(&CreateConnectLinkRequest {
                         service_slug: service.as_str(),
                         expires_in: CONNECT_LINK_TTL_SECONDS,
-                        callback_url: self.callback_url(_intent_id),
+                        callback_url: self.callback_url(),
                     }),
                 false,
             )

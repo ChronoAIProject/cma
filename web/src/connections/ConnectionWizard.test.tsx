@@ -168,6 +168,46 @@ it('keeps checking after a popup is blocked and provides an explicit reopen acti
   expect(ready).toHaveBeenCalledOnce();
 });
 
+it('treats a completed callback as inert until the approved target is ready for the same owner', async () => {
+  const { client, connected, report } = fixture();
+  const accessTarget: ConnectionTarget = { type: 'agent_access_request', id: 'access-one' };
+  const ready = vi.fn();
+  render(
+    <ConnectionWizard
+      target={accessTarget}
+      expectedOwner="owner"
+      client={client}
+      onReady={ready}
+    />,
+  );
+  await flush();
+  fireEvent.click(screen.getByRole('button', { name: 'Connect all' }));
+  await flush();
+
+  // Callback query parameters and closing the window cannot prove a connection.
+  popup.location.href = '/connection-return?status=completed&connect_link_id=untrusted';
+  popup.closed = true;
+  await poll();
+  expect(ready).not.toHaveBeenCalled();
+  expect(client.check).toHaveBeenLastCalledWith(
+    accessTarget,
+    expect.objectContaining({ service_id: 'api-github', intent_id: expect.any(String) }),
+    expect.any(AbortSignal),
+  );
+
+  services.forEach((service) => connected.add(service));
+  vi.mocked(client.check).mockResolvedValue(report('different-owner'));
+  await poll();
+  expect(ready).not.toHaveBeenCalled();
+  expect(screen.getByRole('alert')).toHaveTextContent('Your CMA account changed');
+
+  vi.mocked(client.check).mockResolvedValue(report());
+  await act(async () => vi.advanceTimersByTimeAsync(4000));
+  expect(ready).toHaveBeenCalledOnce();
+  expect(client.start).toHaveBeenCalledOnce();
+  expect(vi.mocked(client.start).mock.calls[0]?.[0]).toEqual(accessTarget);
+});
+
 it('checks the current account before restoring a saved handoff', async () => {
   const { client } = fixture();
   sessionStorage.setItem(
