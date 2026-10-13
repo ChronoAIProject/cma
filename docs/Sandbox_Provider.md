@@ -58,6 +58,27 @@ legacy writer-release recovery without an archive store.
 They do not establish production PV pause/revive/delete acceptance or native
 warm-pool readiness.
 
+Images supporting native pool initialization additionally declare
+`dev.chrono.cma.runtime-bootstrap=1`. Their `--wait-for-assignment` mode requires
+the Pod UID from the downward API and starts only a mode-0600 Unix socket outside
+the tenant home; it has no tenant identity, control token or TCP listener. The
+control plane delivers a bounded configuration through Kubernetes exec stdin to
+the fixed `/usr/local/bin/layer4-runtime --assign-runtime` command. The waiting
+process checks the exact Pod UID and admits only the first valid configuration.
+An identical request can replay after acknowledgement loss; a different request
+cannot replace it. The control token remains in memory and is excluded from
+child environments. Normal authenticated runtime startup follows assignment.
+
+The native exec sender checks CRD/Pod identity and persisted Sandbox, generation
+and home authority before and after delivery. It requires a successful exec
+exit status and an exact request-digest receipt, bounds both output streams,
+and does not propagate remote output in errors. Local tests exercise kube-rs
+WebSocket exec and real runtime processes, including Pod replacement refusal,
+bounded output without EOF, authenticated startup and retained-home restart.
+This is assignment support only: production warm-pool/template/claim ownership,
+PVC adoption and worker composition still require integration and cluster
+acceptance. A bootstrap label alone is not evidence of a functioning warm pool.
+
 The historical provider observations in sections 1-7 below remain unchanged.
 They establish only behavior on their recorded versions. Section 8 records
 Agent-home experiments on a contract-2 image with Codex 0.147.0 and codex-acp
