@@ -308,6 +308,7 @@ fn worktree_and_agent(sandbox_id: &SandboxId) -> (Worktree, Agent) {
         ]),
         status: AgentStatus::Starting,
         conversation: ConversationState {
+            settings: None,
             conversation_id: None,
             runtime_generation: None,
             last_seq: 0,

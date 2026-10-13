@@ -913,6 +913,17 @@ against current Agent policy and evidence lifetime after IO. TypeScript
 personal/shared unions. Existing `source` methods retain their personal types
 and reject a shared projection.
 
+`GET /api/v1/agents/{id}/settings` returns the owner's current `model`,
+`reasoning_effort`, `permission_mode`, and `pending`. Historical profiles that
+leave model selection to the runtime return an empty model until explicitly set.
+`PATCH` on the same path requires an `Idempotency-Key` and all three settings;
+reasoning effort is `minimal|low|medium|high|x_high`, and permission mode is
+`guarded|autonomous`. Updates require an idle Ready Agent and preserve its
+immutable profile and conversation identity. Desired settings are persisted
+before runtime dispatch and reapplied after reconnect; `pending: true` means
+runtime confirmation is outstanding and further input remains fenced. Retry
+network failures or ambiguous 503 replies with the original body and key.
+
 `GET /api/v1/agents/{id}/events` is a **JSON page**, not SSE. It accepts `after`
 and `limit` (1-200, default 200), returns `items` and optional `next`, and omits
 internal dispatch keys and runtime approval locators. Read all pages, require
@@ -1152,6 +1163,8 @@ returns 409, including changing an omitted default into an explicit reference.
 | `GET /api/v1/agents/{id}/events` | - | after, limit | 200 AgentEventPageView |
 | `GET /api/v1/agents/provenance` | `shared`, `organization`, `sandbox`, `workspace`, `status`, `creation_origin`, `cursor`, `limit` | - | 200 AgentProvenanceInventoryPageView |
 | `GET /api/v1/agents/{id}/provenance` | - | - | 200 AgentProvenanceView |
+| `GET /api/v1/agents/{id}/settings` | - | - | 200 AgentSettingsView |
+| `PATCH /api/v1/agents/{id}/settings` | UpdateAgentSettingsRequest; key | - | 200 AgentSettingsView |
 | `GET /api/v1/agents/{id}/source` | - | - | 200 AccessibleAgentSourceView |
 | `POST /api/v1/agents/{id}/stop` | StopAgentRequest; key | - | 202 empty |
 | `GET /api/v1/agents/{id}/terminal` | - | - | 404 ProblemDocument; 501 ProblemDocument |

@@ -3,6 +3,7 @@
 mod acp;
 mod acp_handshake;
 mod acp_inbound;
+mod acp_settings;
 mod acp_turn;
 mod adapter;
 mod agent_sandbox_backend;

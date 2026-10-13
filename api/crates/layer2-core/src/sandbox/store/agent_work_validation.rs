@@ -195,6 +195,7 @@ fn immutable_agent_fields_changed(current: &Agent, next: &Agent) -> bool {
         || current.creation_key != next.creation_key
         || current.creation_fingerprint != next.creation_fingerprint
         || current.profile != next.profile
+        || current.conversation.settings != next.conversation.settings
         || current.capabilities != next.capabilities
         || current.title != next.title
         || current.created_at != next.created_at

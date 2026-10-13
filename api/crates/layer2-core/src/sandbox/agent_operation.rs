@@ -34,6 +34,7 @@ pub enum AgentOperationKind {
     Steer,
     Interrupt,
     AnswerApproval,
+    UpdateSettings,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -50,6 +51,10 @@ pub enum AgentOperationDelivery {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum AgentOperationIntent {
+    UpdateSettings {
+        settings: super::AgentSettings,
+        previous: Option<super::AgentSettings>,
+    },
     SendMessage {
         payload_sha256: String,
     },
@@ -90,6 +95,7 @@ impl AgentOperationIntent {
 
     pub const fn kind(&self) -> AgentOperationKind {
         match self {
+            Self::UpdateSettings { .. } => AgentOperationKind::UpdateSettings,
             Self::SendMessage { .. } => AgentOperationKind::SendMessage,
             Self::Steer { .. } => AgentOperationKind::Steer,
             Self::Interrupt => AgentOperationKind::Interrupt,
@@ -99,6 +105,12 @@ impl AgentOperationIntent {
 
     fn validate(&self) -> Result<(), SandboxModelError> {
         let valid = match self {
+            Self::UpdateSettings { settings, previous } => {
+                settings.validate().is_ok()
+                    && previous
+                        .as_ref()
+                        .is_none_or(|value| value.validate().is_ok())
+            }
             Self::SendMessage { payload_sha256 } | Self::Steer { payload_sha256 } => {
                 valid_sha256(payload_sha256)
             }

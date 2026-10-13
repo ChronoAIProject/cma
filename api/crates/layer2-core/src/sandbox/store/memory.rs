@@ -305,6 +305,7 @@ impl AgentStore for InMemorySandboxStore {
         let current = state.agents.get(&id).ok_or(SandboxStoreError::NotFound)?;
         if current.owner != agent.owner
             || current.profile != agent.profile
+            || current.conversation.settings != agent.conversation.settings
             || current.work.resolved_skills != agent.work.resolved_skills
         {
             return Err(SandboxStoreError::Conflict);

@@ -6,6 +6,7 @@ use std::{
 mod conversation_fixtures;
 mod creation_delegation;
 mod lifecycle;
+mod settings;
 pub(crate) use conversation_fixtures::{conversation_fixture, conversation_fixture_with_registry};
 
 use async_trait::async_trait;
@@ -445,6 +446,7 @@ pub(crate) fn seeded_agent(
         capabilities: agent_capabilities(),
         status,
         conversation: ConversationState {
+            settings: None,
             conversation_id: Some(format!("conversation-{id}")),
             runtime_generation: Some(1),
             last_seq,
@@ -568,6 +570,7 @@ fn openapi_contains_every_agent_route() {
         "/api/v1/agent-lifecycle/{id}",
         "/api/v1/agents",
         "/api/v1/agents/{id}",
+        "/api/v1/agents/{id}/settings",
         "/api/v1/agents/{id}/input",
         "/api/v1/agents/{id}/steer",
         "/api/v1/agents/{id}/interrupt",
@@ -583,15 +586,20 @@ fn openapi_contains_every_agent_route() {
             .paths
             .get(path)
             .unwrap_or_else(|| panic!("missing {path}"));
-        for operation in [item.get.as_ref(), item.post.as_ref(), item.delete.as_ref()]
-            .into_iter()
-            .flatten()
+        for operation in [
+            item.get.as_ref(),
+            item.post.as_ref(),
+            item.patch.as_ref(),
+            item.delete.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
         {
             assert!(operation_ids.insert(operation.operation_id.as_deref().unwrap()));
             assert_eq!(operation.security.as_ref().map(Vec::len), Some(2));
         }
     }
-    assert_eq!(operation_ids.len(), 15);
+    assert_eq!(operation_ids.len(), 17);
 
     let schemas = serde_json::to_value(document).unwrap();
     let item_ref =
