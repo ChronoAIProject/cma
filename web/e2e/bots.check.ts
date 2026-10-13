@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { LocalStartup, recorded } from './agent-startup-fixtures';
+import { LocalStartup } from './agent-startup-fixtures';
 
 test('LOCAL consumer dashboard uses real CMA, Gateway and Mongo for creation, test and cleanup', async ({
   page,
@@ -17,23 +17,8 @@ test('LOCAL consumer dashboard uses real CMA, Gateway and Mongo for creation, te
       },
     }),
   );
-  await page.route(/\/api\/v1\/agent-profiles(?:\?.*)?$/, (route) =>
-    route.fulfill({
-      json: {
-        items: [
-          {
-            ...recorded<object>('profiles.json', 'agent-profile-read'),
-            id: 'agp_fixture',
-            name: 'Research profile',
-            latest_revision: {
-              ...recorded<object>('profiles.json', 'agent-profile-exact-revision'),
-              profile_id: 'agp_fixture',
-              revision: 1,
-            },
-          },
-        ],
-      },
-    }),
+  await page.route('**/api/image-manager/v1/images?scope=all', (route) =>
+    route.fulfill({ json: { items: [] } }),
   );
   await page.route('**/api/v1/bots**', async (route) => {
     const url = new URL(route.request().url());
@@ -52,13 +37,33 @@ test('LOCAL consumer dashboard uses real CMA, Gateway and Mongo for creation, te
   await page.getByRole('button', { name: 'Event Gateway connection', exact: true }).click();
   await page.getByRole('menuitemradio', { name: 'Research channel' }).click();
   await page.getByRole('button', { name: 'Continue' }).click();
-  await page.getByRole('button', { name: /Select Research profile Version/ }).click();
+  await expect(page.getByRole('heading', { name: 'Configure the Agent inline' })).toBeVisible();
+  await expect(page.getByRole('radio', { name: /System default image/ })).toBeChecked();
+  await page.getByLabel('Model', { exact: true }).fill('gpt-5');
+  await page.getByRole('combobox', { name: /^Reasoning effort/ }).selectOption('high');
+  await page.getByRole('combobox', { name: /^Permission level/ }).selectOption('guarded');
+  await page.getByLabel('System prompt', { exact: true }).fill('Respond with concise updates.');
   await page.getByRole('button', { name: 'Continue' }).click();
   await page.getByRole('button', { name: 'Admission policy' }).click();
   await page.getByRole('menuitemradio', { name: 'Private chats only', exact: true }).click();
   await page.getByLabel('Acknowledgement delay (seconds)', { exact: true }).fill('0');
   await page.getByRole('button', { name: 'Continue' }).click();
+  const creation = page.waitForRequest(
+    (request) => request.method() === 'POST' && new URL(request.url()).pathname === '/api/v1/bots',
+  );
   await page.getByRole('button', { name: 'Create consumer', exact: true }).click();
+  const body: unknown = (await creation).postDataJSON();
+  expect(body).toMatchObject({
+    agent: {
+      model: 'gpt-5',
+      reasoning_effort: 'high',
+      permission_mode: 'guarded',
+      system_prompt: 'Respond with concise updates.',
+      skills: [],
+      permissions: { services: [] },
+    },
+  });
+  expect(body).not.toHaveProperty('profile');
   await expect(page.getByText('Active', { exact: true })).toBeVisible();
   await expect(page.getByText('Event Gateway connection', { exact: true })).toBeVisible();
   for (const theme of ['light', 'dark']) {

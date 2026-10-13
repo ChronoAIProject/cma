@@ -1,5 +1,5 @@
 //! Browser interoperability over real consumer routes, workers, Gateway and Mongo.
-//! Identity, profile catalogue, provider execution and platform APIs are local fakes.
+//! Identity, image catalogue, profile materialization, provider and platform APIs are local fakes.
 use super::*;
 use axum::{body::Body, http::Request, middleware::Next};
 use std::path::Path;
@@ -7,10 +7,38 @@ use std::path::Path;
 struct Profiles(BotProfiles);
 #[async_trait::async_trait]
 impl BotProfileResolver for Profiles {
-    async fn resolve(&self, _: &SubjectId, request: &CreateBot) -> Result<BotProfiles, BotError> {
-        let reference = &request.profile;
-        assert_eq!(reference.id, self.0.agent.profile_id);
-        assert_eq!(reference.revision, self.0.agent.revision);
+    async fn resolve(&self, _: &SubjectId, _: &CreateBot) -> Result<BotProfiles, BotError> {
+        panic!("the consumer browser journey must use inline Agent configuration");
+    }
+}
+#[async_trait::async_trait]
+impl layer2_core::bots::BotInlineProfileResolver for Profiles {
+    async fn resolve_inline(
+        &self,
+        owner: &SubjectId,
+        request: &CreateBot,
+        _: Option<&str>,
+        key: &str,
+    ) -> Result<BotProfiles, BotError> {
+        assert_eq!(owner, &SubjectId::new("owner"));
+        assert!(!key.is_empty());
+        assert!(request.image.is_none());
+        assert!(request.repository.is_none());
+        assert!(request.sandbox_profile.is_none());
+        assert!(request.workspace_profile.is_none());
+        let agent = request
+            .inline_agent
+            .as_ref()
+            .expect("inline Agent required");
+        assert_eq!(agent.model.as_deref(), Some("gpt-5"));
+        assert_eq!(agent.reasoning_effort.as_deref(), Some("high"));
+        assert_eq!(agent.permission_mode.as_deref(), Some("guarded"));
+        assert_eq!(
+            agent.system_prompt.as_deref(),
+            Some("Respond with concise updates.")
+        );
+        assert!(agent.skills.is_empty());
+        assert!(agent.permissions.services.is_empty());
         Ok(self.0.clone())
     }
 }
@@ -22,11 +50,9 @@ async fn dashboard_creates_tests_and_deletes_a_gateway_connection_consumer() {
     let gateway = consumer_fixture::ConsumerGateway::start(&remote).await;
     let template = bot().await;
     let store = Arc::new(InMemoryBotStore::default());
-    let service = BotService::new(
-        store.clone(),
-        Arc::new(Profiles(template.profiles)),
-        "cma_codex".into(),
-    );
+    let profiles = Arc::new(Profiles(template.profiles));
+    let service = BotService::new(store.clone(), profiles.clone(), "cma_codex".into())
+        .with_inline_profiles(profiles);
     let external = lifecycle::external_at(&remote, &gateway.base, consumer_fixture::PUBLIC);
     let worker = BotWorker::new(service.clone(), external.clone(), "web-fixture".into());
     let router = layer1_public::rest::bot_router(BotControl::new(service, external)).layer(
