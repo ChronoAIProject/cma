@@ -355,10 +355,20 @@ mod tests {
         );
         assert_eq!(
             indexes[3].keys,
+            doc! { "sandbox_id": 1, "origin_operation_id": 1 }
+        );
+        let options = indexes[3].options.as_ref().unwrap();
+        assert_eq!(options.unique, Some(true));
+        assert_eq!(
+            options.partial_filter_expression.as_ref(),
+            Some(&doc! { "origin_type": "lifecycle" })
+        );
+        assert_eq!(
+            indexes[4].keys,
             doc! { "work_pending": 1, "work_ready_at": 1, "work_lease_expires_at": 1 }
         );
         assert_eq!(
-            indexes[3].options.as_ref().unwrap().name.as_deref(),
+            indexes[4].options.as_ref().unwrap().name.as_deref(),
             Some("workspaces_due_work")
         );
     }
