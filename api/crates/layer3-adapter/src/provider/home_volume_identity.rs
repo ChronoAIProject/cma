@@ -92,9 +92,30 @@ pub(super) fn validate_claim(
     request: &HomeVolumeRequest,
     claim: &PersistentVolumeClaim,
 ) -> Result<HomeVolumeReceipt> {
-    let desired = desired_claim(namespace, controller, request)?;
-    let expected_spec = desired.spec.as_ref().ok_or_else(invalid)?;
-    let spec = claim.spec.as_ref().ok_or_else(invalid)?;
+    let mut desired = desired_claim(namespace, controller, request)?;
+    if let Some(encoded) = claim
+        .metadata
+        .annotations
+        .as_ref()
+        .and_then(|values| values.get(crate::agent_sandbox::NATIVE_HOME_ANNOTATION))
+    {
+        let origin: crate::agent_sandbox::NativePoolHomeOrigin =
+            serde_json::from_str(encoded).map_err(|_| invalid())?;
+        origin.validate_for(namespace, controller, request)?;
+        if claim.metadata.uid.as_deref() != Some(&origin.pvc_uid)
+            || claim
+                .metadata
+                .labels
+                .as_ref()
+                .and_then(|labels| labels.get(crate::agent_sandbox::NATIVE_HOME_REQUEST_LABEL))
+                .map(String::as_str)
+                != Some(&request.computed_sha256()[..52])
+        {
+            return Err(invalid());
+        }
+        desired.metadata.name = Some(origin.storage_reference()?);
+    }
+    validate_storage(namespace, controller, request, claim)?;
     let metadata = &claim.metadata;
     let uid = metadata
         .uid
@@ -119,6 +140,27 @@ pub(super) fn validate_claim(
             != Some(controller)
         || stored != *request
         || annotations.get(DIGEST_ANNOTATION) != Some(&request.computed_sha256())
+    {
+        return Err(invalid());
+    }
+    Ok(HomeVolumeReceipt {
+        volume_id: request.volume_id.clone(),
+        request_sha256: request.computed_sha256(),
+        storage_reference: desired.metadata.name.ok_or_else(invalid)?,
+        storage_generation: uid.to_string(),
+    })
+}
+
+pub(super) fn validate_storage(
+    namespace: &str,
+    controller: &str,
+    request: &HomeVolumeRequest,
+    claim: &PersistentVolumeClaim,
+) -> Result<()> {
+    let desired = desired_claim(namespace, controller, request)?;
+    let expected_spec = desired.spec.as_ref().ok_or_else(invalid)?;
+    let spec = claim.spec.as_ref().ok_or_else(invalid)?;
+    if claim.metadata.namespace.as_deref() != Some(namespace)
         || spec.access_modes != expected_spec.access_modes
         || spec
             .volume_mode
@@ -141,12 +183,7 @@ pub(super) fn validate_claim(
     {
         return Err(invalid());
     }
-    Ok(HomeVolumeReceipt {
-        volume_id: request.volume_id.clone(),
-        request_sha256: request.computed_sha256(),
-        storage_reference: claim_name(request),
-        storage_generation: uid.to_string(),
-    })
+    Ok(())
 }
 
 fn dns_name(value: &str, maximum: usize) -> bool {

@@ -36,7 +36,7 @@ async fn published_hold_verification_uses_authenticated_control_without_archive_
     transport.bind_runtime(&handle, "sandbox-a").await.unwrap();
     let backend = ProviderHostedBackend::new(
         match &transport.client {
-            RuntimeDiscovery::Provider(client) => client.clone(),
+            RuntimeDiscovery::Provider(client) => client.as_ref().clone(),
             _ => unreachable!(),
         },
         Arc::new(transport),
