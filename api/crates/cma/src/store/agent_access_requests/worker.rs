@@ -4,6 +4,7 @@ use std::time::Duration;
 const LEASE_MILLIS: i64 = 90_000;
 
 impl MongoSandboxStore {
+    #[cfg(test)]
     pub(crate) async fn read_access_request(
         &self,
         id: &str,

@@ -2,6 +2,7 @@
 
 mod activity;
 mod agent_access;
+mod agent_access_worker;
 mod agent_lifecycle;
 mod auth;
 mod bot_setups;
@@ -126,6 +127,7 @@ async fn serve() -> Result<(), String> {
             .spawn(shutdown.subscribe()),
     );
     shutdown.push(composition.native_warm_pools.spawn(shutdown.subscribe()));
+    shutdown.push(composition.agent_access_worker.spawn(shutdown.subscribe()));
     composition.sandbox_lifecycle.spawn(&mut shutdown);
     shutdown.push(composition.provenance_backfill.spawn(shutdown.subscribe()));
     let http_signal = shutdown.subscribe();

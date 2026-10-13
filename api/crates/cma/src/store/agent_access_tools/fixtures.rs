@@ -2,9 +2,9 @@ use layer2_core::ids::*;
 use layer2_core::profiles::*;
 use layer2_core::sandbox::store::AgentAdmission;
 use layer2_core::sandbox::*;
-pub(super) const NOW: &str = "2026-09-05T00:00:00Z";
+pub(crate) const NOW: &str = "2026-09-05T00:00:00Z";
 
-pub(super) fn sandbox(suffix: &str) -> Sandbox {
+pub(crate) fn sandbox(suffix: &str) -> Sandbox {
     Sandbox {
         id: SandboxId(format!("sbx_admission_{suffix}")),
         owner: SubjectId("owner".into()),
@@ -64,7 +64,7 @@ pub(super) fn sandbox(suffix: &str) -> Sandbox {
     }
 }
 
-pub(super) fn workspace(sandbox: &Sandbox, suffix: &str) -> Workspace {
+pub(crate) fn workspace(sandbox: &Sandbox, suffix: &str) -> Workspace {
     let name = format!("workspace-{suffix}");
     Workspace {
         id: WorkspaceId(format!("wks_admission_{suffix}")),
@@ -97,7 +97,7 @@ pub(super) fn workspace(sandbox: &Sandbox, suffix: &str) -> Workspace {
     }
 }
 
-pub(super) fn admission(workspace: &Workspace, suffix: &str) -> AgentAdmission {
+pub(crate) fn admission(workspace: &Workspace, suffix: &str) -> AgentAdmission {
     AgentAdmission {
         binding: None,
         created_by: None,
