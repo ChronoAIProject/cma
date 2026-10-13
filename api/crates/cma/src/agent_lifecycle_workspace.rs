@@ -10,6 +10,17 @@ impl InlineAgentLifecycle {
         actor: Option<&layer2_core::resource_access::ResourceActor>,
         request: &AgentLifecycleCreateRequest,
     ) -> Result<(Workspace, Sandbox), AgentLifecycleProvisioningError> {
+        self.contextual_workspace_for(caller, actor, request, LifecycleBehavior::PromptRepository)
+            .await
+    }
+
+    async fn contextual_workspace_for(
+        &self,
+        caller: &Caller,
+        actor: Option<&layer2_core::resource_access::ResourceActor>,
+        request: &AgentLifecycleCreateRequest,
+        behavior: LifecycleBehavior,
+    ) -> Result<(Workspace, Sandbox), AgentLifecycleProvisioningError> {
         let id = request.workspace_id.as_ref().ok_or_else(|| {
             AgentLifecycleProvisioningError::Invalid("workspace_id is required".into())
         })?;
@@ -18,7 +29,7 @@ impl InlineAgentLifecycle {
             .authorize_lifecycle_workspace(caller, actor, &WorkspaceId(id.clone()))
             .await
             .map_err(|error| contextual_error(error, id))?;
-        validate_scopes(request, &sandbox.credential.effective_reaches())?;
+        validate_scopes_for(request, &sandbox.credential.effective_reaches(), behavior)?;
         Ok((workspace, sandbox))
     }
 
@@ -29,7 +40,7 @@ impl InlineAgentLifecycle {
     ) -> Result<String, AgentLifecycleProvisioningError> {
         // Repeat authorization after every restart, before profile mutation.
         let (workspace, sandbox) = self
-            .contextual_workspace(caller, input.actor.as_ref(), &input.request)
+            .contextual_workspace_for(caller, input.actor.as_ref(), &input.request, input.behavior)
             .await?;
         if input
             .existing_sandbox_id
@@ -83,7 +94,10 @@ impl InlineAgentLifecycle {
             }
             agent.id
         } else {
-            let profile = agent_content(&input.request.profile.clone().unwrap_or_default())?;
+            let profile = validation::agent_content_for(
+                &input.request.profile.clone().unwrap_or_default(),
+                input.behavior,
+            )?;
             let revision = self
                 .profiles
                 .create_agent_for_owner(
@@ -109,7 +123,8 @@ impl InlineAgentLifecycle {
                             revision.revision,
                         ),
                         title: Some(input.request.name.clone()),
-                        first_message: None,
+                        first_message: (input.behavior == LifecycleBehavior::PromptRepository)
+                            .then(|| validation::first_message(&input.request)),
                         origin: AgentOrigin::Lifecycle {
                             operation_id: input.lease.id.clone(),
                         },
@@ -169,11 +184,22 @@ fn contextual_error(
     }
 }
 
-fn validate_scopes(
+pub(super) fn validate_scopes(
     request: &AgentLifecycleCreateRequest,
     inherited: &[layer2_core::ServiceId],
 ) -> Result<(), AgentLifecycleProvisioningError> {
-    let requested = services(&request.profile.clone().unwrap_or_default().permissions)?;
+    validate_scopes_for(request, inherited, LifecycleBehavior::PromptRepository)
+}
+
+fn validate_scopes_for(
+    request: &AgentLifecycleCreateRequest,
+    inherited: &[layer2_core::ServiceId],
+    behavior: LifecycleBehavior,
+) -> Result<(), AgentLifecycleProvisioningError> {
+    let requested = validation::services_for(
+        &request.profile.clone().unwrap_or_default().permissions,
+        behavior,
+    )?;
     if requested.iter().any(|service| !inherited.contains(service)) {
         return Err(AgentLifecycleProvisioningError::Invalid("an Agent in an existing Workspace inherits its Sandbox key scope; additional services require updating that Sandbox first".into()));
     }

@@ -1,5 +1,5 @@
 use super::*;
-use layer2_core::profiles::{InMemoryProfileStore, SandboxProfileStore};
+use layer2_core::profiles::{InMemoryProfileStore, SandboxProfileStore, WorkspaceProfileStore};
 use layer3_adapter::SandboxCapacity;
 
 fn bounds() -> ProfileCapacityBounds {
@@ -19,6 +19,7 @@ async fn lifecycle_uses_captured_defaults_and_replays_profiles_after_configurati
     let caller = Caller::new(SubjectId::new("owner"), Authorization::new([]));
     let request = serde_json::from_value(serde_json::json!({"name":"Test Agent"})).unwrap();
     let input = LifecycleInput {
+        behavior: LifecycleBehavior::PromptRepository,
         request,
         resolved_image: None,
         capacity: Some(SandboxCapacity::default()),
@@ -33,6 +34,7 @@ async fn lifecycle_uses_captured_defaults_and_replays_profiles_after_configurati
         "original",
         input.captured_capacity(bounds()),
         input.captured_limits(),
+        input.behavior,
     )
     .await
     .unwrap();
@@ -69,6 +71,7 @@ async fn lifecycle_uses_captured_defaults_and_replays_profiles_after_configurati
         "original",
         resumed.captured_capacity(changed_bounds),
         resumed.captured_limits(),
+        resumed.behavior,
     )
     .await
     .unwrap();
@@ -82,11 +85,12 @@ async fn legacy_lifecycle_without_capacity_replays_the_old_minimum_reservation()
         PrivateProfileCreationService::new(store.clone(), bounds(), Arc::new([] as [String; 0]));
     let caller = Caller::new(SubjectId::new("owner"), Authorization::new([]));
     let input: LifecycleInput = serde_json::from_value(serde_json::json!({
-        "request":{"name":"Legacy Agent"},"resolved_image":null
+        "request":{"name":"Legacy Agent","repository":{"url":"https://github.com/org/legacy"}},"resolved_image":null
     }))
     .unwrap();
     assert!(input.capacity.is_none());
-    let (_, _, original) = create_profiles(
+    assert_eq!(input.behavior, LifecycleBehavior::Legacy);
+    let (_, workspace, original) = create_profiles(
         &profiles,
         &caller,
         &input.request,
@@ -97,9 +101,20 @@ async fn legacy_lifecycle_without_capacity_replays_the_old_minimum_reservation()
             memory_mib: 128,
         },
         input.captured_limits(),
+        input.behavior,
     )
     .await
     .unwrap();
+    let retained_workspace = store
+        .workspace_profile_revision(&workspace.id, workspace.revision)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(retained_workspace.content.name.is_empty());
+    assert!(matches!(
+        retained_workspace.content.location,
+        layer2_core::profiles::WorkspaceLocation::GitRepository { .. }
+    ));
     let (_, _, replayed) = create_profiles(
         &profiles,
         &caller,
@@ -108,6 +123,7 @@ async fn legacy_lifecycle_without_capacity_replays_the_old_minimum_reservation()
         "legacy",
         input.captured_capacity(bounds()),
         input.captured_limits(),
+        input.behavior,
     )
     .await
     .unwrap();
@@ -123,4 +139,109 @@ async fn legacy_lifecycle_without_capacity_replays_the_old_minimum_reservation()
         (retained.content.cpu_millis, retained.content.memory_mib),
         (100, 128)
     );
+}
+
+#[tokio::test]
+async fn repository_is_a_first_message_and_never_a_platform_clone_plan() {
+    let store = Arc::new(InMemoryProfileStore::default());
+    let profiles =
+        PrivateProfileCreationService::new(store.clone(), bounds(), Arc::new([] as [String; 0]));
+    let caller = Caller::new(SubjectId::new("owner"), Authorization::new([]));
+    let request = serde_json::from_value(json!({"name":"Repo Agent","repository":{"url":"https://github.com/org/project","ref":"feature/setup"}})).unwrap();
+    validate_request(&request).unwrap();
+    let (agent, workspace, sandbox) = create_profiles(
+        &profiles,
+        &caller,
+        &request,
+        None,
+        "repo-prompt",
+        SandboxCapacity::default(),
+        layer2_core::sandbox::SandboxLimits {
+            max_workspaces: 16,
+            max_agents_per_workspace: 16,
+        },
+        LifecycleBehavior::PromptRepository,
+    )
+    .await
+    .unwrap();
+    let workspace = store
+        .workspace_profile_revision(&workspace.id, workspace.revision)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(
+        workspace.content.location,
+        layer2_core::profiles::WorkspaceLocation::Directory { .. }
+    ));
+    assert!(workspace.content.setup_commands.is_empty());
+    assert!(agent.content.system_prompt.is_empty());
+    assert_eq!(agent.content.model.as_deref(), Some("gpt-6"));
+    assert_eq!(
+        agent.content.thinking_effort,
+        layer2_core::profiles::ThinkingEffort::High
+    );
+    assert_eq!(
+        agent.content.permission_level,
+        layer2_core::profiles::PermissionLevel::Autonomous
+    );
+    let sandbox = store
+        .sandbox_profile_revision(&sandbox.id, sandbox.revision)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        sandbox.content.nyxid_services,
+        crate::config::REQUIRED_BASELINE_SERVICES
+            .iter()
+            .copied()
+            .map(layer2_core::ServiceId::new)
+            .collect::<Vec<_>>()
+    );
+    let prompt = validation::first_message(&request);
+    assert!(prompt.contains("https://github.com/org/project"));
+    assert!(prompt.contains("feature/setup"));
+    let repeated = validation::first_message(
+        &serde_json::from_slice(&serde_json::to_vec(&request).unwrap()).unwrap(),
+    );
+    assert_eq!(repeated, prompt);
+}
+
+#[test]
+fn legacy_operations_retain_original_setup_and_permissions_after_upgrade() {
+    let input: LifecycleInput = serde_json::from_value(json!({
+        "request":{"name":"Old pending Agent","repository":{"url":"https://github.com/org/project"}},
+        "resolved_image":null
+    })).unwrap();
+    assert_eq!(input.behavior, LifecycleBehavior::Legacy);
+    let profile = input.request.profile.clone().unwrap_or_default();
+    let original = validation::agent_content_for(&profile, input.behavior).unwrap();
+    assert_eq!(original.model, None);
+    assert_eq!(
+        original.thinking_effort,
+        layer2_core::profiles::ThinkingEffort::Medium
+    );
+    assert_eq!(
+        original.permission_level,
+        layer2_core::profiles::PermissionLevel::Guarded
+    );
+    assert!(
+        validation::services_for(&profile.permissions, input.behavior)
+            .unwrap()
+            .is_empty()
+    );
+    assert!(matches!(
+        validation::repository_location(&input.request, input.behavior).unwrap(),
+        layer2_core::profiles::WorkspaceLocation::GitRepository { .. }
+    ));
+    let admitted: LifecycleInput = serde_json::from_value(json!({
+        "behavior":"prompt_repository","request":input.request,"resolved_image":null
+    }))
+    .unwrap();
+    let recovered: LifecycleInput =
+        serde_json::from_slice(&serde_json::to_vec(&admitted).unwrap()).unwrap();
+    assert_eq!(recovered.behavior, LifecycleBehavior::PromptRepository);
+    assert!(matches!(
+        validation::repository_location(&recovered.request, recovered.behavior).unwrap(),
+        layer2_core::profiles::WorkspaceLocation::Directory { .. }
+    ));
 }
