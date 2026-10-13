@@ -558,7 +558,7 @@ async fn collection_operations_return_the_explicit_operator_refusal() {
             "/api/v1/admin/settings",
             Some(json!({
                 "expected_revision": 0,
-                "settings": PlatformSettings::default()
+                "settings": settings::PlatformSettingsBody::from(PlatformSettings::default())
             })),
         ),
         (
