@@ -171,9 +171,11 @@ async fn suspend_and_delete_send_exact_uid_version_and_foreground_policy() {
         json!({"uid":"sandbox-uid","resourceVersion":"8"})
     );
     assert_eq!(calls[3].1["propagationPolicy"], "Foreground");
-    assert!(calls[4]
+    assert!(calls[4].0.contains("fieldSelector=metadata.name%3D"));
+    assert!(!calls[4].0.contains("labelSelector="));
+    assert!(calls[5]
         .0
-        .contains("labelSelector=cma%2Fcontrol-plane%3Dcma-test"));
+        .contains("labelSelector=agents.x-k8s.io%2Fsandbox-name-hash%3D"));
 }
 
 #[tokio::test]
@@ -204,6 +206,10 @@ async fn deletion_retry_waits_for_the_original_pod_even_after_the_crd_is_gone() 
     assert!(calls.iter().all(|(line, _)| line.starts_with("GET ")));
     assert!(calls[2].0.contains("/pods?"));
     assert!(calls[4].0.contains("/pods?"));
+    assert!(calls[2]
+        .0
+        .contains("labelSelector=agents.x-k8s.io%2Fsandbox-name-hash%3D"));
+    assert!(!calls[2].0.contains("cma%2Fruntime-name"));
 }
 
 #[tokio::test]
@@ -225,6 +231,90 @@ async fn absent_crd_cannot_complete_deletion_with_an_incomplete_pod_inventory() 
         fixture.client.delete(&handle).await,
         Err(AdapterError::Unavailable(_))
     ));
+}
+
+#[tokio::test]
+async fn warm_member_pod_discovery_requires_tracking_label_and_exact_owner_without_runtime_label() {
+    let (_, mut object) = object();
+    object["status"]["conditions"] =
+        json!([{"type":"Ready","status":"True","observedGeneration":1}]);
+    let name = object["metadata"]["name"].as_str().unwrap();
+    let handle = RuntimeHandle(format!("agent-sandbox:{name}:sandbox-uid"));
+    for case in [
+        "warm",
+        "foreign_uid",
+        "foreign_hash",
+        "foreign_owner",
+        "duplicate",
+        "incomplete",
+    ] {
+        let mut pod = json!({"apiVersion":"v1","kind":"Pod", "metadata":{
+            "name":name,"namespace":"cma-test","uid":"warm-pod",
+            "labels":{OWNER_LABEL:"cma-test",pods::TRACKING_LABEL:pods::name_hash(name)},
+            "ownerReferences":[{"apiVersion":"agents.x-k8s.io/v1beta1","kind":"Sandbox","name":name,"uid":"sandbox-uid","controller":true}]},
+            "status":{"phase":"Running","podIP":"10.0.0.7","conditions":[{"type":"Ready","status":"True"}]}});
+        match case {
+            "foreign_uid" => pod["metadata"]["ownerReferences"][0]["uid"] = json!("replacement"),
+            "foreign_hash" => pod["metadata"]["labels"][pods::TRACKING_LABEL] = json!("00000000"),
+            "foreign_owner" => pod["metadata"]["labels"][OWNER_LABEL] = json!("other-team"),
+            _ => (),
+        }
+        let mut candidates = list("PodList");
+        candidates["items"] = if case == "duplicate" {
+            json!([pod.clone(), pod])
+        } else {
+            json!([pod])
+        };
+        if case == "incomplete" {
+            candidates["metadata"]["continue"] = json!("next");
+        }
+        let fixture = Fixture::start(vec![(200, object.clone()), (200, candidates)]).await;
+        let result = fixture.client.pod_binding(&handle).await;
+        assert_eq!(result.is_ok(), case == "warm", "{case}");
+        if let Ok(binding) = result {
+            assert_eq!(binding.pod_uid, "warm-pod");
+            assert_eq!(binding.sandbox_uid, "sandbox-uid");
+        }
+        let calls = fixture.calls.lock().unwrap();
+        assert_eq!(calls.len(), 2);
+        let query = reqwest::Url::parse(&format!(
+            "http://fixture{}",
+            calls[1].0.split_whitespace().nth(1).unwrap()
+        ))
+        .unwrap();
+        assert_eq!(
+            query
+                .query_pairs()
+                .find(|(k, _)| k == "labelSelector")
+                .unwrap()
+                .1,
+            pods::selector(name)
+        );
+    }
+}
+
+#[tokio::test]
+async fn deletion_observes_original_crd_uid_even_when_its_management_label_changes() {
+    let (_, mut object) = object();
+    let name = object["metadata"]["name"].as_str().unwrap().to_owned();
+    let handle = RuntimeHandle(format!("agent-sandbox:{name}:sandbox-uid"));
+    object["metadata"]["labels"][OWNER_LABEL] = json!("changed");
+    let mut objects = list("SandboxList");
+    objects["items"] = json!([object]);
+    let fixture = Fixture::start(vec![
+        (404, missing()),
+        (200, objects),
+        (200, list("PodList")),
+        (200, list("SandboxList")),
+        (200, list("PodList")),
+    ])
+    .await;
+    fixture.client.delete(&handle).await.unwrap();
+    let calls = fixture.calls.lock().unwrap();
+    assert_eq!(calls.len(), 5);
+    assert!(!calls[1].0.contains("labelSelector="));
+    assert!(calls[1].0.contains("fieldSelector=metadata.name%3D"));
+    assert!(calls.iter().all(|(line, _)| line.starts_with("GET ")));
 }
 
 #[tokio::test]

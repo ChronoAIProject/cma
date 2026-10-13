@@ -4,6 +4,7 @@
 mod assignment;
 mod lifecycle;
 mod model;
+mod pods;
 mod pool;
 mod suspension;
 
@@ -144,7 +145,7 @@ impl AgentSandboxClient {
             .pods
             .list(
                 &ListParams::default()
-                    .labels(&format!("{},{RUNTIME_LABEL}={name}", self.selector()))
+                    .labels(&pods::selector(&name))
                     .limit(3),
             )
             .await
