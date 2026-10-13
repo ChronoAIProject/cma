@@ -1,6 +1,7 @@
 //! Transactional Mongo admission and removal for workspace aggregates.
 
-use std::time::Duration;
+mod retry;
+use retry::{exhausted, retry_delay};
 
 use layer2_core::ids::{SubjectId, WorkspaceId};
 use layer2_core::sandbox::store::{
@@ -23,7 +24,6 @@ use super::workspace_removal::apply_removal;
 use super::workspaces::{read_workspace, workspace_document};
 
 const TRANSACTION_ATTEMPTS: usize = 16;
-const RETRY_MAX_DELAY_MILLIS: u64 = 32;
 
 pub(super) enum ApplyError {
     Domain(SandboxStoreError),
@@ -479,23 +479,4 @@ async fn reconcile_workspace(
         .map(read_workspace)
         .transpose()?;
     Ok(stored.as_ref() == Some(expected))
-}
-
-async fn retry_delay(attempt: usize) {
-    if attempt == 0 {
-        return;
-    }
-    let exponent = u32::try_from(attempt.saturating_sub(1)).unwrap_or(u32::MAX);
-    let millis = 1_u64
-        .checked_shl(exponent)
-        .unwrap_or(u64::MAX)
-        .min(RETRY_MAX_DELAY_MILLIS);
-    tokio::time::sleep(Duration::from_millis(millis)).await;
-}
-
-fn exhausted(operation: &str, last: Option<String>) -> SandboxStoreError {
-    SandboxStoreError::Unavailable(format!(
-        "{operation} exhausted its retry budget: {}",
-        last.unwrap_or_else(|| "no driver result".into())
-    ))
 }

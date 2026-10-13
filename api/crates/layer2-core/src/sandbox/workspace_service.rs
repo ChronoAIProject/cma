@@ -1,5 +1,7 @@
 mod binding;
+mod inline;
 mod lifecycle;
+pub use inline::{CreateInlineWorkspace, InlineWorkspaceSource};
 mod support;
 use super::service_trust::{validate_workspace_profile, validate_workspace_revision};
 use super::store::{
@@ -29,26 +31,6 @@ pub struct CreateWorkspace {
     pub profile: WorkspaceProfileRef,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub confirmed_digest: Option<String>,
-}
-
-/// Inline workspace request admitted directly by Agent Manager.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CreateInlineWorkspace {
-    pub source: InlineWorkspaceSource,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
-pub enum InlineWorkspaceSource {
-    GitRepository {
-        url: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        reference: Option<String>,
-    },
-    Empty,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
