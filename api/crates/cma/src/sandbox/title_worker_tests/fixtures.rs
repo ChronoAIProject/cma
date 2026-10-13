@@ -94,6 +94,7 @@ pub(super) fn agent() -> Agent {
         capabilities: RuntimeCapabilities::new([RuntimeCapability::Conversation]),
         status: AgentStatus::Ready,
         conversation: ConversationState {
+            settings: None,
             conversation_id: Some("conversation-title".into()),
             runtime_generation: Some(1),
             last_seq: 0,

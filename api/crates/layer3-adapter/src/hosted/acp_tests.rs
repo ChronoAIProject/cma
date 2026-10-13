@@ -22,6 +22,8 @@ mod reconnect_turn_tests;
 
 #[path = "acp_output_tests.rs"]
 mod output_tests;
+#[path = "acp_settings_tests.rs"]
+mod settings_tests;
 
 async fn socket_pair() -> (Socket, ServerSocket) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")

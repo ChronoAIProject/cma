@@ -36,6 +36,16 @@ pub trait AgentRuntimeRegistry: Send + Sync {
         target: &AgentRuntimeTarget,
     ) -> Result<AgentRuntimeConnection, AgentRuntimeError>;
 
+    /// Retire a failed input attachment and schedule durable reattachment.
+    async fn request_reconnect(
+        &self,
+        _target: &AgentRuntimeTarget,
+    ) -> Result<(), AgentRuntimeError> {
+        Err(AgentRuntimeError::Unavailable(
+            "runtime reconnection is not configured".into(),
+        ))
+    }
+
     /// Idempotently retire every interaction route at or below this authority.
     async fn fence(
         &self,

@@ -81,6 +81,10 @@ pub(super) fn routes() -> Router<AgentRoutesState> {
             get(read_lifecycle_operation),
         )
         .route("/api/v1/agents/{id}", get(read).delete(delete_agent))
+        .route(
+            "/api/v1/agents/{id}/settings",
+            get(super::agent_settings::read).patch(super::agent_settings::update),
+        )
 }
 
 /// Read a durable Agent lifecycle operation and its phase events.
