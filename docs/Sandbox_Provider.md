@@ -9,15 +9,30 @@ per-Agent homes. It does not create one pod per Agent or run Agents in a main
 checkout. Software installation completes as `cma` before credential delivery
 or activation of the credential-bearing loopback proxy.
 
-The final image must demonstrate whole-home writer-fenced checkpoint/restore,
-operation receipts, credential generations, per-Agent configuration and exact
-conversation resumption. Changing `CHRONO_SANDBOX_IMAGE` requires an immutable
+The final image must demonstrate operation receipts, credential generations,
+per-Agent configuration and exact conversation resumption. Retained OpenSandbox
+runtimes also require the legacy whole-home writer-fenced checkpoint/restore
+contract. Changing `CHRONO_SANDBOX_IMAGE` requires an immutable
 digest and triggers recorded rotation; a new tag or label is not evidence.
 See [CMA Model](CMA_Model.md) for the current contract and
 [Operations](CMA_Operations.md) for the final verification register.
 
 The additive conversation acknowledgement protocol and its rollout limits are
 documented in [Runtime output acknowledgement](CMA_Runtime_Output_Recovery.md).
+
+For the `agent-sandbox` provider, the attached home persistent volume is the
+persistence authority. Its runtime transport has no CMA checkpoint archive
+store. Checkpoint capture, writer holds, writer-resume commands and archive
+restore/bootstrap are refused as unsupported before Kubernetes discovery or
+runtime HTTP requests. Runtime ownership bindings, subscriptions, normal
+control operations and Agent history export remain independent of archive
+storage. This does not remove the legacy OpenSandbox archive adapter or the
+remaining global storage configuration required during migration.
+
+Local HTTP transport tests cover native operation without archive storage,
+cross-Sandbox binding refusal and rejection of archive operations before I/O.
+They do not establish production PV pause/revive/delete acceptance or native
+warm-pool readiness.
 
 The historical provider observations in sections 1-7 below remain unchanged.
 They establish only behavior on their recorded versions. Section 8 records
