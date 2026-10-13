@@ -129,6 +129,28 @@ async fn existing_agent_shares_one_mapping_for_all_senders_and_preserves_its_res
                 .conversation,
             first
         );
+        for alias in ["sender-one-conversation", "sender-two-conversation"] {
+            assert_eq!(
+                access
+                    .resolve(&principal, alias)
+                    .await
+                    .unwrap()
+                    .conversation,
+                first
+            );
+        }
+        for alias in ["short", "sender/invalid", "agt_foreign"] {
+            assert!(matches!(
+                access.resolve(&principal, alias).await,
+                Err(BindingError::NotFound)
+            ));
+        }
+        assert!(matches!(
+            access
+                .retained_principal(&binding.binding_id, binding.generation + 1)
+                .await,
+            Err(BindingError::NotFound)
+        ));
         let resources = ResourceAccessService::new(
             f.store.clone(),
             Arc::new(command_tests::LocalAuthority(access.clone())),
@@ -174,6 +196,23 @@ async fn existing_agent_shares_one_mapping_for_all_senders_and_preserves_its_res
             .await
             .unwrap()
             .is_none());
+        assert!(matches!(
+            access.resolve(&principal, "sender-one-conversation").await,
+            Err(BindingError::NotFound)
+        ));
+        let rotated_principal = access
+            .authenticate(&rotated.key_sha256)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            access
+                .resolve(&rotated_principal, "sender-one-conversation")
+                .await
+                .unwrap()
+                .conversation,
+            first
+        );
         f.service.retire(&f.caller, "borrowed-one").await.unwrap();
         for _ in 0..4 {
             let current = f.service.read(&f.caller, "borrowed-one").await.unwrap();
@@ -182,6 +221,12 @@ async fn existing_agent_shares_one_mapping_for_all_senders_and_preserves_its_res
         let retired = f.service.read(&f.caller, "borrowed-one").await.unwrap();
         assert_eq!(retired.work, BindingWork::Idle);
         assert_eq!(retired.state, BindingState::Retired);
+        assert!(matches!(
+            access
+                .resolve(&rotated_principal, "sender-one-conversation")
+                .await,
+            Err(BindingError::NotFound)
+        ));
         assert_eq!(
             f.store
                 .binding_conversation(
