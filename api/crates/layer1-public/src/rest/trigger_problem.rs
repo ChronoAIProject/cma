@@ -246,6 +246,11 @@ fn connection_problem(error: ServiceConnectionServiceError) -> ProblemParts {
 }
 
 fn reference_problem(error: TriggerReferenceError) -> ProblemParts {
+    let status = match &error {
+        TriggerReferenceError::ImageAccessDenied { .. } => StatusCode::FORBIDDEN,
+        TriggerReferenceError::ImageSignInRequired { .. } => StatusCode::UNAUTHORIZED,
+        _ => StatusCode::UNPROCESSABLE_ENTITY,
+    };
     let (code, detail, field) = match error {
         TriggerReferenceError::Unavailable { field } => (
             "trigger_reference_unavailable",
@@ -257,9 +262,19 @@ fn reference_problem(error: TriggerReferenceError) -> ProblemParts {
             "Every profile used by a public Trigger must be public.",
             field,
         ),
+        TriggerReferenceError::ImageAccessDenied { field } => (
+            "trigger_image_access_denied",
+            "The selected Image Manager image is not accessible to this publisher.",
+            field,
+        ),
+        TriggerReferenceError::ImageSignInRequired { field } => (
+            "trigger_image_sign_in_required",
+            "Sign in again to authorize the selected Image Manager image.",
+            field,
+        ),
     };
     (
-        StatusCode::UNPROCESSABLE_ENTITY,
+        status,
         code,
         detail,
         vec![("field", serde_json::json!(field))],

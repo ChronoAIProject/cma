@@ -126,8 +126,19 @@ impl TriggerService {
         caller: &Caller,
         draft: TriggerContent,
     ) -> Result<Trigger, TriggerServiceError> {
+        self.create_with_credential(caller, draft, None).await
+    }
+
+    pub async fn create_with_credential(
+        &self,
+        caller: &Caller,
+        draft: TriggerContent,
+        delegated_credential: Option<&str>,
+    ) -> Result<Trigger, TriggerServiceError> {
         require_publisher(caller)?;
-        let draft = self.materialize_inline(caller, draft).await?;
+        let draft = self
+            .materialize_inline(caller, draft, delegated_credential)
+            .await?;
         let trigger = Trigger::new(
             TriggerId::generate(),
             caller.subject.clone(),
@@ -170,10 +181,24 @@ impl TriggerService {
         expected_draft_version: u64,
         draft: TriggerContent,
     ) -> Result<Trigger, TriggerServiceError> {
+        self.update_draft_with_credential(caller, id, expected_draft_version, draft, None)
+            .await
+    }
+
+    pub async fn update_draft_with_credential(
+        &self,
+        caller: &Caller,
+        id: &TriggerId,
+        expected_draft_version: u64,
+        draft: TriggerContent,
+        delegated_credential: Option<&str>,
+    ) -> Result<Trigger, TriggerServiceError> {
         // Verify ownership before materializing inline profiles so a rejected update
         // cannot leave private internal profile rows behind.
         self.owned(id, &caller.subject).await?;
-        let draft = self.materialize_inline(caller, draft).await?;
+        let draft = self
+            .materialize_inline(caller, draft, delegated_credential)
+            .await?;
         self.definitions
             .save_draft(
                 id,
@@ -329,12 +354,13 @@ impl TriggerService {
         &self,
         caller: &Caller,
         draft: TriggerContent,
+        delegated_credential: Option<&str>,
     ) -> Result<TriggerContent, TriggerServiceError> {
         let Some(materializer) = &self.inline_materializer else {
             return Ok(draft);
         };
         let target = materializer
-            .materialize(&caller.subject, &draft.target)
+            .materialize_with_credential(&caller.subject, &draft.target, delegated_credential)
             .await
             .map_err(TriggerServiceError::Reference)?;
         Ok(TriggerContent { target, ..draft })

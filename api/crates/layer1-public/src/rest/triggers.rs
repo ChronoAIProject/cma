@@ -14,7 +14,7 @@ use layer2_core::trigger_domain::{
 };
 use layer2_core::{Caller, Capability, OperationStore};
 
-use crate::AuthenticatedCaller;
+use crate::{AuthenticatedCaller, DelegatedCredential};
 
 use super::idempotency::{self, IdempotencyKey, RequestBody};
 use super::trigger_openapi_shapes::{
@@ -166,6 +166,7 @@ where
 pub(super) async fn create(
     State(state): State<TriggerRoutesState>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
+    credential: Option<axum::extract::Extension<DelegatedCredential>>,
     key: IdempotencyKey,
     body: Result<RequestBody<CreateTriggerRequest>, BodyProblem>,
 ) -> Response {
@@ -174,6 +175,7 @@ pub(super) async fn create(
     }
     let command_state = state.clone();
     let command_caller = caller.clone();
+    let delegated_credential = credential.map(|value| value.value().to_owned());
     execute_command(
         &state,
         &caller,
@@ -183,7 +185,11 @@ pub(super) async fn create(
         move |body| async move {
             let trigger = command_state
                 .triggers
-                .create(&command_caller, body.content.into())
+                .create_with_credential(
+                    &command_caller,
+                    body.content.into(),
+                    delegated_credential.as_deref(),
+                )
                 .await?;
             Ok((StatusCode::CREATED, Json(TriggerView::from(trigger))).into_response())
         },
@@ -239,6 +245,7 @@ pub(super) async fn update(
     State(state): State<TriggerRoutesState>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     Path(id): Path<String>,
+    credential: Option<axum::extract::Extension<DelegatedCredential>>,
     key: IdempotencyKey,
     body: Result<RequestBody<UpdateTriggerRequest>, BodyProblem>,
 ) -> Response {
@@ -247,6 +254,7 @@ pub(super) async fn update(
     }
     let command_state = state.clone();
     let command_caller = caller.clone();
+    let delegated_credential = credential.map(|value| value.value().to_owned());
     let operation = format!("trigger:update:{id}");
     execute_command(
         &state,
@@ -257,11 +265,12 @@ pub(super) async fn update(
         move |body| async move {
             command_state
                 .triggers
-                .update_draft(
+                .update_draft_with_credential(
                     &command_caller,
                     &TriggerId(id),
                     body.draft_version,
                     body.content.into(),
+                    delegated_credential.as_deref(),
                 )
                 .await
                 .map(TriggerView::from)
