@@ -4,6 +4,7 @@
 mod assignment;
 mod lifecycle;
 mod model;
+mod pool;
 mod suspension;
 
 use crate::{AdapterError, HomeVolumeScope, Result, RuntimeHandle};
@@ -15,12 +16,20 @@ use std::collections::BTreeSet;
 
 pub(crate) use model::{handle, parse_handle};
 pub use model::{AgentSandboxConfig, PodBinding};
+pub use pool::NativePoolHomeOrigin;
+pub use pool::NativePoolPodPolicy;
+pub use pool::{
+    AgentSandboxPools, NativePoolBinding, NativePoolClaim, NativePoolClaimRequest, NativePoolSpec,
+    NativePoolStatus,
+};
+pub(crate) use pool::{NATIVE_HOME_ANNOTATION, NATIVE_HOME_REQUEST_LABEL};
 pub(crate) const OWNER_LABEL: &str = "cma/control-plane";
 const RUNTIME_LABEL: &str = "cma/runtime-name";
 const SPEC_ANNOTATION: &str = "cma/agent-sandbox-spec";
 
 #[derive(Clone)]
 pub struct AgentSandboxClient {
+    pools: std::sync::Arc<AgentSandboxPools>,
     sandboxes: Api<DynamicObject>,
     pods: Api<Pod>,
     claims: Api<PersistentVolumeClaim>,
@@ -50,12 +59,17 @@ impl AgentSandboxClient {
             &[authority, &config.namespace, &config.deployment],
         )?;
         Ok(Self {
+            pools: std::sync::Arc::new(AgentSandboxPools::new(client.clone(), config.clone())),
             sandboxes: Api::namespaced_with(client.clone(), &config.namespace, &resource),
             pods: Api::namespaced(client.clone(), &config.namespace),
             claims: Api::namespaced(client, &config.namespace),
             config,
             scope,
         })
+    }
+
+    pub fn warm_pools(&self) -> &AgentSandboxPools {
+        &self.pools
     }
 
     fn selector(&self) -> String {
