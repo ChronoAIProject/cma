@@ -17,7 +17,11 @@ use axum::{
 };
 use futures_util::{stream, StreamExt};
 use serde_json::{json, Value};
-use tokio::{net::TcpListener, sync::oneshot, time::sleep};
+use tokio::{
+    net::TcpListener,
+    sync::{oneshot, Semaphore},
+    time::sleep,
+};
 
 #[derive(Debug, Clone)]
 pub struct FakeProviderConfig {
@@ -27,6 +31,8 @@ pub struct FakeProviderConfig {
     /// A header delay for turns whose input carries an attachment block only,
     /// so a test can hold media turns while text turns answer at once.
     pub attachment_delay: Duration,
+    /// Holds attachment response headers until the test releases one permit per turn.
+    pub attachment_gate: Option<Arc<Semaphore>>,
     pub missing_turn_once: bool,
     pub busy_always: bool,
     pub frames: Option<Vec<Value>>,
@@ -50,6 +56,7 @@ impl Default for FakeProviderConfig {
             terminal_delay: Duration::ZERO,
             header_delay: Duration::ZERO,
             attachment_delay: Duration::ZERO,
+            attachment_gate: None,
             missing_turn_once: false,
             busy_always: false,
             frames: None,
@@ -260,6 +267,11 @@ async fn responses(
 ) -> Response {
     let attachments = String::from_utf8_lossy(&body).contains("[Attachments:");
     record(&state, "POST", "/api/v2/responses".into(), headers, body);
+    if attachments {
+        if let Some(gate) = &state.config.attachment_gate {
+            gate.acquire().await.unwrap().forget();
+        }
+    }
     if !state.config.header_delay.is_zero() {
         sleep(state.config.header_delay).await;
     }

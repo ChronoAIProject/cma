@@ -15,7 +15,7 @@ use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
-use tokio::sync::Semaphore;
+use tokio::{sync::Semaphore, task::JoinSet};
 
 /// Records how many permits were free while `launch` ran.
 struct Observer {
@@ -175,44 +175,62 @@ async fn relay_media_burst_does_not_429_text() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn burst_of_300_media_callbacks_never_429s_text() {
+async fn three_hundred_pending_media_acceptance_waits_do_not_429_text() {
+    let media_gate = Arc::new(Semaphore::new(0));
     let app = Arc::new(
         MediaApp::new(
             Transport::Relay,
-            media_delayed(Duration::from_secs(10)),
+            FakeProviderConfig {
+                attachment_gate: Some(media_gate.clone()),
+                ..Default::default()
+            },
             TurnConfig::default(),
             ingress(256),
         )
         .await,
     );
-    // Warm the channel and key caches so the burst measures admission only.
+    // Warm the channel and key caches before accumulating acceptance waits.
     let (status, _) = status_of(app.relay(&relay_message(1_000, false)).await).await;
     assert_eq!(status, 202);
     let signed: Vec<_> = (1..=300)
         .map(|sender| relay_message(sender, true))
         .collect();
-    let mut media = Vec::new();
-    for signed in signed {
-        let app = app.clone();
-        media.push(tokio::spawn(async move {
-            app.relay(&signed).await.status().as_u16()
-        }));
+    let mut media = JoinSet::new();
+    let mut sent = 0;
+    // Admission itself is bounded. Keep each arrival batch below that bound,
+    // but hold all 300 provider responses so their acceptance waits overlap.
+    // A runner that retains ingress permits cannot admit the whole third batch.
+    for batch in signed.chunks(100) {
+        for signed in batch {
+            let app = app.clone();
+            let signed = signed.clone();
+            media.spawn(async move { status_of(app.relay(&signed).await).await });
+        }
+        sent += batch.len();
+        // Report rejected callbacks before waiting for missing provider starts.
+        tokio::select! {
+            biased;
+            result = media.join_next() => {
+                panic!("media callback completed before provider release: {result:?}");
+            }
+            _ = app.wait_for_turns(1 + sent) => {}
+        }
     }
-    app.wait_for_turns(301).await;
     until_available(&app.ingress.inflight, 256, Duration::from_secs(5)).await;
-    assert!(
-        media.iter().all(|handler| !handler.is_finished()),
-        "every media acceptance wait is still pending"
-    );
+    if let Some(result) = media.try_join_next() {
+        panic!("media callback completed before provider release: {result:?}");
+    }
     let text = app
         .relay(&relay_message(2_000, false))
         .await
         .status()
         .as_u16();
     let mut statuses = vec![text];
-    for handler in media {
-        statuses.push(handler.await.unwrap());
+    media_gate.add_permits(300);
+    while let Some(result) = media.join_next().await {
+        statuses.push(result.unwrap().0);
     }
+    assert_eq!(statuses.len(), 301);
     assert_eq!(statuses.iter().filter(|status| **status == 429).count(), 0);
     assert!(statuses.iter().all(|status| *status == 202), "{statuses:?}");
 }
