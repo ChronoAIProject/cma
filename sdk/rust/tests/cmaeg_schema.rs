@@ -38,6 +38,15 @@ fn every_gateway_wire_type_replays_the_protocol_examples_without_losing_properti
         ApiType,
         Attachment,
         AttachmentKind,
+        AttachmentSource,
+        AttachmentImage,
+        AttachmentImageOrigin,
+        AttachmentStatus,
+        AttachmentText,
+        AttachmentTextSource,
+        AttachmentUnavailableReason,
+        AttachmentView,
+        AttachmentViewKind,
         BindingId,
         Block,
         BlockRendering,
@@ -66,6 +75,7 @@ fn every_gateway_wire_type_replays_the_protocol_examples_without_losing_properti
         ConversationKind,
         CredentialPatch,
         CredentialsRequest,
+        CustomAttachments,
         CustomAuth,
         DeliveryOutcome,
         EndpointResponse,
@@ -80,10 +90,13 @@ fn every_gateway_wire_type_replays_the_protocol_examples_without_losing_properti
         GroupAdmission,
         HmacSecretRequest,
         IdentityAdmission,
+        InboundMediaCapabilities,
         IntentReceipt,
         InteractionResult,
         McpAuth,
         McpServerRef,
+        MediaDownload,
+        MediaVariant,
         MessageRef,
         ModelAccess,
         ModelConfig,
@@ -129,7 +142,31 @@ fn every_gateway_wire_type_replays_the_protocol_examples_without_losing_properti
         TestChannelResponse,
         ThinkingEffort,
         TypingOutcome,
-        TypingReceipt
+        TypingReceipt,
+        VisualSupport,
+        ActivityKindName,
+        Addressing,
+        AgentEventPolicy,
+        Consumer,
+        ConsumerId,
+        ConsumerName,
+        ConsumerReply,
+        DefaultConsumer,
+        DefaultReply,
+        Pattern,
+        PublishPolicy,
+        ReplyChoice,
+        ReplyLabel,
+        RoutingPolicy,
+        RoutingRule,
+        RuleId,
+        RuleMatch,
+        SourceId,
+        ActivityRouting,
+        Causation,
+        ConsumerSummary,
+        ConsumerTarget,
+        RouteResolution
     );
     inventory.sort_unstable();
     assert_eq!(
@@ -257,4 +294,107 @@ fn removing_a_snapshot_property_fails_the_sdk_contract_check() {
         .unwrap_err()
         .contains("removed schema property")
     );
+}
+
+#[test]
+fn a_channel_without_routing_decodes_and_encodes_without_a_routing_key() {
+    let mut example = fixtures()["ChannelResponse"][0].clone();
+    assert!(example["definition"]["routing"].is_object());
+    let routed: ChannelResponse = serde_json::from_value(example.clone()).unwrap();
+    let routing = routed.definition.routing.as_ref().unwrap();
+    assert_eq!(
+        routing.consumers.as_ref().unwrap()[0].agent_key_hash,
+        "fixture"
+    );
+    example["definition"]
+        .as_object_mut()
+        .unwrap()
+        .remove("routing");
+    let legacy: ChannelResponse = serde_json::from_value(example.clone()).unwrap();
+    assert!(legacy.definition.routing.is_none());
+    assert_eq!(serde_json::to_value(legacy).unwrap(), example);
+}
+
+#[test]
+fn an_activity_without_routing_decodes_and_encodes_without_a_routing_key() {
+    let examples = fixtures();
+    for (name, pointer) in [
+        ("Activity", ""),
+        ("EventContextSnapshot", "/activity"),
+        ("PublicActivity", ""),
+        ("ContextResponse", "/activity"),
+    ] {
+        let mut example = examples[name][0].clone();
+        let activity = example.pointer_mut(pointer).unwrap();
+        assert!(activity["routing"].is_object(), "{name} example is routed");
+        activity.as_object_mut().unwrap().remove("routing");
+        let encoded = match name {
+            "Activity" => {
+                let legacy: Activity = serde_json::from_value(example.clone()).unwrap();
+                assert!(legacy.routing.is_none());
+                serde_json::to_value(legacy).unwrap()
+            }
+            "EventContextSnapshot" => {
+                let legacy: EventContextSnapshot = serde_json::from_value(example.clone()).unwrap();
+                assert!(legacy.activity.routing.is_none());
+                serde_json::to_value(legacy).unwrap()
+            }
+            "PublicActivity" => {
+                let legacy: PublicActivity = serde_json::from_value(example.clone()).unwrap();
+                assert!(legacy.routing.is_none());
+                serde_json::to_value(legacy).unwrap()
+            }
+            _ => {
+                let legacy: ContextResponse = serde_json::from_value(example.clone()).unwrap();
+                assert!(legacy.activity.routing.is_none());
+                serde_json::to_value(legacy).unwrap()
+            }
+        };
+        assert_eq!(encoded, example, "{name}");
+    }
+}
+
+#[test]
+fn a_routed_activity_exposes_its_targets_and_causation() {
+    let activity: Activity = serde_json::from_value(fixtures()["Activity"][0].clone()).unwrap();
+    let routing = activity.routing.unwrap();
+    assert!(routing.resolution == RouteResolution::AgentEvent);
+    assert_eq!(routing.targets[0].id, "csm_00000000000a");
+    let causation = routing.causation.unwrap();
+    assert_eq!(causation.hop, 2);
+    assert!(causation.reply == ReplyChoice::Default);
+    let mut unknown = fixtures()["RouteResolution"][0].clone();
+    unknown = serde_json::Value::String(format!("{}_v2", unknown.as_str().unwrap()));
+    assert!(serde_json::from_value::<RouteResolution>(unknown).is_err());
+}
+
+#[test]
+fn a_context_response_names_its_consumer_only_on_a_routed_channel() {
+    let examples = fixtures();
+    let decode =
+        |example: &Value| -> ContextResponse { serde_json::from_value(example.clone()).unwrap() };
+    let routed = decode(&examples["ContextResponse"][0]);
+    let consumer = routed.consumer.as_ref().unwrap();
+    assert_eq!(
+        (
+            consumer.id.as_str(),
+            consumer.name.as_str(),
+            consumer.label.as_str()
+        ),
+        ("csm_00000000000a", "reviewer", "Reviewer")
+    );
+    // A hand-off's controls can never be clicked, so it projects none.
+    let handoff = decode(&examples["ContextResponse"][1]);
+    assert_eq!(
+        (
+            handoff.capabilities.buttons.as_str(),
+            handoff.capabilities.cards.as_str()
+        ),
+        ("none", "none")
+    );
+    let mut legacy = examples["ContextResponse"][0].clone();
+    legacy.as_object_mut().unwrap().remove("consumer");
+    let decoded = decode(&legacy);
+    assert!(decoded.consumer.is_none());
+    assert_eq!(serde_json::to_value(decoded).unwrap(), legacy);
 }

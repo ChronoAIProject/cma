@@ -430,6 +430,19 @@ is per operation; omit `owner` for personal resources. Listing accepts `after`
 and returns one page; follow `next_after` even when `items` is empty. Channel
 creation/update accepts `connection_ref` and `connection_admission`. Native
 Telegram source, credential and webhook endpoint fields are typed as well.
+A channel read with several consumers carries the read-only
+`definition.routing` (`cmaeg.RoutingPolicy`), with each consumer's public key
+hash and never a key; it is absent on every other channel, and no request type
+sets it. A routed event's `cmaeg.Activity`, and the `cmaeg.PublicActivity` that
+`readEventContext` returns, carry `routing` (`cmaeg.ActivityRouting`): the source
+slot, how the targets were resolved, the targets with the primary consumer first
+and, on a hand-off, its `cmaeg.Causation`. It is absent on every unrouted event.
+Keep an activity you persist as the JSON you received, so fields this SDK does
+not know survive. On a routed channel `cmaeg.ContextResponse` carries `consumer`
+(`cmaeg.ConsumerSummary`), the consumer whose agent key made the call, and its
+`provider_binding_id` is that consumer's binding; `consumer` is absent on every
+other channel. A hand-off event reports `capabilities.buttons` and
+`capabilities.cards` as `"none"`.
 
 ```ts
 import { Cmaeg, type cmaeg } from '@chronoai/cma-sdk';

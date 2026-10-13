@@ -8,6 +8,7 @@ import {
   ConversationKindSchema,
   EventIdSchema,
   EventRefSchema,
+  MediaVariantSchema,
   MessageRefSchema,
   ReplyTargetRefSchema,
   PlatformSchema,
@@ -27,6 +28,14 @@ import {
   type Output,
 } from '../../schema.js';
 import { anything, extensible } from './helpers.js';
+import { InboundMediaCapabilitiesSchema } from './media.js';
+import {
+  ConsumerIdSchema,
+  ConsumerNameSchema,
+  ReplyChoiceSchema,
+  RuleIdSchema,
+  SourceIdSchema,
+} from './channels.js';
 
 export const ReplyTargetResponseSchema = object({
   reply_target_ref: ReplyTargetRefSchema,
@@ -48,12 +57,36 @@ export const ActivityConversationSchema = object({
 });
 export type ActivityConversation = Output<typeof ActivityConversationSchema>;
 
+// A non-secret locator bound into the activity digest; fetching still requires
+// the event reference's authority.
+export const AttachmentSourceSchema = tagged(
+  {
+    nyxid_relay: object({ index: integer, type: enumeration('nyxid_relay') }),
+    telegram: object({
+      file_id: text,
+      file_unique_id: text,
+      type: enumeration('telegram'),
+    }),
+    url: object({ type: enumeration('url'), url: text }),
+    inline: object({ pointer: text, type: enumeration('inline') }),
+  },
+  'type',
+);
+export type AttachmentSource = Output<typeof AttachmentSourceSchema>;
+
 export const AttachmentSchema = object({
+  duration_seconds: optional(nullable(integer)),
+  emoji: optional(nullable(text)),
   filename: optional(nullable(text)),
+  height: optional(nullable(integer)),
   kind: AttachmentKindSchema,
   mime_type: optional(nullable(text)),
   reference: text,
   size_bytes: optional(nullable(integer)),
+  source: optional(nullable(AttachmentSourceSchema)),
+  thumbnail: optional(nullable(AttachmentSourceSchema)),
+  variant: optional(nullable(MediaVariantSchema)),
+  width: optional(nullable(integer)),
 });
 export type Attachment = Output<typeof AttachmentSchema>;
 
@@ -80,6 +113,7 @@ export type CloudEvent = Output<typeof CloudEventSchema>;
 export const ActivityKindSchema = tagged(
   {
     message: object({
+      album_id: optional(nullable(text)),
       attachments: optional(array(AttachmentSchema)),
       mentions_bot: boolean,
       reply_to: optional(nullable(MessageRefSchema)),
@@ -93,7 +127,11 @@ export const ActivityKindSchema = tagged(
       type: enumeration('interaction'),
     }),
     command: object({ args: text, name: text, type: enumeration('command') }),
-    event: object({ ce: CloudEventSchema, type: enumeration('event') }),
+    event: object({
+      attachments: optional(array(AttachmentSchema)),
+      ce: CloudEventSchema,
+      type: enumeration('event'),
+    }),
   },
   'type',
 );
@@ -117,12 +155,57 @@ export const SourceKindSchema = tagged(
 );
 export type SourceKind = Output<typeof SourceKindSchema>;
 
+export const RouteResolutionSchema = enumeration(
+  'default',
+  'rule',
+  'mention',
+  'command',
+  'event_field',
+  'interaction',
+  'agent_event',
+);
+export type RouteResolution = Output<typeof RouteResolutionSchema>;
+
+export const ConsumerTargetSchema = object({ id: ConsumerIdSchema, name: ConsumerNameSchema });
+export type ConsumerTarget = Output<typeof ConsumerTargetSchema>;
+
+// Which of a routed channel's consumers a context response was read for.
+export const ConsumerSummarySchema = object({
+  id: ConsumerIdSchema,
+  label: text,
+  name: ConsumerNameSchema,
+});
+export type ConsumerSummary = Output<typeof ConsumerSummarySchema>;
+
+// What caused a hand-off: the event it continues and its record-scoped chain.
+export const CausationSchema = object({
+  hop: integer,
+  origin_source_id: SourceIdSchema,
+  parent_event_id: EventIdSchema,
+  published_by: ConsumerIdSchema,
+  reply: ReplyChoiceSchema,
+  root: text,
+});
+export type Causation = Output<typeof CausationSchema>;
+
+// Which consumers a routed event reaches; targets[0] is the primary consumer.
+export const ActivityRoutingSchema = object({
+  addressing_bytes: optional(integer),
+  causation: optional(nullable(CausationSchema)),
+  resolution: RouteResolutionSchema,
+  rule_id: optional(nullable(RuleIdSchema)),
+  source_id: SourceIdSchema,
+  targets: array(ConsumerTargetSchema),
+});
+export type ActivityRouting = Output<typeof ActivityRoutingSchema>;
+
 export const ActivitySchema = object({
   actor: ActorSchema,
   conversation: ActivityConversationSchema,
   event_id: EventIdSchema,
   kind: ActivityKindSchema,
   occurred_at: text,
+  routing: optional(nullable(ActivityRoutingSchema)),
   schema_version: integer,
   source: SourceKindSchema,
 });
@@ -133,6 +216,7 @@ export const CapabilitiesSchema = object({
   buttons: text,
   cards: text,
   edit: boolean,
+  inbound_media: optional(nullable(InboundMediaCapabilitiesSchema)),
   max_text_chars: integer,
   typing: boolean,
 });
@@ -143,6 +227,7 @@ export const PublicActivitySchema = object({
   conversation: ActivityConversationSchema,
   kind: ActivityKindSchema,
   occurred_at: text,
+  routing: optional(nullable(ActivityRoutingSchema)),
 });
 export type PublicActivity = Output<typeof PublicActivitySchema>;
 
@@ -151,6 +236,7 @@ export const ContextResponseSchema = object({
   activity_verified: boolean,
   capabilities: CapabilitiesSchema,
   channel_id: ChannelIdSchema,
+  consumer: optional(nullable(ConsumerSummarySchema)),
   conversation_id: ConversationIdSchema,
   event_id: EventIdSchema,
   expires_at: integer,

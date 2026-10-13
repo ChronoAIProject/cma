@@ -50,11 +50,16 @@ impl ConnectionService {
             .event_ref
             .parse()
             .map_err(|_| Error::Invalid("invalid event reference"))?;
-        let (channel, event) = self
+        let (channel, event, _) = self
             .tools
-            .authorize_event(agent, &reference)
+            .authorize_event(agent, &reference, "createChannelConnection")
             .await
             .map_err(|_| Error::NotFound)?;
+        // Connection setup stays the default consumer's: a connection binds a
+        // platform to the channel, not to one of its consumers.
+        if event.consumer.is_some() {
+            return Err(Error::Forbidden("consumer_not_supported"));
+        }
         let context = self
             .tools
             .context(agent, &reference)

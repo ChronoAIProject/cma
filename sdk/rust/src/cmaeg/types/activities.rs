@@ -1,7 +1,8 @@
 //! Activities wire types for the independent CMAEG v1 protocol.
 use super::{
-    AcceptedStatus, ActorKind, AttachmentKind, BindingId, ChannelId, ConversationId,
-    ConversationKind, EventId, EventRef, MessageRef, Platform, ProblemCode,
+    AcceptedStatus, ActorKind, AttachmentKind, BindingId, ChannelId, ConsumerId, ConsumerName,
+    ConversationId, ConversationKind, EventId, EventRef, MessageRef, Platform, ProblemCode,
+    ReplyChoice, RuleId, SourceId,
 };
 use serde::{Deserialize, Serialize};
 
@@ -27,10 +28,85 @@ pub struct Activity {
     pub kind: ActivityKind,
     /// Wire field `occurred_at`.
     pub occurred_at: String,
+    /// The routing decision of a routed event; absent on unrouted events.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub routing: Option<ActivityRouting>,
     /// Wire field `schema_version`.
     pub schema_version: u64,
     /// Wire field `source`.
     pub source: SourceKind,
+}
+
+/// CMAEG `ActivityRouting` wire shape: which consumers an event reaches.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct ActivityRouting {
+    /// Byte offset of the unaddressed remainder; absent means 0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub addressing_bytes: Option<u64>,
+    /// Present exactly on hand-off events.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub causation: Option<Causation>,
+    /// Wire field `resolution`.
+    pub resolution: RouteResolution,
+    /// The rule that selected the targets, when a rule did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rule_id: Option<RuleId>,
+    /// The source slot the event arrived on; `agent` for a hand-off.
+    pub source_id: SourceId,
+    /// 1..=8 consumers; the first is the primary consumer.
+    pub targets: Vec<ConsumerTarget>,
+}
+
+/// CMAEG `RouteResolution` wire shape.
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RouteResolution {
+    /// The policy's `default_targets`.
+    #[serde(rename = "default")]
+    Default,
+    /// A routing rule.
+    #[serde(rename = "rule")]
+    Rule,
+    /// A leading `@name` mention.
+    #[serde(rename = "mention")]
+    Mention,
+    /// A `/to name` command.
+    #[serde(rename = "command")]
+    Command,
+    /// A consumer named by a custom event field.
+    #[serde(rename = "event_field")]
+    EventField,
+    /// The consumer that owns the clicked card.
+    #[serde(rename = "interaction")]
+    Interaction,
+    /// A hand-off published by another consumer.
+    #[serde(rename = "agent_event")]
+    AgentEvent,
+}
+
+/// CMAEG `ConsumerTarget` wire shape.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct ConsumerTarget {
+    /// Wire field `id`.
+    pub id: ConsumerId,
+    /// Wire field `name`.
+    pub name: ConsumerName,
+}
+
+/// CMAEG `Causation` wire shape: what caused a hand-off.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct Causation {
+    /// The hand-off's position in its chain, 1..=4.
+    pub hop: u64,
+    /// The source slot the chain's first event arrived on.
+    pub origin_source_id: SourceId,
+    /// The event whose turn published this one.
+    pub parent_event_id: EventId,
+    /// The consumer that published this event.
+    pub published_by: ConsumerId,
+    /// Where the targets' automatic replies go.
+    pub reply: ReplyChoice,
+    /// The chain's record-scoped root id: 32 lowercase hex digits.
+    pub root: String,
 }
 
 /// CMAEG `ActivityConversation` wire shape.
@@ -52,6 +128,9 @@ pub enum ActivityKind {
     /// Wire variant `message`.
     #[serde(rename = "message")]
     Message {
+        /// Shared by every message of one platform media group.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        album_id: Option<String>,
         /// Wire field `attachments`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         attachments: Option<Vec<Attachment>>,
@@ -85,6 +164,9 @@ pub enum ActivityKind {
     /// Wire variant `event`.
     #[serde(rename = "event")]
     Event {
+        /// Wire field `attachments`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        attachments: Option<Vec<Attachment>>,
         /// Wire field `ce`.
         ce: CloudEvent,
     },
@@ -105,9 +187,18 @@ pub struct Actor {
 /// CMAEG `Attachment` wire shape.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct Attachment {
+    /// Wire field `duration_seconds`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_seconds: Option<u64>,
+    /// Wire field `emoji`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub emoji: Option<String>,
     /// Wire field `filename`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub filename: Option<String>,
+    /// Wire field `height`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height: Option<u64>,
     /// Wire field `kind`.
     pub kind: AttachmentKind,
     /// Wire field `mime_type`.
@@ -118,6 +209,92 @@ pub struct Attachment {
     /// Wire field `size_bytes`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub size_bytes: Option<u64>,
+    /// Where the bytes can be fetched; absent means not retrievable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<AttachmentSource>,
+    /// Wire field `thumbnail`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thumbnail: Option<AttachmentSource>,
+    /// Wire field `variant`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub variant: Option<MediaVariant>,
+    /// Wire field `width`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<u64>,
+}
+
+/// CMAEG `AttachmentSource` wire shape: a non-secret locator bound into the
+/// activity digest. Fetching still requires the event reference's authority.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum AttachmentSource {
+    /// Wire variant `nyxid_relay`.
+    #[serde(rename = "nyxid_relay")]
+    NyxidRelay {
+        /// Wire field `index`.
+        index: u64,
+    },
+    /// Wire variant `telegram`.
+    #[serde(rename = "telegram")]
+    Telegram {
+        /// Wire field `file_id`.
+        file_id: String,
+        /// Wire field `file_unique_id`.
+        file_unique_id: String,
+    },
+    /// Wire variant `url`.
+    #[serde(rename = "url")]
+    Url {
+        /// Wire field `url`.
+        url: String,
+    },
+    /// Wire variant `inline`.
+    #[serde(rename = "inline")]
+    Inline {
+        /// Wire field `pointer`.
+        pointer: String,
+    },
+}
+
+/// CMAEG `MediaVariant` wire shape.
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MediaVariant {
+    /// Wire value `photo`.
+    #[serde(rename = "photo")]
+    Photo,
+    /// Wire value `document`.
+    #[serde(rename = "document")]
+    Document,
+    /// Wire value `audio`.
+    #[serde(rename = "audio")]
+    Audio,
+    /// Wire value `voice`.
+    #[serde(rename = "voice")]
+    Voice,
+    /// Wire value `video`.
+    #[serde(rename = "video")]
+    Video,
+    /// Wire value `video_note`.
+    #[serde(rename = "video_note")]
+    VideoNote,
+    /// Wire value `animation`.
+    #[serde(rename = "animation")]
+    Animation,
+    /// Wire value `sticker`.
+    #[serde(rename = "sticker")]
+    Sticker,
+    /// Wire value `image`.
+    #[serde(rename = "image")]
+    Image,
+    /// Wire value `file`.
+    #[serde(rename = "file")]
+    File,
+    /// Wire value `media`.
+    #[serde(rename = "media")]
+    Media,
+    /// Wire value `embedded`.
+    #[serde(rename = "embedded")]
+    Embedded,
 }
 
 /// CMAEG `Capabilities` wire shape.
@@ -131,6 +308,9 @@ pub struct Capabilities {
     pub cards: String,
     /// Wire field `edit`.
     pub edit: bool,
+    /// Wire field `inbound_media`; absent while inbound media is disabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inbound_media: Option<super::InboundMediaCapabilities>,
     /// Wire field `max_text_chars`.
     pub max_text_chars: u64,
     /// Wire field `typing`.
@@ -179,6 +359,9 @@ pub struct ContextResponse {
     pub capabilities: Capabilities,
     /// Wire field `channel_id`.
     pub channel_id: ChannelId,
+    /// The calling consumer; present only on a channel with routing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub consumer: Option<super::ConsumerSummary>,
     /// Wire field `conversation_id`.
     pub conversation_id: ConversationId,
     /// Wire field `event_id`.
@@ -260,6 +443,9 @@ pub struct PublicActivity {
     pub kind: ActivityKind,
     /// Wire field `occurred_at`.
     pub occurred_at: String,
+    /// The routing decision of a routed event; absent on unrouted events.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub routing: Option<ActivityRouting>,
 }
 
 /// CMAEG `SourceKind` wire shape.

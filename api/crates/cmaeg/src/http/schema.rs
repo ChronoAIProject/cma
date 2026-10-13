@@ -1,6 +1,8 @@
 //! Public channel schema deliberately excludes every retained secret value.
 use cmaeg_core::{
-    channel::{ChannelDefinition, PartitionRule, ProviderBinding, ReplyPolicy, Source},
+    channel::{
+        ChannelDefinition, PartitionRule, ProviderBinding, ReplyPolicy, RoutingPolicy, Source,
+    },
     ids::RecordId,
     profile::{EventWorkerProfile, NyxIdIdentity},
 };
@@ -24,6 +26,10 @@ pub struct PublicChannelDefinition {
     pub connection_ref: Option<String>,
     pub partition: PartitionRule,
     pub reply: ReplyPolicy,
+    /// Multi-consumer routing, read-only here; absent on every channel
+    /// without it. It carries consumers' public key hashes, never a key.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub routing: Option<RoutingPolicy>,
     pub secrets: PublicSecrets,
     pub created_at: String,
     pub version: u64,
@@ -47,6 +53,7 @@ impl PublicChannelDefinition {
             connection_ref: value.connection_ref.clone(),
             partition: value.partition.clone(),
             reply: value.reply.clone(),
+            routing: value.routing.clone(),
             secrets: PublicSecrets {
                 agent_key_hash: value.secrets.agent_key_hash.clone(),
             },

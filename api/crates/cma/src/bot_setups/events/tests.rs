@@ -190,9 +190,13 @@ fn gateway(backend: &str, keys: Arc<MasterKeyRing>) -> ToolsState {
             ProviderClient::new(registry, Duration::from_secs(1), Duration::from_secs(1), 1)
                 .unwrap(),
         ),
-        delivery: tokio::sync::mpsc::channel(1).0,
+        delivery: Arc::new(cmaeg::delivery::router::ShardedScheduler::new(
+            tokio::sync::mpsc::channel(1).0,
+        )),
         tracker: TurnTracker::new(Readiness::initialized()),
         public_origin: "https://gateway.example".into(),
+        media: None,
+        downloads: Default::default(),
     }
 }
 fn advance_router(
@@ -292,6 +296,8 @@ async fn fresh_father_event_reaches_login_with_verified_durable_context_without_
         conversation_id: conversation.clone(),
         expires_at: expiry,
         reply: ReplyAddress::None,
+        consumer: None,
+        lineage: None,
     };
     let reference = EventRef::seal(&payload, &keys).unwrap();
     assert!(reference.as_str().len() < 4096);

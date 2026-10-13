@@ -5,3 +5,4 @@ export * from './types/activities.js';
 export * from './types/channels.js';
 export * from './types/relay.js';
 export * from './types/connections.js';
+export * from './types/media.js';

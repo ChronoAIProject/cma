@@ -1,6 +1,12 @@
 //! Public activity and opaque reply reference created after authentication and admission.
 use super::{facts::RelayFacts, verify::VerifiedCallback};
-use crate::{channels::resolver::ResolvedChannel, ingress::launch::LaunchRequest};
+use crate::{
+    channels::resolver::ResolvedChannel,
+    ingress::{
+        launch::LaunchRequest,
+        media_guard::{self, Admit, Built},
+    },
+};
 use cmaeg_core::{
     activity::{Activity, ActivityConversation, ActivityKind, Actor, SourceKind},
     channel::Platform,
@@ -8,7 +14,10 @@ use cmaeg_core::{
     seal::{EventRef, EventRefPayload, MasterKeyRing, ReplyAddress},
 };
 use std::{sync::Arc, time::Instant};
-pub fn launch_request(
+/// Build the sealed launch request, or the refusal the media guard chose. The
+/// error is the static 400 detail for an activity invalid for reasons unrelated
+/// to its attachments.
+pub(crate) fn launch_request(
     channel: Arc<ResolvedChannel>,
     platform: Platform,
     verified: VerifiedCallback,
@@ -16,7 +25,7 @@ pub fn launch_request(
     keys: &MasterKeyRing,
     received_at: Instant,
     now: i64,
-) -> Result<LaunchRequest, &'static str> {
+) -> Result<Built, &'static str> {
     let payload = verified.payload;
     let event_id = EventId::new(if let Some(callback) = &facts.callback {
         use sha2::{Digest, Sha256};
@@ -34,16 +43,23 @@ pub fn launch_request(
         .and_then(|ce| ce.time.clone())
         .unwrap_or(payload.timestamp);
     let kind = match facts.event {
-        Some(ce) => ActivityKind::Event { ce: *ce },
-        None => ActivityKind::Message {
-            text: payload.content.text.unwrap_or_default(),
+        Some(ce) => ActivityKind::Event {
+            ce: *ce,
             attachments: Vec::new(),
+        },
+        // NyxID derives `content.text` only from a content JSON's top-level
+        // `text` key (nyxid `lark.rs:392-395`), so a Lark post's text exists
+        // only in the raw event, from which the observer derived it.
+        None => ActivityKind::Message {
+            text: facts.text.or(payload.content.text).unwrap_or_default(),
+            attachments: facts.attachments,
             mentions_bot: facts.mentioned == Some(true),
             reply_to: payload
                 .reply_to_message_id
                 .map(MessageRef::new)
                 .transpose()
                 .map_err(|_| "activity_invalid")?,
+            album_id: facts.album_id,
         },
     };
     let activity = Activity {
@@ -65,8 +81,13 @@ pub fn launch_request(
             platform,
             route_id: payload.conversation.id.clone(),
         },
+        routing: None,
     };
-    activity.validate().map_err(|_| "activity_invalid")?;
+    let activity = match media_guard::admit(activity, "nyxid_relay") {
+        Ok(Admit::Ok(activity)) => *activity,
+        Ok(Admit::Refused(reason)) => return Ok(Built::Refused(reason)),
+        Err(_) => return Err("activity_invalid"),
+    };
     let partition_key = activity.partition_key(&channel.definition.partition);
     let conversation_id = ConversationId::derive(
         keys,
@@ -91,12 +112,15 @@ pub fn launch_request(
                 reply_token: verified.reply_token,
                 reply_token_expires_at: verified.reply_expires_at,
             },
+            consumer: None,
+            lineage: None,
         },
         keys,
     )
     .map_err(|_| "event_ref_too_large")?;
-    Ok(LaunchRequest {
+    Ok(Built::Launch(Box::new(LaunchRequest {
         timing: None,
+        consumer: None,
         trace: tracing::Span::current(),
         channel,
         activity,
@@ -104,5 +128,5 @@ pub fn launch_request(
         event_ref,
         idempotency_key: IdempotencyKey::from_event(&event_id),
         received_at,
-    })
+    })))
 }
