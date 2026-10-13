@@ -542,6 +542,7 @@ new binding negotiation. `definition.secrets` contains only `agent_key_hash`.
 
 | Operation | Request | Success | Errors in addition to common management errors |
 | --- | --- | --- | --- |
+| `GET /v1/channels` | Optional `after` opaque cursor; no body | 200 `{items:[...],next_cursor}` with up to 50 owner-scoped channel responses | 401 unauthenticated; 503 record store unavailable |
 | `POST /v1/channels` | Complete create body; optional idempotency header and reserved record UUID | 201 channel response | 409 reused key with different content; 503 cache capacity |
 | `GET /v1/channel-records/{record_id}` | No body | 200 recovered channel response | 404 absent, unreserved, or other owner |
 | `GET /v1/channels/{channel_id}` | No body | 200 channel response | 404 absent or other owner |
@@ -549,6 +550,7 @@ new binding negotiation. `definition.secrets` contains only `agent_key_hash`.
 | `DELETE /v1/channels/{channel_id}?expected_version=N` | Required unsigned version query; no body | 204, empty body | 400 missing/unknown/invalid query; 409 stale version |
 | `POST /v1/channels/{channel_id}/test` | No body | 200 `{"accepted_after_ms":42,"first_text":"...","level":"l1"}` | Provider refusal, timeout or no usable result |
 | `POST /v1/channels/{channel_id}/rekey` | CMA service bearer; no body | 200 `{"kid":1}` | 401 service authentication failure |
+| `GET /v1/permissions` | No body; creator bearer | 200 `{"subject":"...","roles":[...]}` for the authenticated creator | 401 unauthenticated |
 
 PUT replaces policy, not a merge patch. Omitted/null `credentials` retains all
 credentials. A supplied patch has optional `agent_key`, `channel_key` and
@@ -1311,6 +1313,7 @@ Generated from the reviewed OpenAPI snapshot; effective paths include its server
 | Operation | operationId |
 | --- | --- |
 | `POST /v1/callbacks/{channel_id}` | `receiveRelayCallback` |
+| `GET /v1/channels` | `listChannels` |
 | `POST /v1/channels` | `createChannel` |
 | `GET /v1/channel-records/{record_id}` | `recoverChannel` |
 | `DELETE /v1/channels/{channel_id}` | `deleteChannel` |
@@ -1326,6 +1329,7 @@ Generated from the reviewed OpenAPI snapshot; effective paths include its server
 | `POST /v1/events/{event_ref}/replies` | `replyToEvent` |
 | `POST /v1/events/{event_ref}/typing` | `sendTyping` |
 | `POST /v1/messages/{message_ref}/update` | `updateMessage` |
+| `GET /v1/permissions` | `getPermissions` |
 | `POST /v1/telegram/{channel_id}` | Receive an authenticated native Telegram webhook. |
 | `GET /v1/channel-capabilities` | Discover platform setup methods and optional capabilities. |
 | `POST /v1/channel-connections` | Begin a durable owner-authorized gateway connection setup. |
