@@ -2,7 +2,7 @@
 use std::sync::Arc;
 
 use layer2_core::sandbox::{AgentCreationProvenance, RuntimeBinding};
-use layer2_core::{AgentId, SandboxId, SubjectId};
+use layer2_core::AgentId;
 use layer3_adapter::hosted::{HostedAccessToolBinding, HostedAccessToolSource};
 use layer3_adapter::{AdapterError, AgentOpenRequest, RuntimeHandle};
 use mongodb::bson::{doc, Document};
@@ -17,6 +17,7 @@ use super::sandbox_mongo::{
 };
 use super::AuthEncryptionKey;
 
+mod authenticator;
 #[cfg(test)]
 mod fixtures;
 mod operations;
@@ -30,16 +31,7 @@ pub(super) const COLLECTION: &str = "agent_access_tools";
 
 /// This identity can request consent only. Owner approval remains a separate
 /// authenticated command; never treat this as authority to change any grant.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct AuthenticatedAgentAccess {
-    pub agent_id: AgentId,
-    pub owner: SubjectId,
-    pub sandbox_id: SandboxId,
-    pub conversation: String,
-    pub runtime: RuntimeBinding,
-    pub creation: AgentCreationProvenance,
-}
+pub(crate) use layer2_core::sandbox::agent_access_tool::AgentAccessRequester as AuthenticatedAgentAccess;
 
 pub(crate) struct MongoAgentAccessToolSource {
     store: Arc<MongoSandboxStore>,
