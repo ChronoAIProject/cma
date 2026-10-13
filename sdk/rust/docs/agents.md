@@ -13,6 +13,7 @@ use cma_sdk::agents::{AgentLifecycleCreateRequest, AgentLifecycleStatus};
 let key = IdempotencyKey::new(std::env::var("CMA_CREATE_KEY")?)?;
 let request = AgentLifecycleCreateRequest {
     workspace_id: None,
+    sandbox_id: None,
     name: "Research".into(), image: None, repository: None, profile: None,
 };
 let receipt = client.agents().create_lifecycle(&request, &key).await?;
@@ -307,3 +308,47 @@ older servers. Personal ownership reports only whether the current caller owns
 the resource; organization ownership supplies an ID for matching the caller's
 current organization choices. Use the resource's current capabilities to display
 access levels. Organization membership alone does not establish resource permissions.
+
+## Live settings
+
+`agents().settings(agent_id)` reads desired `model`, `reasoning_effort`,
+`permission_mode` and `pending`. `update_settings(agent_id, &body, &key)` takes
+`UpdateAgentSettingsRequest` with all three settings for an idle Agent and a
+stable `IdempotencyKey`. Retry an uncertain HTTP reply with the exact body and
+key. `pending: true` means the durable desired settings still await runtime
+acknowledgement; read again until `pending` clears before treating them as applied.
+The immutable creation profile is preserved.
+
+## Service access decisions
+
+`agents().access_requests(agent_id)` reads `AgentAccessRequestList` for the
+current owner. Each request carries its exact Agent identity, request ID,
+service selection, reason and durable status. Approval requires an explicit
+`ApproveAgentAccessRequest` and `IdempotencyKey`; denial uses
+`deny_access_request(agent_id, request_id, &key)`. Services contain 1–32 ASCII
+identifiers of 1–128 bytes using letters, digits, hyphens and underscores.
+
+```rust,no_run
+use cma_sdk::{Client, IdempotencyKey, Result, agents::{AgentAccessRequest, ApproveAgentAccessRequest}};
+
+async fn approve_services(
+    client: &Client,
+    agent_id: &str,
+    request_id: &str,
+    services: Vec<String>,
+    key: &IdempotencyKey,
+) -> Result<AgentAccessRequest> {
+    client.agents().approve_access_request(
+        agent_id, request_id, &ApproveAgentAccessRequest { services }, key,
+    ).await
+}
+```
+
+Use the same body and key after an uncertain reply: the durable service returns
+current progress on replay. `AgentAccessStatus::Connecting` includes a connection
+target naming this access request for the owner's service connection flow.
+`Applying` awaits runtime verification; only `Succeeded` confirms applied access.
+Read the list again after connecting services. `Denied` and `Failed` are terminal,
+with an optional safe `error` detail. The SDK rejects crossed Agent/request
+identities, inconsistent connection targets and duplicate list IDs. Listing never
+approves services or resumes an Agent.

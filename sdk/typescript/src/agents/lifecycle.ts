@@ -14,6 +14,7 @@ import {
 export const agentLifecycleCreateRequest = object({
   name: text,
   workspace_id: optional(text),
+  sandbox_id: optional(text),
   image: optional(object({ id: text, version: optional(text) })),
   repository: optional(object({ url: text, ref: optional(text) })),
   profile: optional(
