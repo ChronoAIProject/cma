@@ -397,8 +397,19 @@ export const ChannelResponseSchema = object({
 });
 export type ChannelResponse = Output<typeof ChannelResponseSchema>;
 
+/** Owned channel metadata; legacy records omit an unrecoverable original ID and endpoints. */
+export const ChannelListItemSchema = object({
+  channel_id: optional(nullable(text)),
+  definition: PublicChannelDefinitionSchema,
+  endpoints: optional(nullable(EndpointResponseSchema)),
+  provider: ProviderResponseSchema,
+  record_id: text,
+  version: integer,
+});
+export type ChannelListItem = Output<typeof ChannelListItemSchema>;
+
 export const ChannelPageSchema = object({
-  items: array(ChannelResponseSchema),
+  items: array(ChannelListItemSchema),
   next_cursor: optional(nullable(text)),
 });
 export type ChannelPage = Output<typeof ChannelPageSchema>;

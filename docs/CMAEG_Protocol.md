@@ -2372,3 +2372,16 @@ durable operation leases and recheck their intent before platform calls, but an
 external administrator changing a webhook concurrently, or a platform operation
 delayed beyond the lease, cannot be fenced atomically. Do not configure another
 webhook controller for the same bot.
+
+### Owner channel list and legacy identities
+
+`GET /v1/channels` returns `ChannelPage` with owner-scoped `ChannelListItem`
+rows. Every row contains `record_id`, `version`, `provider` and the public
+`definition`. `channel_id` and `endpoints` are included together only when the
+record retains its original recoverable creation identity. Legacy records
+without that identity remain visible with both fields omitted. Listing does
+not reseal channel IDs, change stored blobs or revisions, or invalidate the
+original IDs used by existing integrations. Clients can show the record in
+the Console at `/console/channels/{record_id}`; operations that require a
+channel ID continue to require the original known ID. Create/get responses
+remain `ChannelResponse` with required `channel_id` and `endpoints`.

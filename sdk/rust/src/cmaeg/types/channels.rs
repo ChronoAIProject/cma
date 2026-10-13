@@ -88,11 +88,30 @@ pub struct ChannelResponse {
     pub version: u64,
 }
 
+/// Owned channel metadata, including legacy records without a recoverable original ID.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct ChannelListItem {
+    /// Original retained channel ID; never regenerated for a legacy record.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel_id: Option<String>,
+    /// Public owner-scoped channel definition.
+    pub definition: PublicChannelDefinition,
+    /// Endpoints derived only from the original retained channel ID.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub endpoints: Option<EndpointResponse>,
+    /// Provider binding metadata.
+    pub provider: ProviderResponse,
+    /// Stable record identity, including legacy channels.
+    pub record_id: String,
+    /// Current record revision.
+    pub version: u64,
+}
+
 /// CMAEG owner-scoped channel listing with an opaque continuation cursor.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChannelPage {
     /// Channels visible to the authenticated creator.
-    pub items: Vec<ChannelResponse>,
+    pub items: Vec<ChannelListItem>,
     /// Cursor for the next page, when more channels remain.
     pub next_cursor: Option<String>,
 }
