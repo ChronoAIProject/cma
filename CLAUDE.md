@@ -23,15 +23,16 @@ traffic. A Sandbox is not an Agent: multiple Agents may work concurrently in
 distinct Worktrees inside one Sandbox.
 
 **Consumers.** CMA is a backend service for product frontends and backends.
-Its own `web/` frontend is the operational dashboard, profile marketplace,
-Trigger publisher, public visitor journey, and reference client for the public
-interfaces. The main working surface is one Agent conversation in its Worktree,
-Workspace, and Sandbox. There is no terminal plane, separate Chat model, billing,
+Its own `web/` frontend contains the Agent Manager, Image Manager and Event
+Gateway portals, operational dashboard, Trigger publisher, public visitor
+journey, and reference client for the public interfaces. The main working
+surface is one Agent conversation in its Worktree, Workspace, and Sandbox.
+There is no terminal plane, separate Chat model, billing,
 sponsorship, or contribution-specific workflow.
 
 **The conversation surface may call no route a third-party client could not
-call.** Instance and profile management use public REST; live Agent conversations
-use public AG-UI, and the public Responses interface projects the same Agent
+call.** Instance and inline configuration management use public REST; live Agent
+conversations use public AG-UI, and the public Responses interface projects the same Agent
 conversation for compatible clients. A missing first-party capability must be
 added to the appropriate public interface, never a private route.
 
@@ -84,16 +85,30 @@ required by an external protocol.
 - 1.3 **CMA Worktree** — a git worktree opened in a CMA Workspace; one workspace can have multiple worktrees.
 - 1.4 **CMA Agent** — the agent (e.g. a codex process) opened in one worktree; one worktree has one and only one agent.
 
-**2. CMA Environment Config**
+**2. CMA Environment Config (internal persistence)**
+Users select an image and inline Agent settings. Profiles are private immutable
+configuration records, not a user creation or marketplace concept. Historical
+profile APIs and records remain compatibility/recovery surfaces; they must not
+be reintroduced into the normal portal journey.
+
 - 2.1 **CMA Agent Profile**: model name; thinking effort; permission level; agent skills (Ornn skills, installed at the worktree/agent level in the provider's own convention, never sandbox-global); agent system prompt.
 - 2.2 **CMA Workspace Profile**: workspace path — a public GitHub repository URL (default branch cloned to `/home/cma/<repo>`) or a custom directory name (`/home/cma/<name>`, git-initialised); the agent profiles for this workspace (several, one per agent/worktree).
 - 2.3 **CMA Sandbox Profile**: cpu (millicores); memory (MiB); NyxID service scope list (the scoped agent key, available to the whole sandbox); **agent provider** (codex; claude code and dsh disabled) and **model access type** (ChronoAI-managed LLM or the user's own credentials) — placed here because both are properties of the pod's home; maximum workspaces; maximum agents per workspace; the workspace profiles for this sandbox; software installation commands (global to the sandbox); environment variables (global).
 
-**3. Mutability.** A Sandbox Profile is immutable once its sandbox is provisioned. Workspaces and agents inside a sandbox are mutable: the user may add a workspace from any workspace profile and an agent from any agent profile within the limits. Profiles are versioned; instances pin snapshots. A profile marketplace lets users publish sandbox, workspace and agent profiles publicly.
+**3. Mutability.** A Sandbox pins its immutable environment at provisioning.
+Owners add Workspaces from inline empty-directory or GitHub configuration and
+Agents from inline settings within its recorded limits. Existing-workspace
+Agent creation retains the parent image and service scope. Image Manager owns
+image builds, immutable versions and private/shared/public visibility.
 
 **4. Interaction.** A user always interacts with one agent, in one worktree, in one workspace, in one sandbox. The research use case is exactly: an agent in a worktree of `/home/cma/trureturing` (cloned from `https://github.com/the-omega-institute/trureturing`) inside a sandbox with the required software installed.
 
-**5. CMA Trigger.** An external button that brings the clicking user to an agent **of their own** (never the trigger owner's). Its configuration names the sandbox, workspace and agent profiles and, per level, whether the visitor's existing instance is reused: (a) create a new sandbox; (b) create a new workspace in the visitor's existing sandbox; (c) create a new agent in the visitor's existing workspace. The backend stores that behaviour under a trigger id and gives the owner integration snippets for web pages and Markdown. The owner lists the source URLs the button may be embedded on.
+**5. CMA Trigger.** An external button that brings the clicking user to an agent
+**of their own** (never the trigger owner's). New authoring selects an image,
+inline Agent settings and optional GitHub workspace. The backend stores the
+immutable target under a trigger id and gives the owner integration snippets
+for web pages and Markdown. The owner lists permitted embedding origins.
+Historical profile-based targets retain their recorded reuse policy for replay.
 
 ### `infra/` — fixed contents
 
@@ -224,8 +239,8 @@ It owns:
 
 - Sandbox -> Workspace -> Worktree -> Agent aggregates, lifecycle states,
   ownership, limits, durable orchestration and recovery.
-- Agent, Workspace and Sandbox Profiles: editable drafts, immutable published
-  revisions, pinned instance snapshots, marketplace visibility and trust.
+- Agent, Workspace and Sandbox configuration snapshots, plus retained Profile
+  revisions and trust needed by historical operations.
 - Trigger revisions, placements, Launch consent, reuse decisions, connection
   requirements and durable progress.
 - Append-only Sandbox and Agent event logs, per-object monotonic sequences,
@@ -241,32 +256,26 @@ intersection conveniently exposed by today's interfaces.
 
 A Sandbox pins its complete Sandbox Profile at provisioning. Its service scope,
 provider, model access, resources, software and environment do not change
-implicitly. The owner may add Workspaces and Agents from independently selected
-published profiles within the recorded limits. Published profile changes never
-mutate existing instances.
+implicitly. The owner may add Workspaces and Agents with inline configuration
+within the recorded limits. Published profile changes never mutate existing instances.
 
 An explicit owner service-access command may append additional NyxID grants
 while the Sandbox is fully Paused. It preserves the original profile and creation
 scope, records the owner and time, and renews scoped credentials before revival.
 Profile publication never grants this additional instance access implicitly.
 
-Sandbox Profile availability is a mutable scheduling policy, separate from its
-immutable environment revisions. Always keep alive applies to existing and future
-Sandboxes of that Profile and prevents inactivity pause; explicit manual pause
-remains available. Warmup is restricted to published public Profiles, with a target
-of one through five unowned runtimes. Private forks have their own default policy
-and provision fresh. Changing this policy never rewrites pinned environments,
-ownership or conversations.
+Retained Sandbox Profile availability remains a mutable inactivity policy,
+separate from immutable environments. Always keep alive prevents inactivity
+pause; explicit manual pause remains available. Normal portal authoring does
+not expose legacy Profile policies.
 
-Warm runtime authority lives in `warm_sandboxes`, separately from owned Sandbox
-records. Reservations pin the public revision, service floor, execution policy
-and runtime image. A ready reservation and its owned Sandbox are transferred in
-one admission transaction under the existing owner quota/name/Trigger fences.
-The reserved Sandbox ID and installation receipt survive the transfer; user
-credentials are minted only afterward. Reconciliation reads unowned authority
-before owned authority, and never reclaims a preparing or ready reservation as
-an orphan. Failed/stale runtimes must finish teardown before their capacity is
-reallocated. Claimed runtimes are controlled exclusively by their owned Sandbox.
+New warm capacity uses native agent-sandbox pools. Durable targets live in
+`native_warm_pool_targets`, pin the deployment runtime image and original Pod
+policy, and use leases and revisions. Each owned Sandbox persists its selected
+pool, original claim/member identities and adopted home before subsequent
+effects. Cleanup proves claim, member and Pod finality before releasing a disk.
+Legacy `warm_sandboxes` records remain for already-claimed runtime recovery and
+cleanup only; production no longer admits or prepares new Profile warmups.
 
 #### Capabilities must be proved
 
@@ -430,7 +439,7 @@ the mutable Profile policy in the same transaction as its Sandbox/Agent evidence
 Any admitted message, creation or Launch that needs one revives it. The owner
 does not need to repair a deployment by clicking a revive control.
 
-### Runtime rotation and checkpoints
+### Runtime identity and persistent homes
 
 Changing the configured runtime image never rotates existing live Sandboxes.
 Reconciliation adopts each retained runtime using its recorded image; new
@@ -439,25 +448,21 @@ the existing runtime, native conversation, admitted turns, approvals and dirty
 work without user repair. An incompatible feature stays disabled until retained
 runtime coexistence and uninterrupted interaction are proved. Previously admitted
 rotation operations remain readable and recoverable; image drift cannot admit
-new ones. For an independently admitted pause or recovery, a writer fence holds
-the whole Sandbox home for a consistent checkpoint, and restore preserves that
-snapshot and the retained conversation identity.
-Only the latest completed checkpoint is retained. A replacement must commit before
-older completed objects are pruned; legacy two-generation records are accepted until
-their next successful publication. Periodic capture defaults to thirty minutes and
-uses the live global admin checkpoint interval; manual and automatic pause still
-require a fresh consistent checkpoint before teardown.
-Deleting a Sandbox removes its snapshot archives after runtime teardown and before
-reporting Deleted. Conversation and lifecycle history retain their separate grace
-period; archive cleanup failures remain durable, retryable deletion work.
-The archive cleanup sweep also reconciles snapshots retained by earlier releases
-against validated Deleted Sandbox records without deleting their history.
-Periodic capture waits that same interval from the later of the latest snapshot
-and current runtime binding. Initial provisioning and revival must not immediately
-capture just because the previous snapshot is missing or overdue.
+new ones. Native pause/resume retains the same Sandbox CRD and PVC, changes
+operating mode, and binds the replacement Pod with a new boot identity. A pooled
+runtime retains its original claim and member authority across that transition.
+Deletion waits for the claim, Sandbox and every owned Pod to disappear before
+releasing its PVC and completing database cleanup.
 
-Rotation and restore are never silent. The record names the runtime version,
-checkpoint timestamp and progress. The UI preserves history and explains why
+Production CMA no longer manages S3 checkpoint storage or runs scheduled or
+manual archive capture. Historical checkpoint schemas and provider bindings
+remain readable for recovery; archive-only paused resources require an explicit
+external migration. The initialized VolumeSnapshot used to seed fresh homes
+is an infra prerequisite, not per-user backup scheduling. See
+`docs/CMA_Deployment_Readiness.md` for activation, acceptance and rollback.
+
+Lifecycle transitions are never silent. The record names the runtime version
+and progress. The UI preserves history and explains why
 input is temporarily unavailable. It must not accept input that could be lost
 with an outgoing runtime, invent progress from elapsed time, or require the
 owner to manually restart an Agent after deployment.
