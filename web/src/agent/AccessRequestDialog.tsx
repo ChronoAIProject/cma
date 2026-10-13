@@ -4,7 +4,7 @@ import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 import { ScopePicker } from './ScopePicker';
 import { REQUIRED_AGENT_SCOPES } from './SettingsFields';
-import { accessRequests, type AgentAccessRequest } from './accessRequests';
+import { accessRequests, validAccessServices, type AgentAccessRequest } from './accessRequests';
 import { loadAccessDecision, saveAccessDecision } from './accessDecisionStorage';
 
 export function AgentAccessRequests({
@@ -108,7 +108,15 @@ function AccessRequestDialog({
   useEffect(() => () => active.current?.abort(), []);
   const decide = async (action: 'approve' | 'deny') => {
     if (active.current || saved.error) return;
-    const selected = intent ?? { key: crypto.randomUUID(), action, services };
+    const selected = intent ?? {
+      key: crypto.randomUUID(),
+      action,
+      services: action === 'approve' ? services : [],
+    };
+    if (selected.action === 'approve' && !validAccessServices(selected.services)) {
+      setError('Choose up to 32 services. Existing Sandbox access must remain included.');
+      return;
+    }
     try {
       saveAccessDecision(owner, request.agent_id, request.id, selected);
       setSaved({ intent: selected });
@@ -206,6 +214,7 @@ function AccessRequestDialog({
           value={services}
           onChange={setServices}
           fixed={granted}
+          requested={request.services}
           disabled={pending || !!intent || !!saved.error}
         />
       ) : (
