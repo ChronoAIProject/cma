@@ -77,7 +77,7 @@ impl ProviderHostedControlTransport {
             }
             RuntimeDiscovery::AgentSandbox(client) => {
                 let binding = client.pod_binding(handle).await?;
-                let address = std::net::SocketAddr::new(binding.pod_ip, SUPERVISOR_PORT);
+                let address = client.runtime_proxy_address(handle, &binding).await?;
                 RuntimeEndpoint::parse("http://runtime.invalid", &format!("http://{address}"))
                     .map(|e| e.with_control_token(client.control_token(&binding.sandbox_name)))
             }

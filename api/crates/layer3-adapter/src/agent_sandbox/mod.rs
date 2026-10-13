@@ -9,6 +9,7 @@ mod network_policy;
 mod pods;
 mod pool;
 mod pool_runtime;
+mod proxy;
 mod suspension;
 
 use crate::{AdapterError, HomeVolumeScope, Result, RuntimeHandle};
@@ -46,6 +47,7 @@ pub struct AgentSandboxClient {
     claims: Api<PersistentVolumeClaim>,
     config: AgentSandboxConfig,
     scope: HomeVolumeScope,
+    proxies: std::sync::Arc<proxy::RuntimeProxies>,
 }
 
 impl AgentSandboxClient {
@@ -71,6 +73,7 @@ impl AgentSandboxClient {
             claims: Api::namespaced(client, &config.namespace),
             config,
             scope,
+            proxies: std::sync::Arc::new(proxy::RuntimeProxies::default()),
         })
     }
 
@@ -169,6 +172,16 @@ impl AgentSandboxClient {
             return Err(unavailable("Sandbox has multiple owned Pods"));
         }
         model::pod_binding(&object, &pod)
+    }
+
+    /// Return a loopback address that tunnels runtime traffic through the
+    /// remote Kubernetes API's authorized `pods/portforward` subresource.
+    pub(crate) async fn runtime_proxy_address(
+        &self,
+        runtime: &RuntimeHandle,
+        binding: &PodBinding,
+    ) -> Result<std::net::SocketAddr> {
+        self.proxies.address(runtime, binding, &self.pods).await
     }
 
     pub(crate) fn control_token(&self, runtime_name: &str) -> String {
