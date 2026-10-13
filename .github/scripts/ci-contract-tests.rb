@@ -118,6 +118,26 @@ if mode == "release"
     end
     raise "Gateway contract accepted non-readiness health"
   end
+  config = GatewaySourceContract.documents(File.expand_path("../../infra/cmaeg/configmap.yaml", __dir__)).first
+  GatewaySourceContract.validate_provider_origin(config)
+  %w[http://example-host-03.example-namespace.svc https://example-host-01.example-namespace.svc http://example-host-01.example-namespace.svc:8080 missing duplicate].each do |origin|
+    candidate = Marshal.load(Marshal.dump(config))
+    providers = JSON.parse(candidate["data"]["CMAEG_PROVIDERS"])
+    cma = providers.find { |provider| provider["slug"] == "cma_codex" }
+    case origin
+    when "missing" then providers.delete(cma)
+    when "duplicate" then providers << cma.dup
+    else cma["base_url"] = origin
+    end
+    candidate["data"]["CMAEG_PROVIDERS"] = JSON.generate(providers)
+    begin
+      GatewaySourceContract.validate_provider_origin(candidate)
+    rescue StandardError
+      tests += 1
+      next
+    end
+    raise "Gateway contract accepted incompatible CMA provider origin: #{origin}"
+  end
 else
   %w[smoke journeys].each do |id|
     reject.call("#{id}: runner context at job scope") do |value|
