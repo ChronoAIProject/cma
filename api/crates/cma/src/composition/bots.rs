@@ -43,7 +43,7 @@ impl BotInlineProfileResolver for InlineBotProfileResolver {
             .inline_agent
             .as_ref()
             .ok_or_else(|| BotError::Invalid("inline agent configuration is required".into()))?;
-        let thinking_effort = match inline.reasoning_effort.as_deref().unwrap_or("medium") {
+        let thinking_effort = match inline.reasoning_effort.as_deref().unwrap_or("high") {
             "minimal" => ThinkingEffort::Minimal,
             "low" => ThinkingEffort::Low,
             "medium" => ThinkingEffort::Medium,
@@ -55,7 +55,7 @@ impl BotInlineProfileResolver for InlineBotProfileResolver {
                 )))
             }
         };
-        let permission_level = match inline.permission_mode.as_deref().unwrap_or("guarded") {
+        let permission_level = match inline.permission_mode.as_deref().unwrap_or("autonomous") {
             "guarded" => PermissionLevel::Guarded,
             "autonomous" => PermissionLevel::Autonomous,
             value => {
@@ -80,7 +80,12 @@ impl BotInlineProfileResolver for InlineBotProfileResolver {
             .collect::<Result<Vec<_>, BotError>>()?;
         let agent_content = AgentProfileContent {
             isolated_agent: false,
-            model: inline.model.clone(),
+            model: Some(
+                inline
+                    .model
+                    .clone()
+                    .unwrap_or_else(|| self.default_model.clone()),
+            ),
             thinking_effort,
             permission_level,
             skills,
@@ -107,8 +112,14 @@ impl BotInlineProfileResolver for InlineBotProfileResolver {
         // Before Bot admission there are no runtime effects. A deployment
         // default/catalog change gets new immutable materialization identities;
         // already admitted Bots replay their original stored profiles upstream.
-        let key = layer2_core::profiles::content_digest(&(key, &runtime_image, self.capacity))
-            .map_err(|_| BotError::Unavailable)?;
+        let key = layer2_core::profiles::content_digest(&(
+            key,
+            &runtime_image,
+            self.capacity,
+            &agent_content,
+            crate::config::REQUIRED_BASELINE_SERVICES,
+        ))
+        .map_err(|_| BotError::Unavailable)?;
         let agent = self
             .profiles
             .create_agent_for_owner(
@@ -159,7 +170,14 @@ impl BotInlineProfileResolver for InlineBotProfileResolver {
                 .services
                 .iter()
                 .cloned()
+                .chain(
+                    crate::config::REQUIRED_BASELINE_SERVICES
+                        .iter()
+                        .map(|id| (*id).to_owned()),
+                )
                 .map(layer2_core::ServiceId::new)
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
                 .collect(),
             agent_provider: AgentProvider::Codex,
             model_access: ModelAccess::ChronoaiManaged,
