@@ -14,6 +14,7 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     "agent_command_orders",
     "agent_commands",
     "agent_creation_provenance",
+    "agent_access_tools",
     "agent_log",
     "agent_lifecycle_operations",
     "agent_profile_revisions",
