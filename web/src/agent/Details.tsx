@@ -157,9 +157,6 @@ export function AgentDetails({
               </ResourceLink>
             </Fact>
             <Fact term="Status">{label(detail.sandbox.status)}</Fact>
-            <Fact term="Profile">
-              <ReferenceLink kind="sandbox" id={detail.sandbox.profile.id} />
-            </Fact>
             <Fact term="NyxID services">
               {detail.reach.length === 0 ? (
                 'None'
@@ -178,9 +175,6 @@ export function AgentDetails({
         <Band title="Workspace">
           <dl>
             <Fact term="Name">{detail.workspace.name}</Fact>
-            <Fact term="Profile">
-              <ReferenceLink kind="workspace" id={detail.workspace.profile.id} />
-            </Fact>
             <Fact term="Path">
               <code>{detail.workspace.path}</code>
             </Fact>
@@ -215,11 +209,8 @@ export function AgentDetails({
             </Fact>
           </dl>
         </Band>
-        <Band title="Agent profile">
+        <Band title="Agent setup">
           <dl>
-            <Fact term="Profile">
-              <ReferenceLink kind="agent" id={detail.profile.id} />
-            </Fact>
             <Fact term="Model">{detail.profile.model ?? 'Provider default'}</Fact>
             <Fact term="Thinking">{label(detail.profile.thinkingEffort)}</Fact>
             <Fact term="Permission">{label(detail.profile.permissionLevel)}</Fact>

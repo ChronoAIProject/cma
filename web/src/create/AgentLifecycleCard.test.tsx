@@ -2,10 +2,13 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { agentClient } from '../test/agent';
+import { workspaceFixture } from '../test/hierarchy';
+import { creationClient } from '../test/creation';
 import type { AgentLifecycleOperationView, CmaWebClient } from '../api/client';
 import { connectionClient, type ConnectionReport } from '../connections/client';
 import { AgentLifecycleCard } from './AgentLifecycleCard';
 import { lifecycleStorageKey } from './lifecycleIntent';
+import { CreationFlow } from './CreationFlow';
 
 const catalog = vi.hoisted(() => ({ listServices: vi.fn(), searchSkills: vi.fn() }));
 vi.mock('../api/context', () => ({ useProfileViewsClient: () => ({ authoring: catalog }) }));
@@ -45,12 +48,17 @@ function show(client: CmaWebClient, viewerId = 'owner', onCreated = vi.fn()) {
     />,
   );
 }
-async function review() {
+async function review(contextual = false) {
   const user = userEvent.setup();
   await user.type(screen.getByLabelText('Agent name'), 'Research');
   await user.click(screen.getByRole('button', { name: 'Continue' }));
-  await screen.findByRole('checkbox', { name: 'GitHub' });
-  await user.click(screen.getByRole('checkbox', { name: 'GitHub' }));
+  if (!contextual) {
+    await screen.findByRole('checkbox', { name: 'GitHub' });
+    await user.click(screen.getByRole('checkbox', { name: 'GitHub' }));
+  } else {
+    expect(screen.queryByRole('checkbox', { name: 'GitHub' })).not.toBeInTheDocument();
+    expect(screen.getByText(/inherits the existing Sandbox’s/)).toBeInTheDocument();
+  }
   await user.click(await screen.findByRole('button', { name: 'Add Review changes' }));
   await user.type(screen.getByLabelText('Model'), 'custom-model');
   await user.click(screen.getByRole('button', { name: 'Continue' }));
@@ -210,4 +218,90 @@ it('reports status failures and permits retry without submitting creation again'
   fireEvent.click(screen.getByRole('button', { name: 'Retry status' }));
   await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
   expect(create).not.toHaveBeenCalled();
+});
+
+it('keeps contextual Agent creation in the selected workspace and recovers only that target', async () => {
+  const create = vi
+    .fn()
+    .mockRejectedValueOnce(new Error('Lost create response'))
+    .mockResolvedValue({ id: running.id });
+  const client = agentClient({
+    readWorkspace: async () => workspaceFixture(),
+    createAgentLifecycle: create,
+    readAgentLifecycle: async () => running,
+  });
+  const draw = () =>
+    render(
+      <CreationFlow
+        request={{ kind: 'new_agent', workspaceId: 'wsp_1' }}
+        client={client}
+        viewerId="owner"
+        catalog={creationClient()}
+        onClose={vi.fn()}
+        onCreated={vi.fn()}
+        onChanged={vi.fn()}
+        canCreateSandbox={false}
+      />,
+    );
+  const first = draw();
+  expect(await screen.findByText(/Workspace: chrono-bot/)).toBeInTheDocument();
+  expect(screen.queryByRole('group', { name: 'Runtime image' })).not.toBeInTheDocument();
+  const user = await review(true);
+  expect(screen.queryByLabelText('GitHub repository workspace (optional)')).not.toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: 'Create agent' }));
+  await screen.findByText('Lost create response');
+  const [body, options] = create.mock.calls[0]!;
+  expect(body.workspace_id).toBe('wsp_1');
+  expect(body).not.toHaveProperty('image');
+  expect(body).not.toHaveProperty('repository');
+  expect(body.profile.model).toBe('custom-model');
+  expect(body.profile).not.toHaveProperty('permissions');
+  expect(sessionStorage.getItem(lifecycleStorageKey('owner'))).toBeNull();
+  expect(sessionStorage.getItem(lifecycleStorageKey('owner', 'wsp_1'))).toContain('wsp_1');
+  first.unmount();
+  const global = show(client);
+  expect(screen.getByLabelText('Agent name')).toHaveValue('');
+  expect(screen.queryByRole('button', { name: 'Recover creation' })).not.toBeInTheDocument();
+  global.unmount();
+  draw();
+  await user.click(screen.getByRole('button', { name: 'Recover creation' }));
+  await screen.findByRole('region', { name: 'Agent provisioning progress' });
+  expect(create.mock.calls[1]?.[0]).toEqual(body);
+  expect(create.mock.calls[1]?.[1].idempotencyKey).toBe(options.idempotencyKey);
+});
+
+it('isolates a global creation from contextual creation and rejects a mismatched stored target', async () => {
+  const global = JSON.stringify({
+    version: 1,
+    intent: { key: 'global-key', body: { name: 'Global' } },
+  });
+  sessionStorage.setItem(lifecycleStorageKey('owner'), global);
+  const create = vi.fn();
+  const client = agentClient({ createAgentLifecycle: create });
+  const first = render(
+    <AgentLifecycleCard
+      client={client}
+      viewerId="owner"
+      workspaceId="wsp_1"
+      onClose={vi.fn()}
+      onCreated={vi.fn()}
+    />,
+  );
+  expect(screen.getByLabelText('Agent name')).toHaveValue('');
+  expect(screen.queryByText(/Creation of “Global”/)).not.toBeInTheDocument();
+  first.unmount();
+  sessionStorage.setItem(lifecycleStorageKey('owner', 'wsp_1'), global);
+  render(
+    <AgentLifecycleCard
+      client={client}
+      viewerId="owner"
+      workspaceId="wsp_1"
+      onClose={vi.fn()}
+      onCreated={vi.fn()}
+    />,
+  );
+  expect(screen.getByRole('alert')).toHaveTextContent('saved Agent request could not be read');
+  expect(screen.getByRole('button', { name: 'Continue' })).toBeDisabled();
+  expect(create).not.toHaveBeenCalled();
+  await waitFor(() => expect(screen.getByText(/Workspace: chrono-bot/)).toBeInTheDocument());
 });
