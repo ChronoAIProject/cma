@@ -14,6 +14,7 @@ const image = {
     'org.opencontainers.image.revision': commit,
     'org.opencontainers.image.source': source,
     'dev.chrono.cma.runtime-contract': '3',
+    'dev.chrono.cma.runtime-bootstrap': '1',
   } },
 };
 const proof = { checks, artifacts: {
@@ -77,6 +78,8 @@ test('image admission refuses another architecture, user or runtime contract', (
   for (const mutate of [
     (v) => { v.Architecture = 'arm64'; }, (v) => { v.Config.User = 'root'; },
     (v) => { v.Config.Labels['dev.chrono.cma.runtime-contract'] = '2'; },
+    (v) => { v.Config.Labels['dev.chrono.cma.runtime-bootstrap'] = '0'; },
+    (v) => { delete v.Config.Labels['dev.chrono.cma.runtime-bootstrap']; },
   ]) {
     const changed = structuredClone(image);
     mutate(changed);

@@ -178,6 +178,10 @@ jobs:
           fi
       - name: Gateway diagrams match reviewed Markdown
         run: python3 .github/scripts/render-cmaeg-diagrams.py --check
+      - name: Native Sandbox deployment preflight regressions
+        run: |
+          node --test .github/scripts/agent-sandbox-preflight.test.mjs
+          ruby .github/scripts/agent-sandbox-manifest-contract.rb
       - name: docs/ contains only markdown
         run: |
           bad=$(find docs -type f ! -name '*.md' || true)

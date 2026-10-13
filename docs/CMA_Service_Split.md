@@ -8,7 +8,7 @@ Sandbox Manager design. Local code is not evidence of production deployment.
 | Service | Owns |
 |---|---|
 | Event Gateway | Channels, sealed credentials, ingress normalization, routing, reply delivery and its durable records |
-| Agent Manager | User-facing Agents, profiles, messages, turns, approvals, runtime bindings, workspaces, persistent homes and recovery |
+| Agent Manager | Agents, inline configuration, messages, turns, approvals, runtime bindings, workspaces, native pool targets, persistent homes and recovery |
 | Image Manager | Image catalog, builds, immutable versions, lifecycle, sharing and Artifact Registry integration |
 
 Each is separately deployable with its own NyxID client, permissions, roles,
@@ -28,7 +28,7 @@ flowchart TD
     Web --> AM[Agent Manager]
     Web --> IM[Image Manager]
     EG --> AM
-    AM -. catalog integration target .-> IM
+    AM -->|Authorized image resolution| IM
     IM --> Registry[Artifact Registry]
     AM --> API[Kubernetes Sandbox API]
     API --> Controller[Infra-owned agent-sandbox controller]
@@ -53,8 +53,9 @@ so a lost create response cannot create a second environment. Runtime bindings
 pin image digests. Publishing or changing image defaults never rotates live
 Agents. CPU/memory, runtime class, workload service account and storage are
 explicit. Registry pull identity is separate from the image build identity;
-neither credential is delivered to Agent processes. Persistent-home ownership,
-writer fencing, checkpoints and restore remain required.
+neither credential is delivered to Agent processes. Persistent-home ownership
+and writer fencing remain required. Native pause/resume retains the original
+PVC; CMA no longer schedules or manages Sandbox snapshots or S3 archives.
 
 Agent Manager owns CMA runtime requirements (Codex, supervisor, ACP bridge and
 optional tools). Model, prompt and conversation state never enter Image Manager.
@@ -65,10 +66,13 @@ Registry: `asia-northeast1-docker.pkg.dev/example-project-02/chronoai-registry`.
 Image Manager uses its own Google service identity. No account key is committed
 or accepted as a user API field. Source revisions and output digests are pinned.
 Mutable catalog tags are not runtime identity. The catalog provides authorized
-resolution to an immutable digest. The compatibility Agent API currently pins
-the configured deployment runtime image; per-Agent catalog selection remains
-part of the simplified Agent API target in `CMA_Agent_Manager_API.md`. Sharing grants
-catalog use, not Artifact Registry IAM to end users.
+resolution to an immutable digest. Agent creation, Trigger publishing and
+consumer authoring resolve selected Image Manager versions using the caller's
+delegated authorization before storing their immutable configuration. The
+system image remains available as the default. Private immutable profile
+snapshots are internal compatibility records; users no longer select or manage
+profiles in these creation flows. Sharing grants catalog use, not Artifact
+Registry IAM to end users.
 
 Retirement prevents new use while preserving pinned versions for running Agents
 and recovery. Physical deletion requires evidence that no retained use/recovery
@@ -90,3 +94,5 @@ frontend clients, manifests and tests. Local protocol/ownership tests precede
 cluster checks against infra-pinned CRDs for mounting, readiness, reconnect,
 teardown and recovery. Code first; production cutover follows verified behavior.
 Prior Sandbox Manager foundation code is superseded, not a fourth service.
+See [deployment handoff](CMA_Deployment_Readiness.md) for infra-owned API
+prerequisites, application image/configuration preparation and live acceptance.
