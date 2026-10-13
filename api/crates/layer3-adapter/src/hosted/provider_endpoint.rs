@@ -10,6 +10,7 @@ pub(super) struct RuntimeEndpoint {
     base: Url,
     secure: bool,
     control_token: Option<String>,
+    native_binding: Option<(crate::RuntimeHandle, crate::agent_sandbox::PodBinding)>,
 }
 
 impl RuntimeEndpoint {
@@ -76,6 +77,7 @@ impl RuntimeEndpoint {
             base: parsed,
             secure,
             control_token: None,
+            native_binding: None,
         })
     }
 
@@ -86,6 +88,21 @@ impl RuntimeEndpoint {
 
     pub(super) fn control_token(&self) -> Option<&str> {
         self.control_token.as_deref()
+    }
+
+    pub(super) fn with_native_binding(
+        mut self,
+        handle: crate::RuntimeHandle,
+        binding: crate::agent_sandbox::PodBinding,
+    ) -> Self {
+        self.native_binding = Some((handle, binding));
+        self
+    }
+
+    pub(super) fn native_binding(
+        &self,
+    ) -> Option<&(crate::RuntimeHandle, crate::agent_sandbox::PodBinding)> {
+        self.native_binding.as_ref()
     }
 
     pub(super) fn control(&self) -> crate::Result<Url> {

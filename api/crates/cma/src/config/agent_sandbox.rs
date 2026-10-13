@@ -2,6 +2,20 @@ use layer3_adapter::agent_sandbox::{
     AgentSandboxConfig, NativeTemplateNetworkPolicy, RemoteKubernetesAuth, RemoteKubernetesConfig,
 };
 
+pub(super) fn transport_from_lookup(
+    lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
+) -> Result<layer3_adapter::hosted::NativeRuntimeTransport, String> {
+    use layer3_adapter::hosted::NativeRuntimeTransport;
+    match lookup("CHRONO_AGENT_SANDBOX_RUNTIME_TRANSPORT")?.as_deref() {
+        None | Some("direct") => Ok(NativeRuntimeTransport::Direct),
+        Some("kubernetes-portforward") => Ok(NativeRuntimeTransport::KubernetesPortforward),
+        _ => Err(
+            "CHRONO_AGENT_SANDBOX_RUNTIME_TRANSPORT must be direct or kubernetes-portforward"
+                .into(),
+        ),
+    }
+}
+
 pub(super) fn from_lookup(
     lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
     namespace: &str,
