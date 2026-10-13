@@ -264,6 +264,15 @@ impl HostedBackend for RuntimeBackends {
     ) -> Result<ResponseFrame> {
         self.for_handle(handle)?.exchange(handle, request).await
     }
+    async fn export_agent_history(
+        &self,
+        handle: &RuntimeHandle,
+        agent: &AgentSlot,
+    ) -> Result<Vec<u8>> {
+        self.for_handle(handle)?
+            .export_agent_history(handle, agent)
+            .await
+    }
     async fn verify_checkpoint_hold(
         &self,
         handle: &RuntimeHandle,
@@ -289,6 +298,10 @@ impl HostedBackend for RuntimeBackends {
         self.for_handle(handle)?.teardown(handle).await
     }
 }
+
+#[cfg(test)]
+#[path = "runtime_history_tests.rs"]
+mod history_tests;
 
 #[cfg(test)]
 mod routing_tests {

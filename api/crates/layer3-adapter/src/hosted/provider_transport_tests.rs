@@ -19,6 +19,8 @@ use crate::{AgentLaunch, AgentSlot, ResourceReading};
 mod agent_sandbox;
 #[path = "provider_transport_checkpoint_tests.rs"]
 mod checkpoint;
+#[path = "provider_transport_history_tests.rs"]
+mod history;
 #[path = "provider_transport_restore_tests.rs"]
 mod restore;
 #[path = "provider_transport_retirement_tests.rs"]

@@ -1,6 +1,8 @@
 use super::*;
+use futures_util::StreamExt;
 
 const MAX_HISTORY_BYTES: usize = 64 * 1024 * 1024;
+const HISTORY_TIMEOUT: Duration = Duration::from_secs(120);
 
 impl ProviderHostedControlTransport {
     pub(super) async fn export_agent_history(
@@ -9,6 +11,7 @@ impl ProviderHostedControlTransport {
         agent: &AgentSlot,
     ) -> crate::Result<Vec<u8>> {
         if agent.as_str().is_empty()
+            || matches!(agent.as_str(), "." | "..")
             || agent.as_str().len() > 64
             || !agent
                 .as_str()
@@ -26,6 +29,7 @@ impl ProviderHostedControlTransport {
             .http
             .get(url)
             .header(auth.0, auth.1)
+            .timeout(HISTORY_TIMEOUT)
             .send()
             .await
             .map_err(|error| {
@@ -45,14 +49,19 @@ impl ProviderHostedControlTransport {
                 "runtime history response exceeds its size limit".into(),
             ));
         }
-        let bytes = response.bytes().await.map_err(|error| {
-            AdapterError::Unavailable(format!("read runtime history response: {error}"))
-        })?;
-        if bytes.len() > MAX_HISTORY_BYTES {
-            return Err(AdapterError::Rejected(
-                "runtime history response exceeds its size limit".into(),
-            ));
+        let mut bytes = Vec::new();
+        let mut chunks = response.bytes_stream();
+        while let Some(chunk) = chunks.next().await {
+            let chunk = chunk.map_err(|error| {
+                AdapterError::Unavailable(format!("read runtime history response: {error}"))
+            })?;
+            if chunk.len() > MAX_HISTORY_BYTES.saturating_sub(bytes.len()) {
+                return Err(AdapterError::Rejected(
+                    "runtime history response exceeds its size limit".into(),
+                ));
+            }
+            bytes.extend_from_slice(&chunk);
         }
-        Ok(bytes.to_vec())
+        Ok(bytes)
     }
 }
