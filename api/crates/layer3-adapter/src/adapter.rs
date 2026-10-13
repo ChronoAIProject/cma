@@ -86,11 +86,11 @@ pub trait SandboxAdapter: Send + Sync {
         ))
     }
 
-    /// Resume the same provider object with an explicitly reserved newer process generation.
+    /// Resume the same provider object with a reserved generation and admitted service scope.
     async fn resume_runtime(
         &self,
         _request: &RuntimeAdoptionRequest,
-        _generation: u64,
+        _next: &RuntimeProvisionRequest,
     ) -> Result<RuntimeHandle> {
         Err(crate::AdapterError::Unsupported(
             "runtime resumption is unavailable".into(),
