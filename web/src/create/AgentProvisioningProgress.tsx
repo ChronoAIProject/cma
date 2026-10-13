@@ -1,4 +1,5 @@
 import type { AgentLifecycleCreateReceipt, AgentLifecycleOperationView } from '../api/client';
+import { provisioningNames } from '../vocabulary/steps';
 
 export function AgentProvisioningProgress({
   receipt,
@@ -30,18 +31,15 @@ export function AgentProvisioningProgress({
       </p>
       <ol>
         <li data-state={state(sandboxReady, true)}>
-          <strong>Sandbox ready</strong>
+          <strong>{provisioningNames.sandbox}</strong>
           <span>{state(sandboxReady, true)}</span>
         </li>
         <li data-state={state(runtimeReady, sandboxReady)}>
-          <strong>
-            Workspace + skills + model + reasoning effort + system prompt + permission level setup
-            ready
-          </strong>
+          <strong>{provisioningNames.workspace}</strong>
           <span>{state(runtimeReady, sandboxReady)}</span>
         </li>
         <li data-state={state(keyScopeReady, runtimeReady)}>
-          <strong>Agent key scope configuration ready</strong>
+          <strong>{provisioningNames.key_scope}</strong>
           <span>{state(keyScopeReady, runtimeReady)}</span>
         </li>
       </ol>
