@@ -39,7 +39,10 @@ export function ServicePage({
                 ? current
                 : error instanceof ServiceError && [401, 403].includes(error.status)
                   ? { anonymous: true }
-                  : { error: error instanceof Error ? error.message : 'Service unavailable.' },
+                  : {
+                      ...current,
+                      error: error instanceof Error ? error.message : 'Service unavailable.',
+                    },
             );
         });
     };
@@ -71,13 +74,32 @@ export function ServicePage({
             onClick={() => {
               void serviceRequest<void>(service, '/auth/logout', { method: 'POST' })
                 .then(denied)
-                .catch(() => setState({ error: 'Sign-out could not be completed. Try again.' }));
+                .catch(() =>
+                  setState((current) =>
+                    current.anonymous
+                      ? current
+                      : { ...current, error: 'Sign-out could not be completed. Try again.' },
+                  ),
+                );
             }}
           >
             Sign out of {name}
           </Button>
         ) : null}
       </header>
+      {state.error ? (
+        <section className="service-panel" role="alert">
+          <p>{state.error}</p>
+          <Button
+            onClick={() => {
+              setState((current) => ({ ...current, error: undefined }));
+              setRevision((value) => value + 1);
+            }}
+          >
+            Try again
+          </Button>
+        </section>
+      ) : null}
       {state.anonymous ? (
         <section className="service-panel">
           <p>Sign in with NyxID to open {name}.</p>
@@ -85,23 +107,11 @@ export function ServicePage({
             Sign in with NyxID
           </a>
         </section>
-      ) : state.error ? (
-        <section className="service-panel" role="alert">
-          <p>{state.error}</p>
-          <Button
-            onClick={() => {
-              setState({});
-              setRevision((value) => value + 1);
-            }}
-          >
-            Try again
-          </Button>
-        </section>
       ) : state.session ? (
         <div key={JSON.stringify([state.session.subject, [...state.session.permissions].sort()])}>
           {children(state.session, denied)}
         </div>
-      ) : (
+      ) : state.error ? null : (
         <p role="status">Opening {name}…</p>
       )}
     </main>

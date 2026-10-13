@@ -12,13 +12,13 @@ interface Intent {
   readonly body: AgentLifecycleCreateInput;
   readonly receipt?: AgentLifecycleCreateReceipt;
 }
-export function lifecycleStorageKey(owner: string) {
-  return `cma:agent-creation:${JSON.stringify([location.origin, owner])}`;
+export function lifecycleStorageKey(owner: string, workspaceId?: string) {
+  return `cma:agent-creation:${JSON.stringify(workspaceId === undefined ? [location.origin, owner] : [location.origin, owner, workspaceId])}`;
 }
-function load(owner?: string): { intent?: Intent; error?: string } {
+function load(owner?: string, workspaceId?: string): { intent?: Intent; error?: string } {
   try {
     if (!owner) throw new Error();
-    const raw = sessionStorage.getItem(lifecycleStorageKey(owner));
+    const raw = sessionStorage.getItem(lifecycleStorageKey(owner, workspaceId));
     if (raw === null) return {};
     const saved = JSON.parse(raw) as { version: number; intent: Intent };
     const intent = saved.intent;
@@ -28,6 +28,7 @@ function load(owner?: string): { intent?: Intent; error?: string } {
       !/^[a-zA-Z0-9-]{1,200}$/.test(intent.key) ||
       typeof intent.body?.name !== 'string' ||
       !intent.body.name ||
+      intent.body.workspace_id !== workspaceId ||
       (intent.receipt !== undefined &&
         (typeof intent.receipt.id !== 'string' || !intent.receipt.id))
     )
@@ -41,8 +42,8 @@ function load(owner?: string): { intent?: Intent; error?: string } {
   }
 }
 
-export function useLifecycleIntent(client: CmaWebClient, owner?: string) {
-  const [saved, setSaved] = useState(() => load(owner));
+export function useLifecycleIntent(client: CmaWebClient, owner?: string, workspaceId?: string) {
+  const [saved, setSaved] = useState(() => load(owner, workspaceId));
   const current = useRef(saved.intent);
   const active = useRef<AbortController | undefined>(undefined);
   const [pending, setPending] = useState(false);
@@ -55,8 +56,11 @@ export function useLifecycleIntent(client: CmaWebClient, owner?: string) {
     try {
       if (!owner) throw new Error();
       if (intent)
-        sessionStorage.setItem(lifecycleStorageKey(owner), JSON.stringify({ version: 1, intent }));
-      else sessionStorage.removeItem(lifecycleStorageKey(owner));
+        sessionStorage.setItem(
+          lifecycleStorageKey(owner, workspaceId),
+          JSON.stringify({ version: 1, intent }),
+        );
+      else sessionStorage.removeItem(lifecycleStorageKey(owner, workspaceId));
       current.current = intent;
       setSaved({ intent });
       return true;

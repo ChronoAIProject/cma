@@ -29,7 +29,7 @@ export function operatorFailure(error: unknown): OperatorFailure {
       code: error.code,
       requestId: error.requestId,
       field: error.path ?? error.field,
-      conflict: error.code === 'settings_conflict',
+      conflict: error.status === 409,
       uncertain: error.status === 408 || error.status >= 500,
     };
   }
