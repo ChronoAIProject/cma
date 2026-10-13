@@ -80,6 +80,28 @@ async fn empty_vct_initializes_root_once_and_adopts_without_seed_or_pvc_writes()
 }
 
 #[tokio::test]
+async fn native_home_accepts_controller_normalized_member_fields() {
+    let fixture = Fixture::new().await;
+    let claim = assigned_spec(&fixture, &spec()).await;
+    {
+        let mut state = fixture.state.lock().unwrap();
+        let member = state.rows.get_mut(MEMBER).unwrap();
+        let pod = &mut member["spec"]["podTemplate"]["spec"];
+        for field in ["hostNetwork", "hostPID", "hostIPC"] {
+            pod.as_object_mut().unwrap().remove(field);
+        }
+        let resources = &mut pod["containers"][0]["resources"];
+        resources["requests"]["cpu"] = json!("0.75");
+        resources["requests"]["memory"] = json!("1.5Gi");
+        resources["limits"]["cpu"] = json!("0.75");
+        resources["limits"]["memory"] = json!("1.5Gi");
+    }
+    let home = adopted(&fixture, &claim).await;
+    assert_eq!(home.receipt.storage_reference, "home-warm-member");
+    no_storage_effects(&fixture);
+}
+
+#[tokio::test]
 async fn native_home_requires_initializer_ready_before_returning_attachment() {
     let fixture = Fixture::new().await;
     let claim = assigned_spec(&fixture, &spec()).await;
