@@ -63,6 +63,7 @@ fn every_gateway_wire_type_replays_the_protocol_examples_without_losing_properti
         ChannelCreateRequest,
         ChannelCreation,
         ChannelId,
+        ChannelListItem,
         ChannelPage,
         ChannelResponse,
         ChannelUpdateRequest,
@@ -397,4 +398,20 @@ fn a_context_response_names_its_consumer_only_on_a_routed_channel() {
     let decoded = decode(&legacy);
     assert!(decoded.consumer.is_none());
     assert_eq!(serde_json::to_value(decoded).unwrap(), legacy);
+}
+
+#[test]
+fn legacy_channel_listing_omits_unknown_ids_and_endpoints() {
+    let mut example = fixtures()["ChannelPage"][0].clone();
+    let item = example["items"][0].as_object_mut().unwrap();
+    item.remove("channel_id");
+    item.remove("endpoints");
+    item["definition"]
+        .as_object_mut()
+        .unwrap()
+        .remove("creation");
+    let decoded: ChannelPage = serde_json::from_value(example.clone()).unwrap();
+    assert!(decoded.items[0].channel_id.is_none());
+    assert!(decoded.items[0].endpoints.is_none());
+    assert_eq!(serde_json::to_value(decoded).unwrap(), example);
 }

@@ -1498,11 +1498,53 @@
         "description": "An encrypted pointer to a CMA channel record.",
         "type": "string"
       },
+      "ChannelListItem": {
+        "description": "An owner-visible record whose original channel ID may predate recoverable creation.",
+        "properties": {
+          "channel_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "definition": {
+            "$ref": "#/components/schemas/PublicChannelDefinition"
+          },
+          "endpoints": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/EndpointResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "provider": {
+            "$ref": "#/components/schemas/ProviderResponse"
+          },
+          "record_id": {
+            "type": "string"
+          },
+          "version": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "record_id",
+          "version",
+          "provider",
+          "definition"
+        ],
+        "type": "object"
+      },
       "ChannelPage": {
         "properties": {
           "items": {
             "items": {
-              "$ref": "#/components/schemas/ChannelResponse"
+              "$ref": "#/components/schemas/ChannelListItem"
             },
             "type": "array"
           },

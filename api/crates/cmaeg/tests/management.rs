@@ -168,6 +168,8 @@ mod binary_support;
 mod boundaries;
 #[path = "management/lifecycle.rs"]
 mod lifecycle;
+#[path = "management/list.rs"]
+mod list;
 #[path = "management/operations.rs"]
 mod operations;
 #[path = "management/platforms.rs"]

@@ -10,6 +10,7 @@ import {
   AttachmentSchema,
   AttachmentSourceSchema,
   ChannelResponseSchema,
+  ChannelPageSchema,
   ConsumerSummarySchema,
   ContextResponseSchema,
   EventContextSnapshotSchema,
@@ -318,4 +319,22 @@ describe('CMAEG context consumer', () => {
       'consumer',
     );
   });
+});
+
+it('keeps legacy listed records without inventing channel IDs or endpoints', () => {
+  const examples = JSON.parse(
+    readFileSync(
+      new URL('../../../api/crates/cmaeg/tests/fixtures/sdk-contract.json', import.meta.url),
+      'utf8',
+    ),
+  ) as Record<string, readonly unknown[]>;
+  const page = ChannelPageSchema(examples.ChannelPage?.[0]);
+  const original = page.items[0];
+  expect(original).toBeDefined();
+  if (original === undefined) throw new Error('missing list fixture');
+  const { channel_id, endpoints, ...record } = original;
+  expect(channel_id).toBeDefined();
+  expect(endpoints).toBeDefined();
+  const legacy = { ...page, items: [record] };
+  expect(ChannelPageSchema(legacy)).toEqual(legacy);
 });

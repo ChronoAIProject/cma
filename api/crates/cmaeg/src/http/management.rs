@@ -376,9 +376,22 @@ pub async fn rekey_channel(
 pub struct ListQuery {
     pub after: Option<String>,
 }
+/// An owner-visible record whose original channel ID may predate recoverable creation.
+#[derive(Serialize, ToSchema)]
+pub struct ChannelListItem {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub channel_id: Option<String>,
+    pub record_id: String,
+    pub version: u64,
+    pub provider: ProviderResponse,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub endpoints: Option<EndpointResponse>,
+    pub definition: super::schema::PublicChannelDefinition,
+}
+
 #[derive(Serialize, ToSchema)]
 pub struct ChannelPage {
-    pub items: Vec<ChannelResponse>,
+    pub items: Vec<ChannelListItem>,
     pub next_cursor: Option<String>,
 }
 #[utoipa::path(get,path="/v1/channels",operation_id="listChannels",tag="channels",security(("creatorBearer"=[])),params(ListQuery),responses((status=200,body=ChannelPage),(status="default",body=cmaeg_core::problem::Problem,content_type="application/problem+json")))]
@@ -406,18 +419,11 @@ pub async fn list_channels(
             Ok(id) => id,
             Err(e) => return management_error(ManagementError::Invalid(e)),
         };
-        let loaded = match crate::channels::creation::load_record(&state, &creator, &id).await {
+        let loaded = match management::load_by_record(&state, &creator, &id).await {
             Ok(value) => value,
             Err(error) => return management_error(error),
         };
-        match channel_response(
-            &state,
-            &loaded.channel_id,
-            &loaded.definition,
-            loaded.record.version,
-            provider_response(&loaded.definition),
-            &id,
-        ) {
+        match channel_list_item(&state, &loaded) {
             Ok(value) => items.push(value),
             Err(error) => return management_error(error),
         }
