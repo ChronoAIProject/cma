@@ -35,7 +35,10 @@ pub(crate) struct RuntimeConfig {
 
 impl RuntimeConfig {
     pub(crate) fn from_environment() -> Result<Self, String> {
-        let mut process_env = std::env::vars().collect::<BTreeMap<_, _>>();
+        Self::from_values(std::env::vars().collect())
+    }
+
+    pub(crate) fn from_values(mut process_env: BTreeMap<String, String>) -> Result<Self, String> {
         let home = process_env
             .get("CHRONO_RUNTIME_HOME")
             .or_else(|| process_env.get("HOME"))
