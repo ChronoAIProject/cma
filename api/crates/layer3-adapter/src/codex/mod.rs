@@ -123,6 +123,16 @@ impl CodexAdapter {
 
 #[async_trait::async_trait]
 impl SandboxAdapter for CodexAdapter {
+    fn native_pools(&self) -> Option<&dyn crate::agent_sandbox::NativePoolControl> {
+        self.hosted.native_pools()
+    }
+    async fn select_native_pool(
+        &self,
+        request: &RuntimeProvisionRequest,
+        home: &crate::HomeVolumeRequest,
+    ) -> crate::Result<Option<crate::agent_sandbox::NativePoolBinding>> {
+        self.hosted.select_native_pool(request, home).await
+    }
     fn capabilities(&self) -> AdapterCapabilities {
         self.hosted.capabilities()
     }

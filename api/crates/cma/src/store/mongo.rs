@@ -32,6 +32,7 @@ pub struct MongoStores {
     pub users: Arc<MongoUserDirectoryStore>,
     pub settings: Arc<MongoPlatformSettingsStore>,
     pub operations: Arc<MongoOperationStore>,
+    pub(crate) native_warm_pools: Arc<super::native_warm_pools::MongoNativeWarmPools>,
     pub(crate) agent_lifecycle: Arc<super::MongoAgentLifecycleStore>,
     client: Client,
     database: String,
@@ -69,12 +70,12 @@ impl MongoStores {
         auth_encryption_key: &AuthEncryptionKey,
         activity_retention: Duration,
         checkpoint_storage: Arc<dyn super::CheckpointBlobStore>,
-        runtime: (&str, Option<&layer3_adapter::HomeVolumePolicy>),
+        _runtime: (&str, Option<&layer3_adapter::HomeVolumePolicy>),
     ) -> Result<Self, StoreError> {
-        let mut sandbox_model =
+        // Legacy Profile warm records are retained only for cleanup and already
+        // claimed runtime recovery. New admissions use the regular Sandbox lifecycle.
+        let sandbox_model =
             MongoSandboxStore::open_with_storage(&client, database, checkpoint_storage).await?;
-        sandbox_model.warm_runtime_version = Some(runtime.0.to_owned());
-        sandbox_model.warm_home_policy = runtime.1.cloned();
         let sandbox_model = Arc::new(sandbox_model);
         let sandbox_profiles = Arc::new(MongoProfileStore::open(&client, database).await?);
         let sandbox_credentials = Arc::new(
@@ -127,7 +128,15 @@ impl MongoStores {
                 .await
                 .map_err(|_| StoreError::Unavailable("open event worker profiles".into()))?,
         );
+        let native_warm_pools = Arc::new(
+            super::native_warm_pools::MongoNativeWarmPools::open(
+                &client.database(database),
+                deployment,
+            )
+            .await?,
+        );
         let stores = Self {
+            native_warm_pools,
             event_workers,
             bot_setups,
             bot_setup_contexts,

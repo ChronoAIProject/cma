@@ -134,6 +134,13 @@ pub(crate) struct Fixture {
 }
 
 pub(crate) fn fixture(inventory: bool) -> Fixture {
+    fixture_with_pools(inventory, None)
+}
+
+pub(crate) fn fixture_with_pools(
+    inventory: bool,
+    pools: Option<Arc<dyn warm_pools::WarmPoolAdministration>>,
+) -> Fixture {
     let activity = Arc::new(MemoryActivity::default());
     let activity_service = ActivityService::new(activity.clone());
     let settings = Arc::new(PlatformSettingsService::new(
@@ -154,6 +161,9 @@ pub(crate) fn fixture(inventory: bool) -> Fixture {
         .with_user_directory(layer2_core::UserDirectory::new(names.clone()));
     if inventory {
         state = state.with_runtime_inventory(Arc::new(FixedInventory));
+    }
+    if let Some(pools) = pools {
+        state = state.with_warm_pools(pools);
     }
     Fixture {
         app: router(state),
@@ -902,3 +912,6 @@ async fn runtime_inventory_and_activity_each_require_their_exact_capability() {
     .await;
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
 }
+
+#[path = "admin/warm_pools_tests.rs"]
+mod warm_pool_tests;

@@ -7,6 +7,7 @@ use super::{corrupt, provider_error, SandboxReconciler};
 
 impl SandboxReconciler {
     pub(super) async fn reconcile_homes(&self) -> Result<(), SandboxStoreError> {
+        self.reconcile_native_claims().await?;
         let Some(homes) = self.adapter.home_volumes() else {
             return Ok(());
         };
@@ -43,10 +44,41 @@ impl SandboxReconciler {
             {
                 continue;
             }
+            if let Some(pools) = self.adapter.native_pools() {
+                pools
+                    .cleanup_retained_home(&observed)
+                    .await
+                    .map_err(provider_error)?;
+            }
             homes
                 .remove(&observed.request, Some(&observed.receipt))
                 .await
                 .map_err(provider_error)?;
+        }
+        Ok(())
+    }
+
+    async fn reconcile_native_claims(&self) -> Result<(), SandboxStoreError> {
+        let Some(pools) = self.adapter.native_pools() else {
+            return Ok(());
+        };
+        for claim in pools.inventory_claims().await.map_err(provider_error)? {
+            let id = SandboxId(claim.request.home.sandbox_id.clone());
+            if let Some(current) = self.store.get_sandbox(&id).await? {
+                current
+                    .validate()
+                    .map_err(|error| corrupt(&error.to_string()))?;
+                if current.lifecycle.home.as_ref().is_some_and(|home| {
+                    !home.released
+                        && home
+                            .native_pool
+                            .as_ref()
+                            .is_some_and(|native| native.request == claim.request)
+                }) {
+                    continue;
+                }
+            }
+            pools.reclaim_claim(&claim).await.map_err(provider_error)?;
         }
         Ok(())
     }

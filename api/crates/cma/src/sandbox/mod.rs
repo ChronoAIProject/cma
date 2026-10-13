@@ -11,6 +11,7 @@ mod checkpoint_maintenance;
 mod composition;
 mod credential;
 mod home;
+mod home_native;
 mod live_agent_stopper;
 mod live_agents;
 mod policy;

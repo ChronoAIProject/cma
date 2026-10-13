@@ -6,9 +6,11 @@ use crate::rest::{
 };
 use layer2_core::{resource_access::CallerContext, Caller};
 
+type LifecycleCall = (String, String, String, Option<String>);
+
 #[derive(Default)]
 struct Provisioner {
-    calls: Mutex<Vec<(String, String, String)>>,
+    calls: Mutex<Vec<LifecycleCall>>,
 }
 #[async_trait]
 impl AgentLifecycleProvisioner for Provisioner {
@@ -20,10 +22,12 @@ impl AgentLifecycleProvisioner for Provisioner {
         request: AgentLifecycleCreateRequest,
         key: &str,
     ) -> Result<AgentLifecycleCreateReceipt, AgentLifecycleProvisioningError> {
-        self.calls
-            .lock()
-            .unwrap()
-            .push((caller.subject.to_string(), key.into(), request.name));
+        self.calls.lock().unwrap().push((
+            caller.subject.to_string(),
+            key.into(),
+            request.name,
+            request.workspace_id,
+        ));
         Ok(AgentLifecycleCreateReceipt {
             id: "same-operation".into(),
             status: "provisioning".into(),
@@ -60,8 +64,51 @@ async fn connection_retry_reaches_the_durable_operation_and_requires_a_key() {
     assert_eq!(
         port.calls.lock().unwrap().as_slice(),
         &[
-            (OWNER.into(), "persisted-intent".into(), "Research".into()),
-            (OWNER.into(), "persisted-intent".into(), "Research".into()),
+            (
+                OWNER.into(),
+                "persisted-intent".into(),
+                "Research".into(),
+                None
+            ),
+            (
+                OWNER.into(),
+                "persisted-intent".into(),
+                "Research".into(),
+                None
+            ),
         ]
+    );
+}
+
+#[tokio::test]
+async fn contextual_agent_creation_forwards_workspace_through_the_same_durable_route() {
+    let fixture = fixture().await;
+    let port = Arc::new(Provisioner::default());
+    let router = agent_router(fixture.state.with_lifecycle(port.clone()));
+    let mut call = request(
+        Method::POST,
+        "/api/v1/agents",
+        OWNER,
+        None,
+        Some(
+            json!({"name":"Second Agent","workspace_id":"wk_existing","profile":{"model":"model"}}),
+        ),
+    );
+    call.extensions_mut()
+        .insert(layer2_core::Authorization::new([
+            layer2_core::Capability::UseOwnSandboxes,
+        ]));
+    call.headers_mut()
+        .insert("Idempotency-Key", "same-context".parse().unwrap());
+    let response = router.oneshot(call).await.unwrap();
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    assert_eq!(
+        *port.calls.lock().unwrap(),
+        [(
+            OWNER.into(),
+            "same-context".into(),
+            "Second Agent".into(),
+            Some("wk_existing".into())
+        )]
     );
 }

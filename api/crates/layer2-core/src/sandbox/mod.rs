@@ -49,6 +49,8 @@ mod first_message_dispatch;
 mod first_message_service;
 mod hierarchy;
 mod home;
+mod home_native;
+pub use home_native::SandboxNativePool;
 mod home_recovery;
 mod inactivity;
 mod launch_recovery;

@@ -37,6 +37,16 @@ pub trait HostedAgentRuntime: Send + Sync {
 /// Provider lifecycle and supervisor transport used by a hosted adapter.
 #[async_trait::async_trait]
 pub trait HostedBackend: Send + Sync {
+    fn native_pools(&self) -> Option<&dyn crate::agent_sandbox::NativePoolControl> {
+        None
+    }
+    async fn select_native_pool(
+        &self,
+        _request: &ProviderSandboxRequest,
+        _home: &crate::HomeVolumeRequest,
+    ) -> Result<Option<crate::agent_sandbox::NativePoolBinding>> {
+        Ok(None)
+    }
     async fn provision(&self, request: ProviderSandboxRequest) -> Result<RuntimeHandle>;
     async fn teardown_retained(&self, _handle: &RuntimeHandle) -> Result<()> {
         Err(crate::AdapterError::Unsupported(
