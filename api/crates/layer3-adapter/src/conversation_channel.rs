@@ -107,9 +107,14 @@ impl ConversationInputSender {
                 {
                     continue;
                 }
+                let configuring = matches!(input, ConversationInput::Configure { .. });
                 let result = handler(input).await;
-                let failed = result.is_err();
+                // Configure handlers reserve Unsupported for a definitive
+                // refusal before any setting changes; later failures are ambiguous.
+                let refused = configuring && matches!(result, Err(AdapterError::Unsupported(_)));
+                let failed = result.is_err() && !refused;
                 let outcome = match result {
+                    Err(error) if refused => ConversationSendOutcome::PreWriteFailure(error),
                     Ok(()) => ConversationSendOutcome::WriteConfirmed,
                     Err(error) => ConversationSendOutcome::Ambiguous(error),
                 };
@@ -137,8 +142,12 @@ impl ConversationInputSender {
 
     /// Distinguish refusal before handler invocation from uncertain delivery.
     pub async fn send_classified(&self, input: ConversationInput) -> ConversationSendOutcome {
-        self.send_with_deadline(input, None, DELIVERY_DEADLINE)
-            .await
+        let deadline = if matches!(input, ConversationInput::Configure { .. }) {
+            Duration::from_secs(15)
+        } else {
+            DELIVERY_DEADLINE
+        };
+        self.send_with_deadline(input, None, deadline).await
     }
 
     pub async fn send_guarded(
@@ -146,8 +155,12 @@ impl ConversationInputSender {
         input: ConversationInput,
         guard: Arc<dyn ConversationInputGuard>,
     ) -> ConversationSendOutcome {
-        self.send_with_deadline(input, Some(guard), DELIVERY_DEADLINE)
-            .await
+        let deadline = if matches!(input, ConversationInput::Configure { .. }) {
+            Duration::from_secs(15)
+        } else {
+            DELIVERY_DEADLINE
+        };
+        self.send_with_deadline(input, Some(guard), deadline).await
     }
 
     async fn send_with_deadline(

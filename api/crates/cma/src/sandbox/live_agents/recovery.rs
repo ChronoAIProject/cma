@@ -8,6 +8,7 @@ use layer2_core::sandbox::store::{
 use layer2_core::{now_rfc3339, AgentId};
 
 use super::{LiveAgentRegistry, RegistryEntry};
+use layer2_core::sandbox::{AgentRuntimeError, AgentRuntimeTarget};
 
 const RECOVERY_RETRY_DELAY: Duration = Duration::from_secs(1);
 
@@ -106,6 +107,33 @@ impl LiveAgentConnectionLossHandler for DurableAgentConnectionLossHandler {
 }
 
 impl LiveAgentRegistry {
+    pub(super) async fn reconnect_target(
+        &self,
+        target: &AgentRuntimeTarget,
+    ) -> Result<(), AgentRuntimeError> {
+        let identity = {
+            let state = self.lock();
+            let entry = state
+                .entries
+                .get(&target.agent_id)
+                .ok_or(AgentRuntimeError::NotFound)?;
+            if entry.runtime_generation != target.runtime_generation
+                || entry.conversation_id != target.conversation_id
+            {
+                return Err(AgentRuntimeError::StaleGeneration);
+            }
+            LiveAgentAttachmentIdentity {
+                agent_id: target.agent_id.clone(),
+                conversation_id: target.conversation_id.clone(),
+                runtime_generation: target.runtime_generation,
+                authority_fence: entry.authority_fence,
+                nonce: entry.nonce,
+            }
+        };
+        self.connection_ended(identity).await;
+        Ok(())
+    }
+
     pub(crate) fn install_connection_loss_handler(
         &self,
         handler: Arc<dyn LiveAgentConnectionLossHandler>,

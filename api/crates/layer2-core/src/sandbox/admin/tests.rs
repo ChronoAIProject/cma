@@ -193,6 +193,7 @@ fn agent(sandbox: &Sandbox, workspace: &Workspace, id: &str, status: AgentStatus
         capabilities: crate::RuntimeCapabilities::new([crate::RuntimeCapability::Conversation]),
         status,
         conversation: super::super::ConversationState {
+            settings: None,
             conversation_id: Some("conversation-a".into()),
             runtime_generation: Some(1),
             last_seq: 0,

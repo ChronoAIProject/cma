@@ -134,6 +134,8 @@ use super::trigger_openapi_shapes::*;
         super::agents::read_lifecycle_operation,
         super::agents::list,
         super::agents::read,
+        super::agent_settings::read,
+        super::agent_settings::update,
         super::agent_source::read,
         super::agent_provenance::read,
         super::agent_channel_usage::read,

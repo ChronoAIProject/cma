@@ -20,6 +20,7 @@ pub(super) struct ApprovalSnapshot {
 
 #[derive(Clone)]
 pub(super) enum PreWriteRollback {
+    Settings(Option<super::AgentSettings>),
     NewTurn,
     Approval(ApprovalSnapshot),
     WaitingApproval,
@@ -348,7 +349,7 @@ impl AgentOperationService {
         })
     }
 
-    async fn require_runtime(
+    pub(super) async fn require_runtime(
         &self,
         target: &AgentRuntimeTarget,
         required: &[RuntimeCapability],

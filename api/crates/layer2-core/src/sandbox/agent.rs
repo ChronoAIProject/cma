@@ -12,6 +12,9 @@ use super::{
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConversationState {
+    /// Durable owner overrides; published profiles and open receipt identities stay immutable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settings: Option<super::AgentSettings>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub conversation_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -128,6 +131,7 @@ impl Agent {
             || self.conversation.runtime_generation.is_some()
             || self.conversation.last_seq != 1
             || self.conversation.active_turn.is_some()
+            || self.conversation.settings.is_some()
             || self.conversation.operation.is_some()
             || !self.conversation.queued_messages.is_empty()
             || self.work.next_fence == 0
@@ -194,7 +198,12 @@ impl Agent {
                             || self.conversation.queued_messages[index - 1].sequence
                                 < message.sequence)
                 });
-        if !identity_shape
+        if self
+            .conversation
+            .settings
+            .as_ref()
+            .is_some_and(|settings| settings.validate().is_err())
+            || !identity_shape
             || (requires_identity && self.conversation.conversation_id.is_none())
             || self
                 .conversation

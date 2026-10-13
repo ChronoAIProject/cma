@@ -23,6 +23,7 @@ mod agent_artifacts_tests;
 mod agent_channel_usage;
 mod agent_command_admission;
 mod agent_operate;
+mod agent_settings;
 pub use agent_channel_usage::agent_channel_usage_router;
 #[cfg(test)]
 mod agent_channel_usage_tests;

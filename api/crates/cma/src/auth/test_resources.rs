@@ -157,6 +157,7 @@ pub(crate) fn agent(
         ]),
         status,
         conversation: ConversationState {
+            settings: None,
             conversation_id: None,
             runtime_generation: None,
             last_seq: 1,

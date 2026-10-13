@@ -121,6 +121,13 @@ impl SandboxWorker {
                         .await
                 }
             };
+            if let Some(settings) = &agent.conversation.settings {
+                if let Err(error) = channel.input.send(settings.runtime_input()).await {
+                    return self
+                        .rollback_reopen(sandbox, attachments, adapter_failure(error), now)
+                        .await;
+                }
+            }
             let attachment = match self.dependencies.registry.attach(
                 agent.id.clone(),
                 conversation_id,
