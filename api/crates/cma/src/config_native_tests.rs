@@ -20,7 +20,21 @@ fn native_runtime_transport_requires_explicit_valid_selection() {
         .agent_sandbox_runtime_transport,
         NativeRuntimeTransport::KubernetesPortforward
     );
-    for invalid in ["", "proxy", "portforward", "kubernetes-portforward "] {
+    assert_eq!(
+        configured(&[("CHRONO_AGENT_SANDBOX_RUNTIME_TRANSPORT", "kubernetes-exec")])
+            .unwrap()
+            .runtime
+            .agent_sandbox_runtime_transport,
+        NativeRuntimeTransport::KubernetesExec
+    );
+    for invalid in [
+        "",
+        "proxy",
+        "portforward",
+        "exec",
+        "kubernetes-portforward ",
+        "kubernetes-exec ",
+    ] {
         assert!(
             configured(&[("CHRONO_AGENT_SANDBOX_RUNTIME_TRANSPORT", invalid)])
                 .unwrap_err()
