@@ -42,7 +42,7 @@ pub(super) async fn create_profiles(
         .create_workspace_for_owner(
             &caller.subject,
             &format!("agent-manager:{key}:workspace"),
-            format!("{} workspace", request.name),
+            display_name(&request.name, " workspace"),
             "Inline Agent Manager workspace".into(),
             workspace_content,
         )
@@ -71,7 +71,7 @@ pub(super) async fn create_profiles(
         .create_sandbox_for_owner(
             &caller.subject,
             &format!("agent-manager:{key}:sandbox"),
-            format!("{} sandbox", request.name),
+            display_name(&request.name, " sandbox"),
             "Inline Agent Manager sandbox configuration".into(),
             sandbox_content,
         )
@@ -84,6 +84,22 @@ pub(super) async fn create_profiles(
     Ok((agent_revision, workspace_ref, sandbox_ref))
 }
 
+pub(super) fn display_name(agent_name: &str, suffix: &str) -> String {
+    // Internal profile names have their own byte limit. Keep already valid
+    // names identical for retained operation replay; the visible Agent title
+    // and the operation-derived profile IDs always keep their original values.
+    let available = layer2_core::profiles::MAX_PROFILE_NAME_BYTES - suffix.len();
+    let mut end = agent_name.len().min(available);
+    while !agent_name.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}{suffix}", &agent_name[..end])
+}
+
 #[cfg(test)]
 #[path = "agent_lifecycle_profiles_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "agent_lifecycle_profile_name_tests.rs"]
+mod name_tests;
