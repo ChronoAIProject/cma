@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
+import type { SandboxSummary } from '../api/types';
 import type {
   AgentLifecycleCreateInput,
   AgentLifecycleCreateReceipt,
@@ -8,128 +9,167 @@ import { ConnectionWizard } from '../connections/ConnectionWizard';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { Modal } from '../ui/Modal';
-import { useProfileViewsClient } from '../api/context';
-import { ServicePicker } from '../profiles/pickers/ServicePicker';
-import { SkillPicker } from '../profiles/pickers/SkillPicker';
-import type { SkillReference } from '../profiles/client';
 import { useLifecycleIntent } from './lifecycleIntent';
 import { AgentProvisioningProgress } from './AgentProvisioningProgress';
-import { imageVisibilityLabel, listAgentImages, type AgentImageChoice } from './imageCatalog';
 import './Create.css';
 import './AgentLifecycleCard.css';
-
-const SYSTEM_IMAGE: AgentImageChoice = {
-  id: 'system-default',
-  name: 'System default image',
-  description: 'Maintained by Agent Manager and kept compatible with the default runtime.',
-};
-const EFFORT_CHOICES = ['minimal', 'low', 'medium', 'high', 'x_high'] as const;
-
-type Step = 'image' | 'profile' | 'review';
 
 interface AgentLifecycleCardProps {
   readonly client: CmaWebClient;
   readonly viewerId?: string;
   readonly workspaceId?: string;
+  readonly sandboxId?: string;
+  readonly canCreateSandbox?: boolean;
+  readonly targetPicker?: React.ReactNode;
   readonly onClose: () => void;
   readonly onCreated: (receipt: AgentLifecycleCreateReceipt) => void;
 }
 
-export function AgentLifecycleCard({
+export function AgentLifecycleCard(props: AgentLifecycleCardProps) {
+  const contextual = props.workspaceId !== undefined || props.sandboxId !== undefined;
+  const [target, setTarget] = useState(props.canCreateSandbox === false ? '' : 'new');
+  const [sandboxes, setSandboxes] = useState<readonly SandboxSummary[]>([]);
+  const [locationsError, setLocationsError] = useState<string>();
+  useEffect(() => {
+    if (contextual) return;
+    const request = new AbortController();
+    void (async () => {
+      const items: SandboxSummary[] = [];
+      const seen = new Set<string>();
+      let cursor: string | undefined;
+      do {
+        const page = await props.client.listSandboxes({ cursor, signal: request.signal });
+        items.push(...page.items);
+        cursor = page.next;
+        if (cursor !== undefined && seen.has(cursor)) throw new Error();
+        if (cursor !== undefined) seen.add(cursor);
+      } while (cursor !== undefined && !request.signal.aborted);
+      if (!request.signal.aborted)
+        setSandboxes(items.filter((sandbox) => sandbox.status === 'active'));
+    })().catch(() => {
+      if (!request.signal.aborted) setLocationsError('Existing Sandboxes could not be loaded.');
+    });
+    return () => request.abort();
+  }, [contextual, props.client]);
+  if (contextual) return <AgentLifecycleForm {...props} />;
+  const picker = (
+    <div className="create-form__field agent-lifecycle-location">
+      <label htmlFor="agent-sandbox">Agent location</label>
+      <select id="agent-sandbox" value={target} onChange={(event) => setTarget(event.target.value)}>
+        {props.canCreateSandbox === false ? (
+          <option value="">Choose an existing Sandbox</option>
+        ) : (
+          <option value="new">New Sandbox + new Agent</option>
+        )}
+        {sandboxes.map((sandbox) => (
+          <option key={sandbox.id} value={sandbox.id}>
+            Existing Sandbox: {sandbox.name}
+          </option>
+        ))}
+      </select>
+      {locationsError ? <p role="status">{locationsError}</p> : null}
+    </div>
+  );
+  if (target === '')
+    return (
+      <Modal
+        open
+        title="New agent"
+        onClose={props.onClose}
+        footer={<Button onClick={props.onClose}>Cancel</Button>}
+      >
+        {picker}
+      </Modal>
+    );
+  return (
+    <AgentLifecycleForm
+      key={target}
+      {...props}
+      sandboxId={target === 'new' ? undefined : target}
+      targetPicker={picker}
+    />
+  );
+}
+
+function validRepository(value: string): boolean {
+  if (value === '') return true;
+  try {
+    const url = new URL(value);
+    return (
+      url.protocol === 'https:' &&
+      url.hostname === 'github.com' &&
+      url.username === '' &&
+      url.password === '' &&
+      url.port === '' &&
+      url.search === '' &&
+      url.hash === '' &&
+      /^\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/?$/.test(url.pathname) &&
+      url.pathname
+        .split('/')
+        .filter(Boolean)
+        .every((part) => !['.', '..', '.git'].includes(part))
+    );
+  } catch {
+    return false;
+  }
+}
+
+function AgentLifecycleForm({
   client,
   viewerId,
   workspaceId,
+  sandboxId,
+  targetPicker,
   onClose,
   onCreated,
 }: AgentLifecycleCardProps) {
-  const catalog = useProfileViewsClient()?.authoring;
-  const lifecycle = useLifecycleIntent(client, viewerId, workspaceId);
+  const lifecycle = useLifecycleIntent(client, viewerId, workspaceId, sandboxId);
   const { pending, failure, operation, connection: connectionRequest } = lifecycle;
   const createdReceipt = lifecycle.intent?.receipt;
-  const [step, setStep] = useState<Step>('image');
-  const [images, setImages] = useState<readonly AgentImageChoice[]>([SYSTEM_IMAGE]);
-  const [selectedImage, setSelectedImage] = useState(SYSTEM_IMAGE.id);
-  const [imagesLoading, setImagesLoading] = useState(true);
-  const [imagesError, setImagesError] = useState<string>();
-  const [name, setName] = useState('');
   const [repository, setRepository] = useState('');
-  const [model, setModel] = useState('');
-  const [effort, setEffort] = useState<(typeof EFFORT_CHOICES)[number]>('medium');
-  const [permission, setPermission] = useState<'guarded' | 'autonomous'>('guarded');
-  const [systemPrompt, setSystemPrompt] = useState('');
-  const [scopes, setScopes] = useState<readonly string[]>([]);
-  const [skills, setSkills] = useState<readonly SkillReference[]>([]);
-  const selected = useMemo(
-    () => images.find((image) => image.id === selectedImage) ?? SYSTEM_IMAGE,
-    [images, selectedImage],
-  );
   const [workspaceName, setWorkspaceName] = useState<string>();
   useEffect(() => {
+    if (workspaceId === undefined) return;
     const request = new AbortController();
-    if (workspaceId !== undefined) {
-      void client
-        .readWorkspace(workspaceId, { signal: request.signal })
-        .then((workspace) => {
-          if (!request.signal.aborted && workspace.id === workspaceId)
-            setWorkspaceName(workspace.name);
-        })
-        .catch(() => undefined);
-      return () => request.abort();
-    }
-    void listAgentImages(request.signal)
-      .then((catalogue) => {
-        if (request.signal.aborted) return;
-        setImages([SYSTEM_IMAGE, ...catalogue.filter((image) => !image.retired)]);
-        setImagesError(undefined);
+    void client
+      .readWorkspace(workspaceId, { signal: request.signal })
+      .then((workspace) => {
+        if (!request.signal.aborted && workspace.id === workspaceId)
+          setWorkspaceName(workspace.name);
       })
-      .catch((error: unknown) => {
-        if (!request.signal.aborted) {
-          setImagesError(error instanceof Error ? error.message : 'Image choices are unavailable.');
-          setImages([SYSTEM_IMAGE]);
-        }
-      })
-      .finally(() => {
-        if (!request.signal.aborted) setImagesLoading(false);
-      });
+      .catch(() => undefined);
     return () => request.abort();
   }, [client, workspaceId]);
+  const repositoryUrl = repository.trim();
+  const repositoryValid = validRepository(repositoryUrl);
+  const valid = repositoryValid;
   const submit = () => {
+    if (!valid) return;
     const input: AgentLifecycleCreateInput = {
-      name: name.trim(),
-      ...(workspaceId !== undefined
-        ? { workspace_id: workspaceId }
-        : {
-            ...(selected.id === SYSTEM_IMAGE.id ? {} : { image: { id: selected.id } }),
-            ...(repository.trim() === '' ? {} : { repository: { url: repository.trim() } }),
-          }),
-      profile: {
-        model: model.trim() || undefined,
-        reasoning_effort: effort,
-        permission_mode: permission,
-        system_prompt: systemPrompt,
-        skills: skills.map(({ id, version }) => ({ id, version })),
-        ...(workspaceId === undefined ? { permissions: { services: scopes } } : {}),
-      },
+      name:
+        repositoryUrl === ''
+          ? 'New agent'
+          : new URL(repositoryUrl).pathname
+              .split('/')
+              .filter(Boolean)
+              .at(-1)!
+              .replace(/\.git$/, '')
+              .slice(0, 64),
+      ...(workspaceId === undefined ? {} : { workspace_id: workspaceId }),
+      ...(sandboxId === undefined ? {} : { sandbox_id: sandboxId }),
+      ...(repositoryUrl === '' ? {} : { repository: { url: repositoryUrl } }),
     };
     void lifecycle.submit(input);
   };
-  const validName =
-    name.trim().length > 0 &&
-    [...name.trim()].length <= 64 &&
-    new TextEncoder().encode(name.trim()).length <= 80 &&
-    ![...name].some(
-      (value) =>
-        value.charCodeAt(0) < 32 || (value.charCodeAt(0) >= 127 && value.charCodeAt(0) <= 159),
-    );
   return (
     <>
       <Modal
         open={connectionRequest === undefined}
         title="New agent"
         description={
-          workspaceId === undefined
-            ? 'Agent Manager provisions the sandbox, workspace and runtime from this request.'
-            : `Create an Agent in ${workspaceName ?? 'the selected workspace'} using its existing runtime image.`
+          workspaceId === undefined && sandboxId === undefined
+            ? 'Start an Agent in a new Sandbox with the CMA runtime and an empty workspace.'
+            : 'Start an Agent in this Sandbox with the CMA runtime.'
         }
         onClose={() => {
           if (operation?.status === 'succeeded' || operation?.status === 'failed')
@@ -139,277 +179,79 @@ export function AgentLifecycleCard({
         dismissible={!pending}
         placement="modal--wide"
         footer={
-          <>
-            {createdReceipt !== undefined ? (
-              <>
-                <Button
-                  onClick={() => {
-                    if (operation?.status === 'succeeded' || operation?.status === 'failed')
-                      lifecycle.clear();
-                    onClose();
-                  }}
-                >
-                  Close
-                </Button>
-                <Button
-                  variant="primary"
-                  disabled={operation?.status !== 'succeeded' || operation.agent_id === undefined}
-                  onClick={() => {
-                    if (
-                      operation?.status === 'succeeded' &&
-                      operation.agent_id &&
-                      lifecycle.clear()
-                    )
-                      onCreated({ ...createdReceipt, id: operation.agent_id, status: 'ready' });
-                  }}
-                >
-                  Open agent
-                </Button>
-              </>
-            ) : (
-              <>
-                <Button
-                  disabled={pending || lifecycle.intent !== undefined}
-                  onClick={() =>
-                    step === 'image' ? onClose() : setStep(step === 'review' ? 'profile' : 'image')
-                  }
-                >
-                  Back
-                </Button>
-                {step === 'review' || lifecycle.intent !== undefined ? (
-                  <Button
-                    variant="primary"
-                    disabled={pending || lifecycle.blocked || (!lifecycle.intent && !validName)}
-                    onClick={submit}
-                  >
-                    {pending
-                      ? 'Starting provisioning…'
-                      : lifecycle.intent
-                        ? 'Recover creation'
-                        : 'Create agent'}
-                  </Button>
-                ) : (
-                  <Button
-                    variant="primary"
-                    disabled={lifecycle.blocked || (step === 'image' ? !validName : false)}
-                    onClick={() => setStep(step === 'image' ? 'profile' : 'review')}
-                  >
-                    Continue
-                  </Button>
-                )}
-              </>
-            )}
-          </>
+          createdReceipt !== undefined ? (
+            <>
+              <Button
+                onClick={() => {
+                  if (operation?.status === 'succeeded' || operation?.status === 'failed')
+                    lifecycle.clear();
+                  onClose();
+                }}
+              >
+                Close
+              </Button>
+              <Button
+                variant="primary"
+                disabled={operation?.status !== 'succeeded' || operation.agent_id === undefined}
+                onClick={() => {
+                  if (operation?.status === 'succeeded' && operation.agent_id && lifecycle.clear())
+                    onCreated({ ...createdReceipt, id: operation.agent_id, status: 'ready' });
+                }}
+              >
+                Open agent
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button disabled={pending} onClick={onClose}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                disabled={pending || lifecycle.blocked || (!lifecycle.intent && !valid)}
+                onClick={lifecycle.intent ? () => void lifecycle.submit() : submit}
+              >
+                {pending
+                  ? 'Starting provisioning…'
+                  : lifecycle.intent
+                    ? 'Recover creation'
+                    : 'Create agent'}
+              </Button>
+            </>
+          )
         }
       >
         {createdReceipt !== undefined ? (
           <AgentProvisioningProgress receipt={createdReceipt} operation={operation} />
         ) : null}
         {createdReceipt === undefined && lifecycle.intent === undefined ? (
-          <ol className="agent-lifecycle-steps" aria-label="Agent provisioning steps">
-            {(['image', 'profile', 'review'] as const).map((item, index) => (
-              <li key={item} aria-current={step === item ? 'step' : undefined}>
-                <span>{index + 1}</span>{' '}
-                {item === 'image'
-                  ? workspaceId === undefined
-                    ? 'Image'
-                    : 'Workspace'
-                  : item === 'profile'
-                    ? 'Agent setup'
-                    : 'Review'}
-              </li>
-            ))}
-          </ol>
-        ) : null}
-        {createdReceipt === undefined && lifecycle.intent === undefined && step === 'image' ? (
           <div className="agent-lifecycle-step">
-            <div className="create-form__field">
-              <label htmlFor="agent-name">Agent name</label>
-              <Input
-                id="agent-name"
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-                maxLength={64}
-                aria-invalid={!validName || undefined}
-              />
-              <p className="profile-field__help">
-                A clear name helps you find this Agent in the navigation tree.
-              </p>
-            </div>
-            {workspaceId !== undefined ? (
-              <p role="status">
-                Workspace: {workspaceName ?? 'Selected workspace'}. This Agent uses the existing
-                Sandbox and workspace.
-              </p>
-            ) : (
-              <fieldset className="agent-lifecycle-choices">
-                <legend>Runtime image</legend>
-                <p className="profile-field__help">
-                  Image Manager provides private and public images. The system default is always
-                  available.
-                </p>
-                {imagesLoading ? <p role="status">Loading images…</p> : null}
-                {imagesError ? (
-                  <p role="status">{imagesError} Using the system default image.</p>
-                ) : null}
-                {images.map((image) => (
-                  <label key={image.id} className="agent-lifecycle-choice">
-                    <input
-                      type="radio"
-                      name="agent-image"
-                      value={image.id}
-                      checked={selectedImage === image.id}
-                      onChange={() => setSelectedImage(image.id)}
-                    />
-                    <span>
-                      <strong>{image.name}</strong>
-                      <small>
-                        {image.description ?? 'No description'}
-                        {image.id === SYSTEM_IMAGE.id
-                          ? ''
-                          : ` · ${imageVisibilityLabel(image.visibility)}`}
-                      </small>
-                    </span>
-                  </label>
-                ))}
-              </fieldset>
+            {targetPicker}
+            {workspaceId === undefined ? null : (
+              <p role="status">Existing Sandbox · {workspaceName ?? 'Selected workspace'}</p>
             )}
-          </div>
-        ) : null}
-        {createdReceipt === undefined && lifecycle.intent === undefined && step === 'profile' ? (
-          <div className="agent-lifecycle-step">
-            {workspaceId === undefined ? (
-              <div className="create-form__field">
-                <label htmlFor="agent-repository">GitHub repository workspace (optional)</label>
-                <Input
-                  id="agent-repository"
-                  type="url"
-                  placeholder="https://github.com/org/repository"
-                  value={repository}
-                  onChange={(event) => setRepository(event.target.value)}
-                />
-                <p className="profile-field__help">
-                  Agent Manager asks agent-sandbox to create the workspace directly from this
-                  repository.
+            <div className="create-form__field">
+              <label htmlFor="agent-repository">GitHub repository (optional)</label>
+              <Input
+                id="agent-repository"
+                type="url"
+                placeholder="https://github.com/org/repository"
+                value={repository}
+                onChange={(event) => setRepository(event.target.value)}
+                aria-invalid={!repositoryValid || undefined}
+                aria-describedby="agent-repository-help"
+              />
+              <p id="agent-repository-help" className="profile-field__help">
+                Your Agent receives this repository in its first message and prepares it in the
+                empty workspace. If authorization is needed, you’ll be prompted to connect your
+                account.
+              </p>
+              {repositoryValid ? null : (
+                <p className="create-error" role="alert">
+                  Enter an HTTPS GitHub repository URL.
                 </p>
-              </div>
-            ) : null}
-            <div className="agent-lifecycle-grid">
-              <label>
-                Model
-                <Input
-                  aria-label="Model"
-                  value={model}
-                  onChange={(event) => setModel(event.target.value)}
-                  placeholder="System default"
-                  maxLength={128}
-                />
-                <small>Leave empty to use the system default model.</small>
-              </label>
-              <label>
-                Reasoning effort
-                <select
-                  value={effort}
-                  onChange={(event) => setEffort(event.target.value as typeof effort)}
-                >
-                  {EFFORT_CHOICES.map((value) => (
-                    <option key={value} value={value}>
-                      {value}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Permission level
-                <select
-                  value={permission}
-                  onChange={(event) => setPermission(event.target.value as typeof permission)}
-                >
-                  <option value="guarded">Guarded</option>
-                  <option value="autonomous">Autonomous</option>
-                </select>
-              </label>
-            </div>
-            <label className="create-form__field">
-              System prompt
-              <textarea
-                className="profile-textarea"
-                rows={4}
-                value={systemPrompt}
-                onChange={(event) => setSystemPrompt(event.target.value)}
-                maxLength={32768}
-                placeholder="Optional instructions that stay with this Agent."
-              />
-            </label>
-            <fieldset className="agent-lifecycle-checks">
-              <legend>Agent key scope</legend>
-              {workspaceId !== undefined ? (
-                <p>This Agent inherits the existing Sandbox’s connected services and key scope.</p>
-              ) : (
-                <ServicePicker
-                  catalog={catalog}
-                  value={scopes}
-                  onChange={setScopes}
-                  disabled={pending}
-                />
               )}
-            </fieldset>
-            <fieldset className="agent-lifecycle-checks">
-              <legend>Skills</legend>
-              <SkillPicker
-                catalog={catalog}
-                value={skills}
-                onChange={setSkills}
-                disabled={pending}
-              />
-            </fieldset>
-          </div>
-        ) : null}
-        {createdReceipt === undefined && lifecycle.intent === undefined && step === 'review' ? (
-          <div className="agent-lifecycle-step agent-lifecycle-review">
-            <h3>Ready to provision</h3>
-            <dl>
-              <div>
-                <dt>Image</dt>
-                <dd>{workspaceId === undefined ? selected.name : 'Existing Sandbox image'}</dd>
-              </div>
-              <div>
-                <dt>Workspace</dt>
-                <dd>
-                  {workspaceId === undefined
-                    ? repository.trim() || 'Empty workspace'
-                    : (workspaceName ?? 'Selected workspace')}
-                </dd>
-              </div>
-              <div>
-                <dt>Agent setup</dt>
-                <dd>
-                  {model || 'System default'} · {effort} · {permission}
-                </dd>
-              </div>
-              <div>
-                <dt>Key scope</dt>
-                <dd>
-                  {workspaceId !== undefined
-                    ? 'Inherited from the existing Sandbox'
-                    : scopes.length === 0
-                      ? 'None selected'
-                      : scopes.join(', ')}
-                </dd>
-              </div>
-              <div>
-                <dt>Skills</dt>
-                <dd>
-                  {skills.length === 0
-                    ? 'None selected'
-                    : skills.map((skill) => skill.id).join(', ')}
-                </dd>
-              </div>
-            </dl>
-            <p className="profile-field__help">
-              Provisioning has three observable phases: Sandbox ready, workspace and runtime ready,
-              then Agent key scope ready.
-            </p>
+            </div>
           </div>
         ) : null}
         {lifecycle.intent && !createdReceipt ? (
