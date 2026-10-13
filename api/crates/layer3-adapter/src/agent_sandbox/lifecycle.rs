@@ -18,8 +18,15 @@ use std::time::Duration;
 
 impl AgentSandboxClient {
     async fn desired(&self, request: &ProviderSandboxRequest) -> Result<DynamicObject> {
-        let name = model::name(request)?;
-        let desired = model::desired(&self.config, request, &self.control_token(&name))?;
+        self.desired_at(request, &model::name(request)?).await
+    }
+
+    pub(super) async fn desired_at(
+        &self,
+        request: &ProviderSandboxRequest,
+        name: &str,
+    ) -> Result<DynamicObject> {
+        let desired = model::desired_at(&self.config, request, &self.control_token(name), name)?;
         for volume in &request.volumes {
             let claim = self
                 .claims
@@ -57,7 +64,7 @@ impl AgentSandboxClient {
         Ok(desired)
     }
 
-    fn matches(&self, actual: &DynamicObject, desired: &DynamicObject) -> Result<()> {
+    pub(super) fn matches(&self, actual: &DynamicObject, desired: &DynamicObject) -> Result<()> {
         self.owned(actual)?;
         if actual.name_any() != desired.name_any()
             || actual.metadata.deletion_timestamp.is_some()
@@ -110,7 +117,8 @@ impl AgentSandboxClient {
         runtime: &RuntimeHandle,
         request: &ProviderSandboxRequest,
     ) -> Result<Option<DynamicObject>> {
-        let desired = self.desired(request).await?;
+        let (name, _) = parse_handle(runtime)?;
+        let desired = self.desired_at(request, name).await?;
         let Some(actual) = self.get(runtime).await? else {
             return Ok(None);
         };

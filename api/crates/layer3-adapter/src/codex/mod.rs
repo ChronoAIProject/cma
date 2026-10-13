@@ -135,6 +135,26 @@ impl SandboxAdapter for CodexAdapter {
         self.hosted.provision(spec).await
     }
 
+    async fn teardown_retained_runtime(&self, handle: &RuntimeHandle) -> crate::Result<()> {
+        self.hosted.teardown_retained_runtime(handle).await
+    }
+    async fn suspend_runtime(&self, request: &RuntimeAdoptionRequest) -> crate::Result<()> {
+        self.hosted.suspend_runtime(request).await
+    }
+    async fn verify_suspended_runtime(
+        &self,
+        request: &RuntimeAdoptionRequest,
+    ) -> crate::Result<()> {
+        self.hosted.verify_suspended_runtime(request).await
+    }
+    async fn resume_runtime(
+        &self,
+        request: &RuntimeAdoptionRequest,
+        generation: u64,
+    ) -> crate::Result<RuntimeHandle> {
+        self.hosted.resume_runtime(request, generation).await
+    }
+
     async fn runtime_status(&self, handle: &RuntimeHandle) -> crate::Result<crate::RuntimeStatus> {
         self.hosted.runtime_status(handle).await
     }

@@ -93,7 +93,24 @@ impl SandboxWorker {
             generation,
             sandbox_spec(&sandbox, &self.config.deployment_id),
         );
-        let handle = match self.dependencies.adapter.provision_runtime(&request).await {
+        let provisioned = if let Some(binding) = sandbox.lifecycle.suspended_runtime.as_deref() {
+            match crate::sandbox::runtime_attachment::retained_runtime_request(
+                &sandbox,
+                binding,
+                &self.config.deployment_id,
+            ) {
+                Ok(retained) => {
+                    self.dependencies
+                        .adapter
+                        .resume_runtime(&retained, generation)
+                        .await
+                }
+                Err(error) => Err(error),
+            }
+        } else {
+            self.dependencies.adapter.provision_runtime(&request).await
+        };
+        let handle = match provisioned {
             Ok(handle) => handle,
             Err(error) => {
                 return self
@@ -432,6 +449,9 @@ pub(super) fn replacement_runtime_generation(
 }
 
 fn replacement_runtime_version(sandbox: &Sandbox, deployed: &str) -> String {
+    if let Some(binding) = &sandbox.lifecycle.suspended_runtime {
+        return binding.runtime_version.clone();
+    }
     match sandbox.lifecycle.operation.as_ref() {
         Some(SandboxLifecycleOperation::ImageRotation {
             target_runtime_version,

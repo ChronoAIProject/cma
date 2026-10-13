@@ -130,6 +130,7 @@ impl Sandbox {
         fence: u64,
         at: String,
     ) -> Result<(), SandboxModelError> {
+        self.validate_resumed_binding(&binding)?;
         if self.runtime.is_some()
             || !valid_runtime_binding(&binding, &at)
             || self
@@ -161,6 +162,7 @@ impl Sandbox {
                 _ => return Err(invalid_execution()),
             }
             next.runtime = Some(binding);
+            next.lifecycle.suspended_runtime = None;
             next.lifecycle.runtime_provision = None;
             Ok(())
         })
