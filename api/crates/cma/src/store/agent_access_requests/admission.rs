@@ -65,6 +65,7 @@ impl MongoSandboxStore {
         })
     }
 
+    #[cfg(test)]
     pub(crate) async fn agent_access_request(
         &self,
         id: &str,
