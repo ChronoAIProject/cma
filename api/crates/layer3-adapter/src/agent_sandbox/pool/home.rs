@@ -18,6 +18,8 @@ impl AgentSandboxPools {
     /// a claim-side adoption record; pending controller observation is retryable.
     /// Publish the returned attachment before using it to start an assigned runtime.
     pub async fn adopt_home(&self, original: &NativePoolClaim) -> Result<HomeVolumeAttachment> {
+        self.verify_explicit_network_policy(&original.request.pool)
+            .await?;
         if original.request.home.policy.is_native_vct() {
             return self.adopt_native_vct(original).await;
         }
@@ -211,11 +213,7 @@ impl AgentSandboxPools {
         }
         let original_config = model::binding_config(&self.config, &origin.claim.request.pool);
         let template = model::template(&original_config, &origin.claim.request.pool.spec)?;
-        let mut desired = template.data["spec"].clone();
-        desired
-            .as_object_mut()
-            .unwrap()
-            .remove("volumeClaimTemplatesPolicy");
+        let mut desired = model::sandbox_spec(&template, &origin.claim.request.pool);
         if model::contains(&member.data["spec"], &desired) {
             if member.data["spec"]["podTemplate"]["spec"]
                 .get("volumes")

@@ -150,6 +150,16 @@ impl AgentSandboxPools {
         Ok(())
     }
 
+    pub(crate) async fn verify_explicit_network_policy(
+        &self,
+        binding: &NativePoolBinding,
+    ) -> Result<()> {
+        if binding.pod_policy.template_network_policy.is_some() {
+            self.bound_resources(binding).await?;
+        }
+        Ok(())
+    }
+
     async fn verify_binding(&self, binding: &NativePoolBinding) -> Result<()> {
         self.bound_resources(binding).await?;
         self.verify_seed(&binding.spec.home).await
@@ -221,3 +231,6 @@ mod management_tests;
 
 #[cfg(test)]
 mod native_home_tests;
+
+#[cfg(test)]
+mod network_policy_tests;

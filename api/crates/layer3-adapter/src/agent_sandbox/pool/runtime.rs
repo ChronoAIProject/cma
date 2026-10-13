@@ -55,10 +55,7 @@ impl AgentSandboxPools {
         validate_request(&self.config.deployment, origin, &home, request)?;
         let config = model::binding_config(&self.config, &origin.claim.request.pool);
         let template = model::template(&config, &origin.claim.request.pool.spec)?;
-        let mut spec = template.data["spec"].clone();
-        spec.as_object_mut()
-            .unwrap()
-            .remove("volumeClaimTemplatesPolicy");
+        let mut spec = model::sandbox_spec(&template, &origin.claim.request.pool);
         if !origin.claim.request.home.policy.is_native_vct() {
             spec["volumeClaimTemplates"] = json!([]);
             spec["podTemplate"]["spec"]["volumes"] = super::home::explicit_volumes(origin)?;

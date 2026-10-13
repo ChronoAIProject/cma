@@ -13,6 +13,7 @@ pub struct AgentSandboxConfig {
     pub runtime_class: Option<String>,
     pub service_account: String,
     pub image_pull_secrets: Vec<String>,
+    pub template_network_policy: Option<super::NativeTemplateNetworkPolicy>,
     pub control_key: String,
 }
 
@@ -24,6 +25,7 @@ impl std::fmt::Debug for AgentSandboxConfig {
             .field("runtime_class", &self.runtime_class)
             .field("service_account", &self.service_account)
             .field("image_pull_secrets", &self.image_pull_secrets)
+            .field("template_network_policy", &self.template_network_policy)
             .field("control_key", &"<redacted>")
             .finish()
     }
@@ -31,6 +33,9 @@ impl std::fmt::Debug for AgentSandboxConfig {
 
 impl AgentSandboxConfig {
     pub fn validate(&self) -> Result<()> {
+        if let Some(policy) = &self.template_network_policy {
+            policy.validate()?;
+        }
         if !dns_label(&self.namespace)
             || !label_value(&self.deployment)
             || !dns_label(&self.service_account)
