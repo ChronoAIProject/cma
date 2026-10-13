@@ -82,8 +82,8 @@ pub use home_snapshot_view::{
     HomeSnapshotViewStore,
 };
 pub use home_volume::{
-    HomeVolumeAttachment, HomeVolumePolicy, HomeVolumeReceipt, HomeVolumeRequest, HomeVolumeScope,
-    HomeVolumeStore,
+    HomeVolumeAttachment, HomeVolumeMode, HomeVolumePolicy, HomeVolumeReceipt, HomeVolumeRequest,
+    HomeVolumeScope, HomeVolumeStore,
 };
 pub use home_volume_router::RoutedHomeVolumes;
 pub use prompt_identity::PromptIdentity;

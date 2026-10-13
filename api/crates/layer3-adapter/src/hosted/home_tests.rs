@@ -15,6 +15,7 @@ fn attachment() -> HomeVolumeAttachment {
         volume_id: "home-fixture".into(),
         sandbox_id: "sandbox-fixture".into(),
         policy: HomeVolumePolicy {
+            mode: Default::default(),
             storage_class: "storage".into(),
             capacity_gib: 64,
             template_name: "seed".into(),
@@ -22,6 +23,7 @@ fn attachment() -> HomeVolumeAttachment {
         },
     };
     let receipt = HomeVolumeReceipt {
+        native_authority: None,
         volume_id: request.volume_id.clone(),
         request_sha256: request.computed_sha256(),
         storage_reference: "home-one".into(),

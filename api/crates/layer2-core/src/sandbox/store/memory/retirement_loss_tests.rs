@@ -52,6 +52,7 @@ async fn retirement_loss_stops_agents_atomically_without_revival_or_losing_histo
                 let mut home = SandboxHome::reserve(
                     &original.id,
                     HomeVolumePolicy {
+                        mode: Default::default(),
                         storage_class: "storage".into(),
                         capacity_gib: 64,
                         template_name: "empty".into(),
@@ -60,6 +61,7 @@ async fn retirement_loss_stops_agents_atomically_without_revival_or_losing_histo
                 )
                 .unwrap();
                 home.bind(HomeVolumeReceipt {
+                    native_authority: None,
                     volume_id: home.request.volume_id.clone(),
                     request_sha256: home.request.computed_sha256(),
                     storage_reference: "original-disk".into(),

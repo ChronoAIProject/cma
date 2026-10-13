@@ -32,19 +32,21 @@ impl AgentSandboxClient {
             .get(&first.pvc.claim_name)
             .await
             .map_err(api_error)?;
-        let Some(encoded) = volume.annotations().get(NATIVE_HOME_ANNOTATION) else {
+        let Some(origin) = self.pools.volume_origin(&volume).await? else {
             return Ok(None);
         };
-        let origin: NativePoolHomeOrigin =
-            serde_json::from_str(encoded).map_err(|_| rejected("invalid native home origin"))?;
-        let home = HomeVolumeAttachment {
-            request: origin.claim.request.home.clone(),
-            receipt: crate::provider::PersistentHomeVolumes::native_home_receipt(
-                &self.config.namespace,
-                &self.config.deployment,
-                &origin.claim.request.home,
-                &volume,
-            )?,
+        let home = if origin.claim.request.home.policy.is_native_vct() {
+            self.pools.native_attachment(&origin, &volume)?
+        } else {
+            HomeVolumeAttachment {
+                request: origin.claim.request.home.clone(),
+                receipt: crate::provider::PersistentHomeVolumes::native_home_receipt(
+                    &self.config.namespace,
+                    &self.config.deployment,
+                    &origin.claim.request.home,
+                    &volume,
+                )?,
+            }
         };
         if request.metadata.get("cma/home-identity") != Some(&home.identity()?) {
             return Err(rejected(

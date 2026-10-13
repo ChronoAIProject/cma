@@ -14,6 +14,9 @@ impl AgentSandboxPools {
         &self,
         original: &NativePoolClaim,
     ) -> Result<Option<HomeVolumeAttachment>> {
+        if original.request.home.policy.is_native_vct() {
+            return self.recover_native_vct(original).await;
+        }
         let desired = model::claim(&self.config, &original.request)?;
         if original.name != desired.name_any() || !super::super::model::dns_label(&original.uid) {
             return Err(rejected("native claim receipt is invalid"));

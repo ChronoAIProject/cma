@@ -23,12 +23,12 @@ pub use connection::{
 };
 pub(crate) use model::{handle, parse_handle};
 pub use model::{AgentSandboxConfig, PodBinding};
-pub use pool::NativePoolHomeOrigin;
 pub use pool::NativePoolPodPolicy;
 pub use pool::{
     AgentSandboxPools, NativePoolBinding, NativePoolClaim, NativePoolClaimRequest, NativePoolSpec,
     NativePoolStatus,
 };
+pub use pool::{NativeHomeVolumes, NativePoolHomeOrigin};
 pub use pool::{NativePoolCleanup, NativePoolMember};
 pub use pool::{NativePoolConfiguration, NativePoolControl};
 pub(crate) use pool::{NATIVE_HOME_ANNOTATION, NATIVE_HOME_REQUEST_LABEL};

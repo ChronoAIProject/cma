@@ -48,7 +48,10 @@ pub(super) fn validate_scope(namespace: &str, controller: &str) -> Result<()> {
 }
 
 pub(super) fn validate_policy(policy: &HomeVolumePolicy) -> Result<()> {
-    if !dns_name(&policy.storage_class, 253) || !dns_name(&policy.template_name, 253) {
+    if policy.is_native_vct()
+        || !dns_name(&policy.storage_class, 253)
+        || !dns_name(&policy.template_name, 253)
+    {
         return Err(invalid());
     }
     Ok(())
@@ -144,6 +147,7 @@ pub(super) fn validate_claim(
         return Err(invalid());
     }
     Ok(HomeVolumeReceipt {
+        native_authority: None,
         volume_id: request.volume_id.clone(),
         request_sha256: request.computed_sha256(),
         storage_reference: desired.metadata.name.ok_or_else(invalid)?,

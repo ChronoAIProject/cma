@@ -30,6 +30,7 @@ impl Store {
         let attachment = HomeVolumeAttachment {
             request: request.clone(),
             receipt: HomeVolumeReceipt {
+                native_authority: None,
                 volume_id: request.volume_id.clone(),
                 request_sha256: request.computed_sha256(),
                 storage_reference: name.into(),
@@ -149,6 +150,7 @@ impl HomeVolumeStore for Store {
 }
 fn policy(name: &str) -> HomeVolumePolicy {
     HomeVolumePolicy {
+        mode: Default::default(),
         storage_class: format!("{name}-storage"),
         capacity_gib: 16,
         template_name: format!("{name}-seed"),
