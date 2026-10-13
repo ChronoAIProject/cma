@@ -37,6 +37,7 @@ enum Mode {
     StallBeforeReady,
     InvalidReady,
     BufferedExit,
+    BufferedHistoryExit,
 }
 
 #[derive(Default)]
@@ -316,6 +317,30 @@ async fn serve_forwarder(
         error.extend_from_slice(detail.as_bytes());
         let _ = ws.send(Message::Binary(error)).await;
         while ws.next().await.is_some_and(|value| value.is_ok()) {}
+        return;
+    }
+    if matches!(mode, Mode::BufferedHistoryExit) {
+        let mut request = Vec::new();
+        while !request.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+            let Some(Ok(Message::Binary(bytes))) = ws.next().await else {
+                panic!("history request was not delivered");
+            };
+            assert_eq!(bytes[0], 0);
+            request.extend_from_slice(&bytes[1..]);
+        }
+        let request = String::from_utf8(request).unwrap();
+        assert!(request.starts_with("GET /runtime/agents/agent-a/history "));
+        state.requests.lock().unwrap().push(request);
+        let body = "{\"history\":\"".to_owned() + &"x".repeat(48 * 1024) + "\"}\n";
+        let mut response = vec![1];
+        response.extend_from_slice(format!("HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes());
+        // Flush the complete finite response and successful exec exit together.
+        // The HTTP consumer must drain stdout even if the exit is already ready.
+        ws.feed(Message::Binary(response)).await.unwrap();
+        ws.feed(Message::Binary(b"\x03{\"status\":\"Success\"}".to_vec()))
+            .await
+            .unwrap();
+        ws.flush().await.unwrap();
         return;
     }
     let (runtime, forward) = tokio::io::duplex(64 * 1024);
@@ -763,6 +788,27 @@ async fn native_exec_success_status_preserves_buffered_stdout_and_refuses_writes
     stream.read_to_end(&mut bytes).await.unwrap();
     assert_eq!(bytes, b"buffered-response");
     assert!(fixture.state.requests.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn native_exec_history_drains_large_buffered_response_after_successful_exit() {
+    let fixture = Fixture::start(
+        Mode::BufferedHistoryExit,
+        NativeRuntimeTransport::KubernetesExec,
+    )
+    .await;
+    let expected = "{\"history\":\"".to_owned() + &"x".repeat(48 * 1024) + "\"}\n";
+    for _ in 0..8 {
+        let history = fixture
+            .transport
+            .export_agent_history(&handle(), &AgentSlot::new("agent-a"))
+            .await
+            .unwrap();
+        assert_eq!(history, expected.as_bytes());
+    }
+    fixture.drained().await;
+    assert_eq!(fixture.state.opened.load(Ordering::SeqCst), 8);
+    assert_eq!(fixture.state.requests.lock().unwrap().len(), 8);
 }
 
 #[tokio::test]
