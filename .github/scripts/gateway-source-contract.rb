@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "yaml"
+require "json"
 
 module GatewaySourceContract
   def self.documents(path)
@@ -95,7 +96,18 @@ module GatewaySourceContract
   def self.check(root)
     validate(expected.keys.to_h { |path| [path, documents(File.join(root, path))] })
     config = documents(File.join(root, "infra/cmaeg/configmap.yaml")).first
+    validate_provider_origin(config)
+  end
+
+  def self.validate_provider_origin(config)
     raise "Existing ChannelPointer record authority must survive the service rename" unless config.dig("data", "CMAEG_CMA_BASE_URL") == "http://cma-api.chrono-bot.svc"
+    data = config.fetch("data")
+    providers = JSON.parse(data.fetch("CMAEG_PROVIDERS")).select { |provider| provider["slug"] == "cma_codex" }
+    # The provider client selects its CMA service bearer by exact origin.
+    # A DNS alias that reaches the same Pods still falls back to the Agent key.
+    unless providers.length == 1 && providers.first["base_url"] == data.fetch("CMAEG_CMA_BASE_URL")
+      raise "CMA provider origin must equal CMAEG_CMA_BASE_URL for service authentication"
+    end
   end
 end
 
