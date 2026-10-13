@@ -1,3 +1,14 @@
+import {
+  readAgentSettings,
+  changeAgentSettings,
+  type UpdateAgentSettingsRequest,
+} from './agents/settings.js';
+import {
+  listAgentAccessRequests,
+  approveAgentAccess,
+  denyAgentAccess,
+  type ApproveAgentAccessRequest,
+} from './agents/access-requests.js';
 import type { ResolvedConfig } from './config.js';
 import { requestVoid, type OperationOptions } from './http.js';
 import { ProtocolError } from './errors.js';
@@ -79,6 +90,33 @@ export interface AgentProvenanceInventoryOptions extends AccessibleAgentListOpti
 /** Public Agent REST commands and durable read projections. */
 export class Agents {
   constructor(private readonly config: ResolvedConfig) {}
+
+  /** Read desired runtime settings and their confirmation state. */
+  settings(id: string, options: OperationOptions = {}) {
+    return readAgentSettings(this.config, id, options);
+  }
+  /** Update an idle Agent; preserve body and key when retrying uncertain replies. */
+  updateSettings(id: string, body: UpdateAgentSettingsRequest, options: CommandOptions) {
+    return changeAgentSettings(this.config, id, body, options);
+  }
+
+  /** Read durable owner-visible service requests without granting access. */
+  accessRequests(id: string, options: OperationOptions = {}) {
+    return listAgentAccessRequests(this.config, id, options);
+  }
+  /** Approve an exact selection; retry uncertain replies with the original body and key. */
+  approveAccessRequest(
+    id: string,
+    requestId: string,
+    body: ApproveAgentAccessRequest,
+    options: CommandOptions,
+  ) {
+    return approveAgentAccess(this.config, id, requestId, body, options);
+  }
+  /** Explicitly deny this request using a stable command key. */
+  denyAccessRequest(id: string, requestId: string, options: CommandOptions) {
+    return denyAgentAccess(this.config, id, requestId, options);
+  }
 
   /** Admit or resume the exact same inline request with its original idempotency key. */
   createLifecycle(body: AgentLifecycleCreateRequest, options: CommandOptions) {

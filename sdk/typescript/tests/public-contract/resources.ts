@@ -3,6 +3,19 @@ import type { AgentProvenanceInventoryOptions } from '../../src/agents.js';
 import type { AccessibleSandboxListOptions } from '../../src/sandboxes.js';
 
 export const resourceDispatch: Record<string, Dispatch> = {
+  'GET /api/v1/agents/{id}/access-requests': ({ client, param }) =>
+    client.agents.accessRequests(param('id')),
+  'POST /api/v1/agents/{id}/access-requests/{request_id}/approve': ({
+    client,
+    param,
+    body,
+    command,
+  }) => client.agents.approveAccessRequest(param('id'), param('request_id'), body, command),
+  'POST /api/v1/agents/{id}/access-requests/{request_id}/deny': ({ client, param, command }) =>
+    client.agents.denyAccessRequest(param('id'), param('request_id'), command),
+  'GET /api/v1/agents/{id}/settings': ({ client, param }) => client.agents.settings(param('id')),
+  'PATCH /api/v1/agents/{id}/settings': ({ client, param, body, command }) =>
+    client.agents.updateSettings(param('id'), body, command),
   'POST /api/v1/agents': ({ client, body, command }) =>
     client.agents.createLifecycle(body, command),
   'GET /api/v1/agent-lifecycle/{id}': ({ client, param }) =>

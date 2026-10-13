@@ -3,6 +3,7 @@ import type { ContractCase } from './context.js';
 import { browserOperations } from './navigation.js';
 
 export const localCodes = new Map([
+  ['settings-state-agent-invalid-input', 'invalid_agent_request'],
   ['gateway-connection-list-invalid-query', 'invalid_query'],
   ['gateway-connection-delete-invalid-query', 'invalid_query'],
   ['queued-cancellation-v2-invalid-revision', 'invalid_queued_cancellation_request'],
@@ -105,6 +106,13 @@ export function expectation(
 ): 'wire' | 'preflight-validation' | 'serializer-protection' | 'browser-only' | 'raw-wire-only' {
   if (browserOperations.has(fixture.operation)) return 'browser-only';
   const body = problemBody(fixture);
+  if (fixture.id === 'agent-access-deny-invalid-json') {
+    assert.equal(fixture.operation, 'POST /api/v1/agents/{id}/access-requests/{request_id}/deny');
+    assert.equal(body.code, 'invalid_json');
+    assert.throws(() => JSON.parse(fixture.request.rawBody!));
+    // Denial exposes no body argument and always serializes the empty object.
+    return 'raw-wire-only';
+  }
   if (['authoring-skills-unknown-query', 'authoring-skills-duplicate-query'].includes(fixture.id)) {
     assert.equal(fixture.operation, 'GET /api/v1/profile-authoring/skills');
     assert.equal(body.code, 'invalid_profile_authoring_query');

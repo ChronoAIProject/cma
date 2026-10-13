@@ -7,11 +7,14 @@ use crate::{
 };
 use reqwest::{Method, StatusCode};
 
+mod access_requests;
+pub use access_requests::*;
 mod artifacts;
 mod channel_usage;
 mod events;
 mod lifecycle;
 mod provenance;
+mod settings;
 mod shared;
 mod types;
 pub use artifacts::*;
@@ -19,6 +22,7 @@ pub use channel_usage::*;
 pub use events::*;
 pub use lifecycle::*;
 pub use provenance::*;
+pub use settings::*;
 pub use shared::*;
 pub use types::*;
 

@@ -17,6 +17,9 @@ pub struct AgentLifecycleCreateRequest {
     /// Existing owned Workspace; inherits its image, repository and Sandbox scope.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_id: Option<String>,
+    /// Existing owned Sandbox; creates an empty workspace for the new Agent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sandbox_id: Option<String>,
     /// Image Manager catalogue selection.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub image: Option<AgentLifecycleImage>,

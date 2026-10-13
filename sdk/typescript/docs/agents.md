@@ -333,3 +333,51 @@ older servers. Personal ownership reports only whether the current caller owns
 the resource; organization ownership supplies an ID for matching the caller's
 current organization choices. Use the resource's current capabilities to display
 access levels. Organization membership alone does not establish resource permissions.
+
+## Live settings
+
+`agents.settings(agentId)` reads the owner's desired `model`, `reasoning_effort`,
+`permission_mode` and `pending`. `agents.updateSettings(agentId, body,
+{ idempotencyKey })` supplies all three settings for an idle Agent. Retain the
+exact body and key when an HTTP reply is uncertain. `pending: true` records
+accepted desired settings; read again until runtime acknowledgement clears
+`pending` before treating them as applied. The immutable creation profile is
+preserved.
+
+## Service access decisions
+
+`agents.accessRequests(agentId)` returns `{ items }` for the authenticated owner.
+Each request has an `id`, exact `agent_id`, `services`, `reason` and durable `status`.
+`approveAccessRequest` sends the owner's explicit service selection with a stable
+idempotency key. `denyAccessRequest` sends an explicit denial with its own key.
+Services contain 1–32 ASCII identifiers of 1–128 characters using letters, digits,
+hyphens and underscores. Authentication and current ownership are checked by the
+service; the SDK does not infer approval from an Agent message.
+
+```ts
+import { createClient } from '@chronoai/cma-sdk';
+
+export async function approveServices(
+  agentId: string,
+  requestId: string,
+  services: string[],
+  decisionKey: string,
+) {
+  const cma = createClient();
+  return cma.agents.approveAccessRequest(
+    agentId,
+    requestId,
+    { services },
+    { idempotencyKey: decisionKey },
+  );
+}
+```
+
+Retry an uncertain decision with the unchanged body and original key. The durable
+service returns current progress on replay. `connecting` includes
+`connection.target = { type: 'agent_access_request', id: requestId }` for the
+owner's connection flow. `applying` means runtime verification is pending;
+only `succeeded` confirms applied access. Read the list again after a connection
+return. `denied` and `failed` are terminal outcomes; an optional `error` supplies
+safe failure detail. SDK validation rejects crossed Agent/request identities,
+inconsistent connection targets, and duplicate list IDs.
