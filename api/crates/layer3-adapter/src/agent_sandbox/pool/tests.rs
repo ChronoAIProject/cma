@@ -55,6 +55,10 @@ async fn pool_prewarms_independent_seeded_disks_without_tenant_identity_and_repl
     assert!(!pool.observed);
     assert_eq!(pool.ready_replicas, 0);
     let template = fixture.row("sandboxtemplates", &pool.binding.template_name);
+    assert_eq!(
+        template["spec"]["podTemplate"]["spec"]["automountServiceAccountToken"],
+        false
+    );
     let container = &template["spec"]["podTemplate"]["spec"]["containers"][0];
     assert_eq!(
         container["command"],

@@ -64,7 +64,7 @@ from the remaining application activation steps.
 | Native authorization | Fresh CMA Pod metadata token confirms Sandbox get, Claim create, PVC get, and `pods/exec` get/create; PVC create/patch remain denied | VCT integration passes native adapter tests. Verify live allocation with the final image; PVC writes and snapshot reads are not required for new empty native homes |
 | Native persistent home | Installed templates support `volumeClaimTemplates`; the controller creates and owns each member's PVC | New native homes use an empty VCT volume initialized by the pinned CMA runtime image. Validate suspend/resume and deletion through the controller; a mandatory seed snapshot is a superseded implementation choice |
 | Runtime network path | `chrono-pod-default` selects all remote Pods and admits ingress only on TCP 8080 from local `sandbox-router` Pods; no `sandbox-router` namespace is deployed | Infra must provide a runtime path before live acceptance. Current CMA discovery connects directly to Pod IP TCP 9090 for authenticated HTTP and WebSocket. Kubernetes API access alone does not satisfy this requirement |
-| Runtime ServiceAccount and storage | Remote namespace has `default` and `chrono-cma`, but no `cma-runtime`; default StorageClass is `standard-rwo`, and `home-a` also exists | Select a runtime identity with API token automount disabled and explicitly configure native storage class/capacity. Do not assume the control-plane identity belongs in user runtimes. Live RWOP provisioning remains unverified |
+| Runtime ServiceAccount and storage | Remote namespace has `default` and `chrono-cma`, but no `cma-runtime`; default StorageClass is `standard-rwo`, and `home-a` also exists | Select an existing runtime identity and explicitly configure native storage class/capacity. CMA disables API token automount in the Pod template independently of the ServiceAccount default. Do not assume the control-plane identity belongs in user runtimes. Live RWOP provisioning remains unverified |
 | Shared MongoDB | Existing `chrono-bot` credentials have been copied to and verified in the canonical application Secrets; original Secrets are retained | Select each service's shared-schema mode and run only its own migration/startup initialization |
 | Existing Event Gateway feature settings | Live `cmaeg` has Console and Media enabled, `cma_codex` non-human/media providers and `gpt-transcribe` STT settings, with optional STT/console Secret refs and a 32 MiB in-memory media volume | The controlled Gateway integration restores live source `976e8773` Console/Media/STT code while retaining independent Mongo and portal authentication. Gateway/Core 1,556 tests, strict Clippy and the authenticated Mongo Console/media/portal composition contract pass locally. Keep the old deployment and Secrets until the final integrated source passes native CI and image gates, all three record domains are migrated, and the replacement passes real Console/media/consumer acceptance; empty STT URL and FFmpeg directory preserve the live disabled transcription/transform settings |
 | Image Manager build identity (deferred) | Lookups for the single `cma-image-manager` Google service account returned 404; current operator IAM tests did not grant account creation, policy changes or Cloud Build submission | Does not block the current Agent Manager/Event Gateway rollout. Infra provisions this identity and the permissions below before later Image Manager activation |
@@ -202,11 +202,11 @@ do not confer authority in the remote cluster. Infra must provide a separate
 remote identity and namespaced authorization in the assigned native namespace.
 Validate the actual remote principal's grants; do not apply the northeast
 application manifests to southeast as a substitute. The table below describes
-the **current implementation**, not the minimum permissions intrinsic to
+the **current preflight grant set**, not the minimum permissions intrinsic to
 agent-sandbox. PVC/snapshot and exec rows are under CMA-side simplification;
 they are not an outstanding request for infra to extend its Role:
 
-| API/resource | Required verbs | Purpose |
+| API/resource | Checked verbs | Purpose |
 |---|---|---|
 | `agents.x-k8s.io/sandboxes` | get, list, create, patch, delete | Provision, observe, suspend, resume and retire |
 | `extensions.agents.x-k8s.io/{sandboxtemplates,sandboxwarmpools,sandboxclaims}` | get, list, create, patch, delete | Native pool administration and claims |
@@ -215,10 +215,21 @@ they are not an outstanding request for infra to extend its Role:
 | core `pods/exec` | get, create | kube-rs WebSocket assignment over stdin |
 | `snapshot.storage.k8s.io/volumesnapshots` | get only for legacy snapshot-seeded home mode | Verify a historically pinned initialized seed; not used for new empty native homes |
 
+For new empty native homes, the adapter currently emits PVC get/list, Pod list,
+and a WebSocket GET to `pods/exec`. Pod get and exec create are conservative
+preflight grants beyond those emitted requests; the pinned kube-rs client uses
+GET for assignment. The operator preflight also reads the configured
+ServiceAccount and StorageClass, but CMA's runtime adapter does not need those
+read permissions. No direct PV, Secret or ConfigMap calls are part of this path.
+
 The checked-in local Role retains permissions needed by previous OpenSandbox and
 storage cleanup paths. Native controllers own runtime Pod creation/deletion;
 runtime workloads use `CHRONO_AGENT_SANDBOX_SERVICE_ACCOUNT` (default
-`cma-runtime`) in the remote namespace with automatic API tokens disabled. Registry
+`cma-runtime`) in the remote namespace. CMA sets
+`spec.automountServiceAccountToken: false` in every runtime Pod template; this
+overrides the ServiceAccount default, so an unset or true ServiceAccount field
+does not fail preflight. Verify the admitted Pod retains that explicit false
+setting during activation. Registry
 pull identity needs reader access to each selected immutable image; this is
 separate from the Image Manager workload/build identity. Configure
 `CHRONO_AGENT_SANDBOX_IMAGE_PULL_SECRETS` only if the node's registry identity
@@ -268,6 +279,11 @@ Sandbox and PVC. Delete retires the Claim/Sandbox and waits for controller GC
 of the original PVC and Pod; CMA never issues a direct PVC delete for this mode.
 CSI must support `ReadWriteOncePod`. Verify the runtime image pin includes the
 initializer as well as runtime pool assignment support before rollout.
+The production preflight checks that the chosen StorageClass exists and uses
+GKE PD CSI. That check does not prove live RWOP provisioning or scheduling;
+those remain activation acceptance checks. The Pod/PVC templates require RWOP,
+while the GKE provisioner choice is a production check rather than an inherent
+requirement of the agent-sandbox API.
 
 Historical four-field native home overrides still select `legacy_snapshot`;
 `CHRONO_AGENT_SANDBOX_HOME_MODE=legacy_snapshot` makes that choice explicit.
@@ -536,7 +552,8 @@ node .github/scripts/agent-sandbox-preflight.mjs \
 
 This script reads `cma-agent-manager` configuration and Deployment overrides
 only from the CMA context, then checks native API
-schemas, ServiceAccount token isolation, the effective seed and storage class
+schemas, the configured runtime ServiceAccount's existence and non-deletion,
+the effective seed and storage class
 in the runtime context. It checks the configured native namespace and remote
 API origin against the selected runtime cluster and performs namespaced
 authorization checks as the explicit remote principal. It does not read Secrets
