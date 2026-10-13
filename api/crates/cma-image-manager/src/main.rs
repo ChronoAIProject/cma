@@ -42,7 +42,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         schema::migrate(&database).await?;
         return Ok(());
     }
-    let store = Store::open(database.clone()).await?;
+    let authority = cma_service_auth::mongodb_authority::MongoAuthorityMode::from_env(
+        CMA_IM_MONGODB_AUTHORITY_MODE,
+    )?;
+    let store = Store::open_with_authority(database.clone(), authority).await?;
     let issuer = required(CMA_IM_NYXID_ISSUER)?;
     let auth = NyxIdAuth::new(
         &issuer,

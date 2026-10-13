@@ -327,7 +327,7 @@ mod tests {
     }
     #[test]
     fn accepts_only_the_exact_build_source_destination_and_identity() {
-        let (executor, build) = fixture();
+        let (executor, mut build) = fixture();
         let mut response = executor.request(&build).unwrap();
         response["id"] = json!(uuid::Uuid::new_v4());
         response["status"] = json!("SUCCESS");
@@ -349,7 +349,24 @@ mod tests {
                 "accepted changed {field}"
             );
         }
-        assert!(build.destination().starts_with(REGISTRY));
+        let registry = "asia-southeast1-docker.pkg.dev/chronoai-501608/chrono-pod";
+        assert_eq!(
+            response["images"][0],
+            format!("{registry}/{}:{}", build.image_id, build.id)
+        );
+        let mut wrong_registry = response.clone();
+        wrong_registry["results"]["images"][0]["name"] =
+            json!(format!("elsewhere.invalid/{}:{}", build.image_id, build.id));
+        assert!(executor.observation(&build, &wrong_registry).is_err());
+        build.digest = result.digest;
+        assert_eq!(
+            build.reference(),
+            Some(format!(
+                "{registry}/{}@sha256:{}",
+                build.image_id,
+                "b".repeat(64)
+            ))
+        );
     }
     #[test]
     fn source_paths_cannot_inject_build_flags_or_escape_checkout() {

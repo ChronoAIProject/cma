@@ -11,6 +11,7 @@ use crate::{
 
 fn attachment() -> HomeVolumeAttachment {
     let request = HomeVolumeRequest {
+        scope: None,
         volume_id: "home-fixture".into(),
         sandbox_id: "sandbox-fixture".into(),
         policy: HomeVolumePolicy {

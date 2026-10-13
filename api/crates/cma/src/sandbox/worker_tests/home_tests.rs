@@ -16,6 +16,7 @@ pub(super) fn home_policy() -> HomeVolumePolicy {
 pub(super) struct Homes {
     authority: Arc<InMemorySandboxStore>,
     backend: InMemoryHostedBackend,
+    scope: layer3_adapter::HomeVolumeScope,
     disks: Mutex<BTreeMap<String, HomeVolumeAttachment>>,
     prepare_calls: AtomicUsize,
     lose_response: AtomicBool,
@@ -26,7 +27,15 @@ pub(super) struct Homes {
 
 impl Homes {
     pub(super) fn new(harness: &Harness) -> Arc<Self> {
+        Self::for_cluster(harness, "local")
+    }
+    fn for_cluster(harness: &Harness, cluster: &str) -> Arc<Self> {
         Arc::new(Self {
+            scope: layer3_adapter::HomeVolumeScope::from_authority(
+                "kubernetes-pvc-v1",
+                &[cluster, "runtime", "deployment"],
+            )
+            .unwrap(),
             authority: harness.store.clone(),
             backend: harness.backend.clone(),
             disks: Mutex::new(BTreeMap::new()),
@@ -41,6 +50,9 @@ impl Homes {
 
 #[async_trait::async_trait]
 impl HomeVolumeStore for Homes {
+    fn allocation_scope(&self) -> Option<layer3_adapter::HomeVolumeScope> {
+        Some(self.scope.clone())
+    }
     async fn inventory(&self) -> layer3_adapter::Result<Vec<HomeVolumeAttachment>> {
         Ok(self.disks.lock().unwrap().values().cloned().collect())
     }
@@ -154,10 +166,18 @@ pub(super) fn adapter(harness: &Harness, homes: Arc<Homes>) -> Arc<dyn SandboxAd
 }
 
 pub(super) fn worker(harness: &Harness, homes: Arc<Homes>, holder: &str) -> Arc<SandboxWorker> {
+    worker_with_adapter(harness, adapter(harness, homes), holder)
+}
+
+fn worker_with_adapter(
+    harness: &Harness,
+    adapter: Arc<dyn SandboxAdapter>,
+    holder: &str,
+) -> Arc<SandboxWorker> {
     SandboxWorker::new(
         SandboxWorkerDependencies {
             store: harness.store.clone(),
-            adapter: adapter(harness, homes),
+            adapter,
             credentials: harness.credentials.clone(),
             workspaces: Arc::new(WorkspaceRecorder {
                 actions: harness.actions.clone(),
@@ -376,3 +396,6 @@ async fn control_plane_restart_adopts_exact_persistent_process_and_status_failur
     assert_eq!(harness.stored(&created.id).await, active);
     assert_eq!(harness.adapter.runtime_inventory().await.unwrap().len(), 1);
 }
+
+#[path = "home_routing_tests.rs"]
+mod routing;

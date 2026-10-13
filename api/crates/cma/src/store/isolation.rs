@@ -206,14 +206,38 @@ pub(crate) fn validate(status: &Document, database: &str) -> Result<(), StoreErr
     }
     Ok(())
 }
+#[cfg(test)]
 pub(crate) async fn verify(database: &Database) -> Result<(), StoreError> {
+    verify_with_authority(
+        database,
+        cma_service_auth::mongodb_authority::MongoAuthorityMode::Isolated,
+    )
+    .await
+}
+
+pub(crate) async fn verify_with_authority(
+    database: &Database,
+    authority: cma_service_auth::mongodb_authority::MongoAuthorityMode,
+) -> Result<(), StoreError> {
     let status = database
         .run_command(doc! {"connectionStatus":1,"showPrivileges":true})
         .await
         .map_err(|_| {
             StoreError::Unavailable("cannot verify Agent Manager schema authority".into())
         })?;
-    validate(&status, database.name())
+    match authority {
+        cma_service_auth::mongodb_authority::MongoAuthorityMode::Isolated => {
+            validate(&status, database.name())
+        }
+        cma_service_auth::mongodb_authority::MongoAuthorityMode::SharedSchema => {
+            cma_service_auth::mongodb_authority::verify_shared_schema(
+                &status,
+                database.name(),
+                &role(database.name()),
+            )
+            .map_err(|error| StoreError::Unavailable(error.into()))
+        }
+    }
 }
 #[cfg(test)]
 #[path = "agent_lifecycle_contract.rs"]
@@ -224,6 +248,9 @@ mod lifecycle_children_contract;
 #[cfg(test)]
 #[path = "profile_internal_contract.rs"]
 mod profile_internal_contract;
+#[cfg(test)]
+#[path = "shared_schema_contract.rs"]
+mod shared_schema_contract;
 #[cfg(test)]
 mod tests {
     use super::*;

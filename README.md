@@ -42,13 +42,18 @@ Agent configuration and skills live in per-Agent homes, not globally.
 | `infra/` | Fixed Dockerfile and Kubernetes manifest inventory; kept aligned with code. |
 | `docs/` | Public contracts, design authority, operations and evidence. |
 
-The proposed three-service refactor is recorded in
-[CMA Service Split](./docs/CMA_Service_Split.md), with separate
-[NyxID, database, and frontend boundaries](./docs/CMA_Service_Isolation.md),
+The three application services are `cma-agent-manager`, `cma-event-gateway`
+and `cma-image-manager`, exposed through the Agent Manager, Event Gateway and
+Image Manager portals. See [CMA Service Split](./docs/CMA_Service_Split.md),
+[NyxID, schema, and frontend boundaries](./docs/CMA_Service_Isolation.md),
 [Agent Manager API](./docs/CMA_Agent_Manager_API.md), and
-[Sandbox Manager API](./docs/CMA_Sandbox_Manager_API.md).
-These are design drafts; the architecture and interfaces described above remain
-the currently implemented system.
+[deployment readiness](./docs/CMA_Deployment_Readiness.md).
+
+The Kubernetes workload and canonical Service names use these service names.
+Legacy DNS aliases `cma-api` and `cmaeg` preserve existing sealed ChannelPointer
+authorities and retained internal callers during deployment. The image repository
+names `cma-api`/`cma-cmaeg`, source directories and credential service identities
+remain compatible; stored pointers are not rewritten by the rename.
 
 ## Local Development
 

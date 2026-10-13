@@ -1,8 +1,8 @@
 //! Explicit offline transfer; the gateway never receives legacy DB credentials.
-use super::RecordError;
+use super::{RecordError, RecordKind};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use mongodb::{
-    bson::{doc, spec::BinarySubtype, Binary, Document},
+    bson::{doc, spec::BinarySubtype, Binary, DateTime, Document},
     options::{Acknowledgment, CollectionOptions, ReadConcern, WriteConcern},
     Database,
 };
@@ -12,12 +12,16 @@ use std::io::{BufRead, BufReader, Read};
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct LegacyRecord {
+    #[serde(default)]
+    kind: RecordKind,
     record_id: String,
     owner: String,
     version: String,
     blob: String,
+    #[serde(default)]
+    expires_at: Option<i64>,
 }
-fn decode(line: &str) -> Result<Document, RecordError> {
+fn decode(line: &str) -> Result<(RecordKind, Document), RecordError> {
     let bad = || RecordError::Rejected("invalid legacy record export".into());
     let record: LegacyRecord = serde_json::from_str(line).map_err(|_| bad())?;
     let id = uuid::Uuid::parse_str(&record.record_id).map_err(|_| bad())?;
@@ -32,9 +36,18 @@ fn decode(line: &str) -> Result<Document, RecordError> {
     {
         return Err(bad());
     }
-    Ok(
-        doc! {"_id":record.record_id,"owner":record.owner,"version":version,"schema_version":1_i32,"blob":Binary{subtype:BinarySubtype::Generic,bytes}},
-    )
+    let mut document = doc! {"_id":record.record_id,"owner":record.owner,"version":version,"schema_version":1_i32,"blob":Binary{subtype:BinarySubtype::Generic,bytes}};
+    match (record.kind, record.expires_at) {
+        (RecordKind::Interaction, Some(expiry)) if expiry > 0 => {
+            document.insert(
+                "expires_at",
+                DateTime::from_millis(expiry.checked_mul(1000).ok_or_else(bad)?),
+            );
+        }
+        (RecordKind::Channel | RecordKind::Connection, None) => (),
+        _ => return Err(bad()),
+    }
+    Ok((record.kind, document))
 }
 pub async fn import(db: &Database, path: &std::path::Path) -> Result<u64, RecordError> {
     let file = std::fs::File::open(path)
@@ -44,7 +57,6 @@ pub async fn import(db: &Database, path: &std::path::Path) -> Result<u64, Record
         .read_concern(ReadConcern::majority())
         .write_concern(WriteConcern::builder().w(Acknowledgment::Majority).build())
         .build();
-    let records = db.collection_with_options::<Document>(super::mongo::RECORDS, options);
     let mut count = 0;
     loop {
         let mut line = String::new();
@@ -60,7 +72,16 @@ pub async fn import(db: &Database, path: &std::path::Path) -> Result<u64, Record
                 "record export row exceeds limit".into(),
             ));
         }
-        let desired = decode(&line)?;
+        let (kind, desired) = decode(&line)?;
+        if desired
+            .get_datetime("expires_at")
+            .is_ok_and(|expiry| *expiry <= DateTime::now())
+        {
+            // Expired legacy interactions are already logically absent.
+            count += 1;
+            continue;
+        }
+        let records = db.collection_with_options::<Document>(kind.collection(), options.clone());
         let query = doc! {"_id":desired.get_str("_id").map_err(|_| RecordError::Rejected("invalid record ID".into()))?};
         // Restart-safe insert only. Never overwrite an independently mutated row.
         let result = records

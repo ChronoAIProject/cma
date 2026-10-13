@@ -1,20 +1,24 @@
 //! Gateway-owned sealed record persistence. No Agent Manager collections.
-use super::{RecordError, RecordHead, RecordValue};
+use super::{RecordError, RecordHead, RecordKind, RecordValue};
 use futures_util::TryStreamExt;
 use mongodb::{
-    bson::{doc, spec::BinarySubtype, Binary, Document},
+    bson::{doc, spec::BinarySubtype, Binary, DateTime, Document},
     options::{Acknowledgment, ReadConcern, ReturnDocument, WriteConcern},
     Collection, Database,
 };
 use serde::{Deserialize, Serialize};
 
 pub const RECORDS: &str = "eg_channel_records";
+pub const CONNECTIONS: &str = "eg_connection_records";
+pub const INTERACTIONS: &str = "eg_interaction_records";
 pub const MIGRATIONS: &str = "eg_schema_migrations";
 pub const SESSIONS: &str = "eg_auth_sessions";
+pub const COLLECTIONS: &[&str] = &[RECORDS, CONNECTIONS, INTERACTIONS, MIGRATIONS, SESSIONS];
 #[derive(Clone, Debug)]
 pub struct MongoRecords {
     db: Database,
     records: Collection<Record>,
+    kind: RecordKind,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -25,22 +29,54 @@ struct Record {
     blob: Binary,
     version: i64,
     schema_version: i32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    expires_at: Option<DateTime>,
 }
 
 impl MongoRecords {
     pub async fn open(db: Database) -> Result<Self, RecordError> {
-        verify(&db).await?;
+        Self::open_with_authority(
+            db,
+            cma_service_auth::mongodb_authority::MongoAuthorityMode::Isolated,
+        )
+        .await
+    }
+    pub async fn open_with_authority(
+        db: Database,
+        authority: cma_service_auth::mongodb_authority::MongoAuthorityMode,
+    ) -> Result<Self, RecordError> {
+        verify_with_authority(&db, authority).await?;
         let options = mongodb::options::CollectionOptions::builder()
             .read_concern(ReadConcern::majority())
             .write_concern(WriteConcern::builder().w(Acknowledgment::Majority).build())
             .build();
         Ok(Self {
             records: db.collection_with_options(RECORDS, options),
+            kind: RecordKind::Channel,
             db,
         })
     }
     pub async fn reachable(&self) -> bool {
         self.db.run_command(doc! {"ping":1}).await.is_ok()
+    }
+    pub fn for_kind(&self, kind: RecordKind) -> Self {
+        Self {
+            db: self.db.clone(),
+            records: self.db.collection_with_options(
+                kind.collection(),
+                mongodb::options::CollectionOptions::builder()
+                    .read_concern(ReadConcern::majority())
+                    .write_concern(WriteConcern::builder().w(Acknowledgment::Majority).build())
+                    .build(),
+            ),
+            kind,
+        }
+    }
+    fn live(&self, mut filter: Document) -> Document {
+        if self.kind == RecordKind::Interaction {
+            filter.insert("expires_at", doc! {"$gt":DateTime::now()});
+        }
+        filter
     }
     pub async fn put(
         &self,
@@ -49,9 +85,29 @@ impl MongoRecords {
         blob: &[u8],
         expected: Option<u64>,
     ) -> Result<u64, RecordError> {
+        self.put_expiring(id, owner, blob, expected, None).await
+    }
+    pub async fn put_expiring(
+        &self,
+        id: &str,
+        owner: &str,
+        blob: &[u8],
+        expected: Option<u64>,
+        expires_at: Option<i64>,
+    ) -> Result<u64, RecordError> {
         if owner.is_empty() || owner.len() > 512 || blob.is_empty() || blob.len() > 65536 {
             return Err(RecordError::Rejected("invalid record".into()));
         }
+        let expiry = match (self.kind, expires_at) {
+            (RecordKind::Interaction, Some(seconds))
+                if seconds > DateTime::now().timestamp_millis() / 1000
+                    && seconds <= DateTime::now().timestamp_millis() / 1000 + 7 * 24 * 60 * 60 =>
+            {
+                Some(DateTime::from_millis(seconds.checked_mul(1000).ok_or_else(|| RecordError::Rejected("invalid interaction expiry".into()))?))
+            }
+            (RecordKind::Channel | RecordKind::Connection, None) => None,
+            _ => return Err(RecordError::Rejected("interaction expiry must be in the next seven days and only interactions may expire".into())),
+        };
         let binary = Binary {
             subtype: BinarySubtype::Generic,
             bytes: blob.to_vec(),
@@ -59,10 +115,17 @@ impl MongoRecords {
         if let Some(version) = expected {
             let version = i64::try_from(version)
                 .map_err(|_| RecordError::Rejected("invalid record revision".into()))?;
+            if version < 1 || version == i64::MAX {
+                return Err(RecordError::Rejected("invalid record revision".into()));
+            }
+            let mut filter = doc! {"_id":id,"owner":owner,"version":version};
+            if let Some(expiry) = expiry {
+                filter.insert("expires_at", doc! {"$gt":DateTime::now(),"$eq":expiry});
+            }
             let row = self
                 .records
                 .find_one_and_update(
-                    doc! {"_id":id,"owner":owner,"version":version},
+                    filter,
                     doc! {"$set":{"blob":binary},"$inc":{"version":1_i64}},
                 )
                 .return_document(ReturnDocument::After)
@@ -79,6 +142,7 @@ impl MongoRecords {
             blob: binary,
             version: 1,
             schema_version: 1,
+            expires_at: expiry,
         };
         match self.records.insert_one(&row).await {
             Ok(_) => Ok(1),
@@ -100,7 +164,7 @@ impl MongoRecords {
     pub async fn get(&self, id: &str) -> Result<RecordValue, RecordError> {
         let row = self
             .records
-            .find_one(doc! {"_id":id})
+            .find_one(self.live(doc! {"_id":id}))
             .await
             .map_err(failure)?
             .ok_or(RecordError::NotFound)?;
@@ -114,7 +178,7 @@ impl MongoRecords {
             i64::try_from(expected).map_err(|_| RecordError::Rejected("invalid version".into()))?;
         if self
             .records
-            .delete_one(doc! {"_id":id,"version":version})
+            .delete_one(self.live(doc! {"_id":id,"version":version}))
             .await
             .map_err(failure)?
             .deleted_count
@@ -124,7 +188,7 @@ impl MongoRecords {
         }
         if self
             .records
-            .find_one(doc! {"_id":id})
+            .find_one(self.live(doc! {"_id":id}))
             .await
             .map_err(failure)?
             .is_none()
@@ -142,7 +206,7 @@ impl MongoRecords {
         if !(1..=1000).contains(&limit) {
             return Err(RecordError::Rejected("invalid page size".into()));
         }
-        let mut filter = doc! {};
+        let mut filter = self.live(doc! {});
         if let Some(owner) = owner {
             filter.insert("owner", owner);
         }
@@ -184,113 +248,6 @@ fn failure(_: mongodb::error::Error) -> RecordError {
     RecordError::Unavailable("gateway database operation failed".into())
 }
 
-pub fn role(database: &str, migration: bool) -> Document {
-    let grants:Vec<_>=[RECORDS,MIGRATIONS,SESSIONS].iter().map(|name|doc!{
-        "resource":{"db":database,"collection":*name},
-        "actions":if migration {vec!["find","insert","update","createCollection","collMod","createIndex","listIndexes"]} else if *name==MIGRATIONS {vec!["find"]} else {vec!["find","insert","update","remove"]}
-    }).collect();
-    doc! {"createRole":if migration {"cma_eg_migrator"}else{"cma_eg_runtime"},"privileges":grants,"roles":[]}
-}
-pub async fn verify(db: &Database) -> Result<(), RecordError> {
-    let invalid = || RecordError::Rejected("gateway database credential is not isolated".into());
-    let status = db
-        .run_command(doc! {"connectionStatus":1,"showPrivileges":true})
-        .await
-        .map_err(failure)?;
-    let info = status.get_document("authInfo").map_err(|_| invalid())?;
-    if info
-        .get_array("authenticatedUsers")
-        .map_err(|_| invalid())?
-        .len()
-        != 1
-    {
-        return Err(invalid());
-    }
-    let mut grants =
-        std::collections::BTreeMap::<String, std::collections::BTreeSet<String>>::new();
-    for grant in info
-        .get_array("authenticatedUserPrivileges")
-        .map_err(|_| invalid())?
-    {
-        let grant = grant.as_document().ok_or_else(&invalid)?;
-        let resource = grant.get_document("resource").map_err(|_| invalid())?;
-        let collection = resource.get_str("collection").map_err(|_| invalid())?;
-        if resource.len() != 2
-            || resource.get_str("db").ok() != Some(db.name())
-            || ![RECORDS, MIGRATIONS, SESSIONS].contains(&collection)
-        {
-            return Err(invalid());
-        }
-        for action in grant.get_array("actions").map_err(|_| invalid())? {
-            let action = action.as_str().ok_or_else(&invalid)?;
-            let allowed = if collection != MIGRATIONS {
-                &["find", "insert", "update", "remove"][..]
-            } else {
-                &["find"][..]
-            };
-            if !allowed.contains(&action) {
-                return Err(invalid());
-            }
-            grants
-                .entry(collection.into())
-                .or_default()
-                .insert(action.into());
-        }
-    }
-    if !["find", "insert", "update", "remove"]
-        .iter()
-        .all(|a| grants.get(RECORDS).is_some_and(|s| s.contains(*a)))
-        || !grants.get(MIGRATIONS).is_some_and(|s| s.contains("find"))
-    {
-        return Err(invalid());
-    }
-    if !["find", "insert", "update", "remove"]
-        .iter()
-        .all(|a| grants.get(SESSIONS).is_some_and(|s| s.contains(*a)))
-    {
-        return Err(invalid());
-    }
-    let marker = db
-        .collection::<Document>(MIGRATIONS)
-        .find_one(doc! {"_id":"schema","version":1})
-        .await
-        .map_err(failure)?;
-    if marker.is_none() {
-        return Err(RecordError::Unavailable(
-            "gateway schema migration required".into(),
-        ));
-    }
-    Ok(())
-}
-pub async fn migrate(db: &Database) -> Result<(), RecordError> {
-    cma_service_auth::browser::migrate(db, SESSIONS)
-        .await
-        .map_err(failure)?;
-    let record_validator = doc! {"$jsonSchema":{"bsonType":"object","additionalProperties":false,"required":["_id","owner","blob","version","schema_version"],"properties":{
-    "_id":{"bsonType":"string"},"owner":{"bsonType":"string","minLength":1,"maxLength":512},"blob":{"bsonType":"binData"},"version":{"bsonType":"long","minimum":1},"schema_version":{"enum":[1]}}}};
-    for (name, validator) in [
-        (RECORDS, record_validator),
-        (
-            MIGRATIONS,
-            doc! {"$jsonSchema":{"bsonType":"object","additionalProperties":false,"required":["_id","version"],"properties":{"_id":{"enum":["schema"]},"version":{"enum":[1]}}}},
-        ),
-    ] {
-        match db.run_command(doc!{"create":name,"validator":validator.clone(),"validationLevel":"strict","validationAction":"error"}).await{
-            Ok(_)=>{},Err(error) if matches!(error.kind.as_ref(),mongodb::error::ErrorKind::Command(c) if c.code==48)=>{db.run_command(doc!{"collMod":name,"validator":validator,"validationLevel":"strict","validationAction":"error"}).await.map_err(failure)?;},Err(error)=>return Err(failure(error)),
-        }
-    }
-    db.collection::<Document>(RECORDS)
-        .create_index(
-            mongodb::IndexModel::builder()
-                .keys(doc! {"owner":1,"_id":1})
-                .build(),
-        )
-        .await
-        .map_err(failure)?;
-    db.collection::<Document>(MIGRATIONS)
-        .update_one(doc! {"_id":"schema"}, doc! {"$set":{"version":1}})
-        .upsert(true)
-        .await
-        .map_err(failure)?;
-    Ok(())
-}
+#[path = "mongo_schema.rs"]
+mod schema;
+pub use schema::{migrate, role, verify, verify_with_authority};

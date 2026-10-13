@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { nativeResources, preflight, productionContext, validateCrd, validateSeed } from './agent-sandbox-preflight.mjs';
+import { homePolicy, nativeResources, preflight, productionContext, productionRuntimeContext, validateCrd, validateSeed } from './agent-sandbox-preflight.mjs';
 
 function crd([plural, group, fields]) {
   const spec = Object.fromEntries(fields.map((field) => [field, { type: 'object' }]));
@@ -53,25 +53,55 @@ test('home seed preflight rejects replacement, deletion, unready and missing ini
   }
 });
 
-function fixture(fail = () => false) {
+const legacyConfig = {
+  CHRONO_SANDBOX_NAMESPACE: 'chrono-bot',
+  CHRONO_SANDBOX_HOME_TEMPLATE: 'home-seed', CHRONO_SANDBOX_HOME_TEMPLATE_UID: 'original-seed',
+  CHRONO_SANDBOX_HOME_STORAGE_CLASS: 'cma-home-v1', CHRONO_SANDBOX_HOME_CAPACITY_GIB: '64',
+  CHRONO_AGENT_SANDBOX_SERVICE_ACCOUNT: 'cma-runtime',
+};
+const remoteOptions = {
+  runtimeContext: productionRuntimeContext, runtimeNamespace: 'native-cma',
+  runtimePrincipal: 'system:serviceaccount:native-cma:cma-controller',
+};
+const remoteConfig = {
+  ...legacyConfig,
+  CHRONO_AGENT_SANDBOX_NAMESPACE: remoteOptions.runtimeNamespace,
+  CHRONO_AGENT_SANDBOX_API_SERVER: 'https://runtime.invalid',
+  CHRONO_AGENT_SANDBOX_CA_FILE: '/var/run/native/ca.crt',
+  CHRONO_AGENT_SANDBOX_TOKEN_FILE: '/var/run/native/token',
+  CHRONO_AGENT_SANDBOX_HOME_TEMPLATE: 'remote-seed', CHRONO_AGENT_SANDBOX_HOME_TEMPLATE_UID: 'original-seed',
+  CHRONO_AGENT_SANDBOX_HOME_STORAGE_CLASS: 'remote-disk', CHRONO_AGENT_SANDBOX_HOME_CAPACITY_GIB: '32',
+};
+
+function fixture(fail = () => false, config = legacyConfig, options = {}, deploymentEnv = [], extraConfigMaps = {}) {
   const calls = [];
   return { calls, command(args) {
     calls.push(args);
-    assert.deepEqual(args.slice(0, 5), ['--context', productionContext, '--namespace', 'chrono-bot', '--request-timeout=10s']);
-    const [operation, kind, name] = args.slice(5);
     if (fail(args)) throw new Error('sensitive raw cluster detail');
+    if (args[2] === 'config') {
+      assert.deepEqual(args, ['--context', options.runtimeContext, 'config', 'view', '--minify', '-o', 'jsonpath={.clusters[0].cluster.server}']);
+      return 'https://runtime.invalid';
+    }
+    const [operation, kind, name] = args.slice(5);
+    const control = operation === 'get' && ['configmap', 'deployment'].includes(kind);
+    const context = control ? productionContext : options.runtimeContext ?? productionContext;
+    const namespace = control ? 'chrono-bot' : options.runtimeNamespace ?? 'chrono-bot';
+    assert.deepEqual(args.slice(0, 5), ['--context', context, '--namespace', namespace, '--request-timeout=10s']);
     if (operation === 'auth') {
       assert.equal(kind, 'can-i');
-      assert.deepEqual(args.slice(-2), ['--as', 'system:serviceaccount:chrono-bot:chrono-bot-ksa']);
+      assert.deepEqual(args.slice(-2), ['--as', options.runtimePrincipal ?? 'system:serviceaccount:chrono-bot:chrono-bot-ksa']);
       return 'yes\n';
     }
     assert.equal(operation, 'get');
     assert.deepEqual(args.slice(-2), ['-o', 'json']);
     if (kind === 'customresourcedefinition') return JSON.stringify(crd(nativeResources.find(([plural, group]) => name === `${plural}.${group}`)));
-    if (kind === 'configmap') return JSON.stringify({ data: {
-      CHRONO_SANDBOX_HOME_TEMPLATE: 'home-seed', CHRONO_SANDBOX_HOME_TEMPLATE_UID: 'original-seed',
-      CHRONO_SANDBOX_HOME_STORAGE_CLASS: 'cma-home-v1', CHRONO_AGENT_SANDBOX_SERVICE_ACCOUNT: 'cma-runtime',
-    } });
+    if (kind === 'configmap') {
+      if (name === 'cma-agent-manager') return JSON.stringify({ data: config });
+      if (extraConfigMaps[name]) return JSON.stringify({ data: extraConfigMaps[name] });
+      assert.ok(args.includes('--ignore-not-found'));
+      return '';
+    }
+    if (kind === 'deployment') return JSON.stringify({ spec: { template: { spec: { containers: [{ name: 'api', env: deploymentEnv }] } } } });
     if (kind === 'serviceaccount') return JSON.stringify({ automountServiceAccountToken: false });
     if (kind === 'storageclass') return JSON.stringify({ provisioner: 'pd.csi.storage.gke.io' });
     assert.equal(kind, 'volumesnapshots.snapshot.storage.k8s.io');
@@ -95,7 +125,76 @@ test('missing APIs or denied rights fail readiness with bounded static diagnosti
   assert.equal(result.passed, false);
   assert.equal(result.checks.filter((value) => !value.passed).length, 6);
   assert.ok(!JSON.stringify(result).includes('sensitive raw'));
-  for (const options of [{ context: '--all' }, { namespace: '../other' }, { serviceAccount: 'bad name' }]) {
+  for (const options of [
+    { context: '--all' }, { namespace: '../other' }, { serviceAccount: 'bad name' },
+    { runtimeContext: '--all' }, { runtimeNamespace: '../other' }, { runtimePrincipal: 'bad name' },
+    { runtimeContext: productionRuntimeContext },
+  ]) {
     assert.throws(() => preflight(options, () => { throw new Error('must not execute'); }));
   }
+});
+
+test('two-cluster preflight reads CMA config locally and native resources and authority remotely', () => {
+  const { calls, command } = fixture(() => false, remoteConfig, remoteOptions);
+  const result = preflight(remoteOptions, command);
+  assert.equal(result.passed, true);
+  assert.equal(result.runtimeContext, productionRuntimeContext);
+  assert.equal(result.runtimeNamespace, remoteOptions.runtimeNamespace);
+  assert.equal(result.runtimePrincipal, remoteOptions.runtimePrincipal);
+  assert.equal(calls.filter((args) => args[1] === productionContext).length, 2);
+  assert.ok(calls.some((args) => args[6] === 'volumesnapshots.snapshot.storage.k8s.io' && args[7] === 'remote-seed'));
+  assert.ok(calls.some((args) => args[6] === 'storageclass' && args[7] === 'remote-disk'));
+  assert.ok(calls.every((args) => !args.includes('secrets')));
+});
+
+test('native storage overrides are complete and legacy storage stays the default', () => {
+  assert.equal(homePolicy(legacyConfig).template, 'home-seed');
+  assert.equal(homePolicy(remoteConfig).template, 'remote-seed');
+  for (const field of ['STORAGE_CLASS', 'CAPACITY_GIB', 'TEMPLATE', 'TEMPLATE_UID']) {
+    assert.throws(() => homePolicy({ ...remoteConfig, [`CHRONO_AGENT_SANDBOX_HOME_${field}`]: '' }));
+  }
+  for (const capacity of ['0', '1025', '1.5', 'not-a-number']) {
+    assert.throws(() => homePolicy({ ...remoteConfig, CHRONO_AGENT_SANDBOX_HOME_CAPACITY_GIB: capacity }));
+  }
+});
+
+test('remote connection and namespace must match actual deployment configuration', () => {
+  for (const change of [
+    { CHRONO_AGENT_SANDBOX_NAMESPACE: 'other-cma' },
+    { CHRONO_AGENT_SANDBOX_TOKEN_FILE: '' },
+    { CHRONO_AGENT_SANDBOX_API_SERVER: 'https://other.invalid' },
+    { CHRONO_AGENT_SANDBOX_CA_FILE: 'relative/ca.crt' },
+  ]) {
+    const { command } = fixture(() => false, { ...remoteConfig, ...change }, remoteOptions);
+    assert.equal(preflight(remoteOptions, command).passed, false);
+  }
+});
+
+test('legacy seed fallback is checked in the actual native cluster and cannot pass on local seed existence', () => {
+  const config = { ...remoteConfig };
+  for (const field of ['STORAGE_CLASS', 'CAPACITY_GIB', 'TEMPLATE', 'TEMPLATE_UID']) delete config[`CHRONO_AGENT_SANDBOX_HOME_${field}`];
+  const { command, calls } = fixture((args) => args[6] === 'volumesnapshots.snapshot.storage.k8s.io' && args[7] === 'home-seed', config, remoteOptions);
+  const result = preflight(remoteOptions, command);
+  assert.equal(result.passed, false);
+  assert.deepEqual(result.checks.filter((check) => !check.passed).map((check) => check.name), ['ready retained-home seed and storage class']);
+  assert.ok(calls.some((args) => args[1] === productionRuntimeContext && args[7] === 'home-seed'));
+});
+
+test('Deployment ConfigMap overrides resolve metadata auth from the control cluster only', () => {
+  const config = { ...remoteConfig, CHRONO_AGENT_SANDBOX_API_SERVER: '', CHRONO_AGENT_SANDBOX_NAMESPACE: '', CHRONO_AGENT_SANDBOX_AUTH_MODE: 'google-metadata', CHRONO_AGENT_SANDBOX_TOKEN_FILE: '' };
+  const env = ['API_SERVER', 'NAMESPACE', 'CA_FILE'].map((field) => ({ name: `CHRONO_AGENT_SANDBOX_${field}`, valueFrom: { configMapKeyRef: { name: 'chrono-pod-configmap', key: `CHRONO_POD_${field}`, optional: true } } }));
+  const extra = { 'chrono-pod-configmap': { CHRONO_POD_API_SERVER: 'https://runtime.invalid', CHRONO_POD_NAMESPACE: remoteOptions.runtimeNamespace, CHRONO_POD_CA_FILE: '/etc/chrono-pod/ca.crt', CHRONO_POD_WARM_POOL: 'unowned-pool', 'ca.crt': 'not-read-by-preflight' } };
+  const { command, calls } = fixture(() => false, config, remoteOptions, env, extra);
+  assert.equal(preflight(remoteOptions, command).passed, true);
+  assert.equal(calls.filter((args) => args[6] === 'configmap' && args[7] === 'chrono-pod-configmap').length, 1);
+  assert.ok(calls.filter((args) => args[6] === 'configmap').every((args) => args[1] === productionContext));
+  assert.equal(preflight(remoteOptions, fixture(() => false, config, remoteOptions, env).command).passed, false);
+  assert.equal(preflight(remoteOptions, fixture(() => false, { ...config, CHRONO_AGENT_SANDBOX_TOKEN_FILE: '/unexpected/token' }, remoteOptions, env, extra).command).passed, false);
+});
+
+test('native Secret environment inputs fail without reading Secret values', () => {
+  const env = [{ name: 'CHRONO_AGENT_SANDBOX_API_SERVER', valueFrom: { secretKeyRef: { name: 'untrusted', key: 'server' } } }];
+  const { command, calls } = fixture(() => false, remoteConfig, remoteOptions, env);
+  assert.equal(preflight(remoteOptions, command).passed, false);
+  assert.ok(calls.every((args) => !args.includes('secret') && !args.includes('secrets')));
 });

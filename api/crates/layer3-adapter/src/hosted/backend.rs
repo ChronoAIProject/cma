@@ -37,8 +37,36 @@ pub trait HostedAgentRuntime: Send + Sync {
 /// Provider lifecycle and supervisor transport used by a hosted adapter.
 #[async_trait::async_trait]
 pub trait HostedBackend: Send + Sync {
+    async fn reserve_home_request(
+        &self,
+        _runtime: &ProviderSandboxRequest,
+        home: &crate::HomeVolumeRequest,
+    ) -> Result<crate::HomeVolumeRequest> {
+        Ok(home.clone())
+    }
+    async fn verify_home_route(
+        &self,
+        _runtime: &ProviderSandboxRequest,
+        _home: &crate::HomeVolumeRequest,
+    ) -> Result<()> {
+        Ok(())
+    }
+    fn verify_retained_home_route(
+        &self,
+        _handle: &RuntimeHandle,
+        _home: &crate::HomeVolumeRequest,
+    ) -> Result<()> {
+        Ok(())
+    }
     fn native_pools(&self) -> Option<&dyn crate::agent_sandbox::NativePoolControl> {
         None
+    }
+    /// Resolve pool authority from the durable home before claim recovery or cleanup.
+    fn native_pools_for_home(
+        &self,
+        _home: &crate::HomeVolumeRequest,
+    ) -> Result<Option<&dyn crate::agent_sandbox::NativePoolControl>> {
+        Ok(self.native_pools())
     }
     async fn select_native_pool(
         &self,

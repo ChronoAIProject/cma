@@ -116,11 +116,32 @@ pub fn validate_runtime_privileges(reply: &Document, database: &str) -> Result<(
 }
 
 pub async fn verify_runtime(db: &Database) -> Result<(), SchemaError> {
-    validate_runtime_privileges(
-        &db.run_command(doc! {"connectionStatus":1,"showPrivileges":true})
-            .await?,
-        db.name(),
-    )?;
+    verify_runtime_with_authority(
+        db,
+        cma_service_auth::mongodb_authority::MongoAuthorityMode::Isolated,
+    )
+    .await
+}
+pub async fn verify_runtime_with_authority(
+    db: &Database,
+    authority: cma_service_auth::mongodb_authority::MongoAuthorityMode,
+) -> Result<(), SchemaError> {
+    let status = db
+        .run_command(doc! {"connectionStatus":1,"showPrivileges":true})
+        .await?;
+    match authority {
+        cma_service_auth::mongodb_authority::MongoAuthorityMode::Isolated => {
+            validate_runtime_privileges(&status, db.name())?
+        }
+        cma_service_auth::mongodb_authority::MongoAuthorityMode::SharedSchema => {
+            cma_service_auth::mongodb_authority::verify_shared_schema(
+                &status,
+                db.name(),
+                &runtime_role(db.name()),
+            )
+            .map_err(|_| SchemaError::Isolation)?;
+        }
+    }
     let marker = db
         .collection::<Document>(MIGRATIONS)
         .find_one(doc! {"_id":"schema"})

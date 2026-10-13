@@ -16,9 +16,9 @@ pub(super) async fn production_adapter(
         .await
         .map_err(|_| "runtime routing database unavailable")?;
     let runtime_database = routing_client.database(&config.mongodb_database);
-    crate::store::isolation::verify(&runtime_database)
+    crate::store::isolation::verify_with_authority(&runtime_database, config.mongodb_authority)
         .await
-        .map_err(|error| format!("runtime database authority is not isolated: {error}"))?;
+        .map_err(|error| format!("runtime database authority is not usable: {error}"))?;
     let routing = crate::store::runtime_routing::MongoRuntimeRouting::open(
         &runtime_database,
         &config.deployment_id,
@@ -30,6 +30,7 @@ pub(super) async fn production_adapter(
         agent_sandbox: None,
         opensandbox: None,
         allocate_agent_sandbox: config.runtime.allocate_agent_sandbox,
+        home_routes: None,
     };
     if !config.runtime.allocate_agent_sandbox || config.runtime.retain_opensandbox {
         let reclaimer =
@@ -54,10 +55,44 @@ pub(super) async fn production_adapter(
                 .map_err(|e| e.to_string())?,
         ));
     }
+    let mut native_homes = None;
+    let separate_native = config.runtime.agent_sandbox_connection.is_some()
+        || config
+            .runtime
+            .agent_sandbox
+            .as_ref()
+            .is_some_and(|settings| settings.namespace != config.runtime.sandbox_namespace);
     if let Some(settings) = &config.runtime.agent_sandbox {
-        let client = layer3_adapter::agent_sandbox::AgentSandboxClient::infer(settings.clone())
-            .await
-            .map_err(|e| e.to_string())?;
+        let connection = layer3_adapter::agent_sandbox::resolve_kubernetes_connection(
+            config.runtime.agent_sandbox_connection.as_ref(),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+        if separate_native {
+            if let Some(policy) = &config.runtime.agent_sandbox_home_policy {
+                let homes = layer3_adapter::provider::PersistentHomeVolumes::namespaced(
+                    connection.client.clone(),
+                    &settings.namespace,
+                    &config.deployment_id,
+                    &connection.authority,
+                )
+                .map_err(|e| e.to_string())?;
+                homes
+                    .preflight(policy)
+                    .await
+                    .map_err(|e| format!("native home seed is not usable: {e}"))?;
+                native_homes = Some((
+                    Arc::new(homes) as Arc<dyn layer3_adapter::HomeVolumeStore>,
+                    policy.clone(),
+                ));
+            }
+        }
+        let client = layer3_adapter::agent_sandbox::AgentSandboxClient::new(
+            connection.client,
+            settings.clone(),
+            &connection.authority,
+        )
+        .map_err(|e| e.to_string())?;
         client
             .inventory()
             .await
@@ -69,6 +104,31 @@ pub(super) async fn production_adapter(
             client,
             Arc::new(transport),
         )));
+    }
+    let mut home_store: Option<Arc<dyn layer3_adapter::HomeVolumeStore>> = None;
+    let mut local_homes = None;
+    if let Some(policy) = &config.runtime.home_policy {
+        let homes = layer3_adapter::provider::PersistentHomeVolumes::infer_namespaced(
+            &config.runtime.sandbox_namespace,
+            &config.deployment_id,
+        )
+        .await
+        .map_err(|e| format!("durable home authority is not usable: {e}"))?;
+        homes
+            .preflight(policy)
+            .await
+            .map_err(|e| format!("durable home seed is not usable: {e}"))?;
+        let homes = Arc::new(homes) as Arc<dyn layer3_adapter::HomeVolumeStore>;
+        home_store = Some(homes.clone());
+        local_homes = Some((homes, policy.clone()));
+    }
+    if separate_native && (local_homes.is_some() || native_homes.is_some()) {
+        let routes = Arc::new(
+            layer3_adapter::RoutedHomeVolumes::new(local_homes, native_homes)
+                .map_err(|e| e.to_string())?,
+        );
+        backends.home_routes = Some(routes.clone());
+        home_store = Some(routes);
     }
     let mut deployment = HostedDeployment::default();
     deployment.image.uri = config.runtime.sandbox_image.clone();
@@ -86,18 +146,8 @@ pub(super) async fn production_adapter(
         },
     )
     .with_provider_tools(provider_tools);
-    if let Some(policy) = &config.runtime.home_policy {
-        let homes = layer3_adapter::provider::PersistentHomeVolumes::infer_namespaced(
-            &config.runtime.sandbox_namespace,
-            &config.deployment_id,
-        )
-        .await
-        .map_err(|error| format!("durable home authority is not usable: {error}"))?;
-        homes
-            .preflight(policy)
-            .await
-            .map_err(|error| format!("durable home seed is not usable: {error}"))?;
-        adapter = adapter.with_home_volumes(Arc::new(homes));
+    if let Some(homes) = home_store {
+        adapter = adapter.with_home_volumes(homes);
     }
     Ok(Arc::new(adapter))
 }

@@ -8,6 +8,9 @@ pub(super) async fn reserve(
     request: &RuntimeProvisionRequest,
     mut home: SandboxHome,
 ) -> Result<SandboxHome, AdapterError> {
+    home.request = adapter.reserve_home_request(request, &home.request).await?;
+    home.validate(&layer2_core::SandboxId(home.request.sandbox_id.clone()))
+        .map_err(|error| AdapterError::Rejected(error.to_string()))?;
     if let Some(pool) = adapter.select_native_pool(request, &home.request).await? {
         home.native_pool = Some(Box::new(SandboxNativePool {
             request: NativePoolClaimRequest {
@@ -37,7 +40,7 @@ pub(super) async fn next(
         return Err(rejected("native home is already retiring"));
     }
     let pools = adapter
-        .native_pools()
+        .native_pools_for_home(&current.request)?
         .ok_or_else(|| rejected("native pool authority is unavailable"))?;
     let mut next = current.clone();
     let reservation = next.native_pool.as_mut().unwrap();
@@ -77,7 +80,7 @@ pub(super) async fn next_cleanup(
         return Ok(None);
     }
     let pools = adapter
-        .native_pools()
+        .native_pools_for_home(&current.request)?
         .ok_or_else(|| rejected("native pool authority is unavailable"))?;
     let original = native.cleanup.clone().unwrap_or_else(|| NativePoolCleanup {
         request: native.request.clone(),

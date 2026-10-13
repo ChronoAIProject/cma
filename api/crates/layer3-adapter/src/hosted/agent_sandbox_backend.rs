@@ -226,6 +226,7 @@ pub struct RuntimeBackends {
     pub opensandbox: Option<Arc<dyn HostedBackend>>,
     pub allocate_agent_sandbox: bool,
     pub routing: Arc<dyn RuntimeRoutingStore>,
+    pub home_routes: Option<Arc<crate::RoutedHomeVolumes>>,
 }
 
 impl RuntimeBackends {
@@ -246,10 +247,78 @@ impl RuntimeBackends {
 
 #[async_trait::async_trait]
 impl HostedBackend for RuntimeBackends {
+    async fn reserve_home_request(
+        &self,
+        request: &ProviderSandboxRequest,
+        home: &crate::HomeVolumeRequest,
+    ) -> Result<crate::HomeVolumeRequest> {
+        let identity = super::deployment::provider_request_identity(request)?;
+        let selected = self
+            .routing
+            .select(
+                &identity.sandbox_id,
+                identity.generation,
+                self.allocate_agent_sandbox,
+            )
+            .await?;
+        self.select(selected)?;
+        match &self.home_routes {
+            Some(routes) => routes.reserve_for(selected, home),
+            None => Ok(home.clone()),
+        }
+    }
+    async fn verify_home_route(
+        &self,
+        request: &ProviderSandboxRequest,
+        home: &crate::HomeVolumeRequest,
+    ) -> Result<()> {
+        let Some(routes) = &self.home_routes else {
+            return Ok(());
+        };
+        let native = routes.is_native(home)?;
+        let identity = super::deployment::provider_request_identity(request)?;
+        let selected = self
+            .routing
+            .select(&identity.sandbox_id, identity.generation, native)
+            .await?;
+        if native != selected {
+            return Err(AdapterError::Rejected(
+                "runtime provider conflicts with its recorded home authority".into(),
+            ));
+        }
+        self.select(selected)?;
+        Ok(())
+    }
     fn native_pools(&self) -> Option<&dyn crate::agent_sandbox::NativePoolControl> {
         self.agent_sandbox
             .as_deref()
             .and_then(|backend| backend.native_pools())
+    }
+    fn verify_retained_home_route(
+        &self,
+        handle: &RuntimeHandle,
+        home: &crate::HomeVolumeRequest,
+    ) -> Result<()> {
+        if let Some(routes) = &self.home_routes {
+            if routes.is_native(home)? != handle.0.starts_with("agent-sandbox:") {
+                return Err(AdapterError::Rejected(
+                    "retained runtime conflicts with its recorded home authority".into(),
+                ));
+            }
+        }
+        self.for_handle(handle)?;
+        Ok(())
+    }
+    fn native_pools_for_home(
+        &self,
+        home: &crate::HomeVolumeRequest,
+    ) -> Result<Option<&dyn crate::agent_sandbox::NativePoolControl>> {
+        if let Some(routes) = &self.home_routes {
+            if !routes.is_native(home)? {
+                return Ok(None);
+            }
+        }
+        Ok(self.native_pools())
     }
     async fn select_native_pool(
         &self,

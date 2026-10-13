@@ -7,6 +7,10 @@ use mongodb::{
     options::{ClientOptions, Credential},
     Client,
 };
+#[path = "support/record_domains.rs"]
+mod record_domains;
+#[path = "support/shared_schema.rs"]
+mod shared_schema;
 #[tokio::test]
 #[ignore = "requires authenticated disposable service Mongo fixture"]
 async fn gateway_records_are_exclusive_owner_immutable_and_revision_fenced() {
@@ -110,6 +114,7 @@ async fn exercise(uri: &str, admin: &Client, name: &str) -> Result<(), Box<dyn s
     assert_eq!(restarted.get("record").await?.blob, b"opaque-v2");
     assert!(records.delete("record", 1).await.is_err());
     assert!(records.delete("record", 2).await?);
+    record_domains::verify(&db, restarted).await?;
     Ok(())
 }
 fn denied(e: mongodb::error::Error) -> bool {

@@ -12,6 +12,7 @@ fn retained(
         .env
         .insert("CHRONO_RUNTIME_GENERATION".into(), generation.to_string());
     let allocation = HomeVolumeRequest {
+        scope: None,
         volume_id: "home-one".into(),
         sandbox_id: "logical-sandbox".into(),
         policy: HomeVolumePolicy {

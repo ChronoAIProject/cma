@@ -324,6 +324,7 @@ async fn deletion_observes_original_crd_uid_even_when_its_management_label_chang
 async fn foreign_home_claim_is_refused_before_creating_sandbox() {
     let request = super::tests::request();
     let allocation = HomeVolumeRequest {
+        scope: None,
         volume_id: "home-one".into(),
         sandbox_id: "someone-elses-sandbox".into(),
         policy: HomeVolumePolicy {
@@ -362,6 +363,7 @@ async fn stale_ready_condition_cannot_bind_a_pod() {
 async fn pvc_mount_requires_the_exact_admitted_uid_even_with_identical_labels() {
     let mut request = super::tests::request();
     let allocation = HomeVolumeRequest {
+        scope: None,
         volume_id: "home-one".into(),
         sandbox_id: "logical-sandbox".into(),
         policy: HomeVolumePolicy {
