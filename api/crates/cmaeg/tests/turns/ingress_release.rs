@@ -15,7 +15,7 @@ use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
-use tokio::sync::Semaphore;
+use tokio::{sync::Semaphore, task::JoinSet};
 
 /// Records how many permits were free while `launch` ran.
 struct Observer {
@@ -176,10 +176,14 @@ async fn relay_media_burst_does_not_429_text() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn burst_of_300_media_callbacks_never_429s_text() {
+    let media_gate = Arc::new(Semaphore::new(0));
     let app = Arc::new(
         MediaApp::new(
             Transport::Relay,
-            media_delayed(Duration::from_secs(10)),
+            FakeProviderConfig {
+                attachment_gate: Some(media_gate.clone()),
+                ..Default::default()
+            },
             TurnConfig::default(),
             ingress(256),
         )
@@ -191,27 +195,33 @@ async fn burst_of_300_media_callbacks_never_429s_text() {
     let signed: Vec<_> = (1..=300)
         .map(|sender| relay_message(sender, true))
         .collect();
-    let mut media = Vec::new();
+    let mut media = JoinSet::new();
     for signed in signed {
         let app = app.clone();
-        media.push(tokio::spawn(async move {
-            app.relay(&signed).await.status().as_u16()
-        }));
+        media.spawn(async move { status_of(app.relay(&signed).await).await });
     }
-    app.wait_for_turns(301).await;
+    // Surface a rejected callback immediately, including its status and body,
+    // instead of hiding it behind a timeout waiting for missing provider turns.
+    tokio::select! {
+        biased;
+        result = media.join_next() => {
+            panic!("media callback completed before provider release: {result:?}");
+        }
+        _ = app.wait_for_turns(301) => {}
+    }
     until_available(&app.ingress.inflight, 256, Duration::from_secs(5)).await;
-    assert!(
-        media.iter().all(|handler| !handler.is_finished()),
-        "every media acceptance wait is still pending"
-    );
+    if let Some(result) = media.try_join_next() {
+        panic!("media callback completed before provider release: {result:?}");
+    }
     let text = app
         .relay(&relay_message(2_000, false))
         .await
         .status()
         .as_u16();
     let mut statuses = vec![text];
-    for handler in media {
-        statuses.push(handler.await.unwrap());
+    media_gate.add_permits(300);
+    while let Some(result) = media.join_next().await {
+        statuses.push(result.unwrap().0);
     }
     assert_eq!(statuses.iter().filter(|status| **status == 429).count(), 0);
     assert!(statuses.iter().all(|status| *status == 202), "{statuses:?}");
