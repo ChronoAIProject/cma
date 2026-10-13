@@ -49,13 +49,16 @@ function fixture(t) {
             return {
               find(query) {
                 assert.equal(JSON.stringify(query), '{}');
+                let position = 0;
                 return {
                   sort(order) { assert.equal(JSON.stringify(order), '{"_id":1}'); return this; },
                   batchSize(size) { assert.equal(size, 100); return this; },
-                  *[Symbol.iterator]() {
-                    for (const record of data[name]) yield record;
-                    if (readFailure === name) throw new Error('private-driver-detail');
+                  // A real mongosh Cursor is not a JavaScript iterable.
+                  hasNext() {
+                    if (position === data[name].length && readFailure === name) throw new Error('private-driver-detail');
+                    return position < data[name].length;
                   },
+                  next() { assert.ok(position < data[name].length); return data[name][position++]; },
                   close() { closed.push(name); if (closeFailure === name) throw new Error('private-close-detail'); },
                 };
               },
