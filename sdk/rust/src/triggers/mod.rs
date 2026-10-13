@@ -9,6 +9,7 @@ use reqwest::{Method, StatusCode};
 use serde::Deserialize;
 
 mod badges;
+mod target;
 mod types;
 pub use badges::*;
 pub use types::*;

@@ -109,6 +109,14 @@ export const triggerContent = object({
   consent: object({ always_review: boolean }),
 });
 export type TriggerContent = Output<typeof triggerContent>;
+/** New Trigger inputs can configure an Agent without selecting legacy profiles. */
+export type TriggerContentInput = Omit<TriggerContent, 'target'> & {
+  readonly target:
+    | TriggerContent['target']
+    | (Partial<Omit<TriggerContent['target'], 'inline'>> & {
+        readonly inline: TriggerInlineTarget;
+      });
+};
 export const triggerAvailability = enumeration('draft', 'published', 'retired');
 export const triggerPlacement = object({
   id: text,
