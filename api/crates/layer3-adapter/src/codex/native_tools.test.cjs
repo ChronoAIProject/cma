@@ -8,6 +8,7 @@ const { setTimeout: delay } = require("node:timers/promises");
 const { test } = require("node:test");
 const { bridgePath, persistConversations } = require("./persist_conversations.cjs");
 const { subscriptionAuth } = require("./subscription_auth.cjs");
+const { managedModelCatalog } = require("./managed_model_catalog.cjs");
 const { names, processRpc, stop, fixture } = require("./native_tools_fixture.cjs");
 
 test("pinned Codex keeps exact native tool names through live key rotation and conversation reload", { timeout: 120000 }, async () => {
@@ -32,7 +33,7 @@ test("pinned Codex keeps exact native tool names through live key rotation and c
   let program = bridgePath;
   if (process.env.CMA_ACP_UPSTREAM_SOURCE) {
     program = join(directory, "bridge.mjs");
-    writeFileSync(program, subscriptionAuth(persistConversations(readFileSync(process.env.CMA_ACP_UPSTREAM_SOURCE, "utf8"))));
+    writeFileSync(program, managedModelCatalog(subscriptionAuth(persistConversations(readFileSync(process.env.CMA_ACP_UPSTREAM_SOURCE, "utf8")))));
   }
   const connect = async () => {
     bridge = processRpc(process.execPath, [program], {
