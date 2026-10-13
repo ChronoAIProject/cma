@@ -81,6 +81,9 @@
 }
 .bots__facts dd {
   margin: 0;
+}
+.bots__facts dt,
+.bots__facts dd {
   overflow-wrap: anywhere;
 }
 @media (max-width: 760px) {
