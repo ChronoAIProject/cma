@@ -839,7 +839,7 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_TRUSTED_SUBJECT` | Local trusted-mode subject; default `local-developer`, irrelevant in provider mode |
 | `CHRONO_IMAGE_MANAGER_BASE_URL` | Image Manager service base URL used for delegated image resolution; defaults to the CMA public origin with `/api/image-manager` when unset |
 | `CHRONO_NYXID_BASE_URL` | Required API/OAuth HTTP(S) origin in provider mode |
-| `CHRONO_CMAEG_BASE_URL` | CMAEG management HTTP(S) origin; production `http://cmaeg`. Set together with its public origin; omitting both disables Bot routes/workers. |
+| `CHRONO_CMAEG_BASE_URL` | CMAEG management HTTP(S) origin; production `http://cma-event-gateway`. Set together with its public origin; omitting both disables Bot routes/workers. |
 | `CHRONO_CMAEG_PUBLIC_URL` | CMAEG public HTTP(S) origin used to validate returned callbacks; production `https://bot-gateway.chrono-ai.fun`. |
 | `CHRONO_NYXID_PUBLIC_URL` | Required exact canonical HTTPS browser origin in provider mode |
 | `CHRONO_NYXID_CLIENT_ID` | Provider-issued OAuth client id, not a chosen display name |
@@ -847,6 +847,7 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_AUTH_ENCRYPTION_KEY` | Secret reference: standard-base64 encoding of exactly 32 random bytes |
 | `CHRONO_MONGODB_URI` | Required secret reference, `mongodb://` or `mongodb+srv://` |
 | `CHRONO_MONGODB_DATABASE` | Database name; code default `chrono_bot`, production explicitly `chrono-bot` |
+| `CHRONO_MONGODB_AUTHORITY_MODE` | `isolated` by default verifies exact collection grants; production `shared-schema` allows the existing database-scoped credential while AM opens only its own collection catalog. Neither mode changes validators, indexes or resource authorization. |
 | `CHRONO_DEPLOYMENT_ID` | Required stable Kubernetes-label-compatible CMA ownership identity |
 | `CHRONO_SANDBOX_BASE_URL` | Required canonical HTTP(S) provider origin |
 | `CHRONO_SANDBOX_API_KEY_FILE` | Required readable nonempty mounted provider key; never a ConfigMap value |
@@ -859,6 +860,15 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_AGENT_SANDBOX_RUNTIME_CLASS` | Optional Kubernetes RuntimeClass passed to agent-sandbox Pods |
 | `CHRONO_AGENT_SANDBOX_SERVICE_ACCOUNT` | Kubernetes ServiceAccount for agent-sandbox Pods; defaults to `cma-runtime` |
 | `CHRONO_AGENT_SANDBOX_IMAGE_PULL_SECRETS` | Optional comma-separated Kubernetes image-pull Secret names for agent-sandbox Pods |
+| `CHRONO_AGENT_SANDBOX_NAMESPACE` | Native CRD/Pod/PVC namespace, independent of legacy `CHRONO_SANDBOX_NAMESPACE`; empty or absent inherits the legacy namespace |
+| `CHRONO_AGENT_SANDBOX_API_SERVER` | Explicit remote Kubernetes API, one canonical HTTPS origin without trailing slash. Production Deployment resolves this from the infra-owned `chrono-pod-configmap` ConfigMap `CHRONO_POD_API_SERVER` key. Configure with a CA and the selected authentication mode; empty connection fields in default token-file mode preserve inferred local configuration. |
+| `CHRONO_AGENT_SANDBOX_AUTH_MODE` | `google-metadata` in production uses the `chrono-bot-ksa` Workload Identity annotation for short-lived tokens; remote API and CA are required and token-file input must be empty. Default `token-file` requires API, CA and token file together when any connection field is set. Metadata credentials are refreshed in the application without gcloud or kubeconfig plugins. |
+| `CHRONO_AGENT_SANDBOX_CA_FILE` | Absolute path to a mounted remote Kubernetes PEM CA bundle; TLS verification is mandatory and kube-rs reloads the bundle for new connections |
+| `CHRONO_AGENT_SANDBOX_TOKEN_FILE` | Absolute path to a mounted remote bearer token; kube-rs refreshes file contents approximately every minute. Rotate the token before expiry. The explicit remote client does not read global kubeconfig, execute gcloud/plugins, or change legacy credentials. |
+| `CHRONO_AGENT_SANDBOX_HOME_STORAGE_CLASS` | Native home StorageClass; configure all four native home fields together. When all are empty/absent, native provisioning inherits the legacy home policy for same-cluster compatibility. A different native home policy requires an independent namespace or explicit Kubernetes API connection when native support is enabled. |
+| `CHRONO_AGENT_SANDBOX_HOME_CAPACITY_GIB` | Native home capacity, integer 1-1024 GiB |
+| `CHRONO_AGENT_SANDBOX_HOME_TEMPLATE` | Ready, initialized seed VolumeSnapshot in the native namespace and cluster |
+| `CHRONO_AGENT_SANDBOX_HOME_TEMPLATE_UID` | Exact native seed UID; a remote deployment must use its remote seed identity, preserving the legacy seed and retained home policies |
 | `CHRONO_SANDBOX_HOME_STORAGE_CLASS` | Durable home StorageClass; configure all four home fields together, or omit all for legacy ephemeral operation |
 | `CHRONO_SANDBOX_HOME_CAPACITY_GIB` | Home disk capacity, integer 1-1024 GiB; production 64 |
 | `CHRONO_SANDBOX_HOME_TEMPLATE` | Ready, credential-free seed VolumeSnapshot in the Sandbox namespace; initialized with `infra/storage/home-seed.yaml` and `home-template.yaml` |

@@ -11,6 +11,7 @@ use crate::sandbox::SandboxCheckpointConversation;
 
 fn evidence(stamp: &str) -> (HomeSnapshotExportRequest, HomeSnapshotExportReceipt) {
     let home = HomeVolumeRequest {
+        scope: None,
         volume_id: "home-one".into(),
         sandbox_id: "sbx_one".into(),
         policy: HomeVolumePolicy {

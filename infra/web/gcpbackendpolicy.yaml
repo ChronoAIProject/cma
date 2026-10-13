@@ -2,7 +2,7 @@
 #
 # The frontend is served from here and still uses same-origin API paths. On the
 # managed Gateway, more-specific API, auth, and discovery rules now send those
-# paths directly to `cma-api`; the web service carries the static application
+# paths directly to `cma-agent-manager`; the web service carries the static application
 # and its client-side routes. nginx retains the same-origin proxy contract for
 # an image reached without that Gateway split.
 #

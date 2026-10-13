@@ -28,7 +28,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: cma-image-manager
-          image: asia-northeast1-docker.pkg.dev/chronoai-501608/chronoai-registry/cma-image-manager:unreleased
+          image: asia-southeast1-docker.pkg.dev/chronoai-501608/chrono-pod/cma-image-manager:unreleased
           ports:
             - name: http
               containerPort: 8080

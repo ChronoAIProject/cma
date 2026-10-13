@@ -145,6 +145,7 @@ pub struct Config {
     pub trusted_proxies: TrustedProxyConfig,
     pub mongodb_uri: String,
     pub mongodb_database: String,
+    pub mongodb_authority: cma_service_auth::mongodb_authority::MongoAuthorityMode,
     pub deployment_id: String,
     pub runtime: RuntimeConfig,
     pub execution: layer2_core::sandbox::ProvisioningExecution,
@@ -171,6 +172,7 @@ impl std::fmt::Debug for Config {
             .field("trusted_proxies", &self.trusted_proxies)
             .field("mongodb_uri", &"<redacted>")
             .field("mongodb_database", &self.mongodb_database)
+            .field("mongodb_authority", &self.mongodb_authority)
             .field("deployment_id", &self.deployment_id)
             .field("runtime", &self.runtime)
             .field("execution", &self.execution)
@@ -315,6 +317,10 @@ impl Config {
             trusted_proxies,
             mongodb_uri,
             mongodb_database,
+            mongodb_authority: cma_service_auth::mongodb_authority::MongoAuthorityMode::parse(
+                lookup("CHRONO_MONGODB_AUTHORITY_MODE")?.as_deref(),
+            )
+            .map_err(str::to_owned)?,
             deployment_id,
             runtime,
             execution,

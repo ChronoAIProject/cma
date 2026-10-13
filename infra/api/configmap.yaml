@@ -1,10 +1,10 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: cma-api
+  name: cma-agent-manager
   namespace: chrono-bot
   labels:
-    app.kubernetes.io/name: cma-api
+    app.kubernetes.io/name: cma-agent-manager
     app.kubernetes.io/part-of: cma
 data:
   CHRONO_SANDBOX_PROVIDER: "opensandbox"
@@ -14,6 +14,21 @@ data:
   CHRONO_AGENT_SANDBOX_RUNTIME_CLASS: ""
   CHRONO_AGENT_SANDBOX_SERVICE_ACCOUNT: "cma-runtime"
   CHRONO_AGENT_SANDBOX_IMAGE_PULL_SECRETS: ""
+  # Deployment env refs take the API and namespace from chrono-pod-configmap.
+  # Metadata mode uses the annotated KSA's short-lived Google identity; the
+  # projected CA verifies the remote cluster, and no static token is mounted.
+  CHRONO_AGENT_SANDBOX_NAMESPACE: ""
+  CHRONO_AGENT_SANDBOX_API_SERVER: ""
+  CHRONO_AGENT_SANDBOX_AUTH_MODE: "google-metadata"
+  CHRONO_AGENT_SANDBOX_CA_FILE: "/etc/chrono-pod/ca.crt"
+  CHRONO_AGENT_SANDBOX_TOKEN_FILE: ""
+  # All four native home fields override the legacy seed policy together.
+  # Empty preserves the existing policy for same-cluster deployments.
+  # A distinct policy needs a separate native namespace or API connection.
+  CHRONO_AGENT_SANDBOX_HOME_STORAGE_CLASS: ""
+  CHRONO_AGENT_SANDBOX_HOME_CAPACITY_GIB: ""
+  CHRONO_AGENT_SANDBOX_HOME_TEMPLATE: ""
+  CHRONO_AGENT_SANDBOX_HOME_TEMPLATE_UID: ""
   # Preserve the active production Bridge gates recorded on 2026-09-22.
   # Additional gates still require their own canary verification.
   # New file admissions only; supporting readers/workers must precede enablement.
@@ -59,7 +74,7 @@ data:
   CHRONO_SERVER_CLOUDFLARE_PROXY_CIDRS: "173.245.48.0/20,103.21.244.0/22,103.22.200.0/22,103.31.4.0/22,141.101.64.0/18,108.162.192.0/18,190.93.240.0/20,188.114.96.0/20,197.234.240.0/22,198.41.128.0/17,162.158.0.0/15,104.16.0.0/13,104.24.0.0/14,172.64.0.0/13,131.0.72.0/22,2400:cb00::/32,2606:4700::/32,2803:f800::/32,2405:b500::/32,2405:8100::/32,2a06:98c0::/29,2c0f:f248::/32"
   CHRONO_NYXID_BASE_URL: "https://nyx-api.chrono-ai.fun"
   CHRONO_NYXID_PUBLIC_URL: "https://nyx.chrono-ai.fun"
-  CHRONO_CMAEG_BASE_URL: "http://cmaeg"
+  CHRONO_CMAEG_BASE_URL: "http://cma-event-gateway"
   CHRONO_CMAEG_PUBLIC_URL: "https://bot-gateway.chrono-ai.fun"
   CHRONO_BOT_FATHER_BINDING_ID: "bnd_77fe02e529054f0086ce5d50a63bfe47"
   CHRONO_BOT_FATHER_TELEGRAM_USERNAME: "CMA_Trureturing_Bot"
@@ -67,6 +82,8 @@ data:
   CHRONO_NYXID_CLIENT_ID: "c0cd33d2-27ba-4b8d-b38e-562364fadb72"
   # Must match the database authorized by the Secret's connection URI.
   CHRONO_MONGODB_DATABASE: "chrono-bot"
+  # Shared database deployment; each service retains its own schema and collections.
+  CHRONO_MONGODB_AUTHORITY_MODE: "shared-schema"
   # TTL applies to existing Activity records; lowering it can remove history.
   CHRONO_ACTIVITY_RETENTION_DAYS: "90"
   # Canonical platform origin for scoped runtime service proxying.

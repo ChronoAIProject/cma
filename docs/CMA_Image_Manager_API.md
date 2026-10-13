@@ -8,7 +8,7 @@ Local implementation, 2026-10-12; cloud execution and deployment remain to be ve
 An image is an owned catalog entry; a version is an immutable digest and build
 provenance; a build is a durable asynchronous operation. Registry credentials are
 deployment secrets. Registry:
-`asia-northeast1-docker.pkg.dev/chronoai-501608/chronoai-registry`.
+`asia-southeast1-docker.pkg.dev/chronoai-501608/chrono-pod`.
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -78,10 +78,13 @@ and build; edits, retirement and share changes supply the numeric current revisi
 in `If-Match`. `GET /v1/permissions` returns this service's role catalog and current
 permissions. All list responses are `{items,next_cursor}` with optional `after`.
 
-Cloud Build uses a separately configured Google build identity and pinned Docker
-builder image. No live build is asserted by local protocol tests. Configure IAM,
-builder digest and registry access before activation. Build logs are bounded to
-200 entries and include a `truncated` flag. Retirement is logical: this release
-does not delete registry blobs or claim to implement cross-service reference GC.
+Image Manager owns the build workflow. It submits and reconciles Cloud Build
+jobs, and the jobs execute with the same Image Manager Google service identity;
+there is no separate build product or user supplied build credential. The Docker
+builder image is pinned. No live build is asserted by local protocol tests.
+Configure IAM, the builder digest and registry access before activation. Build
+logs are bounded to 200 entries and include a `truncated` flag. Retirement is
+logical: this release does not delete registry blobs or claim to implement
+cross-service reference GC.
 See [deployment readiness](CMA_Deployment_Readiness.md) for exact identities,
 IAM, builder/runtime image requirements and the deployment acceptance sequence.

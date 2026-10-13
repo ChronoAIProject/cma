@@ -342,6 +342,7 @@ async fn main() -> Result<()> {
         identity: identity.clone(),
         image: args[4].clone(),
         home: HomeVolumeRequest {
+            scope: None,
             volume_id: identity.clone(),
             sandbox_id: identity.clone(),
             policy: HomeVolumePolicy {

@@ -52,7 +52,7 @@ pub(crate) struct ControlPlaneComposition {
 impl ControlPlaneComposition {
     pub(crate) async fn build(config: &Config) -> Result<Self, String> {
         let stores = Arc::new(
-            MongoStores::connect(
+            MongoStores::connect_with_authority(
                 &config.mongodb_uri,
                 &config.mongodb_database,
                 &config.deployment_id,
@@ -62,6 +62,7 @@ impl ControlPlaneComposition {
                     &config.runtime.sandbox_image,
                     config.runtime.home_policy.as_ref(),
                 ),
+                config.mongodb_authority,
             )
             .await
             .map_err(|error| format!("durable stores are not usable: {error}"))?,
@@ -200,7 +201,7 @@ impl ControlPlaneComposition {
             stores.native_warm_pools.clone(),
             adapter.clone(),
             config.runtime.sandbox_image.clone(),
-            config.runtime.home_policy.clone(),
+            config.runtime.agent_sandbox_home_policy.clone(),
             layer3_adapter::SandboxCapacity {
                 cpu_millis: config.default_profiles.cpu_millis,
                 memory_mib: config.default_profiles.memory_mib,
@@ -271,7 +272,11 @@ impl ControlPlaneComposition {
                 skills: agent_skills,
             },
             SandboxLifecycleConfig {
-                home_policy: config.runtime.home_policy.clone(),
+                home_policy: config
+                    .runtime
+                    .home_policy
+                    .clone()
+                    .or_else(|| config.runtime.agent_sandbox_home_policy.clone()),
                 execution: config.execution,
                 holder: worker_holder.clone(),
                 deployment_id: config.deployment_id.clone(),

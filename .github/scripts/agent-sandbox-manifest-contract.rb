@@ -4,6 +4,8 @@ require "yaml"
 
 path = File.expand_path("../../infra/api/serviceaccount.yaml", __dir__)
 documents = YAML.load_stream(File.read(path))
+control = documents.find { |value| value["kind"] == "ServiceAccount" && value.dig("metadata", "name") == "chrono-bot-ksa" }
+abort "Agent Manager Workload Identity binding changed" unless control && control.dig("metadata", "annotations", "iam.gke.io/gcp-service-account") == "chrono-cma@chronoai-501608.iam.gserviceaccount.com"
 role = documents.find { |value| value["kind"] == "Role" && value.dig("metadata", "name") == "cma-batchsandbox-reclaimer" }
 abort "Native Sandbox namespaced Role is missing" unless role && role.dig("metadata", "namespace") == "chrono-bot"
 rules = role.fetch("rules")
@@ -35,7 +37,7 @@ abort "Native runtime selector must include cold and pooled Pods only" unless se
   "matchExpressions" => [{ "key" => "agents.x-k8s.io/sandbox-name-hash", "operator" => "Exists" }],
 }
 abort "Native runtime ingress must admit only Agent Manager TCP control" unless policy.dig("spec", "policyTypes") == ["Ingress"] && policy.dig("spec", "ingress") == [{
-  "from" => [{ "podSelector" => { "matchLabels" => { "app.kubernetes.io/name" => "cma-api" } } }],
+  "from" => [{ "podSelector" => { "matchLabels" => { "app.kubernetes.io/name" => "cma-agent-manager" } } }],
   "ports" => [{ "protocol" => "TCP", "port" => 9090 }],
 }]
-puts "Native Sandbox RBAC, runtime token isolation and cold/warm network contract passed"
+puts "Native Sandbox Workload Identity, RBAC, runtime token isolation and cold/warm network contract passed"

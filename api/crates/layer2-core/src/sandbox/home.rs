@@ -25,6 +25,7 @@ impl SandboxHome {
     pub fn reserve(id: &SandboxId, policy: HomeVolumePolicy) -> Result<Self, SandboxModelError> {
         let home = Self {
             request: HomeVolumeRequest {
+                scope: None,
                 volume_id: format!("home_{}", uuid::Uuid::new_v4().simple()),
                 sandbox_id: id.to_string(),
                 policy,

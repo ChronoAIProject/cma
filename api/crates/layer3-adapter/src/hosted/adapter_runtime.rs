@@ -14,6 +14,11 @@ impl HostedAdapter {
             .deployment
             .render_runtime(&request.spec, request.generation)?;
         self.verify_spec_home(&request.spec).await?;
+        if let Some(home) = &request.spec.home_volume {
+            self.backend
+                .verify_home_route(&rendered, &home.request)
+                .await?;
+        }
         let identity = provider_request_identity(&rendered)?;
         let request_sha256 = crate::provider_request_digest(request)?;
         let receipt = self
@@ -84,6 +89,7 @@ impl HostedAdapter {
     ) -> crate::Result<()> {
         let rendered = self.retained_request(request, request.generation)?;
         self.verify_spec_home(&request.spec).await?;
+        self.verify_adoption_home_route(request)?;
         if observe_only {
             self.backend
                 .verify_suspended(&request.handle, &rendered)
@@ -110,6 +116,7 @@ impl HostedAdapter {
         let previous_identity = provider_request_identity(&previous)?;
         let next_identity = provider_request_identity(&next)?;
         self.verify_spec_home(&request.spec).await?;
+        self.verify_adoption_home_route(request)?;
         {
             let mut states = self.states.lock().await;
             if let Some(state) = states.get(&request.handle) {
@@ -136,6 +143,11 @@ impl HostedAdapter {
     ) -> crate::Result<RuntimeHandle> {
         let request = self.deployment.render_runtime(spec, generation)?;
         self.verify_spec_home(spec).await?;
+        if let Some(home) = &spec.home_volume {
+            self.backend
+                .verify_home_route(&request, &home.request)
+                .await?;
+        }
         let identity = provider_request_identity(&request)?;
         let handle = self.backend.provision(request).await?;
         self.verify_spec_home(spec).await?;
@@ -170,6 +182,7 @@ impl HostedAdapter {
         }
         let request = deployment.render_runtime(&adoption.spec, adoption.generation)?;
         self.verify_spec_home(&adoption.spec).await?;
+        self.verify_adoption_home_route(adoption)?;
         let expected = provider_request_identity(&request)?;
         let Some(observation) = self.backend.adopt(&adoption.handle, &request).await? else {
             return Ok(None);
@@ -232,6 +245,14 @@ impl HostedAdapter {
         }
         states.insert(handle.clone(), candidate);
         Ok(handle)
+    }
+
+    fn verify_adoption_home_route(&self, request: &RuntimeAdoptionRequest) -> crate::Result<()> {
+        if let Some(home) = &request.spec.home_volume {
+            self.backend
+                .verify_retained_home_route(&request.handle, &home.request)?;
+        }
+        Ok(())
     }
 
     async fn verify_spec_home(&self, spec: &SandboxSpec) -> crate::Result<()> {

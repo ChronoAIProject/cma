@@ -25,9 +25,9 @@ function fixture() {
     tools: { kubectl: { path: '/protected/kubectl', sha256: '1'.repeat(64) }, skopeo: { path: '/protected/skopeo', sha256: '2'.repeat(64) } },
     kubeconfig: '/protected/kubeconfig', registryAuthFile: '/protected/registry-auth.json',
     context: 'reviewed-cluster', namespace: 'cma',
-    api: { deployment: 'cma-api', container: 'api', service: 'cma-api', servicePort: 80 },
+    api: { deployment: 'cma-agent-manager', container: 'api', service: 'cma-agent-manager', servicePort: 80 },
     web: { deployment: 'cma-web', container: 'web', service: 'cma-web', servicePort: 80 },
-    configMap: { name: 'cma-api', runtimeKey: 'CHRONO_SANDBOX_IMAGE', originKey: 'CHRONO_SERVER_PUBLIC_URL' },
+    configMap: { name: 'cma-agent-manager', runtimeKey: 'CHRONO_SANDBOX_IMAGE', originKey: 'CHRONO_SERVER_PUBLIC_URL' },
     route: { name: 'cma-web', parent: { name: 'gateway', namespace: 'gateway-system', sectionName: 'https' } },
     runtimePlatform: platform,
     nyxid: { context: 'reviewed-cluster', namespace: 'identity', deployment: 'nyxid-api', container: 'nyxid', source: 'https://github.com/example/identity' },
@@ -64,7 +64,7 @@ function fixture() {
       'spec.template.spec.containers[*].name': [target.container],
       'spec.template.spec.containers[*].image': [images[component].reference.replace('@', ':reviewed@')],
       [`spec.template.spec.containers[?(@.name=="${target.container}")].ports[*]`]: [{ name: 'http', containerPort: 8080 }],
-      [`spec.template.spec.containers[?(@.name=="${target.container}")].envFrom[*]`]: component === 'api' ? [{ configMapRef: { name: 'cma-api' } }, { secretRef: { name: 'cma-api' } }] : [],
+      [`spec.template.spec.containers[?(@.name=="${target.container}")].envFrom[*]`]: component === 'api' ? [{ configMapRef: { name: 'cma-agent-manager' } }, { secretRef: { name: 'cma-agent-manager' } }] : [],
     });
     add(namespace, 'pods', `app=${target.deployment}`, { 'items[*].metadata.name': [`${component}-pod`] });
     add(namespace, 'pod', `${component}-pod`, {
@@ -77,14 +77,14 @@ function fixture() {
     add(namespace, 'node', 'worker', { 'metadata.name': ['worker'], 'status.nodeInfo.operatingSystem': ['linux'], 'status.nodeInfo.architecture': ['amd64'] });
     if (component !== 'nyxid') add(namespace, 'service', target.service, { 'metadata.name': [target.service], 'metadata.namespace': [namespace], 'metadata.uid': [`${component}-service`], 'metadata.resourceVersion': ['25'], 'spec.selector': [label], 'spec.ports': [[{ port: 80, targetPort: 'http', protocol: 'TCP' }]], 'spec.type': ['ClusterIP'] });
   }
-  add('cma', 'configmap', 'cma-api', { 'metadata.name': ['cma-api'], 'metadata.namespace': ['cma'], 'metadata.uid': ['config-uid'], 'metadata.resourceVersion': ['22'], 'data.CHRONO_SANDBOX_IMAGE': [images.runtime.reference.replace('@', ':reviewed@')], 'data.CHRONO_SERVER_PUBLIC_URL': [request.expected.origin] });
-  add('cma', 'secret', 'cma-api', { sourceKeys: { name: 'cma-api', namespace: 'cma', uid: 'secret-uid', resourceVersion: '24', keys: ['CHRONO_MONGODB_URI', 'CHRONO_SESSION_SIGNING_KEY'], deleting: false } });
+  add('cma', 'configmap', 'cma-agent-manager', { 'metadata.name': ['cma-agent-manager'], 'metadata.namespace': ['cma'], 'metadata.uid': ['config-uid'], 'metadata.resourceVersion': ['22'], 'data.CHRONO_SANDBOX_IMAGE': [images.runtime.reference.replace('@', ':reviewed@')], 'data.CHRONO_SERVER_PUBLIC_URL': [request.expected.origin] });
+  add('cma', 'secret', 'cma-agent-manager', { sourceKeys: { name: 'cma-agent-manager', namespace: 'cma', uid: 'secret-uid', resourceVersion: '24', keys: ['CHRONO_MONGODB_URI', 'CHRONO_SESSION_SIGNING_KEY'], deleting: false } });
   const match = (type, value) => ({ path: { type, value } });
   const backend = (name) => ({ name, kind: 'Service', group: '', port: 80, weight: 1 });
   add('cma', 'httproute', 'cma-web', {
     'metadata.name': ['cma-web'], 'metadata.namespace': ['cma'], 'metadata.uid': ['route-uid'], 'metadata.generation': [3], 'metadata.resourceVersion': ['23'],
     'spec.hostnames': [['cma.example.test']], 'spec.parentRefs': [[config.route.parent]],
-    'spec.rules': [[{ matches: [match('PathPrefix', '/api'), match('PathPrefix', '/auth'), match('Exact', '/openapi.json'), match('Exact', '/.well-known/agent-card.json')], backendRefs: [backend('cma-api')] }, { matches: [match('PathPrefix', '/')], backendRefs: [backend('cma-web')] }]],
+    'spec.rules': [[{ matches: [match('PathPrefix', '/api'), match('PathPrefix', '/auth'), match('Exact', '/openapi.json'), match('Exact', '/.well-known/agent-card.json')], backendRefs: [backend('cma-agent-manager')] }, { matches: [match('PathPrefix', '/')], backendRefs: [backend('cma-web')] }]],
     'status.parents': [[{ parentRef: config.route.parent, conditions: ['Accepted', 'ResolvedRefs'].map((type) => ({ ...condition(type), observedGeneration: 3 })) }]],
   });
   const calls = [];
@@ -146,23 +146,23 @@ test('immutable reference parsing retains registry ports and removes only the ta
 });
 
 const mutations = {
-  'unobserved deployment generation': (f) => { f.resources.get('cma/deployment/cma-api').status[0].observedGeneration = 1; },
+  'unobserved deployment generation': (f) => { f.resources.get('cma/deployment/cma-agent-manager').status[0].observedGeneration = 1; },
   'unready deployment replicas': (f) => { f.resources.get('cma/deployment/cma-web').status[0].readyReplicas = 0; },
   'terminating pod': (f) => { f.resources.get('cma/pod/api-pod')['metadata.deletionTimestamp'] = ['now']; },
-  'extra selected pod': (f) => { f.resources.get('cma/pods/app=cma-api')['items[*].metadata.name'].push('old-pod'); },
+  'extra selected pod': (f) => { f.resources.get('cma/pods/app=cma-agent-manager')['items[*].metadata.name'].push('old-pod'); },
   'foreign replica owner': (f) => { f.resources.get('cma/replicaset/api-rs')['metadata.ownerReferences'][0][0].uid = 'foreign'; },
   'unready container': (f) => { f.resources.get('cma/pod/api-pod').status[0].containerStatuses[0].ready = false; },
   'config digest used as imageID': (f) => { f.resources.get('cma/pod/api-pod').status[0].containerStatuses[0].imageID = `docker-pullable://${f.images.api.repository}@${f.images.api.configDigest}`; },
   'index root used as running child': (f) => { f.resources.get('cma/pod/api-pod').status[0].containerStatuses[0].imageID = `docker-pullable://${f.images.api.reference}`; },
-  'runtime pin drift': (f) => { f.resources.get('cma/configmap/cma-api')['data.CHRONO_SANDBOX_IMAGE'] = [f.images.api.reference]; },
-  'origin drift': (f) => { f.resources.get('cma/configmap/cma-api')['data.CHRONO_SERVER_PUBLIC_URL'] = ['https://other.example.test']; },
-  'explicit runtime env override': (f) => { f.resources.get('cma/deployment/cma-api')['spec.template.spec.containers[?(@.name=="api")].env[*].name'] = ['CHRONO_SANDBOX_IMAGE']; },
-  'unbound API ConfigMap': (f) => { f.resources.get('cma/deployment/cma-api')['spec.template.spec.containers[?(@.name=="api")].envFrom[*]'] = [{ configMapRef: { name: 'other' } }]; },
+  'runtime pin drift': (f) => { f.resources.get('cma/configmap/cma-agent-manager')['data.CHRONO_SANDBOX_IMAGE'] = [f.images.api.reference]; },
+  'origin drift': (f) => { f.resources.get('cma/configmap/cma-agent-manager')['data.CHRONO_SERVER_PUBLIC_URL'] = ['https://other.example.test']; },
+  'explicit runtime env override': (f) => { f.resources.get('cma/deployment/cma-agent-manager')['spec.template.spec.containers[?(@.name=="api")].env[*].name'] = ['CHRONO_SANDBOX_IMAGE']; },
+  'unbound API ConfigMap': (f) => { f.resources.get('cma/deployment/cma-agent-manager')['spec.template.spec.containers[?(@.name=="api")].envFrom[*]'] = [{ configMapRef: { name: 'other' } }]; },
   'stale route readiness': (f) => { f.resources.get('cma/httproute/cma-web')['status.parents'][0][0].conditions[0].observedGeneration = 2; },
   'wrong route backend': (f) => { f.resources.get('cma/httproute/cma-web')['spec.rules'][0][0].backendRefs[0].name = 'cma-web'; },
   'wildcard route hostname': (f) => { f.resources.get('cma/httproute/cma-web')['spec.hostnames'] = [['*.example.test']]; },
-  'wrong service selector': (f) => { f.resources.get('cma/service/cma-api')['spec.selector'][0].app = 'other'; },
-  'wrong service target port': (f) => { f.resources.get('cma/service/cma-api')['spec.ports'][0][0].targetPort = 9000; },
+  'wrong service selector': (f) => { f.resources.get('cma/service/cma-agent-manager')['spec.selector'][0].app = 'other'; },
+  'wrong service target port': (f) => { f.resources.get('cma/service/cma-agent-manager')['spec.ports'][0][0].targetPort = 9000; },
   'missing independent NyxID scope': (f) => { f.config.nyxid = null; },
   'declared NyxID revision mismatch': (f) => { f.request.expected.nyxidCommit = 'c'.repeat(40); },
 };
@@ -182,17 +182,17 @@ for (const [index, [name, mutate]] of Object.entries(mutations).entries()) test(
 
 function broadServiceFixture() {
   const f = fixture();
-  const dep = f.resources.get('cma/deployment/cma-api');
+  const dep = f.resources.get('cma/deployment/cma-agent-manager');
   dep['spec.selector'][0].matchLabels.revision = 'new';
   dep['spec.template.metadata.labels'][0].revision = 'new';
   f.resources.get('cma/pod/api-pod')['metadata.labels'][0].revision = 'new';
-  f.resources.set('cma/pods/app=cma-api,revision=new', { 'items[*].metadata.name': ['api-pod'] });
+  f.resources.set('cma/pods/app=cma-agent-manager,revision=new', { 'items[*].metadata.name': ['api-pod'] });
   return f;
 }
 
 test('a broader Service selector is allowed only when its entire population is attested', () => {
   const f = broadServiceFixture(); observe(f.config, f.request, f.command);
-  f.resources.get('cma/pods/app=cma-api')['items[*].metadata.name'].push('old-pod');
+  f.resources.get('cma/pods/app=cma-agent-manager')['items[*].metadata.name'].push('old-pod');
   assert.throws(() => observe(f.config, f.request, f.command), /service_pod_population_mismatch/);
 });
 
@@ -200,7 +200,7 @@ test('Service population is checked again after registry reads', () => {
   const f = broadServiceFixture(); let changed = false;
   assert.throws(() => observe(f.config, f.request, (tool, args) => {
     if (tool === f.config.tools.skopeo.path && !changed) {
-      changed = true; f.resources.get('cma/pods/app=cma-api')['items[*].metadata.name'].push('old-pod');
+      changed = true; f.resources.get('cma/pods/app=cma-agent-manager')['items[*].metadata.name'].push('old-pod');
     }
     return f.command(tool, args);
   }), /service_pod_population_mismatch/);
@@ -217,7 +217,7 @@ test('a same-name replacement Pod cannot satisfy the Service identity check', ()
   }), /service_pod_identity_mismatch/);
 });
 
-const environmentSources = (f) => f.resources.get('cma/deployment/cma-api')['spec.template.spec.containers[?(@.name=="api")].envFrom[*]'];
+const environmentSources = (f) => f.resources.get('cma/deployment/cma-agent-manager')['spec.template.spec.containers[?(@.name=="api")].envFrom[*]'];
 function addSource(f, kind, name, keys, prefix = '') {
   f.resources.set(`cma/${kind}/${name}`, { sourceKeys: { name, namespace: 'cma', uid: `${name}-uid`, resourceVersion: '30', keys, deleting: false } });
   environmentSources(f).push({ ...(prefix ? { prefix } : {}), [kind === 'secret' ? 'secretRef' : 'configMapRef']: { name } });
@@ -226,7 +226,7 @@ function addSource(f, kind, name, keys, prefix = '') {
 test('the required ConfigMap cannot be prefixed or ambiguous', () => {
   const f = fixture(); environmentSources(f)[0].prefix = 'OTHER_';
   assert.throws(() => observe(f.config, f.request, f.command), /api_configmap_prefixed/);
-  environmentSources(f)[0].prefix = ''; environmentSources(f).push({ configMapRef: { name: 'cma-api' } });
+  environmentSources(f)[0].prefix = ''; environmentSources(f).push({ configMapRef: { name: 'cma-agent-manager' } });
   assert.throws(() => observe(f.config, f.request, f.command), /api_configmap_not_bound/);
 });
 
@@ -263,7 +263,7 @@ test('later source key and identity changes are checked in both observations', (
     assert.throws(() => observe(f.config, f.request, (tool, args) => {
       if (tool === f.config.tools.skopeo.path && !changed) {
         changed = true;
-        const source = f.resources.get('cma/secret/cma-api').sourceKeys;
+        const source = f.resources.get('cma/secret/cma-agent-manager').sourceKeys;
         if (field === 'keys') source.keys.push('CHRONO_SANDBOX_IMAGE'); else source.resourceVersion = '31';
       }
       return f.command(tool, args);
@@ -272,11 +272,11 @@ test('later source key and identity changes are checked in both observations', (
 });
 
 test('missing, inaccessible or malformed later source evidence fails closed', () => {
-  const missing = fixture(); missing.resources.delete('cma/secret/cma-api');
+  const missing = fixture(); missing.resources.delete('cma/secret/cma-agent-manager');
   assert.throws(() => observe(missing.config, missing.request, missing.command));
-  const wrong = fixture(); wrong.resources.get('cma/secret/cma-api').sourceKeys.namespace = 'other';
+  const wrong = fixture(); wrong.resources.get('cma/secret/cma-agent-manager').sourceKeys.namespace = 'other';
   assert.throws(() => observe(wrong.config, wrong.request, wrong.command), /environment_source_identity_incomplete/);
-  const value = fixture(); value.resources.get('cma/secret/cma-api').sourceKeys.extraValue = 'untrusted-data';
+  const value = fixture(); value.resources.get('cma/secret/cma-agent-manager').sourceKeys.extraValue = 'untrusted-data';
   assert.throws(() => observe(value.config, value.request, value.command), /invalid_schema/);
   const inaccessible = fixture();
   assert.throws(() => observe(inaccessible.config, inaccessible.request, (tool, args) => {
@@ -313,7 +313,7 @@ test('registry labels and contract are checked against bytes, not fixture declar
 test('a rollout occurring during registry reads cannot produce a passing receipt', () => {
   const f = fixture(); let changed = false;
   assert.throws(() => observe(f.config, f.request, (tool, args) => {
-    if (tool === f.config.tools.skopeo.path && !changed) { changed = true; f.resources.get('cma/deployment/cma-api')['metadata.resourceVersion'] = ['new']; }
+    if (tool === f.config.tools.skopeo.path && !changed) { changed = true; f.resources.get('cma/deployment/cma-agent-manager')['metadata.resourceVersion'] = ['new']; }
     return f.command(tool, args);
   }), /deployment_changed_during_observation/);
 });

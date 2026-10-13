@@ -81,6 +81,7 @@ def main():
                 ["cargo", "test", "--locked", "-p", "cmaeg", "--test", "management", "binary::compiled_binary_", "--", "--include-ignored", "--test-threads=1"],
                 ["cargo", "test", "--locked", "-p", "cmaeg", "--test", "mongo_isolation", "--", "--ignored", "--test-threads=1"],
                 ["cargo", "test", "--locked", "-p", "cma", "store::isolation::tests::real_", "--", "--ignored", "--test-threads=1"],
+                ["cargo", "test", "--locked", "-p", "cma", "store::isolation::shared_schema_contract::", "--", "--ignored", "--test-threads=1"],
             ]:
                 result = subprocess.run(command, cwd=root / "api", env=environment)
                 if result.returncode:

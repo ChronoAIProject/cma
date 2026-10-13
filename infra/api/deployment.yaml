@@ -1,10 +1,10 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: cma-api
+  name: cma-agent-manager
   namespace: chrono-bot
   labels:
-    app.kubernetes.io/name: cma-api
+    app.kubernetes.io/name: cma-agent-manager
     app.kubernetes.io/part-of: cma
 spec:
   replicas: 1
@@ -15,14 +15,14 @@ spec:
     type: Recreate
   selector:
     matchLabels:
-      app.kubernetes.io/name: cma-api
+      app.kubernetes.io/name: cma-agent-manager
   template:
     metadata:
       annotations:
         # Reload the environment-bound runtime pin when its ConfigMap changes.
         cma.chronoai.dev/runtime-image: "sha256:532a64cf193957991248d98d82b7a61f6d333a2b87f5e1db0a19ae55f598ed49"
       labels:
-        app.kubernetes.io/name: cma-api
+        app.kubernetes.io/name: cma-agent-manager
         app.kubernetes.io/part-of: cma
     spec:
       # Shutdown drains HTTP for up to 30s, then background workers for up to
@@ -43,7 +43,7 @@ spec:
                 topologyKey: kubernetes.io/hostname
                 labelSelector:
                   matchLabels:
-                    app.kubernetes.io/name: cma-api
+                    app.kubernetes.io/name: cma-agent-manager
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001
@@ -63,9 +63,28 @@ spec:
               protocol: TCP
           envFrom:
             - configMapRef:
-                name: cma-api
+                name: cma-agent-manager
             - secretRef:
-                name: cma-api
+                name: cma-agent-manager
+          env:
+            - name: CHRONO_AGENT_SANDBOX_API_SERVER
+              valueFrom:
+                configMapKeyRef:
+                  name: chrono-pod-configmap
+                  key: CHRONO_POD_API_SERVER
+                  optional: true
+            - name: CHRONO_AGENT_SANDBOX_NAMESPACE
+              valueFrom:
+                configMapKeyRef:
+                  name: chrono-pod-configmap
+                  key: CHRONO_POD_NAMESPACE
+                  optional: true
+            - name: CHRONO_AGENT_SANDBOX_CA_FILE
+              valueFrom:
+                configMapKeyRef:
+                  name: chrono-pod-configmap
+                  key: CHRONO_POD_CA_FILE
+                  optional: true
           securityContext:
             allowPrivilegeEscalation: false
             privileged: false
@@ -107,6 +126,9 @@ spec:
             # Longer than the API's two-second store-ping deadline.
             timeoutSeconds: 3
           volumeMounts:
+            - name: chrono-pod-configmap
+              mountPath: /etc/chrono-pod
+              readOnly: true
             - name: agent-sandbox-control
               mountPath: /var/run/cma-agent-sandbox
               readOnly: true
@@ -118,6 +140,13 @@ spec:
               mountPath: /var/secrets
               readOnly: true
       volumes:
+        - name: chrono-pod-configmap
+          configMap:
+            name: chrono-pod-configmap
+            optional: true
+            items:
+              - key: ca.crt
+                path: ca.crt
         - name: agent-sandbox-control
           secret:
             secretName: cma-agent-sandbox-control

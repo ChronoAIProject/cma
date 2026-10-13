@@ -1,6 +1,6 @@
 # CMA service isolation
 
-Revised target, 2026-10-12. See [architecture](CMA_Service_Split.md).
+Revised deployment, 2026-10-13. See [architecture](CMA_Service_Split.md).
 
 ## Independent services
 
@@ -11,7 +11,8 @@ Revised target, 2026-10-12. See [architecture](CMA_Service_Split.md).
 | Image Manager | `cma-image-manager`; `cma-im:` | Image catalog, shares, versions, builds and retention references |
 
 Each service owns its OAuth client/secret, exact target resource, role catalog,
-DB URI, encryption key, schema validators, indexes and migrations. Admin in one
+encryption key, schema validators, indexes and migrations. The current deployment
+uses the same `chrono-bot` database URI with separate service schemas. Admin in one
 service is not admin in another. Legacy unscoped permissions do not implicitly
 grant the new service's permissions. User/role assignment authority remains NyxID.
 Service-to-service requests identify both caller and authorized resource scope;
@@ -27,13 +28,29 @@ writable authority.
 
 ## Database isolation
 
-Shared MongoDB infrastructure is allowed. Prefer separate logical databases for
-clear ownership; exact collection-scoped custom roles in one database are also
-valid. No runtime account may read/write another service's collections or hold global
-admin roles. Image and Gateway migrations use separate identities. Agent Manager
-retains its existing startup index/schema initialization, with DDL confined to its
-explicit collection catalog; extracting those migrations is a separate change. Each service verifies effective grants at startup.
-Migrators have only their service's explicitly named schema permissions.
+The deployment requested on 2026-10-13 uses the existing `chrono-bot` database
+and database-scoped credential for all three services. Agent Manager retains its
+exact collection catalog, Image Manager owns `im_*`, and Event Gateway owns
+`eg_*`. Their schema versions, validators, indexes, sessions and migrations
+remain independent. No service store opens another service's collections, and
+no cross-service database joins or transactions are introduced.
+
+Each binary defaults to `isolated`, which verifies exact collection-scoped
+effective grants. The checked-in deployment explicitly selects `shared-schema`
+with `CHRONO_MONGODB_AUTHORITY_MODE`, `CMA_IM_MONGODB_AUTHORITY_MODE`, and
+`CMAEG_MONGODB_AUTHORITY_MODE`. All database names are `chrono-bot`. Shared mode
+checks authenticated database authority and all operations required by that
+service, permits the existing database-wide grants, and still refuses global or
+other-database grants. It does not provide account-level isolation between the
+services; schema and application boundaries enforce their ownership in this
+mode. Switching to separate restricted credentials and `isolated` requires no
+collection renaming or data movement.
+
+Image and Gateway migrations are explicit commands targeting only their own
+collections; Agent Manager retains startup index/schema initialization confined
+to its named catalog. Validators, unique indexes and migration markers remain
+mandatory in both authority modes. Copying the database URI into each service's
+Secret does not share browser keys or OAuth identities.
 
 Existing Agent collections can retain their names in an Agent-only database;
 renaming every table is not a substitute for permission isolation. New image
@@ -74,14 +91,17 @@ the selected service. No service reads another service's login collections.
 The Image Manager schema is `im_images`, `im_builds`, `im_schema_migrations`,
 `im_auth_sessions`. Successful immutable builds are the version catalog; image
 retirement retains their registry blobs for already admitted Agents. The Gateway
-schema is `eg_channel_records`, `eg_schema_migrations`, `eg_auth_sessions`.
+schema is `eg_channel_records`, `eg_connection_records`, `eg_interaction_records`,
+`eg_schema_migrations` and `eg_auth_sessions` (schema marker 2). Each record kind
+uses its own collection; interactions preserve immutable expiration and a TTL
+index, and expired records are refused before asynchronous TTL cleanup.
 AM's full exact collection catalog is owned by `store/isolation.rs`; the legacy
 `gateway_channel_records` collection is excluded from its runtime grants.
 Agent Manager no longer initializes or serves legacy channel, connection or
 interaction record storage. Event Gateway uses its own `eg_channel_records` store;
 the old adapters and protocol fixtures are retained only for migration regression
 coverage. Provider bindings remain Agent Manager resources.
-Agent Manager verifies its effective runtime grants before any startup DDL. The
+Agent Manager verifies its configured credential policy before any startup DDL. The
 restricted bootstrap contract opens the full production store assembly twice,
 including Bot setups and Event Worker definitions, while reads of all three
 legacy Gateway collections remain forbidden.

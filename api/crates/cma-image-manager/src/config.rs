@@ -1,6 +1,7 @@
 //! Image Manager deployment configuration contract.
 pub const CMA_IM_MONGODB_URI: &str = "CMA_IM_MONGODB_URI";
 pub const CMA_IM_MONGODB_DATABASE: &str = "CMA_IM_MONGODB_DATABASE";
+pub const CMA_IM_MONGODB_AUTHORITY_MODE: &str = "CMA_IM_MONGODB_AUTHORITY_MODE";
 pub const CMA_IM_NYXID_ISSUER: &str = "CMA_IM_NYXID_ISSUER";
 pub const CMA_IM_NYXID_CLIENT_ID: &str = "CMA_IM_NYXID_CLIENT_ID";
 pub const CMA_IM_NYXID_CLIENT_SECRET: &str = "CMA_IM_NYXID_CLIENT_SECRET";

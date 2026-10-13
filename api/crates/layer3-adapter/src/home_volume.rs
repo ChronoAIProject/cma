@@ -72,11 +72,18 @@ pub struct HomeVolumeRequest {
     pub volume_id: String,
     pub sandbox_id: String,
     pub policy: HomeVolumePolicy,
+    /// Recorded before allocation; absent historical requests belong to the
+    /// original local store, never whichever provider is the current default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<HomeVolumeScope>,
 }
 
 impl HomeVolumeRequest {
     pub fn validate(&self) -> Result<()> {
         self.policy.validate()?;
+        if let Some(scope) = &self.scope {
+            scope.validate()?;
+        }
         if !identifier(&self.volume_id) || !identifier(&self.sandbox_id) {
             return Err(invalid("home allocation lineage is invalid"));
         }
@@ -97,6 +104,11 @@ impl HomeVolumeRequest {
             digest.update(value.as_bytes());
         }
         digest.update(self.policy.capacity_gib.to_be_bytes());
+        // Preserve every historical request digest exactly when scope is absent.
+        if let Some(scope) = &self.scope {
+            digest.update(b"cma-home-request-scope-v1\0");
+            digest.update(scope.0.as_bytes());
+        }
         format!("{:x}", digest.finalize())
     }
 }

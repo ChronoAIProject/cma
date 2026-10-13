@@ -1,6 +1,7 @@
 //! Technical OAuth transport shared by independently configured services.
 //! Each caller supplies its own client, cookie keys and exclusive DB collections.
 pub mod browser;
+pub mod mongodb_authority;
 mod nyx;
 pub use nyx::{AuthError, NyxIdAuth, Principal};
 #[derive(Clone, Copy, Debug)]
