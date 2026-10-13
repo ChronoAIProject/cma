@@ -5,13 +5,17 @@ use std::{
     collections::BTreeMap,
     ffi::OsStr,
     fs,
-    os::unix::{fs::PermissionsExt, process::CommandExt},
+    os::unix::{
+        fs::PermissionsExt,
+        process::{CommandExt, ExitStatusExt},
+    },
     path::{Path, PathBuf},
-    process::{Command, Output},
+    process::{Child, Command, ExitStatus, Output, Stdio},
     sync::{
         atomic::{AtomicUsize, Ordering},
         Once,
     },
+    time::Duration,
 };
 
 pub const EPERM: &str = "1";
@@ -70,6 +74,10 @@ pub fn run_job(op: &str, bin: &Path, job: &Path, arg: Option<&OsStr>) -> Output 
 /// argument naming no directory (relative or not UTF-8) must still reach the
 /// wrapper: spawning into a missing cwd fails before the wrapper runs.
 pub fn run_job_in(cwd: &Path, op: &str, bin: &Path, job: &Path, arg: Option<&OsStr>) -> Output {
+    job_command(cwd, op, bin, job, arg).output().unwrap()
+}
+
+fn job_command(cwd: &Path, op: &str, bin: &Path, job: &Path, arg: Option<&OsStr>) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_cmaeg"));
     command
         .arg("--media-job")
@@ -80,7 +88,63 @@ pub fn run_job_in(cwd: &Path, op: &str, bin: &Path, job: &Path, arg: Option<&OsS
         .env_clear()
         .current_dir(cwd)
         .process_group(0);
-    command.output().unwrap()
+    command
+}
+
+/// Measure the real wrapper's kernel CPU limit independently of the launcher's
+/// equal 20-second wall limit. SCHED_IDLE cannot promise CPU time per wall second.
+/// The outer bound is test cleanup only; the wrapper still sets every real limit.
+pub async fn observe_cpu_limited_job(bin: &Path, job: &Path) -> (ExitStatus, Duration) {
+    let child = job_command(job, "probe", bin, job, None)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut running = ReapOnDrop(Some(child));
+    let pid = libc::pid_t::try_from(running.0.as_ref().unwrap().id()).unwrap();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
+    loop {
+        let mut status = 0;
+        // SAFETY: rusage is plain integers; wait4 fills both output values for
+        // our exact, unreaped child. No other waiter owns this std::process child.
+        let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
+        let result = unsafe { libc::wait4(pid, &mut status, libc::WNOHANG, &mut usage) };
+        if result == pid {
+            // std::process::Child has no kill-on-drop behavior. Disarm cleanup
+            // immediately after reaping so it cannot signal a recycled PID.
+            drop(running.0.take());
+            let time = |value: libc::timeval| {
+                Duration::from_secs(u64::try_from(value.tv_sec).unwrap())
+                    + Duration::from_micros(u64::try_from(value.tv_usec).unwrap())
+            };
+            return (
+                ExitStatus::from_raw(status),
+                time(usage.ru_utime) + time(usage.ru_stime),
+            );
+        }
+        assert!(
+            result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EINTR),
+            "could not reap sandbox CPU probe: {}",
+            std::io::Error::last_os_error()
+        );
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the sandbox CPU probe did not reach its kernel limit before test cleanup"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+struct ReapOnDrop(Option<Child>);
+
+impl Drop for ReapOnDrop {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.0.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
 }
 
 /// Run the probe in `mode` as op `probe`.
