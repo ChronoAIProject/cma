@@ -86,6 +86,33 @@ async fn home_selection_persists_provider_before_allocation_and_keeps_it_on_retr
     assert_eq!(new.inventory().await.unwrap().len(), 1);
 }
 
+#[test]
+fn missing_home_routes_reject_a_persisted_remote_scope() {
+    let backend = RuntimeBackends {
+        home_routes: None,
+        agent_sandbox: Some(Arc::new(super::super::InMemoryHostedBackend::default())),
+        opensandbox: Some(Arc::new(super::super::InMemoryHostedBackend::default())),
+        allocate_agent_sandbox: true,
+        routing: Arc::new(Routes::default()),
+    };
+    let home = HomeVolumeRequest {
+        scope: Some(
+            HomeVolumeScope::from_authority("kubernetes-pvc-v1", &["remote", "runtime"]).unwrap(),
+        ),
+        volume_id: "remote-home".into(),
+        sandbox_id: "remote-sandbox".into(),
+        policy: HomeVolumePolicy {
+            storage_class: "storage".into(),
+            capacity_gib: 4,
+            template_name: "seed".into(),
+            template_generation: "seed-uid".into(),
+        },
+    };
+    let handle = RuntimeHandle::new("agent-sandbox:remote-sandbox");
+    assert!(backend.verify_retained_home_route(&handle, &home).is_err());
+    assert!(backend.native_pools_for_home(&home).is_err());
+}
+
 use crate::codex::{CodexAdapter, CodexSandboxSpec};
 use crate::{
     HomeVolumeAttachment, HomeVolumePolicy, HomeVolumeReceipt, HomeVolumeRequest, HomeVolumeScope,

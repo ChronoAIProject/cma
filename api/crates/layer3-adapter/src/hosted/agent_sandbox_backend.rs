@@ -264,6 +264,9 @@ impl HostedBackend for RuntimeBackends {
         self.select(selected)?;
         match &self.home_routes {
             Some(routes) => routes.reserve_for(selected, home),
+            None if home.scope.is_some() => Err(AdapterError::Rejected(
+                "recorded home storage authority is not configured".into(),
+            )),
             None => Ok(home.clone()),
         }
     }
@@ -272,6 +275,11 @@ impl HostedBackend for RuntimeBackends {
         request: &ProviderSandboxRequest,
         home: &crate::HomeVolumeRequest,
     ) -> Result<()> {
+        if self.home_routes.is_none() && home.scope.is_some() {
+            return Err(AdapterError::Rejected(
+                "recorded home storage authority is not configured".into(),
+            ));
+        }
         let Some(routes) = &self.home_routes else {
             return Ok(());
         };
@@ -299,6 +307,11 @@ impl HostedBackend for RuntimeBackends {
         handle: &RuntimeHandle,
         home: &crate::HomeVolumeRequest,
     ) -> Result<()> {
+        if self.home_routes.is_none() && home.scope.is_some() {
+            return Err(AdapterError::Rejected(
+                "recorded home storage authority is not configured".into(),
+            ));
+        }
         if let Some(routes) = &self.home_routes {
             if routes.is_native(home)? != handle.0.starts_with("agent-sandbox:") {
                 return Err(AdapterError::Rejected(
@@ -313,6 +326,11 @@ impl HostedBackend for RuntimeBackends {
         &self,
         home: &crate::HomeVolumeRequest,
     ) -> Result<Option<&dyn crate::agent_sandbox::NativePoolControl>> {
+        if self.home_routes.is_none() && home.scope.is_some() {
+            return Err(AdapterError::Rejected(
+                "recorded home storage authority is not configured".into(),
+            ));
+        }
         if let Some(routes) = &self.home_routes {
             if !routes.is_native(home)? {
                 return Ok(None);
@@ -325,6 +343,11 @@ impl HostedBackend for RuntimeBackends {
         request: &ProviderSandboxRequest,
         home: &crate::HomeVolumeRequest,
     ) -> Result<Option<crate::agent_sandbox::NativePoolBinding>> {
+        if self.home_routes.is_none() && home.scope.is_some() {
+            return Err(AdapterError::Rejected(
+                "recorded home storage authority is not configured".into(),
+            ));
+        }
         let identity = super::deployment::provider_request_identity(request)?;
         let selected = self
             .routing
