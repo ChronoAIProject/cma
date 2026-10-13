@@ -26,10 +26,11 @@ ARG TARGETARCH
 ARG GH_VERSION=2.100.0
 ARG GH_SOURCE_COMMIT=45437bc7eeeb3359bbfddd1742f79de7652fd3e2
 ARG GH_SOURCE_SHA256=e16749bc0d99dc0633a3d5ebadf48ffff1c24beb1ce83e8f6a71bb64ce477e9a
-ARG GH_GO_VERSION=1.26.8
-ARG GH_GO_SHA256_AMD64=d0f743b33e8d8945e6b1f432edd15785c70507121d6e2a723b21285eddf8b57b
-ARG GH_GO_SHA256_ARM64=211ffced9dcb9633a55eac6364816ec0ddd951389a740e88fa8b3337971bdda0
-ARG GH_X_MOD_VERSION=0.40.0
+ARG GH_GO_VERSION=1.26.9
+ARG GH_GO_SHA256_AMD64=42d158b4d8f7b61ac0a830567c940a86098fb7aac52e467a5ebec03ef5cc2f8d
+ARG GH_GO_SHA256_ARM64=4a97373d49fcacdcf3694fea368a500b00ee3e963974f3e7514132717632f052
+ARG GH_X_MOD_VERSION=0.41.0
+ARG GH_X_NET_VERSION=0.60.0
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
@@ -52,11 +53,14 @@ WORKDIR /source
 ENV GOTOOLCHAIN=local CGO_ENABLED=0
 RUN --mount=type=cache,id=cma-gh-modules,target=/root/go/pkg/mod,sharing=locked \
     --mount=type=cache,id=cma-gh-build-${TARGETARCH},target=/root/.cache/go-build,sharing=locked \
-    /usr/local/go/bin/go mod edit -require="golang.org/x/mod@v${GH_X_MOD_VERSION}" \
+    /usr/local/go/bin/go mod edit -require="golang.org/x/mod@v${GH_X_MOD_VERSION}" -require="golang.org/x/net@v${GH_X_NET_VERSION}" \
     && /usr/local/go/bin/go mod download golang.org/x/mod \
-    && /usr/local/go/bin/go mod download \
+    && /usr/local/go/bin/go mod download golang.org/x/net \
+    && /usr/local/go/bin/go mod download all \
     && /usr/local/go/bin/go mod verify \
     && test "$(/usr/local/go/bin/go list -m -f '{{.Version}}' golang.org/x/mod)" = "v${GH_X_MOD_VERSION}" \
+    && test "$(/usr/local/go/bin/go list -m -f '{{.Version}}' golang.org/x/net)" = "v${GH_X_NET_VERSION}" \
+    && mkdir -p /out \
     && /usr/local/go/bin/go build -mod=readonly -trimpath \
         -ldflags="-s -w -X github.com/cli/cli/v2/internal/build.Version=${GH_VERSION} -X github.com/cli/cli/v2/internal/build.Date=2026-09-09" \
         -o /out/gh ./cmd/gh
