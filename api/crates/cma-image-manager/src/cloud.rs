@@ -94,15 +94,19 @@ impl CloudBuild {
         let (dockerfile, mut steps) = (build.source.dockerfile.clone(), Vec::new());
         if let Some(content) = &build.source.dockerfile_content {
             let encoded = STANDARD.encode(content.as_bytes());
+            // A separate empty volume keeps checkout-controlled files/symlinks
+            // from redirecting the imported Dockerfile write.
+            let volumes = json!([{"name":"cma-dockerfile","path":"/cma-import"}]);
             steps.push(json!({
                 "name": self.builder_image,
                 "entrypoint": "sh",
+                "volumes": volumes,
                 "args": ["-ceu", format!(
-                    "printf '%s' '{}' | base64 -d > /workspace/CMA.Dockerfile",
+                    "printf '%s' '{}' | base64 -d > /cma-import/Dockerfile",
                     encoded
                 )]
             }));
-            steps.push(json!({"name":self.builder_image,"args":["build","--file","/workspace/CMA.Dockerfile","--tag",build.destination(),build.source.context]}));
+            steps.push(json!({"name":self.builder_image,"volumes":volumes,"args":["build","--file","/cma-import/Dockerfile","--tag",build.destination(),build.source.context]}));
         } else {
             steps.push(json!({"name":self.builder_image,"args":["build","--file",dockerfile,"--tag",build.destination(),build.source.context]}));
         }
@@ -118,11 +122,7 @@ impl CloudBuild {
         let expected = self.request(build)?;
         if value["source"]["gitSource"] != expected["source"]["gitSource"]
             || value["images"] != expected["images"]
-            || value["steps"].as_array().is_none_or(|steps| {
-                steps.len() != 1
-                    || steps[0]["name"] != expected["steps"][0]["name"]
-                    || steps[0]["args"] != expected["steps"][0]["args"]
-            })
+            || !same_steps(&value["steps"], &expected["steps"])
             || value["serviceAccount"] != expected["serviceAccount"]
             || !value["tags"]
                 .as_array()
@@ -162,6 +162,26 @@ impl CloudBuild {
         };
         Ok(Observation { id, phase, digest })
     }
+}
+
+fn same_steps(actual: &Value, expected: &Value) -> bool {
+    let (Some(actual), Some(expected)) = (actual.as_array(), expected.as_array()) else {
+        return false;
+    };
+    actual.len() == expected.len()
+        && actual.iter().zip(expected).all(|(actual, expected)| {
+            let (Some(actual), Some(expected)) = (actual.as_object(), expected.as_object()) else {
+                return false;
+            };
+            expected
+                .iter()
+                .all(|(key, value)| actual.get(key) == Some(value))
+                && actual.keys().all(|key| {
+                    expected.contains_key(key)
+                        // Cloud Build adds these output-only observation fields.
+                        || matches!(key.as_str(), "timing" | "pullTiming" | "status" | "exitCode")
+                })
+        })
 }
 
 #[async_trait::async_trait]
@@ -355,9 +375,55 @@ mod tests {
         assert_eq!(steps.len(), 2);
         assert_eq!(steps[0]["entrypoint"], "sh");
         assert_eq!(steps[1]["args"][1], "--file");
-        assert_eq!(steps[1]["args"][2], "/workspace/CMA.Dockerfile");
+        assert_eq!(steps[1]["args"][2], "/cma-import/Dockerfile");
+        assert_eq!(steps[0]["volumes"], steps[1]["volumes"]);
         let script = steps[0]["args"][1].as_str().unwrap();
         assert!(!script.contains("FROM alpine"));
-        assert!(script.contains("base64 -d > /workspace/CMA.Dockerfile"));
+        assert!(script.contains("base64 -d > /cma-import/Dockerfile"));
+    }
+
+    #[test]
+    fn imported_dockerfile_reconciles_running_and_success_with_exact_provenance() {
+        let (executor, mut build) = fixture();
+        build.source.dockerfile_content = Some("FROM alpine:3.20\nRUN echo safe\n".into());
+        let mut response = executor.request(&build).unwrap();
+        response["id"] = json!(uuid::Uuid::new_v4());
+        response["status"] = json!("WORKING");
+        response["steps"][0]["status"] = json!("SUCCESS");
+        response["steps"][0]["timing"] = json!({"startTime":"2026-10-13T00:00:00Z"});
+        response["steps"][1]["pullTiming"] = json!({"startTime":"2026-10-13T00:00:01Z"});
+        assert_eq!(
+            executor.observation(&build, &response).unwrap().phase,
+            BuildPhase::Running
+        );
+        let digest = format!("sha256:{}", "b".repeat(64));
+        response["status"] = json!("SUCCESS");
+        response["results"] = json!({"images":[{"name":build.destination(),"digest":digest}]});
+        let observed = executor.observation(&build, &response).unwrap();
+        assert_eq!(observed.phase, BuildPhase::Succeeded);
+        assert_eq!(observed.digest.as_deref(), Some(digest.as_str()));
+
+        for step in 0..2 {
+            for field in ["name", "args", "volumes"] {
+                let mut changed = response.clone();
+                changed["steps"][step][field] = json!(null);
+                assert!(executor.observation(&build, &changed).is_err());
+            }
+            for (field, value) in [
+                ("entrypoint", json!("unapproved")),
+                ("env", json!(["DOCKER_HOST=tcp://other:2375"])),
+                ("dir", json!("elsewhere")),
+                ("script", json!("echo unapproved")),
+            ] {
+                let mut changed = response.clone();
+                changed["steps"][step][field] = value;
+                assert!(executor.observation(&build, &changed).is_err());
+            }
+        }
+        let mut missing = response.clone();
+        missing["steps"].as_array_mut().unwrap().pop();
+        assert!(executor.observation(&build, &missing).is_err());
+        response["steps"].as_array_mut().unwrap().reverse();
+        assert!(executor.observation(&build, &response).is_err());
     }
 }
