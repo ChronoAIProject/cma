@@ -585,6 +585,17 @@ jobs:
             CHRONO_BUILD_SHA=${{ github.sha }}
             OS_SECURITY_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
           cache-from: type=gha,scope=${{ matrix.component }}
+      - name: Release build cache before image checks
+        # Native Docker image bytes are independent of BuildKit's build cache.
+        # The cache is already exported above; free its toolchain/build layers
+        # before Trivy's Docker export and the tested-image transfer archive.
+        env:
+          IMAGE_COMPONENT: ${{ matrix.component }}
+        run: |
+          native_image_id=$(docker image inspect "cma-${IMAGE_COMPONENT}:ci" --format '{{.Id}}')
+          docker buildx prune --all --force
+          test "$(docker image inspect "cma-${IMAGE_COMPONENT}:ci" --format '{{.Id}}')" = "$native_image_id"
+          df -h .
       - name: Vulnerability scan
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
