@@ -181,6 +181,20 @@ export function preflight(options = {}, command = (args, input) => execFileSync(
     // Both CMA Pod templates explicitly disable automount. That Pod setting
     // overrides the ServiceAccount default, which need not itself be false.
   });
+  check('configured runtime class exists and matches known production admission', () => {
+    const name = config.CHRONO_AGENT_SANDBOX_RUNTIME_CLASS || '';
+    // The southeast production namespace enforces chrono-pod-sandbox. Other
+    // deployments may use their default runtime and need no explicit class.
+    if (runtimeContext === productionRuntimeContext && runtimeNamespace === 'chrono-pod') {
+      assert.ok(['microvm', 'gvisor'].includes(name));
+    }
+    if (!name) return;
+    assert.ok(dns(name));
+    const runtimeClass = get('runtimeclass.node.k8s.io', name);
+    assert.equal(runtimeClass.metadata?.name, name);
+    assert.ok(!runtimeClass.metadata?.deletionTimestamp);
+    assert.ok(dns(runtimeClass.handler));
+  });
   check(policy?.mode === 'native_vct_empty_v1' ? 'native home storage class' : 'ready retained-home seed and storage class', () => {
     assert.ok(policy);
     if (policy.mode === 'legacy_snapshot') {
@@ -190,7 +204,7 @@ export function preflight(options = {}, command = (args, input) => execFileSync(
   });
   return {
     context, namespace, serviceAccount, runtimeContext, runtimeNamespace, runtimePrincipal, upstreamRevision,
-    scope: 'read-only CMA configuration and runtime API schema, RBAC and home prerequisites; mounted credential identity, controller version and live behavior require separate acceptance',
+    scope: 'read-only CMA configuration and runtime API schema, RBAC, selected RuntimeClass and home prerequisites; mounted credential identity, controller version, complete admission policy and live behavior require separate acceptance',
     passed: checks.every((value) => value.passed), checks,
   };
 }

@@ -111,6 +111,7 @@ function fixture(fail = () => false, config = legacyConfig, options = {}, deploy
     }
     if (kind === 'deployment') return JSON.stringify({ spec: { template: { spec: { containers: [{ name: 'api', env: deploymentEnv }] } } } });
     if (kind === 'serviceaccount') return JSON.stringify({ metadata: { name, namespace }, automountServiceAccountToken: false });
+    if (kind === 'runtimeclass.node.k8s.io') return JSON.stringify({ metadata: { name }, handler: 'test-handler' });
     if (kind === 'storageclass') return JSON.stringify({ provisioner: 'pd.csi.storage.gke.io' });
     assert.equal(kind, 'volumesnapshots.snapshot.storage.k8s.io');
     return JSON.stringify(seed());
@@ -227,6 +228,56 @@ test('two-cluster preflight reads CMA config locally and native resources and au
   assert.ok(calls.some((args) => args[6] === 'volumesnapshots.snapshot.storage.k8s.io' && args[7] === 'remote-seed'));
   assert.ok(calls.some((args) => args[6] === 'storageclass' && args[7] === 'remote-disk'));
   assert.ok(calls.every((args) => !args.includes('secrets')));
+});
+
+test('selected runtime class resolves Deployment overrides in the runtime cluster', () => {
+  const env = [{ name: 'CHRONO_AGENT_SANDBOX_RUNTIME_CLASS', value: 'microvm' }];
+  const { command, calls } = fixture(() => false, remoteConfig, remoteOptions, env);
+  assert.equal(preflight(remoteOptions, command).passed, true);
+  assert.ok(calls.some((args) => args[1] === productionRuntimeContext
+    && args[6] === 'runtimeclass.node.k8s.io' && args[7] === 'microvm'));
+  const optional = fixture(() => false, remoteConfig, remoteOptions);
+  assert.equal(preflight(remoteOptions, optional.command).passed, true);
+  assert.ok(optional.calls.every((args) => args[6] !== 'runtimeclass.node.k8s.io'));
+});
+
+test('selected runtime class must exist, retain its name and handler, and not be deleting', () => {
+  const config = { ...remoteConfig, CHRONO_AGENT_SANDBOX_RUNTIME_CLASS: 'microvm' };
+  for (const changed of [
+    undefined, {},
+    { metadata: { name: 'another-class' }, handler: 'test-handler' },
+    { metadata: { name: 'microvm', deletionTimestamp: '2026-10-13T00:00:00Z' }, handler: 'test-handler' },
+    { metadata: { name: 'microvm' } },
+    { metadata: { name: 'microvm' }, handler: '' },
+  ]) {
+    const { command } = fixture(() => false, config, remoteOptions);
+    const result = preflight(remoteOptions, (args, input) => {
+      const raw = command(args, input);
+      if (args[6] !== 'runtimeclass.node.k8s.io') return raw;
+      if (changed === undefined) throw new Error('sensitive RuntimeClass detail');
+      return JSON.stringify(changed);
+    });
+    assert.equal(result.passed, false);
+    assert.deepEqual(result.checks.filter((check) => !check.passed).map((check) => check.name),
+      ['configured runtime class exists and matches known production admission']);
+    assert.ok(!JSON.stringify(result).includes('sensitive'));
+  }
+});
+
+test('only known southeast production namespace requires its admitted runtime classes', () => {
+  const options = { ...remoteOptions, runtimeNamespace: 'chrono-pod' };
+  for (const runtimeClass of [undefined, '', 'unconfined', 'microvm', 'gvisor']) {
+    const config = { ...remoteConfig, CHRONO_AGENT_SANDBOX_NAMESPACE: 'chrono-pod', CHRONO_AGENT_SANDBOX_RUNTIME_CLASS: runtimeClass };
+    const { command } = fixture(() => false, config, options);
+    assert.equal(preflight(options, command).passed, ['microvm', 'gvisor'].includes(runtimeClass));
+  }
+  for (const [config, elsewhere] of [
+    [remoteConfig, remoteOptions],
+    [{ ...remoteConfig, CHRONO_AGENT_SANDBOX_NAMESPACE: 'chrono-pod' }, { ...options, runtimeContext: 'another-cluster' }],
+    [{ ...remoteConfig, CHRONO_AGENT_SANDBOX_RUNTIME_CLASS: 'custom-runtime' }, remoteOptions],
+  ]) {
+    assert.equal(preflight(elsewhere, fixture(() => false, config, elsewhere).command).passed, true);
+  }
 });
 
 test('native storage overrides are complete and legacy storage stays the default', () => {
