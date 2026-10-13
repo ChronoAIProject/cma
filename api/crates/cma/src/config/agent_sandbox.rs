@@ -9,8 +9,9 @@ pub(super) fn transport_from_lookup(
     match lookup("CHRONO_AGENT_SANDBOX_RUNTIME_TRANSPORT")?.as_deref() {
         None | Some("direct") => Ok(NativeRuntimeTransport::Direct),
         Some("kubernetes-portforward") => Ok(NativeRuntimeTransport::KubernetesPortforward),
+        Some("kubernetes-exec") => Ok(NativeRuntimeTransport::KubernetesExec),
         _ => Err(
-            "CHRONO_AGENT_SANDBOX_RUNTIME_TRANSPORT must be direct or kubernetes-portforward"
+            "CHRONO_AGENT_SANDBOX_RUNTIME_TRANSPORT must be direct, kubernetes-portforward or kubernetes-exec"
                 .into(),
         ),
     }
