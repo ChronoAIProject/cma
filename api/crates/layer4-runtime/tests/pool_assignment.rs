@@ -6,7 +6,7 @@ use layer3_adapter::{
         RuntimeBootstrapReceipt, RuntimeBootstrapRequest, RUNTIME_BOOTSTRAP_VERSION,
     },
     wire::{RequestFrame, ResponseFrame},
-    RuntimeStatus, RuntimeStatusRequest,
+    InstallReceipt, InstallRequest, RuntimeStatus, RuntimeStatusRequest,
 };
 use tokio::{io::AsyncWriteExt, process::Command};
 
@@ -47,11 +47,32 @@ impl Fixture {
     }
 
     async fn waiting(&self, uid: &str) -> tokio::process::Child {
+        let ambient = self.root.join(format!("ambient-{uid}"));
+        let directory = ambient.join("cma-checkpoints/runtime-state");
+        std::fs::create_dir_all(&directory).unwrap();
+        let request = InstallRequest::new("image-build-install", vec![]);
+        let receipt = InstallReceipt {
+            operation_id: request.operation_id.clone(),
+            request_sha256: request.request_sha256.clone(),
+            commands: vec![],
+        };
+        // The parent starts with another runtime's completed image-local state.
+        // Assignment must select retained transfer storage before reading it.
+        std::fs::write(
+            directory.join("install-v2.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "state": "completed", "version": 2, "sandbox_id": "native-tools-fixture",
+                "request": request, "receipt": receipt,
+            }))
+            .unwrap(),
+        )
+        .unwrap();
         let mut child = self
             .command()
             .arg("--wait-for-assignment")
             .env("CHRONO_RUNTIME_POD_UID", uid)
             .env("CHRONO_RUNTIME_BIND", self.address.to_string())
+            .env("TMPDIR", ambient)
             .spawn()
             .unwrap();
         tokio::time::timeout(Duration::from_secs(10), async {
@@ -88,6 +109,10 @@ impl Fixture {
                 (
                     "CHRONO_RUNTIME_STATE_ROOT".into(),
                     self.root.join("state").to_string_lossy().into_owned(),
+                ),
+                (
+                    "TMPDIR".into(),
+                    self.root.join("transfer").to_string_lossy().into_owned(),
                 ),
             ]),
         }
@@ -170,6 +195,33 @@ impl Fixture {
         };
         status
     }
+
+    async fn install(
+        &self,
+        assignment: &RuntimeBootstrapRequest,
+        request: &InstallRequest,
+    ) -> InstallReceipt {
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_secs(10))
+            .build()
+            .unwrap();
+        let response = client
+            .post(format!("http://{}/runtime/control", self.address))
+            .header(
+                "x-cma-runtime-token",
+                &assignment.environment["CHRONO_RUNTIME_CONTROL_TOKEN"],
+            )
+            .json(&RequestFrame::Install(request.clone()))
+            .send()
+            .await
+            .unwrap();
+        assert!(response.status().is_success());
+        let ResponseFrame::Install(receipt) = response.json().await.unwrap() else {
+            panic!("expected installation receipt");
+        };
+        receipt
+    }
 }
 
 impl Drop for Fixture {
@@ -203,6 +255,20 @@ async fn assignment_cli_gates_network_authenticates_and_rebinds_retained_home_af
         .is_err());
     fixture.assign(&request, true).await;
     let original = fixture.status(&request).await;
+    assert!(!original.installation_ready);
+    let installation = InstallRequest::new(
+        "install-once",
+        vec!["printf 'installed\\n' >> installation-count".into()],
+    );
+    let installed = fixture.install(&request, &installation).await;
+    assert!(fixture.status(&request).await.installation_ready);
+    let persistent_journal = fixture
+        .root
+        .join("transfer/cma-checkpoints/runtime-state/install-v2.json");
+    let journal_before = std::fs::read(&persistent_journal).unwrap();
+    let authority: serde_json::Value = serde_json::from_slice(&journal_before).unwrap();
+    assert_eq!(authority["sandbox_id"], "sbx_cli");
+    assert_eq!(authority["state"], "completed");
     fixture.assign(&request, true).await;
     assert_eq!(fixture.status(&request).await.boot_id, original.boot_id);
     wrong = request.clone();
@@ -223,7 +289,26 @@ async fn assignment_cli_gates_network_authenticates_and_rebinds_retained_home_af
         .environment
         .insert("CHRONO_RUNTIME_GENERATION".into(), "2".into());
     fixture.assign(&request, true).await;
-    assert_ne!(fixture.status(&request).await.boot_id, original.boot_id);
+    let restored = fixture.status(&request).await;
+    assert_ne!(restored.boot_id, original.boot_id);
+    assert!(restored.installation_ready);
+    assert_eq!(fixture.install(&request, &installation).await, installed);
+    assert_eq!(std::fs::read(persistent_journal).unwrap(), journal_before);
+    assert_eq!(
+        std::fs::read(fixture.root.join("home/installation-count")).unwrap(),
+        b"installed\n"
+    );
+    for uid in ["original-pod", "replacement-pod"] {
+        let ambient: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(fixture.root.join(format!(
+                "ambient-{uid}/cma-checkpoints/runtime-state/install-v2.json"
+            )))
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(ambient["sandbox_id"], "native-tools-fixture");
+        assert_eq!(ambient["state"], "completed");
+    }
     assert_eq!(
         std::fs::read(fixture.root.join("home/retained.txt")).unwrap(),
         b"retained"
