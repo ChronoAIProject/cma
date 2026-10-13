@@ -398,6 +398,7 @@ async fn sigterm_keeps_process_alive_until_ten_second_turn_finishes() {
 }
 
 #[tokio::test]
+#[ignore = "requires authenticated disposable service Mongo fixture"]
 async fn nyxid_photo_callback_is_refused_not_rejected_by_the_real_binary() {
     use super::nyxid_shapes::{telegram_photo, TELEGRAM_FILE_ID};
     let provider = FakeProvider::start(FakeProviderConfig::default()).await;
