@@ -57,12 +57,15 @@ pub(crate) struct AgentAccessRequestView {
 }
 impl From<AgentAccessRequest> for AgentAccessRequestView {
     fn from(value: AgentAccessRequest) -> Self {
-        let connection =
-            (value.status == AgentAccessStatus::Connecting).then(|| AgentAccessConnection {
-                target: AgentAccessConnectionTarget::AgentAccessRequest {
-                    id: value.id.clone(),
-                },
-            });
+        let connection = matches!(
+            value.status,
+            AgentAccessStatus::Connecting | AgentAccessStatus::Applying
+        )
+        .then(|| AgentAccessConnection {
+            target: AgentAccessConnectionTarget::AgentAccessRequest {
+                id: value.id.clone(),
+            },
+        });
         Self {
             id: value.id,
             agent_id: value.agent_id.to_string(),

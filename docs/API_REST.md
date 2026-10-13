@@ -937,10 +937,12 @@ Approval requires a verified caller context matching the authenticated owner
 and an outbound request credential; missing credentials are refused before
 any approval effect. The Core service owns durable decision replay and current
 owner checks. Reuse the exact decision body and key after an uncertain reply.
-A `connecting` response adds `connection.target` with
+Both `connecting` and `applying` responses include `connection.target` with
 `{ "type": "agent_access_request", "id": "request-id" }` for the owner's
-connection flow. `applying` awaits runtime verification, and only `succeeded`
-confirms applied access. Poll the list after a connection return. `pending`,
+connection flow. Connections can be rechecked and restored throughout application
+without changing the approved services or admitting another approval.
+`applying` awaits runtime verification, and only `succeeded` confirms applied
+access. Poll the list after a connection return. `pending`,
 `denied` and `failed` preserve their durable meanings. All responses are private
 and non-cacheable. Typed refusals use `agent_access_invalid` (400),
 `agent_access_forbidden` (403), `agent_access_not_found` (404),

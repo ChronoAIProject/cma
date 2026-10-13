@@ -374,10 +374,11 @@ export async function approveServices(
 ```
 
 Retry an uncertain decision with the unchanged body and original key. The durable
-service returns current progress on replay. `connecting` includes
+service returns current progress on replay. `connecting` and `applying` include
 `connection.target = { type: 'agent_access_request', id: requestId }` for the
-owner's connection flow. `applying` means runtime verification is pending;
-only `succeeded` confirms applied access. Read the list again after a connection
-return. `denied` and `failed` are terminal outcomes; an optional `error` supplies
-safe failure detail. SDK validation rejects crossed Agent/request identities,
+owner's connection flow. Recheck that target if a connection expires while access
+is being applied; reconnecting preserves the approved scope and current request.
+`applying` means runtime verification is pending; only `succeeded` confirms applied
+access. Read the list again after a connection return. `denied` and `failed` are
+terminal outcomes; an optional `error` supplies safe failure detail. SDK validation rejects crossed Agent/request identities,
 inconsistent connection targets, and duplicate list IDs.
