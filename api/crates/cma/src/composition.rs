@@ -1,13 +1,15 @@
 //! Production control-plane service and router assembly.
 use std::sync::Arc;
+mod access;
 mod adapter;
 mod bindings;
 mod bots;
 mod credentials;
 mod event_routing;
 mod profiles;
+mod routes;
 use adapter::production_adapter;
-use axum::{extract::DefaultBodyLimit, Router};
+use axum::Router;
 use layer1_public::rest::{self, HierarchyState, ProfilesState};
 use layer2_core::{
     profiles::authoring::ProfileAuthoringService,
@@ -33,7 +35,6 @@ use crate::{
     },
     store::{DefaultProfileSpec, MongoStores},
     trigger::{CmaServiceConnectionBroker, TriggerComposition, TriggerCompositionDependencies},
-    REQUEST_BODY_LIMIT_BYTES,
 };
 pub(crate) struct ControlPlaneComposition {
     pub router: Router,
@@ -47,6 +48,7 @@ pub(crate) struct ControlPlaneComposition {
     pub sandbox_control_scheduler: super::commands::SandboxControlScheduler,
     pub sandbox_lifecycle: SandboxLifecycleComposition,
     pub native_warm_pools: Arc<crate::warm_pools::NativeWarmPools>,
+    pub agent_access_worker: crate::agent_access_worker::AgentAccessWorker,
 }
 
 impl ControlPlaneComposition {
@@ -274,7 +276,7 @@ impl ControlPlaneComposition {
                 workspaces: Arc::clone(&workspace_service),
                 agents: projections.agents(),
                 operations: projections.operations(),
-                policy: sandbox_policy,
+                policy: sandbox_policy.clone(),
                 skills: agent_skills,
             },
             SandboxLifecycleConfig {
@@ -297,7 +299,7 @@ impl ControlPlaneComposition {
             stores: Arc::clone(&stores),
             directory: users,
             settings: Arc::clone(&settings),
-            broker,
+            broker: broker.clone(),
             sandboxes: Arc::clone(&sandbox_service),
             workspaces: Arc::clone(&workspace_service),
             agents: projections.agents(),
@@ -332,7 +334,7 @@ impl ControlPlaneComposition {
                     context: context.clone(),
                 },
             ),
-            worker_holder,
+            worker_holder.clone(),
         )
         .map_err(|error| format!("Agent command worker is not usable: {error}"))?;
         let command_scheduler = crate::commands::CommandScheduler::new(command_worker);
@@ -349,11 +351,16 @@ impl ControlPlaneComposition {
             resource_access.clone(),
             auth.clone(),
         );
-        let command_service = layer2_core::sandbox::agent_io::AgentCommandService::new(
-            stores.sandbox_model.clone(),
-            resource_access.clone(),
+        let agent_access = access::compose(
+            &stores,
             auth.clone(),
+            sandbox_policy,
+            broker,
+            resource_access.clone(),
+            worker_holder,
+            access_tools,
         );
+        let command_service = agent_access.commands;
         let projections = projections.with_commands(command_service.clone());
         let responses_v2 = bindings::responses(
             &stores,
@@ -376,6 +383,7 @@ impl ControlPlaneComposition {
             "cma_codex".into(),
         );
         let resource_routes = rest::profiles_router(profiles)
+            .merge(agent_access.owner_routes)
             .merge(rest::event_workers::router(event_workers.clone()))
             .merge(layer1_public::rest::agent_artifacts_router(
                 layer2_core::sandbox::agent_artifacts::AgentArtifactService::new(
@@ -452,31 +460,17 @@ impl ControlPlaneComposition {
         } else {
             resource_routes
         };
-        let public = super::rest_router(resource_routes)
-            .merge(crate::connections::router(browser_connections))
-            .merge(crate::auth::router(Arc::clone(&auth)))
-            .layer(axum::middleware::from_fn_with_state(
-                recorder,
-                crate::activity::record,
-            ))
-            .layer(axum::middleware::from_fn_with_state(
-                Arc::clone(&limits),
-                crate::rate_limit::enforce,
-            ))
-            .layer(axum::middleware::from_fn_with_state(
-                auth.clone(),
-                crate::auth::attach_subject,
-            ));
         let provenance_backfill =
             crate::sandbox::AgentProvenanceBackfill::new(stores.sandbox_model.clone());
-        let router = Router::new()
-            .merge(public)
-            .merge(crate::health::router(stores))
-            .layer(axum::middleware::from_fn_with_state(
-                limits,
-                crate::rate_limit::admit,
-            ))
-            .layer(DefaultBodyLimit::max(REQUEST_BODY_LIMIT_BYTES));
+        let router = routes::compose(
+            resource_routes,
+            browser_connections,
+            auth.clone(),
+            recorder,
+            limits,
+            stores,
+            agent_access.tool_routes,
+        );
 
         Ok(Self {
             router,
@@ -490,6 +484,7 @@ impl ControlPlaneComposition {
             sandbox_control_scheduler,
             sandbox_lifecycle,
             native_warm_pools,
+            agent_access_worker: agent_access.worker,
         })
     }
 }

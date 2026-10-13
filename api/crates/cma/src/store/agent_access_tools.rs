@@ -19,7 +19,7 @@ use super::AuthEncryptionKey;
 
 mod authenticator;
 #[cfg(test)]
-mod fixtures;
+pub(crate) mod fixtures;
 mod operations;
 mod records;
 #[cfg(test)]

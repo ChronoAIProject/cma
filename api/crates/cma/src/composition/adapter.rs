@@ -148,11 +148,13 @@ pub(super) async fn production_adapter(
         backends.home_routes = Some(routes.clone());
         home_store = Some(routes);
     }
-    let mut deployment = HostedDeployment::default();
-    deployment.image = crate::warm_pools::deployment_image(config.runtime.sandbox_image.clone());
-    deployment.upstream_base_url = config.runtime.upstream_base_url.clone();
-    deployment.upstream_wire_api = config.runtime.upstream_wire_api.clone();
-    deployment.platform_base_url = config.runtime.platform_base_url.clone();
+    let deployment = HostedDeployment {
+        image: crate::warm_pools::deployment_image(config.runtime.sandbox_image.clone()),
+        upstream_base_url: config.runtime.upstream_base_url.clone(),
+        upstream_wire_api: config.runtime.upstream_wire_api.clone(),
+        platform_base_url: config.runtime.platform_base_url.clone(),
+        ..HostedDeployment::default()
+    };
     deployment
         .contract()
         .map_err(|error| format!("hosted runtime image is not usable: {error}"))?;

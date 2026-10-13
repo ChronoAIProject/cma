@@ -116,6 +116,8 @@ mod workspaces;
 mod worktrees;
 
 pub use activity::MongoActivityStore;
+#[cfg(test)]
+pub(crate) use agent_access_tools::fixtures as agent_access_fixtures;
 pub(crate) use agent_access_tools::MongoAgentAccessToolSource;
 #[cfg(test)]
 pub(crate) use agent_lifecycle_operations::LifecycleRecord;
