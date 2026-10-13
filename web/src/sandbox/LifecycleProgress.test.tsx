@@ -181,7 +181,7 @@ it('shows sandbox progress inside the preparing row of the actual Launch journey
     </CmaClientProvider>,
   );
   const region = await screen.findByRole('region', { name: 'Sandbox progress' });
-  const row = screen.getByRole('heading', { name: 'Preparing your sandbox' }).closest('li')!;
+  const row = screen.getByRole('heading', { name: 'Sandbox ready' }).closest('li')!;
   expect(row).toContainElement(region);
   expect(within(region).getByText(/Downloading, unpacking/)).toBeInTheDocument();
   expect(client.requests.start).not.toHaveBeenCalled();
