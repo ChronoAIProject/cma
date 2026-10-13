@@ -132,7 +132,7 @@ impl MongoSandboxStore {
                 .await?
                 .ok_or(AgentAccessError::NotFound)?;
             let record = read(&value)?;
-            if record.phase != AgentAccessPhase::Connecting {
+            if record.phase != AgentAccessPhase::Connecting && !record.phase.applying() {
                 return Err(AgentAccessError::Conflict.into());
             }
             let snapshot = validate_lineage(self, &record.requester, session, false).await?;
@@ -158,3 +158,7 @@ async fn owned(
         .ok_or(AgentAccessError::NotFound)?;
     Ok(read(&value)?)
 }
+
+#[cfg(test)]
+#[path = "connection_tests.rs"]
+mod tests;
