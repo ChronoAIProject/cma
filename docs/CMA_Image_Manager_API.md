@@ -66,9 +66,13 @@ Each service has its own viewer/user/admin roles. Runtime/migrator identities ar
 separate. Error responses and build logs must not expose service credentials.
 
 
-The current build input is `{repository,commit,dockerfile,context}`: a public
+The current build input is `{repository,commit,dockerfile,context,dockerfile_content?}`: a public
 GitHub HTTPS URL and full lowercase commit SHA, with optional Dockerfile/context
-(default `Dockerfile` and `.`). Private repository credentials and source uploads
+(default `Dockerfile` and `.`). Optional `dockerfile_content` imports UTF-8
+Dockerfile text up to 16 KiB; it is written into a separate Cloud Build volume
+and built against the selected repository context. Both the import and build
+steps must match the recorded request before a successful digest is published.
+Private repository credentials and source uploads
 are not accepted in this version. The owner supplies `Idempotency-Key` on create
 and build; edits, retirement and share changes supply the numeric current revision
 in `If-Match`. `GET /v1/permissions` returns this service's role catalog and current
@@ -79,3 +83,5 @@ builder image. No live build is asserted by local protocol tests. Configure IAM,
 builder digest and registry access before activation. Build logs are bounded to
 200 entries and include a `truncated` flag. Retirement is logical: this release
 does not delete registry blobs or claim to implement cross-service reference GC.
+See [deployment readiness](CMA_Deployment_Readiness.md) for exact identities,
+IAM, builder/runtime image requirements and the deployment acceptance sequence.
