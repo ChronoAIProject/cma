@@ -227,7 +227,7 @@ Interfaces expose semantic operations in their protocol's own idiom:
 | 2 | **Responses** | compatible conversation clients; `conversation` is the Agent id | `layer1-public/src/responses/` |
 | 3 | **REST** | resource management, profiles, marketplace, Triggers and Launches | `layer1-public/src/rest/` |
 | 4 | **PTY** | absent in this release; no terminal plane | `layer1-public/src/pty/` (typed refusal only) |
-| 5 | **MCP** | explicit unsupported-operation response; no invented Agent tools | `layer1-public/src/mcp/` |
+| 5 | **MCP** | `agent_key_scope_revision` proposes owner consent using a limited runtime capability; other operations remain explicitly unsupported | `layer1-public/src/mcp/` |
 | 6 | **A2A** | public provider card; JSON-RPC explicitly unsupported, no invented Agent tasks | `layer1-public/src/a2a/` |
 
 Each interface is a **projection** of the same core model. It may expose a
@@ -368,8 +368,13 @@ requires separate collection-scoped credentials. No cross-service collection
 access or domain/store implementation dependency is allowed. The old local `cma-sandbox-manager`
 foundation is superseded and must not become a fourth deployment.
 
-Agent Manager retains repository setup, Agent homes, models, prompts, ACP and
-runtime/conversation recovery. Existing OpenSandbox resources retain their old
+Agent Manager retains Agent homes, models, prompts, ACP and runtime/conversation
+recovery. New Agent creation uses the deployment runtime and an empty workspace;
+an optional GitHub repository is passed in its first prompt for the Agent to set
+up. New defaults are gpt-6, high reasoning and autonomous permissions, with
+chrono-llm-public and ornn-api always included in the key scope. Historical
+admitted lifecycle operations retain their recorded setup behavior and defaults.
+Existing OpenSandbox resources retain their old
 provider authority until verified migration. New crates alone do not declare the
 split or deployment complete; live continuity remains mandatory.
 
