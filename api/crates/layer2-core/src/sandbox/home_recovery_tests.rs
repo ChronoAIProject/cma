@@ -15,6 +15,7 @@ fn native() -> Sandbox {
     let mut home = SandboxHome::reserve(
         &value.id,
         HomeVolumePolicy {
+            mode: Default::default(),
             storage_class: "storage".into(),
             capacity_gib: 64,
             template_name: "empty".into(),
@@ -23,6 +24,7 @@ fn native() -> Sandbox {
     )
     .unwrap();
     home.bind(HomeVolumeReceipt {
+        native_authority: None,
         volume_id: home.request.volume_id.clone(),
         request_sha256: home.request.computed_sha256(),
         storage_reference: "original-disk".into(),

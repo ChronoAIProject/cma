@@ -69,6 +69,7 @@ async fn home_selection_persists_provider_before_allocation_and_keeps_it_on_retr
         volume_id: "home-one".into(),
         sandbox_id: spec.sandbox_id,
         policy: crate::HomeVolumePolicy {
+            mode: Default::default(),
             storage_class: "storage".into(),
             capacity_gib: 4,
             template_name: "seed".into(),
@@ -76,7 +77,11 @@ async fn home_selection_persists_provider_before_allocation_and_keeps_it_on_retr
         },
     };
     assert!(backend
-        .select_native_pool(&request, &home)
+        .select_native_pool(
+            &request,
+            &super::super::HostedDeployment::default().image,
+            &home
+        )
         .await
         .unwrap()
         .is_none());
@@ -103,6 +108,7 @@ async fn missing_home_routes_reject_a_persisted_remote_scope() {
         volume_id: "remote-home".into(),
         sandbox_id: "remote-sandbox".into(),
         policy: HomeVolumePolicy {
+            mode: Default::default(),
             storage_class: "storage".into(),
             capacity_gib: 4,
             template_name: "seed".into(),
@@ -121,7 +127,14 @@ async fn missing_home_routes_reject_a_persisted_remote_scope() {
         .unwrap();
     assert!(backend.reserve_home_request(&request, &home).await.is_err());
     assert!(backend.verify_home_route(&request, &home).await.is_err());
-    assert!(backend.select_native_pool(&request, &home).await.is_err());
+    assert!(backend
+        .select_native_pool(
+            &request,
+            &super::super::HostedDeployment::default().image,
+            &home
+        )
+        .await
+        .is_err());
     assert!(
         routes.0.lock().await.is_empty(),
         "unavailable home authority cannot reserve a replacement runtime provider"
@@ -164,6 +177,7 @@ impl HomeVolumeStore for Homes {
             .as_ref()
             .is_none_or(|scope| scope == &self.scope));
         let receipt = HomeVolumeReceipt {
+            native_authority: None,
             volume_id: request.volume_id.clone(),
             request_sha256: request.computed_sha256(),
             storage_reference: "retained-home".into(),
@@ -190,6 +204,7 @@ impl HomeVolumeStore for Homes {
 }
 fn policy(seed: &str) -> HomeVolumePolicy {
     HomeVolumePolicy {
+        mode: Default::default(),
         storage_class: "storage".into(),
         capacity_gib: 4,
         template_name: seed.into(),

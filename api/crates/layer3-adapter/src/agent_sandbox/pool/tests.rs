@@ -18,6 +18,7 @@ pub(super) fn spec() -> NativePoolSpec {
         cpu_millis: 750,
         memory_mib: 1536,
         home: HomeVolumePolicy {
+            mode: Default::default(),
             storage_class: "cma-home".into(),
             capacity_gib: 4,
             template_name: "seed".into(),
@@ -29,7 +30,13 @@ pub(super) fn spec() -> NativePoolSpec {
 pub(super) fn request(binding: NativePoolBinding) -> NativePoolClaimRequest {
     NativePoolClaimRequest {
         home: crate::HomeVolumeRequest {
-            scope: None,
+            scope: binding.spec.home.is_native_vct().then(|| {
+                crate::HomeVolumeScope::from_authority(
+                    "native-vct-empty-v1",
+                    &["fixture", "cma-test", "cma-test"],
+                )
+                .unwrap()
+            }),
             volume_id: "home-one".into(),
             sandbox_id: "sbx_one".into(),
             policy: binding.spec.home.clone(),

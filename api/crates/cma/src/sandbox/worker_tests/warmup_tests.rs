@@ -185,6 +185,7 @@ async fn persistent_warm(harness: &Harness) -> (Arc<dyn SandboxAdapter>, WarmSan
     let mut home = layer2_core::sandbox::SandboxHome::reserve(
         &record.id,
         layer3_adapter::HomeVolumePolicy {
+            mode: Default::default(),
             storage_class: "storage".into(),
             capacity_gib: 64,
             template_name: "seed".into(),
@@ -193,6 +194,7 @@ async fn persistent_warm(harness: &Harness) -> (Arc<dyn SandboxAdapter>, WarmSan
     )
     .unwrap();
     home.bind(layer3_adapter::HomeVolumeReceipt {
+        native_authority: None,
         volume_id: home.request.volume_id.clone(),
         request_sha256: home.request.computed_sha256(),
         storage_reference: "warm-original".into(),

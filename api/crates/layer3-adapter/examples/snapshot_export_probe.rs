@@ -346,6 +346,7 @@ async fn main() -> Result<()> {
             volume_id: identity.clone(),
             sandbox_id: identity.clone(),
             policy: HomeVolumePolicy {
+                mode: Default::default(),
                 storage_class: "cma-home-v1".into(),
                 capacity_gib: 1,
                 template_name: args[2].clone(),

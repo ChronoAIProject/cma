@@ -62,9 +62,37 @@ impl AgentSandboxPools {
             let assigned = claim.sandbox_name.as_deref() == Some(&member.name_any());
             if owners.iter().any(|owner| owner.uid == claim.uid) || assigned {
                 self.cleanup_member(&member, claim)?;
+                let pvc_uid = if claim.request.home.policy.is_native_vct() {
+                    let volume = self
+                        .volumes
+                        .get_opt(&format!("home-{}", member.name_any()))
+                        .await
+                        .map_err(api_error)?;
+                    if let Some(volume) = volume {
+                        let uid = volume
+                            .uid()
+                            .ok_or_else(|| rejected("native cleanup PVC UID missing"))?;
+                        let mut assigned = claim.clone();
+                        assigned.sandbox_name = Some(member.name_any());
+                        let origin = super::NativePoolHomeOrigin {
+                            claim: assigned,
+                            sandbox_uid: member.uid().unwrap(),
+                            pvc_uid: uid.clone(),
+                        };
+                        let mut observed = volume;
+                        observed.metadata.deletion_timestamp = None;
+                        self.validate_native_volume(&observed, &origin)?;
+                        Some(uid)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
                 owned.push(NativePoolMember {
                     name: member.name_any(),
                     uid: member.uid().unwrap(),
+                    pvc_uid,
                 });
             }
         }

@@ -74,12 +74,49 @@ impl AgentSandboxPools {
     pub(crate) async fn select_runtime(
         &self,
         request: &crate::provider::ProviderSandboxRequest,
+        image: &crate::RuntimeImage,
         home: &crate::HomeVolumeRequest,
     ) -> Result<Option<NativePoolBinding>> {
         home.validate()?;
         let identity = crate::hosted::provider_request_identity(request)?;
         if identity.sandbox_id != home.sandbox_id || !request.volumes.is_empty() {
             return Err(rejected("native pool selection has another home authority"));
+        }
+        if home.policy.is_native_vct() {
+            if request.image.uri != image.uri {
+                return Err(rejected(
+                    "native cold allocation requires an admitted runtime image",
+                ));
+            }
+            let quantity = |name: &str, suffix: &str| {
+                request
+                    .resource_limits
+                    .get(name)
+                    .and_then(|v| v.strip_suffix(suffix))
+                    .and_then(|v| v.parse::<u32>().ok())
+                    .ok_or_else(|| rejected("native resource quantity is invalid"))
+            };
+            let spec = NativePoolSpec {
+                image: image.clone(),
+                cpu_millis: quantity("cpu", "m")?,
+                memory_mib: quantity("memory", "Mi")?,
+                home: home.policy.clone(),
+            };
+            let policy = NativePoolPodPolicy::from(&self.config);
+            if let Some(pool) = self
+                .inventory()
+                .await?
+                .into_iter()
+                .find(|pool| pool.binding.spec == spec && pool.binding.pod_policy == policy)
+            {
+                return Ok(Some(pool.binding));
+            }
+            // A zero-sized pool is the controller's cold-creation template. The
+            // claim controller falls back to createSandbox when no warm member exists.
+            return self
+                .ensure_cold_pool(&spec)
+                .await
+                .map(|pool| Some(pool.binding));
         }
         let policy = NativePoolPodPolicy::from(&self.config);
         let selected = self.inventory().await?.into_iter().find(|pool| {
@@ -100,6 +137,30 @@ impl AgentSandboxPools {
         } else {
             Ok(None)
         }
+    }
+
+    /// Create a cold template without ever changing an administrator's replica target.
+    async fn ensure_cold_pool(&self, spec: &NativePoolSpec) -> Result<NativePoolStatus> {
+        let desired = model::template(&self.config, spec)?;
+        let template = super::ensure(&self.templates, &desired).await?;
+        let desired = model::pool(&self.config, spec, &template, 0)?;
+        let pool = match self
+            .pools
+            .get_opt(&desired.name_any())
+            .await
+            .map_err(api_error)?
+        {
+            Some(actual) => actual,
+            None => super::create(&self.pools, &desired).await?,
+        };
+        let status = self.discover(&pool).await?;
+        if status.binding.spec != *spec
+            || status.binding.pod_policy != NativePoolPodPolicy::from(&self.config)
+            || status.binding.template_uid != template.uid().unwrap_or_default()
+        {
+            return Err(rejected("native cold pool authority changed"));
+        }
+        Ok(status)
     }
 
     /// Return a complete, bounded inventory. Readiness is useful only when the

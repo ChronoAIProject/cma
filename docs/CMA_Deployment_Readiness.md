@@ -178,23 +178,43 @@ infra policy; check the selected RuntimeClass can schedule the requested image,
 CPU/memory and disk in the target node pool.
 
 Keep the legacy `CHRONO_SANDBOX_HOME_*` settings pinned to the northeast seed
-and retained allocations. Configure all four native home overrides together for
-southeast: `CHRONO_AGENT_SANDBOX_HOME_STORAGE_CLASS`,
-`CHRONO_AGENT_SANDBOX_HOME_CAPACITY_GIB`, `CHRONO_AGENT_SANDBOX_HOME_TEMPLATE`
-and `CHRONO_AGENT_SANDBOX_HOME_TEMPLATE_UID`. The capacity is 1–1024 GiB. The
-native template must be a ready, format-1 initialized VolumeSnapshot in the
-native namespace, pinned by its exact remote Kubernetes UID. When all native
-overrides are empty, the parser inherits the legacy policy for same-cluster
-compatibility; that fallback does not copy a snapshot across clusters. Any
-partial native override is rejected.
+and retained allocations. For new native homes in southeast, set
+`CHRONO_AGENT_SANDBOX_HOME_MODE=native_vct_empty_v1`,
+`CHRONO_AGENT_SANDBOX_HOME_STORAGE_CLASS`, and
+`CHRONO_AGENT_SANDBOX_HOME_CAPACITY_GIB` (1–1024 GiB). Leave
+`CHRONO_AGENT_SANDBOX_HOME_TEMPLATE` and
+`CHRONO_AGENT_SANDBOX_HOME_TEMPLATE_UID` empty. A complete native storage class
+and capacity pair without snapshot fields also selects this mode. An explicit
+mode may inherit storage class/capacity from the legacy configuration, but using
+an explicit southeast storage pair makes the cluster boundary clear.
 
-The checked-in seed manifests show
-the layout (`home`, `state`, `transfer`) and are operator initialization inputs,
-not per-Agent backup scheduling. Use CSI support for `ReadWriteOncePod` and
-restoring the seed to a fresh PVC. Each pool member has its own disk. Never
-reinitialize or replace a seed name/UID that retained allocations reference.
-The existing seed and runtime pins are historical production pins, not evidence
-that the newly built bootstrap runtime has been deployed.
+The native Sandbox controller creates one PVC per Sandbox from the volume claim
+template. The pinned runtime image supplies the `--initialize-home` init command,
+which mounts the PVC root as UID/GID 10001 and initializes the `home`, `state`,
+and `transfer` layout before the runtime starts. It uses a completion marker to
+make Pod recreation safe. The runtime receives credentials only after CMA
+records and verifies the original Claim, Sandbox, and PVC UIDs. A zero-replica
+CMA-owned pool supplies the controller's cold SandboxClaim fallback when no
+warm pool exists. Pool scaling and cold fallback use the same template contract.
+
+New native allocation does not require VolumeSnapshot discovery or PVC
+create/patch/delete permissions for CMA. It requires PVC get/list to verify the
+recorded disk identity, Pod get/list to establish readiness and deletion finality,
+and Pod exec get/create to deliver runtime assignment. Pause preserves the
+Sandbox and PVC. Delete retires the Claim/Sandbox and waits for controller GC
+of the original PVC and Pod; CMA never issues a direct PVC delete for this mode.
+CSI must support `ReadWriteOncePod`. Verify the runtime image pin includes the
+initializer as well as runtime pool assignment support before rollout.
+
+Historical four-field native home overrides still select `legacy_snapshot`;
+`CHRONO_AGENT_SANDBOX_HOME_MODE=legacy_snapshot` makes that choice explicit.
+Those allocations retain their original snapshot, scope, request digest, and
+PVC cleanup behavior and require their historical storage permissions. When
+all native overrides and mode are empty, configuration inherits the legacy
+policy for compatibility. That inheritance never copies a snapshot across
+clusters. A partial policy, unknown mode, or an empty-VCT mode mixed with
+snapshot fields fails startup. The old seed manifests remain operator inputs
+for retained legacy allocations, and their pinned names/UIDs must remain intact.
 
 The application Deployment takes the remote API origin and namespace from
 `chrono-bot/example-namespace-02` ConfigMap keys `CHRONO_POD_API_SERVER` and

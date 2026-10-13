@@ -37,7 +37,8 @@ impl NativePoolSpec {
             || !(1..=1_048_576).contains(&self.cpu_millis)
             || !(1..=1_048_576).contains(&self.memory_mib)
             || !super::super::model::dns_label(&self.home.storage_class)
-            || !super::super::model::dns_label(&self.home.template_name)
+            || (!self.home.is_native_vct()
+                && !super::super::model::dns_label(&self.home.template_name))
         {
             return Err(rejected("invalid native warm pool configuration"));
         }
@@ -200,7 +201,7 @@ pub(super) fn template(
     if let Some(class) = &config.runtime_class {
         pod["spec"]["runtimeClassName"] = json!(class);
     }
-    decode(json!({"apiVersion":API_VERSION,"kind":"SandboxTemplate",
+    let mut template = json!({"apiVersion":API_VERSION,"kind":"SandboxTemplate",
         "metadata":{"name":name,"namespace":config.namespace,"labels":labels,
             "annotations":{DIGEST_ANNOTATION:hash}},
         "spec":{"service":false,"podTemplate":pod,"volumeClaimTemplatesPolicy":"Disallowed",
@@ -209,7 +210,26 @@ pub(super) fn template(
                 "spec":{"accessModes":["ReadWriteOncePod"],"volumeMode":"Filesystem",
                     "storageClassName":spec.home.storage_class,
                     "resources":{"requests":{"storage":format!("{}Gi",spec.home.capacity_gib)}},
-                    "dataSource":{"apiGroup":"snapshot.storage.k8s.io","kind":"VolumeSnapshot","name":spec.home.template_name}}}]}}))
+                    "dataSource":{"apiGroup":"snapshot.storage.k8s.io","kind":"VolumeSnapshot","name":spec.home.template_name}}}]}});
+    if spec.home.is_native_vct() {
+        template["spec"]["volumeClaimTemplates"][0]["spec"]
+            .as_object_mut()
+            .unwrap()
+            .remove("dataSource");
+        template["spec"]["volumeClaimTemplates"][0]["metadata"]["annotations"] =
+            json!({"cma/home-layout":"native-vct-empty-v1"});
+        template["spec"]["podTemplate"]["spec"]["initContainers"] = json!([{
+            "name":"initialize-home","image":spec.image.uri,
+            "command":["/usr/local/bin/layer4-runtime","--initialize-home","/mnt/cma-home"],
+            "args":[],"env":[],"envFrom":[],
+            "securityContext":{"allowPrivilegeEscalation":false,"privileged":false,
+                "runAsNonRoot":true,"runAsUser":10001,"runAsGroup":10001,
+                "seccompProfile":{"type":"RuntimeDefault"},"capabilities":{"drop":["ALL"]}},
+            "resources":{"requests":{"cpu":"10m","memory":"16Mi"},"limits":{"cpu":"100m","memory":"64Mi"}},
+            "volumeMounts":[{"name":"home","mountPath":"/mnt/cma-home","readOnly":false}]
+        }]);
+    }
+    decode(template)
 }
 
 pub(super) fn pool(

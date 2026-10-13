@@ -18,6 +18,9 @@ impl AgentSandboxPools {
     /// a claim-side adoption record; pending controller observation is retryable.
     /// Publish the returned attachment before using it to start an assigned runtime.
     pub async fn adopt_home(&self, original: &NativePoolClaim) -> Result<HomeVolumeAttachment> {
+        if original.request.home.policy.is_native_vct() {
+            return self.adopt_native_vct(original).await;
+        }
         let desired_claim = model::claim(&self.config, &original.request)?;
         if original.name != desired_claim.name_any() {
             return Err(rejected("native claim receipt is invalid"));
@@ -220,7 +223,15 @@ impl AgentSandboxPools {
             {
                 return Err(rejected("native pool member has unadmitted volumes"));
             }
+            if origin.claim.request.home.policy.is_native_vct() {
+                return Ok(
+                    member.annotations().get(NATIVE_HOME_ANNOTATION) == Some(&encode(origin)?)
+                );
+            }
             return Ok(false);
+        }
+        if origin.claim.request.home.policy.is_native_vct() {
+            return Err(rejected("native VCT ownership cannot be converted"));
         }
         desired["volumeClaimTemplates"] = json!([]);
         desired["podTemplate"]["spec"]["volumes"] = explicit_volumes(origin)?;
@@ -243,6 +254,9 @@ impl AgentSandboxPools {
         allow_retained: bool,
     ) -> Result<()> {
         let request = &origin.claim.request.home;
+        if request.policy.is_native_vct() {
+            return self.validate_native_volume(volume, origin);
+        }
         PersistentHomeVolumes::validate_pool_storage(
             &self.config.namespace,
             &self.config.deployment,

@@ -78,7 +78,7 @@ fn native_configuration_preserves_local_defaults_and_rejects_partial_remote_cred
 }
 
 #[test]
-fn native_home_override_keeps_the_legacy_seed_and_requires_all_fields() {
+fn native_snapshot_override_keeps_legacy_seed_and_empty_vct_needs_storage_pair() {
     let legacy = [
         ("CHRONO_SANDBOX_HOME_STORAGE_CLASS", "local-disk"),
         ("CHRONO_SANDBOX_HOME_CAPACITY_GIB", "64"),
@@ -119,7 +119,17 @@ fn native_home_override_keeps_the_legacy_seed_and_requires_all_fields() {
                 .filter(|(i, _)| bits & (1 << i) != 0)
                 .map(|(_, field)| *field),
         );
-        assert!(configured(&values).is_err());
+        if bits == 3 {
+            let policy = configured(&values)
+                .unwrap()
+                .runtime
+                .agent_sandbox_home_policy
+                .unwrap();
+            assert!(policy.is_native_vct());
+            assert!(policy.template_name.is_empty());
+        } else {
+            assert!(configured(&values).is_err(), "subset {bits}");
+        }
     }
     let mut empty = legacy.to_vec();
     empty.extend(native.iter().map(|(key, _)| (*key, "")));
@@ -239,4 +249,59 @@ fn disabled_native_provider_does_not_require_projected_remote_connection() {
             assert!(config.runtime.agent_sandbox_connection.is_none());
         }
     }
+}
+
+#[test]
+fn native_empty_vct_mode_can_share_cluster_without_snapshot_and_rejects_mixed_mode() {
+    let key = TemporaryEntry::file(b"native-control-key-fixture-padding-0000");
+    let enabled = [
+        ("CHRONO_AGENT_SANDBOX_ENABLED", "true"),
+        ("CHRONO_AGENT_SANDBOX_CONTROL_KEY_FILE", key.path_str()),
+        ("CHRONO_AGENT_SANDBOX_HOME_STORAGE_CLASS", "native-disk"),
+        ("CHRONO_AGENT_SANDBOX_HOME_CAPACITY_GIB", "32"),
+    ];
+    let policy = configured(&enabled)
+        .unwrap()
+        .runtime
+        .agent_sandbox_home_policy
+        .unwrap();
+    assert!(policy.is_native_vct());
+    assert!(policy.template_name.is_empty() && policy.template_generation.is_empty());
+    for (name, value) in [
+        ("CHRONO_AGENT_SANDBOX_HOME_MODE", "unknown"),
+        ("CHRONO_AGENT_SANDBOX_HOME_MODE", "legacy_snapshot"),
+        ("CHRONO_AGENT_SANDBOX_HOME_CAPACITY_GIB", "032"),
+        ("CHRONO_AGENT_SANDBOX_HOME_CAPACITY_GIB", "0"),
+    ] {
+        let mut values = enabled.to_vec();
+        values.retain(|(key, _)| *key != name);
+        values.push((name, value));
+        assert!(configured(&values).is_err(), "{name}={value}");
+    }
+    let mixed = [
+        enabled.as_slice(),
+        &[
+            ("CHRONO_AGENT_SANDBOX_HOME_MODE", "native_vct_empty_v1"),
+            ("CHRONO_AGENT_SANDBOX_HOME_TEMPLATE", "forbidden"),
+        ],
+    ]
+    .concat();
+    assert!(configured(&mixed).is_err());
+    let fallback = configured(&[
+        ("CHRONO_SANDBOX_HOME_STORAGE_CLASS", "original-disk"),
+        ("CHRONO_SANDBOX_HOME_CAPACITY_GIB", "64"),
+        ("CHRONO_SANDBOX_HOME_TEMPLATE", "original-seed"),
+        ("CHRONO_SANDBOX_HOME_TEMPLATE_UID", "original-uid"),
+        ("CHRONO_AGENT_SANDBOX_HOME_MODE", "native_vct_empty_v1"),
+    ])
+    .unwrap();
+    assert_eq!(
+        fallback
+            .runtime
+            .agent_sandbox_home_policy
+            .unwrap()
+            .storage_class,
+        "original-disk"
+    );
+    assert!(!fallback.runtime.home_policy.unwrap().is_native_vct());
 }

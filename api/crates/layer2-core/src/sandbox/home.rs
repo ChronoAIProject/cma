@@ -117,6 +117,7 @@ mod tests {
         let mut home = SandboxHome::reserve(
             &id,
             HomeVolumePolicy {
+                mode: Default::default(),
                 storage_class: "storage".into(),
                 capacity_gib: 64,
                 template_name: "empty".into(),
@@ -125,6 +126,7 @@ mod tests {
         )
         .unwrap();
         let receipt = HomeVolumeReceipt {
+            native_authority: None,
             volume_id: home.request.volume_id.clone(),
             request_sha256: home.request.computed_sha256(),
             storage_reference: "home-volume".into(),

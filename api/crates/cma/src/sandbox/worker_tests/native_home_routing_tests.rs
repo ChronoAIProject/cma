@@ -19,6 +19,7 @@ impl LocalHome {
         Arc::new(Self {
             home: HomeVolumeAttachment {
                 receipt: HomeVolumeReceipt {
+                    native_authority: None,
                     volume_id: request.volume_id.clone(),
                     request_sha256: request.computed_sha256(),
                     storage_reference: "legacy-pvc".into(),
@@ -76,6 +77,7 @@ fn adapter(harness: &Harness, local: Arc<LocalHome>, pools: Arc<Pools>) -> Codex
             Some((
                 pools.clone(),
                 HomeVolumePolicy {
+                    mode: Default::default(),
                     template_name: "remote-seed".into(),
                     template_generation: "remote-seed-uid".into(),
                     ..home_tests::home_policy()

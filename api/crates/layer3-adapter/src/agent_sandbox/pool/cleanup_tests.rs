@@ -39,6 +39,7 @@ async fn unadmitted_cleanup_records_member_before_delete_and_waits_for_orphan_po
     assert_eq!(
         planned.members,
         [NativePoolMember {
+            pvc_uid: None,
             name: "warm-member".into(),
             uid: "member-uid".into()
         }]
