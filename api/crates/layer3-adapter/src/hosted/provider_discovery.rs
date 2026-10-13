@@ -8,20 +8,23 @@ impl ProviderHostedControlTransport {
         archive_factory: Arc<dyn CheckpointArchiveStoreFactory>,
     ) -> crate::Result<Self> {
         RuntimeEndpoint::parse(client.base_url(), "runtime.invalid")?;
-        Self::with_discovery(RuntimeDiscovery::Provider(client), Some(archive_factory))
+        Self::with_discovery(
+            RuntimeDiscovery::Provider(Arc::new(client)),
+            Some(archive_factory),
+        )
     }
 
     /// Retained runtimes remain addressable, including release of preexisting writer holds.
     /// No new checkpoint, restore, or archive transfer is permitted.
     pub fn for_retained_opensandbox(client: SandboxClient) -> crate::Result<Self> {
         RuntimeEndpoint::parse(client.base_url(), "runtime.invalid")?;
-        Self::with_discovery(RuntimeDiscovery::Provider(client), None)
+        Self::with_discovery(RuntimeDiscovery::Provider(Arc::new(client)), None)
     }
 
     pub fn for_agent_sandbox(
         client: crate::agent_sandbox::AgentSandboxClient,
     ) -> crate::Result<Self> {
-        Self::with_discovery(RuntimeDiscovery::AgentSandbox(client), None)
+        Self::with_discovery(RuntimeDiscovery::AgentSandbox(Arc::new(client)), None)
     }
 
     fn with_discovery(

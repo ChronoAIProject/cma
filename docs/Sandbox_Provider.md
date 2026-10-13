@@ -75,9 +75,30 @@ exit status and an exact request-digest receipt, bounds both output streams,
 and does not propagate remote output in errors. Local tests exercise kube-rs
 WebSocket exec and real runtime processes, including Pod replacement refusal,
 bounded output without EOF, authenticated startup and retained-home restart.
-This is assignment support only: production warm-pool/template/claim ownership,
-PVC adoption and worker composition still require integration and cluster
-acceptance. A bootstrap label alone is not evidence of a functioning warm pool.
+The native pool client configures immutable `SandboxTemplate` and
+`SandboxWarmPool` resources keyed by image digest, CPU/memory, initialized home
+policy and Pod policy. It pins seed/template/pool UIDs and counts ready replicas
+only after the controller observes the pool generation. Each template provisions
+an independent PVC; claims carry only `warmPoolRef`, because claim-level env or
+volume templates force upstream cold allocation. Persist a claim request before
+calling `claim`, and its returned UID before `observe_claim` or `adopt_home`.
+
+Home adoption records the original claim, Sandbox and PVC UIDs on the claim,
+converts the same Sandbox from a volume template to an explicit reference to
+the same PVC, and waits for the controller to observe that generation. Only then
+does it remove the PVC owner reference and record retained-home metadata. This
+prevents the controller from re-adopting a detached PVC. No Pod operation is
+issued during conversion. Lost mutation replies replay against the same UIDs.
+The attachment must be persisted before runtime assignment. `recover_home`
+recovers an adopted PVC against the original claim receipt even after claim or
+seed removal; storage cleanup without an attachment also checks a bounded,
+complete inventory, rejecting duplicate or inconsistent adoption records.
+
+Local Kubernetes HTTP fixtures cover pool/claim operations, controller-observed
+home adoption, original Pod policy retention and recovery of lost replies.
+These APIs are not yet wired into production lifecycle workers. Pool selection,
+runtime assignment/resume, claim and Pod retirement finality, administration
+and real cluster acceptance remain required before enabling native warm pools.
 
 The historical provider observations in sections 1-7 below remain unchanged.
 They establish only behavior on their recorded versions. Section 8 records
