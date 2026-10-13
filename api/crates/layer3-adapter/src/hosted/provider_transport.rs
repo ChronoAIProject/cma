@@ -32,8 +32,8 @@ pub struct ProviderHostedControlTransport {
 
 #[derive(Clone)]
 enum RuntimeDiscovery {
-    Provider(SandboxClient),
-    AgentSandbox(crate::agent_sandbox::AgentSandboxClient),
+    Provider(Arc<SandboxClient>),
+    AgentSandbox(Arc<crate::agent_sandbox::AgentSandboxClient>),
 }
 
 #[derive(Default)]

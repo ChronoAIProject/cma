@@ -10,6 +10,9 @@ use crate::{
 #[path = "home_volume_identity.rs"]
 mod identity;
 
+#[path = "home_native_recovery.rs"]
+mod native_recovery;
+
 #[path = "home_original_claim.rs"]
 mod original_claim;
 
@@ -37,6 +40,23 @@ pub struct PersistentHomeVolumes {
 }
 
 impl PersistentHomeVolumes {
+    pub(crate) fn validate_pool_storage(
+        namespace: &str,
+        controller: &str,
+        request: &HomeVolumeRequest,
+        claim: &PersistentVolumeClaim,
+    ) -> Result<()> {
+        identity::validate_storage(namespace, controller, request, claim)
+    }
+
+    pub(crate) fn native_home_receipt(
+        namespace: &str,
+        controller: &str,
+        request: &HomeVolumeRequest,
+        claim: &PersistentVolumeClaim,
+    ) -> Result<HomeVolumeReceipt> {
+        identity::validate_claim(namespace, controller, request, claim)
+    }
     pub async fn infer_namespaced(
         namespace: impl Into<String>,
         controller: impl Into<String>,
@@ -122,6 +142,37 @@ impl PersistentHomeVolumes {
             .get_opt(&identity::claim_name(request))
             .await
             .map_err(|error| failure("read durable home", error))
+    }
+
+    async fn read_receipt(
+        &self,
+        request: &HomeVolumeRequest,
+        receipt: Option<&HomeVolumeReceipt>,
+    ) -> Result<Option<PersistentVolumeClaim>> {
+        if let Some(receipt) = receipt {
+            receipt.validate_for(request)?;
+            // The receipt pins an adopted pool PVC's actual name and UID. The
+            // identity validator additionally checks its original claim lineage.
+            self.claims
+                .get_opt(&receipt.storage_reference)
+                .await
+                .map_err(|error| failure("read recorded durable home", error))
+        } else {
+            let ordinary = self.read(request).await?;
+            let adopted = Self::recover_native_claim(
+                &self.claims,
+                &self.namespace,
+                &self.controller,
+                request,
+            )
+            .await?;
+            match (ordinary, adopted) {
+                (Some(_), Some(_)) => Err(AdapterError::Rejected(
+                    "durable home has conflicting ordinary and native allocations".into(),
+                )),
+                (ordinary, adopted) => Ok(ordinary.or(adopted)),
+            }
+        }
     }
 
     fn receipt(
@@ -250,9 +301,12 @@ impl HomeVolumeStore for PersistentHomeVolumes {
     async fn verify(&self, attachment: &HomeVolumeAttachment) -> Result<()> {
         attachment.receipt.validate_for(&attachment.request)?;
         self.verify_template(&attachment.request.policy).await?;
-        let claim = self.read(&attachment.request).await?.ok_or_else(|| {
-            AdapterError::Rejected("the recorded durable home no longer exists".into())
-        })?;
+        let claim = self
+            .read_receipt(&attachment.request, Some(&attachment.receipt))
+            .await?
+            .ok_or_else(|| {
+                AdapterError::Rejected("the recorded durable home no longer exists".into())
+            })?;
         if claim.metadata.deletion_timestamp.is_some()
             || self.receipt(&attachment.request, &claim)? != attachment.receipt
         {
@@ -272,7 +326,7 @@ impl HomeVolumeStore for PersistentHomeVolumes {
         if let Some(receipt) = receipt {
             receipt.validate_for(request)?;
         }
-        let Some(claim) = self.read(request).await? else {
+        let Some(claim) = self.read_receipt(request, receipt).await? else {
             return Ok(());
         };
         let captured = self.receipt(request, &claim)?;
@@ -304,7 +358,7 @@ impl HomeVolumeStore for PersistentHomeVolumes {
                 Err(error) => return Err(failure("release exact durable home", error)),
             }
         }
-        match self.read(request).await? {
+        match self.read_receipt(request, Some(&captured)).await? {
             None => Ok(()),
             Some(current)
                 if current.metadata.uid.as_deref() != Some(&captured.storage_generation)
