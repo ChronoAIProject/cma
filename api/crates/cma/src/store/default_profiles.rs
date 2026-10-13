@@ -61,7 +61,7 @@ impl DefaultProfileSpec {
                 isolated_agent: false,
                 model: Some(self.agent_model.clone()),
                 thinking_effort: self.agent_effort,
-                permission_level: PermissionLevel::Guarded,
+                permission_level: PermissionLevel::Autonomous,
                 skills: Vec::new(),
                 system_prompt: String::new(),
             },
@@ -115,7 +115,10 @@ impl DefaultProfileSpec {
                 runtime_image: None,
                 cpu_millis: self.cpu_millis,
                 memory_mib: self.memory_mib,
-                nyxid_services: Vec::new(),
+                nyxid_services: crate::config::REQUIRED_BASELINE_SERVICES
+                    .iter()
+                    .map(|id| layer2_core::ServiceId::new(*id))
+                    .collect(),
                 agent_provider: AgentProvider::Codex,
                 model_access: ModelAccess::ChronoaiManaged,
                 max_workspaces: DEFAULT_MAX_WORKSPACES,
@@ -390,6 +393,21 @@ mod tests {
         assert_eq!(first.sandbox_revision, second.sandbox_revision);
         assert_eq!(first.agent.owner.as_str(), SYSTEM_OWNER);
         assert_eq!(first.agent.visibility, ProfileVisibility::Public);
+        assert_eq!(
+            first.agent.draft.permission_level,
+            PermissionLevel::Autonomous
+        );
+        assert_eq!(first.agent.draft.thinking_effort, ThinkingEffort::High);
+        assert_eq!(
+            first
+                .sandbox
+                .draft
+                .nyxid_services
+                .iter()
+                .map(layer2_core::ServiceId::as_str)
+                .collect::<Vec<_>>(),
+            ["chrono-llm-public", "ornn-api"]
+        );
         assert_eq!(
             first.workspace.draft.agent_profiles,
             vec![AgentProfileRef::new(

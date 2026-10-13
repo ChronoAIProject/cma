@@ -323,7 +323,7 @@ fn baseline_services_are_nonempty_valid_and_deduplicated() {
             .iter()
             .map(ServiceId::as_str)
             .collect::<Vec<_>>(),
-        ["api-github", "model"]
+        ["api-github", "chrono-llm-public", "model", "ornn-api"]
     );
     for value in ["", ",,", "service with spaces", "bad/service"] {
         assert!(configured(&[("CHRONO_BASELINE_SERVICES", value)]).is_err());
