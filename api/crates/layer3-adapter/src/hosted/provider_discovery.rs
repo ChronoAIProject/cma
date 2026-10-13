@@ -92,13 +92,11 @@ impl ProviderHostedControlTransport {
                 let endpoint =
                     RuntimeEndpoint::parse("http://runtime.invalid", &format!("http://{address}"))?
                         .with_control_token(client.control_token(&binding.sandbox_name));
-                Ok(
-                    if self.native_transport == NativeRuntimeTransport::KubernetesPortforward {
-                        endpoint.with_native_binding(handle.clone(), binding)
-                    } else {
-                        endpoint
-                    },
-                )
+                Ok(if self.native_transport != NativeRuntimeTransport::Direct {
+                    endpoint.with_native_binding(handle.clone(), binding)
+                } else {
+                    endpoint
+                })
             }
         }
     }

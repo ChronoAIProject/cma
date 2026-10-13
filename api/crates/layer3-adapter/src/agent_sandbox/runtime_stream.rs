@@ -7,12 +7,16 @@ use std::{
     time::Duration,
 };
 
-use kube::api::Portforwarder;
+use kube::api::{AttachedProcess, Portforwarder};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::sync::OwnedSemaphorePermit;
 
 use super::{api_error, rejected, unavailable, AgentSandboxClient, PodBinding};
+use crate::hosted::NativeRuntimeTransport;
 use crate::{AdapterError, Result, RuntimeHandle};
+
+#[path = "runtime_exec.rs"]
+mod exec;
 
 const RUNTIME_PORT: u16 = 9090;
 const OPEN_TIMEOUT: Duration = Duration::from_secs(10);
@@ -29,10 +33,25 @@ pub(crate) enum RuntimeStreamKind {
 /// Kubernetes error-channel contents are deliberately excluded from errors/logs.
 pub(crate) struct RuntimeStream {
     stream: Box<dyn RuntimeIo>,
-    forwarder: Portforwarder,
-    error: Option<Pin<Box<dyn Future<Output = Option<String>> + Send>>>,
+    owner: StreamOwner,
+    // true denotes a successful exec exit; its buffered stdout must still drain.
+    terminal: Option<Pin<Box<dyn Future<Output = bool> + Send>>>,
+    closed: bool,
     failed: bool,
     _permit: OwnedSemaphorePermit,
+}
+
+enum StreamOwner {
+    Portforward(Portforwarder),
+    Exec(AttachedProcess),
+}
+impl StreamOwner {
+    fn abort(&self) {
+        match self {
+            Self::Portforward(owner) => owner.abort(),
+            Self::Exec(owner) => owner.abort(),
+        }
+    }
 }
 
 impl AgentSandboxClient {
@@ -41,6 +60,7 @@ impl AgentSandboxClient {
         runtime: &RuntimeHandle,
         expected: &PodBinding,
         kind: RuntimeStreamKind,
+        transport: NativeRuntimeTransport,
     ) -> Result<RuntimeStream> {
         // No unbounded queue behind long-lived conversations. Clones share this budget.
         let permits = match kind {
@@ -54,26 +74,16 @@ impl AgentSandboxClient {
             if self.pod_binding(runtime).await? != *expected {
                 return Err(rejected("Sandbox Pod changed before runtime stream opened"));
             }
-            let mut forwarder = self
-                .pods
-                .portforward(&expected.pod_name, &[RUNTIME_PORT])
-                .await
-                .map_err(stream_error)?;
-            let Some(stream) = forwarder.take_stream(RUNTIME_PORT) else {
-                forwarder.abort();
-                return Err(unavailable("Kubernetes runtime stream is absent"));
-            };
-            let Some(error) = forwarder.take_error(RUNTIME_PORT) else {
-                forwarder.abort();
-                return Err(unavailable("Kubernetes runtime error channel is absent"));
-            };
-            // Construct the drop guard before the next await, including timeout cancellation.
-            let stream = RuntimeStream {
-                stream: Box::new(stream),
-                forwarder,
-                error: Some(Box::pin(error)),
-                failed: false,
-                _permit: permit,
+            let stream = match transport {
+                NativeRuntimeTransport::KubernetesPortforward => {
+                    self.portforward_stream(expected, permit).await?
+                }
+                NativeRuntimeTransport::KubernetesExec => {
+                    exec::open(self, expected, permit).await?
+                }
+                NativeRuntimeTransport::Direct => {
+                    return Err(rejected("direct transport cannot open a Kubernetes stream"));
+                }
             };
             if self.pod_binding(runtime).await? != *expected {
                 return Err(rejected("Sandbox Pod changed while runtime stream opened"));
@@ -83,6 +93,38 @@ impl AgentSandboxClient {
         })
         .await
         .map_err(|_| unavailable("Kubernetes runtime stream opening timed out"))?
+    }
+
+    async fn portforward_stream(
+        &self,
+        expected: &PodBinding,
+        permit: OwnedSemaphorePermit,
+    ) -> Result<RuntimeStream> {
+        let mut forwarder = self
+            .pods
+            .portforward(&expected.pod_name, &[RUNTIME_PORT])
+            .await
+            .map_err(stream_error)?;
+        let Some(stream) = forwarder.take_stream(RUNTIME_PORT) else {
+            forwarder.abort();
+            return Err(unavailable("Kubernetes runtime stream is absent"));
+        };
+        let Some(error) = forwarder.take_error(RUNTIME_PORT) else {
+            forwarder.abort();
+            return Err(unavailable("Kubernetes runtime error channel is absent"));
+        };
+        // Construct the drop guard before the next await, including timeout cancellation.
+        Ok(RuntimeStream {
+            stream: Box::new(stream),
+            owner: StreamOwner::Portforward(forwarder),
+            terminal: Some(Box::pin(async move {
+                let _ = error.await;
+                false
+            })),
+            closed: false,
+            failed: false,
+            _permit: permit,
+        })
     }
 }
 
@@ -102,17 +144,16 @@ fn stream_error(error: kube::Error) -> AdapterError {
 }
 
 impl RuntimeStream {
-    fn check(&mut self, cx: &mut Context<'_>) -> io::Result<()> {
-        if let Some(error) = &mut self.error {
-            if error.as_mut().poll(cx).is_ready() {
-                // kube's error-channel contract makes even sender disappearance
-                // terminal; do not allow further writes after a silent close.
-                self.failed = true;
-                self.error = None;
+    fn check(&mut self, cx: &mut Context<'_>, writing: bool) -> io::Result<()> {
+        if let Some(terminal) = &mut self.terminal {
+            if let Poll::Ready(success) = terminal.as_mut().poll(cx) {
+                self.closed = true;
+                self.failed = !success;
+                self.terminal = None;
             }
         }
-        if self.failed {
-            self.forwarder.abort();
+        if self.failed || (writing && self.closed) {
+            self.owner.abort();
             Err(io::Error::new(
                 io::ErrorKind::BrokenPipe,
                 "Kubernetes runtime stream closed",
@@ -124,7 +165,7 @@ impl RuntimeStream {
 }
 impl Drop for RuntimeStream {
     fn drop(&mut self) {
-        self.forwarder.abort();
+        self.owner.abort();
     }
 }
 impl AsyncRead for RuntimeStream {
@@ -133,15 +174,15 @@ impl AsyncRead for RuntimeStream {
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
-        self.check(cx)?;
+        self.check(cx, false)?;
         let before = buf.filled().len();
         let result = Pin::new(&mut self.stream).poll_read(cx, buf);
         if matches!(&result, Poll::Ready(Ok(())))
             && buf.filled().len() == before
             && buf.remaining() > 0
         {
-            self.failed = true;
-            self.forwarder.abort();
+            self.closed = true;
+            self.owner.abort();
         }
         result
     }
@@ -152,11 +193,11 @@ impl AsyncWrite for RuntimeStream {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
-        self.check(cx)?;
+        self.check(cx, true)?;
         Pin::new(&mut self.stream).poll_write(cx, buf)
     }
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        self.check(cx)?;
+        self.check(cx, true)?;
         Pin::new(&mut self.stream).poll_flush(cx)
     }
     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
