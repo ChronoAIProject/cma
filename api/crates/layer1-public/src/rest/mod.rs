@@ -15,6 +15,10 @@ mod bot_setups;
 mod bots;
 pub use bot_setups::bot_setup_router;
 pub use bots::bot_router;
+mod agent_access_requests;
+pub use agent_access_requests::agent_access_requests_router;
+#[cfg(test)]
+mod agent_access_requests_tests;
 mod agent_artifacts;
 mod agent_openapi_shapes;
 pub use agent_artifacts::agent_artifacts_router;

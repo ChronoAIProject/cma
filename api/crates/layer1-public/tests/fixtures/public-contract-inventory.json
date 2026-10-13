@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 184,
+  "openapi_operations": 187,
   "operations": {
     "GET /api/v1/organizations": {
       "classification": "openapi",
@@ -2667,6 +2667,50 @@
         "not_authenticated",
         "sandbox_checkpoint_in_progress",
         "store_failed"
+      ]
+    },
+    "GET /api/v1/agents/{id}/access-requests": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_access_requests.rs# Authenticated transport projects injected Core durable access decisions and their typed failures.",
+      "required_problems": [
+        "not_authenticated",
+        "agent_access_invalid",
+        "agent_access_forbidden",
+        "agent_access_not_found",
+        "agent_access_conflict",
+        "agent_access_unavailable"
+      ]
+    },
+    "POST /api/v1/agents/{id}/access-requests/{request_id}/approve": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_access_requests.rs# Authenticated transport projects injected Core durable access decisions and their typed failures.",
+      "required_problems": [
+        "not_authenticated",
+        "agent_access_invalid",
+        "agent_access_forbidden",
+        "agent_access_not_found",
+        "agent_access_conflict",
+        "agent_access_unavailable",
+        "missing_idempotency_key",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required"
+      ]
+    },
+    "POST /api/v1/agents/{id}/access-requests/{request_id}/deny": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_access_requests.rs# Authenticated transport projects injected Core durable access decisions and their typed failures.",
+      "required_problems": [
+        "not_authenticated",
+        "agent_access_invalid",
+        "agent_access_forbidden",
+        "agent_access_not_found",
+        "agent_access_conflict",
+        "agent_access_unavailable",
+        "missing_idempotency_key",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required"
       ]
     }
   }
