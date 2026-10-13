@@ -96,6 +96,12 @@ complete inventory, rejecting duplicate or inconsistent adoption records.
 
 Local Kubernetes HTTP fixtures cover pool/claim operations, controller-observed
 home adoption, original Pod policy retention and recovery of lost replies.
+Pod discovery and pause/delete observation use the upstream controller's
+`agents.x-k8s.io/sandbox-name-hash` label, then validate the original Sandbox
+owner UID. This supports claimed warm Pods without claim-specific CMA labels
+that upstream metadata reconciliation would remove. The hash is only a search
+hint; matching labels alone never grant runtime ownership. CRD deletion
+observation uses name and UID without filtering on a mutable management label.
 These APIs are not yet wired into production lifecycle workers. Pool selection,
 runtime assignment/resume, claim and Pod retirement finality, administration
 and real cluster acceptance remain required before enabling native warm pools.

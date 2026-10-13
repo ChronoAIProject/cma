@@ -1,6 +1,6 @@
 use super::{
-    api_error, handle, model, parse_handle, rejected, unavailable, AgentSandboxClient, OWNER_LABEL,
-    RUNTIME_LABEL, SPEC_ANNOTATION,
+    api_error, handle, model, parse_handle, pods, rejected, unavailable, AgentSandboxClient,
+    SPEC_ANNOTATION,
 };
 use crate::{
     provider::ProviderSandboxRequest, Result, RuntimeFinalityReceipt, RuntimeHandle,
@@ -301,7 +301,6 @@ impl AgentSandboxClient {
                     .sandboxes
                     .list(
                         &ListParams::default()
-                            .labels(&self.selector())
                             .fields(&format!("metadata.name={name}"))
                             .limit(2),
                     )
@@ -311,10 +310,7 @@ impl AgentSandboxClient {
                     .pods
                     .list(
                         &ListParams::default()
-                            .labels(&format!(
-                                "{OWNER_LABEL}={},{RUNTIME_LABEL}={name}",
-                                self.config.deployment
-                            ))
+                            .labels(&pods::selector(name))
                             .limit(100),
                     )
                     .await

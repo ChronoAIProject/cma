@@ -64,7 +64,7 @@ fn object() -> Value {
 fn pods(replaced: bool) -> Value {
     json!({"apiVersion":"v1","kind":"PodList","metadata":{"resourceVersion":"8"},"items":[{
         "metadata":{"name":"claimed-pod","namespace":"cma-test","uid":if replaced {"replacement-pod"} else {"original-pod"},
-            "labels":{"cma/control-plane":"cma-test","cma/runtime-name":"claimed"},
+            "labels":{"cma/control-plane":"cma-test",super::super::pods::TRACKING_LABEL:super::super::pods::name_hash("claimed")},
             "ownerReferences":[{"apiVersion":"agents.x-k8s.io/v1beta1","kind":"Sandbox","name":"claimed","uid":"sandbox-uid","controller":true}]},
         "status":{"phase":"Running","podIP":"10.0.0.1","conditions":[{"type":"Ready","status":"True"}]}}]})
 }
