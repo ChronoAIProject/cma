@@ -186,9 +186,7 @@ describe('blocked preparation state', () => {
       const { unmount } = render(
         <Progress client={client} id={PUBLIC_RECORD.id} onNavigate={vi.fn()} />,
       );
-      const row = (await screen.findByRole('heading', { name: 'Preparing your sandbox' })).closest(
-        'li',
-      );
+      const row = (await screen.findByRole('heading', { name: 'Sandbox ready' })).closest('li');
       expect(row).not.toBeNull();
       expect(within(row!).getByText(label)).toBeInTheDocument();
       expect(row?.querySelector('.landing__character')).toHaveAttribute(
