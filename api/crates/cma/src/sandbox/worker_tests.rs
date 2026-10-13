@@ -52,6 +52,7 @@ mod lifecycle_failure_clock_tests;
 mod lifecycle_queue_conflict_tests;
 mod lifecycle_queue_tests;
 mod lifecycle_recovery_tests;
+mod native_pool_tests;
 mod native_suspension_tests;
 mod pause_cancellation_tests;
 mod provided_credential_tests;

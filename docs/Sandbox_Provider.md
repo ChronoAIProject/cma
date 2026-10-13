@@ -112,12 +112,35 @@ credential delivery. Runtime deletion first deletes the original claim, then
 waits for the CRD, owned Pods and claim to disappear; lost deletion replies can
 recover claim identity from the retained PVC.
 
+The lifecycle worker selects its provider before home allocation and records
+the selected pool request, original claim UID, assigned Sandbox and home receipt
+in separate durable transitions. Retries preserve the selected image and Pod
+policy. A reservation already committed to ordinary storage stays on that path.
+Native reservations cannot allocate an ordinary replacement PVC on retry.
+
+Retirement also handles claims that never reached runtime admission. It records
+discovered claim/member identities before requesting claim-first deletion, then
+observes claim, owned Sandbox and Pod absence before disk release. Cleanup does
+not recreate missing claims. A late creation after database retirement is found
+by native claim reconciliation; orphan cleanup records its plan on the original
+claim. Retained-home cleanup checks native finality even if the member CRD has
+already disappeared. Incomplete inventories or unknown orphan Pod parents keep
+cleanup pending.
+
+Operators manage native capacity through `/api/v1/admin/warm-pools` and the Warm
+pools tab. Targets persist the configured system image, resources and original
+Pod policy before provider I/O. Initial pool creation uses zero replicas until
+the pool/template UIDs are acknowledged in Mongo; later scaling always uses
+that original binding. Changes to deployment defaults never retarget an existing
+pool. The former profile prewarming worker now only retires unowned legacy
+reservations; new creation no longer claims legacy prepared environments.
+
 Kube-rs HTTP/WebSocket fixtures exercise this backend with failed exec, exact
-replay, a restarted control-plane client and a new Pod on resume. They emulate
-controller observations and the assignment receiver, not a real cluster. The
-lifecycle worker still needs durable pool selection/claim/home stages before it
-can use this path, including retirement of claims that never reached runtime
-admission. Pool administration and real cluster acceptance also remain pending.
+replay, a restarted control-plane client and a new Pod on resume. Worker tests
+cover durable stages, response loss, partial retirement and late claims. These
+fixtures emulate controller observations and assignment reception. Production
+controller compatibility and real lifecycle acceptance remain deployment gates;
+see [deployment handoff](CMA_Deployment_Readiness.md).
 
 The historical provider observations in sections 1-7 below remain unchanged.
 They establish only behavior on their recorded versions. Section 8 records

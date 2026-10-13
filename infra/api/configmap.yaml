@@ -87,10 +87,9 @@ data:
   # image across API upgrades and rollback; drift never admits rotation work.
   # Prove retained-runtime compatibility before deploying any new API image.
   CHRONO_SANDBOX_IMAGE: "us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-runtime@sha256:532a64cf193957991248d98d82b7a61f6d333a2b87f5e1db0a19ae55f598ed49"
-  # Public Profile availability controls credential-free warm runtime counts
-  # (1-5 per Profile) in MongoDB. The worker pins this image, the service floor
-  # and install bounds; changed pins retire old unowned reservations before
-  # replacement. Owned live runtimes are adopted using their durable image pin.
+  # Native warm pools are managed by immutable image/resources/home policy.
+  # Keep native provider flags disabled until infra installs the pinned APIs
+  # and the deployment preflight in docs/CMA_Deployment_Readiness.md passes.
   # Seed system Profiles only while an operator-selected default still names one.
   # Custom published defaults prevent removed system catalogue entries returning.
   CHRONO_SANDBOX_CPU: "1"
@@ -104,4 +103,4 @@ data:
   CHRONO_DEPLOYMENT_ID: "chrono-bot-prod"
   # AgentKey service floor. Public skill material is served by ornn-api.
   CHRONO_BASELINE_SERVICES: "chrono-llm-public,ornn-api"
-  RUST_LOG: "info,cma::sandbox::checkpoint_maintenance=debug"
+  RUST_LOG: "info"

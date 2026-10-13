@@ -14,9 +14,7 @@ impl AgentService {
         request: CreateAgent,
     ) -> Result<Agent, AgentServiceError> {
         require(caller)?;
-        if !caller.authorization.allows(Capability::CreateSandbox)
-            || actor.is_some_and(|actor| actor.ordinary_subject() != Some(&caller.subject))
-        {
+        if actor.is_some_and(|actor| actor.ordinary_subject() != Some(&caller.subject)) {
             return Err(AgentServiceError::Forbidden);
         }
         if !matches!(request.origin, AgentOrigin::Lifecycle { .. }) {
@@ -36,6 +34,33 @@ impl AgentService {
             },
         )
         .await
+    }
+
+    /// Check the same owned Workspace/Sandbox admission authority before an
+    /// inline lifecycle writes private profiles or persists its operation.
+    pub async fn authorize_lifecycle_workspace(
+        &self,
+        caller: &Caller,
+        actor: Option<&ResourceActor>,
+        workspace_id: &WorkspaceId,
+    ) -> Result<(Workspace, Sandbox), AgentServiceError> {
+        require(caller)?;
+        if actor.is_some_and(|actor| actor.ordinary_subject() != Some(&caller.subject)) {
+            return Err(AgentServiceError::Forbidden);
+        }
+        self.runtime_capabilities
+            .require([RuntimeCapability::Conversation])
+            .map_err(|capability| AgentServiceError::CapabilityUnsupported { capability })?;
+        let workspace = self.owned_workspace(caller, workspace_id).await?;
+        if workspace.status != WorkspaceStatus::Ready || workspace.resolved_commit.is_none() {
+            return Err(AgentServiceError::WorkspaceNotReady);
+        }
+        let sandbox = self.parent_sandbox(caller, &workspace).await?;
+        if !sandbox.accepts_creation_admission() {
+            return Err(AgentServiceError::SandboxNotReady);
+        }
+        self.connections.check_sandbox(&sandbox).await?;
+        Ok((workspace, sandbox))
     }
 
     pub async fn create(

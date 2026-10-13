@@ -2,6 +2,19 @@ use super::*;
 
 #[async_trait::async_trait]
 impl SandboxAdapter for HostedAdapter {
+    fn native_pools(&self) -> Option<&dyn crate::agent_sandbox::NativePoolControl> {
+        self.backend.native_pools()
+    }
+    async fn select_native_pool(
+        &self,
+        request: &RuntimeProvisionRequest,
+        home: &crate::HomeVolumeRequest,
+    ) -> crate::Result<Option<crate::agent_sandbox::NativePoolBinding>> {
+        let rendered = self
+            .deployment
+            .render_runtime(&request.spec, request.generation)?;
+        self.backend.select_native_pool(&rendered, home).await
+    }
     fn capabilities(&self) -> AdapterCapabilities {
         self.deployment.capabilities()
     }

@@ -114,6 +114,8 @@ mod workspaces;
 mod worktrees;
 
 pub use activity::MongoActivityStore;
+#[cfg(test)]
+pub(crate) use agent_lifecycle_operations::LifecycleRecord;
 pub(crate) use agent_lifecycle_operations::{
     CreateResult, LifecycleInput, LifecycleLease, MongoAgentLifecycleStore, DISCOVERY_BATCH,
     HEARTBEAT,
@@ -140,3 +142,5 @@ mod legacy_finalization;
 mod legacy_reuse_lifecycle;
 mod legacy_sandbox;
 pub(crate) mod runtime_routing;
+
+pub(crate) mod native_warm_pools;

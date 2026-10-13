@@ -161,6 +161,42 @@ fn respond(state: &Mutex<State>, method: &str, path: &str, body: Value) -> (u16,
     let missing = json!({"apiVersion":"v1","kind":"Status","status":"Failure","reason":"NotFound","message":"missing","code":404});
     let conflict = json!({"apiVersion":"v1","kind":"Status","status":"Failure","reason":"Conflict","message":"conflict","code":409});
     let (status, result) = match method {
+        "GET"
+            if path == format!("{}/sandboxwarmpools", prefix())
+                || path == format!("{}/sandboxclaims", prefix()) =>
+        {
+            state
+                .list_queries
+                .push(url.query().unwrap_or_default().into());
+            if let Some((status, body)) = state.list_replies.pop_front() {
+                return (status, body, lost.is_some());
+            }
+            let selector = url
+                .query_pairs()
+                .find(|(k, _)| k == "labelSelector")
+                .map(|(_, v)| v.into_owned())
+                .unwrap_or_default();
+            let items: Vec<_> = state
+                .rows
+                .iter()
+                .filter(|(key, value)| {
+                    key.starts_with(&format!("{path}/"))
+                        && selector
+                            .split(',')
+                            .filter(|term| !term.is_empty())
+                            .all(|term| {
+                                let (key, expected) = term.split_once('=').unwrap();
+                                value["metadata"]["labels"][key] == expected
+                            })
+                })
+                .map(|(_, v)| v.clone())
+                .collect();
+            (
+                200,
+                json!({"apiVersion":API_VERSION,"kind":if path.ends_with("/sandboxclaims") {"SandboxClaimList"} else {"SandboxWarmPoolList"},
+                "metadata":{"resourceVersion":state.version.to_string()},"items":items}),
+            )
+        }
         "GET" if path == "/apis/agents.x-k8s.io/v1beta1/namespaces/cma-test/sandboxes" => {
             let selector = url
                 .query_pairs()
@@ -194,10 +230,13 @@ fn respond(state: &Mutex<State>, method: &str, path: &str, body: Value) -> (u16,
                 .iter()
                 .filter(|(key, value)| {
                     key.starts_with(&format!("{path}/"))
-                        && selector.split(',').all(|term| {
-                            let (key, expected) = term.split_once('=').unwrap();
-                            value["metadata"]["labels"][key] == expected
-                        })
+                        && selector
+                            .split(',')
+                            .filter(|term| !term.is_empty())
+                            .all(|term| {
+                                let (key, expected) = term.split_once('=').unwrap();
+                                value["metadata"]["labels"][key] == expected
+                            })
                 })
                 .map(|(_, v)| v.clone())
                 .collect();

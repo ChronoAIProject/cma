@@ -17,6 +17,8 @@ pub struct SandboxHome {
     pub receipt: Option<HomeVolumeReceipt>,
     #[serde(default)]
     pub released: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_pool: Option<Box<super::SandboxNativePool>>,
 }
 
 impl SandboxHome {
@@ -29,6 +31,7 @@ impl SandboxHome {
             },
             receipt: None,
             released: false,
+            native_pool: None,
         };
         home.validate(id)?;
         Ok(home)
@@ -42,6 +45,22 @@ impl SandboxHome {
         if let Some(receipt) = &self.receipt {
             receipt.validate_for(&self.request).map_err(|_| invalid())?;
         }
+        if let Some(native) = &self.native_pool {
+            native.validate_for(&self.request)?;
+            if self.released && !native.cleaned {
+                return Err(invalid());
+            }
+            if let Some(receipt) = &self.receipt {
+                let name = native
+                    .claim
+                    .as_ref()
+                    .and_then(|claim| claim.sandbox_name.as_ref())
+                    .ok_or_else(invalid)?;
+                if receipt.storage_reference != format!("home-{name}") {
+                    return Err(invalid());
+                }
+            }
+        }
         Ok(())
     }
 
@@ -54,6 +73,19 @@ impl SandboxHome {
                 .is_some_and(|current| current != &receipt)
         {
             return Err(invalid());
+        }
+        if let Some(native) = &self.native_pool {
+            native.validate_for(&self.request)?;
+            if native.cleaned
+                || native.cleanup.is_some()
+                || native
+                    .claim
+                    .as_ref()
+                    .and_then(|c| c.sandbox_name.as_ref())
+                    .is_none_or(|name| receipt.storage_reference != format!("home-{name}"))
+            {
+                return Err(invalid());
+            }
         }
         self.receipt = Some(receipt);
         Ok(())

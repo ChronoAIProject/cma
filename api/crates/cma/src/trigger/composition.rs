@@ -49,6 +49,7 @@ pub(crate) struct TriggerCompositionDependencies {
     pub public_origin: String,
     pub worker_holder: String,
     pub profile_bounds: ProfileCapacityBounds,
+    pub capacity: layer3_adapter::SandboxCapacity,
     pub profile_scanner: Arc<dyn PublicValueScanner>,
     pub image_resolver: Arc<dyn ImageResolver>,
 }
@@ -67,6 +68,7 @@ impl TriggerComposition {
         let inline_materializer = InlineTriggerProfileMaterializer::new(
             dependencies.stores.sandbox_profiles.clone(),
             dependencies.profile_bounds,
+            dependencies.capacity,
             dependencies.profile_scanner,
             dependencies.image_resolver,
         );
