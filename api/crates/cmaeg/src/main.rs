@@ -163,26 +163,28 @@ fn run_database_command(command: &str) {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
-        .unwrap_or_else(|error| {
-            eprintln!("cannot initialize command runtime: {error}");
-            std::process::exit(1);
-        });
+        .unwrap_or_else(|_| fail("cannot initialize database command runtime"));
     if let Err(error) = runtime.block_on(async {
-        let database = std::env::var(cmaeg::CMAEG_MONGODB_DATABASE)?;
+        let database = std::env::var(cmaeg::CMAEG_MONGODB_DATABASE)
+            .map_err(|_| "CMAEG_MONGODB_DATABASE is missing or not valid UTF-8")?;
         if command != "--migrate" {
             println!(
                 "{}",
                 cmaeg::records::mongo::role(&database, command == "--print-migration-role")
             );
-            return Ok::<(), Box<dyn std::error::Error>>(());
+            return Ok::<(), &'static str>(());
         }
-        let uri = std::env::var(cmaeg::CMAEG_MONGODB_URI)?;
-        let client = mongodb::Client::with_uri_str(uri).await?;
-        cmaeg::records::mongo::migrate(&client.database(&database)).await?;
+        let uri = std::env::var(cmaeg::CMAEG_MONGODB_URI)
+            .map_err(|_| "CMAEG_MONGODB_URI is missing or not valid UTF-8")?;
+        let client = mongodb::Client::with_uri_str(uri)
+            .await
+            .map_err(|_| "Gateway database client configuration failed; details withheld")?;
+        cmaeg::records::mongo::migrate(&client.database(&database))
+            .await
+            .map_err(|_| "Gateway schema migration failed; details withheld")?;
         Ok(())
     }) {
-        eprintln!("{error}");
-        std::process::exit(1);
+        fail(error);
     }
 }
 
@@ -190,21 +192,64 @@ fn run_import(path: &str) {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
-        .unwrap_or_else(|error| {
-            eprintln!("cannot initialize command runtime: {error}");
-            std::process::exit(1);
-        });
+        .unwrap_or_else(|_| fail("cannot initialize database command runtime"));
     if let Err(error) = runtime.block_on(async {
-        let database = std::env::var(cmaeg::CMAEG_MONGODB_DATABASE)?;
-        let uri = std::env::var(cmaeg::CMAEG_MONGODB_URI)?;
-        let client = mongodb::Client::with_uri_str(uri).await?;
+        let database = std::env::var(cmaeg::CMAEG_MONGODB_DATABASE)
+            .map_err(|_| "CMAEG_MONGODB_DATABASE is missing or not valid UTF-8")?;
+        let uri = std::env::var(cmaeg::CMAEG_MONGODB_URI)
+            .map_err(|_| "CMAEG_MONGODB_URI is missing or not valid UTF-8")?;
+        let client = mongodb::Client::with_uri_str(uri)
+            .await
+            .map_err(|_| "Gateway database client configuration failed; details withheld")?;
         let count =
             cmaeg::records::import::import(&client.database(&database), std::path::Path::new(path))
-                .await?;
+                .await
+                .map_err(import_failure)?;
         println!("Imported and verified {count} sealed records");
-        Ok::<(), Box<dyn std::error::Error>>(())
+        Ok::<(), &'static str>(())
     }) {
-        eprintln!("{error}");
-        std::process::exit(1);
+        fail(error);
+    }
+}
+
+// Never display environment/driver errors or unrecognized record error text:
+// these commands run with database credentials and a private sealed export.
+fn import_failure(error: cmaeg::records::RecordError) -> &'static str {
+    use cmaeg::records::RecordError;
+    match error {
+        RecordError::Rejected(reason)
+            if reason == "import conflicts with an existing record; no row was overwritten" =>
+        {
+            "import conflicts with an existing record; no row was overwritten"
+        }
+        RecordError::Rejected(reason) if reason == "record export is unreadable" => {
+            "record export is unreadable"
+        }
+        RecordError::Rejected(_) => {
+            "Gateway record import rejected; check export or target records"
+        }
+        RecordError::Unavailable(_) => "Gateway record import unavailable; details withheld",
+        _ => "Gateway record import failed; details withheld",
+    }
+}
+
+#[cfg(test)]
+mod database_diagnostics_tests {
+    use super::import_failure;
+    use cmaeg::records::RecordError;
+
+    #[test]
+    fn import_diagnostics_preserve_conflicts_but_withhold_unrecognized_text() {
+        let conflict = "import conflicts with an existing record; no row was overwritten";
+        assert_eq!(
+            import_failure(RecordError::Rejected(conflict.into())),
+            conflict
+        );
+        for error in [
+            RecordError::Rejected("SYNTHETIC_PRIVATE_RECORD".into()),
+            RecordError::Unavailable("SYNTHETIC_PRIVATE_DRIVER_ERROR".into()),
+        ] {
+            assert!(!import_failure(error).contains("SYNTHETIC_PRIVATE"));
+        }
     }
 }
