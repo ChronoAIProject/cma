@@ -80,9 +80,10 @@ from the remaining application activation steps.
 | Native Kubernetes authentication | Actual CMA Pod received the `chrono-cma@chronoai-501608.iam.gserviceaccount.com` metadata identity; Sandbox and claim reads returned HTTP 200 with the remote CA verified | Exercise the application token refresh path and native lifecycle with the final candidate |
 | Native target | `chrono-bot/chrono-pod-configmap` currently supplies `https://35.240.157.32` and namespace `chrono-pod` | Use these current values; do not use the earlier `cma-test` namespace or infer configuration from last-applied annotations |
 | Native authorization | Fresh CMA Pod metadata token confirms Sandbox get, Claim create, PVC get, and `pods/exec` get/create; PVC create/patch remain denied | VCT integration passes native adapter tests. Verify live allocation with the final image; PVC writes and snapshot reads are not required for new empty native homes |
-| Native persistent home | Installed templates support `volumeClaimTemplates`; the controller creates and owns each member's PVC | New native homes use an empty VCT volume initialized by the pinned CMA runtime image. Validate suspend/resume and deletion through the controller; a mandatory seed snapshot is a superseded implementation choice |
-| Runtime network path | `chrono-pod-default` selects all remote Pods and admits ingress only on TCP 8080, from Pods in the `sandbox-router` namespace or local Pods labeled `app=sandbox-router`; no `sandbox-router` namespace is deployed | Infra must provide a runtime path before live acceptance. Current CMA discovery connects directly to Pod IP TCP 9090 for authenticated HTTP and WebSocket. Kubernetes API access alone does not satisfy this requirement |
-| Runtime ServiceAccount and storage | Remote `default` ServiceAccount exists, is active and has no GSA annotation; infra's existing template also uses it with token automount disabled. `standard-rwo` is the existing PD CSI default StorageClass | CMA's production configuration selects `default` with Pod token automount disabled and `standard-rwo` with the existing 64 GiB home default. A new dedicated runtime ServiceAccount is not required. Live RWOP provisioning remains unverified |
+| Native persistent home | A pinned diagnostic Python image passed controller-owned 64 GiB RWOP allocation/mount on `home-a`, suspend/resume with the same PVC and saved marker, and Claim deletion with Sandbox/PVC GC | This proves the infrastructure substrate. Verify the final CMA runtime initializer, authenticated assignment/bootstrap and lifecycle before activation; a mandatory seed snapshot is a superseded implementation choice |
+| Runtime network path | `chrono-pod-default` admits ingress only on TCP 8080 from the undeployed `sandbox-router` namespace or local Pods labeled `app=sandbox-router`. Northeast CMA connection attempts to the ready diagnostic Pod on both TCP 9090 and 8080 timed out after four seconds | Infra must provide and verify the runtime path. Current CMA discovery connects directly to Pod IP TCP 9090 for authenticated HTTP and WebSocket. The measured timeouts do not isolate policy from routing; Kubernetes API access alone does not satisfy this requirement |
+| Runtime ServiceAccount and storage | Remote `default` exists, is active and has no GSA annotation. A `standard-rwo` canary disk could not attach to the selected N4 node because it uses `pd-balanced`; `home-a` (`hyperdisk-balanced`, CMEK) passed the diagnostic 64 GiB RWOP lifecycle | CMA selects `default` with Pod token automount disabled and `home-a` with the existing 64 GiB home default. A new runtime ServiceAccount is not required; final CMA image/bootstrap acceptance remains separate |
+| Runtime isolation class | The southeast `chrono-pod-sandbox` policy enforces `microvm` or `gvisor`; an isolated Sandbox without `runtimeClassName` was rejected. The diagnostic `microvm`/`home-a` Pod ran successfully | CMA explicitly selects the existing `microvm` RuntimeClass. Class existence and policy compatibility are checked before activation; final CMA image and connection acceptance remain separate |
 | CMA runtime signing key | `chrono-bot/cma-agent-sandbox-control` has been created and read-verified in the northeast CMA cluster, without printing or storing its value locally | Mount the existing Secret during activation and preserve its value across restarts; it is separate from infra's Kubernetes access identity |
 | Canonical application prerequisites | Three canonical Services, Agent Manager/Event Gateway ConfigMaps, and their four health/backend policies have been created and read-verified in northeast. Original credential values match the canonical Secret copies; new required auth/control keys are present | Deploy the verified application images, observe ready endpoints and finish route/alias cutover. Old `cma-api`, `cmaeg` and `cma-web` remain Ready 1/1; no canonical application worker or Image Manager worker has started |
 | Shared MongoDB | Existing `chrono-bot` credentials have been copied to and verified in the canonical application Secrets; original Secrets are retained | Select each service's shared-schema mode and run only its own migration/startup initialization |
@@ -240,8 +241,9 @@ For new empty native homes, the adapter currently emits PVC get/list, Pod list,
 and a WebSocket GET to `pods/exec`. Pod get and exec create are conservative
 preflight grants beyond those emitted requests; the pinned kube-rs client uses
 GET for assignment. The operator preflight also reads the configured
-ServiceAccount and StorageClass, but CMA's runtime adapter does not need those
-read permissions. No direct PV, Secret or ConfigMap calls are part of this path.
+ServiceAccount, selected RuntimeClass and StorageClass, but CMA's runtime
+adapter does not need those read permissions. No direct PV, Secret or ConfigMap
+calls are part of this path.
 
 The checked-in local Role retains permissions needed by previous OpenSandbox and
 storage cleanup paths. Native controllers own runtime Pod creation/deletion;
@@ -270,10 +272,30 @@ remote runtime network path for the northeast CMA source, covering both cold
 and warm Pods. Reaching the Kubernetes API alone does not prove runtime
 connectivity. Verify the cluster CNI enforces NetworkPolicy and that an
 unrelated Pod cannot reach the runtime port.
+On 2026-10-13, connection attempts from northeast CMA to the ready diagnostic
+Pod at `10.57.0.97` timed out after four seconds on both TCP 9090 and TCP 8080.
+The diagnostic used a pinned Python image, not the final CMA runtime. This is
+an observed remote network blocker; the measurements do not distinguish
+NetworkPolicy rejection from routing or other network enforcement.
 The policy intentionally does not rely on `cma/runtime-name`, which claimed
-warm Pods do not carry. Workload network egress and gVisor scheduling remain
+warm Pods do not carry. Workload network egress and runtime scheduling remain
 infra policy; check the selected RuntimeClass can schedule the requested image,
 CPU/memory and disk in the target node pool.
+
+The production application configuration explicitly selects
+`CHRONO_AGENT_SANDBOX_RUNTIME_CLASS=microvm`. On 2026-10-13, the southeast
+`chrono-pod-sandbox` Kyverno policy was confirmed in `Enforce` mode: Pods in
+`chrono-pod` must name either `microvm` or `gvisor`. An isolated Sandbox probe
+without `runtimeClassName` was rejected, so an empty setting cannot activate
+native CMA there. The existing `microvm` RuntimeClass uses handler `kata-clh`,
+adds node selector `sandbox.gke.io/runtime=microvm` and its matching
+`NoSchedule` toleration, and charges `250m` CPU plus `130Mi` memory Pod overhead.
+These are infra-owned RuntimeClass settings; CMA selects the class without
+modifying them. The preflight requires an allowed class only for this known
+production cluster/namespace and checks any explicitly selected class exists,
+is not deleting and has a handler. Other deployments may omit the setting.
+Class existence and this specific admission check do not prove complete policy
+acceptance, node capacity, image compatibility or live RWOP scheduling.
 
 Keep the legacy `CHRONO_SANDBOX_HOME_*` settings pinned to the northeast seed
 and retained allocations. For new native homes in southeast, set
@@ -308,6 +330,25 @@ GKE PD CSI. That check does not prove live RWOP provisioning or scheduling;
 those remain activation acceptance checks. The Pod/PVC templates require RWOP,
 while the GKE provisioner choice is a production check rather than an inherent
 requirement of the agent-sandbox API.
+
+The production native storage choice is `home-a`, retaining the 64 GiB request.
+The 2026-10-13 isolated canary using `standard-rwo` provisioned a PVC but failed
+disk attachment: Compute rejected its `pd-balanced` disk on the selected
+`n4-standard-16` microvm node. The infra-owned `home-a` class uses
+`pd.csi.storage.gke.io` with `type=hyperdisk-balanced`, a regional CMEK key,
+`WaitForFirstConsumer`, `Delete` reclaim policy and volume expansion enabled.
+Checking the CSI provisioner alone had missed this disk/node incompatibility.
+The replacement canary with a pinned diagnostic Python image passed real
+64 GiB `ReadWriteOncePod` allocation and mounting on `home-a`. Suspending the
+Sandbox removed its Pod while retaining the same PVC UID; resuming created a
+new Pod UID, retained that PVC and read the saved marker with its boot count
+incremented to two. Foreground Claim deletion was followed by controller GC of
+the Sandbox and PVC. This proves the infrastructure lifecycle and persistence
+substrate. It does not prove the final CMA runtime's home initializer,
+authenticated assignment, bootstrap or end-to-end Agent lifecycle, which still
+require the final image and a working remote runtime network path.
+The legacy `CHRONO_SANDBOX_HOME_STORAGE_CLASS=cma-home-v1` remains pinned for
+retained northeast allocations.
 
 Historical four-field native home overrides still select `legacy_snapshot`;
 `CHRONO_AGENT_SANDBOX_HOME_MODE=legacy_snapshot` makes that choice explicit.
@@ -373,10 +414,18 @@ Exec currently provides the authenticated initial assignment channel. Successful
 authorization checks alone do not prove allocation, assignment, remote runtime
 connectivity or persistent-home acceptance.
 
-The prospective checked-in application configuration passed all 37 operator
-preflight checks against the live infra ConfigMap, remote schemas, exact
-impersonated authorization reviews, runtime account and StorageClass. This
-does not attest a deployed candidate or live runtime behavior. Earlier
+The earlier prospective checked-in application configuration passed all 37
+operator preflight checks against the live infra ConfigMap, remote schemas, exact
+impersonated authorization reviews, runtime account and StorageClass. That
+version did not check RuntimeClass or Pod admission; the later isolated probe
+found the missing class described above. The expanded preflight adds the
+selected class and known production class requirement. The revised prospective
+`microvm`/`home-a` application configuration passed all 38 checks against live
+infrastructure on 2026-10-13. These checks substitute the checked-in application
+ConfigMap and Deployment for the not-yet-deployed candidate; the remaining
+reads and authorization reviews use the actual clusters. Neither the earlier
+37 checks nor the expanded checks attest a deployed candidate or live runtime
+behavior. Earlier
 `kubectl auth can-i` failures arose from discovery and subresource parsing;
 direct SelfSubjectAccessReviews confirm the actual grants without requesting
 additional permissions.
@@ -585,6 +634,7 @@ node .github/scripts/agent-sandbox-preflight.mjs \
 This script reads `cma-agent-manager` configuration and Deployment overrides
 only from the CMA context, then checks native API
 schemas, the configured runtime ServiceAccount's existence and non-deletion,
+the selected RuntimeClass and the known southeast `chrono-pod` class requirement,
 the effective seed and storage class
 in the runtime context. It checks the configured native namespace and remote
 API origin against the selected runtime cluster and performs namespaced
