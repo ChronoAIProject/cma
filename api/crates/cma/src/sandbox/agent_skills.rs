@@ -21,6 +21,7 @@ const RESOLUTION_TIMEOUT: Duration = Duration::from_secs(30);
 mod authority;
 mod http;
 use http::{bounded_body, classify_status};
+#[cfg(test)]
 mod warmup;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -36,6 +37,7 @@ pub(crate) enum AgentSkillResolutionError {
 /// Resolves profile references to immutable archives before home materialization.
 #[async_trait::async_trait]
 pub(crate) trait AgentSkillResolver: Send + Sync {
+    #[cfg(test)]
     async fn resolve_warm(
         &self,
         _owner: &layer2_core::SubjectId,
@@ -48,6 +50,7 @@ pub(crate) trait AgentSkillResolver: Send + Sync {
         }
     }
 
+    #[cfg(test)]
     async fn warm_archives(
         &self,
         _owner: &layer2_core::SubjectId,
@@ -73,37 +76,9 @@ pub(crate) trait AgentSkillResolver: Send + Sync {
 }
 
 #[cfg(test)]
-#[derive(Default)]
-pub(crate) struct EmptyAgentSkillResolver;
-
+mod empty;
 #[cfg(test)]
-#[async_trait::async_trait]
-impl AgentSkillResolver for EmptyAgentSkillResolver {
-    async fn resolve(
-        &self,
-        _sandbox: &Sandbox,
-        references: &[SkillRef],
-    ) -> Result<Vec<ResolvedAgentSkill>, AgentSkillResolutionError> {
-        if references.is_empty() {
-            Ok(Vec::new())
-        } else {
-            Err(AgentSkillResolutionError::Unavailable(
-                "no agent skill source is composed".into(),
-            ))
-        }
-    }
-
-    fn runtime_skills(
-        &self,
-        material: &[ResolvedAgentSkill],
-    ) -> Result<Vec<AgentSkill>, AgentSkillResolutionError> {
-        if material.is_empty() {
-            Ok(Vec::new())
-        } else {
-            Err(invalid(0, "no runtime skill source is composed"))
-        }
-    }
-}
+pub(crate) use empty::EmptyAgentSkillResolver;
 
 /// Resolves Ornn references through NyxID's service proxy to immutable material.
 pub(crate) struct OrnnAgentSkillResolver {
@@ -111,6 +86,7 @@ pub(crate) struct OrnnAgentSkillResolver {
     request_origin: reqwest::Url,
     locator_origin: reqwest::Url,
     credentials: Option<Arc<dyn SandboxCredentialController>>,
+    #[cfg(test)]
     warmup_tokens: Option<Arc<dyn super::credential::OwnerTokenSource>>,
 }
 
@@ -141,6 +117,7 @@ impl OrnnAgentSkillResolver {
             request_origin: origin.clone(),
             locator_origin: origin,
             credentials,
+            #[cfg(test)]
             warmup_tokens: None,
         })
     }
@@ -207,6 +184,7 @@ impl OrnnAgentSkillResolver {
 
 #[async_trait::async_trait]
 impl AgentSkillResolver for OrnnAgentSkillResolver {
+    #[cfg(test)]
     async fn resolve_warm(
         &self,
         owner: &layer2_core::SubjectId,
@@ -215,6 +193,7 @@ impl AgentSkillResolver for OrnnAgentSkillResolver {
         self.resolve_public_material(owner, references).await
     }
 
+    #[cfg(test)]
     async fn warm_archives(
         &self,
         owner: &layer2_core::SubjectId,

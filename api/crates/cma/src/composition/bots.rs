@@ -26,7 +26,7 @@ struct InlineBotProfileResolver {
     profiles: Arc<PrivateProfileCreationService>,
     image_resolver: Arc<dyn ImageResolver>,
     connections: Arc<dyn SandboxCredentialPrerequisite>,
-    bounds: ProfileCapacityBounds,
+    capacity: layer3_adapter::SandboxCapacity,
     default_model: String,
 }
 
@@ -104,6 +104,11 @@ impl BotInlineProfileResolver for InlineBotProfileResolver {
             ),
             None => None,
         };
+        // Before Bot admission there are no runtime effects. A deployment
+        // default/catalog change gets new immutable materialization identities;
+        // already admitted Bots replay their original stored profiles upstream.
+        let key = layer2_core::profiles::content_digest(&(key, &runtime_image, self.capacity))
+            .map_err(|_| BotError::Unavailable)?;
         let agent = self
             .profiles
             .create_agent_for_owner(
@@ -147,8 +152,8 @@ impl BotInlineProfileResolver for InlineBotProfileResolver {
             .map_err(profile_error)?;
         let sandbox_content = SandboxProfileContent {
             runtime_image,
-            cpu_millis: self.bounds.min_cpu_millis,
-            memory_mib: self.bounds.min_memory_mib,
+            cpu_millis: self.capacity.cpu_millis,
+            memory_mib: self.capacity.memory_mib,
             nyxid_services: inline
                 .permissions
                 .services
@@ -158,8 +163,8 @@ impl BotInlineProfileResolver for InlineBotProfileResolver {
                 .collect(),
             agent_provider: AgentProvider::Codex,
             model_access: ModelAccess::ChronoaiManaged,
-            max_workspaces: 1,
-            max_agents_per_workspace: 1,
+            max_workspaces: 16,
+            max_agents_per_workspace: 16,
             workspace_profiles: vec![WorkspaceProfileRef {
                 id: workspace.profile_id.clone(),
                 revision: workspace.revision,
@@ -296,7 +301,10 @@ impl BotComposition {
             ),
             image_resolver,
             connections,
-            bounds: profile_bounds,
+            capacity: layer3_adapter::SandboxCapacity {
+                cpu_millis: config.default_profiles.cpu_millis,
+                memory_mib: config.default_profiles.memory_mib,
+            },
             default_model: config.default_profiles.agent_model.clone(),
         });
         let service = BotService::new(stores.bots.clone(), profiles, "cma_codex".into())
@@ -381,3 +389,7 @@ fn due(bot: &layer2_core::bots::Bot) -> bool {
             .is_some_and(|expiry| expiry <= now.saturating_add(3 * 86400))
     }
 }
+
+#[cfg(test)]
+#[path = "bots_tests.rs"]
+mod tests;

@@ -12,6 +12,8 @@ const IMAGE: &str = "runtime-warm-test";
 
 #[path = "home_policy_tests.rs"]
 mod home_policy_tests;
+#[path = "retirement_tests.rs"]
+mod retirement_tests;
 
 fn bounds() -> ProfileCapacityBounds {
     ProfileCapacityBounds {

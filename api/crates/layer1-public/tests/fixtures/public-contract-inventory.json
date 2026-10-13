@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 179,
+  "openapi_operations": 182,
   "operations": {
     "GET /api/v1/organizations": {
       "classification": "openapi",
@@ -2602,6 +2602,38 @@
       "required_problems": [
         "forbidden",
         "not_authenticated"
+      ]
+    },
+    "GET /api/v1/admin/warm-pools": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin/warm_pools.rs# Authenticated native pool handlers and typed service errors define the wire contract.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated",
+        "operator_service_unavailable"
+      ]
+    },
+    "POST /api/v1/admin/warm-pools": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin/warm_pools.rs# Authenticated native pool handlers and typed service errors define the wire contract.",
+      "required_problems": [
+        "forbidden",
+        "invalid_admin_request",
+        "not_authenticated",
+        "operator_conflict",
+        "operator_service_unavailable"
+      ]
+    },
+    "PUT /api/v1/admin/warm-pools/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin/warm_pools.rs# Authenticated native pool handlers and typed service errors define the wire contract.",
+      "required_problems": [
+        "forbidden",
+        "invalid_admin_request",
+        "not_authenticated",
+        "operator_conflict",
+        "operator_resource_not_found",
+        "operator_service_unavailable"
       ]
     }
   }

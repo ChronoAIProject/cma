@@ -75,6 +75,8 @@ impl InlineAgentLifecycle {
         };
         let lease = record.lease()?;
         let attempts = record.attempts;
+        let capacity = record.input.captured_capacity(self.bounds);
+        let limits = record.input.captured_limits();
         let caller = Caller::new(
             SubjectId::new(record.owner),
             Authorization::new(record.input.capabilities),
@@ -84,6 +86,8 @@ impl InlineAgentLifecycle {
             ProvisionInput {
                 request: record.input.request,
                 runtime_image: record.input.resolved_image,
+                capacity,
+                limits,
                 key: record.key,
                 lease: lease.clone(),
                 existing_sandbox_id: record.sandbox_id,

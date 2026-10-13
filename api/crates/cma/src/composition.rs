@@ -46,6 +46,7 @@ pub(crate) struct ControlPlaneComposition {
     pub command_scheduler: super::commands::CommandScheduler,
     pub sandbox_control_scheduler: super::commands::SandboxControlScheduler,
     pub sandbox_lifecycle: SandboxLifecycleComposition,
+    pub native_warm_pools: Arc<crate::warm_pools::NativeWarmPools>,
 }
 
 impl ControlPlaneComposition {
@@ -172,6 +173,10 @@ impl ControlPlaneComposition {
             stores.sandbox_profiles.clone(),
             image_resolver.clone(),
             authoring_bounds,
+            layer3_adapter::SandboxCapacity {
+                cpu_millis: config.default_profiles.cpu_millis,
+                memory_mib: config.default_profiles.memory_mib,
+            },
             profile_scanner.clone(),
             stores.agent_lifecycle.clone(),
         );
@@ -191,12 +196,23 @@ impl ControlPlaneComposition {
         );
         let hierarchy = HierarchyReadService::new(stores.sandbox_model.clone())
             .with_resource_access(resource_access.clone());
+        let native_warm_pools = crate::warm_pools::NativeWarmPools::new(
+            stores.native_warm_pools.clone(),
+            adapter.clone(),
+            config.runtime.sandbox_image.clone(),
+            config.runtime.home_policy.clone(),
+            layer3_adapter::SandboxCapacity {
+                cpu_millis: config.default_profiles.cpu_millis,
+                memory_mib: config.default_profiles.memory_mib,
+            },
+        );
         let admin = layer1_public::rest::admin::AdminState::new(
             Arc::clone(&settings),
             sandbox_operators,
             Arc::clone(&activity),
         )
-        .with_user_directory(Arc::clone(&users));
+        .with_user_directory(Arc::clone(&users))
+        .with_warm_pools(native_warm_pools.clone());
         let operations: Arc<dyn OperationStore> = stores.operations.clone();
         let profiles = ProfilesState::new(
             stores.sandbox_profiles.clone(),
@@ -226,8 +242,7 @@ impl ControlPlaneComposition {
             AuthMode::Provider { .. } => OrnnAgentSkillResolver::scoped(
                 &config.runtime.platform_base_url,
                 Arc::clone(&sandbox_credentials),
-            )?
-            .with_warmup_tokens(auth.clone()),
+            )?,
             AuthMode::Trusted { .. } => {
                 OrnnAgentSkillResolver::anonymous(&config.runtime.platform_base_url)?
             }
@@ -280,6 +295,10 @@ impl ControlPlaneComposition {
             public_origin: config.public_url.clone(),
             worker_holder: worker_holder.clone(),
             profile_bounds: authoring_bounds,
+            capacity: layer3_adapter::SandboxCapacity {
+                cpu_millis: config.default_profiles.cpu_millis,
+                memory_mib: config.default_profiles.memory_mib,
+            },
             profile_scanner: profile_scanner.clone(),
             image_resolver: image_resolver.clone(),
         })?;
@@ -459,6 +478,7 @@ impl ControlPlaneComposition {
             command_scheduler,
             sandbox_control_scheduler,
             sandbox_lifecycle,
+            native_warm_pools,
         })
     }
 }

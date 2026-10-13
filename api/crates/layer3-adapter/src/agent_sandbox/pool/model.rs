@@ -225,7 +225,8 @@ pub(super) fn pool(
     decode(json!({"apiVersion":API_VERSION,"kind":"SandboxWarmPool",
         "metadata":{"name":format!("cma-pool-{}",&hash[..48]),"namespace":config.namespace,
             "labels":{OWNER_LABEL:config.deployment},
-            "annotations":{DIGEST_ANNOTATION:hash,"cma/pool-template-uid":template.uid()}},
+            "annotations":{DIGEST_ANNOTATION:hash,"cma/pool-template-uid":template.uid(),
+                super::DEFINITION_ANNOTATION:super::management::definition(config,spec)?}},
         "spec":{"replicas":replicas,"sandboxTemplateRef":{"name":template.name_any()},
             "updateStrategy":{"type":"OnReplenish"}}}))
 }

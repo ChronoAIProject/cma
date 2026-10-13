@@ -24,10 +24,23 @@ is required. A `202` receipt contains an **operation** ID; read
 `agent_id` to open the Agent. A phase event marked `ready` does not complete the
 operation. Workspace/runtime readiness is reported only after Agent preparation.
 
+To add an Agent to an existing owned, ready Workspace, pass `workspace_id` to
+the same lifecycle endpoint. This path retains the Workspace and parent Sandbox;
+it rejects `image` and `repository` because those belong to the existing
+environment. Omitted or empty service selections inherit the parent's connected
+key scope, and requested services outside that scope are refused. The caller
+needs the existing Workspace's creation authority but does not need
+`CreateSandbox`. Admission and every resumed worker validate the current
+Workspace/Sandbox ownership, readiness and connection prerequisites before
+creating the inline Agent. The durable operation key also binds `workspace_id`;
+replaying it for another Workspace or for a new Sandbox conflicts.
+
 The permanent operation ledger binds a key to one owner's submitted request.
 Retries keep that exact body and key, including after a lost HTTP response.
 The originally resolved image digest and captured settings remain pinned even
 if the image catalogue advances. A different request under that key is refused.
+New operations also capture the configured CPU/memory allocation. Legacy
+operations retain their original minimum reservation and immutable limits.
 
 `waiting_for_connection` carries `connection.services` and `connection.target`
 for the connection wizard. After verifying the same owner's connections, repeat
@@ -958,6 +971,29 @@ JSON Patch operations. Reset uses `{ expected_revision }`. Read the resulting
 revision after every successful change. Runtime inventory can fail unavailable
 without proving that a runtime is absent.
 
+Native warm-pool administration requires `ConfigurePlatform`:
+
+- `GET /api/v1/admin/warm-pools` returns durable targets, current provider
+  observations and the deployment's default image/CPU/memory. An unavailable
+  provider retains its target records with `available: false`; unobserved
+  readiness is `null`.
+- `POST /api/v1/admin/warm-pools` requires `Idempotency-Key` and accepts
+  `{ cpu_millis, memory_mib, target_replicas }`. The server supplies its pinned
+  system runtime image, initialized home seed and Pod policy. The `202` response
+  acknowledges a durable target, not ready capacity. Retry an uncertain create
+  with its exact original body and key.
+- `PUT /api/v1/admin/warm-pools/{id}` accepts
+  `{ expected_revision, target_replicas }` and returns `202`. Set the target to
+  zero to stop spare-capacity replenishment. Read current state after an
+  uncertain write or conflict before submitting a reviewed update.
+
+The reconciler saves the original pool/template UIDs before expanding capacity.
+Subsequent updates preserve those identities and their Pod policy; a missing or
+replaced resource causes reconciliation to report unavailable and retry, without
+creating replacement capacity. Target replicas are bounded to 0–1000. Active
+claimed Sandboxes continue their own retained-home lifecycle independently of
+spare-capacity changes.
+
 See [Operations](CMA_Operations.md) for settings meaning, deployment prerequisites,
 alerts, recovery, data-reset boundaries and production evidence. There is no
 arbitrary shell, database deletion or NyxID administration endpoint here.
@@ -1086,6 +1122,9 @@ returns 409, including changing an omitted default into an explicit reference.
 | `POST /api/v1/admin/settings/reset` | ResetRequest | - | 200 SettingsView |
 | `POST /api/v1/admin/triggers/pause` | - | - | 200 SettingsView |
 | `POST /api/v1/admin/triggers/resume` | - | - | 200 SettingsView |
+| `GET /api/v1/admin/warm-pools` | - | - | 200 WarmPoolList |
+| `POST /api/v1/admin/warm-pools` | ConfigureWarmPoolBody; key | - | 202 WarmPoolView |
+| `PUT /api/v1/admin/warm-pools/{id}` | ResizeWarmPoolBody | - | 202 WarmPoolView |
 
 ### Agent profiles
 

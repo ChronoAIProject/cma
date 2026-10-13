@@ -19,7 +19,7 @@ use layer2_core::SubjectId;
 /// Trigger so the user never has to manage those rows.
 pub(crate) struct InlineTriggerProfileMaterializer {
     profiles: Arc<PrivateProfileCreationService>,
-    bounds: ProfileCapacityBounds,
+    capacity: layer3_adapter::SandboxCapacity,
     image_resolver: Arc<dyn ImageResolver>,
 }
 
@@ -27,12 +27,13 @@ impl InlineTriggerProfileMaterializer {
     pub(crate) fn new(
         profile_store: Arc<dyn layer2_core::bots::BotProfileStore>,
         bounds: ProfileCapacityBounds,
+        capacity: layer3_adapter::SandboxCapacity,
         scanner: Arc<dyn layer2_core::profiles::PublicValueScanner>,
         image_resolver: Arc<dyn ImageResolver>,
     ) -> Arc<Self> {
         Arc::new(Self {
             profiles: PrivateProfileCreationService::new(profile_store, bounds, scanner),
-            bounds,
+            capacity,
             image_resolver,
         })
     }
@@ -76,7 +77,8 @@ impl TriggerInlineTargetMaterializer for InlineTriggerProfileMaterializer {
         inline
             .validate()
             .map_err(|error| unavailable(error.field))?;
-        let key_digest = content_digest(&inline).map_err(|_| unavailable("target.inline"))?;
+        let key_digest =
+            content_digest(&(&inline, self.capacity)).map_err(|_| unavailable("target.inline"))?;
         let key = format!("trigger-inline:{key_digest}");
         let agent = self
             .profiles
@@ -135,8 +137,8 @@ impl TriggerInlineTargetMaterializer for InlineTriggerProfileMaterializer {
                 "Inline Trigger Sandbox".into(),
                 "Internal Agent Manager Trigger sandbox configuration".into(),
                 SandboxProfileContent {
-                    cpu_millis: self.bounds.min_cpu_millis,
-                    memory_mib: self.bounds.min_memory_mib,
+                    cpu_millis: self.capacity.cpu_millis,
+                    memory_mib: self.capacity.memory_mib,
                     runtime_image: inline
                         .image
                         .as_ref()
@@ -144,8 +146,8 @@ impl TriggerInlineTargetMaterializer for InlineTriggerProfileMaterializer {
                     nyxid_services: inline.agent.services.clone(),
                     agent_provider: AgentProvider::Codex,
                     model_access: ModelAccess::ChronoaiManaged,
-                    max_workspaces: 1,
-                    max_agents_per_workspace: 1,
+                    max_workspaces: 16,
+                    max_agents_per_workspace: 16,
                     workspace_profiles: vec![workspace_ref.clone()],
                     software_install_commands: Vec::new(),
                     environment_variables: Vec::new(),

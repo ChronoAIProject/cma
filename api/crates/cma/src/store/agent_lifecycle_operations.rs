@@ -37,11 +37,36 @@ const MAX_EVENTS: i32 = 32;
 pub(crate) struct LifecycleInput {
     pub request: AgentLifecycleCreateRequest,
     pub resolved_image: Option<String>,
+    /// New admissions pin deployment capacity; legacy records used policy minima.
+    #[serde(default)]
+    pub capacity: Option<layer3_adapter::SandboxCapacity>,
     #[serde(default)]
     pub capabilities: Vec<Capability>,
     /// Original authenticated actor; old records retain unknown attribution.
     #[serde(default)]
     pub actor: Option<layer2_core::resource_access::ResourceActor>,
+}
+
+impl LifecycleInput {
+    pub(crate) fn captured_limits(&self) -> layer2_core::sandbox::SandboxLimits {
+        // Capacity was introduced with expandable inline Sandboxes. Historical
+        // admissions must recreate their original immutable one-slot profile.
+        let maximum = if self.capacity.is_some() { 16 } else { 1 };
+        layer2_core::sandbox::SandboxLimits {
+            max_workspaces: maximum,
+            max_agents_per_workspace: maximum,
+        }
+    }
+
+    pub(crate) fn captured_capacity(
+        &self,
+        bounds: layer2_core::profiles::ProfileCapacityBounds,
+    ) -> layer3_adapter::SandboxCapacity {
+        self.capacity.unwrap_or(layer3_adapter::SandboxCapacity {
+            cpu_millis: bounds.min_cpu_millis,
+            memory_mib: bounds.min_memory_mib,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

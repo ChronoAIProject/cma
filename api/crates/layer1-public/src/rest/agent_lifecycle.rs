@@ -20,6 +20,9 @@ use utoipa::ToSchema;
 #[serde(deny_unknown_fields)]
 pub struct AgentLifecycleCreateRequest {
     pub name: String,
+    /// Add an Agent to this owned, ready Workspace using its existing Sandbox.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image: Option<AgentLifecycleImageReference>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

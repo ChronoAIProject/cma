@@ -49,6 +49,7 @@ async fn materialization_is_deterministic_and_links_private_revisions() {
     let materializer = InlineTriggerProfileMaterializer::new(
         store.clone(),
         bounds(),
+        layer3_adapter::SandboxCapacity::default(),
         Arc::new([] as [String; 0]),
         Arc::new(AuthorizedImageResolver),
     );
@@ -116,7 +117,62 @@ async fn materialization_is_deterministic_and_links_private_revisions() {
         sandbox_revision.content.runtime_image.as_deref(),
         Some("registry.example/codex@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
     );
+    assert_eq!(sandbox_revision.content.max_workspaces, 16);
+    assert_eq!(sandbox_revision.content.max_agents_per_workspace, 16);
     assert_eq!(agent_revision.content.model.as_deref(), Some("gpt-5-codex"));
+    assert_eq!(
+        (
+            sandbox_revision.content.cpu_millis,
+            sandbox_revision.content.memory_mib
+        ),
+        (1000, 1024)
+    );
+}
+
+#[tokio::test]
+async fn changed_capacity_materializes_new_snapshots_and_retains_existing_target() {
+    let store = Arc::new(InMemoryProfileStore::default());
+    let owner = SubjectId::new("trigger-owner");
+    let build = |capacity| {
+        InlineTriggerProfileMaterializer::new(
+            store.clone(),
+            bounds(),
+            capacity,
+            Arc::new([] as [String; 0]),
+            Arc::new(AuthorizedImageResolver),
+        )
+    };
+    let old = build(layer3_adapter::SandboxCapacity::default())
+        .materialize_with_credential(&owner, &target(), Some("trigger-caller"))
+        .await
+        .unwrap();
+    let changed = build(layer3_adapter::SandboxCapacity {
+        cpu_millis: 2000,
+        memory_mib: 4096,
+    });
+    let new = changed
+        .materialize_with_credential(&owner, &target(), Some("trigger-caller"))
+        .await
+        .unwrap();
+    assert_ne!(new.sandbox_profile.id, old.sandbox_profile.id);
+    assert_eq!(
+        changed
+            .materialize_with_credential(&owner, &target(), Some("trigger-caller"))
+            .await
+            .unwrap(),
+        new
+    );
+    for (target, expected) in [(old, (1000, 1024)), (new, (2000, 4096))] {
+        let retained = store
+            .sandbox_profile_revision(&target.sandbox_profile.id, target.sandbox_profile.revision)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (retained.content.cpu_millis, retained.content.memory_mib),
+            expected
+        );
+    }
 }
 
 #[tokio::test]
@@ -125,6 +181,7 @@ async fn changed_inline_content_and_owner_get_distinct_snapshots() {
     let materializer = InlineTriggerProfileMaterializer::new(
         store.clone(),
         bounds(),
+        layer3_adapter::SandboxCapacity::default(),
         Arc::new([] as [String; 0]),
         Arc::new(AuthorizedImageResolver),
     );
@@ -164,6 +221,7 @@ async fn invalid_inline_payload_is_rejected_before_profile_creation() {
     let materializer = InlineTriggerProfileMaterializer::new(
         store.clone(),
         bounds(),
+        layer3_adapter::SandboxCapacity::default(),
         Arc::new([] as [String; 0]),
         Arc::new(AuthorizedImageResolver),
     );
@@ -214,6 +272,7 @@ async fn image_authority_is_required_before_creating_private_profiles() {
     let materializer = InlineTriggerProfileMaterializer::new(
         store.clone(),
         bounds(),
+        layer3_adapter::SandboxCapacity::default(),
         Arc::new([] as [String; 0]),
         Arc::new(AuthorizedImageResolver),
     );
@@ -258,6 +317,7 @@ async fn image_manager_reference_replaces_supplied_or_missing_digest() {
     let materializer = InlineTriggerProfileMaterializer::new(
         store.clone(),
         bounds(),
+        layer3_adapter::SandboxCapacity::default(),
         Arc::new([] as [String; 0]),
         Arc::new(AuthorizedImageResolver),
     );
@@ -300,6 +360,7 @@ async fn system_default_image_does_not_require_image_manager_authority() {
     let materializer = InlineTriggerProfileMaterializer::new(
         store.clone(),
         bounds(),
+        layer3_adapter::SandboxCapacity::default(),
         Arc::new([] as [String; 0]),
         Arc::new(AuthorizedImageResolver),
     );

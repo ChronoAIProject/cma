@@ -24,6 +24,20 @@ pub trait SandboxAdapter: Send + Sync {
         None
     }
 
+    fn native_pools(&self) -> Option<&dyn crate::agent_sandbox::NativePoolControl> {
+        None
+    }
+
+    /// Select a provider and an eligible pool before any home allocation. The
+    /// caller persists the returned binding (or ordinary home decision).
+    async fn select_native_pool(
+        &self,
+        _request: &RuntimeProvisionRequest,
+        _home: &crate::HomeVolumeRequest,
+    ) -> Result<Option<crate::agent_sandbox::NativePoolBinding>> {
+        Ok(None)
+    }
+
     async fn provision(&self, spec: &SandboxSpec) -> Result<RuntimeHandle>;
 
     /// Stop the exact runtime Pod while retaining its provider object and volume.

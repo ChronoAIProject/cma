@@ -43,6 +43,7 @@ mod source_cases;
 mod state_cases;
 mod symbols;
 mod trigger_cases;
+mod warm_pool_cases;
 
 use symbols::Symbols;
 
@@ -141,6 +142,9 @@ fn paths() -> Vec<PathBuf> {
 }
 
 async fn scenario(name: &str) -> Scenario {
+    if let Some(scenario) = warm_pool_cases::scenario(name) {
+        return scenario;
+    }
     if let Some(scenario) = lifecycle_cases::scenario(name).await {
         return scenario;
     }

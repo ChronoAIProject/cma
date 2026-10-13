@@ -204,6 +204,14 @@ impl SandboxWorker {
         mut sandbox: Sandbox,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        if sandbox.runtime.is_some() || sandbox.lifecycle.suspended_runtime.is_some() {
+            return Err(SandboxStoreError::Corrupt(
+                "home release still has a bound runtime".into(),
+            ));
+        }
+        if let Some(failure) = self.cleanup_native_home(&mut sandbox, now).await? {
+            return self.retry_failure(sandbox, failure, now).await;
+        }
         if sandbox.lifecycle.background_checkpoint.is_some() {
             return self
                 .retry_failure(
@@ -214,11 +222,6 @@ impl SandboxWorker {
                 .await;
         }
         if let Some(home) = &mut sandbox.lifecycle.home {
-            if sandbox.runtime.is_some() || sandbox.lifecycle.suspended_runtime.is_some() {
-                return Err(SandboxStoreError::Corrupt(
-                    "home release still has a bound runtime".into(),
-                ));
-            }
             if let Err(error) =
                 crate::sandbox::home::release_home(self.dependencies.adapter.as_ref(), home).await
             {

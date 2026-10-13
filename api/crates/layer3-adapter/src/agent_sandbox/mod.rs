@@ -24,6 +24,8 @@ pub use pool::{
     AgentSandboxPools, NativePoolBinding, NativePoolClaim, NativePoolClaimRequest, NativePoolSpec,
     NativePoolStatus,
 };
+pub use pool::{NativePoolCleanup, NativePoolMember};
+pub use pool::{NativePoolConfiguration, NativePoolControl};
 pub(crate) use pool::{NATIVE_HOME_ANNOTATION, NATIVE_HOME_REQUEST_LABEL};
 pub(crate) const OWNER_LABEL: &str = "cma/control-plane";
 const RUNTIME_LABEL: &str = "cma/runtime-name";
