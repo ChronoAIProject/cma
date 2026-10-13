@@ -924,6 +924,28 @@ before runtime dispatch and reapplied after reconnect; `pending: true` means
 runtime confirmation is outstanding and further input remains fenced. Retry
 network failures or ambiguous 503 replies with the original body and key.
 
+`GET /api/v1/agents/{id}/access-requests` returns `{ items }` for the Agent owner.
+Each item retains its exact request and Agent IDs, `services`, `reason`, durable
+`status`, and optional safe `error`. Owner approval uses
+`POST /api/v1/agents/{id}/access-requests/{request_id}/approve` with
+`{ "services": ["service-id"] }`; denial uses the sibling `/deny` with `{}`.
+Both commands require an `Idempotency-Key` and return the current request with
+HTTP 200. Service selections contain 1–32 identifiers, each 1–128 ASCII letters,
+digits, hyphens or underscores. Bodies are limited to 8 KiB.
+
+Approval requires a verified caller context matching the authenticated owner
+and an outbound request credential; missing credentials are refused before
+any approval effect. The Core service owns durable decision replay and current
+owner checks. Reuse the exact decision body and key after an uncertain reply.
+A `connecting` response adds `connection.target` with
+`{ "type": "agent_access_request", "id": "request-id" }` for the owner's
+connection flow. `applying` awaits runtime verification, and only `succeeded`
+confirms applied access. Poll the list after a connection return. `pending`,
+`denied` and `failed` preserve their durable meanings. All responses are private
+and non-cacheable. Typed refusals use `agent_access_invalid` (400),
+`agent_access_forbidden` (403), `agent_access_not_found` (404),
+`agent_access_conflict` (409), and `agent_access_unavailable` (503).
+
 `GET /api/v1/agents/{id}/events` is a **JSON page**, not SSE. It accepts `after`
 and `limit` (1-200, default 200), returns `items` and optional `next`, and omits
 internal dispatch keys and runtime approval locators. Read all pages, require
@@ -1163,6 +1185,9 @@ returns 409, including changing an omitted default into an explicit reference.
 | `GET /api/v1/agents/{id}/events` | - | after, limit | 200 AgentEventPageView |
 | `GET /api/v1/agents/provenance` | `shared`, `organization`, `sandbox`, `workspace`, `status`, `creation_origin`, `cursor`, `limit` | - | 200 AgentProvenanceInventoryPageView |
 | `GET /api/v1/agents/{id}/provenance` | - | - | 200 AgentProvenanceView |
+| `GET /api/v1/agents/{id}/access-requests` | - | - | 200 AgentAccessRequestList |
+| `POST /api/v1/agents/{id}/access-requests/{request_id}/approve` | ApproveAgentAccessRequest; key | - | 200 AgentAccessRequestView |
+| `POST /api/v1/agents/{id}/access-requests/{request_id}/deny` | DenyAgentAccessRequest; key | - | 200 AgentAccessRequestView |
 | `GET /api/v1/agents/{id}/settings` | - | - | 200 AgentSettingsView |
 | `PATCH /api/v1/agents/{id}/settings` | UpdateAgentSettingsRequest; key | - | 200 AgentSettingsView |
 | `GET /api/v1/agents/{id}/source` | - | - | 200 AccessibleAgentSourceView |
