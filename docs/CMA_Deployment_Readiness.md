@@ -559,7 +559,11 @@ schemas, the configured runtime ServiceAccount's existence and non-deletion,
 the effective seed and storage class
 in the runtime context. It checks the configured native namespace and remote
 API origin against the selected runtime cluster and performs namespaced
-authorization checks as the explicit remote principal. It does not read Secrets
+authorization checks as the explicit remote principal. These checks submit
+non-persistent `SelfSubjectAccessReview` requests to the exact authorization API
+endpoint, with API group, resource and subresource supplied in the JSON body.
+They bypass kubectl resource discovery and do not interpret `pods/exec` as a
+Pod named `exec`. The script does not read Secrets
 or modify workloads. A missing/incompatible CRD, denied right, mismatched target,
 incomplete policy or replaced/unready remote seed returns nonzero. Omitting the
 runtime context preserves the same-cluster mode; a distinct runtime context
