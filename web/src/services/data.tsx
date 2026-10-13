@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '../ui/Button';
+import { Input } from '../ui/Input';
 import { ServiceError, serviceRequest, type Service } from './client';
 export interface Page<T> {
   items: T[];
@@ -173,7 +174,7 @@ export function WriteForm({
               disabled={busy || pending !== undefined}
             />
           ) : (
-            <input
+            <Input
               name={field.name}
               type={field.type ?? 'text'}
               accept={field.accept}

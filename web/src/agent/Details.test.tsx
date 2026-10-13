@@ -41,7 +41,7 @@ it('shows lineage, profile, Worktree, first-message delivery, and guarded contro
     'Sandbox',
     'Workspace',
     'Worktree',
-    'Agent profile',
+    'Agent setup',
     'First-message delivery',
   ]) {
     expect(screen.getByRole('heading', { name: band })).toBeInTheDocument();

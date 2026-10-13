@@ -13,7 +13,6 @@ import {
   IconSettingsOutline16,
   IconTrashOutline16,
 } from '../ui/icons';
-import { ReferenceLink } from '../profiles/ReferenceLink';
 import {
   sandboxChildrenAvailable,
   sandboxUnavailableNotice,
@@ -244,12 +243,6 @@ export function SandboxPage({
         <div>
           <dt>Owner</dt>
           <dd>{sandbox.ownerName?.trim() || 'Name unavailable'}</dd>
-        </div>
-        <div>
-          <dt>Profile</dt>
-          <dd>
-            <ReferenceLink kind="sandbox" id={sandbox.profile.id} />
-          </dd>
         </div>
       </dl>
       <SandboxOverview

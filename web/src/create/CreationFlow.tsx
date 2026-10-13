@@ -36,8 +36,10 @@ export function CreationFlow({
   if (request.kind === 'new_agent' && client.createAgentLifecycle !== undefined) {
     return (
       <AgentLifecycleCard
+        key={'workspaceId' in request ? request.workspaceId : 'new-sandbox'}
         client={client}
         viewerId={viewerId}
+        workspaceId={'workspaceId' in request ? request.workspaceId : undefined}
         onClose={onClose}
         onCreated={(receipt) => onCreated({ kind: 'agent', agentId: receipt.id })}
       />

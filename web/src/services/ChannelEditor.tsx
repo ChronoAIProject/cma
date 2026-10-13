@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Button } from '../ui/Button';
+import { Input } from '../ui/Input';
 import { segment, ServiceError, serviceRequest } from './client';
 export interface Channel {
   channel_id: string;
@@ -134,7 +135,7 @@ export function ChannelEditor({
       {!channel ? (
         <label>
           Agent key
-          <input
+          <Input
             name="agent_key"
             type="password"
             autoComplete="off"
