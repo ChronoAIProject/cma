@@ -174,6 +174,8 @@ mod list;
 mod operations;
 #[path = "management/platforms.rs"]
 mod platforms;
+#[path = "management/test_turn.rs"]
+mod test_turn;
 
 #[path = "management/invalidation.rs"]
 mod invalidation;
