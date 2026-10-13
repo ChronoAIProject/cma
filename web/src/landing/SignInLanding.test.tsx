@@ -6,19 +6,12 @@ import { SignInLanding } from './SignInLanding';
 afterEach(() => vi.useRealTimers());
 
 describe('the signed-out invitation', () => {
-  it('keeps the CMA mark and three service tabs in the landing chrome', () => {
+  it('introduces all three services alongside the CMA character', () => {
     render(<SignInLanding onSignIn={vi.fn()} />);
-    expect(screen.getByRole('link', { name: 'CMA home' })).toHaveAttribute('href', '/');
-    expect(screen.getByRole('navigation', { name: 'CMA services' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Agent Manager' })).toHaveAttribute('href', '/');
-    expect(screen.getByRole('link', { name: 'Image Manager' })).toHaveAttribute(
-      'href',
-      '/image-manager',
-    );
-    expect(screen.getByRole('link', { name: 'Event Gateway' })).toHaveAttribute(
-      'href',
-      '/event-gateway',
-    );
+    for (const name of ['Agent Manager', 'Image Manager', 'Event Gateway']) {
+      expect(screen.getByRole('heading', { name })).toBeInTheDocument();
+    }
+    expect(screen.getByRole('complementary', { name: 'CMA services' })).toBeInTheDocument();
   });
 
   it('reveals the cloud after five seconds, not glasses lettering', () => {

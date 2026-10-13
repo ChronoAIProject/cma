@@ -199,6 +199,9 @@ impl Triggers<'_> {
 }
 
 fn validate_content(content: &TriggerContent) -> Result<()> {
+    if content.target.inline.is_some() {
+        return Ok(());
+    }
     for reference in [
         &content.target.sandbox_profile,
         &content.target.workspace_profile,

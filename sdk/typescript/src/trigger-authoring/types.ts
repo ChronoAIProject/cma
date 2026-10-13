@@ -1,9 +1,4 @@
-import {
-  permissionLevel,
-  profileReference,
-  skillReference,
-  thinkingEffort,
-} from '../profiles/types.js';
+import { permissionLevel, skillReference, thinkingEffort } from '../profiles/types.js';
 import {
   array,
   boolean,
@@ -15,6 +10,7 @@ import {
   text,
   type Output,
 } from '../schema.js';
+import { ProtocolError } from '../errors.js';
 
 export const triggerButtonLabel = enumeration(
   'open_in_cma',
@@ -52,6 +48,48 @@ export const triggerInlineTarget = object({
   workspace: optional(triggerInlineWorkspace),
 });
 export type TriggerInlineTarget = Output<typeof triggerInlineTarget>;
+const triggerProfileReference = object({ id: text, revision: integer });
+const normalizeTriggerProfileReference = (value: unknown) => {
+  const reference = triggerProfileReference(value);
+  if (reference.revision === 0) {
+    if (reference.id !== '') throw new ProtocolError('profile revision must be positive');
+    // Inline targets keep legacy profile fields as empty sentinels. Normalize
+    // the response so callers can continue using the stable reference shape.
+    return { id: '', revision: 1 };
+  }
+  return reference;
+};
+const triggerTarget = (value: unknown) => {
+  const parsed = object({
+    sandbox_profile: optional(triggerProfileReference),
+    workspace_profile: optional(triggerProfileReference),
+    agent_profile: optional(triggerProfileReference),
+    inline: optional(triggerInlineTarget),
+  })(value);
+  if (parsed.inline === undefined) {
+    if (
+      parsed.sandbox_profile === undefined ||
+      parsed.workspace_profile === undefined ||
+      parsed.agent_profile === undefined ||
+      parsed.sandbox_profile.revision === 0 ||
+      parsed.workspace_profile.revision === 0 ||
+      parsed.agent_profile.revision === 0
+    )
+      throw new ProtocolError('profile targets are required when inline configuration is absent');
+  }
+  return {
+    sandbox_profile: normalizeTriggerProfileReference(
+      parsed.sandbox_profile ?? { id: '', revision: 0 },
+    ),
+    workspace_profile: normalizeTriggerProfileReference(
+      parsed.workspace_profile ?? { id: '', revision: 0 },
+    ),
+    agent_profile: normalizeTriggerProfileReference(
+      parsed.agent_profile ?? { id: '', revision: 0 },
+    ),
+    ...(parsed.inline === undefined ? {} : { inline: parsed.inline }),
+  };
+};
 export const triggerContent = object({
   presentation: object({
     title: text,
@@ -60,12 +98,7 @@ export const triggerContent = object({
     theme: triggerTheme,
     signup_hint: optional(text),
   }),
-  target: object({
-    sandbox_profile: profileReference,
-    workspace_profile: profileReference,
-    agent_profile: profileReference,
-    inline: optional(triggerInlineTarget),
-  }),
+  target: triggerTarget,
   reuse: object({
     sandbox: enumeration('reuse_existing', 'always_new'),
     workspace: enumeration('reuse_existing', 'always_new'),
