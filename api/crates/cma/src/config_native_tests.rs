@@ -305,3 +305,47 @@ fn native_empty_vct_mode_can_share_cluster_without_snapshot_and_rejects_mixed_mo
     );
     assert!(!fallback.runtime.home_policy.unwrap().is_native_vct());
 }
+
+#[test]
+fn native_template_policy_is_explicit_bounded_and_does_not_block_disabled_provider() {
+    let key = TemporaryEntry::file(b"native-control-key-fixture-padding-0000");
+    let enabled = [
+        ("CHRONO_AGENT_SANDBOX_ENABLED", "true"),
+        ("CHRONO_AGENT_SANDBOX_CONTROL_KEY_FILE", key.path_str()),
+    ];
+    assert!(configured(&enabled)
+        .unwrap()
+        .runtime
+        .agent_sandbox
+        .unwrap()
+        .template_network_policy
+        .is_none());
+    for value in ["", r#"{"ingress":[],"egress":[]}"#] {
+        let mut values = enabled.to_vec();
+        values.push(("CHRONO_AGENT_SANDBOX_TEMPLATE_NETWORK_POLICY", value));
+        let config = configured(&values).unwrap();
+        assert_eq!(
+            config
+                .runtime
+                .agent_sandbox
+                .unwrap()
+                .template_network_policy
+                .is_some(),
+            !value.is_empty()
+        );
+    }
+    for value in [
+        r#"{"ingress":[]}"#,
+        r#"{"ingress":[],"egress":[],"management":"Unmanaged"}"#,
+        "invalid",
+    ] {
+        let mut values = enabled.to_vec();
+        values.push(("CHRONO_AGENT_SANDBOX_TEMPLATE_NETWORK_POLICY", value));
+        assert!(configured(&values).is_err());
+    }
+    assert!(configured(&[(
+        "CHRONO_AGENT_SANDBOX_TEMPLATE_NETWORK_POLICY",
+        "invalid-while-disabled"
+    )])
+    .is_ok());
+}

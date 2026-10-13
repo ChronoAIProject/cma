@@ -1,5 +1,5 @@
 use layer3_adapter::agent_sandbox::{
-    AgentSandboxConfig, RemoteKubernetesAuth, RemoteKubernetesConfig,
+    AgentSandboxConfig, NativeTemplateNetworkPolicy, RemoteKubernetesAuth, RemoteKubernetesConfig,
 };
 
 pub(super) fn from_lookup(
@@ -34,6 +34,12 @@ pub(super) fn from_lookup(
             .filter(|s| !s.is_empty())
             .map(str::to_owned)
             .collect(),
+        template_network_policy: lookup("CHRONO_AGENT_SANDBOX_TEMPLATE_NETWORK_POLICY")?
+            .filter(|value| !value.is_empty())
+            .map(|value| {
+                NativeTemplateNetworkPolicy::parse(&value).map_err(|error| error.to_string())
+            })
+            .transpose()?,
         control_key,
     };
     value.validate().map_err(|e| e.to_string())?;
