@@ -166,14 +166,34 @@ fn validate_successor(
     expected
         .env
         .insert("CHRONO_RUNTIME_GENERATION".into(), new.to_string());
-    // The rendered fingerprint includes generation. All other request fields
-    // must remain exact, including image, home UID, mounts and service scope.
+    if let Some(reaches) = next.env.get("CHRONO_SANDBOX_REACHES") {
+        if !previous.env.contains_key("CHRONO_SANDBOX_REACHES") {
+            return Err(rejected("Sandbox resume has no previous service scope"));
+        }
+        expected
+            .env
+            .insert("CHRONO_SANDBOX_REACHES".into(), reaches.clone());
+        if let (Some(upstream), Some(platform)) = (
+            previous.env.get("CHRONO_UPSTREAM_BASE_URL"),
+            previous.env.get("CHRONO_PLATFORM_BASE_URL"),
+        ) {
+            // Reuse the renderer's scope selection; never accept an arbitrary
+            // endpoint supplied in the next provider request.
+            let reaches: Vec<_> = reaches.split(',').map(str::to_owned).collect();
+            expected.env.insert(
+                "CHRONO_UPSTREAM_BASE_URL".into(),
+                crate::hosted::scoped_model_base_url(upstream, platform, &reaches),
+            );
+        }
+    }
+    // The fingerprint covers the new generation and scope. Image, home UID,
+    // mounts, tool authority and every other request field must remain exact.
     expected.metadata.remove("cma/spec-sha256");
     let mut submitted = next.clone();
     submitted.metadata.remove("cma/spec-sha256");
     if new <= old || previous.volumes.is_empty() || expected != submitted {
         return Err(rejected(
-            "Sandbox resume must advance only its runtime generation",
+            "Sandbox resume may change only generation and rendered service scope",
         ));
     }
     Ok(())

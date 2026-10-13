@@ -30,12 +30,47 @@ pub(crate) fn retained_runtime_request(
         .provision_generation
         .filter(|generation| *generation > 0)
         .ok_or_else(|| AdapterError::Rejected("retained runtime generation is absent".into()))?;
-    Ok(RuntimeAdoptionRequest::new(
-        generation,
-        RuntimeHandle::new(&binding.runtime_id),
-        sandbox_spec(sandbox, deployment),
+    let mut spec = sandbox_spec(sandbox, deployment);
+    if sandbox.lifecycle.suspended_runtime.as_deref() == Some(binding) {
+        // Grants are append-only and reserve a credential generation above the
+        // previous authority. While this binding is suspended, managed custody
+        // stays unchanged: the expanded credential is published only after the
+        // resumed binding clears suspended_runtime. Reconstruct its old scope,
+        // including earlier grants, rather than assigning new grants to old CRD
+        // identity. The adapter still verifies the exact rendered old request.
+        let current = sandbox
+            .credential
+            .current
+            .as_ref()
+            .filter(|current| current.generation > 0 && sandbox.credential.validate())
+            .ok_or_else(|| {
+                AdapterError::Rejected("suspended runtime credential scope is absent".into())
+            })?;
+        spec.reaches = sandbox
+            .credential
+            .reaches
+            .iter()
+            .chain(
+                sandbox
+                    .credential
+                    .service_grants
+                    .iter()
+                    .filter(|grant| grant.credential_generation_floor < current.generation)
+                    .flat_map(|grant| &grant.services),
+            )
+            .map(ToString::to_string)
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+    } else if sandbox.runtime.as_ref() != Some(binding) {
+        return Err(AdapterError::Rejected(
+            "retained runtime binding is not current or suspended".into(),
+        ));
+    }
+    Ok(
+        RuntimeAdoptionRequest::new(generation, RuntimeHandle::new(&binding.runtime_id), spec)
+            .with_expected_image(&binding.runtime_version),
     )
-    .with_expected_image(&binding.runtime_version))
 }
 
 /// Attach this replica to durable authority without allocating another runtime.

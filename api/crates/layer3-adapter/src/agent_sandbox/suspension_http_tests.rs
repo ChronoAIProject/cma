@@ -207,3 +207,185 @@ async fn changed_uid_or_image_cannot_be_resumed_or_suspended_by_stale_authority(
     ));
     assert_eq!(fixture.calls.lock().unwrap().len(), 2);
 }
+
+fn scoped_retained(
+    generation: u64,
+    name: Option<&str>,
+    reaches: &str,
+    model_service: &str,
+) -> (crate::provider::ProviderSandboxRequest, Value, Value) {
+    let (mut request, original, pvc) = retained(generation, name);
+    request
+        .env
+        .insert("CHRONO_SANDBOX_REACHES".into(), reaches.into());
+    request.env.insert(
+        "CHRONO_PLATFORM_BASE_URL".into(),
+        "https://nyx.example".into(),
+    );
+    request.env.insert(
+        "CHRONO_UPSTREAM_BASE_URL".into(),
+        format!("https://nyx.example/api/v1/proxy/s/{model_service}"),
+    );
+    let config = super::super::tests::config();
+    let client = AgentSandboxClient::new(
+        kube::Client::try_from(kube::Config::new("http://127.0.0.1:1".parse().unwrap())).unwrap(),
+        config.clone(),
+        "fixture",
+    )
+    .unwrap();
+    let name = original["metadata"]["name"].as_str().unwrap();
+    let mut object = serde_json::to_value(
+        model::desired_at(&config, &request, &client.control_token(name), name).unwrap(),
+    )
+    .unwrap();
+    for field in ["uid", "resourceVersion", "generation"] {
+        object["metadata"][field] = original["metadata"][field].clone();
+    }
+    (request, object, pvc)
+}
+
+#[tokio::test]
+async fn scope_resume_keeps_uid_version_and_absent_pod_fences_and_replays_exact_new_identity() {
+    let (previous, mut old, pvc) = scoped_retained(2, None, "chrono-llm", "chrono-llm");
+    let handle = runtime(&old);
+    let name = old["metadata"]["name"].as_str().unwrap().to_owned();
+    let (next, mut resumed, _) = scoped_retained(
+        3,
+        Some(&name),
+        "chrono-llm,chrono-llm-public,api-github",
+        "chrono-llm-public",
+    );
+    old["spec"]["operatingMode"] = json!("Suspended");
+    resumed["metadata"]["resourceVersion"] = json!("8");
+    let fixture = Fixture::start(vec![
+        (200, pvc.clone()),
+        (200, pvc.clone()),
+        (200, old.clone()),
+        (200, old.clone()),
+        (200, list("PodList")),
+        (200, old),
+        (0, Value::Null),
+        (200, pvc.clone()),
+        (200, pvc),
+        (200, resumed.clone()),
+    ])
+    .await;
+    assert!(matches!(
+        fixture.client.resume(&handle, &previous, &next).await,
+        Err(AdapterError::Unavailable(_))
+    ));
+    fixture
+        .client
+        .resume(&handle, &previous, &next)
+        .await
+        .unwrap();
+    let calls = fixture.calls.lock().unwrap();
+    let patches: Vec<_> = calls
+        .iter()
+        .filter(|(line, _)| line.starts_with("PATCH "))
+        .collect();
+    assert_eq!(patches.len(), 1);
+    let patch = &patches[0].1;
+    assert_eq!(patch["metadata"]["uid"], "original-crd");
+    assert_eq!(patch["metadata"]["resourceVersion"], "7");
+    assert_eq!(patch["spec"], resumed["spec"]);
+    assert_eq!(
+        patch["metadata"]["annotations"],
+        resumed["metadata"]["annotations"]
+    );
+    assert!(calls[4].0.contains("/pods?"));
+    assert!(calls
+        .iter()
+        .all(|(line, _)| !line.starts_with("POST ") && !line.starts_with("DELETE ")));
+}
+
+#[tokio::test]
+async fn scope_resume_refuses_unrelated_runtime_changes_before_kubernetes_io() {
+    let (previous, old, _) = scoped_retained(2, None, "chrono-llm", "chrono-llm");
+    let handle = runtime(&old);
+    let (next, _, _) = scoped_retained(
+        3,
+        Some(old["metadata"]["name"].as_str().unwrap()),
+        "chrono-llm,chrono-llm-public",
+        "chrono-llm-public",
+    );
+    let fixture = Fixture::start(vec![]).await;
+    for field in [
+        "origin",
+        "route",
+        "query",
+        "platform",
+        "tool",
+        "image",
+        "mount",
+        "home",
+        "owner",
+        "generation",
+        "removed-scope",
+    ] {
+        let mut changed = next.clone();
+        match field {
+            "origin" => {
+                changed.env.insert(
+                    "CHRONO_UPSTREAM_BASE_URL".into(),
+                    "https://other.example/api/v1/proxy/s/chrono-llm-public".into(),
+                );
+            }
+            "route" => {
+                changed.env.insert(
+                    "CHRONO_UPSTREAM_BASE_URL".into(),
+                    "https://nyx.example/arbitrary".into(),
+                );
+            }
+            "query" => {
+                changed.env.insert(
+                    "CHRONO_UPSTREAM_BASE_URL".into(),
+                    "https://nyx.example/api/v1/proxy/s/chrono-llm-public?changed=1".into(),
+                );
+            }
+            "platform" => {
+                changed.env.insert(
+                    "CHRONO_PLATFORM_BASE_URL".into(),
+                    "https://other.example".into(),
+                );
+            }
+            "tool" => {
+                changed.env.insert(
+                    "CHRONO_TOOL_PROXY_URL".into(),
+                    "https://other.example/mcp".into(),
+                );
+            }
+            "image" => {
+                changed.image.uri = format!("registry.example/cma@sha256:{}", "b".repeat(64))
+            }
+            "mount" => changed.volumes[0].mount_path = "/other".into(),
+            "home" => {
+                changed
+                    .metadata
+                    .insert("cma/home-identity".into(), "replacement".into());
+            }
+            "owner" => {
+                changed
+                    .metadata
+                    .insert("cma/sandbox".into(), "other".into());
+            }
+            "generation" => {
+                changed
+                    .env
+                    .insert("CHRONO_RUNTIME_GENERATION".into(), "4".into());
+            }
+            "removed-scope" => {
+                changed.env.remove("CHRONO_SANDBOX_REACHES");
+            }
+            _ => unreachable!(),
+        }
+        assert!(
+            matches!(
+                fixture.client.resume(&handle, &previous, &changed).await,
+                Err(AdapterError::Rejected(_))
+            ),
+            "{field}"
+        );
+    }
+    assert!(fixture.calls.lock().unwrap().is_empty());
+}

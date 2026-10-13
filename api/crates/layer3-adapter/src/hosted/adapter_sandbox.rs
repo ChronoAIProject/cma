@@ -96,9 +96,9 @@ impl SandboxAdapter for HostedAdapter {
     async fn resume_runtime(
         &self,
         request: &RuntimeAdoptionRequest,
-        generation: u64,
+        next: &RuntimeProvisionRequest,
     ) -> crate::Result<RuntimeHandle> {
-        self.resume_exact(request, generation).await
+        self.resume_exact(request, next).await
     }
 
     async fn runtime_status(&self, handle: &RuntimeHandle) -> crate::Result<crate::RuntimeStatus> {
