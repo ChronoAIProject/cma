@@ -50,6 +50,23 @@ original master keys and `CMAEG_CMA_BASE_URL=http://example-host-01.example-name
 existing sealed pointers bind that exact origin even though persistence now
 uses Mongo. Provider dispatch uses the canonical Agent Manager Service.
 
+Quiesce all legacy Gateway writers, including inbound interaction handling,
+until import and verification finish. With a temporary read-only legacy Mongo
+credential and the correct database selected in `mongosh`, set
+`CMA_GATEWAY_EXPORT_FILE` to a new local path and load
+`.github/scripts/export-gateway-records.js`. The exporter requires all three
+legacy collections to exist, even when empty. It validates schema version 1,
+preserves exact record revisions and sealed bytes, and translates interaction
+BSON Dates to the importer's whole-second expiry values without rounding.
+It publishes a mode-0600 NDJSON file only after the full export succeeds and
+refuses to overwrite an existing path. A failed export removes its private
+staging directory; after a killed process, remove any abandoned
+`.cma-gateway-export-*` directory only after confirming that export has stopped.
+Run `cmaeg --import-legacy-records PATH` with the destination migration
+configuration, then verify every live record. Expired interactions remain in
+the export for comparison but the importer deliberately skips them. Keep the
+export protected as sealed production data and remove it after verification.
+
 The local authenticated Mongo contract starts the real Gateway executable
 with Console and media enabled, stops the old record server, then verifies
 creation/list/delete, Console OAuth/read/delete visibility, media tool discovery,
