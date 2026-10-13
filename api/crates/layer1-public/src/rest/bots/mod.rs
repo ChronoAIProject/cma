@@ -1,8 +1,9 @@
 //! Public projection of durable owner Bot operations.
 pub(crate) mod shapes;
 use crate::AuthenticatedCaller;
+use crate::DelegatedCredential;
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Extension, Path, Query, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -38,6 +39,7 @@ async fn no_store(request: axum::extract::Request, next: axum::middleware::Next)
 pub async fn create(
     State(control): State<Arc<BotControl>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
+    credential: Option<Extension<DelegatedCredential>>,
     headers: HeaderMap,
     body: Result<Json<CreateBotBody>, axum::extract::rejection::JsonRejection>,
 ) -> Response {
@@ -55,7 +57,17 @@ pub async fn create(
         _ => "",
     };
     let result = match body.into_core() {
-        Ok(body) => control.service.create(&caller, key, body).await,
+        Ok(body) => {
+            control
+                .service
+                .create_with_credential(
+                    &caller,
+                    credential.as_ref().map(|value| value.value()),
+                    key,
+                    body,
+                )
+                .await
+        }
         Err(error) => Err(error),
     };
     view(result, StatusCode::CREATED)
@@ -193,15 +205,29 @@ fn view(result: Result<Bot, BotError>, status: StatusCode) -> Response {
     }
 }
 fn problem(error: BotError) -> Response {
-    let (status, code) = match error {
+    let (status, code) = match &error {
         BotError::Forbidden => (StatusCode::FORBIDDEN, "bot_forbidden"),
         BotError::NotFound => (StatusCode::NOT_FOUND, "bot_not_found"),
         BotError::Conflict => (StatusCode::CONFLICT, "bot_conflict"),
         BotError::Invalid(_) => (StatusCode::BAD_REQUEST, "invalid_bot"),
+        BotError::ConnectionRequired { .. } => {
+            (StatusCode::UNPROCESSABLE_ENTITY, "connection_required")
+        }
         BotError::Unavailable => (StatusCode::SERVICE_UNAVAILABLE, "bot_unavailable"),
     };
-    super::problems::problem_response(
-        status,
-        super::problem_document(status, code, &error.to_string(), code),
-    )
+    let mut body = super::problem_document(status, code, &error.to_string(), code);
+    if let BotError::ConnectionRequired {
+        services,
+        connection_target,
+    } = error
+    {
+        if let Some(object) = body.as_object_mut() {
+            object.insert(
+                "services".into(),
+                serde_json::to_value(services).expect("service identifiers are JSON values"),
+            );
+            object.insert("connection_target".into(), connection_target);
+        }
+    }
+    super::problems::problem_response(status, body)
 }

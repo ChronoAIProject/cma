@@ -237,6 +237,7 @@ fn problem(error: BotError) -> Response {
         BotError::NotFound => StatusCode::NOT_FOUND,
         BotError::Conflict => StatusCode::CONFLICT,
         BotError::Invalid(_) => StatusCode::BAD_REQUEST,
+        BotError::ConnectionRequired { .. } => StatusCode::UNPROCESSABLE_ENTITY,
         BotError::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
     };
     let mut response = (

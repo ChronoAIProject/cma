@@ -1,5 +1,8 @@
 use super::*;
-use crate::{Caller, Capability, SubjectId};
+use crate::{
+    profiles::{AgentProfileRef, SandboxProfileRef, WorkspaceProfileRef},
+    Caller, Capability, SubjectId,
+};
 use sha2::{Digest, Sha256};
 use std::{
     sync::Arc,
@@ -22,9 +25,23 @@ pub trait BotProfileResolver: Send + Sync {
             .await
     }
 }
+/// Resolves the user-facing inline consumer configuration into immutable,
+/// private profile revisions. The implementation lives in the CMA composition
+/// because image authority and profile materialization are service concerns.
+#[async_trait::async_trait]
+pub trait BotInlineProfileResolver: Send + Sync {
+    async fn resolve_inline(
+        &self,
+        owner: &SubjectId,
+        request: &CreateBot,
+        delegated_credential: Option<&str>,
+        idempotency_key: &str,
+    ) -> Result<BotProfiles, BotError>;
+}
 pub struct BotService {
     pub(super) store: Arc<dyn BotStore>,
     profiles: Arc<dyn BotProfileResolver>,
+    inline_profiles: Option<Arc<dyn BotInlineProfileResolver>>,
     provider: String,
 }
 impl BotService {
@@ -36,8 +53,18 @@ impl BotService {
         Arc::new(Self {
             store,
             profiles,
+            inline_profiles: None,
             provider,
         })
+    }
+    pub fn with_inline_profiles(
+        mut self: Arc<Self>,
+        resolver: Arc<dyn BotInlineProfileResolver>,
+    ) -> Arc<Self> {
+        Arc::get_mut(&mut self)
+            .expect("BotService inline resolver must be configured before sharing")
+            .inline_profiles = Some(resolver);
+        self
     }
     pub async fn create(
         &self,
@@ -46,7 +73,19 @@ impl BotService {
         request: CreateBot,
     ) -> Result<Bot, BotError> {
         require(caller)?;
-        self.create_owned(&caller.subject, None, key, request).await
+        self.create_owned(&caller.subject, None, None, key, request)
+            .await
+    }
+    pub async fn create_with_credential(
+        &self,
+        caller: &Caller,
+        delegated_credential: Option<&str>,
+        key: &str,
+        request: CreateBot,
+    ) -> Result<Bot, BotError> {
+        require(caller)?;
+        self.create_owned(&caller.subject, None, delegated_credential, key, request)
+            .await
     }
     pub async fn create_for_owner(
         &self,
@@ -55,15 +94,22 @@ impl BotService {
         request: CreateBot,
     ) -> Result<Bot, BotError> {
         authority.require(Capability::ManageOwnBots)?;
-        self.create_owned(authority.owner_subject(), Some(authority), key, request)
-            .await
+        self.create_owned(
+            authority.owner_subject(),
+            Some(authority),
+            None,
+            key,
+            request,
+        )
+        .await
     }
     async fn create_owned(
         &self,
         owner: &SubjectId,
         authority: Option<&BotOwnerAuthority>,
+        delegated_credential: Option<&str>,
         key: &str,
-        request: CreateBot,
+        mut request: CreateBot,
     ) -> Result<Bot, BotError> {
         request.validate()?;
         if key.is_empty() || key.len() > 256 || key.chars().any(char::is_control) {
@@ -82,13 +128,33 @@ impl BotService {
         if let Some(current) = self.store.creation(owner, &key_hash).await? {
             return replay_owned(current, &fingerprint, authority);
         }
-        let profiles = if let Some(authority) = authority {
+        let profiles = if request.inline_agent.is_some() {
+            self.inline_profiles
+                .as_ref()
+                .ok_or(BotError::Unavailable)?
+                .resolve_inline(owner, &request, delegated_credential, key)
+                .await?
+        } else if let Some(authority) = authority {
             self.profiles
                 .resolve_for_owner(authority.owner(), &request)
                 .await?
         } else {
             self.profiles.resolve(owner, &request).await?
         };
+        if request.inline_agent.is_some() {
+            request.profile = AgentProfileRef {
+                id: profiles.agent.profile_id.clone(),
+                revision: profiles.agent.revision,
+            };
+            request.sandbox_profile = Some(SandboxProfileRef::new(
+                profiles.sandbox.profile_id.clone(),
+                profiles.sandbox.revision,
+            ));
+            request.workspace_profile = Some(WorkspaceProfileRef::new(
+                profiles.workspace.profile_id.clone(),
+                profiles.workspace.revision,
+            ));
+        }
         if let Some(authority) = authority {
             authority.require(Capability::ManageOwnBots)?;
         }

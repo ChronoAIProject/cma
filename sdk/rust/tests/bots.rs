@@ -27,10 +27,14 @@ async fn bot_lifecycle_uses_exact_routes_statuses_and_creation_key() {
         event_worker_profile: None,
         name: "Test bot".into(),
         nyxid_bot_id: "external-bot".into(),
-        profile: BotProfileRef {
+        connection_ref: None,
+        image: None,
+        repository: None,
+        agent: None,
+        profile: Some(BotProfileRef {
             id: "profile".into(),
             revision: 1,
-        },
+        }),
         sandbox_profile: Some(BotProfileRef {
             id: "sbp_research".into(),
             revision: 2,

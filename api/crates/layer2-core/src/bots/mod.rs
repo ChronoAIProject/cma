@@ -26,6 +26,11 @@ pub enum BotError {
     Conflict,
     #[error("{0}")]
     Invalid(String),
+    #[error("the selected services need to be connected before creating this consumer")]
+    ConnectionRequired {
+        services: Vec<String>,
+        connection_target: serde_json::Value,
+    },
     #[error("bot dependency is unavailable")]
     Unavailable,
 }
