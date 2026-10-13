@@ -21,6 +21,8 @@ mod agent_sandbox;
 mod checkpoint;
 #[path = "provider_transport_restore_tests.rs"]
 mod restore;
+#[path = "provider_transport_retirement_tests.rs"]
+mod retirement;
 
 struct NullStore;
 

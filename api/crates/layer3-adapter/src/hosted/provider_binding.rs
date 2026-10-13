@@ -1,4 +1,4 @@
-//! Runtime ownership is independent of the retired native archive capability.
+//! Runtime ownership is independent of the retired CMA archive capability.
 use super::*;
 
 impl ProviderHostedControlTransport {
@@ -18,7 +18,7 @@ impl ProviderHostedControlTransport {
     ) -> crate::Result<Arc<dyn CheckpointArchiveStore>> {
         if self.archive_factory.is_none() {
             return Err(AdapterError::Unsupported(
-                "CMA archives are retired for agent-sandbox".into(),
+                "CMA archives are retired for this runtime transport".into(),
             ));
         }
         self.binding(handle).await?.store.ok_or_else(|| {
