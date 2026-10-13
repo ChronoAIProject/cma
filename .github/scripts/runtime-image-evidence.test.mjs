@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { existsSync, mkdtempSync, readFileSync, rmSync, mkdirSync, writeFileSync, symlinkSync, chmodSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdtempSync, readFileSync, rmSync, mkdirSync, writeFileSync, symlinkSync, chmodSync, lstatSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assertAgentShellPath, assertCheckpointHoldReceipt, checks, diagnosticStages, installedCodexVersion, installRequest, waitForWriterProgress } from './runtime-image-probe.mjs';
+import { assertAgentShellPath, assertCheckpointHoldReceipt, assertPublicHomeSeed, checks, diagnosticStages, installedCodexVersion, installRequest, waitForWriterProgress } from './runtime-image-probe.mjs';
 import { campaign, pins, safeFailureStage, source, validateEvidence, validateImage } from './runtime-image-evidence.mjs';
 
 const commit = 'c'.repeat(40);
@@ -24,6 +25,35 @@ const proof = { checks, artifacts: {
   gh: '3'.repeat(64), ghVersion: expected.GH_VERSION,
 } };
 const record = () => structuredClone({ schema: 'cma-runtime-image-v1', scope: 'local-contract-3-no-provider-or-model', commit, image, sourceReference: null, result: 'pass', cleanup: { containers: 0, volumes: 0 }, proof });
+
+test('public seed requires materialized NyxID aliases and preserves their exact content', () => {
+  const root = mkdtempSync(join(tmpdir(), 'cma-public-seed-test-'));
+  const source = join(root, 'image-home');
+  const seed = join(root, 'public-seed');
+  const skill = join(source, '.codex', 'skills', 'nyxid');
+  try {
+    mkdirSync(join(skill, 'references'), { recursive: true });
+    mkdirSync(join(skill, 'scripts'));
+    writeFileSync(join(skill, 'references', 'post-install.md'), 'public install instructions');
+    writeFileSync(join(skill, 'scripts', 'inspect.sh'), 'public executable script', { mode: 0o755 });
+    symlinkSync('references/post-install.md', join(skill, 'POST_INSTALL.md'));
+    symlinkSync('scripts', join(skill, 'tools'));
+    assert.throws(() => assertPublicHomeSeed(source), /public home seed must contain only ordinary entries/);
+    execFileSync('cp', ['-aL', source, seed], { stdio: ['ignore', 'pipe', 'pipe'] });
+    assertPublicHomeSeed(seed);
+    assert.ok(lstatSync(join(skill, 'POST_INSTALL.md')).isSymbolicLink());
+    assert.ok(lstatSync(join(skill, 'tools')).isSymbolicLink());
+    const copied = join(seed, '.codex', 'skills', 'nyxid');
+    // GNU cp may preserve alias hardlinks; replace one entry to simulate drift.
+    rmSync(join(copied, 'POST_INSTALL.md'));
+    writeFileSync(join(copied, 'POST_INSTALL.md'), 'changed instructions');
+    assert.throws(() => assertPublicHomeSeed(seed));
+    writeFileSync(join(copied, 'POST_INSTALL.md'), readFileSync(join(skill, 'references', 'post-install.md')));
+    rmSync(join(copied, 'tools', 'inspect.sh'));
+    writeFileSync(join(copied, 'tools', 'inspect.sh'), readFileSync(join(skill, 'scripts', 'inspect.sh')), { mode: 0o644 });
+    assert.throws(() => assertPublicHomeSeed(seed));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
 
 test('writer progress waits for scheduling and refuses stopped or truncated counters', async () => {
   let value = '1';

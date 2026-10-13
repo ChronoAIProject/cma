@@ -268,6 +268,9 @@ ARG NYXID_SKILL_COMMIT=0ac096837c7436b05b71b374207a42320776715d
 ARG NYXID_SKILL_ARCHIVE_SHA256=6559072f4d4ab35b466cdf64ae0ae86ee3fb89a36f67925ed1ba4eb781ee23b8
 ARG ORNN_SKILL_COMMIT=052024a6927306f2455843b850a948d77ac67f9d
 ARG ORNN_SKILL_ARCHIVE_SHA256=a5788101f78d364e14b57bfc2fa1755702833b239b280ed6ce60c5abd3a442c3
+# The pinned NyxID skill has two reviewed internal aliases. Fresh-volume
+# initialization accepts only regular files/directories, so materialize
+# these aliases in the immutable public seed while retaining the image home.
 RUN set -eux; \
     groupadd --gid 10001 cma; \
     useradd --create-home --uid 10001 --gid 10001 --shell /bin/bash cma; \
@@ -298,7 +301,11 @@ RUN set -eux; \
     test ! -e /home/cma/.codex/auth.json; \
     test ! -e /home/cma/.nyxid/access_token; \
     test ! -e /home/cma/.cma/provider/codex/auth.json; \
-    cp -a /home/cma /usr/share/cma-runtime-home; \
+    test "$(find /home/cma -type l -printf '%P\n' | sort | paste -sd, -)" = ".codex/skills/nyxid/POST_INSTALL.md,.codex/skills/nyxid/tools"; \
+    test "$(readlink /home/cma/.codex/skills/nyxid/POST_INSTALL.md)" = "references/post-install.md"; \
+    test "$(readlink /home/cma/.codex/skills/nyxid/tools)" = "scripts"; \
+    cp -aL /home/cma /usr/share/cma-runtime-home; \
+    test -z "$(find /usr/share/cma-runtime-home ! -type d ! -type f -print -quit)"; \
     chown -R root:root /usr/share/cma-runtime-home; \
     chmod -R a+rX,go-w /usr/share/cma-runtime-home; \
     rm -rf /tmp/baseline-skills /tmp/nyxid-source.tar.gz /tmp/ornn-source.tar.gz
