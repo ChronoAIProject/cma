@@ -1,5 +1,5 @@
 import { Presence } from '../../ui/Presence';
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { Button } from '../../ui/Button';
 import { Input } from '../../ui/Input';
 import { IconSearchOutline16 } from '../../ui/icons';
@@ -12,12 +12,16 @@ export function ServicePicker({
   value,
   onChange,
   disabled,
+  help = 'Choose the services this sandbox needs. We’ll help each user connect any missing services before opening their sandbox.',
 }: {
   readonly catalog?: ServiceCatalogClient;
   readonly value: readonly string[];
   readonly onChange: (value: readonly string[]) => void;
   readonly disabled: boolean;
+  readonly help?: string;
 }) {
+  const searchId = useId();
+  const helpId = useId();
   const [query, setQuery] = useState('');
   const [reload, setReload] = useState(0);
   const [state, setState] = useState<{
@@ -41,18 +45,17 @@ export function ServicePicker({
   }, [catalog, reload]);
   return (
     <div className="profile-field">
-      <p id="profile-services-help" className="profile-field__help">
-        Choose the services this sandbox needs. We’ll help each user connect any missing services
-        before opening their sandbox.
+      <p id={helpId} className="profile-field__help">
+        {help}
       </p>
-      <label className="sr-only" htmlFor="profile-service-search">
+      <label className="sr-only" htmlFor={searchId}>
         Search services
       </label>
       <Input
-        id="profile-service-search"
+        id={searchId}
         value={query}
         icon={<IconSearchOutline16 />}
-        aria-describedby="profile-services-help"
+        aria-describedby={helpId}
         disabled={disabled || catalog === undefined}
         onChange={(event) => setQuery(event.target.value)}
       />

@@ -262,7 +262,7 @@ it.each(['active'] as const)(
     agent.click();
     expect(onAction.mock.calls).toEqual([
       [{ kind: 'new_workspace', sandboxId: 'sbx_1' }],
-      [{ kind: 'new_agent', workspaceId: 'wsp_1' }],
+      [{ kind: 'new_agent', sandboxId: 'sbx_1' }],
     ]);
   },
 );

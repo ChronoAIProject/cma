@@ -214,7 +214,7 @@ export function SandboxOverview({
                       <Button
                         icon={<IconPlusOutline16 />}
                         disabled={busy || workspace.status !== 'ready'}
-                        onClick={() => onAction({ kind: 'new_agent', workspaceId: workspace.id })}
+                        onClick={() => onAction({ kind: 'new_agent', sandboxId: sandbox.id })}
                       >
                         New agent
                       </Button>

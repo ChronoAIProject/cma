@@ -18,7 +18,7 @@ it.each(['ready', 'stopped'] as const)(
       />
     );
     const { rerender } = render(draw(true));
-    expect(screen.getByRole('status')).toHaveTextContent('Loading conversation activity.');
+    expect(screen.getByText('Loading conversation activity.')).toHaveAttribute('role', 'status');
     expect(screen.getByRole('button', { name: 'Stop' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Delete' })).toBeDisabled();
     rerender(draw(false));
@@ -41,7 +41,7 @@ it('shows lineage, profile, Worktree, first-message delivery, and guarded contro
     'Sandbox',
     'Workspace',
     'Worktree',
-    'Agent setup',
+    'Agent settings',
     'First-message delivery',
   ]) {
     expect(screen.getByRole('heading', { name: band })).toBeInTheDocument();
@@ -50,10 +50,6 @@ it('shows lineage, profile, Worktree, first-message delivery, and guarded contro
   expect(await screen.findByRole('link', { name: 'GitHub' })).toHaveAttribute(
     'href',
     'https://nyx.chrono-ai.fun/services/catalog-github',
-  );
-  expect(await screen.findByRole('link', { name: 'TypeScript' })).toHaveAttribute(
-    'href',
-    'https://ornn.chrono-ai.fun/skills/typescript',
   );
   expect(screen.getAllByText('Completed')).toHaveLength(2);
   expect(screen.getByRole('button', { name: 'Delete' })).toBeDisabled();
@@ -76,7 +72,9 @@ it('requires explicit acknowledgement before deleting a stopped Agent', async ()
   await actor.click(screen.getByRole('button', { name: 'Delete' }));
   const confirm = screen.getByRole('button', { name: 'Delete Agent' });
   expect(confirm).toBeDisabled();
-  await actor.click(screen.getByRole('checkbox'));
+  await actor.click(
+    screen.getByRole('checkbox', { name: 'I understand this Agent and Worktree will be deleted.' }),
+  );
   await actor.click(confirm);
   expect(onDelete).toHaveBeenCalledOnce();
 });

@@ -2,7 +2,12 @@ import { useState } from 'react';
 import { Button } from '../ui/Button';
 import { can, segment, ServiceError, serviceRequest, type ServiceSession } from './client';
 import { PageStatus, usePage } from './data';
-import { ChannelEditor, DeleteChannel, type Channel } from './ChannelEditor';
+import {
+  ChannelEditor,
+  DeleteChannel,
+  hasChannelAddress,
+  type ChannelListItem,
+} from './ChannelEditor';
 export function EventGateway({
   session,
   denied,
@@ -10,7 +15,7 @@ export function EventGateway({
   readonly session: ServiceSession;
   readonly denied: () => void;
 }) {
-  const channels = usePage<Channel>('event-gateway', '/v1/channels', denied);
+  const channels = usePage<ChannelListItem>('event-gateway', '/v1/channels', denied);
   const [busy, setBusy] = useState<string>();
   const [creating, setCreating] = useState(false);
   const [result, setResult] = useState<string>();
@@ -71,13 +76,32 @@ export function EventGateway({
             </p>
             <details>
               <summary>Channel details</summary>
-              <p>Event endpoint</p>
-              <code>{channel.endpoints.custom_event_url}</code>
-              <p>Callback endpoint</p>
-              <code>{channel.endpoints.nyxid_callback_url}</code>
+              {hasChannelAddress(channel) ? (
+                <>
+                  <p>Event endpoint</p>
+                  <code>{channel.endpoints.custom_event_url}</code>
+                  <p>Callback endpoint</p>
+                  <code>{channel.endpoints.nyxid_callback_url}</code>
+                </>
+              ) : (
+                <p>
+                  Open this existing channel in the Event Gateway console to view its endpoints and
+                  manage it.
+                </p>
+              )}
               <pre>{JSON.stringify(channel.definition, null, 2)}</pre>
             </details>
-            {can(session, 'event-gateway', 'channels:update') ? (
+            {!hasChannelAddress(channel) ? (
+              <a
+                className="service-link"
+                href={`https://bot-gateway.chrono-ai.fun/console/channels/${segment(channel.record_id)}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Manage existing channel
+              </a>
+            ) : null}
+            {hasChannelAddress(channel) && can(session, 'event-gateway', 'channels:update') ? (
               <details>
                 <summary>Edit channel</summary>
                 <ChannelEditor
@@ -88,10 +112,10 @@ export function EventGateway({
                 />
               </details>
             ) : null}
-            {can(session, 'event-gateway', 'channels:delete') ? (
+            {hasChannelAddress(channel) && can(session, 'event-gateway', 'channels:delete') ? (
               <DeleteChannel channel={channel} denied={denied} onDone={channels.refresh} />
             ) : null}
-            {can(session, 'event-gateway', 'channels:test') ? (
+            {hasChannelAddress(channel) && can(session, 'event-gateway', 'channels:test') ? (
               <Button disabled={busy !== undefined} onClick={() => void test(channel.channel_id)}>
                 {busy === channel.channel_id ? 'Sending test…' : 'Send test event'}
               </Button>

@@ -322,7 +322,7 @@ describe('Sandbox navigation tree', () => {
 
     await actor.click(screen.getByRole('button', { name: 'Options for chrono-bot' }));
     await actor.click(screen.getByRole('menuitem', { name: 'New agent' }));
-    expect(actions.at(-1)).toEqual({ kind: 'new_agent', workspaceId: 'wsp_1' });
+    expect(actions.at(-1)).toEqual({ kind: 'new_agent', sandboxId: 'sbx_1' });
 
     await actor.click(screen.getByRole('button', { name: 'Options for Agent one' }));
     await actor.click(screen.getByRole('menuitem', { name: 'Stop' }));

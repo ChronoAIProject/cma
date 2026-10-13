@@ -12,13 +12,17 @@ interface Intent {
   readonly body: AgentLifecycleCreateInput;
   readonly receipt?: AgentLifecycleCreateReceipt;
 }
-export function lifecycleStorageKey(owner: string, workspaceId?: string) {
-  return `cma:agent-creation:${JSON.stringify(workspaceId === undefined ? [location.origin, owner] : [location.origin, owner, workspaceId])}`;
+export function lifecycleStorageKey(owner: string, workspaceId?: string, sandboxId?: string) {
+  return `cma:agent-creation:${JSON.stringify(sandboxId !== undefined ? [location.origin, owner, 'sandbox', sandboxId] : workspaceId === undefined ? [location.origin, owner] : [location.origin, owner, workspaceId])}`;
 }
-function load(owner?: string, workspaceId?: string): { intent?: Intent; error?: string } {
+function load(
+  owner?: string,
+  workspaceId?: string,
+  sandboxId?: string,
+): { intent?: Intent; error?: string } {
   try {
     if (!owner) throw new Error();
-    const raw = sessionStorage.getItem(lifecycleStorageKey(owner, workspaceId));
+    const raw = sessionStorage.getItem(lifecycleStorageKey(owner, workspaceId, sandboxId));
     if (raw === null) return {};
     const saved = JSON.parse(raw) as { version: number; intent: Intent };
     const intent = saved.intent;
@@ -29,6 +33,7 @@ function load(owner?: string, workspaceId?: string): { intent?: Intent; error?: 
       typeof intent.body?.name !== 'string' ||
       !intent.body.name ||
       intent.body.workspace_id !== workspaceId ||
+      intent.body.sandbox_id !== sandboxId ||
       (intent.receipt !== undefined &&
         (typeof intent.receipt.id !== 'string' || !intent.receipt.id))
     )
@@ -42,8 +47,13 @@ function load(owner?: string, workspaceId?: string): { intent?: Intent; error?: 
   }
 }
 
-export function useLifecycleIntent(client: CmaWebClient, owner?: string, workspaceId?: string) {
-  const [saved, setSaved] = useState(() => load(owner, workspaceId));
+export function useLifecycleIntent(
+  client: CmaWebClient,
+  owner?: string,
+  workspaceId?: string,
+  sandboxId?: string,
+) {
+  const [saved, setSaved] = useState(() => load(owner, workspaceId, sandboxId));
   const current = useRef(saved.intent);
   const active = useRef<AbortController | undefined>(undefined);
   const [pending, setPending] = useState(false);
@@ -57,10 +67,10 @@ export function useLifecycleIntent(client: CmaWebClient, owner?: string, workspa
       if (!owner) throw new Error();
       if (intent)
         sessionStorage.setItem(
-          lifecycleStorageKey(owner, workspaceId),
+          lifecycleStorageKey(owner, workspaceId, sandboxId),
           JSON.stringify({ version: 1, intent }),
         );
-      else sessionStorage.removeItem(lifecycleStorageKey(owner, workspaceId));
+      else sessionStorage.removeItem(lifecycleStorageKey(owner, workspaceId, sandboxId));
       current.current = intent;
       setSaved({ intent });
       return true;
