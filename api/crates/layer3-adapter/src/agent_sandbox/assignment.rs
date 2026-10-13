@@ -61,6 +61,20 @@ impl AgentSandboxClient {
             .get(runtime)
             .await?
             .ok_or_else(|| unavailable("Sandbox disappeared during runtime assignment"))?;
+        if let Some(encoded) = object.annotations().get(super::NATIVE_HOME_ANNOTATION) {
+            let origin: super::NativePoolHomeOrigin = serde_json::from_str(encoded)
+                .map_err(|_| rejected("invalid native runtime origin"))?;
+            origin.validate_for(
+                &self.config.namespace,
+                &self.config.deployment,
+                &origin.claim.request.home,
+            )?;
+            self.pools.observe_claim(&origin.claim).await?;
+            self.pools.member_owned(&object, &origin.claim)?;
+            if object.uid().as_deref() != Some(&origin.sandbox_uid) {
+                return Err(rejected("native Sandbox changed during runtime assignment"));
+            }
+        }
         for (annotation, environment) in [
             ("cma/sandbox", "CHRONO_SANDBOX_ID"),
             ("cma/runtime-generation", "CHRONO_RUNTIME_GENERATION"),

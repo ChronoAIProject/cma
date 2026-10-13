@@ -6,6 +6,7 @@ mod lifecycle;
 mod model;
 mod pods;
 mod pool;
+mod pool_runtime;
 mod suspension;
 
 use crate::{AdapterError, HomeVolumeScope, Result, RuntimeHandle};

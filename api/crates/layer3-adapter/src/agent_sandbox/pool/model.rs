@@ -308,7 +308,7 @@ pub(super) fn verify(actual: &DynamicObject, desired: &DynamicObject) -> Result<
 }
 
 // API defaults may add ordinary fields; all submitted values and array cardinality stay exact.
-pub(super) fn contains(actual: &serde_json::Value, desired: &serde_json::Value) -> bool {
+pub(crate) fn contains(actual: &serde_json::Value, desired: &serde_json::Value) -> bool {
     match desired {
         serde_json::Value::Object(fields) => actual.as_object().is_some_and(|a| {
             fields.iter().all(|(k, v)| {

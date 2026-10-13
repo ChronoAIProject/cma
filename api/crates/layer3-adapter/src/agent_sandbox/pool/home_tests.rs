@@ -24,6 +24,7 @@ pub(super) async fn assigned(fixture: &Fixture) -> NativePoolClaim {
         .as_object_mut()
         .unwrap()
         .remove("volumeClaimTemplatesPolicy");
+    blueprint["operatingMode"] = json!("Running");
     let mut volume = blueprint["volumeClaimTemplates"][0].clone();
     volume["apiVersion"] = json!("v1");
     volume["kind"] = json!("PersistentVolumeClaim");

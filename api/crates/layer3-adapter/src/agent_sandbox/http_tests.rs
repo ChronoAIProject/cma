@@ -190,6 +190,7 @@ async fn deletion_retry_waits_for_the_original_pod_even_after_the_crd_is_gone() 
             "name":name,"uid":"sandbox-uid","controller":true}]}}]);
     let fixture = Fixture::start(vec![
         (404, missing()),
+        (404, missing()),
         (200, list("SandboxList")),
         (200, pods),
         (200, list("SandboxList")),
@@ -200,16 +201,16 @@ async fn deletion_retry_waits_for_the_original_pod_even_after_the_crd_is_gone() 
     let calls = fixture.calls.lock().unwrap();
     assert_eq!(
         calls.len(),
-        5,
+        6,
         "must observe the Pod disappearing before success"
     );
     assert!(calls.iter().all(|(line, _)| line.starts_with("GET ")));
-    assert!(calls[2].0.contains("/pods?"));
-    assert!(calls[4].0.contains("/pods?"));
-    assert!(calls[2]
+    assert!(calls[3].0.contains("/pods?"));
+    assert!(calls[5].0.contains("/pods?"));
+    assert!(calls[3]
         .0
         .contains("labelSelector=agents.x-k8s.io%2Fsandbox-name-hash%3D"));
-    assert!(!calls[2].0.contains("cma%2Fruntime-name"));
+    assert!(!calls[3].0.contains("cma%2Fruntime-name"));
 }
 
 #[tokio::test]
@@ -222,6 +223,7 @@ async fn absent_crd_cannot_complete_deletion_with_an_incomplete_pod_inventory() 
     let mut pods = list("PodList");
     pods["metadata"]["continue"] = json!("next-page");
     let fixture = Fixture::start(vec![
+        (404, missing()),
         (404, missing()),
         (200, list("SandboxList")),
         (200, pods),
@@ -303,6 +305,7 @@ async fn deletion_observes_original_crd_uid_even_when_its_management_label_chang
     objects["items"] = json!([object]);
     let fixture = Fixture::start(vec![
         (404, missing()),
+        (404, missing()),
         (200, objects),
         (200, list("PodList")),
         (200, list("SandboxList")),
@@ -311,9 +314,9 @@ async fn deletion_observes_original_crd_uid_even_when_its_management_label_chang
     .await;
     fixture.client.delete(&handle).await.unwrap();
     let calls = fixture.calls.lock().unwrap();
-    assert_eq!(calls.len(), 5);
-    assert!(!calls[1].0.contains("labelSelector="));
-    assert!(calls[1].0.contains("fieldSelector=metadata.name%3D"));
+    assert_eq!(calls.len(), 6);
+    assert!(!calls[2].0.contains("labelSelector="));
+    assert!(calls[2].0.contains("fieldSelector=metadata.name%3D"));
     assert!(calls.iter().all(|(line, _)| line.starts_with("GET ")));
 }
 

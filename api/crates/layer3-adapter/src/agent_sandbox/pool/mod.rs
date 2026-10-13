@@ -4,6 +4,7 @@ mod home;
 mod home_origin;
 mod model;
 mod recovery;
+mod runtime;
 
 use kube::{
     api::{DynamicObject, Patch, PatchParams, PostParams},
@@ -22,6 +23,8 @@ pub use model::{
 };
 pub(crate) const NATIVE_HOME_ANNOTATION: &str = "cma/native-home-origin";
 pub(crate) const NATIVE_HOME_REQUEST_LABEL: &str = "cma/home-request";
+pub(super) use model::contains as contains_spec;
+pub(super) use runtime::RUNTIME_REQUEST_ANNOTATION;
 
 const API_VERSION: &str = "extensions.agents.x-k8s.io/v1beta1";
 const DIGEST_ANNOTATION: &str = "cma/native-pool-config";
@@ -274,7 +277,16 @@ mod tests;
 mod fixture;
 
 #[cfg(test)]
+mod fixture_exec;
+
+#[cfg(test)]
 mod home_tests;
 
 #[cfg(test)]
 mod recovery_tests;
+
+#[cfg(test)]
+mod runtime_tests;
+
+#[cfg(test)]
+mod backend_tests;
