@@ -69,11 +69,7 @@ data:
   CHRONO_MONGODB_DATABASE: "chrono-bot"
   # TTL applies to existing Activity records; lowering it can remove history.
   CHRONO_ACTIVITY_RETENTION_DAYS: "90"
-  # Existing machine-owned external chrono-storage bucket. MongoDB stores
-  # archive manifests/fences, never archive bytes. CMA does not create buckets.
-  CHRONO_CHECKPOINT_BUCKET: "chrono-platform-bot"
-  CHRONO_STORAGE_CLIENT_ID: "sa_a91005afad2304c1b0023b21"
-  # Canonical platform origin for machine token minting and storage proxying.
+  # Canonical platform origin for scoped runtime service proxying.
   CHRONO_PLATFORM_BASE_URL: "https://nyx-api.chrono-ai.fun"
   # Agent model calls use the scoped AgentKey through this platform proxy.
   CHRONO_UPSTREAM_BASE_URL: "https://nyx-api.chrono-ai.fun/api/v1/proxy/s/chrono-llm-public"

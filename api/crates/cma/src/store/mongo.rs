@@ -6,10 +6,9 @@ use layer2_core::StoreError;
 use mongodb::{bson::doc, Client};
 
 use super::{
-    AuthEncryptionKey, MongoActivityStore, MongoAuthStore, MongoCheckpointObjectStore,
-    MongoOperationStore, MongoPlatformSettingsStore, MongoProfileStore,
-    MongoSandboxCredentialStore, MongoSandboxStore, MongoTriggerDefinitionStore,
-    MongoUserDirectoryStore,
+    AuthEncryptionKey, MongoActivityStore, MongoAuthStore, MongoOperationStore,
+    MongoPlatformSettingsStore, MongoProfileStore, MongoSandboxCredentialStore, MongoSandboxStore,
+    MongoTriggerDefinitionStore, MongoUserDirectoryStore,
 };
 
 /// Aggregate-neutral stores opened atomically at process startup.
@@ -24,8 +23,6 @@ pub struct MongoStores {
     pub sandbox_profiles: Arc<MongoProfileStore>,
     /// Encrypted one-time key values awaiting runtime acknowledgement.
     pub(crate) sandbox_credentials: Arc<MongoSandboxCredentialStore>,
-    /// Sandbox-confined whole-home checkpoint archive authority.
-    pub checkpoint_objects: Arc<MongoCheckpointObjectStore>,
     /// Versioned Trigger definitions, placements, and immutable revisions.
     #[allow(dead_code)] // Opened and validated here; #824 composes the public routes.
     pub trigger_definitions: Arc<MongoTriggerDefinitionStore>,
@@ -47,7 +44,6 @@ impl MongoStores {
         deployment: &str,
         auth_encryption_key: &AuthEncryptionKey,
         activity_retention: Duration,
-        checkpoint_storage: Arc<dyn super::CheckpointBlobStore>,
         runtime: (&str, Option<&layer3_adapter::HomeVolumePolicy>),
     ) -> Result<Self, StoreError> {
         let client = Client::with_uri_str(uri)
@@ -60,7 +56,7 @@ impl MongoStores {
             deployment,
             auth_encryption_key,
             activity_retention,
-            checkpoint_storage,
+            Arc::new(super::checkpoint_storage::RetiredCheckpointStorage),
             runtime,
         )
         .await
@@ -80,7 +76,6 @@ impl MongoStores {
         sandbox_model.warm_runtime_version = Some(runtime.0.to_owned());
         sandbox_model.warm_home_policy = runtime.1.cloned();
         let sandbox_model = Arc::new(sandbox_model);
-        let checkpoint_objects = Arc::new(sandbox_model.checkpoint_objects.clone());
         let sandbox_profiles = Arc::new(MongoProfileStore::open(&client, database).await?);
         let sandbox_credentials = Arc::new(
             MongoSandboxCredentialStore::open(&client, database, deployment, auth_encryption_key)
@@ -140,7 +135,6 @@ impl MongoStores {
             sandbox_model,
             sandbox_profiles,
             sandbox_credentials,
-            checkpoint_objects,
             trigger_definitions,
             auth,
             codex_subscriptions,

@@ -16,7 +16,6 @@ mod gateway;
 mod home;
 mod profiles;
 mod runtime;
-mod storage;
 
 mod features;
 pub(crate) use features::FeatureFlags;
@@ -25,7 +24,6 @@ mod bot_father;
 pub(crate) use bot_father::BotFatherConfig;
 pub(crate) use profiles::DefaultProfileConfig;
 pub(crate) use runtime::RuntimeConfig;
-pub(crate) use storage::CheckpointStorageConfig;
 
 const DEFAULT_BIND: &str = "0.0.0.0:8080";
 const DEFAULT_PUBLIC_URL: &str = "http://localhost:8080";
@@ -150,7 +148,6 @@ pub struct Config {
     pub deployment_id: String,
     pub runtime: RuntimeConfig,
     pub execution: layer2_core::sandbox::ProvisioningExecution,
-    pub checkpoint_storage: CheckpointStorageConfig,
     pub baseline_services: Vec<ServiceId>,
     pub auth_encryption_key: AuthEncryptionKey,
     pub activity_retention: Duration,
@@ -177,7 +174,6 @@ impl std::fmt::Debug for Config {
             .field("deployment_id", &self.deployment_id)
             .field("runtime", &self.runtime)
             .field("execution", &self.execution)
-            .field("checkpoint_storage", &self.checkpoint_storage)
             .field("baseline_services", &self.baseline_services)
             .field("auth_encryption_key", &self.auth_encryption_key)
             .field("activity_retention", &self.activity_retention)
@@ -247,7 +243,6 @@ impl Config {
         let deployment_id = runtime::deployment_id_from_lookup(&mut lookup)?;
         let runtime = RuntimeConfig::from_lookup(&mut lookup)?;
         let execution = execution::from_lookup(&mut lookup)?;
-        let checkpoint_storage = CheckpointStorageConfig::from_lookup(&mut lookup)?;
         let baseline_services = parse_service_ids(
             "CHRONO_BASELINE_SERVICES",
             &value_or(
@@ -323,7 +318,6 @@ impl Config {
             deployment_id,
             runtime,
             execution,
-            checkpoint_storage,
             baseline_services,
             auth_encryption_key,
             activity_retention,

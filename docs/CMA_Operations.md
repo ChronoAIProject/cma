@@ -876,9 +876,6 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_INSTALL_COMMAND_TIMEOUT_SECONDS` | Per-command bound 1-600; default 600 |
 | `CHRONO_INSTALL_TOTAL_TIMEOUT_SECONDS` | Total ordered-command bound, at least command bound and at most 1800; default 1800 |
 | `CHRONO_CLONE_DEPTH` | Git clone depth 1-1000; default 50 |
-| `CHRONO_CHECKPOINT_BUCKET` | Required external chrono-storage bucket; existing production bucket `chrono-platform-bot` |
-| `CHRONO_STORAGE_CLIENT_ID` | Required machine identity for checkpoint storage, distinct from browser OAuth client |
-| `CHRONO_STORAGE_CLIENT_SECRET` | Required storage machine-secret reference |
 | `CHRONO_ACTIVITY_RETENTION_DAYS` | Activity TTL, 1-3650 days; default 90 |
 | `CHRONO_SERVER_RATE_ADMISSION_PER_MINUTE` | Pre-auth network budget/burst; default 6000 |
 | `CHRONO_SERVER_RATE_HEALTH_PER_MINUTE` | Separate probe budget, minimum 30; default 120 |
@@ -888,6 +885,14 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_SERVER_TRUSTED_PROXY_CIDRS` | Exact trusted load-balancer peers; empty by default, production explicit |
 | `CHRONO_SERVER_TRUSTED_PROXY_HOPS` | Trusted rightmost forwarded hops, 1-16; default 1 |
 | `CHRONO_SERVER_CLOUDFLARE_PROXY_CIDRS` | Empty or the complete build-pinned set; must not overlap trusted peer ranges |
+
+CMA no longer reads checkpoint bucket or storage machine credentials. Production
+startup installs a retired archive store that refuses upload, download and delete;
+old environment variables cannot reactivate storage access. Historical manifest
+metadata remains readable and is not evidence of an available restore path.
+Existing archive-only paused Sandboxes require an explicit data migration outside
+CMA before revival. Retained OpenSandbox runtimes can still release a preexisting
+checkpoint writer hold; they cannot create new holds or transfer archives.
 
 `RUST_LOG` controls tracing and defaults to `info`; it is not a `CHRONO_*`
 configuration field. Log level changes never authorize credential-value output.

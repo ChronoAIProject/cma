@@ -1,12 +1,21 @@
 use super::*;
 
 impl ProviderHostedControlTransport {
+    /// Legacy archive protocol for callers that explicitly supply storage authority.
+    /// CMA production uses the archive-free constructors below.
     pub fn new(
         client: SandboxClient,
         archive_factory: Arc<dyn CheckpointArchiveStoreFactory>,
     ) -> crate::Result<Self> {
         RuntimeEndpoint::parse(client.base_url(), "runtime.invalid")?;
         Self::with_discovery(RuntimeDiscovery::Provider(client), Some(archive_factory))
+    }
+
+    /// Retained runtimes remain addressable, including release of preexisting writer holds.
+    /// No new checkpoint, restore, or archive transfer is permitted.
+    pub fn for_retained_opensandbox(client: SandboxClient) -> crate::Result<Self> {
+        RuntimeEndpoint::parse(client.base_url(), "runtime.invalid")?;
+        Self::with_discovery(RuntimeDiscovery::Provider(client), None)
     }
 
     pub fn for_agent_sandbox(
@@ -38,19 +47,20 @@ impl ProviderHostedControlTransport {
     }
 
     pub(super) fn require_supported_operation(&self, request: &RequestFrame) -> crate::Result<()> {
+        let native_writer_resume = matches!(self.client, RuntimeDiscovery::AgentSandbox(_))
+            && matches!(request, RequestFrame::ResumeCheckpointWriters(_));
         if self.archive_factory.is_none()
-            && matches!(
-                request,
-                RequestFrame::Checkpoint(_)
-                    | RequestFrame::CheckpointForTeardown(_)
-                    | RequestFrame::ResumeCheckpointWriters(_)
-                    | RequestFrame::BootstrapRestore(_)
-                    | RequestFrame::Restore(_)
-            )
+            && (native_writer_resume
+                || matches!(
+                    request,
+                    RequestFrame::Checkpoint(_)
+                        | RequestFrame::CheckpointForTeardown(_)
+                        | RequestFrame::BootstrapRestore(_)
+                        | RequestFrame::Restore(_)
+                ))
         {
             return Err(AdapterError::Unsupported(
-                "agent-sandbox persists its home on the attached volume; CMA archives are retired"
-                    .into(),
+                "CMA archives are retired; Sandbox state belongs to its persistent volume".into(),
             ));
         }
         Ok(())
