@@ -1,3 +1,5 @@
+import { validAccessServices } from './accessRequests';
+
 export interface AccessDecision {
   readonly key: string;
   readonly action: 'approve' | 'deny';
@@ -23,11 +25,8 @@ export function loadAccessDecision(
       !/^[a-zA-Z0-9-]{1,200}$/.test(intent.key) ||
       !['approve', 'deny'].includes(intent.action) ||
       !Array.isArray(intent.services) ||
-      intent.services.length > 64 ||
-      !intent.services.every(
-        (service) =>
-          typeof service === 'string' && service.trim() === service && service.length > 0,
-      )
+      (intent.action === 'approve' && !validAccessServices(intent.services)) ||
+      (intent.action === 'deny' && intent.services.length !== 0)
     )
       throw new Error();
     return { intent };

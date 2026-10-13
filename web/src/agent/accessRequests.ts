@@ -1,6 +1,15 @@
 import { ProtocolError } from '@chronoai/cma-sdk';
 import type { ConnectionTarget } from '../connections/client';
 
+export function validAccessServices(value: unknown): value is readonly string[] {
+  return (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.length <= 32 &&
+    value.every((service) => typeof service === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(service))
+  );
+}
+
 export interface AgentAccessRequest {
   readonly id: string;
   readonly agent_id: string;
@@ -22,11 +31,7 @@ function accessRequest(value: unknown, agentId: string): AgentAccessRequest {
     !['pending', 'connecting', 'applying', 'succeeded', 'denied', 'failed'].includes(
       request.status,
     ) ||
-    !Array.isArray(request.services) ||
-    request.services.length > 64 ||
-    !request.services.every(
-      (service) => typeof service === 'string' && service.trim() === service && service.length > 0,
-    ) ||
+    !validAccessServices(request.services) ||
     typeof request.reason !== 'string' ||
     (request.error !== undefined && typeof request.error !== 'string') ||
     (request.connection !== undefined &&
@@ -70,6 +75,8 @@ export const accessRequests = {
     services: readonly string[],
     signal: AbortSignal,
   ): Promise<AgentAccessRequest> {
+    if (action === 'approve' && !validAccessServices(services))
+      throw new Error('Choose 1 to 32 services with valid service identifiers.');
     const result = accessRequest(
       await readResponse(
         await fetch(`${path(agentId)}/${encodeURIComponent(id)}/${action}`, {

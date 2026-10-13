@@ -9,14 +9,18 @@ export function ScopePicker({
   onChange,
   disabled,
   fixed = REQUIRED_AGENT_SCOPES,
+  requested = [],
 }: {
   readonly value: readonly string[];
   readonly onChange: (services: readonly string[]) => void;
   readonly disabled: boolean;
   readonly fixed?: readonly string[];
+  readonly requested?: readonly string[];
 }) {
   const authoring = useProfileViewsClient()?.authoring;
-  const signature = JSON.stringify([...new Set([...REQUIRED_AGENT_SCOPES, ...fixed])]);
+  const signature = JSON.stringify([
+    ...new Set([...REQUIRED_AGENT_SCOPES, ...fixed, ...requested]),
+  ]);
   const required = useMemo(() => JSON.parse(signature) as string[], [signature]);
   const catalog = useMemo(
     () =>
@@ -43,7 +47,9 @@ export function ScopePicker({
           <small>
             {REQUIRED_AGENT_SCOPES.some((baseline) => baseline === scope)
               ? 'Required'
-              : 'Already granted'}
+              : fixed.includes(scope)
+                ? 'Already granted'
+                : 'Requested'}
           </small>
         </label>
       ))}
