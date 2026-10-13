@@ -16,6 +16,14 @@ impl ControlAuth {
         let Ok(value) = std::env::var("CHRONO_RUNTIME_CONTROL_TOKEN") else {
             return Ok(None);
         };
+        let auth = Self::from_token(value)?;
+        // Runtime children are spawned with explicit environment maps. Also
+        // remove the bootstrap value from the supervisor's process environment.
+        std::env::remove_var("CHRONO_RUNTIME_CONTROL_TOKEN");
+        Ok(Some(auth))
+    }
+
+    pub(crate) fn from_token(value: String) -> Result<Arc<Self>, String> {
         if value.len() != 64
             || !value
                 .bytes()
@@ -23,10 +31,7 @@ impl ControlAuth {
         {
             return Err("CHRONO_RUNTIME_CONTROL_TOKEN must be a 256-bit hexadecimal token".into());
         }
-        // Runtime children are spawned with explicit environment maps. Also
-        // remove the bootstrap value from the supervisor's process environment.
-        std::env::remove_var("CHRONO_RUNTIME_CONTROL_TOKEN");
-        Ok(Some(Arc::new(Self(value))))
+        Ok(Arc::new(Self(value)))
     }
 }
 

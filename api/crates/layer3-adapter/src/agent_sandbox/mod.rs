@@ -1,6 +1,7 @@
 //! Direct, ownership-confined integration with the infra-owned agent-sandbox API.
 //! The controller creates Pods; CMA submits and observes only its own resources.
 
+mod assignment;
 mod lifecycle;
 mod model;
 mod suspension;
