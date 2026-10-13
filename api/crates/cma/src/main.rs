@@ -1,6 +1,7 @@
 //! CMA control plane composition while replacement resource routes are rebuilt.
 
 mod activity;
+mod agent_access;
 mod agent_lifecycle;
 mod auth;
 mod bot_setups;
