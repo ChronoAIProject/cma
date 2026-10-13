@@ -11,9 +11,10 @@ or activation of the credential-bearing loopback proxy.
 
 The final image must demonstrate operation receipts, credential generations,
 per-Agent configuration and exact conversation resumption. Retained OpenSandbox
-runtimes also require the legacy whole-home writer-fenced checkpoint/restore
-contract. Changing `CHRONO_SANDBOX_IMAGE` requires an immutable
-digest and triggers recorded rotation; a new tag or label is not evidence.
+runtimes must still support releasing writer holds left by earlier deployments.
+CMA no longer captures or restores whole-home archives. Changing
+`CHRONO_SANDBOX_IMAGE` requires an immutable digest and triggers recorded rotation;
+a new tag or label is not evidence.
 See [CMA Model](CMA_Model.md) for the current contract and
 [Operations](CMA_Operations.md) for the final verification register.
 
@@ -26,11 +27,18 @@ store. Checkpoint capture, writer holds, writer-resume commands and archive
 restore/bootstrap are refused as unsupported before Kubernetes discovery or
 runtime HTTP requests. Runtime ownership bindings, subscriptions, normal
 control operations and Agent history export remain independent of archive
-storage. This does not remove the legacy OpenSandbox archive adapter or the
-remaining global storage configuration required during migration.
+storage. Production also constructs the retained OpenSandbox transport without
+archive authority. Its only remaining checkpoint command is release of an existing
+writer hold, which requires no archive access. Startup no longer reads checkpoint
+bucket or storage machine credentials, and the storage proxy HTTP implementation
+has been removed. Historical manifests and their object-key validation remain
+readable; blob upload, download and deletion return Unsupported. CMA does not
+claim historical objects were deleted, and archive-only paused Sandboxes need an
+explicit migration outside CMA before revival.
 
 Local HTTP transport tests cover native operation without archive storage,
-cross-Sandbox binding refusal and rejection of archive operations before I/O.
+cross-Sandbox binding refusal, rejection of archive operations before I/O and
+legacy writer-release recovery without an archive store.
 They do not establish production PV pause/revive/delete acceptance or native
 warm-pool readiness.
 
