@@ -289,4 +289,6 @@ mod title_value_tests;
 #[cfg(test)]
 mod workspace_service_tests;
 
+pub mod agent_access;
+pub mod agent_access_tool;
 mod suspended_runtime;
