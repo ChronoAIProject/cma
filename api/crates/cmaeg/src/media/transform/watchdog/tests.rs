@@ -1,6 +1,11 @@
 //! The watchdog loop over a fake gauge and signaller, on every platform.
 use super::*;
-use std::{fs::File, os::fd::AsRawFd, sync::atomic::AtomicUsize, time::Instant};
+use std::{
+    fs::File,
+    os::fd::AsRawFd,
+    sync::{atomic::AtomicUsize, mpsc},
+    time::Instant,
+};
 
 /// Reports `usage` and `inactive`, counting samples.
 #[derive(Clone, Default)]
@@ -111,23 +116,63 @@ fn signals_only_through_the_registered_pidfd() {
 
 #[test]
 fn no_signal_after_finish() {
-    let (gauge, signaller) = (FakeGauge::default(), FakeSignaller::default());
-    let watchdog = start(&gauge, &signaller);
+    no_signal_after_deregister(|registration| assert!(!registration.finish()));
+}
+
+#[test]
+fn no_signal_after_drop() {
+    no_signal_after_deregister(drop);
+}
+
+fn no_signal_after_deregister(remove: impl FnOnce(Registration)) {
+    struct GatedGauge {
+        sampled: mpsc::Sender<u32>,
+        usage: mpsc::Receiver<u64>,
+    }
+
+    impl MemoryGauge for GatedGauge {
+        fn limit(&self) -> u64 {
+            LIMIT
+        }
+
+        fn sample(&mut self, pid: u32) -> io::Result<u64> {
+            self.sampled
+                .send(pid)
+                .map_err(|_| io::ErrorKind::BrokenPipe)?;
+            self.usage
+                .recv()
+                .map_err(|_| io::ErrorKind::BrokenPipe.into())
+        }
+
+        fn inactive_file(&mut self) -> io::Result<u64> {
+            Ok(0)
+        }
+    }
+
+    let (sampled, samples) = mpsc::channel();
+    let (release, usage) = mpsc::channel();
+    let gauge = GatedGauge { sampled, usage };
+    let signaller = FakeSignaller::default();
+    let watchdog = Watchdog::start(Box::new(gauge), Box::new(signaller.clone())).unwrap();
+    // Drop this sender before the watchdog on panic so a blocked sample exits
+    // before WatchdogHandle joins its thread.
+    let release_sample = release;
     let registration = watchdog.register(7, descriptor());
-    assert!(eventually(|| gauge.samples.load(Ordering::SeqCst) >= 2));
-    assert!(!registration.finish());
-    gauge.usage.store(LIMIT, Ordering::SeqCst);
-    thread::sleep(PERIOD * 10);
+    assert_eq!(samples.recv_timeout(Duration::from_secs(5)).unwrap(), 7);
+    // The watchdog has read the registration, but its over-limit sample only
+    // completes after deregistration. It must not signal from this stale sample.
+    remove(registration);
+    // Check removal before the successor can overwrite the slot, so a broken
+    // finish/drop cannot be hidden by that registration.
+    assert!(watchdog.shared.lock().is_none());
+    let next = watchdog.register(8, descriptor());
+    release_sample.send(LIMIT).unwrap();
+    // Sampling the next job proves the previous sample's signalling decision
+    // has completed; no scheduling delay is used as evidence of completion.
+    assert_eq!(samples.recv_timeout(Duration::from_secs(5)).unwrap(), 8);
     assert!(signaller.kills.lock().unwrap().is_empty());
-    // A dropped registration deregisters too.
-    let dropped = watchdog.register(8, descriptor());
-    drop(dropped);
-    gauge.usage.store(0, Ordering::SeqCst);
-    let samples = gauge.samples.load(Ordering::SeqCst);
-    gauge.usage.store(LIMIT, Ordering::SeqCst);
-    thread::sleep(PERIOD * 10);
-    assert!(gauge.samples.load(Ordering::SeqCst) <= samples + 1);
-    assert!(signaller.kills.lock().unwrap().is_empty());
+    assert!(!next.finish());
+    release_sample.send(0).unwrap();
 }
 
 #[test]
