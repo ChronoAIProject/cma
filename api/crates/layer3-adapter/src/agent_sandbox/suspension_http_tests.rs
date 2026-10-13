@@ -88,6 +88,10 @@ async fn suspension_retains_crd_and_pvc_and_waits_for_terminating_pods() {
     assert_eq!(calls[2].1["metadata"]["uid"], "original-crd");
     assert_eq!(calls[2].1["metadata"]["resourceVersion"], "7");
     assert_eq!(calls[2].1["spec"], json!({"operatingMode":"Suspended"}));
+    assert!(calls[4]
+        .0
+        .contains("labelSelector=agents.x-k8s.io%2Fsandbox-name-hash%3D"));
+    assert!(!calls[4].0.contains("cma%2Fruntime-name"));
     assert!(calls
         .iter()
         .all(|(line, _)| !line.starts_with("DELETE ") && !line.starts_with("POST ")));

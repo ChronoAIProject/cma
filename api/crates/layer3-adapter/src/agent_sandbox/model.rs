@@ -226,7 +226,7 @@ pub(super) fn ready(object: &DynamicObject) -> bool {
 pub(super) fn owned_pod(pod: &Pod, config: &AgentSandboxConfig, name: &str, uid: &str) -> bool {
     pod.namespace().as_deref() == Some(&config.namespace)
         && pod.labels().get(OWNER_LABEL) == Some(&config.deployment)
-        && pod.labels().get(RUNTIME_LABEL).map(String::as_str) == Some(name)
+        && pod.labels().get(super::pods::TRACKING_LABEL) == Some(&super::pods::name_hash(name))
         && pod
             .metadata
             .owner_references
