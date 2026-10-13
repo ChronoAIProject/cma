@@ -204,7 +204,7 @@ impl AgentAccessWorker {
                 }
             }
             Phase::Pausing => self.paused(record, &sandbox).await?,
-            Phase::Granting => self.grant(record).await?,
+            Phase::Granting => self.grant(record, &sandbox).await?,
             Phase::Reviving => self.revive(record, &sandbox).await?,
             Phase::Notifying => {
                 self.notify(record, &context, credential.expose(), &agent, &sandbox)

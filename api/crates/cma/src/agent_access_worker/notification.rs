@@ -49,6 +49,14 @@ impl AgentAccessWorker {
             {
                 Some(status) => status,
                 None => {
+                    if matches!(
+                        sandbox.status,
+                        SandboxStatus::Pausing | SandboxStatus::Paused
+                    ) {
+                        // A later explicit pause must not be undone by a
+                        // fresh notification command's implicit revival.
+                        return Err(AgentAccessError::Invalid);
+                    }
                     if !notification_ready(record, agent, sandbox)? {
                         return Err(AgentAccessError::Conflict);
                     }
