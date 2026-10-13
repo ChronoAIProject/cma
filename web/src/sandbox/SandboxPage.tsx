@@ -157,6 +157,16 @@ export function SandboxPage({
               target={{ kind: 'sandbox', id: sandboxId, name: sandbox.name }}
             />
           )}
+          {permissions.createAgent ? (
+            <Button
+              icon={<IconPlusOutline16 />}
+              disabled={busy || needsConnections || !childrenAvailable}
+              onClick={() => onAction({ kind: 'new_agent', sandboxId })}
+              aria-label="New agent in this Sandbox"
+            >
+              New agent
+            </Button>
+          ) : null}
           {permissions.createWorkspace ? (
             <Button
               icon={<IconPlusOutline16 />}

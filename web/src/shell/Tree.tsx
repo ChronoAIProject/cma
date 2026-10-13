@@ -40,6 +40,7 @@ export type TreeAction =
   | { readonly kind: 'revive_sandbox'; readonly sandboxId: string }
   | { readonly kind: 'delete_sandbox'; readonly sandboxId: string }
   | { readonly kind: 'new_agent'; readonly workspaceId: string }
+  | { readonly kind: 'new_agent'; readonly sandboxId: string }
   | { readonly kind: 'remove_workspace'; readonly workspaceId: string }
   | { readonly kind: 'stop_agent'; readonly agentId: string }
   | { readonly kind: 'delete_agent'; readonly agentId: string }
@@ -229,14 +230,16 @@ export function Tree({
                           onNavigate={onNavigate}
                           onToggle={childrenAvailable ? () => toggle(sandboxNode) : undefined}
                           onAction={(kind) =>
-                            onAction({
-                              kind: kind as
-                                | 'new_workspace'
-                                | 'pause_sandbox'
-                                | 'revive_sandbox'
-                                | 'delete_sandbox',
-                              sandboxId: sandbox.id,
-                            })
+                            kind === 'new_agent'
+                              ? onAction({ kind, sandboxId: sandbox.id })
+                              : onAction({
+                                  kind: kind as
+                                    | 'new_workspace'
+                                    | 'pause_sandbox'
+                                    | 'revive_sandbox'
+                                    | 'delete_sandbox',
+                                  sandboxId: sandbox.id,
+                                })
                           }
                         />
                         {sandboxExpanded ? (
@@ -291,10 +294,12 @@ export function Tree({
                                         workspaceReady ? () => toggle(workspaceNode) : undefined
                                       }
                                       onAction={(kind) =>
-                                        onAction({
-                                          kind: kind as 'new_agent' | 'remove_workspace',
-                                          workspaceId: workspace.id,
-                                        })
+                                        kind === 'new_agent'
+                                          ? onAction({ kind, sandboxId: sandbox.id })
+                                          : onAction({
+                                              kind: 'remove_workspace',
+                                              workspaceId: workspace.id,
+                                            })
                                       }
                                     />
                                     {workspaceExpanded ? (

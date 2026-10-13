@@ -17,6 +17,17 @@ export interface Channel {
   };
   endpoints: { custom_event_url: string; nyxid_callback_url: string };
 }
+export type ChannelListItem = Omit<Channel, 'channel_id' | 'endpoints'> & {
+  readonly channel_id?: string | null;
+  readonly endpoints?: Channel['endpoints'] | null;
+};
+export function hasChannelAddress(channel: ChannelListItem): channel is Channel {
+  return (
+    typeof channel.channel_id === 'string' &&
+    channel.channel_id.length > 0 &&
+    channel.endpoints != null
+  );
+}
 function policy(channel?: Channel): string {
   if (!channel) return '';
   const { definition: d } = channel;

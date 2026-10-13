@@ -11,6 +11,8 @@ import type { AgentCommand } from './controller';
 import './Details.css';
 import { ReferenceLink } from '../profiles/ReferenceLink';
 import { creationLabel, useAgentProvenance } from './provenance';
+import { SessionSettings } from './SessionSettings';
+import { ScopeSettings } from './ScopeSettings';
 
 interface AgentDetailsProps {
   readonly sharing?: React.ReactNode;
@@ -209,25 +211,14 @@ export function AgentDetails({
             </Fact>
           </dl>
         </Band>
-        <Band title="Agent setup">
-          <dl>
-            <Fact term="Model">{detail.profile.model ?? 'Provider default'}</Fact>
-            <Fact term="Thinking">{label(detail.profile.thinkingEffort)}</Fact>
-            <Fact term="Permission">{label(detail.profile.permissionLevel)}</Fact>
-            <Fact term="Skills">
-              {detail.profile.skills.length === 0 ? (
-                'None'
-              ) : (
-                <ul>
-                  {detail.profile.skills.map((skill) => (
-                    <li key={skill.id}>
-                      <ReferenceLink kind="skill" id={skill.id} version={skill.version} />
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </Fact>
-          </dl>
+        <Band title="Agent settings">
+          <SessionSettings
+            key={`settings:${detail.id}`}
+            agentId={detail.id}
+            active={open}
+            busy={detail.status !== 'ready' || pending !== undefined || historyLoading}
+          />
+          <ScopeSettings key={`scope:${detail.id}`} detail={detail} />
         </Band>
         <Band title="First-message delivery">
           {detail.firstMessage === undefined ? (

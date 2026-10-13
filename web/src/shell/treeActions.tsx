@@ -18,6 +18,16 @@ export function sandboxActions(
   busy: boolean,
 ): TreeRowAction[] {
   const actions: TreeRowAction[] = [];
+  if (permissions.createAgent)
+    actions.push({
+      id: 'new_agent',
+      label: 'New agent',
+      icon: <IconPlusOutline16 />,
+      disabled: busy || stale || !sandboxChildrenAvailable(sandbox),
+      reason: !sandboxChildrenAvailable(sandbox)
+        ? 'Available when the Sandbox is active.'
+        : undefined,
+    });
   if (permissions.createWorkspace)
     actions.push({
       id: 'new_workspace',
