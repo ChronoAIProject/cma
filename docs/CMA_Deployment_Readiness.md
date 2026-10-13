@@ -59,12 +59,13 @@ from the remaining application activation steps.
 
 | Prerequisite | Observed state | Remaining work |
 |---|---|---|
-| Native Kubernetes authentication | Actual CMA Pod received the `chrono-cma@chronoai-501608.iam.gserviceaccount.com` metadata identity; Sandbox and claim reads returned HTTP 200 with the remote CA verified | Exercise the application token refresh path and native lifecycle after required grants are present |
+| Native Kubernetes authentication | Actual CMA Pod received the `chrono-cma@chronoai-501608.iam.gserviceaccount.com` metadata identity; Sandbox and claim reads returned HTTP 200 with the remote CA verified | Exercise the application token refresh path and native lifecycle with the final candidate |
 | Native target | `chrono-bot/chrono-pod-configmap` currently supplies `https://35.240.157.32` and namespace `chrono-pod` | Use these current values; do not use the earlier `cma-test` namespace or infer configuration from last-applied annotations |
 | Native authorization | Fresh CMA Pod metadata token confirms Sandbox get, Claim create, PVC get, and `pods/exec` get/create; PVC create/patch remain denied | VCT integration passes native adapter tests. Verify live allocation with the final image; PVC writes and snapshot reads are not required for new empty native homes |
 | Native persistent home | Installed templates support `volumeClaimTemplates`; the controller creates and owns each member's PVC | New native homes use an empty VCT volume initialized by the pinned CMA runtime image. Validate suspend/resume and deletion through the controller; a mandatory seed snapshot is a superseded implementation choice |
 | Runtime network path | `chrono-pod-default` selects all remote Pods and admits ingress only on TCP 8080 from local `sandbox-router` Pods; no `sandbox-router` namespace is deployed | Infra must provide a runtime path before live acceptance. Current CMA discovery connects directly to Pod IP TCP 9090 for authenticated HTTP and WebSocket. Kubernetes API access alone does not satisfy this requirement |
 | Runtime ServiceAccount and storage | Remote `default` ServiceAccount exists, is active and has no GSA annotation; infra's existing template also uses it with token automount disabled. `standard-rwo` is the existing PD CSI default StorageClass | CMA's production configuration selects `default` with Pod token automount disabled and `standard-rwo` with the existing 64 GiB home default. A new dedicated runtime ServiceAccount is not required. Live RWOP provisioning remains unverified |
+| CMA runtime signing key | `chrono-bot/cma-agent-sandbox-control` has been created and read-verified in the northeast CMA cluster, without printing or storing its value locally | Mount the existing Secret during activation and preserve its value across restarts; it is separate from infra's Kubernetes access identity |
 | Shared MongoDB | Existing `chrono-bot` credentials have been copied to and verified in the canonical application Secrets; original Secrets are retained | Select each service's shared-schema mode and run only its own migration/startup initialization |
 | Existing Event Gateway feature settings | Live `cmaeg` has Console and Media enabled, `cma_codex` non-human/media providers and `gpt-transcribe` STT settings, with optional STT/console Secret refs and a 32 MiB in-memory media volume | The controlled Gateway integration restores live source `976e8773` Console/Media/STT code while retaining independent Mongo and portal authentication. Gateway/Core 1,556 tests, strict Clippy and the authenticated Mongo Console/media/portal composition contract pass locally. Keep the old deployment and Secrets until the final integrated source passes native CI and image gates, all three record domains are migrated, and the replacement passes real Console/media/consumer acceptance; empty STT URL and FFmpeg directory preserve the live disabled transcription/transform settings |
 | Image Manager build identity (deferred) | Lookups for the single `cma-image-manager` Google service account returned 404; current operator IAM tests did not grant account creation, policy changes or Cloud Build submission | Does not block the current Agent Manager/Event Gateway rollout. Infra provisions this identity and the permissions below before later Image Manager activation |
@@ -351,6 +352,14 @@ creation to the controller, so those denied PVC writes are not an infra blocker.
 Exec currently provides the authenticated initial assignment channel. Successful
 authorization checks alone do not prove allocation, assignment, remote runtime
 connectivity or persistent-home acceptance.
+
+The prospective checked-in application configuration passed all 37 operator
+preflight checks against the live infra ConfigMap, remote schemas, exact
+impersonated authorization reviews, runtime account and StorageClass. This
+does not attest a deployed candidate or live runtime behavior. Earlier
+`kubectl auth can-i` failures arose from discovery and subresource parsing;
+direct SelfSubjectAccessReviews confirm the actual grants without requesting
+additional permissions.
 
 ## Build and configure the selected application images
 
