@@ -5,9 +5,10 @@ use serde::{Deserialize, Serialize};
 use crate::profiles::{AgentProfileRef, SandboxProfileRef, WorkspaceProfileRef};
 use crate::{AgentProfileId, CoreError, SandboxProfileId, WorkspaceProfileId};
 
-pub const DEFAULT_SANDBOX_PROFILE_ID: &str = "sbp_default";
-pub const DEFAULT_WORKSPACE_PROFILE_ID: &str = "wkp_default";
-pub const DEFAULT_AGENT_PROFILE_ID: &str = "agp_default";
+// Versioned identities preserve historical published defaults during rollout.
+pub const DEFAULT_SANDBOX_PROFILE_ID: &str = "sbp_default_v2";
+pub const DEFAULT_WORKSPACE_PROFILE_ID: &str = "wkp_default_v2";
+pub const DEFAULT_AGENT_PROFILE_ID: &str = "agp_default_v2";
 pub const DEFAULT_PROFILE_REVISION: u32 = 1;
 pub const MIN_PAUSE_AFTER_SECONDS: u64 = 60;
 pub const MAX_PAUSE_AFTER_SECONDS: u64 = 86_400;
@@ -186,9 +187,9 @@ mod tests {
             serde_json::to_value(settings).unwrap(),
             json!({
                 "defaults": {
-                    "sandbox_profile": {"id": "sbp_default", "revision": 1},
-                    "workspace_profile": {"id": "wkp_default", "revision": 1},
-                    "agent_profile": {"id": "agp_default", "revision": 1}
+                    "sandbox_profile": {"id": "sbp_default_v2", "revision": 1},
+                    "workspace_profile": {"id": "wkp_default_v2", "revision": 1},
+                    "agent_profile": {"id": "agp_default_v2", "revision": 1}
                 },
                 "inactivity": {"pause_after_seconds": 900},
                 "checkpoints": {"interval_seconds": 1800},

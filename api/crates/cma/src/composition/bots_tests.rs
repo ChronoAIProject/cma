@@ -41,7 +41,7 @@ fn resolver(
         image_resolver: Arc::new(NoExternalResolver),
         connections: Arc::new(FixedSandboxCredentialPrerequisite::Ready),
         capacity,
-        default_model: "model".into(),
+        default_model: "gpt-6".into(),
     })
 }
 
@@ -49,7 +49,7 @@ fn input() -> CreateBot {
     serde_json::from_value(serde_json::json!({
         "name":"Consumer", "external_bot_id":uuid::Uuid::new_v4().to_string(),
         "profile":{"id":"__inline__","revision":1},
-        "inline_agent":{"model":"model"},
+        "inline_agent":{},
         "admission":{"type":"scoped","senders":{"type":"open"},"chats":{"type":"open"},"groups":"deny"},
         "reply":{"auto_final":true,"ack_after_ms":2000}
     })).unwrap()
@@ -81,6 +81,26 @@ async fn consumer_defaults_match_native_pool_and_admitted_replay_keeps_original_
             first.profiles.sandbox.content.memory_mib
         ),
         (1000, 1024)
+    );
+    assert_eq!(first.profiles.agent.content.model.as_deref(), Some("gpt-6"));
+    assert_eq!(
+        first.profiles.agent.content.thinking_effort,
+        ThinkingEffort::High
+    );
+    assert_eq!(
+        first.profiles.agent.content.permission_level,
+        PermissionLevel::Autonomous
+    );
+    assert_eq!(
+        first
+            .profiles
+            .sandbox
+            .content
+            .nyxid_services
+            .iter()
+            .map(layer2_core::ServiceId::as_str)
+            .collect::<Vec<_>>(),
+        ["chrono-llm-public", "ornn-api"]
     );
     assert_eq!(first.profiles.sandbox.content.max_workspaces, 16);
     assert_eq!(first.profiles.sandbox.content.max_agents_per_workspace, 16);

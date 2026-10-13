@@ -4,7 +4,7 @@ use super::value_or;
 
 const DEFAULT_SANDBOX_CPU: &str = "1";
 const DEFAULT_SANDBOX_MEMORY: &str = "1Gi";
-const DEFAULT_AGENT_MODEL: &str = "gpt-5.6-sol";
+const DEFAULT_AGENT_MODEL: &str = "gpt-6";
 const DEFAULT_AGENT_EFFORT: &str = "high";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -97,7 +97,7 @@ mod tests {
             DefaultProfileConfig {
                 cpu_millis: 1_000,
                 memory_mib: 1_024,
-                agent_model: DEFAULT_AGENT_MODEL.into(),
+                agent_model: "gpt-6".into(),
                 agent_effort: ThinkingEffort::High,
             }
         );
