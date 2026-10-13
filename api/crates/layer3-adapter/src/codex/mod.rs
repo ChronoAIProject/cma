@@ -62,6 +62,7 @@ impl HostedAgentRuntime for CodexRuntime {
             own_credential: request.options.own_credential,
             channel_tool: None,
             provider_tool: None,
+            access_tool: None,
             recovered_prompt: None,
         })
     }
@@ -109,6 +110,14 @@ impl CodexAdapter {
         source: std::sync::Arc<dyn crate::hosted::HostedProviderToolSource>,
     ) -> Self {
         self.hosted = self.hosted.with_provider_tools(source);
+        self
+    }
+
+    pub fn with_access_tools(
+        mut self,
+        source: Arc<dyn crate::hosted::HostedAccessToolSource>,
+    ) -> Self {
+        self.hosted = self.hosted.with_access_tools(source);
         self
     }
 
