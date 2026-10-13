@@ -9,7 +9,7 @@ import { pathToFileURL } from 'node:url';
 import { githubProxyProbe } from './runtime-github-probe.mjs';
 
 export const checks = [
-  'installed-artifacts', 'non-root-read-only', 'credential-before-install-refused',
+  'installed-artifacts', 'non-root-read-only', 'empty-volume-initialization', 'credential-before-install-refused',
   'install-exact-replay', 'credential-after-install', 'github-api-proxy', 'daemon-writer-active',
   'agent-home-helper-aliases', 'agent-shell-inherited-path', 'escaping-helper-refused',
   'checkpoint-writers-held', 'checkpoint-exact-replay', 'wrong-resume-token-refused',
@@ -68,6 +68,45 @@ function homeSnapshot(root) {
   };
   visit('');
   return sha256(JSON.stringify(entries));
+}
+
+function initializeEmptyVolume() {
+  const volume = mkdtempSync(join(tmpdir(), 'cma-empty-home-'));
+  const source = '/usr/share/cma-runtime-home';
+  const initialize = () => execFileSync('/usr/local/bin/layer4-runtime', ['--initialize-home', volume], {
+    encoding: 'utf8', timeout: 30000, stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  const before = homeSnapshot('/home/cma');
+  const publicHome = homeSnapshot(source);
+  try {
+    assert.equal(lstatSync(source).uid, 0);
+    for (const path of ['.codex/auth.json', '.nyxid/access_token', '.cma/provider/codex/auth.json']) {
+      assert.equal(existsSync(join(source, path)), false);
+    }
+    initialize();
+    for (const name of ['home', 'state', 'transfer', '.cma-home-layout-v1']) {
+      const metadata = lstatSync(join(volume, name));
+      assert.ok(metadata.isDirectory() && !metadata.isSymbolicLink());
+      assert.equal(metadata.uid, 10001);
+    }
+    for (const name of ['nyxid', 'ornn-agent-manual-cli']) {
+      const relative = join('.codex', 'skills', name, 'SKILL.md');
+      assert.deepEqual(readFileSync(join(volume, 'home', relative)), readFileSync(join(source, relative)));
+    }
+    assert.deepEqual(readdirSync(join(volume, 'state')), []);
+    assert.deepEqual(readdirSync(join(volume, 'transfer')), []);
+    writeFileSync(join(volume, 'home', 'uncommitted-work'), 'preserve across suspension');
+    writeFileSync(join(volume, 'state', 'retained-binding'), 'same identity');
+    symlinkSync('uncommitted-work', join(volume, 'home', 'user-link'));
+    const retained = homeSnapshot(volume);
+    initialize();
+    assert.equal(homeSnapshot(volume), retained);
+    assert.equal(homeSnapshot('/home/cma'), before);
+    assert.equal(homeSnapshot(source), publicHome);
+    rmSync(join(volume, '.cma-home-layout-v1'), { recursive: true });
+    assert.throws(initialize);
+    assert.equal(readFileSync(join(volume, 'home', 'uncommitted-work'), 'utf8'), 'preserve across suspension');
+  } finally { rmSync(volume, { recursive: true, force: true }); }
 }
 
 export function installedCodexVersion(home, command = execFileSync) {
@@ -192,6 +231,8 @@ export async function probe(onStage = () => {}) {
   assert.equal(process.getuid(), 10001);
   assert.throws(() => writeFileSync('/usr/local/cma-ci-write-refusal', 'refused'));
   complete('non-root-read-only');
+  initializeEmptyVolume();
+  complete('empty-volume-initialization');
   const credential = { t: 'credential', operation_id: 'ci-credential', value: secret, custody_generation: 1 };
   assert.equal((await control(credential)).code, 'install_not_completed');
   complete('credential-before-install-refused');

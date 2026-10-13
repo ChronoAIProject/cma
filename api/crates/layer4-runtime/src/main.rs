@@ -15,6 +15,7 @@ mod fs_durability;
 mod git;
 mod github_proxy;
 mod history;
+mod home_initializer;
 mod install;
 mod install_state;
 mod install_state_validation;
@@ -65,6 +66,13 @@ async fn main() {
 
 async fn run() -> Result<(), String> {
     let arguments = std::env::args_os().skip(1).collect::<Vec<_>>();
+    if arguments.len() == 2 && arguments[0] == "--initialize-home" {
+        return home_initializer::initialize(
+            std::path::Path::new(&arguments[1]),
+            std::path::Path::new("/usr/share/cma-runtime-home"),
+        )
+        .map_err(|error| format!("initialize persistent home: {error}"));
+    }
     if arguments.len() == 1 && arguments[0] == "--assign-runtime" {
         return pool_bootstrap::assign_from_stdio().await;
     }
