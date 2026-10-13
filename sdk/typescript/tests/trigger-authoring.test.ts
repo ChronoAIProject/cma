@@ -107,6 +107,37 @@ describe('Trigger authoring', () => {
     expect(test.calls.at(-1)?.url).toContain('/embed?placement_id=plc_readme');
   });
 
+  it('decodes inline targets with legacy profile sentinels', async () => {
+    const test = transport();
+    const inlineDocument = {
+      ...document,
+      draft: {
+        ...content,
+        target: {
+          sandbox_profile: { id: '', revision: 0 },
+          workspace_profile: { id: '', revision: 0 },
+          agent_profile: { id: '', revision: 0 },
+          inline: {
+            image: { id: 'private-codex', version: 'v3' },
+            agent: {
+              model: 'gpt-5-codex',
+              reasoning_effort: 'medium',
+              permission_mode: 'guarded',
+              skills: [],
+              system_prompt: 'Inspect the project.',
+              services: ['api-github'],
+            },
+          },
+        },
+      },
+    };
+    test.answer(inlineDocument);
+    const parsed = await new TriggerAuthoring(test.client.config).read(document.id);
+    expect(parsed.draft.target.inline?.image?.id).toBe('private-codex');
+    expect(parsed.draft.target.sandbox_profile).toEqual({ id: '', revision: 1 });
+    expect(parsed.draft.target.agent_profile).toEqual({ id: '', revision: 1 });
+  });
+
   it('rejects mismatched identities and invalid mutations before transport', async () => {
     const test = transport();
     const api = new TriggerAuthoring(test.client.config);

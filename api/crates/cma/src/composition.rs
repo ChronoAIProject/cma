@@ -288,6 +288,7 @@ impl ControlPlaneComposition {
             worker_holder: worker_holder.clone(),
             profile_bounds: authoring_bounds,
             profile_scanner: profile_scanner.clone(),
+            image_resolver: image_resolver.clone(),
         })?;
         let (trigger_routes, launch_scheduler) = trigger.into_parts();
         let context = AgentContextService::new(
@@ -389,16 +390,16 @@ impl ControlPlaneComposition {
             .merge(trigger_routes)
             .merge(layer1_public::rest::admin::router(admin));
         let resource_routes = resource_routes.merge(bindings.router(config.gateway.as_ref())?);
-        let (bot_routes, bots) = bots::BotComposition::build(
+        let (bot_routes, bots) = bots::BotComposition::build(bots::BotCompositionDependencies {
             config,
-            &stores,
-            auth.clone(),
-            event_workers,
+            stores: &stores,
+            auth: auth.clone(),
+            profiles: event_workers,
             image_resolver,
-            connection_prerequisite.clone(),
-            authoring_bounds,
+            connections: connection_prerequisite.clone(),
+            profile_bounds: authoring_bounds,
             profile_scanner,
-        )?;
+        })?;
         let resource_routes = resource_routes.merge(bot_routes);
         let mut actor_continuations = None;
         let resource_routes = if config.bot_father.is_some() {

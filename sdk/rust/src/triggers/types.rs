@@ -1,7 +1,10 @@
 //! Publisher and anonymous Trigger wire documents.
 
-use crate::profiles::{AgentProvider, EnvironmentVariable, ProfileReference, ThinkingEffort};
-use serde::{Deserialize, Serialize};
+use crate::profiles::{
+    AgentProvider, EnvironmentVariable, PermissionLevel, ProfileReference, SkillReference,
+    ThinkingEffort,
+};
+use serde::{Deserialize, Serialize, de::Deserializer};
 
 string_enum! { /// Approved external button label.
     pub enum ButtonLabel { OpenInCma => "open_in_cma", ChatWithThis => "chat_with_this", RunWithCma => "run_with_cma", TryIt => "try_it" }
@@ -39,11 +42,118 @@ pub struct Presentation {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Target {
     /// Sandbox profile revision.
+    #[serde(
+        default = "empty_profile_reference",
+        deserialize_with = "deserialize_profile_reference"
+    )]
     pub sandbox_profile: ProfileReference,
     /// Workspace profile revision.
+    #[serde(
+        default = "empty_profile_reference",
+        deserialize_with = "deserialize_profile_reference"
+    )]
     pub workspace_profile: ProfileReference,
     /// Agent profile revision.
+    #[serde(
+        default = "empty_profile_reference",
+        deserialize_with = "deserialize_profile_reference"
+    )]
     pub agent_profile: ProfileReference,
+    /// Inline image and Agent configuration for new Trigger launches.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inline: Option<TriggerInlineTarget>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Image Manager selection for an inline Trigger Agent.
+pub struct TriggerImage {
+    /// Image Manager identifier.
+    pub id: String,
+    /// Optional Image Manager version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    /// Immutable OCI reference returned by Image Manager.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Optional GitHub workspace source for an inline Trigger.
+pub struct TriggerRepository {
+    /// HTTPS GitHub repository URL.
+    pub url: String,
+    /// Optional branch, tag, or commit reference.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+/// Inline workspace settings.
+pub struct TriggerInlineWorkspace {
+    /// Optional repository source.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository: Option<TriggerRepository>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Inline model, permission, skill, and service scope.
+pub struct TriggerInlineAgent {
+    /// Optional model override.
+    pub model: Option<String>,
+    /// Requested reasoning effort.
+    pub reasoning_effort: ThinkingEffort,
+    /// Guarded or autonomous execution policy.
+    pub permission_mode: PermissionLevel,
+    /// Skills selected from Ornn.
+    pub skills: Vec<SkillReference>,
+    /// Initial system instructions.
+    pub system_prompt: String,
+    /// NyxID service identifiers granted to the Agent.
+    pub services: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Inline Trigger target configuration.
+pub struct TriggerInlineTarget {
+    /// Optional Image Manager image.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<TriggerImage>,
+    /// Inline Agent configuration.
+    pub agent: TriggerInlineAgent,
+    /// Optional workspace configuration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<TriggerInlineWorkspace>,
+}
+
+fn empty_profile_reference() -> ProfileReference {
+    ProfileReference {
+        id: String::new(),
+        revision: 1,
+    }
+}
+
+fn deserialize_profile_reference<'de, D>(deserializer: D) -> Result<ProfileReference, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    struct WireReference {
+        id: String,
+        revision: u32,
+    }
+    let value = WireReference::deserialize(deserializer)?;
+    if value.revision == 0 {
+        if value.id.is_empty() {
+            return Ok(empty_profile_reference());
+        }
+        return Err(serde::de::Error::custom(
+            "profile revision must be positive",
+        ));
+    }
+    Ok(ProfileReference {
+        id: value.id,
+        revision: value.revision,
+    })
 }
 
 /// Reuse decisions recorded in a Trigger revision.
@@ -307,4 +417,40 @@ pub struct TriggerPreview {
     pub technical: Technical,
     /// Initial Agent message.
     pub first_message: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inline_target_accepts_empty_legacy_profile_fields() {
+        let target: Target = serde_json::from_value(serde_json::json!({
+            "sandbox_profile": {"id": "", "revision": 0},
+            "workspace_profile": {"id": "", "revision": 0},
+            "agent_profile": {"id": "", "revision": 0},
+            "inline": {
+                "agent": {
+                    "reasoning_effort": "medium",
+                    "permission_mode": "guarded",
+                    "skills": [],
+                    "system_prompt": "",
+                    "services": []
+                }
+            }
+        }))
+        .expect("inline Trigger target should decode");
+        assert_eq!(target.sandbox_profile.revision, 1);
+        assert!(target.inline.is_some());
+    }
+
+    #[test]
+    fn legacy_target_still_requires_positive_profile_revisions() {
+        let result = serde_json::from_value::<Target>(serde_json::json!({
+            "sandbox_profile": {"id": "sbp_one", "revision": 0},
+            "workspace_profile": {"id": "wkp_one", "revision": 1},
+            "agent_profile": {"id": "agp_one", "revision": 1}
+        }));
+        assert!(result.is_err());
+    }
 }
