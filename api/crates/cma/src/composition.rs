@@ -177,7 +177,7 @@ impl ControlPlaneComposition {
             Arc::clone(&workspace_service),
             projections.agents(),
             stores.sandbox_profiles.clone(),
-            image_resolver,
+            image_resolver.clone(),
             authoring_bounds,
             profile_scanner.clone(),
             stores.agent_lifecycle.clone(),
@@ -317,7 +317,7 @@ impl ControlPlaneComposition {
                 stores.sandbox_model.clone(),
                 resource_access.clone(),
                 auth.clone(),
-                connection_prerequisite,
+                connection_prerequisite.clone(),
             ),
         );
         let sandbox_control_service = layer2_core::sandbox::control::SandboxControlService::new(
@@ -389,8 +389,16 @@ impl ControlPlaneComposition {
             .merge(trigger_routes)
             .merge(layer1_public::rest::admin::router(admin));
         let resource_routes = resource_routes.merge(bindings.router(config.gateway.as_ref())?);
-        let (bot_routes, bots) =
-            bots::BotComposition::build(config, &stores, auth.clone(), event_workers)?;
+        let (bot_routes, bots) = bots::BotComposition::build(
+            config,
+            &stores,
+            auth.clone(),
+            event_workers,
+            image_resolver,
+            connection_prerequisite.clone(),
+            authoring_bounds,
+            profile_scanner,
+        )?;
         let resource_routes = resource_routes.merge(bot_routes);
         let mut actor_continuations = None;
         let resource_routes = if config.bot_father.is_some() {
