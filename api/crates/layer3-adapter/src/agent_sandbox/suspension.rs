@@ -114,7 +114,7 @@ impl AgentSandboxClient {
                     .pods
                     .list(
                         &ListParams::default()
-                            .labels(&format!("{},{RUNTIME_LABEL}={name}", self.selector()))
+                            .labels(&pods::selector(name))
                             .limit(100),
                     )
                     .await

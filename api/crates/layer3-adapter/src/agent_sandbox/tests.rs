@@ -97,7 +97,7 @@ fn creation_names_are_retry_stable_and_generation_specific() {
 #[test]
 fn same_namespace_or_spoofed_labels_do_not_establish_pod_ownership() {
     let mut pod: Pod = serde_json::from_value(json!({"metadata":{"name":"runtime","namespace":"cma-test",
-        "labels":{OWNER_LABEL:"cma-test",RUNTIME_LABEL:"sandbox-one"},
+        "labels":{OWNER_LABEL:"cma-test",pods::TRACKING_LABEL:pods::name_hash("sandbox-one")},
         "ownerReferences":[{"apiVersion":"agents.x-k8s.io/v1beta1","kind":"Sandbox","name":"sandbox-one","uid":"original-uid","controller":true}]}})).unwrap();
     assert!(model::owned_pod(
         &pod,
