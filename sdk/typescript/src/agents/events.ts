@@ -35,6 +35,7 @@ export const agentOperationKind = enumeration(
   'steer',
   'interrupt',
   'answer_approval',
+  'update_settings',
 );
 export type AgentOperationKind = Output<typeof agentOperationKind>;
 export const agentOperationDelivery = enumeration(
