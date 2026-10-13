@@ -621,7 +621,7 @@ remain required.
 
 ## Prerequisites
 
-- Verify the exact cluster context, namespace, deployment id, database and bucket
+- Verify the exact cluster context, namespace, deployment id, database and storage class
   before any write. The recorded production namespace is `chrono-bot`, deployment
   id `chrono-bot-prod` and database `chrono-bot`; re-read live configuration rather
   than relying solely on this historical record.
@@ -636,12 +636,10 @@ remain required.
 - Supply referenced secrets out of band. No secret value belongs in a manifest,
   commit, command argument, screenshot or evidence transcript. Keep the existing
   authentication encryption key stable unless an explicit migration is designed.
-- External checkpoint bytes use the existing chrono-storage bucket
-  `chrono-platform-bot`, not a renamed GridFS bucket. Verify the machine identity
-  can upload, read and delete exact objects through the platform proxy and that
-  versioned DELETE returns the durable fence receipt described below. Verify
-  GET 404 and rejection of a delayed upload on a disposable object. Metadata
-  remains in MongoDB.
+- The home PVC must belong to the exact recorded Sandbox allocation and retain
+  its original Kubernetes UID. Verify suspend/resume against that PVC and prove
+  CRD and Pod removal before releasing it. CMA no longer requires a checkpoint
+  bucket, storage machine identity or archive upload/download/delete access.
 - The provider-facing model endpoint and baseline services must be usable for a
   fresh visitor. A successful admin account test does not establish that fact.
 - Build, label, scan and inspect all three immutable image digests. Check the
@@ -716,11 +714,11 @@ pause-cancellation fence can be claimed while its superseded capture unwinds.
 Four simultaneous long operations can still consume all slots; this is a
 bounded concurrency improvement, not an unbounded latency guarantee.
 
-Workspace, periodic checkpoint maintenance, and checkpoint-object cleanup
-sweeps remain serial. Shutdown stops admitting sweeps, permits a 25-second
-drain, and cancels remaining child tasks without clearing their durable leases.
-The API requests 256 MiB and is limited to 1 GiB to accommodate the existing
-bounded multipart buffers across concurrent lifecycle transfers.
+Workspace sweeps remain serial. Periodic checkpoint maintenance and checkpoint
+object cleanup workers are retired. Shutdown stops admitting sweeps, permits a
+25-second drain, and cancels remaining child tasks without clearing their durable
+leases. The API requests 256 MiB and is limited to 1 GiB; this configuration no
+longer reserves buffers for CMA archive transfers.
 
 ## NyxID Prerequisites
 
@@ -1029,85 +1027,47 @@ fault recovery, external storage cleanup,
 provider login, real embeds, or public readiness. Existing full-campaign inputs
 and gates remain unchanged.
 
-## Checkpoints And Cleanup
+## Persistent Home And Retirement
 
-The external storage service is reached through the platform machine-credential
-flow and `/api/v1/proxy/s/chrono-storage-service`. The existing bucket is retained
-under its new checkpoint configuration name. MongoDB owns checkpoint manifests,
-writer fences, publication authority and deletion intents; external objects own
-the bytes. GridFS is not an acceptable substitute for the required external
-persistence boundary.
+For native agent-sandbox runtimes, pause retains the original Sandbox CRD and
+home PVC, patches `operatingMode: Suspended` and waits for all Pods owned by its
+UID to disappear. CMA stores that retained binding even though the Sandbox has
+no live runtime. Reconciliation must preserve it through control-plane restarts.
 
-Archives above 32 MiB use bounded 32 MiB physical objects through that same
-authenticated storage route. The Mongo stage's opaque key records the versioned
-part layout and total size before any upload; cleanup can therefore enumerate
-every part after an interrupted upload, even if no part manifest was published.
-A bounded manifest is uploaded only after every part is readable and both the
-part digests and whole-archive digest match. Restore verifies the manifest,
-each part and the complete archive. Existing single-object checkpoints remain
-readable. Do not roll back to an API that cannot read the part layout after a
-multipart checkpoint is published. This avoids the production ingress's HTTP
-413 limit without changing runtime archive bytes or writer-fence authority.
+Resume advances the reserved runtime generation on that same CRD and PVC with
+`operatingMode: Running`. It retains the admitted image and configuration, and
+requires a new process boot identity before publishing a live binding. A change
+to the deployment's default image does not authorize a different resumed image.
+Lost responses are retried against the original UID and exact old or next spec;
+resume never creates a replacement CRD to hide an uncertain PATCH.
 
-New upload stages record a fixed 1,200-second (20-minute) client transfer budget
-in `cleanup_after`, increased from 600 seconds after a still-progressing
-6.26 GB upload exhausted that shorter budget. This is a CMA-owned bound, not an
-expiry sent to the external storage service. Existing stages keep their exact
-recorded deadlines across upgrades; never extend a live stage by editing its
-record. Transfer cancellation and cleanup both use the stored deadline.
+Deletion can preempt an uncertain pause or resume. Retained runtime deletion
+requires no live runtime HTTP connection and proves both CRD and owned Pod
+absence before releasing the home. Paused Agent stop records settle against
+that durable parent authority and a fresh provider inventory, retaining their
+conversation history without fabricating a runtime close receipt. Native
+retirement does not create checkpoint writer-release work: no such hold was
+acquired by the retained-home lifecycle.
 
-The 180-second per-request timeout, four concurrent 32 MiB parts, three bounded
-immutable-part attempts, exact readback checks and Retry-After handling remain
-unchanged. Storage credentials are refreshed between requests when needed.
-Both periodic and explicit lifecycle captures still have a 1,800-second total
-bound, including archive creation and publication, so a 20-minute upload budget
-leaves less than ten minutes for the remaining work and does not guarantee every
-large home can finish. Periodic capture claims renew every minute; the explicit
-lifecycle worker retains its configured 31-minute lease. Timeout preserves
-writer-recovery and cleanup authority rather than claiming publication.
-If lifecycle publication loses a revision comparison, the finished worker
-re-reads the aggregate and schedules a short retry only while its exact lease,
-operation, runtime, credential and status are unchanged. Concurrent metadata is
-preserved; a successor worker's lease is never released. An unrelated metadata
-write must not leave the Sandbox waiting for the full capture lease to expire.
+CMA no longer captures, uploads, downloads or deletes checkpoint archives, and
+production storage effects return Unsupported without storage HTTP. Historical
+manifest, object-key and cleanup records remain readable for migration and
+audit. Their presence does not prove those external objects were removed.
+Archive-only paused Sandboxes require an explicit migration outside CMA before
+revival. Retained OpenSandbox can release an existing writer hold; it cannot
+create a new checkpoint or restore an archive. Do not treat the current API as
+a tool for draining historical storage cleanup records.
 
-Publish only after bounded upload, size/digest verification and readable bytes.
-Use immutable physical object identities so cleanup of a losing upload cannot
-delete a concurrent winner. Retention keeps the latest completed checkpoint
-(accepting legacy two-generation records until replacement) and does not remove
-an active recovery reference. Record deletion intent in the
-same transaction that removes publication authority, then perform bounded HTTP
-cleanup after commit. Never keep a Mongo transaction open around external HTTP.
+The 2026-10-06 storage investigation measured 4,292,528 requests in seven days
+from the historical `chrono-bot-storage` client. Its retry population included
+1,023 records and 52,893 physical keys. Those observations describe the old
+archive implementation; they establish neither current storage activity nor
+historical deletion completion. Any external migration must retain its own
+verified deletion evidence.
 
-A DELETE followed by GET 404 is insufficient while an earlier ambiguous upload
-can still finish. The client upload deadline is not a remote write-lifetime
-guarantee. Production cleanup uses chrono-storage's versioned deletion through
-`DELETE .../objects?key=<opaque-key>&mutationGeneration=2`; query transport
-survives the NyxID proxy's header filtering. Immutable UUID keys are never reused.
-Generation 2 supersedes legacy uploads (generation 0) and generation 1 uploads.
-Every part must be fenced before the manifest, with four concurrent requests.
-Accept completion only from a successful, bounded JSON response containing
-`error: null` and `data: {deleted: true, generation: 2, fenceVersion: 1}`. A plain
-204, missing receipt, wrong generation, timeout or partial success retains
-deletion work. Replaying the same fenced delete is idempotent.
-
-Existing `checkpoint_archive_tombstones` settle through this same operation.
-Once all keys are fenced, retain their immutable identity for historical
-references, set `deletion_fenced_at`, and remove `next_attempt_at`. They no
-longer generate recurring storage calls, including after restart. Newly fenced
-uncertain stages can complete without creating a retry tombstone. Backends that
-can only establish observed absence still retain and retry uncertain stages
-with bounded exponential backoff; elapsed time alone never settles them.
-No cleanup record contains credentials. Before deployment, verify delayed legacy
-and generation 1 uploads are rejected after deletion through the real proxy.
-
-The 2026-10-06 investigation measured 4,292,528 storage requests in seven days
-from `chrono-bot-storage`. The old cleanup path repeatedly deleted and read back
-already absent objects: 1,023 retry records described 52,893 physical keys, or
-105,786 DELETE/GET calls per complete pass before retries. This count describes
-the amplification mechanism, not an attribution of every measured request.
-After rollout, a final bounded pass must fence the existing keys; verify pending
-records drain and storage requests fall before claiming the incident resolved.
+Local CRD HTTP and lifecycle worker fixtures cover the new persistence behavior.
+Production acceptance still requires the installed controller version, final
+runtime image, real CRD/Pod/PVC operations and actual Agent conversation recovery.
 
 ## Rollback And Alerts
 
@@ -1120,7 +1080,7 @@ new manifests. Restoring a pre-reset backup is a separate destructive epoch
 transition, never an ordinary rollback that preserves post-reset work.
 
 Alert on sustained readiness/store failures, reconciliation timeouts, unresolved
-credential revocations, checkpoint publication/cleanup backlog, rejected
+credential revocations, retained runtime/PVC cleanup backlog, rejected
 integrity/fence checks, first-message recovery-required state, repeated runtime
 absence, capacity failures, abnormal HTTP 429/503 rates and inactive baseline
 services. Record object/operation/request ids and failure classes, not secrets.

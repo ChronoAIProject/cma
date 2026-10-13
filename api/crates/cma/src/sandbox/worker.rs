@@ -19,6 +19,7 @@ mod execute;
 mod home;
 mod lifecycle;
 mod provisioning;
+mod retained_retirement;
 mod retirement;
 mod support;
 

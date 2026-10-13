@@ -26,6 +26,37 @@ pub trait SandboxAdapter: Send + Sync {
 
     async fn provision(&self, spec: &SandboxSpec) -> Result<RuntimeHandle>;
 
+    /// Stop the exact runtime Pod while retaining its provider object and volume.
+    async fn suspend_runtime(&self, _request: &RuntimeAdoptionRequest) -> Result<()> {
+        Err(crate::AdapterError::Unsupported(
+            "runtime suspension is unavailable".into(),
+        ))
+    }
+
+    async fn verify_suspended_runtime(&self, _request: &RuntimeAdoptionRequest) -> Result<()> {
+        Err(crate::AdapterError::Unsupported(
+            "runtime suspension observation is unavailable".into(),
+        ))
+    }
+
+    /// Delete a persisted provider identity and all Pods without requiring a live process.
+    async fn teardown_retained_runtime(&self, _handle: &RuntimeHandle) -> Result<()> {
+        Err(crate::AdapterError::Unsupported(
+            "retained runtime deletion is unavailable".into(),
+        ))
+    }
+
+    /// Resume the same provider object with an explicitly reserved newer process generation.
+    async fn resume_runtime(
+        &self,
+        _request: &RuntimeAdoptionRequest,
+        _generation: u64,
+    ) -> Result<RuntimeHandle> {
+        Err(crate::AdapterError::Unsupported(
+            "runtime resumption is unavailable".into(),
+        ))
+    }
+
     /// Exactly one creation dispatch; failures cannot be upgraded by name-only recovery.
     async fn provision_runtime_receipted(
         &self,
