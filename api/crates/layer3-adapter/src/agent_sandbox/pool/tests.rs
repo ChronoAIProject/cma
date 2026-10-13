@@ -46,6 +46,37 @@ pub(super) fn request(binding: NativePoolBinding) -> NativePoolClaimRequest {
     }
 }
 
+#[test]
+fn sandbox_spec_comparison_accepts_kubernetes_canonicalization_only_for_defaults_and_quantities() {
+    let desired = json!({
+        "hostNetwork": false,
+        "hostPID": false,
+        "containers": [{
+            "resources": {
+                "requests": {"cpu": "1000m", "memory": "1024Mi"},
+                "limits": {"cpu": "1000m", "memory": "1024Mi"}
+            }
+        }]
+    });
+    let actual = json!({
+        "containers": [{
+            "resources": {
+                "requests": {"cpu": "1", "memory": "1Gi"},
+                "limits": {"cpu": "1", "memory": "1Gi"}
+            }
+        }]
+    });
+    assert!(model::contains(&actual, &desired));
+
+    let mut changed = actual.clone();
+    changed["containers"][0]["resources"]["limits"]["memory"] = json!("2Gi");
+    assert!(!model::contains(&changed, &desired));
+
+    let mut identity = actual;
+    identity["containers"][0]["resources"]["requests"]["cpu"] = json!("1000");
+    assert!(!model::contains(&identity, &desired));
+}
+
 #[tokio::test]
 async fn pool_prewarms_independent_seeded_disks_without_tenant_identity_and_replays_lost_writes() {
     let fixture = Fixture::new().await;
