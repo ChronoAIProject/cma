@@ -415,6 +415,7 @@ fn stored_agent(parent: &Workspace, tree: &Worktree, id: &str) -> Agent {
         ]),
         status: AgentStatus::Starting,
         conversation: ConversationState {
+            settings: None,
             conversation_id: None,
             runtime_generation: None,
             last_seq: 0,

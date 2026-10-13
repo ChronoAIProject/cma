@@ -33,6 +33,7 @@ pub fn validate_agent_conversation_admission(
     parent: Option<&Sandbox>,
     mutation: &AgentConversationMutation,
 ) -> Result<(), SandboxStoreError> {
+    crate::sandbox::agent_settings_validation::validate_settings_mutation(current, mutation)?;
     let admission = admits_input(current, mutation);
     if [
         mutation.execution_fence.is_some(),

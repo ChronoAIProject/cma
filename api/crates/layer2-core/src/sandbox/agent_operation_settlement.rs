@@ -12,6 +12,7 @@ use super::{
 };
 
 enum SendClassification {
+    Rejected(String),
     PreWrite(String),
     Confirmed,
     Ambiguous(String),
@@ -28,7 +29,24 @@ impl AgentOperationService {
                 .require(prepared.required.iter().copied())
             {
                 Ok(()) => {
-                    let outcome = if let Some(authority) = &self.execution_authority {
+                    let outcome = if matches!(
+                        prepared.input,
+                        layer3_adapter::ConversationInput::Configure { .. }
+                    ) {
+                        connection
+                            .input
+                            .send_guarded(
+                                prepared.input.clone(),
+                                std::sync::Arc::new(
+                                    super::agent_settings_validation::SettingsInputGuard {
+                                        store: self.store.clone(),
+                                        target: prepared.target.clone(),
+                                        sequence: prepared.operation_sequence,
+                                    },
+                                ),
+                            )
+                            .await
+                    } else if let Some(authority) = &self.execution_authority {
                         connection
                             .input
                             .send_guarded(
@@ -65,6 +83,15 @@ impl AgentOperationService {
                             .await
                     };
                     match outcome {
+                        ConversationSendOutcome::PreWriteFailure(
+                            layer3_adapter::AdapterError::Unsupported(detail),
+                        ) if matches!(
+                            prepared.input,
+                            layer3_adapter::ConversationInput::Configure { .. }
+                        ) =>
+                        {
+                            SendClassification::Rejected(detail)
+                        }
                         ConversationSendOutcome::PreWriteFailure(error) => {
                             SendClassification::PreWrite(error.to_string())
                         }
@@ -89,9 +116,9 @@ impl AgentOperationService {
         classification: SendClassification,
     ) -> Result<AgentOperationReceipt, AgentOperationError> {
         let detail = match &classification {
-            SendClassification::PreWrite(detail) | SendClassification::Ambiguous(detail) => {
-                Some(bounded_detail(detail))
-            }
+            SendClassification::Rejected(detail)
+            | SendClassification::PreWrite(detail)
+            | SendClassification::Ambiguous(detail) => Some(bounded_detail(detail)),
             SendClassification::Confirmed => None,
         };
         for _ in 0..MAX_OPERATION_COMMIT_RETRIES {
@@ -145,19 +172,32 @@ impl AgentOperationService {
                 .as_mut()
                 .expect("the matching operation was checked");
             match &classification {
-                SendClassification::Confirmed => next_record
-                    .mark_write_confirmed(at.clone())
-                    .map_err(|error| AgentOperationError::Corrupt(error.to_string()))?,
-                SendClassification::PreWrite(detail) => next_record
-                    .mark_pre_write_failed(operation_failure("input_not_written", detail, &at)?)
-                    .map_err(|error| AgentOperationError::Corrupt(error.to_string()))?,
+                SendClassification::Confirmed => {
+                    let result = if matches!(
+                        next_record.intent,
+                        super::AgentOperationIntent::UpdateSettings { .. }
+                    ) {
+                        next_record.mark_execution_observed(at.clone())
+                    } else {
+                        next_record.mark_write_confirmed(at.clone())
+                    };
+                    result.map_err(|error| AgentOperationError::Corrupt(error.to_string()))?;
+                }
+                SendClassification::Rejected(detail) | SendClassification::PreWrite(detail) => {
+                    next_record
+                        .mark_pre_write_failed(operation_failure("input_not_written", detail, &at)?)
+                        .map_err(|error| AgentOperationError::Corrupt(error.to_string()))?
+                }
                 SendClassification::Ambiguous(detail) => next_record
                     .require_recovery(operation_failure("input_write_ambiguous", detail, &at)?)
                     .map_err(|error| AgentOperationError::Corrupt(error.to_string()))?,
             }
             settle_queued_message(&mut next, &prepared, &classification)?;
             let mut logs = vec![operation_log(&next, prepared.operation_sequence)?];
-            if matches!(&classification, SendClassification::PreWrite(_)) {
+            if matches!(
+                &classification,
+                SendClassification::Rejected(_) | SendClassification::PreWrite(_)
+            ) {
                 append_pre_write_rollback(&current, &mut next, &prepared, &at, &mut logs)?;
             }
             super::agent_io::trigger::project_delivery(
@@ -171,6 +211,11 @@ impl AgentOperationService {
                     return match &classification {
                         SendClassification::Confirmed => {
                             Ok(receipt(agent, prepared.operation_sequence))
+                        }
+                        SendClassification::Rejected(_) => {
+                            Err(AgentOperationError::InvalidRequest(
+                                detail.clone().expect("failure detail exists"),
+                            ))
                         }
                         SendClassification::PreWrite(_) => {
                             Err(AgentOperationError::RuntimeUnavailable(
@@ -298,7 +343,9 @@ fn settle_queued_message(
     }
     let result = match classification {
         SendClassification::Confirmed => message.mark_delivered(),
-        SendClassification::PreWrite(_) => message.retry_after_pre_write_failure(),
+        SendClassification::Rejected(_) | SendClassification::PreWrite(_) => {
+            message.retry_after_pre_write_failure()
+        }
         SendClassification::Ambiguous(_) => message.require_recovery(),
     };
     result.map_err(|error| AgentOperationError::Corrupt(error.to_string()))
@@ -312,6 +359,9 @@ fn append_pre_write_rollback(
     logs: &mut Vec<AgentLogKind>,
 ) -> Result<(), AgentOperationError> {
     match &prepared.rollback {
+        PreWriteRollback::Settings(previous) => {
+            next.conversation.settings = previous.clone();
+        }
         PreWriteRollback::NewTurn
             if current.status == AgentStatus::Working
                 && current.conversation.active_turn == Some(prepared.turn_sequence) =>

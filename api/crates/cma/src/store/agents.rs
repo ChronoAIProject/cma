@@ -315,6 +315,8 @@ impl AgentStore for MongoSandboxStore {
                     "record.owner": agent.owner.as_str(),
                     "record.profile": record_bson(&agent.profile)
                         .map_err(SandboxStoreError::Corrupt)?,
+                    "record.conversation.settings": record_bson(&agent.conversation.settings)
+                        .map_err(SandboxStoreError::Corrupt)?,
                     "record.work.resolved_skills": record_bson(&agent.work.resolved_skills)
                         .map_err(SandboxStoreError::Corrupt)?,
                 },

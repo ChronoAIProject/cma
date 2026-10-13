@@ -471,6 +471,7 @@ fn agent(
         ]),
         status,
         conversation: ConversationState {
+            settings: None,
             conversation_id: Some(format!("conversation-{id}")),
             runtime_generation: Some(1),
             last_seq: 0,

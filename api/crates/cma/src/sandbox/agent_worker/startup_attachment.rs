@@ -55,6 +55,34 @@ impl AgentWorker {
                 (&target.conversation_id, recovered_prompt),
             )
             .await?;
+        if let Some(settings) = &agent.conversation.settings {
+            channel
+                .input
+                .send(settings.runtime_input())
+                .await
+                .map_err(adapter_failure)?;
+            self.dependencies
+                .operations
+                .confirm_settings_replayed(
+                    &layer2_core::sandbox::AgentRuntimeTarget {
+                        agent_id: agent.id.clone(),
+                        conversation_id: target.conversation_id.clone(),
+                        runtime_generation: target.runtime_generation,
+                    },
+                    &layer2_core::sandbox::AgentWorkAuthority {
+                        holder: self.config.holder.clone(),
+                        fence: connection_fence,
+                    },
+                    settings,
+                )
+                .await
+                .map_err(|error| {
+                    WorkerFailure::retryable(
+                        "agent_settings_confirmation_unavailable",
+                        error.to_string(),
+                    )
+                })?;
+        }
         let conversation_id = valid_conversation_id(channel.conversation_id)?;
         if conversation_id != target.conversation_id {
             return Err(WorkerFailure::terminal(
