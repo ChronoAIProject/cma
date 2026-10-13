@@ -1,0 +1,963 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "agent-access-list-success",
+      "operation": "GET /api/v1/agents/{id}/access-requests",
+      "scenario": "agent_access_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agent-one/access-requests",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "items": [
+            {
+              "id": "access-one",
+              "agent_id": "agent-one",
+              "status": "pending",
+              "services": [
+                "api-github"
+              ],
+              "reason": "Read the selected repository."
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-access-list-anonymous",
+      "operation": "GET /api/v1/agents/{id}/access-requests",
+      "scenario": "agent_access_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agent-one/access-requests",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-access-list-invalid",
+      "operation": "GET /api/v1/agents/{id}/access-requests",
+      "scenario": "agent_access_invalid",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agent-one/access-requests",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent_access_invalid",
+          "title": "agent_access_invalid",
+          "status": 400,
+          "detail": "the access request is invalid",
+          "code": "agent_access_invalid"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-access-list-forbidden",
+      "operation": "GET /api/v1/agents/{id}/access-requests",
+      "scenario": "agent_access_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agent-one/access-requests",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent_access_forbidden",
+          "title": "agent_access_forbidden",
+          "status": 403,
+          "detail": "sign in as the Agent owner to approve service access",
+          "code": "agent_access_forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-access-list-not-found",
+      "operation": "GET /api/v1/agents/{id}/access-requests",
+      "scenario": "agent_access_not_found",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agent-one/access-requests",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent_access_not_found",
+          "title": "agent_access_not_found",
+          "status": 404,
+          "detail": "this access request is not available to the caller",
+          "code": "agent_access_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-access-list-conflict",
+      "operation": "GET /api/v1/agents/{id}/access-requests",
+      "scenario": "agent_access_conflict",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agent-one/access-requests",
+        "headers": {}
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent_access_conflict",
+          "title": "agent_access_conflict",
+          "status": 409,
+          "detail": "this access request has already changed",
+          "code": "agent_access_conflict"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-access-list-unavailable",
+      "operation": "GET /api/v1/agents/{id}/access-requests",
+      "scenario": "agent_access_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agent-one/access-requests",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent_access_unavailable",
+          "title": "agent_access_unavailable",
+          "status": 503,
+          "detail": "service access is temporarily unavailable",
+          "code": "agent_access_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-access-approve-success",
+      "operation": "POST /api/v1/agents/{id}/access-requests/{request_id}/approve",
+      "scenario": "agent_access_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agent-one/access-requests/access-one/approve",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "access-contract-key"
+        },
+        "body": {
+          "services": [
+            "api-github"
+          ]
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "id": "access-one",
+          "agent_id": "agent-one",
+          "status": "connecting",
+          "services": [
+            "api-github"
+          ],
+          "reason": "Read the selected repository.",
+          "connection": {
+            "target": {
+              "type": "agent_access_request",
+              "id": "access-one"
+            }
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-access-approve-anonymous",
+      "operation": "POST /api/v1/agents/{id}/access-requests/{request_id}/approve",
+      "scenario": "agent_access_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agent-one/access-requests/access-one/approve",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "access-contract-key"
+        },
+        "body": {
+          "services": [
+            "api-github"
+          ]
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-access-approve-invalid",
+      "operation": "POST /api/v1/agents/{id}/access-requests/{request_id}/approve",
+      "scenario": "agent_access_invalid",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agent-one/access-requests/access-one/approve",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "access-contract-key"
+        },
+        "body": {
+          "services": [
+            "api-github"
+          ]
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent_access_invalid",
+          "title": "agent_access_invalid",
+          "status": 400,
+          "detail": "the access request is invalid",
+          "code": "agent_access_invalid"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-access-approve-forbidden",
+      "operation": "POST /api/v1/agents/{id}/access-requests/{request_id}/approve",
+      "scenario": "agent_access_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agent-one/access-requests/access-one/approve",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "access-contract-key"
+        },
+        "body": {
+          "services": [
+            "api-github"
+          ]
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent_access_forbidden",
+          "title": "agent_access_forbidden",
+          "status": 403,
+          "detail": "sign in as the Agent owner to approve service access",
+          "code": "agent_access_forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-access-approve-not-found",
+      "operation": "POST /api/v1/agents/{id}/access-requests/{request_id}/approve",
+      "scenario": "agent_access_not_found",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agent-one/access-requests/access-one/approve",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "access-contract-key"
+        },
+        "body": {
+          "services": [
+            "api-github"
+          ]
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent_access_not_found",
+          "title": "agent_access_not_found",
+          "status": 404,
+          "detail": "this access request is not available to the caller",
+          "code": "agent_access_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-access-approve-conflict",
+      "operation": "POST /api/v1/agents/{id}/access-requests/{request_id}/approve",
+      "scenario": "agent_access_conflict",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agent-one/access-requests/access-one/approve",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "access-contract-key"
+        },
+        "body": {
+          "services": [
+            "api-github"
+          ]
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent_access_conflict",
+          "title": "agent_access_conflict",
+          "status": 409,
+          "detail": "this access request has already changed",
+          "code": "agent_access_conflict"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-access-approve-unavailable",
+      "operation": "POST /api/v1/agents/{id}/access-requests/{request_id}/approve",
+      "scenario": "agent_access_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agent-one/access-requests/access-one/approve",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "access-contract-key"
+        },
+        "body": {
+          "services": [
+            "api-github"
+          ]
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent_access_unavailable",
+          "title": "agent_access_unavailable",
+          "status": 503,
+          "detail": "service access is temporarily unavailable",
+          "code": "agent_access_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-access-approve-missing-key",
+      "operation": "POST /api/v1/agents/{id}/access-requests/{request_id}/approve",
+      "scenario": "agent_access_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agent-one/access-requests/access-one/approve",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "services": [
+            "api-github"
+          ]
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-access-approve-invalid-key",
+      "operation": "POST /api/v1/agents/{id}/access-requests/{request_id}/approve",
+      "scenario": "agent_access_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agent-one/access-requests/access-one/approve",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "bad key"
+        },
+        "body": {
+          "services": [
+            "api-github"
+          ]
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-idempotency-key",
+          "title": "invalid idempotency key",
+          "status": 400,
+          "detail": "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+          "code": "invalid_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-access-approve-invalid-json",
+      "operation": "POST /api/v1/agents/{id}/access-requests/{request_id}/approve",
+      "scenario": "agent_access_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agent-one/access-requests/access-one/approve",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "access-contract-key"
+        },
+        "rawBody": "{"
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 400,
+          "detail": "Failed to parse the request body as JSON: EOF while parsing an object at line 1 column 1",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-access-approve-missing-media-type",
+      "operation": "POST /api/v1/agents/{id}/access-requests/{request_id}/approve",
+      "scenario": "agent_access_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agent-one/access-requests/access-one/approve",
+        "headers": {
+          "idempotency-key": "access-contract-key"
+        },
+        "body": {
+          "services": [
+            "api-github"
+          ]
+        }
+      },
+      "response": {
+        "status": 415,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/json_content_type_required",
+          "title": "json_content_type_required",
+          "status": 415,
+          "detail": "The request body must use an application/json content type.",
+          "code": "json_content_type_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-access-approve-no-credential",
+      "operation": "POST /api/v1/agents/{id}/access-requests/{request_id}/approve",
+      "scenario": "agent_access_no_credential",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agent-one/access-requests/access-one/approve",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "access-contract-key"
+        },
+        "body": {
+          "services": [
+            "api-github"
+          ]
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent_access_forbidden",
+          "title": "agent_access_forbidden",
+          "status": 403,
+          "detail": "sign in as the Agent owner to approve service access",
+          "code": "agent_access_forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-access-deny-success",
+      "operation": "POST /api/v1/agents/{id}/access-requests/{request_id}/deny",
+      "scenario": "agent_access_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agent-one/access-requests/access-one/deny",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "access-contract-key"
+        },
+        "body": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "id": "access-one",
+          "agent_id": "agent-one",
+          "status": "denied",
+          "services": [
+            "api-github"
+          ],
+          "reason": "Read the selected repository."
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-access-deny-anonymous",
+      "operation": "POST /api/v1/agents/{id}/access-requests/{request_id}/deny",
+      "scenario": "agent_access_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agent-one/access-requests/access-one/deny",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "access-contract-key"
+        },
+        "body": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-access-deny-invalid",
+      "operation": "POST /api/v1/agents/{id}/access-requests/{request_id}/deny",
+      "scenario": "agent_access_invalid",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agent-one/access-requests/access-one/deny",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "access-contract-key"
+        },
+        "body": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent_access_invalid",
+          "title": "agent_access_invalid",
+          "status": 400,
+          "detail": "the access request is invalid",
+          "code": "agent_access_invalid"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-access-deny-forbidden",
+      "operation": "POST /api/v1/agents/{id}/access-requests/{request_id}/deny",
+      "scenario": "agent_access_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agent-one/access-requests/access-one/deny",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "access-contract-key"
+        },
+        "body": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent_access_forbidden",
+          "title": "agent_access_forbidden",
+          "status": 403,
+          "detail": "sign in as the Agent owner to approve service access",
+          "code": "agent_access_forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-access-deny-not-found",
+      "operation": "POST /api/v1/agents/{id}/access-requests/{request_id}/deny",
+      "scenario": "agent_access_not_found",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agent-one/access-requests/access-one/deny",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "access-contract-key"
+        },
+        "body": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent_access_not_found",
+          "title": "agent_access_not_found",
+          "status": 404,
+          "detail": "this access request is not available to the caller",
+          "code": "agent_access_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-access-deny-conflict",
+      "operation": "POST /api/v1/agents/{id}/access-requests/{request_id}/deny",
+      "scenario": "agent_access_conflict",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agent-one/access-requests/access-one/deny",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "access-contract-key"
+        },
+        "body": {}
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent_access_conflict",
+          "title": "agent_access_conflict",
+          "status": 409,
+          "detail": "this access request has already changed",
+          "code": "agent_access_conflict"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-access-deny-unavailable",
+      "operation": "POST /api/v1/agents/{id}/access-requests/{request_id}/deny",
+      "scenario": "agent_access_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agent-one/access-requests/access-one/deny",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "access-contract-key"
+        },
+        "body": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent_access_unavailable",
+          "title": "agent_access_unavailable",
+          "status": 503,
+          "detail": "service access is temporarily unavailable",
+          "code": "agent_access_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-access-deny-missing-key",
+      "operation": "POST /api/v1/agents/{id}/access-requests/{request_id}/deny",
+      "scenario": "agent_access_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agent-one/access-requests/access-one/deny",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-access-deny-invalid-key",
+      "operation": "POST /api/v1/agents/{id}/access-requests/{request_id}/deny",
+      "scenario": "agent_access_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agent-one/access-requests/access-one/deny",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "bad key"
+        },
+        "body": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-idempotency-key",
+          "title": "invalid idempotency key",
+          "status": 400,
+          "detail": "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+          "code": "invalid_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-access-deny-invalid-json",
+      "operation": "POST /api/v1/agents/{id}/access-requests/{request_id}/deny",
+      "scenario": "agent_access_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agent-one/access-requests/access-one/deny",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "access-contract-key"
+        },
+        "rawBody": "{"
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 400,
+          "detail": "Failed to parse the request body as JSON: EOF while parsing an object at line 1 column 1",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-access-deny-missing-media-type",
+      "operation": "POST /api/v1/agents/{id}/access-requests/{request_id}/deny",
+      "scenario": "agent_access_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agent-one/access-requests/access-one/deny",
+        "headers": {
+          "idempotency-key": "access-contract-key"
+        },
+        "body": {}
+      },
+      "response": {
+        "status": 415,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/json_content_type_required",
+          "title": "json_content_type_required",
+          "status": 415,
+          "detail": "The request body must use an application/json content type.",
+          "code": "json_content_type_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}
