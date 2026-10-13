@@ -295,9 +295,20 @@ RUN set -eux; \
     test -s /home/cma/.codex/skills/ornn-agent-manual-cli/SKILL.md; \
     test "$(find /home/cma/.codex/skills -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort | paste -sd, -)" = "nyxid,ornn-agent-manual-cli"; \
     chown -R 10001:10001 /home/cma /var/lib/cma-runtime /var/lib/cma-transfer; \
+    test ! -e /home/cma/.codex/auth.json; \
+    test ! -e /home/cma/.nyxid/access_token; \
+    test ! -e /home/cma/.cma/provider/codex/auth.json; \
+    cp -a /home/cma /usr/share/cma-runtime-home; \
+    chown -R root:root /usr/share/cma-runtime-home; \
+    chmod -R a+rX,go-w /usr/share/cma-runtime-home; \
     rm -rf /tmp/baseline-skills /tmp/nyxid-source.tar.gz /tmp/ornn-source.tar.gz
 
 COPY --from=build /out/layer4-runtime /usr/local/bin/layer4-runtime
+
+# Native SandboxTemplates use this same image as a non-root init container:
+# layer4-runtime --initialize-home /mnt/cma-home seeds a fresh VCT volume with
+# this image's public home and empty state/transfer directories. Completed
+# volumes retain all user contents across Pod suspension and replacement.
 
 # Persist untouched provider conversations before publishing an Agent as Ready.
 # These exact-source patches and restart proofs use synthetic credentials and
