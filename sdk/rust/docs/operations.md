@@ -34,11 +34,8 @@ settings fields, so editing a known field does not discard newer deployment
 configuration. Patch replaces only supplied sections; it is not an arbitrary
 deep merge. Server validation remains authoritative.
 
-`checkpoints.interval_seconds` controls periodic snapshots globally (60 through
-86400 seconds, default 1800), using `Section<Checkpoints>`. Workers reread the
-setting without a restart. Manual and inactivity pauses still require a fresh
-completed snapshot. Only the latest completed snapshot is retained; replacement
-commits before old archives are removed. Older APIs can omit the section.
+Sandbox persistence is owned by Agent Sandbox and its attached PV. CMA exposes
+no public setting for snapshot scheduling or checkpoint archive retention.
 
 `pause_triggers` and `resume_triggers` change orchestration controls. They do not
 cancel admitted Launches or authorize deleting their resources. Operator

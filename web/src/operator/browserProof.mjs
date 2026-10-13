@@ -51,7 +51,7 @@ let settings = {
     agent_profile: { id: 'agp_default', revision: 3 },
   },
   inactivity: { pause_after_seconds: 900 },
-  retention: { checkpoint_grace_days: 7, agent_log_days: 30 },
+  retention: { agent_log_days: 30 },
   limits: { max_sandboxes_per_user: 10, visitor_max_sandboxes: 1, visitor_max_launches_per_day: 5 },
   triggers: { enabled: true, orchestration_paused: false },
   marketplace: { enabled: true },

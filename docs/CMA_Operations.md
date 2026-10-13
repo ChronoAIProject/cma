@@ -909,7 +909,6 @@ submit `expected_revision`; reconcile conflicts without automatic overwrite.
 |---|---|
 | `defaults` | `sbp_default`, `wkp_default`, `agp_default`, each revision 1 |
 | `inactivity.pause_after_seconds` | 900; valid range 60-86400 |
-| `retention.checkpoint_grace_days` | 7 |
 | `retention.agent_log_days` | 90 after terminal state, subject to integrity rules below |
 | `limits.max_sandboxes_per_user` | 3 |
 | `limits.visitor_max_sandboxes` | 1 |
