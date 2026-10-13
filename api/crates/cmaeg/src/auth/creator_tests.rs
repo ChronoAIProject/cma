@@ -314,3 +314,164 @@ async fn malformed_or_duplicate_owner_selection_fails_before_upstream() {
         Err(CreatorAuthError::NotAuthenticated)
     );
 }
+
+#[tokio::test]
+async fn token_authentication_matches_header_authentication_and_shares_its_cache() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let router = Router::new()
+        .route(
+            "/api/v1/users/me",
+            get({
+                let calls = calls.clone();
+                move |headers: HeaderMap| {
+                    let calls = calls.clone();
+                    async move {
+                        calls.fetch_add(1, Ordering::Relaxed);
+                        match headers.get("authorization").unwrap().to_str().unwrap() {
+                            "Bearer human" => (
+                                StatusCode::OK,
+                                r#"{"id":"human","user_type":"person"}"#.to_owned(),
+                            ),
+                            _ => (StatusCode::UNAUTHORIZED, String::new()),
+                        }
+                    }
+                }
+            }),
+        )
+        .route(
+            "/api/v1/orgs/org-a/authorization",
+            get({
+                let calls = calls.clone();
+                move || {
+                    let calls = calls.clone();
+                    async move {
+                        calls.fetch_add(1, Ordering::Relaxed);
+                        r#"{"id":"org-a","your_role":"admin"}"#
+                    }
+                }
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = format!("http://{}", listener.local_addr().unwrap());
+    let task = tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
+    let select = |token: &str, owner: &str| {
+        let mut value = headers(token);
+        value.insert("x-cmaeg-owner", owner.parse().unwrap());
+        value
+    };
+
+    // Each path fills the cache once; the other path then answers from it.
+    let by_token = CreatorAuthenticator::new(&address).unwrap();
+    let personal = by_token.authenticate_token("human", None).await.unwrap();
+    let organization = by_token
+        .authenticate_token("human", Some("org-a"))
+        .await
+        .unwrap();
+    let fetched = calls.load(Ordering::Relaxed);
+    assert_eq!(
+        by_token.authenticate(&headers("human")).await.unwrap(),
+        personal
+    );
+    assert_eq!(
+        by_token
+            .authenticate(&select("human", "org-a"))
+            .await
+            .unwrap(),
+        organization
+    );
+    assert_eq!(calls.load(Ordering::Relaxed), fetched);
+
+    let by_headers = CreatorAuthenticator::new(&address).unwrap();
+    assert_eq!(
+        by_headers.authenticate(&headers("human")).await.unwrap(),
+        personal
+    );
+    assert_eq!(
+        by_headers
+            .authenticate(&select("human", "org-a"))
+            .await
+            .unwrap(),
+        organization
+    );
+    let fetched = calls.load(Ordering::Relaxed);
+    assert_eq!(
+        by_headers.authenticate_token("human", None).await.unwrap(),
+        personal
+    );
+    assert_eq!(
+        by_headers
+            .authenticate_token("human", Some("org-a"))
+            .await
+            .unwrap(),
+        organization
+    );
+    assert_eq!(calls.load(Ordering::Relaxed), fetched);
+    assert_eq!(personal.subject, "human");
+    assert!(!personal.organization);
+    assert_eq!(organization.subject, "org-a");
+    assert!(organization.organization);
+    assert_eq!(organization.token_hash, token_hash("human"));
+
+    // A refused bearer is refused identically, and the refusal is cached too.
+    assert_eq!(
+        by_token.authenticate_token("stranger", None).await,
+        Err(CreatorAuthError::NotAuthenticated)
+    );
+    let fetched = calls.load(Ordering::Relaxed);
+    assert_eq!(
+        by_token.authenticate(&headers("stranger")).await,
+        Err(CreatorAuthError::NotAuthenticated)
+    );
+    assert_eq!(calls.load(Ordering::Relaxed), fetched);
+    task.abort();
+}
+
+#[tokio::test]
+async fn cached_results_expire_on_tokios_clock() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let router = Router::new()
+        .route(
+            "/api/v1/users/me",
+            get(
+                |State(calls): State<Arc<AtomicUsize>>, headers: HeaderMap| async move {
+                    calls.fetch_add(1, Ordering::Relaxed);
+                    match headers.get("authorization").unwrap().to_str().unwrap() {
+                        "Bearer human" => (StatusCode::OK, r#"{"id":"human"}"#.to_owned()),
+                        _ => (StatusCode::UNAUTHORIZED, String::new()),
+                    }
+                },
+            ),
+        )
+        .with_state(calls.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let auth =
+        CreatorAuthenticator::new(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
+    let task = tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
+    // Moves only tokio's clock, while no request is in flight, then lets it
+    // run in real time again.
+    async fn skip(by: Duration) {
+        tokio::time::pause();
+        tokio::time::advance(by).await;
+        tokio::time::resume();
+    }
+    auth.authenticate_token("human", None).await.unwrap();
+    auth.authenticate_token("stranger", None).await.unwrap_err();
+    assert_eq!(calls.load(Ordering::Relaxed), 2);
+    skip(FAILURE_TTL - Duration::from_secs(1)).await;
+    auth.authenticate_token("human", None).await.unwrap();
+    auth.authenticate_token("stranger", None).await.unwrap_err();
+    assert_eq!(calls.load(Ordering::Relaxed), 2);
+    // The failure's 10 s are over; the success's 60 s are not.
+    skip(Duration::from_secs(2)).await;
+    auth.authenticate_token("human", None).await.unwrap();
+    auth.authenticate_token("stranger", None).await.unwrap_err();
+    assert_eq!(calls.load(Ordering::Relaxed), 3);
+    skip(SUCCESS_TTL).await;
+    auth.authenticate_token("human", None).await.unwrap();
+    assert_eq!(calls.load(Ordering::Relaxed), 4);
+    task.abort();
+}

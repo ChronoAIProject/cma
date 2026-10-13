@@ -3,6 +3,8 @@ use serde::{Deserialize, Deserializer};
 use std::fmt;
 use utoipa::ToSchema;
 
+use crate::ids::ConsumerId;
+
 /// A secret that only appears in the encrypted channel blob.
 #[derive(Clone, PartialEq, Eq, ToSchema)]
 #[schema(value_type = String)]
@@ -47,4 +49,8 @@ pub struct ChannelSecrets {
     pub telegram_bot_token: Option<Secret>,
     #[serde(default, skip_serializing)]
     pub telegram_webhook_secret: Option<Secret>,
+    /// Additional consumers' agent keys, which are their provider
+    /// credentials; only ever in the sealed blob, and only when non-empty.
+    #[serde(default, skip_serializing)]
+    pub consumer_keys: Vec<(ConsumerId, Secret)>,
 }

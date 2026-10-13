@@ -19,7 +19,7 @@ pub async fn observe(
     channel: &ResolvedChannel,
     activity: &Activity,
 ) -> Result<(), Problem> {
-    if matches!(&activity.kind, ActivityKind::Event { ce } if ce.r#type == "telegram.managed_bot_created")
+    if matches!(&activity.kind, ActivityKind::Event { ce, .. } if ce.r#type == "telegram.managed_bot_created")
     {
         if let Some(observer) = &state.receipt_observer {
             observer.observe(channel, activity).await?;

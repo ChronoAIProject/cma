@@ -1,10 +1,14 @@
 //! Management operations over sealed definitions and CMA records.
 use super::definition::{
     build_definition, build_update, channel_pointer, validate_create_request,
-    validate_update_request, ChannelCreateRequest, ChannelUpdateRequest,
+    validate_update_request, ChannelCreateRequest, ChannelUpdateRequest, SourceRequest,
 };
-pub use super::state::{CreatedChannel, LoadedChannel, ManagementError, ManagementState};
+pub use super::lifecycle::{delete, rekey};
+pub use super::state::{
+    CreatedChannel, LoadedChannel, ManagementError, ManagementState, RecordedChannel,
+};
 pub use super::test_turn::{test_turn, TestResult};
+use super::write_gate::WriteFlags;
 use crate::{
     auth::Creator,
     providers::{BindingRequest, ToolsAdvertisement},
@@ -24,6 +28,7 @@ pub async fn create(
     creator: &Creator,
     mut request: ChannelCreateRequest,
 ) -> Result<CreatedChannel, ManagementError> {
+    custom_attachments_allowed(state, &request.sources)?;
     crate::connections::binding::expand_create(state, creator, &mut request).await?;
     validate_create_request(&request).map_err(ManagementError::Invalid)?;
     if request.profile.metadata.owner.subject != creator.subject {
@@ -54,6 +59,7 @@ pub async fn create(
         record_id.clone(),
         binding_id.clone(),
         ConformanceLevel::L1,
+        WriteFlags::default(),
     )
     .map_err(ManagementError::Invalid)?;
     let pointer =
@@ -83,7 +89,10 @@ pub async fn create(
     }
     .await;
     let version = match saved {
-        Ok(version) => version,
+        Ok(version) => {
+            state.index.changed(&record_id, &creator.subject, version);
+            version
+        }
         Err(error) => {
             if state
                 .providers
@@ -105,6 +114,58 @@ pub async fn create(
     })
 }
 
+/// Refuse a custom source's attachments setting while inbound media is off.
+///
+/// An image older than this setting cannot parse a stored definition that
+/// carries it, so it is accepted only once the operator has enabled media on
+/// every replica. Removing the setting is always allowed. Origins that are IP
+/// literals must be public; a DNS name is checked against public addresses on
+/// every later fetch, so only the obviously private case is refused here.
+pub(super) fn custom_attachments_allowed(
+    state: &ManagementState,
+    sources: &[SourceRequest],
+) -> Result<(), ManagementError> {
+    for (index, source) in sources.iter().enumerate() {
+        let SourceRequest::Custom {
+            attachments: Some(config),
+            ..
+        } = source
+        else {
+            continue;
+        };
+        let pointer = format!("/sources/{index}/attachments");
+        if !state.media_enabled {
+            tracing::info!(
+                source = index,
+                "custom attachments refused while media is disabled"
+            );
+            return Err(ManagementError::Invalid(ValidationError::new(
+                pointer,
+                "custom_attachments_disabled",
+            )));
+        }
+        for (position, origin) in config.origins.iter().enumerate() {
+            // A malformed origin is left to the structural validation of the
+            // complete definition, which reports its own exact pointer.
+            let address = match url::Url::parse(origin)
+                .ok()
+                .and_then(|url| url.host().map(|host| host.to_owned()))
+            {
+                Some(url::Host::Ipv4(address)) => Some(std::net::IpAddr::V4(address)),
+                Some(url::Host::Ipv6(address)) => Some(std::net::IpAddr::V6(address)),
+                _ => None,
+            };
+            if address.is_some_and(|address| !crate::net::policy::public_ip(address)) {
+                return Err(ManagementError::Invalid(ValidationError::new(
+                    format!("{pointer}/origins/{position}"),
+                    "attachment_origin_not_public",
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
 pub async fn load(
     state: &ManagementState,
     creator: &Creator,
@@ -115,6 +176,42 @@ pub async fn load(
         return Err(ManagementError::NotFound);
     }
     Ok(loaded)
+}
+
+/// The channel `record_id` stores, read for `creator` only: the
+/// record-keyed counterpart of [`load`], with the same owner check, for the
+/// console's summaries. Another owner's record is `NotFound`. A definition
+/// that opens but fails validation is returned with `valid: false` so the
+/// console can name it; nothing may act on such a definition.
+pub async fn load_by_record(
+    state: &ManagementState,
+    creator: &Creator,
+    record_id: &RecordId,
+) -> Result<RecordedChannel, ManagementError> {
+    let pointer =
+        channel_pointer(&state.cma_base_url, record_id).map_err(ManagementError::Invalid)?;
+    let record = state
+        .records
+        .get(&pointer.record_url)
+        .await
+        .map_err(|error| match error {
+            RecordError::NotFound => ManagementError::NotFound,
+            other => ManagementError::Record(other),
+        })?;
+    let opened = open_blob(state.master_keys.as_ref(), &record.blob)
+        .map_err(|_| ManagementError::Internal("channel blob cannot be opened".into()))?;
+    let definition: ChannelDefinition = serde_json::from_slice(&opened.payload)
+        .map_err(|_| ManagementError::Internal("channel definition cannot be read".into()))?;
+    if definition.record_id != *record_id || definition.owner.subject != creator.subject {
+        return Err(ManagementError::NotFound);
+    }
+    let valid = definition.validate().is_ok();
+    Ok(RecordedChannel {
+        definition,
+        version: record.version,
+        record_bytes: record.blob.len(),
+        valid,
+    })
 }
 
 pub async fn update(
@@ -135,6 +232,7 @@ pub async fn update(
     )
     .await?;
     validate_update_request(&request).map_err(ManagementError::Invalid)?;
+    custom_attachments_allowed(state, &request.sources)?;
     if current
         .definition
         .creation
@@ -160,8 +258,9 @@ pub async fn update(
         )));
     }
     state.resolver.invalidate(channel_id.as_str());
-    let mut definition =
-        build_update(&request, &current.definition).map_err(ManagementError::Invalid)?;
+    // The write gate runs inside the build, before the provider sees anything.
+    let mut definition = build_update(&request, &current.definition, WriteFlags::default())
+        .map_err(ManagementError::Invalid)?;
     definition.version = current.record.version;
     // Validate the complete definition and its storage bound before the provider sees a mutation.
     seal_definition(&state.master_keys, &definition)?;
@@ -191,6 +290,9 @@ pub async fn update(
         )
         .await
         .map_err(ManagementError::Record)?;
+    state
+        .index
+        .changed(&definition.record_id, &creator.subject, version);
     state.resolver.invalidate(channel_id.as_str());
     Ok(LoadedChannel {
         channel_id: channel_id.clone(),
@@ -200,85 +302,7 @@ pub async fn update(
     })
 }
 
-pub async fn delete(
-    state: &ManagementState,
-    creator: &Creator,
-    channel_id: &ChannelId,
-    expected_version: u64,
-) -> Result<(), ManagementError> {
-    let pointer = open_pointer(state, channel_id)?;
-    let _guard = state.mutation_guard(pointer.record_id.as_str()).await;
-    let current = load(state, creator, channel_id).await?;
-    if current.record.version != expected_version {
-        return Err(ManagementError::Conflict {
-            expected: expected_version,
-            actual: Some(current.record.version),
-        });
-    }
-    crate::connections::binding::disconnect(state, &current.definition, channel_id).await?;
-    state.resolver.invalidate(channel_id.as_str());
-    let credential = current
-        .definition
-        .secrets
-        .provider_credential
-        .as_ref()
-        .ok_or_else(|| {
-            ManagementError::Internal("channel provider credential is unavailable".into())
-        })?;
-    state
-        .providers
-        .unbind(
-            &current.definition.provider.slug,
-            &current.definition.provider.binding_id,
-            credential,
-        )
-        .await
-        .map_err(ManagementError::Provider)?;
-    match state
-        .records
-        .delete(&current.definition.record_id, expected_version)
-        .await
-    {
-        Ok(true) | Ok(false) => {
-            crate::connections::binding::release(state, &current.definition).await?;
-            state.resolver.invalidate(channel_id.as_str());
-            Ok(())
-        }
-        Err(RecordError::Conflict { expected, actual }) => {
-            Err(ManagementError::Conflict { expected, actual })
-        }
-        Err(error) => Err(ManagementError::Record(error)),
-    }
-}
-
-pub async fn rekey(state: &ManagementState, channel_id: &ChannelId) -> Result<u8, ManagementError> {
-    let pointer = open_pointer(state, channel_id)?;
-    let _guard = state.mutation_guard(pointer.record_id.as_str()).await;
-    let loaded = load_unowned(state, channel_id).await?;
-    state.resolver.invalidate(channel_id.as_str());
-    let mut definition = loaded.definition;
-    definition.version = loaded.record.version;
-    let blob = seal_definition(state.master_keys.as_ref(), &definition)?;
-    state
-        .records
-        .put(
-            &definition.record_id,
-            &definition.owner.subject,
-            &blob,
-            Some(loaded.record.version),
-        )
-        .await
-        .map_err(|error| match error {
-            RecordError::Conflict { expected, actual } => {
-                ManagementError::Conflict { expected, actual }
-            }
-            other => ManagementError::Record(other),
-        })?;
-    state.resolver.invalidate(channel_id.as_str());
-    Ok(state.master_keys.current_kid())
-}
-
-fn open_pointer(
+pub(super) fn open_pointer(
     state: &ManagementState,
     channel_id: &ChannelId,
 ) -> Result<ChannelPointer, ManagementError> {
@@ -302,7 +326,7 @@ fn open_pointer(
     Ok(pointer)
 }
 
-async fn load_unowned(
+pub(super) async fn load_unowned(
     state: &ManagementState,
     channel_id: &ChannelId,
 ) -> Result<LoadedChannel, ManagementError> {

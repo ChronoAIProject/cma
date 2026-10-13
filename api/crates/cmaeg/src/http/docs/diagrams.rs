@@ -55,4 +55,9 @@ pub(super) const DIAGRAMS: &[(&str, &str, &str)] = &[
         "architecture-0",
         include_str!("../../../assets/docs/architecture-0.svg"),
     ),
+    (
+        "85b38235dde811586cebe405ab92528997e701ea95fec62205b46a7491771069",
+        "architecture-1",
+        include_str!("../../../assets/docs/architecture-1.svg"),
+    ),
 ];

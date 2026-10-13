@@ -34,10 +34,14 @@ async fn run(
 ) -> Result<TestResult, ManagementError> {
     let current = load(state, creator, channel_id).await?;
     let definition = current.definition;
-    let credential = definition
-        .secrets
-        .provider_credential
-        .as_ref()
+    // The test turn verifies the binding management created: the default
+    // consumer's.
+    let consumer = definition
+        .consumer(None)
+        .ok_or_else(|| unavailable("channel consumer is not configured"))?;
+    let provider = consumer.provider;
+    let credential = consumer
+        .credential
         .ok_or_else(|| unavailable("channel provider credential is unavailable"))?;
     let conversation_id = ConversationId::derive(
         &state.master_keys,
@@ -48,14 +52,14 @@ async fn run(
     state
         .providers
         .ensure_conversation(
-            &definition.provider.slug,
-            &definition.provider.binding_id,
+            &provider.slug,
+            &provider.binding_id,
             &conversation_id,
             credential,
         )
         .await
         .map_err(ManagementError::Provider)?;
-    let mut stream = state.providers.start_turn(&definition.provider.slug, TurnRequest {
+    let mut stream = state.providers.start_turn(&provider.slug, TurnRequest {
                 timing: None,
         conversation_id,
         input: vec![serde_json::json!({"role":"user","content":[{"type":"input_text","text":"CMAEG channel test"}]})],
@@ -96,7 +100,7 @@ async fn run(
             .duration_since(stream.request_started)
             .as_millis() as u64,
         first_text,
-        level: definition.provider.level,
+        level: provider.level,
     })
 }
 

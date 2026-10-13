@@ -1,3 +1,7 @@
+#[path = "restore/routed.rs"]
+mod routed;
+#[path = "../../cmaeg-core/tests/routing_policy/fixture.rs"]
+mod routing_fixture;
 #[path = "restore/support.rs"]
 mod support;
 use cmaeg::{channels::resolver::ResolveError, http::readiness::Readiness, ChannelCacheConfig};
@@ -17,6 +21,11 @@ async fn concurrent_cold_calls_share_one_get_and_warm_hits_share_the_arc() {
     let first = results[0].as_ref().unwrap();
     assert_eq!(first.version, 1);
     assert_eq!(first.agent_key_hash, [0; 32]);
+    // A legacy channel's only consumer is the default, decoded from the same hash.
+    assert_eq!(
+        first.consumer_keys,
+        [(cmaeg_core::ids::ConsumerId::default_consumer(), [0; 32])]
+    );
     for result in &results {
         assert!(Arc::ptr_eq(first, result.as_ref().unwrap()));
     }

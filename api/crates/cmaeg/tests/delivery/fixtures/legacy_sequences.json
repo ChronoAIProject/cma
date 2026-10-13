@@ -1,0 +1,698 @@
+{
+  "a_ack_then_answer": {
+    "calls": [
+      {
+        "at_ms": 1500,
+        "body": {
+          "message_id": "inbound-1",
+          "reply": {
+            "metadata": null,
+            "text": "Working on it…"
+          }
+        },
+        "content_type": "application/json",
+        "credential": "reply_token",
+        "endpoint": "/api/v1/channel-relay/reply",
+        "timeout_ms": 5000,
+        "transport": "relay"
+      },
+      {
+        "at_ms": 4500,
+        "body": {
+          "message_id": "inbound-1",
+          "reply": {
+            "metadata": null,
+            "text": "The answer."
+          }
+        },
+        "content_type": "application/json",
+        "credential": "channel_key",
+        "endpoint": "/api/v1/channel-relay/reply",
+        "timeout_ms": 5000,
+        "transport": "relay"
+      }
+    ],
+    "receipts": [],
+    "sync": []
+  },
+  "b_immediate_answer": {
+    "calls": [
+      {
+        "at_ms": 0,
+        "body": {
+          "message_id": "inbound-1",
+          "reply": {
+            "metadata": null,
+            "text": "Quick."
+          }
+        },
+        "content_type": "application/json",
+        "credential": "reply_token",
+        "endpoint": "/api/v1/channel-relay/reply",
+        "timeout_ms": 5000,
+        "transport": "relay"
+      }
+    ],
+    "receipts": [],
+    "sync": []
+  },
+  "c_heartbeats": {
+    "calls": [
+      {
+        "at_ms": 1000,
+        "body": {
+          "message_id": "inbound-1",
+          "reply": {
+            "metadata": null,
+            "text": "Working on it…"
+          }
+        },
+        "content_type": "application/json",
+        "credential": "reply_token",
+        "endpoint": "/api/v1/channel-relay/reply",
+        "timeout_ms": 5000,
+        "transport": "relay"
+      },
+      {
+        "at_ms": 11000,
+        "body": {
+          "message_id": "inbound-1",
+          "reply": {
+            "metadata": null,
+            "text": "Still working…"
+          }
+        },
+        "content_type": "application/json",
+        "credential": "channel_key",
+        "endpoint": "/api/v1/channel-relay/reply",
+        "timeout_ms": 5000,
+        "transport": "relay"
+      },
+      {
+        "at_ms": 21000,
+        "body": {
+          "message_id": "inbound-1",
+          "reply": {
+            "metadata": null,
+            "text": "Still working…"
+          }
+        },
+        "content_type": "application/json",
+        "credential": "channel_key",
+        "endpoint": "/api/v1/channel-relay/reply",
+        "timeout_ms": 5000,
+        "transport": "relay"
+      },
+      {
+        "at_ms": 31000,
+        "body": {
+          "message_id": "inbound-1",
+          "reply": {
+            "metadata": null,
+            "text": "Still working…"
+          }
+        },
+        "content_type": "application/json",
+        "credential": "channel_key",
+        "endpoint": "/api/v1/channel-relay/reply",
+        "timeout_ms": 5000,
+        "transport": "relay"
+      },
+      {
+        "at_ms": 41000,
+        "body": {
+          "message_id": "inbound-1",
+          "reply": {
+            "metadata": null,
+            "text": "Still working…"
+          }
+        },
+        "content_type": "application/json",
+        "credential": "channel_key",
+        "endpoint": "/api/v1/channel-relay/reply",
+        "timeout_ms": 5000,
+        "transport": "relay"
+      },
+      {
+        "at_ms": 51000,
+        "body": {
+          "message_id": "inbound-1",
+          "reply": {
+            "metadata": null,
+            "text": "Still working…"
+          }
+        },
+        "content_type": "application/json",
+        "credential": "channel_key",
+        "endpoint": "/api/v1/channel-relay/reply",
+        "timeout_ms": 5000,
+        "transport": "relay"
+      },
+      {
+        "at_ms": 70000,
+        "body": {
+          "message_id": "inbound-1",
+          "reply": {
+            "metadata": null,
+            "text": "Done."
+          }
+        },
+        "content_type": "application/json",
+        "credential": "channel_key",
+        "endpoint": "/api/v1/channel-relay/reply",
+        "timeout_ms": 5000,
+        "transport": "relay"
+      }
+    ],
+    "receipts": [],
+    "sync": []
+  },
+  "d_failure_text": {
+    "calls": [
+      {
+        "at_ms": 0,
+        "body": {
+          "message_id": "inbound-1",
+          "reply": {
+            "metadata": null,
+            "text": "Sorry, I couldn’t finish that request. Please try again."
+          }
+        },
+        "content_type": "application/json",
+        "credential": "reply_token",
+        "endpoint": "/api/v1/channel-relay/reply",
+        "timeout_ms": 5000,
+        "transport": "relay"
+      }
+    ],
+    "receipts": [],
+    "sync": []
+  },
+  "e_tool_reply_suppresses_auto_final": {
+    "calls": [
+      {
+        "at_ms": 0,
+        "body": {
+          "message_id": "inbound-1",
+          "reply": {
+            "metadata": null,
+            "text": "From the tool."
+          }
+        },
+        "content_type": "application/json",
+        "credential": "reply_token",
+        "endpoint": "/api/v1/channel-relay/reply",
+        "timeout_ms": 5000,
+        "transport": "relay"
+      }
+    ],
+    "receipts": [
+      {
+        "at_ms": 0,
+        "command": "reply",
+        "receipt": {
+          "delivery": {
+            "outcome": "confirmed",
+            "platform_message_id": "platform-1"
+          },
+          "message_ref": "<sealed:mr>",
+          "rendering": {
+            "blocks": [],
+            "outcome": "rendered"
+          }
+        }
+      }
+    ],
+    "sync": []
+  },
+  "f_custom_webhook_and_sync": {
+    "calls": [
+      {
+        "at_ms": 0,
+        "endpoint": "receiver.example",
+        "transport": "dns"
+      },
+      {
+        "at_ms": 0,
+        "body": {
+          "data": {
+            "conversation_id": "conv_00000000000000000000000000000001",
+            "error": null,
+            "event_id": "msg-1",
+            "message": {
+              "blocks": [],
+              "text": "Interim."
+            },
+            "text": "Interim."
+          },
+          "datacontenttype": "application/json",
+          "id": "<uuid>",
+          "source": "https://gateway.example/channels/d73609e085657147",
+          "specversion": "1.0",
+          "subject": "msg-1",
+          "time": "<time>",
+          "type": "cmaeg.response.message"
+        },
+        "endpoint": "https://receiver.example/events",
+        "headers": {
+          "content-type": "application/cloudevents+json",
+          "webhook-id": "<uuid>",
+          "webhook-signature": "<sig>",
+          "webhook-timestamp": "<time>"
+        },
+        "transport": "webhook"
+      },
+      {
+        "at_ms": 0,
+        "endpoint": "receiver.example",
+        "transport": "dns"
+      },
+      {
+        "at_ms": 0,
+        "body": {
+          "data": {
+            "conversation_id": "conv_00000000000000000000000000000001",
+            "error": null,
+            "event_id": "msg-1",
+            "message": null,
+            "text": "Hello."
+          },
+          "datacontenttype": "application/json",
+          "id": "<uuid>",
+          "source": "https://gateway.example/channels/d73609e085657147",
+          "specversion": "1.0",
+          "subject": "msg-1",
+          "time": "<time>",
+          "type": "cmaeg.response.completed"
+        },
+        "endpoint": "https://receiver.example/events",
+        "headers": {
+          "content-type": "application/cloudevents+json",
+          "webhook-id": "<uuid>",
+          "webhook-signature": "<sig>",
+          "webhook-timestamp": "<time>"
+        },
+        "transport": "webhook"
+      },
+      {
+        "at_ms": 1000,
+        "endpoint": "receiver.example",
+        "transport": "dns"
+      },
+      {
+        "at_ms": 1000,
+        "body": {
+          "data": {
+            "conversation_id": "conv_00000000000000000000000000000001",
+            "error": null,
+            "event_id": "msg-1",
+            "message": null,
+            "text": "Hello."
+          },
+          "datacontenttype": "application/json",
+          "id": "<uuid>",
+          "source": "https://gateway.example/channels/d73609e085657147",
+          "specversion": "1.0",
+          "subject": "msg-1",
+          "time": "<time>",
+          "type": "cmaeg.response.completed"
+        },
+        "endpoint": "https://receiver.example/events",
+        "headers": {
+          "content-type": "application/cloudevents+json",
+          "webhook-id": "<uuid>",
+          "webhook-signature": "<sig>",
+          "webhook-timestamp": "<time>"
+        },
+        "transport": "webhook"
+      },
+      {
+        "at_ms": 5000,
+        "endpoint": "receiver.example",
+        "transport": "dns"
+      },
+      {
+        "at_ms": 5000,
+        "body": {
+          "data": {
+            "conversation_id": "conv_00000000000000000000000000000001",
+            "error": null,
+            "event_id": "msg-1",
+            "message": null,
+            "text": "Hello."
+          },
+          "datacontenttype": "application/json",
+          "id": "<uuid>",
+          "source": "https://gateway.example/channels/d73609e085657147",
+          "specversion": "1.0",
+          "subject": "msg-1",
+          "time": "<time>",
+          "type": "cmaeg.response.completed"
+        },
+        "endpoint": "https://receiver.example/events",
+        "headers": {
+          "content-type": "application/cloudevents+json",
+          "webhook-id": "<uuid>",
+          "webhook-signature": "<sig>",
+          "webhook-timestamp": "<time>"
+        },
+        "transport": "webhook"
+      },
+      {
+        "at_ms": 21000,
+        "endpoint": "receiver.example",
+        "transport": "dns"
+      },
+      {
+        "at_ms": 21000,
+        "body": {
+          "data": {
+            "conversation_id": "conv_00000000000000000000000000000001",
+            "error": null,
+            "event_id": "msg-1",
+            "message": null,
+            "text": "Hello."
+          },
+          "datacontenttype": "application/json",
+          "id": "<uuid>",
+          "source": "https://gateway.example/channels/d73609e085657147",
+          "specversion": "1.0",
+          "subject": "msg-1",
+          "time": "<time>",
+          "type": "cmaeg.response.completed"
+        },
+        "endpoint": "https://receiver.example/events",
+        "headers": {
+          "content-type": "application/cloudevents+json",
+          "webhook-id": "<uuid>",
+          "webhook-signature": "<sig>",
+          "webhook-timestamp": "<time>"
+        },
+        "transport": "webhook"
+      }
+    ],
+    "receipts": [
+      {
+        "at_ms": 0,
+        "command": "reply",
+        "receipt": {
+          "delivery": {
+            "outcome": "confirmed",
+            "platform_message_id": null
+          },
+          "message_ref": null,
+          "rendering": {
+            "blocks": [],
+            "outcome": "rendered"
+          }
+        }
+      }
+    ],
+    "sync": [
+      {
+        "at_ms": 0,
+        "data": {
+          "conversation_id": "conv_00000000000000000000000000000001",
+          "event_id": "msg-1",
+          "text": "Hel"
+        },
+        "event": "cmaeg.text.delta"
+      },
+      {
+        "at_ms": 0,
+        "data": {
+          "conversation_id": "conv_00000000000000000000000000000001",
+          "error": null,
+          "event_id": "msg-1",
+          "message": {
+            "blocks": [],
+            "text": "Interim."
+          },
+          "text": "Interim."
+        },
+        "event": "cmaeg.message"
+      },
+      {
+        "at_ms": 0,
+        "data": {
+          "conversation_id": "conv_00000000000000000000000000000001",
+          "error": null,
+          "event_id": "msg-1",
+          "message": {
+            "blocks": [],
+            "text": "Hello."
+          },
+          "text": "Hello."
+        },
+        "event": "cmaeg.message"
+      },
+      {
+        "at_ms": 0,
+        "data": {
+          "conversation_id": "conv_00000000000000000000000000000001",
+          "error": null,
+          "event_id": "msg-1",
+          "message": null,
+          "text": "Hello."
+        },
+        "event": "cmaeg.completed"
+      }
+    ]
+  },
+  "g_token_once_then_channel_key": {
+    "calls": [
+      {
+        "at_ms": 0,
+        "body": {
+          "message_id": "inbound-1",
+          "reply": {
+            "metadata": null,
+            "text": "First."
+          }
+        },
+        "content_type": "application/json",
+        "credential": "reply_token",
+        "endpoint": "/api/v1/channel-relay/reply",
+        "timeout_ms": 5000,
+        "transport": "relay"
+      },
+      {
+        "at_ms": 3000,
+        "body": {
+          "message_id": "inbound-1",
+          "reply": {
+            "metadata": null,
+            "text": "First."
+          }
+        },
+        "content_type": "application/json",
+        "credential": "channel_key",
+        "endpoint": "/api/v1/channel-relay/reply",
+        "timeout_ms": 5000,
+        "transport": "relay"
+      },
+      {
+        "at_ms": 6000,
+        "body": {
+          "message_id": "inbound-1",
+          "reply": {
+            "metadata": null,
+            "text": "Second."
+          }
+        },
+        "content_type": "application/json",
+        "credential": "channel_key",
+        "endpoint": "/api/v1/channel-relay/reply",
+        "timeout_ms": 5000,
+        "transport": "relay"
+      }
+    ],
+    "receipts": [
+      {
+        "at_ms": 3000,
+        "command": "reply",
+        "receipt": {
+          "delivery": {
+            "outcome": "confirmed",
+            "platform_message_id": "platform-2"
+          },
+          "message_ref": "<sealed:mr>",
+          "rendering": {
+            "blocks": [],
+            "outcome": "rendered"
+          }
+        }
+      },
+      {
+        "at_ms": 6000,
+        "command": "reply",
+        "receipt": {
+          "delivery": {
+            "outcome": "confirmed",
+            "platform_message_id": "platform-3"
+          },
+          "message_ref": "<sealed:mr>",
+          "rendering": {
+            "blocks": [],
+            "outcome": "rendered"
+          }
+        }
+      }
+    ],
+    "sync": []
+  },
+  "h_relay_update_and_native_controls": {
+    "calls": [
+      {
+        "body": {
+          "message_id": "inbound-1",
+          "reply": {
+            "metadata": {
+              "reply_markup": {
+                "inline_keyboard": [
+                  [
+                    {
+                      "callback_data": "ce1:<uuid>:0",
+                      "text": "First"
+                    }
+                  ],
+                  [
+                    {
+                      "callback_data": "ce1:<uuid>:1",
+                      "text": "Second"
+                    }
+                  ]
+                ]
+              }
+            },
+            "text": "Choose"
+          }
+        },
+        "content_type": "application/json",
+        "credential": "channel_key",
+        "endpoint": "/api/v1/channel-relay/reply",
+        "timeout_ms": 5000,
+        "transport": "relay"
+      },
+      {
+        "body": {
+          "message_id": "platform-1",
+          "outbound_message_id": "reply-1",
+          "reply": {
+            "metadata": {
+              "reply_markup": {
+                "inline_keyboard": [
+                  [
+                    {
+                      "callback_data": "ce1:<uuid>:0",
+                      "text": "Again"
+                    }
+                  ]
+                ]
+              }
+            },
+            "text": "Chosen: First"
+          }
+        },
+        "content_type": "application/json",
+        "credential": "channel_key",
+        "endpoint": "/api/v1/channel-relay/reply/update",
+        "timeout_ms": 5000,
+        "transport": "relay"
+      },
+      {
+        "body": {
+          "chat_id": "42",
+          "reply_markup": {
+            "inline_keyboard": [
+              [
+                {
+                  "callback_data": "ce1:<uuid>:0",
+                  "text": "First"
+                }
+              ],
+              [
+                {
+                  "callback_data": "ce1:<uuid>:1",
+                  "text": "Second"
+                }
+              ]
+            ]
+          },
+          "text": "Choose"
+        },
+        "content_type": "application/json",
+        "credential": "bot_token",
+        "endpoint": "sendMessage",
+        "timeout_ms": 5000,
+        "transport": "telegram"
+      }
+    ],
+    "receipts": [
+      {
+        "command": "reply",
+        "receipt": {
+          "delivery": {
+            "outcome": "confirmed",
+            "platform_message_id": "platform-1"
+          },
+          "message_ref": "<sealed:mr>",
+          "rendering": {
+            "blocks": [
+              {
+                "index": 0,
+                "outcome": {
+                  "type": "exact"
+                }
+              }
+            ],
+            "outcome": "rendered"
+          }
+        }
+      },
+      {
+        "command": "update",
+        "receipt": {
+          "delivery": {
+            "outcome": "confirmed",
+            "platform_message_id": "platform-1"
+          },
+          "message_ref": "<sealed:mr>",
+          "rendering": {
+            "blocks": [
+              {
+                "index": 0,
+                "outcome": {
+                  "type": "exact"
+                }
+              }
+            ],
+            "outcome": "rendered"
+          }
+        }
+      },
+      {
+        "command": "reply",
+        "receipt": {
+          "delivery": {
+            "outcome": "confirmed",
+            "platform_message_id": "103"
+          },
+          "message_ref": "<sealed:mr>",
+          "rendering": {
+            "blocks": [
+              {
+                "index": 0,
+                "outcome": {
+                  "type": "exact"
+                }
+              }
+            ],
+            "outcome": "rendered"
+          }
+        }
+      }
+    ],
+    "sync": []
+  }
+}
