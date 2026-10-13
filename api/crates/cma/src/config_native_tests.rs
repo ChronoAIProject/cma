@@ -55,12 +55,16 @@ fn native_configuration_preserves_local_defaults_and_rejects_partial_remote_cred
         ("CHRONO_AGENT_SANDBOX_TOKEN_FILE", "/var/run/native/token"),
     ];
     for bits in 1..7 {
-        let subset: Vec<_> = fields
+        let mut subset: Vec<_> = fields
             .iter()
             .enumerate()
             .filter(|(i, _)| bits & (1 << i) != 0)
             .map(|(_, field)| *field)
             .collect();
+        subset.extend([
+            ("CHRONO_AGENT_SANDBOX_ENABLED", "true"),
+            ("CHRONO_AGENT_SANDBOX_CONTROL_KEY_FILE", key.path_str()),
+        ]);
         assert!(configured(&subset)
             .unwrap_err()
             .contains("must be configured together"));
@@ -170,6 +174,11 @@ fn different_native_home_policy_requires_independent_authority_when_enabled() {
 
 #[test]
 fn metadata_auth_is_explicit_and_cannot_mix_with_token_file_or_partial_target() {
+    let key = TemporaryEntry::file(b"native-control-key-fixture-padding-0000");
+    let enabled = [
+        ("CHRONO_AGENT_SANDBOX_ENABLED", "true"),
+        ("CHRONO_AGENT_SANDBOX_CONTROL_KEY_FILE", key.path_str()),
+    ];
     let fields = [
         (
             "CHRONO_AGENT_SANDBOX_API_SERVER",
@@ -178,34 +187,56 @@ fn metadata_auth_is_explicit_and_cannot_mix_with_token_file_or_partial_target() 
         ("CHRONO_AGENT_SANDBOX_CA_FILE", "/etc/singapore/ca.crt"),
         ("CHRONO_AGENT_SANDBOX_AUTH_MODE", "google-metadata"),
     ];
-    let config = configured(&fields).unwrap();
+    let config = configured(&[enabled.as_slice(), fields.as_slice()].concat()).unwrap();
     assert_eq!(
         config.runtime.agent_sandbox_connection.unwrap().auth,
         layer3_adapter::agent_sandbox::RemoteKubernetesAuth::GoogleMetadata
     );
     for missing in 0..fields.len() {
-        let subset: Vec<_> = fields
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| *i != missing)
-            .map(|(_, v)| *v)
-            .collect();
+        let mut subset = enabled.to_vec();
+        subset.extend(
+            fields
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| *i != missing)
+                .map(|(_, v)| *v),
+        );
         assert!(configured(&subset).is_err());
     }
-    let mut mixed = fields.to_vec();
+    let mut mixed = [enabled.as_slice(), fields.as_slice()].concat();
     mixed.push(("CHRONO_AGENT_SANDBOX_TOKEN_FILE", "/var/run/native/token"));
     assert!(configured(&mixed).unwrap_err().contains("must be unset"));
-    assert!(configured(&[("CHRONO_AGENT_SANDBOX_AUTH_MODE", "auto")]).is_err());
+    assert!(configured(
+        &[
+            enabled.as_slice(),
+            &[("CHRONO_AGENT_SANDBOX_AUTH_MODE", "auto")]
+        ]
+        .concat()
+    )
+    .is_err());
 }
 
 #[test]
 fn disabled_native_provider_does_not_require_projected_remote_connection() {
-    let values = [
-        ("CHRONO_AGENT_SANDBOX_ENABLED", "false"),
+    let projected = [
         ("CHRONO_AGENT_SANDBOX_AUTH_MODE", "google-metadata"),
         ("CHRONO_AGENT_SANDBOX_CA_FILE", "/etc/chrono-pod/ca.crt"),
     ];
-    let config = configured(&values).expect("disabled native target is optional");
-    assert!(config.runtime.agent_sandbox.is_none());
-    assert!(config.runtime.agent_sandbox_connection.is_none());
+    for bits in 0..4 {
+        let partial: Vec<_> = projected
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| bits & (1 << i) != 0)
+            .map(|(_, value)| *value)
+            .collect();
+        for explicit_disable in [false, true] {
+            let mut values = partial.clone();
+            if explicit_disable {
+                values.push(("CHRONO_AGENT_SANDBOX_ENABLED", "false"));
+            }
+            let config = configured(&values).expect("disabled native target is optional");
+            assert!(config.runtime.agent_sandbox.is_none());
+            assert!(config.runtime.agent_sandbox_connection.is_none());
+        }
+    }
 }
