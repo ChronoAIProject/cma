@@ -1,9 +1,48 @@
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 import { EventGateway } from './EventGateway';
+import { ChannelEditor, type Channel } from './ChannelEditor';
 
 afterEach(() => vi.unstubAllGlobals());
+it.each([undefined, { type: 'existing_agent' as const, agent_id: 'agt_borrowed' }])(
+  'preserves a channel provider target when saving an unrelated name change: %j',
+  async (target) => {
+    const channel: Channel = {
+      record_id: 'record',
+      channel_id: 'channel',
+      version: 7,
+      provider: { slug: 'cma_codex', level: 'l2' },
+      definition: {
+        schema_version: 1,
+        name: 'Original name',
+        sources: [],
+        provider: { target },
+      },
+      endpoints: { custom_event_url: '', nyxid_callback_url: '' },
+    };
+    const fetcher = vi.fn().mockResolvedValue(new Response('{}'));
+    vi.stubGlobal('fetch', fetcher);
+    const done = vi.fn();
+    render(<ChannelEditor channel={channel} denied={vi.fn()} onDone={done} />);
+    const input = screen.getByLabelText<HTMLTextAreaElement>('Channel configuration JSON');
+    const policy = JSON.parse(input.value);
+    policy.name = 'Renamed channel';
+    fireEvent.change(input, { target: { value: JSON.stringify(policy) } });
+    await userEvent.click(screen.getByRole('button', { name: 'Save channel' }));
+    await waitFor(() => expect(done).toHaveBeenCalledOnce());
+    expect(fetcher).toHaveBeenCalledOnce();
+    const [url, request] = fetcher.mock.calls[0]!;
+    expect(url).toBe('/api/event-gateway/v1/channels/channel');
+    expect(request.method).toBe('PUT');
+    const body = JSON.parse(request.body);
+    expect(body.name).toBe('Renamed channel');
+    expect(body.expected_version).toBe(7);
+    expect(body.provider).toEqual({ slug: 'cma_codex', ...(target ? { target } : {}) });
+    expect(body).not.toHaveProperty('credentials');
+  },
+);
+
 it('keeps legacy channel metadata visible and uses its existing console while modern rows retain actions', async () => {
   const fetcher = vi.fn().mockResolvedValue(
     new Response(
