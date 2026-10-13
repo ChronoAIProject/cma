@@ -197,7 +197,10 @@ impl AsyncWrite for RuntimeStream {
         Pin::new(&mut self.stream).poll_write(cx, buf)
     }
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        self.check(cx, true)?;
+        // HTTP keeps polling flush while it drains response bytes. A successful
+        // exec exit must allow that no-op; new writes still fail in poll_write.
+        // A failed or missing exec status continues to reject both operations.
+        self.check(cx, false)?;
         Pin::new(&mut self.stream).poll_flush(cx)
     }
     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
