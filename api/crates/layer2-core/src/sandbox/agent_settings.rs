@@ -55,6 +55,11 @@ impl AgentSettings {
 }
 
 impl Agent {
+    pub fn selected_model(&self) -> Option<String> {
+        let model = self.settings().model;
+        (!model.is_empty()).then_some(model)
+    }
+
     pub fn settings(&self) -> AgentSettings {
         self.conversation
             .settings

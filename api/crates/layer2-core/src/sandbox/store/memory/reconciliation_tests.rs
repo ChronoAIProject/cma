@@ -861,6 +861,7 @@ async fn runtime_loss_keeps_public_transcript_and_usage_readable_before_reopen()
             runtime_generation: 4,
         },
         AgentLogKind::TurnStarted {
+            model: None,
             turn_sequence: 3,
             origin_key: None,
         },

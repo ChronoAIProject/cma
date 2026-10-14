@@ -85,9 +85,17 @@ pub(super) fn fold_agent_log(
             AgentLogKind::TurnStarted {
                 turn_sequence,
                 origin_key,
+                model,
             } => {
                 if latest_conversation.is_none() || *turn_sequence != entry.seq {
                     return Err("agent turn start is invalid".into());
+                }
+                if model.as_ref().is_some_and(|model| {
+                    model.len() > 256
+                        || model.trim() != model
+                        || model.chars().any(char::is_control)
+                }) {
+                    return Err("agent turn model is invalid".into());
                 }
                 transcript.start(*turn_sequence, origin_key.clone(), &entry.appended_at)?;
             }

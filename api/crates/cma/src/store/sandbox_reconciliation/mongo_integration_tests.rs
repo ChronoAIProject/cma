@@ -192,6 +192,7 @@ async fn runtime_loss_recovers_checkpoint_agents_preserves_history_and_stops_new
             state: AgentOperationDelivery::DispatchFenced,
         },
         AgentLogKind::TurnStarted {
+            model: None,
             turn_sequence: 3,
             origin_key: None,
         },

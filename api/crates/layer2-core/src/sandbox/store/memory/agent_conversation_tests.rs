@@ -153,6 +153,7 @@ fn begin_turn(
         appended_at: NOW.into(),
         agent_logs: vec![
             AgentLogKind::TurnStarted {
+                model: None,
                 turn_sequence,
                 origin_key: None,
             },
@@ -200,6 +201,7 @@ fn begin_first_message(
                 recovery_generation: 0,
             },
             AgentLogKind::TurnStarted {
+                model: None,
                 turn_sequence,
                 origin_key: Some("conversation".into()),
             },

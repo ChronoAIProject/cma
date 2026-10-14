@@ -28,6 +28,7 @@ async fn working(store: &MongoSandboxStore, id: &str) -> Agent {
     mutation.agent.conversation.last_seq = current.conversation.last_seq + 2;
     mutation.agent_logs = vec![
         AgentLogKind::TurnStarted {
+            model: None,
             turn_sequence,
             origin_key: None,
         },

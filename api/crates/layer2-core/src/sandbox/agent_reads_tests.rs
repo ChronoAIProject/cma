@@ -680,6 +680,7 @@ async fn transcript_reconstructs_completed_and_active_turns() {
                 runtime_generation: 1,
             },
             AgentLogKind::TurnStarted {
+                model: None,
                 turn_sequence: 3,
                 origin_key: Some("manual".into()),
             },
@@ -694,6 +695,7 @@ async fn transcript_reconstructs_completed_and_active_turns() {
             },
             AgentLogKind::TurnCompleted { turn_sequence: 3 },
             AgentLogKind::TurnStarted {
+                model: None,
                 turn_sequence: 8,
                 origin_key: None,
             },
@@ -833,6 +835,7 @@ fn steering_history() -> Vec<AgentLogKind> {
             runtime_generation: 1,
         },
         AgentLogKind::TurnStarted {
+            model: None,
             turn_sequence: 3,
             origin_key: None,
         },
@@ -1040,6 +1043,7 @@ async fn transcript_reconstructs_queue_input_across_a_pre_write_retry() {
                 state: AgentOperationDelivery::DispatchFenced,
             },
             AgentLogKind::TurnStarted {
+                model: None,
                 turn_sequence: 5,
                 origin_key: Some(queued_message_origin(3)),
             },
@@ -1069,6 +1073,7 @@ async fn transcript_reconstructs_queue_input_across_a_pre_write_retry() {
                 state: AgentOperationDelivery::DispatchFenced,
             },
             AgentLogKind::TurnStarted {
+                model: None,
                 turn_sequence: 11,
                 origin_key: Some(queued_message_origin(3)),
             },
@@ -1298,6 +1303,7 @@ async fn semantic_log_corruption_is_refused_by_every_projection() {
                 runtime_generation: 1,
             },
             AgentLogKind::TurnStarted {
+                model: None,
                 turn_sequence: 3,
                 origin_key: None,
             },
@@ -1314,6 +1320,7 @@ async fn semantic_log_corruption_is_refused_by_every_projection() {
                 runtime_generation: 1,
             },
             AgentLogKind::TurnStarted {
+                model: None,
                 turn_sequence: 3,
                 origin_key: None,
             },
@@ -1328,6 +1335,7 @@ async fn semantic_log_corruption_is_refused_by_every_projection() {
                 runtime_generation: 1,
             },
             AgentLogKind::TurnStarted {
+                model: None,
                 turn_sequence: 3,
                 origin_key: None,
             },
@@ -1335,6 +1343,7 @@ async fn semantic_log_corruption_is_refused_by_every_projection() {
                 content: "question".into(),
             },
             AgentLogKind::TurnStarted {
+                model: None,
                 turn_sequence: 5,
                 origin_key: None,
             },
