@@ -4,6 +4,9 @@ use super::*;
 use crate::{HomeVolumeMode, HomeVolumeStore};
 use serde_json::json;
 
+#[path = "native_home_read_tests.rs"]
+mod read_tests;
+
 fn spec() -> NativePoolSpec {
     let mut spec = super::tests::spec();
     spec.home.mode = HomeVolumeMode::NativeVctEmptyV1;
