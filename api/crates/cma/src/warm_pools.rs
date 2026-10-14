@@ -168,6 +168,18 @@ impl NativeWarmPools {
                 home,
             })
             .map_err(|_| WarmPoolError::Invalid)?;
+        // An operator may already have configured this exact immutable plan
+        // under another idempotency key. Reuse that durable target instead of
+        // tripping the collection's unique plan index during startup.
+        if self
+            .store
+            .list()
+            .await?
+            .iter()
+            .any(|target| target.plan.config_sha256 == plan.config_sha256)
+        {
+            return Ok(());
+        }
         let key = format!("system-default-v1-{}", plan.config_sha256);
         let id = target_id(SYSTEM_ACTOR, &key);
         if self.store.find(&id).await?.is_some() {
