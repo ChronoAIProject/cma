@@ -30,6 +30,42 @@ pub struct AgentAdmission {
 }
 
 impl AgentAdmission {
+    pub fn admits_bootstrap(
+        &self,
+        workspace: &Workspace,
+        parent: &crate::sandbox::Sandbox,
+    ) -> bool {
+        matches!(&self.origin, AgentOrigin::Lifecycle { operation_id }
+            if parent.accepts_lifecycle_bootstrap(operation_id))
+            && self.binding.is_none()
+            && self.owner == parent.owner
+            && self.workspace_id == workspace.id
+            && crate::sandbox::lifecycle_bootstrap::bootstrap_workspace(parent, workspace)
+    }
+
+    pub fn record_parent_admission(
+        &self,
+        parent: &mut crate::sandbox::Sandbox,
+        workspace: &Workspace,
+        cause: crate::sandbox::SandboxReviveCause,
+    ) -> Result<Option<crate::sandbox::SandboxEventKind>, SandboxStoreError> {
+        if self.admits_bootstrap(workspace, parent) {
+            parent.revision = parent
+                .revision
+                .checked_add(1)
+                .ok_or(SandboxStoreError::Conflict)?;
+            parent.updated_at.clone_from(&self.event_at);
+            parent.last_activity_at.clone_from(&self.event_at);
+            parent
+                .validate()
+                .map_err(|e| SandboxStoreError::Corrupt(e.to_string()))?;
+            Ok(None)
+        } else {
+            parent
+                .record_creation_admission(cause, self.event_at.clone())
+                .map_err(|e| SandboxStoreError::Corrupt(e.to_string()))
+        }
+    }
     /// A pre-created profile session without user activity is a fresh session
     /// for the Trigger, including when the Trigger requests a new conversation.
     pub fn claims_unused_prepared_agent(&self, agent: &Agent) -> bool {
@@ -167,10 +203,17 @@ impl AgentAdmission {
         }
         let number = workspace.next_worktree_number;
         let name = format!("wt-{number}");
-        let base_commit = workspace
-            .resolved_commit
-            .clone()
-            .ok_or(SandboxStoreError::WorkspaceNotReady)?;
+        let pending = workspace.status == crate::sandbox::WorkspaceStatus::Preparing
+            && matches!(self.origin, AgentOrigin::Lifecycle { .. });
+        let base_commit = if pending {
+            // Explicit WaitForWorkspace state: this is absence of a base, never a Git revision.
+            String::new()
+        } else {
+            workspace
+                .resolved_commit
+                .clone()
+                .ok_or(SandboxStoreError::WorkspaceNotReady)?
+        };
         let worktree = Worktree {
             id: self.worktree_id.clone(),
             workspace_id: workspace.id.clone(),
@@ -205,7 +248,14 @@ impl AgentAdmission {
                 operation: None,
                 queued_messages: Vec::new(),
             },
-            work: AgentWorkState::new(AgentWorkStep::AddWorktree, self.event_at.clone()),
+            work: AgentWorkState::new(
+                if pending {
+                    AgentWorkStep::WaitForWorkspace
+                } else {
+                    AgentWorkStep::AddWorktree
+                },
+                self.event_at.clone(),
+            ),
             failure: None,
             title: self.title.clone(),
             created_at: self.event_at.clone(),
