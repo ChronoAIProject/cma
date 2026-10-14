@@ -27,10 +27,7 @@ import { useAgentAccess } from './resources/agentAccess';
 import { SharedAgent } from './resources/SharedAgent';
 import { SharedAgentDetails } from './resources/SharedAgentDetails';
 import { AgentInventory } from './resources/AgentInventory';
-import { SharingButton } from './resources/SharingButton';
-import { ArtifactButton } from './resources/ArtifactButton';
 import { ArtifactPublicationScope } from './resources/artifactRecovery';
-import { ChannelUsage } from './resources/ChannelUsage';
 import { SandboxAccessPage } from './resources/SandboxAccessPage';
 import { WorkspaceContents } from './resources/WorkspaceContents';
 import { scopeValue } from './resources/scope';
@@ -301,44 +298,8 @@ export function Console({
             open={detailsOpen}
             onClose={() => setDetailsOpen(false)}
             detail={ready?.detail}
-            workspace={ready?.workspace}
             historyLoading={ready?.historyLoading}
             pending={agent.pending}
-            actionError={agent.actionError}
-            onNavigate={onNavigate}
-            onStop={agent.stop}
-            onDelete={agent.delete}
-            channelUsage={
-              detailsOpen && ready !== undefined && client.resourceViews !== undefined ? (
-                <ChannelUsage
-                  key={ready.detail.id}
-                  client={client.resourceViews}
-                  id={ready.detail.id}
-                />
-              ) : undefined
-            }
-            artifacts={
-              detailsOpen && ready !== undefined && client.resourceViews !== undefined ? (
-                <ArtifactButton
-                  publicationScope={artifactPublicationScope}
-                  key={ready.detail.id}
-                  client={client.resourceViews}
-                  id={ready.detail.id}
-                />
-              ) : undefined
-            }
-            sharing={
-              detailsOpen && ready !== undefined && client.resourceViews !== undefined ? (
-                <SharingButton
-                  client={client.resourceViews}
-                  target={{
-                    kind: 'sandbox',
-                    id: ready.detail.sandbox.id,
-                    name: ready.detail.sandbox.name,
-                  }}
-                />
-              ) : undefined
-            }
           />
         ) : shared !== undefined ? (
           <SharedAgentDetails
