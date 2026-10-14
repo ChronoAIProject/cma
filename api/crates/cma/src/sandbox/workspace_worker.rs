@@ -69,6 +69,11 @@ pub(crate) struct WorkspaceWorker {
     config: WorkspaceWorkerConfig,
 }
 
+pub(crate) struct WorkspaceDrain {
+    pub workspace: Workspace,
+    pub executed_work: bool,
+}
+
 impl WorkspaceWorker {
     pub fn new(
         dependencies: WorkspaceWorkerDependencies,
@@ -120,37 +125,6 @@ impl WorkspaceWorker {
         };
         self.execute(workspace, now).await?;
         Ok(true)
-    }
-
-    pub async fn run_until_ready(
-        &self,
-        id: &WorkspaceId,
-        now: SystemTime,
-    ) -> Result<Workspace, SandboxStoreError> {
-        for _ in 0..4 {
-            let current = self
-                .dependencies
-                .store
-                .get_workspace(id)
-                .await?
-                .ok_or(SandboxStoreError::NotFound)?;
-            match current.status {
-                WorkspaceStatus::Ready => return Ok(current),
-                WorkspaceStatus::Failed | WorkspaceStatus::Removing | WorkspaceStatus::Removed => {
-                    return Ok(current)
-                }
-                WorkspaceStatus::Preparing => {
-                    if !self.run_one(id, now).await? {
-                        return Ok(current);
-                    }
-                }
-            }
-        }
-        self.dependencies
-            .store
-            .get_workspace(id)
-            .await?
-            .ok_or(SandboxStoreError::NotFound)
     }
 
     async fn execute(

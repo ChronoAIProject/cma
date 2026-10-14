@@ -44,7 +44,11 @@ interface ConsoleProps {
   readonly hierarchyRevision?: number;
 }
 
-export function Console({
+export function Console(props: ConsoleProps) {
+  return <ConsoleContent key={props.user.id} {...props} />;
+}
+
+function ConsoleContent({
   user,
   route,
   onSignOut,
@@ -69,7 +73,10 @@ export function Console({
   const agentAccess = useAgentAccess(
     client.resourceViews,
     route.kind === 'agent' ? route.agentId : undefined,
+    user.id,
+    client,
   );
+  const accessUncertain = agentAccess.personalReadOnly;
   const shared =
     agentAccess.state.status === 'ready' && agentAccess.state.value.detail.access === 'shared'
       ? agentAccess.state.value.detail
@@ -90,6 +97,7 @@ export function Console({
     setRevision((value) => value + 1);
   }, [refreshNavigation]);
   const agent = useAgentController(client, personalAgentId, {
+    suspended: accessUncertain,
     summary:
       route.kind === 'agent' && navigation.status === 'ready'
         ? navigation.items
@@ -108,8 +116,9 @@ export function Console({
     onCreate,
     user.id,
     onNavigate,
+    !accessUncertain,
   );
-  const canUse = user.capabilities.includes('use_own_sandboxes');
+  const canUse = !accessUncertain && user.capabilities.includes('use_own_sandboxes');
   const canCreate = !user.visitor && canUse && onCreate !== undefined;
   const canCreateInScope = canCreate && navigationScope === '' && scopeReady;
   const permissions: TreePermissions = {
@@ -122,7 +131,7 @@ export function Console({
     stopAgent: canUse,
     deleteAgent: canUse,
     exportHistory: canUse,
-    deleteSandbox: user.capabilities.includes('delete_own_sandbox'),
+    deleteSandbox: !accessUncertain && user.capabilities.includes('delete_own_sandbox'),
   };
   const ready = agent.state.status === 'ready' ? agent.state : undefined;
   const content = isBotRoute(route) ? (
@@ -156,8 +165,7 @@ export function Console({
     />
   ) : route.kind === 'agent' &&
     client.resourceViews !== undefined &&
-    personalAgentId === undefined &&
-    agentAccess.state.status !== 'ready' ? (
+    personalAgentId === undefined ? (
     <section
       className="console__empty"
       role={agentAccess.state.status === 'error' ? 'alert' : 'status'}
@@ -173,10 +181,12 @@ export function Console({
   ) : route.kind === 'agent' ? (
     <AgentSurface
       key={route.agentId}
+      lifecycleClient={client}
       draft={draft}
       agentId={route.agentId}
       viewerId={user.id}
       controller={agent}
+      accessUncertain={accessUncertain}
       detailsOpen={detailsOpen}
       onDetailsOpenChange={setDetailsOpen}
       onNavigate={onNavigate}
@@ -290,10 +300,12 @@ export function Console({
 
   return (
     <AppFrame
-      detailsOpen={(personalAgentId !== undefined || shared !== undefined) && detailsOpen}
+      detailsOpen={
+        !accessUncertain && (personalAgentId !== undefined || shared !== undefined) && detailsOpen
+      }
       compactDetailsOverlay
       details={
-        route.kind === 'agent' && personalAgentId !== undefined ? (
+        route.kind === 'agent' && personalAgentId !== undefined && !accessUncertain ? (
           <AgentDetails
             key={route.agentId}
             open={detailsOpen}
@@ -318,7 +330,7 @@ export function Console({
           />
         ) : undefined
       }
-      overlay={actions.overlay}
+      overlay={accessUncertain ? undefined : actions.overlay}
       sidebarCollapsed={sidebarCollapsed}
       onSidebarCollapsedChange={setSidebarCollapsed}
       sidebar={({ collapsed, onToggle, onNavigate: onSidebarNavigate }) => (

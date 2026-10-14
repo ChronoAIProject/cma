@@ -5,6 +5,16 @@ failures and receipt paths, see
 [CMA native Sandbox production verification](CMA_Native_Production_Verification.md).
 This document keeps operational instructions and dated infra diagnostics.
 
+The latest completed production deployment is PR #1019, candidate `3d6885c6`,
+merged as `68dbe4b6`, with all 15 CI jobs passed. Agent Manager/Web were Ready
+at approximately 20:26 SGT on 2026-10-14. Strict full-home preservation now
+passes, including modes, ownership, links, dirty Git, the original PVC and
+conversation. Warm creation still took 17.306 seconds and usable resume took
+21.649 seconds; the five-second performance bar remains unmet. Immediate
+delete feedback/disappearance passed. A transient authorization-check outage
+also exposed a UI continuity defect. Exact observations and the next fixes are
+recorded in the [PR #1019 verification](CMA_Native_Production_Verification.md#full-home-preservation-and-lifecycle-performance--pr-1019).
+
 The combined performance and full-home candidate `04ccbd6a` merged through
 PR #1016 as `fea97549`. CI run
 [38539408542](https://github.com/ChronoAIProject/cma/actions/runs/38539408542),
@@ -24,8 +34,9 @@ The follow-up source introduces a separately identified native pool policy with
 `fsGroupChangePolicy: OnRootMismatch`. Existing pool/template/home records keep
 their original policy; activate fresh capacity only when its `config_sha256`
 exactly equals the non-null administration `default_config_sha256`. Matching
-only image and resources can select an old policy and is insufficient. Fresh
-whole-home mode preservation and timing still require live verification.
+only image and resources can select an old policy and is insufficient. PR #1019
+proved fresh whole-home mode preservation; subsequent releases still require
+their own live continuity and timing verification.
 
 After a new-policy pool or binding is persisted, any API rollback must retain
 support for the optional `fs_group_change_policy` field and v3 pool identity.

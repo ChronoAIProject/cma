@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { ApiError, TransportError } from '@chronoai/cma-sdk';
 
 export interface AuthorizedValue<Value> {
   readonly value: Value;
@@ -6,7 +7,7 @@ export interface AuthorizedValue<Value> {
 }
 export type AuthorizedRead<Value> =
   | { readonly status: 'loading' }
-  | { readonly status: 'error'; readonly message: string }
+  | { readonly status: 'error'; readonly message: string; readonly transient?: true }
   | { readonly status: 'ready'; readonly value: Value };
 
 /** Values belong to one read context and expire independently of a pending refresh. */
@@ -47,6 +48,7 @@ export function useAuthorizedRead<Value>(
           publish({
             status: 'error',
             message: 'Current resource access could not be checked. Try again.',
+            transient: true,
           });
         }
       }, 15_000);
@@ -71,6 +73,11 @@ export function useAuthorizedRead<Value>(
           clearTimeout(expiration);
           publish({
             status: 'error',
+            ...((error instanceof ApiError && error.isRetryable) ||
+            error instanceof TransportError ||
+            error instanceof TypeError
+              ? { transient: true as const }
+              : {}),
             message:
               error instanceof Error && !request.signal.aborted
                 ? error.message

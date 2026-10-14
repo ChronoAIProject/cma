@@ -1,4 +1,12 @@
-import { useCallback, type Dispatch, type SetStateAction, type RefObject } from 'react';
+import {
+  useCallback,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  type Dispatch,
+  type SetStateAction,
+  type RefObject,
+} from 'react';
 import type { CmaWebClient, CommandKeys } from '../api/client';
 import type { AgentLiveEvent } from '../api/types';
 import type { AgentCommand, AgentResourceState, ApprovalDecision } from './controller';
@@ -54,12 +62,24 @@ export function useAgentActions({
   onIdentityChange,
   options,
 }: Options) {
+  const context = useMemo(
+    () => ({ agentId, client, historyIncomplete, allowed: inputAvailability.allowed }),
+    [agentId, client, historyIncomplete, inputAvailability.allowed],
+  );
+  const currentContext = useRef<typeof context | undefined>(undefined);
+  useLayoutEffect(() => {
+    currentContext.current = context;
+    return () => {
+      currentContext.current = undefined;
+    };
+  }, [context]);
   const run = useCallback(
     async (
       approval: { readonly id: string; readonly decision: ApprovalDecision } | string,
       onAccepted?: () => void,
     ) => {
       if (
+        currentContext.current !== context ||
         agentId === undefined ||
         actionAbortRef.current !== undefined ||
         historyIncomplete ||
@@ -67,7 +87,13 @@ export function useAgentActions({
       )
         return;
       const current = stateRef.current;
+      if (current.status !== 'ready' || current.detail.id !== agentId) return;
       const session = current.status === 'ready' ? current.v2 : undefined;
+      if (
+        current.detail.status === 'starting' &&
+        (session === undefined || typeof approval !== 'string')
+      )
+        return;
       if (session === undefined) replayAbortRef.current?.abort();
       const controller = new AbortController();
       actionAbortRef.current = controller;
@@ -92,6 +118,7 @@ export function useAgentActions({
             await session.send(
               approval,
               () => {
+                if (controller.signal.aborted || currentContext.current !== context) return;
                 accepted = true;
                 onAccepted?.();
               },
@@ -144,6 +171,7 @@ export function useAgentActions({
       agentId,
       applyLive,
       client,
+      context,
       historyIncomplete,
       inputAvailability.allowed,
       keys,
@@ -166,7 +194,7 @@ export function useAgentActions({
       operation: (id: string, key: string, signal: AbortSignal) => Promise<void>,
     ) => {
       const mayPreemptSend = name === 'interrupt' && actionKindRef.current === 'send';
-      if (historyIncomplete) return;
+      if (currentContext.current !== context || historyIncomplete) return;
       if (name === 'interrupt' && !activeTurn) return;
       if (agentId === undefined || (actionAbortRef.current !== undefined && !mayPreemptSend)) {
         return;
@@ -213,6 +241,7 @@ export function useAgentActions({
     },
     [
       activeTurn,
+      context,
       agentId,
       historyIncomplete,
       keys,
@@ -232,7 +261,15 @@ export function useAgentActions({
   );
 
   const recoverPending = async () => {
+    if (currentContext.current !== context) return;
     if (v2 === undefined || actionAbortRef.current !== undefined || historyIncomplete) return;
+    const current = stateRef.current;
+    if (
+      current.status === 'ready' &&
+      current.detail.status === 'starting' &&
+      !inputAvailability.allowed
+    )
+      return;
     const controller = new AbortController();
     actionAbortRef.current = controller;
     actionKindRef.current = 'send';

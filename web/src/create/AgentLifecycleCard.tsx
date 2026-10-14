@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type {
   AgentLifecycleCreateInput,
   AgentLifecycleCreateReceipt,
@@ -9,6 +9,7 @@ import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { Modal } from '../ui/Modal';
 import { useLifecycleIntent } from './lifecycleIntent';
+import { useLifecycleAgent } from './lifecycleAgent';
 import { AgentProvisioningProgress } from './AgentProvisioningProgress';
 import './Create.css';
 import './AgentLifecycleCard.css';
@@ -46,7 +47,20 @@ function validRepository(value: string): boolean {
   }
 }
 
-export function AgentLifecycleCard({
+export function AgentLifecycleCard(props: AgentLifecycleCardProps) {
+  const { client, viewerId, workspaceId, sandboxId } = props;
+  const [scope, setScope] = useState({ client, viewerId, workspaceId, sandboxId, generation: 0 });
+  if (
+    scope.client !== client ||
+    scope.viewerId !== viewerId ||
+    scope.workspaceId !== workspaceId ||
+    scope.sandboxId !== sandboxId
+  )
+    setScope({ client, viewerId, workspaceId, sandboxId, generation: scope.generation + 1 });
+  return <AgentLifecycleForm key={scope.generation} {...props} />;
+}
+
+function AgentLifecycleForm({
   client,
   viewerId,
   workspaceId,
@@ -58,21 +72,36 @@ export function AgentLifecycleCard({
   const lifecycle = useLifecycleIntent(client, viewerId, workspaceId, sandboxId);
   const { pending, failure, operation, connection: connectionRequest } = lifecycle;
   const createdReceipt = lifecycle.intent?.receipt;
+  const admitted = useLifecycleAgent(
+    client,
+    operation,
+    createdReceipt?.id,
+    viewerId,
+    workspaceId,
+    sandboxId,
+  );
+  const openTarget = useMemo(
+    () =>
+      admitted ??
+      (operation?.status === 'succeeded' &&
+      operation.id === createdReceipt?.id &&
+      operation.agent_id
+        ? { id: operation.agent_id, status: 'ready' }
+        : undefined),
+    [admitted, createdReceipt?.id, operation],
+  );
   const [repository, setRepository] = useState('');
   const [workspaceName, setWorkspaceName] = useState<string>();
   const openedOperation = useRef<string | undefined>(undefined);
   const clearIntent = lifecycle.clear;
+  const bindAgent = lifecycle.bindAgent;
   useEffect(() => {
-    if (
-      createdReceipt === undefined ||
-      operation?.status !== 'succeeded' ||
-      !operation.agent_id ||
-      openedOperation.current === operation.id
-    )
-      return;
+    if (createdReceipt === undefined || operation === undefined || openTarget === undefined) return;
+    if (openedOperation.current === operation.id) return;
     openedOperation.current = operation.id;
-    if (clearIntent()) onCreated({ ...createdReceipt, id: operation.agent_id, status: 'ready' });
-  }, [clearIntent, createdReceipt, onCreated, operation]);
+    if (operation.status === 'succeeded' ? clearIntent() : bindAgent(openTarget.id))
+      onCreated({ ...createdReceipt, id: openTarget.id, status: openTarget.status });
+  }, [bindAgent, clearIntent, createdReceipt, onCreated, operation, openTarget]);
   useEffect(() => {
     if (workspaceId === undefined) return;
     const request = new AbortController();
@@ -140,10 +169,19 @@ export function AgentLifecycleCard({
               </Button>
               <Button
                 variant="primary"
-                disabled={operation?.status !== 'succeeded' || operation.agent_id === undefined}
+                disabled={openTarget === undefined}
                 onClick={() => {
-                  if (operation?.status === 'succeeded' && operation.agent_id && lifecycle.clear())
-                    onCreated({ ...createdReceipt, id: operation.agent_id, status: 'ready' });
+                  if (
+                    openTarget &&
+                    operation &&
+                    openedOperation.current !== operation.id &&
+                    (operation.status === 'succeeded'
+                      ? lifecycle.clear()
+                      : lifecycle.bindAgent(openTarget.id))
+                  ) {
+                    openedOperation.current = operation.id;
+                    onCreated({ ...createdReceipt, id: openTarget.id, status: openTarget.status });
+                  }
                 }}
               >
                 Open agent

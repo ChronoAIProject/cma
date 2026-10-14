@@ -1,5 +1,64 @@
 # CMA native Sandbox production verification — 2026-10-14
 
+## Full-home preservation and lifecycle performance — PR #1019
+
+PR #1019 merged candidate `3d6885c6bba35f205e4b498800a1bb2128753ed3`
+into `develop` as `68dbe4b653f80ed260ef9ddaa5c42ed301272d94`.
+CI [38557313596](https://github.com/ChronoAIProject/cma/actions/runs/38557313596),
+attempt 1, passed all 15 jobs. Agent Manager generation 17 and shared Web
+generation 93 were Ready at approximately 20:26 SGT. Their published digests
+are `sha256:ff464a85415309745791e8e7b967839613929bd73842e19ba5eb265534267705`
+and `sha256:dc5b98bfebc3605597b2dd096f4bd807df459c667d8b62d4b5b8788303fcc951`.
+Runtime `cad2058` and Event Gateway `0c30681` were retained; Image Manager
+remained undeployed. The new exact default pool reached two observed Ready
+replicas with `fsGroupChangePolicy: OnRootMismatch`.
+
+One fresh production fixture produced the following browser observations.
+Accepted feedback and actual completion are separate boundaries; a functional
+pass does not imply the five-second performance target passed.
+
+| Operation | User feedback / acceptance | Actual observed completion | Five-second result |
+| --- | --- | --- | --- |
+| Warm New Agent | Automatic exact Agent navigation and enabled composer: 17,305.6 ms | Same 17,305.6 ms boundary | Failed |
+| Pause | Feedback 1.8 ms; accepted 183 ms | Agent paused 1,682 ms; Sandbox settled 8,961.1 ms | Feedback and Agent passed; complete Sandbox failed |
+| Resume | Feedback 1,318.3 ms; accepted 1,570 ms | Agent ready 21,648.7 ms; Sandbox settled 22,876.3 ms | Feedback passed; usable Agent and complete Sandbox failed |
+| Delete | Feedback 9 ms; accepted 355.8 ms; hidden from active tree in the same observation as acceptance | Background retirement confirmed 65,415 ms | Immediate disappearance passed; cleanup remains background work |
+
+Pause/resume retained the original Claim, Sandbox and PVC identities. No owned
+Pod remained while paused; resume created a different Pod using the same PVC.
+All 15 inspected entries across `/home/cma`, `/home/.codex` and a separate
+`/home` fixture matched exactly after resume, including bytes, modes, ownership,
+symlinks, and staged, dirty and untracked Git content. The original conversation
+identity and complete history prefix were preserved and a post-resume turn
+completed. The recall prompt was ambiguous among four earlier markers: the
+model returned the most recent original marker, while the helper expected the
+first. That stricter assertion remains recorded as failed; no prompt was resent.
+
+Real model selection/inference, Ornn skill installation/use, and the scope MCP
+request → owner approval → delivered credential → exactly one automatically
+acknowledged notification in the original conversation passed. The service was
+already connected, so this does not establish a fresh live OAuth callback.
+Creating another Agent in the same Sandbox with an optional GitHub URL passed:
+the URL appeared in its first prompt and the Agent prepared the repository.
+Stop showed accepted and confirmed progress. Delete hid the Sandbox immediately
+and exposed optional cleanup progress. Original owner workload continuity
+passed with the same Pod, PVC, Workspace and two Agent identities.
+
+A spectator observed a 24.308-second disappearance of the conversation during
+a transient access-check failure. The draft/history subsequently recovered,
+but uninterrupted UI continuity failed. The next source retains an already
+authorized personal view read-only during transient checks, retries stalled
+Sandbox observations, and removes redundant Workspace adoption and historical
+pool discovery from new native allocations. Those changes require a new
+deployment and fresh timing; this release does not meet the full goal bar.
+
+Private evidence is retained under `/tmp/cma-performance-release-publish-01`,
+`/tmp/cma-performance-release-rollout-01`,
+`/tmp/cma-agent-followup-live-PERF_3d6885c6_01`, and
+`/tmp/cma-whole-home-PERF_3d6885c6_01`. Original workload comparison is
+`/tmp/cma-performance-release-protected-after.json`. These files contain
+operator evidence and are not repository artifacts.
+
 ## Combined performance and full-home release — PR #1016
 
 Candidate `04ccbd6a` contains the native-home authority fix, faster durable

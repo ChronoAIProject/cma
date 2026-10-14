@@ -11,6 +11,7 @@ interface Intent {
   readonly key: string;
   readonly body: AgentLifecycleCreateInput;
   readonly receipt?: AgentLifecycleCreateReceipt;
+  readonly agentId?: string;
 }
 export function lifecycleStorageKey(owner: string, workspaceId?: string, sandboxId?: string) {
   return `cma:agent-creation:${JSON.stringify(sandboxId !== undefined ? [location.origin, owner, 'sandbox', sandboxId] : workspaceId === undefined ? [location.origin, owner] : [location.origin, owner, workspaceId])}`;
@@ -34,6 +35,7 @@ function load(
       !intent.body.name ||
       intent.body.workspace_id !== workspaceId ||
       intent.body.sandbox_id !== sandboxId ||
+      (intent.agentId !== undefined && (typeof intent.agentId !== 'string' || !intent.agentId)) ||
       (intent.receipt !== undefined &&
         (typeof intent.receipt.id !== 'string' || !intent.receipt.id))
     )
@@ -45,6 +47,31 @@ function load(
         'The saved Agent request could not be read. Restore your browser session before continuing.',
     };
   }
+}
+
+/** Find only a validated creation already bound to this viewer's admitted Agent. */
+export function lifecycleScopeForAgent(owner: string, agentId: string) {
+  try {
+    for (let index = 0; index < sessionStorage.length; index += 1) {
+      const key = sessionStorage.key(index);
+      if (!key?.startsWith('cma:agent-creation:')) continue;
+      const raw = sessionStorage.getItem(key);
+      if (!raw) continue;
+      let body: AgentLifecycleCreateInput | undefined;
+      try {
+        body = (JSON.parse(raw) as { intent?: Intent }).intent?.body;
+      } catch {
+        continue;
+      }
+      if (!body || key !== lifecycleStorageKey(owner, body.workspace_id, body.sandbox_id)) continue;
+      const { intent } = load(owner, body.workspace_id, body.sandbox_id);
+      if (intent?.agentId === agentId && intent.receipt)
+        return { workspaceId: body.workspace_id, sandboxId: body.sandbox_id };
+    }
+  } catch {
+    /* Unreadable storage never authorizes recovery. */
+  }
+  return undefined;
 }
 
 export function useLifecycleIntent(
@@ -88,16 +115,28 @@ export function useLifecycleIntent(
     if (!receipt || !client.readAgentLifecycle) return;
     const abort = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const startedAt = Date.now();
+    let phase: string | undefined;
+    let phaseStartedAt = Date.now();
     const poll = async () => {
       try {
         const value = await client.readAgentLifecycle!(receipt.id, { signal: abort.signal });
         if (abort.signal.aborted) return;
+        if (
+          value.id !== receipt.id ||
+          (current.current?.agentId && value.agent_id !== current.current.agentId)
+        )
+          throw new Error('Agent setup identity could not be verified.');
+        if (value.phase !== phase) {
+          phase = value.phase;
+          phaseStartedAt = Date.now();
+        }
         setOperation(value);
         setFailure(undefined);
         if (value.status === 'waiting_for_connection') setConnection(value.connection);
         if (value.status === 'queued' || value.status === 'running')
-          timer = setTimeout(() => void poll(), Date.now() - startedAt < 10000 ? 250 : 1000);
+          // A slow earlier phase must not add a full second to observing Agent readiness.
+          // Keep each new phase responsive, then back off if that phase stalls.
+          timer = setTimeout(() => void poll(), Date.now() - phaseStartedAt < 10000 ? 250 : 1000);
       } catch (error: unknown) {
         if (!abort.signal.aborted)
           setFailure(error instanceof Error ? error.message : 'Status unavailable.');
@@ -123,6 +162,8 @@ export function useLifecycleIntent(
         signal: abort.signal,
       });
       if (!abort.signal.aborted) {
+        if (intent.receipt && result.id !== intent.receipt.id)
+          throw new Error('Agent setup identity changed. Your original request has been saved.');
         setOperation(undefined);
         retain({ ...intent, receipt: result });
       }
@@ -154,6 +195,17 @@ export function useLifecycleIntent(
     submit,
     retryStatus: () => setPollVersion((value) => value + 1),
     clear: () => retain(),
+    bindAgent: (agentId: string) => {
+      const intent = current.current;
+      if (
+        !intent?.receipt ||
+        operation?.id !== intent.receipt.id ||
+        operation.agent_id !== agentId ||
+        (intent.agentId !== undefined && intent.agentId !== agentId)
+      )
+        return false;
+      return retain({ ...intent, agentId });
+    },
     blocked: saved.error !== undefined,
   };
 }
