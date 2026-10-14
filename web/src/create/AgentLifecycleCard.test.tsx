@@ -290,8 +290,16 @@ it('isolates a global creation from contextual creation and rejects a mismatched
 
 it('uses server defaults without image, workspace or profile selectors and allows an empty repository', async () => {
   const create = vi.fn().mockResolvedValue({ id: running.id });
-  show(agentClient({ createAgentLifecycle: create, readAgentLifecycle: async () => running }));
+  const listSandboxes = vi.fn();
+  show(
+    agentClient({
+      listSandboxes,
+      createAgentLifecycle: create,
+      readAgentLifecycle: async () => running,
+    }),
+  );
   expect(screen.getAllByRole('textbox')).toHaveLength(1);
+  expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
   for (const label of [
     'Agent name',
     'Model',
@@ -304,15 +312,28 @@ it('uses server defaults without image, workspace or profile selectors and allow
   await userEvent.click(screen.getByRole('button', { name: 'Create agent' }));
   await waitFor(() => expect(create).toHaveBeenCalledOnce());
   expect(create.mock.calls[0]?.[0]).toEqual({ name: 'New agent' });
+  expect(listSandboxes).not.toHaveBeenCalled();
 });
 
-it('selects an existing Sandbox and keeps its recovery separate from new Sandbox creation', async () => {
+it('retains the contextual Sandbox and keeps its recovery separate from global creation', async () => {
   const create = vi.fn().mockRejectedValue(new Error('Lost response'));
   const client = agentClient({ createAgentLifecycle: create });
-  const first = show(client);
+  const draw = () =>
+    render(
+      <CreationFlow
+        request={{ kind: 'new_agent', sandboxId: 'sbx_1' }}
+        client={client}
+        viewerId="owner"
+        catalog={creationClient()}
+        onClose={vi.fn()}
+        onCreated={vi.fn()}
+        onChanged={vi.fn()}
+        canCreateSandbox={false}
+      />,
+    );
+  const first = draw();
   const user = userEvent.setup();
-  await screen.findByRole('option', { name: 'Existing Sandbox: Atlas' });
-  await user.selectOptions(screen.getByLabelText('Agent location'), 'sbx_1');
+  expect(screen.queryByLabelText('Agent location')).not.toBeInTheDocument();
   await user.click(screen.getByRole('button', { name: 'Create agent' }));
   await screen.findByText('Lost response');
   expect(create.mock.calls[0]?.[0]).toEqual({ name: 'New agent', sandbox_id: 'sbx_1' });
@@ -321,11 +342,35 @@ it('selects an existing Sandbox and keeps its recovery separate from new Sandbox
     'sbx_1',
   );
   first.unmount();
-  show(client);
+  const global = show(client);
   expect(screen.queryByRole('button', { name: 'Recover creation' })).not.toBeInTheDocument();
-  await screen.findByRole('option', { name: 'Existing Sandbox: Atlas' });
-  await user.selectOptions(screen.getByLabelText('Agent location'), 'sbx_1');
+  global.unmount();
+  draw();
   expect(screen.getByRole('button', { name: 'Recover creation' })).toBeEnabled();
+  await user.click(screen.getByRole('button', { name: 'Recover creation' }));
+  await waitFor(() => expect(create).toHaveBeenCalledTimes(2));
+  expect(create.mock.calls[1]?.[0]).toEqual(create.mock.calls[0]?.[0]);
+  expect(create.mock.calls[1]?.[1].idempotencyKey).toBe(create.mock.calls[0]?.[1].idempotencyKey);
+});
+
+it('keeps global new-Sandbox creation unavailable without its capability', async () => {
+  const create = vi.fn();
+  render(
+    <AgentLifecycleCard
+      client={agentClient({ createAgentLifecycle: create })}
+      viewerId="owner"
+      canCreateSandbox={false}
+      onClose={vi.fn()}
+      onCreated={vi.fn()}
+    />,
+  );
+  expect(screen.queryByLabelText('Agent location')).not.toBeInTheDocument();
+  expect(screen.getByRole('status')).toHaveTextContent(
+    'Use New agent from an existing Sandbox or workspace',
+  );
+  expect(screen.getByRole('button', { name: 'Create agent' })).toBeDisabled();
+  await userEvent.click(screen.getByRole('button', { name: 'Create agent' }));
+  expect(create).not.toHaveBeenCalled();
 });
 
 it('refuses invalid repository URLs before admission', async () => {
