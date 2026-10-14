@@ -24,6 +24,7 @@ export function useResourceActions(
   onCreate?: (action: CreateAction) => void,
   viewerId = 'current',
   onNavigate?: (route: AppRoute) => void,
+  enabled = true,
 ) {
   const [deletion, setDeletion] = useState<
     { request: DeletionRequest; restored: boolean } | undefined
@@ -45,9 +46,9 @@ export function useResourceActions(
   const [error, setError] = useState<string>();
   const keys = useRef(new CommandKeys());
   const inFlight = useRef(false);
-  const connections = useConnectionGate();
+  const connections = useConnectionGate(enabled);
   const execute = async (action: LifecycleAction) => {
-    if (inFlight.current) return;
+    if (!enabled || inFlight.current) return;
     inFlight.current = true;
     setPending(true);
     setError(undefined);
@@ -124,6 +125,7 @@ export function useResourceActions(
     });
   };
   const select = (action: TreeAction) => {
+    if (!enabled) return;
     if (action.kind === 'new_agent' || action.kind === 'new_workspace') {
       onCreate?.(action);
     } else if (action.kind === 'stop_agent') {

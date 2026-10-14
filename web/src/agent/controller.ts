@@ -55,6 +55,7 @@ export interface AgentController {
 }
 
 interface AgentControllerOptions {
+  readonly suspended?: boolean;
   readonly summary?: AgentSummary;
   readonly onHierarchyChange?: () => void;
   readonly onDeleted?: () => void;
@@ -92,15 +93,19 @@ export function useAgentController(
   agentId: string | undefined,
   options: AgentControllerOptions = {},
 ): AgentController {
+  const suspended = options.suspended === true;
   const [revision, setRevision] = useState(0);
   const [replayRevision, setReplayRevision] = useState(0);
   const [, setRequestRevision] = useState(0);
   const [state, setState, stateRef] = useAgentState(
     agentId === undefined ? { status: 'idle' } : { status: 'loading' },
   );
+  const loaded = useRef<{ client: CmaWebClient; agentId?: string; revision: number } | undefined>(
+    undefined,
+  );
   const { inputAvailability, resourceAvailability, progressObservation } = useSandboxInput(
     client,
-    agentId,
+    suspended ? undefined : agentId,
     state.status === 'ready' && state.detail.id === agentId ? state.detail.sandbox.id : undefined,
   );
   const activeTurn =
@@ -184,6 +189,7 @@ export function useAgentController(
   );
 
   useEffect(() => {
+    if (suspended) return;
     const controller = new AbortController();
     queueMicrotask(() => {
       if (controller.signal.aborted) return;
@@ -191,9 +197,18 @@ export function useAgentController(
       setReplayError(undefined);
       setPending(undefined);
       if (agentId === undefined) {
+        loaded.current = undefined;
         setState({ status: 'idle' });
         return;
       }
+      if (
+        loaded.current?.client === client &&
+        loaded.current.agentId === agentId &&
+        loaded.current.revision === revision &&
+        stateRef.current.status === 'ready'
+      )
+        return;
+      loaded.current = { client, agentId, revision };
       setState({ status: 'loading' });
       void loadAgent(client, agentId, controller.signal, true, (ready) => {
         if (!controller.signal.aborted) setState({ status: 'ready', ...ready });
@@ -211,16 +226,17 @@ export function useAgentController(
     return () => {
       controller.abort();
     };
-  }, [agentId, applyLive, client, revision, setState]);
+  }, [agentId, applyLive, client, revision, setState, stateRef, suspended]);
 
   const historyUnavailable =
     state.status === 'ready' && state.detail.id === agentId && state.historyUnavailable === true;
   const historyLoading =
     state.status === 'ready' && state.detail.id === agentId && state.historyLoading === true;
   const historyIncomplete = historyLoading || historyUnavailable;
-  const v2 = state.status === 'ready' && state.detail.id === agentId ? state.v2 : undefined;
+  const v2 =
+    !suspended && state.status === 'ready' && state.detail.id === agentId ? state.v2 : undefined;
   useEffect(() => {
-    if (!historyUnavailable || agentId === undefined) return;
+    if (suspended || !historyUnavailable || agentId === undefined) return;
     const request = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
     let retryDelay = 5000;
@@ -243,9 +259,10 @@ export function useAgentController(
       request.abort();
       clearTimeout(timer);
     };
-  }, [agentId, client, historyUnavailable, setState]);
+  }, [agentId, client, historyUnavailable, setState, suspended]);
 
   const replayEnabled =
+    !suspended &&
     agentId !== undefined &&
     state.status === 'ready' &&
     state.detail.id === agentId &&
@@ -253,6 +270,7 @@ export function useAgentController(
     (v2 !== undefined || (pending !== 'send' && pending !== 'approval'));
 
   const provisioning =
+    !suspended &&
     state.status === 'ready' &&
     state.detail.id === agentId &&
     !historyIncomplete &&
@@ -358,7 +376,7 @@ export function useAgentController(
         actionKindRef.current = undefined;
       }
     };
-  }, [agentId, client]);
+  }, [agentId, client, suspended]);
 
   const reload = useCallback(() => {
     setActionError(undefined);
@@ -368,9 +386,9 @@ export function useAgentController(
   }, [agentId, setState]);
 
   const { run, command, recoverPending } = useAgentActions({
-    agentId,
+    agentId: suspended ? undefined : agentId,
     client,
-    historyIncomplete,
+    historyIncomplete: historyIncomplete || suspended,
     activeTurn,
     inputAvailability,
     actionAbortRef,
@@ -409,9 +427,10 @@ export function useAgentController(
     pendingControl: retained?.control,
     controlNotice,
     controlsUnavailable:
-      v2 !== undefined &&
-      state.status === 'ready' &&
-      state.conversation.responseBinding === undefined,
+      suspended ||
+      (v2 !== undefined &&
+        state.status === 'ready' &&
+        state.conversation.responseBinding === undefined),
     recoverPending: v2 === undefined ? undefined : recoverPending,
     state:
       state.status === 'ready' &&
@@ -422,8 +441,16 @@ export function useAgentController(
             detail: { ...state.detail, status: displayedStatus },
           }
         : state,
-    inputAvailability,
-    resourceAvailability,
+    inputAvailability: suspended
+      ? {
+          allowed: false,
+          notice:
+            'Checking Agent access. Your conversation and draft are retained; actions are unavailable until access is verified.',
+        }
+      : inputAvailability,
+    resourceAvailability: suspended
+      ? { state: 'unavailable', notice: 'Agent access is being checked. Live resources are held.' }
+      : resourceAvailability,
     progressObservation,
     pending,
     actionError: actionError ?? replayError,
