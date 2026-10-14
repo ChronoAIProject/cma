@@ -20,6 +20,7 @@ impl InlineAgentLifecycle {
         caller: &Caller,
         sandbox_id: &SandboxId,
         lease: &LifecycleLease,
+        expected_workspace: Option<&layer2_core::WorkspaceId>,
     ) -> Result<layer2_core::WorkspaceId, AgentLifecycleProvisioningError> {
         tokio::time::timeout(Duration::from_secs(180), async {
             let started = tokio::time::Instant::now();
@@ -81,11 +82,10 @@ impl InlineAgentLifecycle {
                         .list(caller, sandbox_id, &Default::default())
                         .await
                         .map_err(workspace_error)?;
-                    if let Some(workspace) = page
-                        .items
-                        .into_iter()
-                        .find(|workspace| workspace.status == WorkspaceStatus::Ready)
-                    {
+                    if let Some(workspace) = page.items.into_iter().find(|workspace| {
+                        workspace.status == WorkspaceStatus::Ready
+                            && expected_workspace.is_none_or(|id| workspace.id == *id)
+                    }) {
                         return Ok(workspace.id);
                     }
                 }

@@ -42,15 +42,32 @@ the matching API/Web release, a compare-and-set ConfigMap update, and an API rol
 so every replica advertises the intended eligibility. Existing tabs retain their
 selected transport; no accepted request changes protocol on rollout or reversal.
 
-Creation opens the actual admitted Agent while it is Starting after checking its
-Agent/worktree/Workspace/Sandbox lineage and a fresh Active parent without an active
-lifecycle operation or checkpoint. The operation receipt itself is never an Agent
-identity. Starting v2 tabs can submit using the existing exact-body/idempotency-key
-journal and clear drafts only after admission. Execution waits for Ready and remains
-behind the creation first-message barrier. Existing AG-UI tabs continue to wait for
-Agent readiness before input. Stale parent reads, access uncertainty, checkpoints,
-and lifecycle operations hold input; recovery of an uncertain v2 submission is an
-explicit action using the retained body and key, with no automatic resubmission.
+Creation reserves the actual Agent, Worktree and exact profile Workspace before
+runtime preparation finishes. A Starting Agent can open after its owner and full
+lineage are verified. A fresh Active parent without a lifecycle operation or
+checkpoint continues to allow durable v2 input. While the parent is Provisioning or
+Installing, input additionally requires the Agent detail's `bootstrap` object with
+the original lifecycle `operation_id`, `sandbox_id` and `workspace_id`. The server
+derives this proof from the exact original parent/profile lineage and a reservation
+with no runtime effects. A generic Starting status or an operation receipt alone
+does not grant this admission.
+
+The untouched reservation has an empty `base_commit` and starts at Agent work step
+`wait_for_workspace`. This represents an unresolved base, never a Git revision.
+The worker waits for the actual Workspace commit and an Active credentialed parent.
+One transaction then verifies and write-fences both parent records, binds that
+actual commit, and advances to `add_worktree`. Runtime setup starts after this
+publication. Stop, deletion and terminal parent failure handle an untouched
+reservation without attempting runtime cleanup for effects that never occurred.
+Such a cancelled reservation may retain the empty base through its cleanup states.
+
+Starting v2 tabs use the existing exact-body/idempotency-key journal and clear
+drafts only after durable admission. Execution waits for Ready and remains behind
+the creation first-message barrier. The UI continues to show Starting while this
+work runs. Existing AG-UI tabs wait for Agent readiness before input. Stale parent
+or bootstrap reads, access uncertainty, checkpoints and lifecycle operations hold
+input; recovery of an uncertain v2 submission is an explicit action using the
+retained body and key, with no automatic resubmission.
 
 Early navigation retains the owner/scope-bound creation body, key, operation ID,
 and observed Agent ID. The Agent page continues lifecycle observation and clears

@@ -180,7 +180,10 @@ impl WorkspaceWorkerStore for InMemorySandboxStore {
             .sandboxes
             .get(&current.sandbox_id)
             .ok_or(SandboxStoreError::NotFound)?;
-        if !current.work.is_due(&now) || parent.lifecycle.checkpoint_capture.is_some() {
+        if !current.work.is_due(&now)
+            || parent.lifecycle.checkpoint_capture.is_some()
+            || parent.defers_lifecycle_workspace(current)
+        {
             return Ok(None);
         }
         let mut claimed = current.clone();

@@ -43,6 +43,13 @@ pub(super) fn validate_position(
     };
     let positioned = match agent.work.step {
         AgentWorkStep::InstallSkill => false,
+        AgentWorkStep::WaitForWorkspace => {
+            agent.status == AgentStatus::Starting
+                && agent.requested_stop_reason.is_none()
+                && agent.has_no_runtime_effects()
+                && worktree.status == WorktreeStatus::Creating
+                && worktree.base_commit.is_empty()
+        }
         AgentWorkStep::AddWorktree
         | AgentWorkStep::MaterializeHome
         | AgentWorkStep::OpenConversation
@@ -169,7 +176,8 @@ pub(super) fn classify_publication(
 fn startup_step(step: AgentWorkStep) -> bool {
     matches!(
         step,
-        AgentWorkStep::AddWorktree
+        AgentWorkStep::WaitForWorkspace
+            | AgentWorkStep::AddWorktree
             | AgentWorkStep::MaterializeHome
             | AgentWorkStep::OpenConversation
             | AgentWorkStep::PublishReady
@@ -179,7 +187,8 @@ fn startup_step(step: AgentWorkStep) -> bool {
 fn legal_advance(from: AgentWorkStep, to: AgentWorkStep) -> bool {
     matches!(
         (from, to),
-        (AgentWorkStep::AddWorktree, AgentWorkStep::MaterializeHome)
+        (AgentWorkStep::WaitForWorkspace, AgentWorkStep::AddWorktree)
+            | (AgentWorkStep::AddWorktree, AgentWorkStep::MaterializeHome)
             | (
                 AgentWorkStep::MaterializeHome,
                 AgentWorkStep::OpenConversation

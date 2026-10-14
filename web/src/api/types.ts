@@ -195,6 +195,12 @@ export interface FirstMessageState {
 export interface AgentDetail {
   readonly id: string;
   readonly status: AgentStatus;
+  /** Current server proof of the lifecycle-owned bootstrap lineage. */
+  readonly bootstrap?: {
+    readonly operationId: string;
+    readonly sandboxId: string;
+    readonly workspaceId: string;
+  };
   readonly profile: AgentProfileSummary;
   readonly worktree: Worktree;
   readonly workspace: {

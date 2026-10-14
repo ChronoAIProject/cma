@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 
 string_enum! { /// Durable Agent worker step.
     pub enum AgentWorkStep {
+        WaitForWorkspace => "wait_for_workspace",
         AddWorktree => "add_worktree", MaterializeHome => "materialize_home",
         OpenConversation => "open_conversation", PublishReady => "publish_ready",
         PublishConnection => "publish_connection", DispatchFirstMessage => "dispatch_first_message",

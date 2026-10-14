@@ -15,54 +15,69 @@ export async function loadV2Agent(
   onProgress?: (ready: ReadyAgent) => void,
 ): Promise<ReadyAgent & { readonly durableEvents: readonly [] }> {
   await v2.authorize(signal);
-  const [detail, usage] = await Promise.all([
-    client.readAgent(agentId, { signal }),
-    client.readAgentUsage(agentId, { signal }),
+  const readHierarchy = async () => {
+    const detail = await client.readAgent(agentId, { signal });
+    signal.throwIfAborted();
+    if (detail.id !== agentId) throw new Error('Agent projections changed identity.');
+    const workspace = await client.readWorkspace(detail.workspace.id, { signal });
+    signal.throwIfAborted();
+    if (workspace.id !== detail.workspace.id || workspace.sandboxId !== detail.sandbox.id)
+      throw new Error('Agent projections changed identity.');
+    return { detail, workspace };
+  };
+  const readUsage = async () => {
+    const usage = await client.readAgentUsage(agentId, { signal });
+    signal.throwIfAborted();
+    if (usage.agentId !== agentId) throw new Error('Agent projections changed identity.');
+    return usage;
+  };
+  const readPage = async (pageCursor?: string) => {
+    try {
+      await v2.authorize(signal);
+      return await v2.events.snapshot(agentId, { pageCursor, signal });
+    } catch (error) {
+      if (signal.aborted || !allowIncomplete || !transientReadFailure(error)) throw error;
+      return undefined;
+    }
+  };
+  // Independent reads share one load, but no result is exposed until every
+  // required projection has settled and the account is checked again.
+  const [{ detail, workspace }, usage, firstPage] = await Promise.all([
+    readHierarchy(),
+    readUsage(),
+    readPage(),
   ]);
-  if (detail.id !== agentId || usage.agentId !== agentId)
-    throw new Error('Agent projections changed identity.');
-  const workspace = await client.readWorkspace(detail.workspace.id, { signal });
-  if (workspace.id !== detail.workspace.id || workspace.sandboxId !== detail.sandbox.id)
-    throw new Error('Agent projections changed identity.');
+  await v2.authorize(signal);
   let conversation: ConversationState = {
     ...conversationFromTranscript({ agentId, throughSeq: 0, turns: [] }),
     usage,
   };
   const items: V2AgentEventItem[] = [];
-  let pageCursor: string | undefined;
   let incarnation: string | undefined;
-  let historyUnavailable = false;
-  do {
-    let page;
-    try {
-      await v2.authorize(signal);
-      page = await v2.events.snapshot(agentId, { pageCursor, signal });
-    } catch (error) {
-      if (signal.aborted || !allowIncomplete || !transientReadFailure(error)) throw error;
-      await v2.authorize(signal);
-      historyUnavailable = true;
-      break;
-    }
-    await v2.authorize(signal);
+  let page = firstPage;
+  while (page !== undefined) {
     if (incarnation !== undefined && incarnation !== page.incarnation)
       throw new Error('Agent snapshot changed conversation identity.');
     incarnation = page.incarnation;
     conversation = { ...conversation, agentIncarnation: incarnation };
     for (const item of page.items) conversation = foldV2Item(conversation, item);
     items.push(...page.items);
-    pageCursor = page.next_page_cursor ?? undefined;
-    if (pageCursor === undefined)
+    const pageCursor = page.next_page_cursor ?? undefined;
+    if (pageCursor === undefined) {
       conversation = { ...conversation, agentCursor: page.through_cursor };
-    else
-      onProgress?.({
-        detail,
-        workspace,
-        conversation,
-        v2,
-        v2Items: [...items],
-        historyLoading: true,
-      });
-  } while (pageCursor !== undefined);
+      break;
+    }
+    onProgress?.({
+      detail,
+      workspace,
+      conversation,
+      v2,
+      v2Items: [...items],
+      historyLoading: true,
+    });
+    page = await readPage(pageCursor);
+    await v2.authorize(signal);
+  }
   return {
     detail,
     workspace,
@@ -71,6 +86,6 @@ export async function loadV2Agent(
     v2Items: items,
     durableEvents: [],
     historyLoading: false,
-    historyUnavailable,
+    historyUnavailable: page === undefined,
   };
 }

@@ -18,6 +18,7 @@ mod startup;
 mod startup_open;
 mod startup_publication;
 mod startup_support;
+mod startup_wait;
 mod support;
 
 const DEFAULT_LEASE: Duration = Duration::from_secs(18 * 60);
@@ -152,6 +153,7 @@ impl AgentWorker {
     async fn execute(&self, agent: Agent, now: SystemTime) -> Result<(), SandboxStoreError> {
         match agent.work.step {
             AgentWorkStep::InstallSkill => self.install_skill(agent, now).await,
+            AgentWorkStep::WaitForWorkspace => self.wait_for_workspace(agent, now).await,
             AgentWorkStep::AddWorktree => self.add_worktree(agent, now).await,
             AgentWorkStep::MaterializeHome => self.materialize_home(agent, now).await,
             AgentWorkStep::OpenConversation => self.open_conversation(agent, now).await,

@@ -175,6 +175,51 @@ async fn apply_publication(
         |_| Ok(()),
     )
     .await?;
+    if current.work.step == AgentWorkStep::WaitForWorkspace
+        && mutation.agent.work.step == AgentWorkStep::AddWorktree
+    {
+        let sandbox = store
+            .sandboxes
+            .find_one(doc! {"_id": current.sandbox_id.as_str()})
+            .session(&mut *session)
+            .await
+            .map_err(ApplyError::Driver)?
+            .as_ref()
+            .map(super::sandboxes::read_sandbox)
+            .transpose()
+            .map_err(ApplyError::Domain)?
+            .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
+        let workspace = store
+            .workspaces
+            .find_one(doc! {"_id": current.workspace_id.as_str()})
+            .session(&mut *session)
+            .await
+            .map_err(ApplyError::Driver)?
+            .as_ref()
+            .map(super::workspaces::read_workspace)
+            .transpose()
+            .map_err(ApplyError::Domain)?
+            .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
+        layer2_core::sandbox::store::validate_agent_workspace_binding(
+            &current, mutation, &sandbox, &workspace,
+        )
+        .map_err(ApplyError::Domain)?;
+        for (collection, id, revision) in [
+            (&store.sandboxes, sandbox.id.as_str(), sandbox.revision),
+            (&store.workspaces, workspace.id.as_str(), workspace.revision),
+        ] {
+            let written = collection.update_one(doc! {"_id": id,
+                "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+                "revision": signed(revision, "bootstrap parent revision").map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
+                "owned_workspace_cleanup_admission_v1": {"$exists": false},
+                "channel_reuse_cleanup_execution": {"$exists": false}},
+                doc! {"$inc": {"agent_bootstrap_binding_fence": 1_i64}})
+                .session(&mut *session).await.map_err(ApplyError::Driver)?;
+            if written.matched_count != 1 {
+                return Err(ApplyError::Domain(SandboxStoreError::Conflict));
+            }
+        }
+    }
     if (current.status == AgentStatus::Paused
         && current.work.step == AgentWorkStep::CloseProcess
         && mutation.agent.work.step == AgentWorkStep::PublishStopped

@@ -1,12 +1,8 @@
 import { Presence } from '../ui/Presence';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { ConnectionWizard } from '../connections/ConnectionWizard';
 import { useConnectionGate } from '../connections/useConnectionGate';
-import {
-  connectionClient,
-  subscriptionService,
-  type ConnectionReport,
-} from '../connections/client';
+import { subscriptionService } from '../connections/client';
 import type { AppRoute } from '../routing/routes';
 import { routePath } from '../routing/routes';
 import { Button } from '../ui/Button';
@@ -29,10 +25,13 @@ import { QueuedMessageNotice } from './QueuedMessageNotice';
 import { AgentAccessRequests } from './AccessRequestDialog';
 import type { CmaWebClient } from '../api/client';
 import { AgentLifecycleFollowup } from '../create/AgentLifecycleFollowup';
+import { useAgentConnectionReadiness } from './connectionReadiness';
 
 interface AgentSurfaceProps {
   readonly lifecycleClient?: CmaWebClient;
   readonly accessUncertain?: boolean;
+  /** Current personal access was checked for this exact Agent before mounting. */
+  readonly accessAuthorized?: boolean;
   readonly draft?: AgentDraft;
   readonly viewerId?: string;
   readonly agentId: string;
@@ -77,13 +76,9 @@ export function AgentSurface({
   onNavigate,
   viewerId,
   accessUncertain = false,
+  accessAuthorized = false,
 }: AgentSurfaceProps) {
   const headingRef = useRef<HTMLHeadingElement>(null);
-  const [verified, setVerified] = useState<ConnectionReport>();
-  const [connectionNeeded, setConnectionNeeded] = useState(false);
-  const [connectionError, setConnectionError] = useState<string>();
-  const [connectionRetry, setConnectionRetry] = useState(0);
-  const connections = useConnectionGate(!accessUncertain);
   const state: AgentResourceState =
     controller.state.status === 'ready' && controller.state.detail.id !== agentId
       ? { status: 'loading' }
@@ -97,34 +92,15 @@ export function AgentSurface({
     accessUncertain ||
     (viewerId !== undefined && sandboxOwner !== undefined && viewerId !== sandboxOwner);
 
-  useEffect(() => {
-    if (state.status !== 'ready' || readOnly) return;
-    const abort = new AbortController();
-    void connectionClient
-      .check({ type: 'agent', id: agentId }, undefined, abort.signal)
-      .then((report) => {
-        if (abort.signal.aborted) return;
-        if (viewerId !== undefined && report.owner !== viewerId) {
-          setConnectionError('Your CMA account changed. Open the Agent again to continue.');
-          return;
-        }
-        if (report.ready) {
-          setVerified(report);
-          setConnectionError(undefined);
-        } else if (
-          report.services.some((row) => row.state === 'missing' || row.state === 'inactive')
-        )
-          setConnectionNeeded(true);
-        else setConnectionError('The connections could not be verified. Please try again.');
-      })
-      .catch((error: unknown) => {
-        if (!abort.signal.aborted)
-          setConnectionError(
-            error instanceof Error ? error.message : 'The connections could not be verified.',
-          );
-      });
-    return () => abort.abort();
-  }, [agentId, state.status, readOnly, viewerId, connectionRetry]);
+  const connection = useAgentConnectionReadiness(
+    agentId,
+    viewerId,
+    lifecycleClient,
+    !readOnly && (state.status === 'ready' || (accessAuthorized && state.status !== 'error')),
+  );
+  const verified = connection.verified;
+  const connectionError = connection.error;
+  const connections = useConnectionGate(!readOnly, connection.scope);
 
   useEffect(() => {
     if (state.status !== 'ready') headingRef.current?.focus();
@@ -256,14 +232,14 @@ export function AgentSurface({
                 icon={<IconCloseOutline16 />}
                 aria-label="Dismiss error"
                 onClick={() => {
-                  setConnectionError(undefined);
+                  connection.clearError();
                   connections.clearError();
                   controller.clearActionError();
                 }}
               />
             )}
             {connectionError && !readOnly ? (
-              <Button size="sm" onClick={() => setConnectionRetry((value) => value + 1)}>
+              <Button size="sm" onClick={connection.retry}>
                 Retry connections
               </Button>
             ) : null}
@@ -379,15 +355,12 @@ export function AgentSurface({
           onStop={controller.interrupt}
         />
       </div>
-      {verified === undefined && connectionNeeded && !readOnly ? (
+      {verified === undefined && connection.needed && !readOnly ? (
         <ConnectionWizard
           target={{ type: 'agent', id: agentId }}
           presentation="dialog"
           expectedOwner={viewerId}
-          onReady={(report) => {
-            setVerified(report);
-            setConnectionNeeded(false);
-          }}
+          onReady={connection.accept}
           onCancel={() => onNavigate({ kind: 'home' })}
         />
       ) : null}

@@ -208,6 +208,13 @@ pub(crate) struct AgentPageView {
 }
 
 #[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct AgentBootstrapView {
+    operation_id: String,
+    sandbox_id: String,
+    workspace_id: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct AgentView {
     id: String,
     #[schema(value_type = String)]
@@ -216,6 +223,8 @@ pub(crate) struct AgentView {
     worktree: WorktreeSummaryView,
     workspace: WorkspaceContextView,
     sandbox: SandboxContextView,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    bootstrap: Option<AgentBootstrapView>,
     conforms_to: Vec<&'static str>,
     reach: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -253,6 +262,13 @@ impl AgentView {
             workspace,
             sandbox,
         } = lineage;
+        let bootstrap = agent
+            .bootstrap_lineage(&sandbox, &workspace)
+            .map(|operation_id| AgentBootstrapView {
+                operation_id: operation_id.into(),
+                sandbox_id: sandbox.id.to_string(),
+                workspace_id: workspace.id.to_string(),
+            });
         let first_message =
             agent
                 .conversation
@@ -266,6 +282,7 @@ impl AgentView {
                 });
         Self {
             id: agent.id.to_string(),
+            bootstrap,
             status: agent.status,
             profile: (&agent).into(),
             worktree: WorktreeSummaryView {
