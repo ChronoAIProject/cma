@@ -13,9 +13,25 @@ complete and the checked-in pins match its receipt. AM/Web and retained Gateway
 were Ready at **18:02:50 SGT**, and the new full-home pool reached two observed
 Ready replicas at **18:04:03 SGT**. One fresh UI creation succeeded in **21.122
 seconds** to the visible Agent surface/enabled composer; the five-second target
-was not met. Other live acceptance remains pending. Exact digests, identities
+was not met. Model, skill, scope revision and Stop acceptance subsequently
+passed. Pause/resume retained the exact PVC and conversation, but actual
+completion exceeded five seconds and kubelet changed filesystem modes on
+remount; strict whole-home persistence therefore failed. Exact digests, identities
 and measured boundaries are in the
 [combined release report](CMA_Native_Production_Verification.md#combined-performance-and-full-home-release--pr-1016).
+
+The follow-up source introduces a separately identified native pool policy with
+`fsGroupChangePolicy: OnRootMismatch`. Existing pool/template/home records keep
+their original policy; activate fresh capacity only when its `config_sha256`
+exactly equals the non-null administration `default_config_sha256`. Matching
+only image and resources can select an old policy and is insufficient. Fresh
+whole-home mode preservation and timing still require live verification.
+
+After a new-policy pool or binding is persisted, any API rollback must retain
+support for the optional `fs_group_change_policy` field and v3 pool identity.
+Older binaries reject that persisted field through strict deserialization; do
+not roll Agent Manager back to the pre-policy image after activation. Runtime
+`cad2058` and the current full-home layout remain compatible and unchanged.
 
 The preceding `03cbd332` Agent Manager/shared Web release was Ready at
 16:26:14 SGT on 2026-10-14, with two Ready default-pool replicas observed at
