@@ -9,7 +9,9 @@ impl WorkspaceAdmissionKind {
         match self {
             Self::Manual | Self::Trigger | Self::Lifecycle => sandbox.accepts_creation_admission(),
             Self::SandboxProfile => {
-                sandbox.status == SandboxStatus::Installing
+                (sandbox.status == SandboxStatus::Installing
+                    || matches!(&sandbox.origin, super::SandboxOrigin::Lifecycle { operation_id }
+                        if sandbox.accepts_lifecycle_bootstrap(operation_id)))
                     && sandbox.lifecycle.checkpoint_capture.is_none()
             }
         }

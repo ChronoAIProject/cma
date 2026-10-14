@@ -68,6 +68,7 @@ pub use agent_work_evidence_validation::{MAX_AGENT_CLEANUP_DEBT, MAX_AGENT_WORK_
 pub use agent_work_validation::{
     retired_sandbox_cleanup_is_absent, retiring_sandbox_process_is_absent,
     validate_agent_work_mutation, validate_agent_work_mutation_with_sandbox,
+    validate_agent_workspace_binding,
 };
 mod sandbox_admission;
 pub use sandbox_admission::{

@@ -66,6 +66,36 @@ pub(in crate::store) async fn apply(
         .map_err(|_| CommandLedgerError::Corrupt)?
         .ok_or(CommandLedgerError::NotFound)?;
     validate_command_reservation(request, &agent, &parent)?;
+    if agent.bootstrap_operation(&parent).is_some() {
+        let workspace = store
+            .workspaces
+            .find_one(doc! {"_id": agent.workspace_id.as_str(),
+            "owned_workspace_cleanup_admission_v1": {"$exists": false},
+            "channel_reuse_cleanup_execution": {"$exists": false}})
+            .session(&mut *session)
+            .await?
+            .as_ref()
+            .map(super::super::workspaces::read_workspace)
+            .transpose()
+            .map_err(|_| CommandLedgerError::Corrupt)?
+            .ok_or(CommandLedgerError::NotAdmissible)?;
+        if agent.bootstrap_lineage(&parent, &workspace).is_none() {
+            return Err(CommandLedgerError::NotAdmissible.into());
+        }
+        let fenced = store
+            .workspaces
+            .update_one(
+                doc! {"_id": workspace.id.as_str(),
+                "revision": signed(workspace.revision, "bootstrap workspace revision")
+                    .map_err(|_| CommandLedgerError::Corrupt)?},
+                doc! {"$inc": {"agent_command_admission_fence": 1_i64}},
+            )
+            .session(&mut *session)
+            .await?;
+        if fenced.matched_count != 1 {
+            return Err(CommandLedgerError::Conflict.into());
+        }
+    }
     let policy = store
         .resource_policies
         .find_one(doc! { "_id": parent.id.as_str() })

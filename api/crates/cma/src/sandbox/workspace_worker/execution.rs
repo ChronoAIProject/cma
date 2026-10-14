@@ -1,6 +1,45 @@
 use super::*;
 
 impl WorkspaceWorker {
+    pub(in crate::sandbox) async fn run_until_ready_observing_bootstrap(
+        &self,
+        id: &WorkspaceId,
+        sandbox: &Sandbox,
+        now: SystemTime,
+    ) -> Result<WorkspaceDrain, SandboxStoreError> {
+        let started = tokio::time::Instant::now();
+        let mut executed_work = false;
+        loop {
+            let at = now + started.elapsed();
+            let mut drained = self.run_until_ready(id, at).await?;
+            executed_work |= drained.executed_work;
+            drained.executed_work = executed_work;
+            let child = &drained.workspace;
+            let observing_bootstrap = matches!(
+                sandbox.origin,
+                layer2_core::sandbox::SandboxOrigin::Lifecycle { .. }
+            ) && child.id == *id
+                && child.owner == sandbox.owner
+                && child.sandbox_id == sandbox.id
+                && matches!(
+                    child.origin,
+                    layer2_core::sandbox::WorkspaceOrigin::SandboxProfile { .. }
+                )
+                && child.origin_matches_sandbox_profile(sandbox)
+                && child.status == WorkspaceStatus::Preparing
+                && child.work.attempts == 0
+                && child.work.ready_at <= rfc3339_at(at);
+            let remaining = Duration::from_secs(10).saturating_sub(started.elapsed());
+            if !observing_bootstrap || remaining.is_zero() {
+                return Ok(drained);
+            }
+            // An independent scheduler may own this exact child's Prepare or
+            // Setup claim. Observe its durable publication without a competing
+            // effect; the normal claim transaction still decides each attempt.
+            tokio::time::sleep(Duration::from_millis(250).min(remaining)).await;
+        }
+    }
+
     pub async fn run_until_ready(
         &self,
         id: &WorkspaceId,

@@ -7,9 +7,6 @@ use layer2_core::sandbox::store::{
 use layer2_core::sandbox::AgentStatus;
 use mongodb::bson::doc;
 
-#[path = "agent_lifecycle_workspace_fixture.rs"]
-mod fixture;
-
 fn work(record: &crate::store::LifecycleRecord, existing: bool) -> ProvisionInput {
     ProvisionInput {
         behavior: record.input.behavior,

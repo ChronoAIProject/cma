@@ -247,6 +247,8 @@ mod fs_group_policy_tests;
 #[cfg(test)]
 mod native_admission_read_tests;
 #[cfg(test)]
+mod native_startup_read_tests;
+#[cfg(test)]
 mod policy_read_tests;
 #[cfg(test)]
 mod read_fixture;
