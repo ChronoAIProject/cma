@@ -49,6 +49,7 @@ fn sandbox(id: &str, owner: &str) -> Sandbox {
             revision: 1,
             digest: "a".repeat(64),
             content: SandboxProfileContent {
+                runtime_image: None,
                 cpu_millis: 1_000,
                 memory_mib: 2_048,
                 nyxid_services: vec![],
@@ -180,6 +181,7 @@ fn agent(
         ]),
         status,
         conversation: ConversationState {
+            settings: None,
             conversation_id: None,
             runtime_generation: None,
             last_seq: 1,

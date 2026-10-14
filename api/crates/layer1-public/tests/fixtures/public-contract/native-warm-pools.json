@@ -1,0 +1,546 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "native-pools-list-operator",
+      "operation": "GET /api/v1/admin/warm-pools",
+      "scenario": "warm_pools_operator",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/warm-pools",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "id": "wp_contract",
+              "revision": 1,
+              "image": "registry/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "cpu_millis": 1000,
+              "memory_mib": 1024,
+              "target_replicas": 2,
+              "ready_replicas": null,
+              "observed": false,
+              "status": "pending",
+              "resource_name": null,
+              "error": null
+            }
+          ],
+          "default_image": "registry/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "default_cpu_millis": 1000,
+          "default_memory_mib": 1024,
+          "available": true
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "native-pools-list-anonymous",
+      "operation": "GET /api/v1/admin/warm-pools",
+      "scenario": "warm_pools_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/warm-pools",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "native-pools-list-forbidden",
+      "operation": "GET /api/v1/admin/warm-pools",
+      "scenario": "warm_pools_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/warm-pools",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-an-operator",
+          "title": "not an operator",
+          "status": 403,
+          "detail": "This operation requires an operator capability this caller does not hold.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "native-pools-list-unavailable",
+      "operation": "GET /api/v1/admin/warm-pools",
+      "scenario": "warm_pools_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/warm-pools",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/operator-service-unavailable",
+          "title": "operator service unavailable",
+          "status": 503,
+          "detail": "An operator dependency could not complete this request.",
+          "code": "operator_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "native-pools-configure-operator",
+      "operation": "POST /api/v1/admin/warm-pools",
+      "scenario": "warm_pools_operator",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/warm-pools",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "pool-contract-create"
+        },
+        "body": {
+          "cpu_millis": 1000,
+          "memory_mib": 1024,
+          "target_replicas": 2
+        }
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "wp_contract",
+          "revision": 1,
+          "image": "registry/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "cpu_millis": 1000,
+          "memory_mib": 1024,
+          "target_replicas": 2,
+          "ready_replicas": null,
+          "observed": false,
+          "status": "pending",
+          "resource_name": null,
+          "error": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "native-pools-configure-anonymous",
+      "operation": "POST /api/v1/admin/warm-pools",
+      "scenario": "warm_pools_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/warm-pools",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "pool-contract-create"
+        },
+        "body": {
+          "cpu_millis": 1000,
+          "memory_mib": 1024,
+          "target_replicas": 2
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "native-pools-configure-forbidden",
+      "operation": "POST /api/v1/admin/warm-pools",
+      "scenario": "warm_pools_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/warm-pools",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "pool-contract-create"
+        },
+        "body": {
+          "cpu_millis": 1000,
+          "memory_mib": 1024,
+          "target_replicas": 2
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-an-operator",
+          "title": "not an operator",
+          "status": 403,
+          "detail": "This operation requires an operator capability this caller does not hold.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "native-pools-configure-unavailable",
+      "operation": "POST /api/v1/admin/warm-pools",
+      "scenario": "warm_pools_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/warm-pools",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "pool-contract-create"
+        },
+        "body": {
+          "cpu_millis": 1000,
+          "memory_mib": 1024,
+          "target_replicas": 2
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/operator-service-unavailable",
+          "title": "operator service unavailable",
+          "status": 503,
+          "detail": "An operator dependency could not complete this request.",
+          "code": "operator_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "native-pools-configure-invalid",
+      "operation": "POST /api/v1/admin/warm-pools",
+      "scenario": "warm_pools_invalid",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/warm-pools",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "pool-contract-create"
+        },
+        "body": {
+          "cpu_millis": 1000,
+          "memory_mib": 1024,
+          "target_replicas": 2
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-admin-request",
+          "title": "invalid admin request",
+          "status": 400,
+          "detail": "The operator request parameters are not valid.",
+          "code": "invalid_admin_request"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "native-pools-configure-conflict",
+      "operation": "POST /api/v1/admin/warm-pools",
+      "scenario": "warm_pools_conflict",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/warm-pools",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "pool-contract-create"
+        },
+        "body": {
+          "cpu_millis": 1000,
+          "memory_mib": 1024,
+          "target_replicas": 2
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/operator-conflict",
+          "title": "operator conflict",
+          "status": 409,
+          "detail": "The operator action conflicts with current resource state.",
+          "code": "operator_conflict"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "native-pools-resize-operator",
+      "operation": "PUT /api/v1/admin/warm-pools/{id}",
+      "scenario": "warm_pools_operator",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/admin/warm-pools/wp_contract",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "expected_revision": 1,
+          "target_replicas": 0
+        }
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "wp_contract",
+          "revision": 2,
+          "image": "registry/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "cpu_millis": 1000,
+          "memory_mib": 1024,
+          "target_replicas": 0,
+          "ready_replicas": null,
+          "observed": false,
+          "status": "pending",
+          "resource_name": null,
+          "error": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "native-pools-resize-anonymous",
+      "operation": "PUT /api/v1/admin/warm-pools/{id}",
+      "scenario": "warm_pools_anonymous",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/admin/warm-pools/wp_contract",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "expected_revision": 1,
+          "target_replicas": 0
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "native-pools-resize-forbidden",
+      "operation": "PUT /api/v1/admin/warm-pools/{id}",
+      "scenario": "warm_pools_forbidden",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/admin/warm-pools/wp_contract",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "expected_revision": 1,
+          "target_replicas": 0
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-an-operator",
+          "title": "not an operator",
+          "status": 403,
+          "detail": "This operation requires an operator capability this caller does not hold.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "native-pools-resize-unavailable",
+      "operation": "PUT /api/v1/admin/warm-pools/{id}",
+      "scenario": "warm_pools_unavailable",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/admin/warm-pools/wp_contract",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "expected_revision": 1,
+          "target_replicas": 0
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/operator-service-unavailable",
+          "title": "operator service unavailable",
+          "status": 503,
+          "detail": "An operator dependency could not complete this request.",
+          "code": "operator_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "native-pools-resize-invalid",
+      "operation": "PUT /api/v1/admin/warm-pools/{id}",
+      "scenario": "warm_pools_invalid",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/admin/warm-pools/wp_contract",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "expected_revision": 1,
+          "target_replicas": 0
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-admin-request",
+          "title": "invalid admin request",
+          "status": 400,
+          "detail": "The operator request parameters are not valid.",
+          "code": "invalid_admin_request"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "native-pools-resize-conflict",
+      "operation": "PUT /api/v1/admin/warm-pools/{id}",
+      "scenario": "warm_pools_conflict",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/admin/warm-pools/wp_contract",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "expected_revision": 1,
+          "target_replicas": 0
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/operator-conflict",
+          "title": "operator conflict",
+          "status": 409,
+          "detail": "The operator action conflicts with current resource state.",
+          "code": "operator_conflict"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "native-pools-resize-missing",
+      "operation": "PUT /api/v1/admin/warm-pools/{id}",
+      "scenario": "warm_pools_missing",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/admin/warm-pools/wp_contract",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "expected_revision": 1,
+          "target_replicas": 0
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/operator-resource-not-found",
+          "title": "operator resource not found",
+          "status": 404,
+          "detail": "No operator resource matches this request.",
+          "code": "operator_resource_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

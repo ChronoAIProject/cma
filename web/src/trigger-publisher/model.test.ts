@@ -9,12 +9,8 @@ import {
 import { content, profiles } from './fixtures';
 
 describe('Trigger publisher validation', () => {
-  it('requires exact available public revisions at each target field', () => {
-    expect(Object.keys(validateStep(0, blankContent(), {}))).toEqual([
-      'target.sandbox_profile',
-      'target.workspace_profile',
-      'target.agent_profile',
-    ]);
+  it('accepts the inline default and validates legacy target revisions', () => {
+    expect(validateStep(0, blankContent(), {})).toEqual({});
     expect(validateStep(0, content, profiles)).toEqual({});
     expect(
       validateStep(0, content, {

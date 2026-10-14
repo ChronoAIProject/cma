@@ -41,6 +41,7 @@ guarded = mode == "release" ? [
   ["ci", "trigger-provider-smoke-contract", "Typecheck every harness entry point"],
   ["ci", "trigger-provider-smoke-contract", "Local browser guard mechanics"],
   ["ci", "backend", "Disposable real Mongo persistence contracts"],
+  ["ci", "backend", "Image Manager authenticated Mongo isolation"],
   ["nightly-staging", "smoke", "Initialize isolated evidence path"],
   ["nightly-staging", "journeys", "Initialize isolated evidence path"],
   ["nightly-staging", "journeys", "Verify approval policy and independently observed deployment before fixture access"],
@@ -62,9 +63,14 @@ guarded.each do |workflow, id, name|
 end
 
 if mode == "release"
-  %w[api web runtime cmaeg].each do |component|
+  %w[api web runtime cmaeg image-manager].each do |component|
     reject.call("CI omits #{component} image") do |value|
       value["ci"]["jobs"]["images"]["strategy"]["matrix"]["component"].delete(component)
+    end
+    %w[images image-exports].each do |id|
+      reject.call("release #{id} omits #{component}") do |value|
+        value["publish"]["jobs"][id]["strategy"]["matrix"]["component"].delete(component)
+      end
     end
   end
   reject.call("release omits runtime dependency") { |value| value["publish"]["jobs"]["release"]["needs"].delete("runtime-image-gate") }
@@ -111,6 +117,26 @@ if mode == "release"
       next
     end
     raise "Gateway contract accepted non-readiness health"
+  end
+  config = GatewaySourceContract.documents(File.expand_path("../../infra/cmaeg/configmap.yaml", __dir__)).first
+  GatewaySourceContract.validate_provider_origin(config)
+  %w[http://example-host-03.example-namespace.svc https://example-host-01.example-namespace.svc http://example-host-01.example-namespace.svc:8080 missing duplicate].each do |origin|
+    candidate = Marshal.load(Marshal.dump(config))
+    providers = JSON.parse(candidate["data"]["CMAEG_PROVIDERS"])
+    cma = providers.find { |provider| provider["slug"] == "cma_codex" }
+    case origin
+    when "missing" then providers.delete(cma)
+    when "duplicate" then providers << cma.dup
+    else cma["base_url"] = origin
+    end
+    candidate["data"]["CMAEG_PROVIDERS"] = JSON.generate(providers)
+    begin
+      GatewaySourceContract.validate_provider_origin(candidate)
+    rescue StandardError
+      tests += 1
+      next
+    end
+    raise "Gateway contract accepted incompatible CMA provider origin: #{origin}"
   end
 else
   %w[smoke journeys].each do |id|

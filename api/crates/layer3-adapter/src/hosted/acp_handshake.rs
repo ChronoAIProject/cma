@@ -16,7 +16,9 @@ impl Bridge {
         settings: HostedAgentOpenSettings,
         updates: &UpdateRelay,
     ) -> crate::Result<()> {
-        let protected = settings.channel_tool.is_some() || settings.provider_tool.is_some();
+        let protected = settings.channel_tool.is_some()
+            || settings.provider_tool.is_some()
+            || settings.access_tool.is_some();
         self.handshake_inner(resume, cwd, settings, updates)
             .await
             .map_err(|error| {
@@ -48,7 +50,7 @@ impl Bridge {
                         "jetbrains": { "air": { "version": 1, "capabilities": ["sessionFailure"] } }
                     },
                 },
-            }),settings.channel_tool.is_some() || settings.provider_tool.is_some())
+            }),settings.channel_tool.is_some() || settings.provider_tool.is_some() || settings.access_tool.is_some())
             .await?;
 
         if let Some(binding) = &settings.channel_tool {
@@ -81,6 +83,20 @@ impl Bridge {
                 }
             }
         }
+        if let Some(binding) = &settings.access_tool {
+            match &greeting {
+                Greeting::Fresh(hello)
+                    if hello.pointer("/agentCapabilities/mcpCapabilities/http")
+                        == Some(&serde_json::Value::Bool(true)) => {}
+                Greeting::Existing
+                    if resume.as_deref().is_some_and(|id| binding.retained_for(id)) => {}
+                _ => {
+                    return Err(AdapterError::Unsupported(
+                        "runtime cannot establish the required service access request tool".into(),
+                    ))
+                }
+            }
+        }
         let tool_servers: Vec<_> = settings
             .channel_tool
             .as_ref()
@@ -89,6 +105,12 @@ impl Bridge {
             .chain(
                 settings
                     .provider_tool
+                    .as_ref()
+                    .map(|binding| binding.acp_server()),
+            )
+            .chain(
+                settings
+                    .access_tool
                     .as_ref()
                     .map(|binding| binding.acp_server()),
             )

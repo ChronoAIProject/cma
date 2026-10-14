@@ -1,3 +1,4 @@
+import { chooseOptionValue } from '../test/select';
 import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
@@ -23,16 +24,18 @@ describe('publisher profile pagination', () => {
       });
     render(<ProfilePicker client={test.client} kind="agent" disabled={false} onSelect={vi.fn()} />);
     await user.click(await screen.findByRole('button', { name: 'Load more' }));
-    await user.selectOptions(
-      screen.getByRole('combobox', { name: 'agent profile source' }),
+    await chooseOptionValue(
+      user,
+      screen.getByRole('button', { name: 'agent profile source' }),
       'public',
     );
-    await screen.findByRole('option', { name: 'Public agent / Revision 4' });
+    await user.click(screen.getByRole('button', { name: 'agent profile' }));
+    await screen.findByRole('menuitemradio', { name: 'Public agent / Revision 4' });
     await act(async () =>
       finish?.({ items: [{ ...profiles.agent, id: 'stale-agent', name: 'Stale agent' }] }),
     );
     expect(
-      screen.queryByRole('option', { name: 'Stale agent / Revision 4' }),
+      screen.queryByRole('menuitemradio', { name: 'Stale agent / Revision 4' }),
     ).not.toBeInTheDocument();
   });
   it('returns to own Workspace profiles when a different Sandbox has no references', async () => {
@@ -44,13 +47,15 @@ describe('publisher profile pagination', () => {
       onSelect: vi.fn(),
     };
     const view = render(<ProfilePicker {...props} references={[profiles.workspace]} />);
-    await screen.findByRole('option', { name: 'trureturing / Revision 3' });
-    expect(screen.getByRole('combobox', { name: 'workspace profile source' })).toHaveValue(
-      'sandbox',
+    await act(async () => undefined);
+    expect(screen.getByRole('button', { name: 'workspace profile source' })).toHaveTextContent(
+      'From Sandbox profile',
     );
     view.rerender(<ProfilePicker {...props} references={[]} />);
-    await screen.findByRole('option', { name: 'trureturing / Revision 3' });
-    expect(screen.getByRole('combobox', { name: 'workspace profile source' })).toHaveValue('own');
+    await act(async () => undefined);
+    expect(screen.getByRole('button', { name: 'workspace profile source' })).toHaveTextContent(
+      'My profiles',
+    );
     expect(test.client.listProfiles).toHaveBeenCalledWith('workspace', 'own', expect.anything());
   });
 });

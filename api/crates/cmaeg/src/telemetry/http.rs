@@ -63,6 +63,7 @@ async fn observe(mut request: Request, next: Next) -> Response {
                 | "/v1/messages/{message_ref}/update"
                 | "/v1/events/{event_ref}/typing"
                 | "/v1/events/{event_ref}/context"
+                | "/v1/events/{event_ref}/attachments/{index}"
         );
     async move {
         let started = std::time::Instant::now();

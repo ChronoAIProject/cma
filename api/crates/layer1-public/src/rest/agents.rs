@@ -3,7 +3,7 @@
 use std::{future::Future, sync::Arc};
 
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Extension, Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -11,15 +11,15 @@ use axum::{
 };
 use layer2_core::profiles::AgentProfileRef;
 use layer2_core::sandbox::store::PageRequest;
-use layer2_core::sandbox::{
-    AgentListQuery, AgentOperationService, AgentOrigin, AgentReadService, AgentService,
-    AgentStatus, CreateAgent,
-};
-use layer2_core::{
-    AgentId, AgentProfileId, Caller, Capability, OperationStore, SandboxId, SubjectId, WorkspaceId,
-};
+use layer2_core::sandbox::{AgentListQuery, AgentOrigin, AgentStatus, CreateAgent};
+use layer2_core::{AgentId, AgentProfileId, Caller, Capability, SandboxId, SubjectId, WorkspaceId};
 use serde::Deserialize;
 
+#[path = "agent_state.rs"]
+mod agent_state;
+use super::agent_lifecycle::{
+    AgentLifecycleCreateReceipt, AgentLifecycleCreateRequest, AgentLifecycleProvisioningError,
+};
 use super::agent_openapi_shapes::{AgentListItemView, AgentView, CreateAgentRequest};
 use super::agent_shared_shapes::{
     AccessibleAgentListItemView, AccessibleAgentPageView, AccessibleAgentView,
@@ -28,44 +28,9 @@ use super::idempotency::{self, IdempotencyKey, RequestBody};
 use super::instance_problem::InstanceProblem;
 use super::BodyProblem;
 use crate::{AuthenticatedCaller, AuthenticatedResourceCaller, DelegatedCredential};
+pub use agent_state::AgentRoutesState;
 
 const DEFAULT_PAGE_LIMIT: u16 = 200;
-
-#[derive(Clone)]
-pub struct AgentRoutesState {
-    pub(super) commands: Option<Arc<layer2_core::sandbox::agent_io::AgentCommandService>>,
-    pub(super) agents: Arc<AgentService>,
-    pub(super) reads: Arc<AgentReadService>,
-    pub(super) agent_operations: Arc<AgentOperationService>,
-    pub(super) operation_records: Arc<dyn OperationStore>,
-}
-
-impl AgentRoutesState {
-    pub fn new(
-        agents: Arc<AgentService>,
-        reads: Arc<AgentReadService>,
-        agent_operations: Arc<AgentOperationService>,
-        operation_records: Arc<dyn OperationStore>,
-    ) -> Self {
-        Self {
-            commands: None,
-            agents,
-            reads,
-            agent_operations,
-            operation_records,
-        }
-    }
-
-    /// Production adapters share the durable command ledger. Older service
-    /// compositions keep their established operation behavior until migrated.
-    pub fn with_commands(
-        mut self,
-        commands: Arc<layer2_core::sandbox::agent_io::AgentCommandService>,
-    ) -> Self {
-        self.commands = Some(commands);
-        self
-    }
-}
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -110,8 +75,100 @@ impl AgentPageParams {
 pub(super) fn routes() -> Router<AgentRoutesState> {
     Router::new()
         .route("/api/v1/workspaces/{id}/agents", post(create))
-        .route("/api/v1/agents", get(list))
+        .route("/api/v1/agents", get(list).post(create_lifecycle))
+        .route(
+            "/api/v1/agent-lifecycle/{id}",
+            get(read_lifecycle_operation),
+        )
         .route("/api/v1/agents/{id}", get(read).delete(delete_agent))
+        .route(
+            "/api/v1/agents/{id}/skills",
+            get(super::agent_skills::read).post(super::agent_skills::install),
+        )
+        .route(
+            "/api/v1/agents/{id}/settings",
+            get(super::agent_settings::read).patch(super::agent_settings::update),
+        )
+}
+
+/// Read a durable Agent lifecycle operation and its phase events.
+#[utoipa::path(
+    get,
+    path = "/api/v1/agent-lifecycle/{id}",
+    tag = "agents",
+    params(("id" = String, Path)),
+    responses(
+        (status = 200, body = crate::rest::AgentLifecycleOperationView),
+        (status = 403, body = crate::rest::ProblemDocument),
+        (status = 404, body = crate::rest::ProblemDocument)
+    )
+)]
+pub(crate) async fn read_lifecycle_operation(
+    State(state): State<AgentRoutesState>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Path(operation_id): Path<String>,
+) -> Response {
+    let Some(reader) = state.lifecycle_operations else {
+        return AgentLifecycleProvisioningError::Unavailable.into_response();
+    };
+    reader
+        .read(&caller, &operation_id)
+        .await
+        .map(|view| (StatusCode::OK, Json(view)).into_response())
+        .unwrap_or_else(IntoResponse::into_response)
+}
+
+/// Create an Agent from one inline lifecycle request.  The provisioning port
+/// owns the sandbox/workspace/agent orchestration; this boundary never accepts
+/// profile, worktree, pod, or runtime identifiers. An optional owned workspace
+/// selects an existing context; the service verifies its creation authority.
+#[utoipa::path(
+    post,
+    path = "/api/v1/agents",
+    tag = "agents",
+    params(("Idempotency-Key" = String, Header)),
+    request_body = AgentLifecycleCreateRequest,
+    responses(
+        (status = 202, body = AgentLifecycleCreateReceipt),
+        (status = 422, body = crate::rest::ProblemDocument),
+        (status = 503, body = crate::rest::ProblemDocument)
+    )
+)]
+pub(crate) async fn create_lifecycle(
+    State(state): State<AgentRoutesState>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    context: Option<Extension<layer2_core::resource_access::CallerContext>>,
+    credential: Option<Extension<DelegatedCredential>>,
+    key: IdempotencyKey,
+    body: Result<RequestBody<AgentLifecycleCreateRequest>, BodyProblem>,
+) -> Response {
+    if let Err(problem) = require_use(&caller) {
+        return problem.into_response();
+    }
+    let Some(provisioner) = state.lifecycle.clone() else {
+        return AgentLifecycleProvisioningError::Unavailable.into_response();
+    };
+    // The lifecycle's permanent owner/key ledger owns admission and resumption.
+    // An outer cached 202 would suppress requeue after connecting services.
+    let key = match key.into_required_value() {
+        Ok(key) => key,
+        Err(error) => return error.into_response(),
+    };
+    let request = match body.and_then(|body| body.into_parts().0) {
+        Ok(body) => body,
+        Err(error) => return error.into_response(),
+    };
+    provisioner
+        .create(
+            &caller,
+            context.as_ref().map(|Extension(value)| value),
+            credential.as_ref().map(|Extension(value)| value.value()),
+            request,
+            &key,
+        )
+        .await
+        .map(|receipt| (StatusCode::ACCEPTED, Json(receipt)).into_response())
+        .unwrap_or_else(IntoResponse::into_response)
 }
 
 /// Compose all owner-facing Agent routes against one shared service set.

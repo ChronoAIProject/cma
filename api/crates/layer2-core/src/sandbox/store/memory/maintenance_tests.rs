@@ -28,6 +28,7 @@ async fn keep_alive_policy_applies_to_existing_sandboxes_and_preserves_manual_pa
     let store = InMemorySandboxStore::with_profiles(profiles.clone());
     let value = stored_sandbox("sbx_keepalive", "owner-a");
     let mut profile = SandboxProfile {
+        internal: false,
         availability: Default::default(),
         id: value.profile.id.clone(),
         owner: value.owner.clone(),

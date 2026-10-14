@@ -15,6 +15,7 @@ fn native() -> Sandbox {
     let mut home = SandboxHome::reserve(
         &value.id,
         HomeVolumePolicy {
+            mode: Default::default(),
             storage_class: "storage".into(),
             capacity_gib: 64,
             template_name: "empty".into(),
@@ -23,6 +24,7 @@ fn native() -> Sandbox {
     )
     .unwrap();
     home.bind(HomeVolumeReceipt {
+        native_authority: None,
         volume_id: home.request.volume_id.clone(),
         request_sha256: home.request.computed_sha256(),
         storage_reference: "original-disk".into(),
@@ -161,7 +163,11 @@ fn interrupted_pause_returns_to_pausing_with_new_authority_and_no_live_publicati
         value.lifecycle.next_authority,
         original.lifecycle.next_authority + 1
     );
-    assert!(value.retained_home_recovery().is_none());
+    let retained = value
+        .retained_home_recovery()
+        .expect("the resumed pause keeps the retained home authority");
+    assert_eq!(retained.source_generation, 11);
+    assert!(retained.resume_pause.is_none());
     assert_eq!(value.work.ready_at, NOW);
     assert_eq!(
         value.lifecycle.paused_notice.as_deref(),

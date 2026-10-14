@@ -3,7 +3,7 @@ use layer2_core::sandbox::store::{AgentLogStore, AgentStore};
 use layer2_core::sandbox::{AgentLogKind, AgentWorkStep};
 
 #[tokio::test]
-async fn missing_retiring_runtime_settles_real_agents_and_retries_archive_cleanup() {
+async fn missing_retiring_runtime_settles_real_agents_without_archive_cleanup() {
     use crate::sandbox::checkpoint_maintenance::SandboxCheckpointMaintenance;
     use crate::sandbox::live_agent_stopper::DurableLiveAgentStopper;
     use crate::sandbox::reconciliation::SandboxReconciler;
@@ -140,10 +140,6 @@ async fn missing_retiring_runtime_settles_real_agents_and_retries_archive_cleanu
                 harness.store.clone(),
                 harness.registry.clone(),
             )),
-            checkpoints: Arc::new(CheckpointPurgeRecorder {
-                actions: harness.actions.clone(),
-                failures: harness.checkpoint_failures.clone(),
-            }),
             registry: harness.registry.clone(),
             updates: DurableAgentUpdateRecorder::new(harness.store.clone()),
             operations: AgentOperationService::new(harness.store.clone(), harness.registry.clone()),
@@ -155,8 +151,7 @@ async fn missing_retiring_runtime_settles_real_agents_and_retries_archive_cleanu
             harness.policy.clone(),
         ),
     );
-    harness.checkpoint_failures.store(1, Ordering::SeqCst);
-    for _ in 0..4 {
+    for _ in 0..3 {
         worker.run_one(&active.id, now).await.unwrap();
     }
     let retrying = harness.stored(&active.id).await;
@@ -180,19 +175,15 @@ async fn missing_retiring_runtime_settles_real_agents_and_retries_archive_cleanu
         .await
         .unwrap()
         .is_empty());
-    assert_eq!(
-        harness
-            .actions
-            .snapshot()
-            .iter()
-            .filter(|action| action.as_str() == "purge-checkpoints")
-            .count(),
-        2
-    );
+    assert!(!harness
+        .actions
+        .snapshot()
+        .iter()
+        .any(|action| action.as_str() == "purge-checkpoints"));
 }
 
 #[tokio::test]
-async fn retirement_retries_snapshot_cleanup_across_restart_without_removing_history() {
+async fn retirement_across_restart_preserves_history_without_snapshot_cleanup() {
     let harness = Harness::new(Vec::new(), 0, Duration::from_secs(3600)).await;
     let created = harness.create().await;
     let now = start_time(&created);
@@ -211,13 +202,12 @@ async fn retirement_retries_snapshot_cleanup_across_restart_without_removing_his
         .await
         .unwrap();
     let history = harness.store.agent_log(&agent.id, 0, 100).await.unwrap();
-    harness.checkpoint_failures.store(1, Ordering::SeqCst);
     harness
         .service
         .delete(&caller("owner", [Capability::DeleteOwnSandbox]), &active.id)
         .await
         .unwrap();
-    for _ in 0..4 {
+    for _ in 0..3 {
         harness.run(&active.id, now).await;
     }
     let retrying = harness.stored(&active.id).await;
@@ -238,9 +228,8 @@ async fn retirement_retries_snapshot_cleanup_across_restart_without_removing_his
         .iter()
         .any(|event| matches!(
             event.kind,
-            SandboxEventKind::WorkStepFailed {
-                step: SandboxWorkStep::MarkRetired,
-                ..
+            SandboxEventKind::WorkStepCompleted {
+                step: SandboxWorkStep::TeardownRuntime,
             }
         )));
 
@@ -263,13 +252,9 @@ async fn retirement_retries_snapshot_cleanup_across_restart_without_removing_his
         history
     );
     assert!(harness.store.get_agent(&agent.id).await.unwrap().is_some());
-    assert_eq!(
-        harness
-            .actions
-            .snapshot()
-            .iter()
-            .filter(|action| action.as_str() == "purge-checkpoints")
-            .count(),
-        2
-    );
+    assert!(!harness
+        .actions
+        .snapshot()
+        .iter()
+        .any(|action| action.as_str() == "purge-checkpoints"));
 }

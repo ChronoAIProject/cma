@@ -193,6 +193,7 @@ pub struct SandboxProfileContentBody {
 impl From<SandboxProfileContentBody> for layer2_core::profiles::SandboxProfileContent {
     fn from(value: SandboxProfileContentBody) -> Self {
         Self {
+            runtime_image: None,
             cpu_millis: value.cpu_millis,
             memory_mib: value.memory_mib,
             nyxid_services: value

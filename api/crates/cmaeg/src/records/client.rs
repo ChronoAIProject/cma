@@ -58,9 +58,11 @@ impl std::error::Error for RecordError {}
 
 #[derive(Debug, Clone)]
 pub struct RecordClient {
+    database: Option<super::mongo::MongoRecords>,
     client: Client,
     base_url: Url,
     record_path: &'static str,
+    record_kind: super::RecordKind,
     service_token: crate::service_auth::ServiceAuth,
 }
 
@@ -93,20 +95,32 @@ impl RecordClient {
             .build()
             .map_err(|error| RecordError::Unavailable(error.to_string()))?;
         Ok(Self {
+            database: None,
             client,
             base_url,
             record_path: RECORD_PATH,
+            record_kind: super::RecordKind::Channel,
             service_token: crate::service_auth::ServiceAuth::Static(Secret::new(service_token)),
         })
     }
 
-    pub(crate) fn with_service_auth(mut self, auth: crate::service_auth::ServiceAuth) -> Self {
-        self.service_token = auth;
+    pub fn with_database(mut self, database: super::mongo::MongoRecords) -> Self {
+        self.database = Some(database);
         self
     }
 
-    /// Probe CMA's readiness endpoint without inspecting or mutating channel records.
+    pub(crate) fn with_service_auth(
+        mut self,
+        service_auth: crate::service_auth::ServiceAuth,
+    ) -> Self {
+        self.service_token = service_auth;
+        self
+    }
+
     pub async fn reachable(&self) -> bool {
+        if let Some(db) = &self.database {
+            return db.reachable().await;
+        }
         let Ok(url) = self.base_url.join("/ready") else {
             return false;
         };
@@ -120,11 +134,13 @@ impl RecordClient {
 
     pub fn connections(mut self) -> Self {
         self.record_path = "/api/v1/gateway/connection-records";
+        self.record_kind = super::RecordKind::Connection;
         self
     }
 
     pub fn interactions(mut self) -> Self {
         self.record_path = "/api/v1/gateway/interaction-records";
+        self.record_kind = super::RecordKind::Interaction;
         self
     }
 
@@ -167,6 +183,18 @@ impl RecordClient {
             ));
         }
         let url = self.record_url(record_id.as_str())?;
+        if let Some(db) = &self.database {
+            return db
+                .for_kind(self.record_kind)
+                .put_expiring(
+                    record_id.as_str(),
+                    owner,
+                    blob,
+                    expected_version,
+                    expires_at,
+                )
+                .await;
+        }
         let response = self
             .client
             .put(url)
@@ -212,6 +240,9 @@ impl RecordClient {
                 "record URL is outside the configured CMA origin".into(),
             ));
         }
+        if let Some(db) = &self.database {
+            return db.for_kind(self.record_kind).get(id).await;
+        }
         let response = self
             .client
             .get(url)
@@ -249,6 +280,12 @@ impl RecordClient {
         expected_version: u64,
     ) -> Result<bool, RecordError> {
         let url = self.record_url(record_id.as_str())?;
+        if let Some(db) = &self.database {
+            return db
+                .for_kind(self.record_kind)
+                .delete(record_id.as_str(), expected_version)
+                .await;
+        }
         let response = self
             .client
             .delete(url)
@@ -279,6 +316,12 @@ impl RecordClient {
         after: Option<&str>,
         limit: usize,
     ) -> Result<Vec<RecordHead>, RecordError> {
+        if let Some(db) = &self.database {
+            return db
+                .for_kind(self.record_kind)
+                .list(owner, after, limit)
+                .await;
+        }
         let url = self
             .base_url
             .join(self.record_path)

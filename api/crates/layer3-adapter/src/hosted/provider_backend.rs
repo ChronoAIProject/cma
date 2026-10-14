@@ -5,7 +5,8 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 
 use super::deployment::{
-    provider_metadata_identity, provider_request_identity, ProviderIdentity, SANDBOX_METADATA,
+    provider_metadata_identity, provider_request_identity, ProviderIdentity,
+    CONTROL_PLANE_METADATA, SANDBOX_METADATA,
 };
 use super::{
     CheckpointArchiveStoreFactory, HostedAgentOpenSettings, HostedBackend,
@@ -30,6 +31,16 @@ pub trait HostedControlTransport: Send + Sync {
         Ok(())
     }
 
+    /// Exact acknowledged native assignment identity for transport reuse.
+    async fn bind_native_runtime(
+        &self,
+        handle: &RuntimeHandle,
+        sandbox_id: &str,
+        _request_sha256: &str,
+    ) -> crate::Result<()> {
+        self.bind_runtime(handle, sandbox_id).await
+    }
+
     async fn exchange(
         &self,
         handle: &RuntimeHandle,
@@ -44,6 +55,16 @@ pub trait HostedControlTransport: Send + Sync {
     ) -> crate::Result<ResponseFrame> {
         self.exchange(handle, RequestFrame::CheckpointForTeardown(request.clone()))
             .await
+    }
+
+    async fn export_agent_history(
+        &self,
+        _handle: &RuntimeHandle,
+        _agent: &crate::AgentSlot,
+    ) -> crate::Result<Vec<u8>> {
+        Err(AdapterError::Unsupported(
+            "agent history export is not supported".into(),
+        ))
     }
 
     async fn open_agent(
@@ -64,24 +85,41 @@ pub struct ProviderHostedBackend {
     transport: Arc<dyn HostedControlTransport>,
     ready_timeout: Duration,
     ready_poll: Duration,
+    created_by: String,
 }
 
 impl ProviderHostedBackend {
-    pub fn new(client: SandboxClient, transport: Arc<dyn HostedControlTransport>) -> Self {
-        Self {
+    pub fn new(
+        client: SandboxClient,
+        transport: Arc<dyn HostedControlTransport>,
+        created_by: impl Into<String>,
+    ) -> crate::Result<Self> {
+        let created_by = created_by.into();
+        if created_by.is_empty()
+            || created_by.len() > 256
+            || created_by.trim() != created_by
+            || created_by.chars().any(char::is_control)
+        {
+            return Err(AdapterError::Rejected(
+                "provider inventory requires a control-plane identity".into(),
+            ));
+        }
+        Ok(Self {
             client,
             transport,
             ready_timeout: DEFAULT_READY_TIMEOUT,
             ready_poll: DEFAULT_READY_POLL,
-        }
+            created_by,
+        })
     }
 
     pub fn production(
         client: SandboxClient,
         archive_factory: Arc<dyn CheckpointArchiveStoreFactory>,
+        created_by: impl Into<String>,
     ) -> crate::Result<Self> {
         let transport = ProviderHostedControlTransport::new(client.clone(), archive_factory)?;
-        Ok(Self::new(client, Arc::new(transport)))
+        Self::new(client, Arc::new(transport), created_by)
     }
 
     #[must_use]
@@ -93,6 +131,17 @@ impl ProviderHostedBackend {
 
     pub fn client(&self) -> &SandboxClient {
         &self.client
+    }
+
+    fn require_creator(&self, request: &ProviderSandboxRequest) -> crate::Result<()> {
+        if request.metadata.get(CONTROL_PLANE_METADATA) != Some(&self.created_by) {
+            return Err(identity_mismatch());
+        }
+        Ok(())
+    }
+
+    async fn scoped_inventory(&self) -> crate::Result<Vec<RuntimeObservation>> {
+        creator_inventory(&self.created_by, self.client.list().await?)
     }
 
     async fn await_running(
@@ -126,6 +175,7 @@ impl ProviderHostedBackend {
         &self,
         request: &ProviderSandboxRequest,
     ) -> crate::Result<Option<ProviderSandbox>> {
+        self.require_creator(request)?;
         matching_sandbox(request, self.client.list().await?)
     }
 }
@@ -216,7 +266,7 @@ impl HostedBackend for ProviderHostedBackend {
     }
 
     async fn inventory(&self) -> crate::Result<Vec<RuntimeObservation>> {
-        provider_inventory(self.client.list().await?)
+        self.scoped_inventory().await
     }
 
     async fn adopt(
@@ -224,12 +274,9 @@ impl HostedBackend for ProviderHostedBackend {
         handle: &RuntimeHandle,
         request: &ProviderSandboxRequest,
     ) -> crate::Result<Option<RuntimeObservation>> {
+        self.require_creator(request)?;
         let expected = provider_request_identity(request)?;
-        let observation = select_adoption(
-            handle,
-            &expected,
-            provider_inventory(self.client.list().await?)?,
-        )?;
+        let observation = select_adoption(handle, &expected, self.scoped_inventory().await?)?;
         if observation.is_some() {
             self.transport
                 .bind_runtime(handle, &expected.sandbox_id)
@@ -246,7 +293,9 @@ impl HostedBackend for ProviderHostedBackend {
         else {
             return Ok(());
         };
-        let current = provider_inventory(self.client.list().await?)?
+        let current = self
+            .scoped_inventory()
+            .await?
             .into_iter()
             .find(|current| current.handle == observation.handle);
         if current.as_ref() != Some(observation) {
@@ -286,6 +335,14 @@ impl HostedBackend for ProviderHostedBackend {
             .await
     }
 
+    async fn export_agent_history(
+        &self,
+        handle: &RuntimeHandle,
+        agent: &crate::AgentSlot,
+    ) -> crate::Result<Vec<u8>> {
+        self.transport.export_agent_history(handle, agent).await
+    }
+
     async fn teardown(&self, handle: &RuntimeHandle) -> crate::Result<()> {
         // Capture immutable provider authority before waiting on local link
         // retirement. A reused provider name can never redirect this delete.
@@ -299,156 +356,9 @@ impl HostedBackend for ProviderHostedBackend {
     }
 }
 
-fn select_adoption(
-    handle: &RuntimeHandle,
-    expected: &ProviderIdentity,
-    inventory: Vec<RuntimeObservation>,
-) -> crate::Result<Option<RuntimeObservation>> {
-    let observation = inventory
-        .into_iter()
-        .find(|observation| observation.handle == *handle);
-    let Some(observation) = observation else {
-        return Ok(None);
-    };
-    if !observation_matches(&observation, expected) {
-        return Err(identity_mismatch());
-    }
-    if !observation.lifecycle.is_running() {
-        // Exact identity is proven above. Readiness can change while a pod is
-        // replaced; leave durable recovery to reconciliation instead of failing
-        // the lifecycle operation permanently.
-        return Err(AdapterError::Unavailable(format!(
-            "provider runtime {} is not running",
-            handle.0
-        )));
-    }
-    Ok(Some(observation))
-}
-
-fn matching_sandbox(
-    request: &ProviderSandboxRequest,
-    sandboxes: Vec<ProviderSandbox>,
-) -> crate::Result<Option<ProviderSandbox>> {
-    let identity = provider_request_identity(request)?;
-    let mut candidates = Vec::new();
-    for sandbox in sandboxes {
-        if sandbox.metadata.get(SANDBOX_METADATA) == Some(&identity.sandbox_id) {
-            let candidate = provider_metadata_identity(&sandbox.metadata)?;
-            if candidate.generation == identity.generation {
-                candidates.push(sandbox);
-            }
-        }
-    }
-    let mut candidates = candidates.into_iter();
-    let Some(sandbox) = candidates.next() else {
-        return Ok(None);
-    };
-    if candidates.next().is_some() {
-        return Err(identity_mismatch());
-    }
-    validate_sandbox_identity(request, sandbox).map(Some)
-}
-
-fn validate_sandbox_identity(
-    request: &ProviderSandboxRequest,
-    sandbox: ProviderSandbox,
-) -> crate::Result<ProviderSandbox> {
-    let identity = provider_request_identity(request)?;
-    if invalid_handle(&sandbox.id)
-        || provider_metadata_identity(&sandbox.metadata).as_ref() != Ok(&identity)
-    {
-        return Err(identity_mismatch());
-    }
-    Ok(sandbox)
-}
-
-fn provider_inventory(sandboxes: Vec<ProviderSandbox>) -> crate::Result<Vec<RuntimeObservation>> {
-    let mut handles = BTreeSet::new();
-    let mut generations = BTreeSet::new();
-    let mut observations = Vec::with_capacity(sandboxes.len());
-    for sandbox in sandboxes {
-        if invalid_handle(&sandbox.id) {
-            return Err(identity_mismatch());
-        }
-        let identity = provider_metadata_identity(&sandbox.metadata)?;
-        let handle = RuntimeHandle(sandbox.id);
-        if !handles.insert(handle.clone())
-            || !generations.insert((identity.sandbox_id.clone(), identity.generation))
-        {
-            return Err(identity_mismatch());
-        }
-        let lifecycle = match sandbox.status {
-            Some(status) if valid_status(&status.state, status.reason.as_deref()) => {
-                RuntimeLifecycle {
-                    state: if status.state.trim().is_empty() {
-                        "unknown".into()
-                    } else {
-                        status.state
-                    },
-                    reason: status.reason,
-                }
-            }
-            None => RuntimeLifecycle {
-                state: "unknown".into(),
-                reason: None,
-            },
-            Some(_) => {
-                return Err(AdapterError::Rejected(
-                    "provider sandbox has an invalid lifecycle status".into(),
-                ));
-            }
-        };
-        observations.push(RuntimeObservation {
-            sandbox_id: identity.sandbox_id,
-            generation: identity.generation,
-            handle,
-            image_sha256: identity.image_sha256,
-            spec_fingerprint: identity.spec_fingerprint,
-            runtime_contract: identity.runtime_contract,
-            lifecycle,
-        });
-    }
-    observations.sort_by(|left, right| {
-        (&left.sandbox_id, left.generation, &left.handle).cmp(&(
-            &right.sandbox_id,
-            right.generation,
-            &right.handle,
-        ))
-    });
-    Ok(observations)
-}
-
-fn observation_matches(observation: &RuntimeObservation, expected: &ProviderIdentity) -> bool {
-    observation.sandbox_id == expected.sandbox_id
-        && observation.generation == expected.generation
-        && observation.image_sha256 == expected.image_sha256
-        && observation.spec_fingerprint == expected.spec_fingerprint
-        && observation.runtime_contract == expected.runtime_contract
-}
-
-fn invalid_handle(value: &str) -> bool {
-    value.trim().is_empty()
-        || value.trim() != value
-        || value.len() > 512
-        || value.chars().any(char::is_control)
-}
-
-fn valid_status(state: &str, reason: Option<&str>) -> bool {
-    state.len() <= 128
-        && !state.chars().any(char::is_control)
-        && reason.is_none_or(|reason| {
-            reason.chars().count() <= 1_024
-                && reason
-                    .chars()
-                    .all(|character| !character.is_control() || matches!(character, '\n' | '\t'))
-        })
-}
-
-fn identity_mismatch() -> AdapterError {
-    AdapterError::Rejected(
-        "provider sandbox identity is ambiguous or belongs to another specification".into(),
-    )
-}
+#[path = "provider_identity.rs"]
+mod identity;
+use identity::*;
 
 #[cfg(test)]
 #[path = "provider_backend_tests.rs"]

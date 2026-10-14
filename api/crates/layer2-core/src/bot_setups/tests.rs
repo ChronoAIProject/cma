@@ -140,6 +140,7 @@ impl BotSetupDependencies for Dependencies {
                 agent_profiles: vec![],
             },
             sandbox: SandboxProfileContent {
+                runtime_image: None,
                 cpu_millis: 1000,
                 memory_mib: 2048,
                 nyxid_services: vec![],

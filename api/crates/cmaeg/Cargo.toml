@@ -5,12 +5,16 @@ edition.workspace = true
 publish = false
 
 [dependencies]
+cma-service-auth = { path = "../cma-service-auth" }
 base64 = { workspace = true }
 bytes = { workspace = true }
 h2 = { workspace = true }
 http-body-util = { workspace = true }
 hyper = { workspace = true }
 hyper-util = { workspace = true }
+image = { workspace = true }
+infer = { workspace = true }
+moka = { workspace = true }
 rustls = { workspace = true }
 tokio-rustls = { workspace = true }
 webpki-roots = { workspace = true }
@@ -20,8 +24,10 @@ dashmap = { workspace = true }
 futures-util = { workspace = true }
 governor = { workspace = true }
 metrics = { workspace = true }
+mongodb = { workspace = true }
 metrics-exporter-prometheus = { workspace = true }
-reqwest = { workspace = true }
+# Speech-to-text uploads are multipart forms.
+reqwest = { workspace = true, features = ["multipart"] }
 ring = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -37,5 +43,24 @@ url = { workspace = true }
 uuid = { workspace = true }
 pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
 
-[target.'cfg(target_os = "linux")'.dev-dependencies]
+# A stand-in for ffmpeg and ffprobe that the media sandbox tests execute. The
+# image builds `--bin cmaeg` only, so it never ships.
+[[bin]]
+name = "cmaeg-media-probe"
+path = "tests/support/media_probe.rs"
+test = false
+doc = false
+bench = false
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Process hardening: prctl(PR_SET_DUMPABLE).
 libc = { workspace = true }
+# The media job's seccomp filters.
+seccompiler = { workspace = true }
+
+[dev-dependencies]
+# The progressive JPEG fixture of the image decode bound test.
+jpeg-encoder = { workspace = true }
+# Paused time drives the media deadline and job tests deterministically.
+tokio = { workspace = true, features = ["test-util"] }
+tracing-log = { workspace = true }

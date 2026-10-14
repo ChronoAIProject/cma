@@ -10,15 +10,12 @@ export const stepNames = {
   ready: 'Ready',
 } satisfies Record<LaunchStepKey, string>;
 
-export const stepOrder: readonly LaunchStepKey[] = [
-  'signing_in',
-  'checking_requirements',
-  'sandbox',
-  'workspace',
-  'agent',
-  'first_message',
-  'ready',
-];
+export const provisioningNames = {
+  sandbox: 'Sandbox ready',
+  workspace:
+    'Workspace + skills + model + reasoning effort + system prompt + permission level setup ready',
+  key_scope: 'Agent key scope configuration ready',
+} as const;
 
 export function progressDetail(detail: string | undefined): string | undefined {
   const known: Readonly<Record<string, string>> = {

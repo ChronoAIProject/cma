@@ -12,6 +12,8 @@ use crate::{
 
 type ServerSocket = tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>;
 
+#[path = "acp_access_tool_tests.rs"]
+mod access_tool_tests;
 #[path = "acp_channel_tool_tests.rs"]
 mod channel_tool_tests;
 #[path = "acp_provider_tool_tests.rs"]
@@ -22,6 +24,8 @@ mod reconnect_turn_tests;
 
 #[path = "acp_output_tests.rs"]
 mod output_tests;
+#[path = "acp_settings_tests.rs"]
+mod settings_tests;
 
 async fn socket_pair() -> (Socket, ServerSocket) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -36,7 +40,10 @@ async fn socket_pair() -> (Socket, ServerSocket) {
     };
     let client = tokio_tungstenite::connect_async(format!("ws://{address}/conversation"));
     let (client, server) = tokio::join!(client, server);
-    (client.expect("client handshake succeeds").0, server)
+    (
+        Box::new(client.expect("client handshake succeeds").0),
+        server,
+    )
 }
 
 async fn send_ready(server: &mut ServerSocket, agent_id: &str) {
@@ -110,6 +117,7 @@ fn settings(permission_mode: Option<&str>, own_credential: bool) -> HostedAgentO
         own_credential,
         channel_tool: None,
         provider_tool: None,
+        access_tool: None,
         recovered_prompt: None,
     }
 }

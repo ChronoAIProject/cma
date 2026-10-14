@@ -81,6 +81,14 @@ pub(super) fn sandbox_spec(sandbox: &Sandbox, deployment_id: &str) -> SandboxSpe
         .as_ref()
         .and_then(|home| home.attachment())
         .map(Box::new);
+    if spec.runtime_image.is_none() {
+        spec.runtime_image = sandbox
+            .lifecycle
+            .home
+            .as_ref()
+            .and_then(|home| home.native_pool.as_ref())
+            .map(|native| native.request.pool.spec.image.uri.clone());
+    }
     spec
 }
 
@@ -96,6 +104,7 @@ pub(super) fn environment_spec(
             cpu_millis: profile.content.cpu_millis,
             memory_mib: profile.content.memory_mib,
         },
+        runtime_image: profile.content.runtime_image.clone(),
         environment: profile
             .content
             .environment_variables

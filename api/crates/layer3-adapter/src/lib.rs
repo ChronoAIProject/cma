@@ -6,6 +6,8 @@
 
 mod adapter;
 mod agent;
+mod agent_skill_install;
+pub use agent_skill_install::{AgentSkillInstallReceipt, AgentSkillInstallRequest};
 mod agent_provider;
 mod capabilities;
 mod checkpoint;
@@ -18,15 +20,18 @@ mod home_snapshot_export;
 mod home_snapshot_job;
 mod home_snapshot_view;
 mod home_volume;
+mod home_volume_router;
 mod prompt_identity;
 mod provider_finality;
 mod runtime;
+pub mod runtime_bootstrap;
 mod runtime_output;
 mod runtime_status;
 mod tool_proxy;
 mod workspace;
 mod workspace_removal;
 
+pub mod agent_sandbox;
 pub mod codex;
 pub mod hosted;
 pub mod provider;
@@ -79,9 +84,10 @@ pub use home_snapshot_view::{
     HomeSnapshotViewStore,
 };
 pub use home_volume::{
-    HomeVolumeAttachment, HomeVolumePolicy, HomeVolumeReceipt, HomeVolumeRequest, HomeVolumeScope,
-    HomeVolumeStore,
+    HomeVolumeAttachment, HomeVolumeMode, HomeVolumePolicy, HomeVolumeReceipt, HomeVolumeRequest,
+    HomeVolumeScope, HomeVolumeStore,
 };
+pub use home_volume_router::RoutedHomeVolumes;
 pub use prompt_identity::PromptIdentity;
 pub use provider_finality::{
     provider_request_digest, RuntimeFinalityReceipt, RuntimeProviderIncarnation,
@@ -89,10 +95,10 @@ pub use provider_finality::{
 };
 pub use runtime::{
     CommandReceipt, CredentialFrame, InstallReceipt, InstallRequest, RuntimeAdoptionRequest,
-    RuntimeCredential, RuntimeHandle, RuntimeImage, RuntimeLifecycle, RuntimeObservation,
-    RuntimeProvisionRequest, SandboxCapacity, SandboxSpec, DEFAULT_COMMAND_OUTPUT_LIMIT_BYTES,
-    DEFAULT_COMMAND_TIMEOUT_SECONDS, DEFAULT_HOME_DIRECTORY, DEFAULT_SUPERVISOR_PROGRAM,
-    DEFAULT_TOTAL_TIMEOUT_SECONDS,
+    RuntimeCredential, RuntimeHandle, RuntimeImage, RuntimeInspection, RuntimeLifecycle,
+    RuntimeObservation, RuntimeProvisionRequest, SandboxCapacity, SandboxSpec,
+    DEFAULT_COMMAND_OUTPUT_LIMIT_BYTES, DEFAULT_COMMAND_TIMEOUT_SECONDS, DEFAULT_HOME_DIRECTORY,
+    DEFAULT_SUPERVISOR_PROGRAM, DEFAULT_TOTAL_TIMEOUT_SECONDS,
 };
 pub use runtime_output::{RuntimeOutputReceipt, RuntimeOutputSource};
 pub use runtime_status::{valid_home_identity, RuntimeStatus, RuntimeStatusRequest};

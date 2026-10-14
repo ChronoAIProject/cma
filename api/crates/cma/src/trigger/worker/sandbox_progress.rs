@@ -229,9 +229,10 @@ fn valid_sandbox(
     let profile = &context.profiles.sandbox;
     let origin_valid = match (&sandbox.origin, reused) {
         (SandboxOrigin::Manual, true) => true,
+        (SandboxOrigin::Lifecycle { operation_id }, true) => valid_origin_id(operation_id),
         (SandboxOrigin::Trigger { launch_id }, true) => valid_origin_id(launch_id),
         (SandboxOrigin::Trigger { launch_id }, false) => launch_id == launch.id.as_str(),
-        (SandboxOrigin::Manual, false) => false,
+        (SandboxOrigin::Manual | SandboxOrigin::Lifecycle { .. }, false) => false,
     };
     launch.resolution.sandbox.id() == Some(&sandbox.id)
         && sandbox.owner == launch.owner
@@ -277,6 +278,7 @@ fn valid_workspace_origin(origin: &WorkspaceOrigin, context: &FrozenLaunchContex
     match origin {
         WorkspaceOrigin::Manual => true,
         WorkspaceOrigin::Trigger { launch_id } => valid_origin_id(launch_id),
+        WorkspaceOrigin::Lifecycle { operation_id } => valid_origin_id(operation_id),
         WorkspaceOrigin::SandboxProfile { index } => context
             .profiles
             .sandbox

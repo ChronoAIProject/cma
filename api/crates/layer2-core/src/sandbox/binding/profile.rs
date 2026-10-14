@@ -271,6 +271,7 @@ fn map_environment(
     };
     workspace.validate().map_err(invalid)?;
     let sandbox = SandboxProfileContent {
+        runtime_image: None,
         cpu_millis,
         memory_mib,
         nyxid_services: services.into_iter().collect(),

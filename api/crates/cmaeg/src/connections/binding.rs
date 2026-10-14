@@ -24,7 +24,9 @@ fn error(value: Error) -> ManagementError {
             expected: 0,
             actual: None,
         },
-        Error::Invalid(message) => invalid(message),
+        // Only connection creation refuses by name; a bound connection read
+        // never does, so the refusal is reported as an invalid reference.
+        Error::Invalid(message) | Error::Forbidden(message) => invalid(message),
         Error::Unavailable => failed(),
     }
 }

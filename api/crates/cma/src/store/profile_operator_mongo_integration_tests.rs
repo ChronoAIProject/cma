@@ -35,6 +35,7 @@ async fn database(prefix: &str) -> (Client, String, MongoProfileStore) {
 
 fn agent_profile(id: &str, owner: &str, visibility: ProfileVisibility) -> AgentProfile {
     AgentProfile {
+        internal: false,
         id: AgentProfileId(id.into()),
         owner: SubjectId(owner.into()),
         name: format!("Agent {id}"),
@@ -59,6 +60,7 @@ fn agent_profile(id: &str, owner: &str, visibility: ProfileVisibility) -> AgentP
 
 fn workspace_profile(id: &str, owner: &str, visibility: ProfileVisibility) -> WorkspaceProfile {
     WorkspaceProfile {
+        internal: false,
         id: WorkspaceProfileId(id.into()),
         owner: SubjectId(owner.into()),
         name: format!("Workspace {id}"),
@@ -83,6 +85,7 @@ fn workspace_profile(id: &str, owner: &str, visibility: ProfileVisibility) -> Wo
 
 fn sandbox_profile(id: &str, owner: &str, visibility: ProfileVisibility) -> SandboxProfile {
     SandboxProfile {
+        internal: false,
         availability: Default::default(),
         id: SandboxProfileId(id.into()),
         owner: SubjectId(owner.into()),
@@ -92,6 +95,7 @@ fn sandbox_profile(id: &str, owner: &str, visibility: ProfileVisibility) -> Sand
         forked_from: None,
         uses_count: 0,
         draft: SandboxProfileContent {
+            runtime_image: None,
             cpu_millis: 1_000,
             memory_mib: 2_048,
             nyxid_services: vec![],

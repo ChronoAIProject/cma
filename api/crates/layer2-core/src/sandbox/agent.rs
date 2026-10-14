@@ -12,6 +12,9 @@ use super::{
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConversationState {
+    /// Durable owner overrides; published profiles and open receipt identities stay immutable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settings: Option<super::AgentSettings>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub conversation_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -53,6 +56,9 @@ impl AgentStopReason {
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum AgentOrigin {
     Manual,
+    Lifecycle {
+        operation_id: String,
+    },
     WorkspaceProfile {
         index: u16,
     },
@@ -125,6 +131,7 @@ impl Agent {
             || self.conversation.runtime_generation.is_some()
             || self.conversation.last_seq != 1
             || self.conversation.active_turn.is_some()
+            || self.conversation.settings.is_some()
             || self.conversation.operation.is_some()
             || !self.conversation.queued_messages.is_empty()
             || self.work.next_fence == 0
@@ -191,7 +198,12 @@ impl Agent {
                             || self.conversation.queued_messages[index - 1].sequence
                                 < message.sequence)
                 });
-        if !identity_shape
+        if self
+            .conversation
+            .settings
+            .as_ref()
+            .is_some_and(|settings| settings.validate().is_err())
+            || !identity_shape
             || (requires_identity && self.conversation.conversation_id.is_none())
             || self
                 .conversation
@@ -275,6 +287,15 @@ impl Agent {
             .checked_add(1)
             .ok_or_else(|| SandboxModelError::invalid_value("agent.revision"))?;
         self.requested_stop_reason = Some(reason);
+        if let Some(skill) = self
+            .work
+            .live_skills
+            .last_mut()
+            .filter(|s| s.status == super::AgentSkillInstallStatus::Pending)
+        {
+            skill.status = super::AgentSkillInstallStatus::Failed;
+            skill.error = Some("agent_stopped_before_skill_confirmation".into());
+        }
         self.updated_at = at.clone();
         let cleanup_not_before = self
             .work

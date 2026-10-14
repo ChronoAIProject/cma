@@ -4,6 +4,7 @@ import type { OperatorClient } from './client';
 import { Sandboxes } from './Sandboxes';
 import { Profiles } from './Profiles';
 import { PlatformSettings } from './PlatformSettings';
+import { WarmPools } from './WarmPools';
 import { Activity } from './Activity';
 import { operatorViews } from './capabilities';
 import './Operations.css';
@@ -76,6 +77,7 @@ export function Operations({
           <Profiles client={client} canControl={canControl} />
         ) : null}
         {selectedView.id === 'settings' ? <PlatformSettings client={client} /> : null}
+        {selectedView.id === 'warm_pools' ? <WarmPools client={client} /> : null}
         {selectedView.id === 'activity' ? <Activity client={client} /> : null}
       </div>
     </section>

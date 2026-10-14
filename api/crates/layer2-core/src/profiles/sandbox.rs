@@ -69,6 +69,10 @@ impl EnvironmentVariable {
 pub struct SandboxProfileContent {
     pub cpu_millis: u32,
     pub memory_mib: u32,
+    /// Immutable OCI image selected by Agent Manager.  A missing value uses
+    /// the deployment's system default image.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_image: Option<String>,
     #[serde(default)]
     pub nyxid_services: Vec<ServiceId>,
     pub agent_provider: AgentProvider,
@@ -90,6 +94,13 @@ impl SandboxProfileContent {
         }
         if !(bounds.min_memory_mib..=bounds.max_memory_mib).contains(&self.memory_mib) {
             return Err(ProfileError::new("memory_out_of_bounds", "memory_mib"));
+        }
+        if self
+            .runtime_image
+            .as_deref()
+            .is_some_and(|image| !valid_runtime_image(image))
+        {
+            return Err(ProfileError::new("invalid_runtime_image", "runtime_image"));
         }
         if !(1..=16).contains(&self.max_workspaces) {
             return Err(ProfileError::new(
@@ -160,9 +171,32 @@ impl SandboxProfileContent {
     }
 }
 
+fn valid_runtime_image(value: &str) -> bool {
+    let Some((name, digest)) = value.rsplit_once("@sha256:") else {
+        return false;
+    };
+    !name.is_empty()
+        && name.len() <= 2_048
+        && !name.contains('@')
+        && !name.contains("://")
+        && !name.starts_with(['.', '-', '_', '/', ':'])
+        && !name.ends_with(['.', '-', '_', '/', ':'])
+        && !name.contains("//")
+        && name.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-' | b'/' | b':')
+        })
+        && digest.len() == 64
+        && digest
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SandboxProfile {
+    /// Immutable service-owned snapshot, excluded from profile management.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub internal: bool,
     #[serde(default)]
     pub availability: super::SandboxProfileAvailability,
     pub id: SandboxProfileId,
@@ -185,6 +219,12 @@ pub struct SandboxProfile {
 impl SandboxProfile {
     pub fn validate(&self, bounds: ProfileCapacityBounds) -> Result<(), ProfileError> {
         self.availability.validate(self.visibility)?;
+        if self.internal && self.visibility != ProfileVisibility::Private {
+            return Err(ProfileError::new(
+                "internal_profile_must_be_private",
+                "visibility",
+            ));
+        }
         validate_metadata(&self.name, &self.description)?;
         self.draft.validate(bounds)?;
         Ok(())

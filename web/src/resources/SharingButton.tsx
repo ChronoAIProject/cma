@@ -3,7 +3,6 @@ import type { ResourceViewsClient } from './client';
 import { CommandKeys } from '../api/client';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
-import { Picker } from '../ui/Picker';
 import { useAuthorizedRead } from './useAuthorizedRead';
 import { ShareScopeEditor } from './ShareScopeEditor';
 import type { ShareTarget } from './sharing';
@@ -12,34 +11,22 @@ import './Sharing.css';
 export function SharingButton({
   client,
   target,
-  sandbox,
 }: {
   readonly client: ResourceViewsClient;
   readonly target: ShareTarget;
-  readonly sandbox?: ShareTarget;
 }) {
   // The button and dialog belong to one resource/client. A new route starts closed.
-  return (
-    <SharingEntry
-      key={`${target.kind}:${target.id}`}
-      client={client}
-      target={target}
-      sandbox={sandbox}
-    />
-  );
+  return <SharingEntry key={`${target.kind}:${target.id}`} client={client} target={target} />;
 }
 
 function SharingEntry({
   client,
   target,
-  sandbox,
 }: {
   readonly client: ResourceViewsClient;
   readonly target: ShareTarget;
-  readonly sandbox?: ShareTarget;
 }) {
   const [openedFor, setOpenedFor] = useState<ResourceViewsClient>();
-  const [scope, setScope] = useState<'agent' | 'sandbox'>(target.kind);
   const [keys] = useState(() => new CommandKeys());
   const { kind, id } = target;
   const read = useMemo(
@@ -54,13 +41,11 @@ function SharingEntry({
   );
   const authority = useAuthorizedRead(read);
   const allowed = authority.state.status === 'ready' && authority.state.value;
-  const selected = scope === 'sandbox' && sandbox !== undefined ? sandbox : target;
   return (
     <>
       {allowed ? (
         <Button
           onClick={() => {
-            setScope(target.kind);
             setOpenedFor(client);
           }}
         >
@@ -69,28 +54,16 @@ function SharingEntry({
       ) : null}
       <Modal
         open={openedFor === client}
-        title="Resource sharing"
+        title="Sandbox sharing"
         onClose={() => setOpenedFor(undefined)}
-        description="Sharing preserves the owner, creation origin and conversation. Recipients cannot reshare your resource."
+        description="Share access to this Sandbox and its Workspaces and Agents. Recipients cannot reshare it."
       >
-        {target.kind === 'agent' && sandbox !== undefined ? (
-          <div className="resource-sharing__scope">
-            <Picker
-              label="Share scope"
-              value={scope}
-              options={[
-                { value: 'agent', label: 'This Agent' },
-                { value: 'sandbox', label: 'Whole Sandbox' },
-              ]}
-              onChange={setScope}
-            />
-          </div>
-        ) : null}
+        <p className="resource-sharing__scope">Sharing applies to the whole Sandbox.</p>
         {openedFor === client ? (
           <ShareScopeEditor
-            key={`${selected.kind}:${selected.id}`}
+            key={`${target.kind}:${target.id}`}
             client={client}
-            target={selected}
+            target={target}
             keys={keys}
           />
         ) : null}

@@ -9,7 +9,7 @@ impl PersistentHomeVolumes {
         request: &HomeVolumeRequest,
         operation_id: &str,
     ) -> Result<HomeProvisionReceipt> {
-        request.validate()?;
+        self.validate_request_scope(request)?;
         let marker = crate::provider::dispatch_marker(operation_id)?;
         self.verify_template(&request.policy).await?;
         if self.read(request).await?.is_some() {

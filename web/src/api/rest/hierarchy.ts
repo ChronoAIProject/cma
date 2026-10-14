@@ -31,14 +31,6 @@ export function sandboxSummary(value: Wire.SandboxSummary): SandboxSummary {
                     capturedAt: value.lifecycle.background_save.captured_at,
                     epoch: value.lifecycle.background_save.epoch,
                   },
-            latestSnapshot:
-              value.lifecycle.latest_snapshot === undefined
-                ? undefined
-                : {
-                    epoch: value.lifecycle.latest_snapshot.epoch,
-                    savedAt: value.lifecycle.latest_snapshot.saved_at,
-                    downloadUrl: value.lifecycle.latest_snapshot.download_url,
-                  },
             checkpoint:
               value.lifecycle.checkpoint === undefined
                 ? undefined

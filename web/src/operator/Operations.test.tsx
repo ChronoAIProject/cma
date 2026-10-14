@@ -1,3 +1,4 @@
+import { chooseOptionValue } from '../test/select';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
@@ -111,7 +112,7 @@ describe('operator capabilities and record views', () => {
     render(<Operations client={client} capabilities={['read_all_sandboxes']} />);
     await screen.findByText('Research Sandbox');
     await user.type(screen.getByLabelText('Sandbox owner'), 'owner-2');
-    await user.selectOptions(screen.getByLabelText('Sandbox status'), 'failed');
+    await chooseOptionValue(user, screen.getByLabelText('Sandbox status'), 'failed');
     await user.type(screen.getByLabelText('Runtime version'), 'runtime-3');
     expect(client.admin.listSandboxes).toHaveBeenCalledTimes(1);
     await user.click(screen.getByRole('button', { name: 'Apply filters' }));
@@ -226,8 +227,8 @@ describe('operator capabilities and record views', () => {
     await screen.findByText('Default Agent');
     expect(screen.getAllByRole('button', { name: 'Retire' })[0]).toBeDisabled();
     expect(screen.getByText('Deployment-owned default.')).toBeInTheDocument();
-    await user.selectOptions(screen.getByLabelText('Profile kind'), 'agent');
-    await user.selectOptions(screen.getByLabelText('Profile visibility'), 'public');
+    await chooseOptionValue(user, screen.getByLabelText('Profile kind'), 'agent');
+    await chooseOptionValue(user, screen.getByLabelText('Profile visibility'), 'public');
     await user.type(screen.getByLabelText('Profile owner'), 'owner-1');
     await user.click(screen.getByRole('button', { name: 'Apply filters' }));
     await waitFor(() =>
@@ -284,7 +285,7 @@ describe('operator capabilities and record views', () => {
       ),
     );
     await user.type(screen.getByLabelText('Activity actor'), 'operator-2');
-    await user.selectOptions(screen.getByLabelText('Activity action'), 'delete');
+    await chooseOptionValue(user, screen.getByLabelText('Activity action'), 'delete');
     await user.click(screen.getByRole('button', { name: 'Apply filters' }));
     await waitFor(() =>
       expect(client.admin.listActivity).toHaveBeenLastCalledWith(

@@ -11,11 +11,17 @@ const SHA256_SEPARATOR: &str = "@sha256:";
 /// Deployment-owned endpoints and runtime identity validated at startup.
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) struct RuntimeConfig {
+    pub agent_sandbox: Option<layer3_adapter::agent_sandbox::AgentSandboxConfig>,
+    pub agent_sandbox_connection: Option<layer3_adapter::agent_sandbox::RemoteKubernetesConfig>,
+    pub agent_sandbox_runtime_transport: layer3_adapter::hosted::NativeRuntimeTransport,
+    pub allocate_agent_sandbox: bool,
+    pub retain_opensandbox: bool,
     pub sandbox_base_url: String,
     pub sandbox_api_key: String,
     pub sandbox_image: String,
     pub sandbox_namespace: String,
     pub home_policy: Option<layer3_adapter::HomeVolumePolicy>,
+    pub agent_sandbox_home_policy: Option<layer3_adapter::HomeVolumePolicy>,
     pub upstream_base_url: String,
     pub upstream_wire_api: String,
     pub platform_base_url: String,
@@ -41,11 +47,32 @@ impl RuntimeConfig {
     pub(super) fn from_lookup(
         lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
     ) -> Result<Self, String> {
-        let sandbox_base_url = parse_canonical_http_origin(
-            "CHRONO_SANDBOX_BASE_URL",
-            &required(lookup, "CHRONO_SANDBOX_BASE_URL")?,
-        )?;
-        let sandbox_api_key_file = required(lookup, "CHRONO_SANDBOX_API_KEY_FILE")?;
+        let allocate_agent_sandbox = match lookup("CHRONO_SANDBOX_PROVIDER")?
+            .as_deref()
+            .unwrap_or("opensandbox")
+        {
+            "opensandbox" => false,
+            "agent-sandbox" => true,
+            _ => return Err("CHRONO_SANDBOX_PROVIDER must be opensandbox or agent-sandbox".into()),
+        };
+        let retain_opensandbox = match lookup("CHRONO_RETAIN_OPENSANDBOX")?
+            .as_deref()
+            .unwrap_or("true")
+        {
+            "true" => true,
+            "false" => false,
+            _ => return Err("CHRONO_RETAIN_OPENSANDBOX must be true or false".into()),
+        };
+        let (sandbox_base_url, sandbox_api_key) = if retain_opensandbox || !allocate_agent_sandbox {
+            let base = parse_canonical_http_origin(
+                "CHRONO_SANDBOX_BASE_URL",
+                &required(lookup, "CHRONO_SANDBOX_BASE_URL")?,
+            )?;
+            let key = read_api_key(&required(lookup, "CHRONO_SANDBOX_API_KEY_FILE")?)?;
+            (base, key)
+        } else {
+            (String::new(), String::new())
+        };
         let sandbox_image = parse_pinned_image(
             "CHRONO_SANDBOX_IMAGE",
             &required(lookup, "CHRONO_SANDBOX_IMAGE")?,
@@ -66,14 +93,50 @@ impl RuntimeConfig {
             "CHRONO_PLATFORM_BASE_URL",
             &required(lookup, "CHRONO_PLATFORM_BASE_URL")?,
         )?;
-        let sandbox_api_key = read_api_key(&sandbox_api_key_file)?;
+        let agent_sandbox =
+            super::agent_sandbox::from_lookup(lookup, &sandbox_namespace, allocate_agent_sandbox)?;
+        let agent_sandbox_runtime_transport = super::agent_sandbox::transport_from_lookup(lookup)?;
+        let home_policy = super::home::from_lookup(lookup)?;
+        let agent_sandbox_home_policy =
+            super::home::native_from_lookup(lookup, home_policy.as_ref())?;
+        // The deployment keeps the remote ConfigMap projected while native
+        // allocation is disabled so it can be enabled without a manifest
+        // rewrite. Do not validate or compose that optional remote target until
+        // the native provider is explicitly enabled; otherwise the disabled
+        // legacy OpenSandbox startup would require a remote token/CA it cannot
+        // use.
+        let agent_sandbox_connection = if agent_sandbox.is_some() {
+            super::agent_sandbox::connection_from_lookup(lookup)?
+        } else {
+            None
+        };
+        if agent_sandbox.as_ref().is_some_and(|settings| {
+            settings.namespace == sandbox_namespace
+                && agent_sandbox_connection.is_none()
+                && agent_sandbox_home_policy != home_policy
+                && !agent_sandbox_home_policy
+                    .as_ref()
+                    .is_some_and(|policy| policy.is_native_vct())
+        }) {
+            return Err(concat!(
+                "a distinct CHRONO_AGENT_SANDBOX_HOME policy requires an independent ",
+                "CHRONO_AGENT_SANDBOX_NAMESPACE or CHRONO_AGENT_SANDBOX_API_SERVER"
+            )
+            .into());
+        }
 
         Ok(Self {
+            agent_sandbox,
+            agent_sandbox_connection,
+            agent_sandbox_runtime_transport,
+            allocate_agent_sandbox,
+            retain_opensandbox,
             sandbox_base_url,
             sandbox_api_key,
             sandbox_image,
             sandbox_namespace,
-            home_policy: super::home::from_lookup(lookup)?,
+            home_policy,
+            agent_sandbox_home_policy,
             upstream_base_url,
             upstream_wire_api,
             platform_base_url,

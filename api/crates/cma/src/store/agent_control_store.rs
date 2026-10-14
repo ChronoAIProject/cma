@@ -121,7 +121,8 @@ fn require_exact_target(
 fn can_supersede_with_stop(step: AgentWorkStep) -> bool {
     matches!(
         step,
-        AgentWorkStep::AddWorktree
+        AgentWorkStep::InstallSkill
+            | AgentWorkStep::AddWorktree
             | AgentWorkStep::MaterializeHome
             | AgentWorkStep::OpenConversation
             | AgentWorkStep::PublishReady

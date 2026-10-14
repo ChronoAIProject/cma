@@ -1,0 +1,47 @@
+.agent-settings,
+.agent-settings-fields {
+  display: grid;
+  gap: 14px;
+}
+.agent-settings-fields label,
+.agent-settings-scopes {
+  display: grid;
+  gap: 6px;
+}
+
+.agent-settings-scopes {
+  margin-top: 18px;
+  padding: 0;
+  border: 0;
+}
+.agent-settings-scopes > div {
+  grid-template-columns: minmax(0, 1fr);
+}
+.agent-settings-scopes label > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.agent-settings-scopes legend {
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+.agent-settings-scopes > label {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.agent-settings-scopes small {
+  color: var(--dsw-alias-label-secondary);
+}
+
+.agent-settings-fields > label {
+  min-width: 0;
+}
+.agent-settings-fields__picker {
+  display: flex;
+  min-width: 0;
+}
+.agent-settings-fields__picker > button {
+  width: 100%;
+}

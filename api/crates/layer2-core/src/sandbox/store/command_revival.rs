@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
-use super::lifecycle_command::{apply_command, PendingApplication};
+use super::lifecycle_command::{
+    apply_sandbox_lifecycle_command, SandboxLifecycleCommandApplication,
+};
 use super::{
     SandboxLifecycleCommand, SandboxLifecycleCommandDisposition, SandboxLifecycleCommandOutcome,
     SandboxLifecycleCommandResult, SandboxStoreError, SandboxTransaction, SandboxTransactionStore,
@@ -35,8 +37,8 @@ impl<T: SandboxTransactionStore + Send + Sync> CommandRevivalStore for T {
                 .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
             let at = crate::now_rfc3339();
             let command = revival(&current, &at);
-            let application = apply_command(current, &command)?;
-            let PendingApplication::Commit {
+            let application = apply_sandbox_lifecycle_command(current, &command)?;
+            let SandboxLifecycleCommandApplication::Commit {
                 expected_revision,
                 sandbox,
                 event,
@@ -88,11 +90,11 @@ pub fn validate_command_revival_transition(
     current
         .validate()
         .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
-    let PendingApplication::Commit {
+    let SandboxLifecycleCommandApplication::Commit {
         expected_revision,
         sandbox,
         event: expected_event,
-    } = apply_command(current.clone(), &revival(current, at))?
+    } = apply_sandbox_lifecycle_command(current.clone(), &revival(current, at))?
     else {
         return Err(SandboxStoreError::Conflict);
     };

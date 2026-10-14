@@ -59,7 +59,7 @@ async fn owned(
         .workspace_profile(&layer2_core::WorkspaceProfileId(id.to_owned()))
         .await
         .map_err(|error| ProfileProblem::from_store(error, "content"))?
-        .filter(|profile| &profile.owner == owner)
+        .filter(|profile| &profile.owner == owner && !profile.internal)
         .ok_or(ProfileProblem::NotFound)
 }
 
@@ -124,6 +124,7 @@ pub(super) async fn create(
         move |body| async move {
             let now = layer2_core::now_rfc3339();
             let profile = WorkspaceProfile {
+                internal: false,
                 id: layer2_core::WorkspaceProfileId::generate(),
                 owner: owner.clone(),
                 name: body.name,
@@ -354,12 +355,13 @@ pub(super) async fn read_revision(
         .await
         .map_err(|error| ProfileProblem::from_store(error, "content"))?
         .filter(|profile| {
-            super::profiles::revision_visible(
-                &caller,
-                &profile.owner,
-                profile.visibility,
-                profile.retired_at.is_some(),
-            )
+            !profile.internal
+                && super::profiles::revision_visible(
+                    &caller,
+                    &profile.owner,
+                    profile.visibility,
+                    profile.retired_at.is_some(),
+                )
         })
         .ok_or(ProfileProblem::NotFound)?;
     let revision = state

@@ -24,6 +24,8 @@ mod bots_tests;
 mod concurrency_tests;
 #[path = "cookie_authorization_tests/deferred_command_tests.rs"]
 mod deferred_command_tests;
+#[path = "cookie_authorization_tests/personal_owner_tests.rs"]
+mod personal_owner_tests;
 #[path = "cookie_authorization_tests/resource_command_tests.rs"]
 mod resource_command_tests;
 #[path = "cookie_authorization_tests/session_routes_tests.rs"]

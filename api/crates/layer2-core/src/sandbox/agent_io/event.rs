@@ -39,6 +39,10 @@ pub enum AgentEventKind {
     },
     ConversationAvailable,
     RuntimeChanged,
+    SkillInstallationChanged {
+        skill_id: String,
+        status: crate::sandbox::AgentSkillInstallStatus,
+    },
     WorkCompleted {
         step: AgentWorkStep,
     },
@@ -143,6 +147,9 @@ impl From<AgentLogEntry> for AgentEvent {
             },
             AgentLogKind::ConversationOpened { .. } => AgentEventKind::ConversationAvailable,
             AgentLogKind::RuntimeGenerationRetired { .. } => AgentEventKind::RuntimeChanged,
+            AgentLogKind::SkillInstallationChanged { skill_id, status } => {
+                AgentEventKind::SkillInstallationChanged { skill_id, status }
+            }
             AgentLogKind::WorkStepCompleted { step } => AgentEventKind::WorkCompleted { step },
             AgentLogKind::WorkStepFailed { step, failure } => {
                 AgentEventKind::WorkFailed { step, failure }

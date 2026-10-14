@@ -27,6 +27,11 @@ pub enum ProblemCode {
     PayloadTooLarge,
     UnsupportedMediaType,
     Internal,
+    /// The event exists but has no attachment at the requested index.
+    AttachmentNotFound,
+    /// Inbound media is disabled, or a media read's event_ref sealed no
+    /// activity digest to verify the activity against.
+    MediaUnavailable,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]

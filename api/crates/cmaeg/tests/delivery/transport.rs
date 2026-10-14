@@ -88,6 +88,7 @@ async fn expired_reply_token_uses_route_key_and_missing_credentials_reject_befor
         pointer: previous.pointer.clone(),
         definition,
         agent_key_hash: previous.agent_key_hash,
+        consumer_keys: previous.consumer_keys.clone(),
         loaded_at: previous.loaded_at,
         version: previous.version,
     });

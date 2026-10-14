@@ -6,6 +6,7 @@ use crate::{AdapterError, AgentSlot};
 pub(super) enum ResourceKey {
     Worktree(String, String),
     AgentHome(AgentSlot),
+    AgentSkill(AgentSlot, String),
     AgentProcess(AgentSlot),
 }
 
@@ -42,6 +43,15 @@ pub(super) fn admit(
 ) -> crate::Result<()> {
     if fence == 0 {
         return rejected(operation, "mutation_authority_invalid");
+    }
+    if let ResourceKey::AgentSkill(agent_id, _) = &resource {
+        if runtime
+            .authorities
+            .get(&ResourceKey::AgentHome(agent_id.clone()))
+            .is_some_and(|r| r.disposition == Disposition::Absent)
+        {
+            return rejected(operation, "mutation_authority_retired");
+        }
     }
     let identity = Identity {
         operation_id: operation_id.into(),

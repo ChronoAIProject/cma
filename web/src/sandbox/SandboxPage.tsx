@@ -13,7 +13,6 @@ import {
   IconSettingsOutline16,
   IconTrashOutline16,
 } from '../ui/icons';
-import { ReferenceLink } from '../profiles/ReferenceLink';
 import {
   sandboxChildrenAvailable,
   sandboxUnavailableNotice,
@@ -158,6 +157,16 @@ export function SandboxPage({
               target={{ kind: 'sandbox', id: sandboxId, name: sandbox.name }}
             />
           )}
+          {permissions.createAgent ? (
+            <Button
+              icon={<IconPlusOutline16 />}
+              disabled={busy || needsConnections || !childrenAvailable}
+              onClick={() => onAction({ kind: 'new_agent', sandboxId })}
+              aria-label="New agent in this Sandbox"
+            >
+              New agent
+            </Button>
+          ) : null}
           {permissions.createWorkspace ? (
             <Button
               icon={<IconPlusOutline16 />}
@@ -213,6 +222,8 @@ export function SandboxPage({
       {needsConnections ? (
         <ConnectionWizard
           target={{ type: 'sandbox', id: sandboxId }}
+          presentation="dialog"
+          expectedOwner={viewerId}
           onReady={() => setConnectionsReady(true)}
           onCancel={() => onNavigate({ kind: 'home' })}
         />
@@ -242,12 +253,6 @@ export function SandboxPage({
         <div>
           <dt>Owner</dt>
           <dd>{sandbox.ownerName?.trim() || 'Name unavailable'}</dd>
-        </div>
-        <div>
-          <dt>Profile</dt>
-          <dd>
-            <ReferenceLink kind="sandbox" id={sandbox.profile.id} />
-          </dd>
         </div>
       </dl>
       <SandboxOverview

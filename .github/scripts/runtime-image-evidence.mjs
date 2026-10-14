@@ -4,10 +4,12 @@ import { randomUUID } from 'node:crypto';
 import { readFileSync, writeFileSync, lstatSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { checks, diagnosticStages } from './runtime-image-probe.mjs';
+import { checks as legacyChecks, diagnosticStages } from './runtime-image-probe.mjs';
+import { bootstrapChecks, bootstrapStages, validateBootstrapProof } from './runtime-bootstrap-probe.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 export const source = 'https://github.com/ChronoAIProject/cma';
+export const checks = [...legacyChecks, ...bootstrapChecks];
 const digest = /^sha256:[0-9a-f]{64}$/;
 const revision = /^[0-9a-f]{40}$/;
 const fields = (value, keys) => assert.deepEqual(Object.keys(value).sort(), [...keys].sort());
@@ -32,11 +34,12 @@ export function validateImage(image, commit, expectedId) {
   assert.equal(image.Config.Labels['org.opencontainers.image.revision'], commit);
   assert.equal(image.Config.Labels['org.opencontainers.image.source'], source);
   assert.equal(image.Config.Labels['dev.chrono.cma.runtime-contract'], '3');
+  assert.equal(image.Config.Labels['dev.chrono.cma.runtime-bootstrap'], '1');
 }
 
-export function validateProbe(proof, expected) {
+function validateProbeChecks(proof, expected, requiredChecks) {
   fields(proof, ['checks', 'artifacts']);
-  assert.deepEqual(proof.checks, checks);
+  assert.deepEqual(proof.checks, requiredChecks);
   fields(proof.artifacts, ['runtime', 'launcher', 'native', 'acp', 'codexVersion', 'acpVersion', 'gh', 'ghVersion']);
   assert.match(proof.artifacts.runtime, /^[0-9a-f]{64}$/);
   assert.equal(proof.artifacts.launcher, expected.CODEX_LAUNCHER_SHA256);
@@ -46,6 +49,16 @@ export function validateProbe(proof, expected) {
   assert.equal(proof.artifacts.acpVersion, expected.CODEX_ACP_VERSION);
   assert.match(proof.artifacts.gh, /^[0-9a-f]{64}$/);
   assert.equal(proof.artifacts.ghVersion, expected.GH_VERSION);
+}
+
+export function validateProbe(proof, expected) { validateProbeChecks(proof, expected, checks); }
+
+export function combineProofs(legacy, bootstrap, expected) {
+  validateProbeChecks(legacy, expected, legacyChecks);
+  validateBootstrapProof(bootstrap, legacy.artifacts.runtime);
+  const proof = { checks: [...legacy.checks, ...bootstrap.checks], artifacts: legacy.artifacts };
+  validateProbe(proof, expected);
+  return proof;
 }
 
 export function validateEvidence(value, commit, expectedId, expected, sourceReference = null) {
@@ -68,6 +81,10 @@ const docker = (args) => execFileSync('docker', args, { encoding: 'utf8', timeou
 const inspect = (id) => JSON.parse(docker(['image', 'inspect', id]))[0];
 
 export function safeFailureStage(stage, error) {
+  if (stage === 'bootstrap-probe') {
+    const match = String(error?.stderr ?? '').match(/^runtime bootstrap probe failed at ([a-z-]+); raw runtime data withheld$/m);
+    return match && bootstrapStages.includes(match[1]) ? `bootstrap-probe:${match[1]}` : 'bootstrap-probe';
+  }
   if (stage !== 'probe') return stage;
   const match = String(error?.stderr ?? '').match(/^runtime image probe failed at ([a-z-]+); raw runtime data withheld$/m);
   return match && diagnosticStages.includes(match[1]) ? `probe:${match[1]}` : 'probe';
@@ -91,17 +108,21 @@ export function campaign(imageRef, commit, output, command = docker) {
       assert.match(sourceReference, /^ghcr\.io\/chronoaiproject\/cma-runtime@sha256:[0-9a-f]{64}$/);
       assert.ok(image.RepoDigests.includes(sourceReference));
     }
-    evidence.image = { Id: image.Id, RepoDigests: sourceReference ? [sourceReference] : [], Os: image.Os, Architecture: image.Architecture, Config: { User: image.Config.User, Labels: Object.fromEntries(['org.opencontainers.image.revision', 'org.opencontainers.image.source', 'dev.chrono.cma.runtime-contract'].map((key) => [key, image.Config.Labels[key]])) } };
+    evidence.image = { Id: image.Id, RepoDigests: sourceReference ? [sourceReference] : [], Os: image.Os, Architecture: image.Architecture, Config: { User: image.Config.User, Labels: Object.fromEntries(['org.opencontainers.image.revision', 'org.opencontainers.image.source', 'dev.chrono.cma.runtime-contract', 'dev.chrono.cma.runtime-bootstrap'].map((key) => [key, image.Config.Labels[key]])) } };
     stage = 'volume-create';
     command(['volume', 'create', '--label', label, identity]);
     stage = 'container-create';
-    command(['create', '--name', identity, '--label', label, '--network', 'none', '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges=true', '--pids-limit', '128', '--memory', '1g', '--cpus', '2', '--tmpfs', '/tmp:rw,nosuid,nodev,size=536870912,mode=1777', '--tmpfs', '/var/lib/cma-runtime:rw,nosuid,nodev,size=67108864,uid=10001,gid=10001,mode=700', '--mount', `type=volume,source=${identity},target=/home/cma`, '--mount', `type=bind,source=${resolve(root, '.github/scripts/runtime-image-probe.mjs')},target=/opt/cma-probe.mjs,readonly`, '--mount', `type=bind,source=${resolve(root, '.github/scripts/runtime-github-probe.mjs')},target=/opt/runtime-github-probe.mjs,readonly`, '--env', `CHRONO_SANDBOX_ID=${identity}`, '--env', 'CHRONO_SANDBOX_REACHES=api-github', '--env', 'CHRONO_PLATFORM_BASE_URL=http://127.0.0.1:9192', image.Id]);
+    command(['create', '--name', identity, '--label', label, '--network', 'none', '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges=true', '--pids-limit', '128', '--memory', '1g', '--cpus', '2', '--tmpfs', '/tmp:rw,nosuid,nodev,size=536870912,mode=1777', '--tmpfs', '/var/lib/cma-runtime:rw,nosuid,nodev,size=67108864,uid=10001,gid=10001,mode=700', '--mount', `type=volume,source=${identity},target=/home/cma`, '--mount', `type=bind,source=${resolve(root, '.github/scripts/runtime-image-probe.mjs')},target=/opt/runtime-image-probe.mjs,readonly`, '--mount', `type=bind,source=${resolve(root, '.github/scripts/runtime-github-probe.mjs')},target=/opt/runtime-github-probe.mjs,readonly`, '--mount', `type=bind,source=${resolve(root, '.github/scripts/runtime-bootstrap-probe.mjs')},target=/opt/runtime-bootstrap-probe.mjs,readonly`, '--env', `CHRONO_SANDBOX_ID=${identity}`, '--env', 'CHRONO_SANDBOX_REACHES=api-github', '--env', 'CHRONO_PLATFORM_BASE_URL=http://127.0.0.1:9192', image.Id]);
     stage = 'container-start';
     command(['start', identity]);
     stage = 'probe';
-    evidence.proof = JSON.parse(command(['exec', identity, 'node', '/opt/cma-probe.mjs']));
+    const legacy = JSON.parse(command(['exec', identity, 'node', '/opt/runtime-image-probe.mjs']));
     stage = 'proof-validation';
-    validateProbe(evidence.proof, expected);
+    validateProbeChecks(legacy, expected, legacyChecks);
+    stage = 'bootstrap-probe';
+    const bootstrap = JSON.parse(command(['exec', identity, 'node', '/opt/runtime-bootstrap-probe.mjs']));
+    stage = 'proof-validation';
+    evidence.proof = combineProofs(legacy, bootstrap, expected);
     evidence.result = 'pass';
   } catch (error) {
     evidence.result = 'fail';

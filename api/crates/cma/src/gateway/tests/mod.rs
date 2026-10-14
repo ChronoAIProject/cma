@@ -1,6 +1,7 @@
 use super::*;
 use serde_json::{json, Value};
 mod connection_channels;
+mod consumer_fixture;
 mod fixture;
 mod key_expiry;
 mod lifecycle;
@@ -32,6 +33,7 @@ fn keys(secrets: &BotSecrets, suffix: &str) -> BotCredentialSet {
 }
 
 #[tokio::test]
+#[ignore = "requires authenticated disposable service Mongo fixture"]
 async fn compiled_gateway_accepts_cma_profiles_and_full_lifecycle_after_restart() {
     let server = Server::start().await;
     let mut gateway = Gateway::start(&server).await;

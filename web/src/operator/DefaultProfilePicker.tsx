@@ -1,3 +1,4 @@
+import { Picker } from '../ui/Picker';
 import { useEffect, useId, useState } from 'react';
 import type { MarketplaceSummary, ProfileKind, ProfileReference } from '@chronoai/cma-sdk';
 import { Button } from '../ui/Button';
@@ -87,31 +88,34 @@ export function DefaultProfilePicker({
           {kind[0]?.toUpperCase()}
           {kind.slice(1)} profile
         </span>
-        <select
-          aria-label={`Default ${kind} profile`}
+        <Picker
+          label={`Default ${kind} profile`}
           value={selected}
           disabled={disabled}
-          aria-invalid={error !== undefined}
-          aria-describedby={error === undefined ? undefined : errorId}
-          onChange={(event) => {
+          invalid={error !== undefined}
+          describedBy={error === undefined ? undefined : errorId}
+          onChange={(choice) => {
             const option = state.items.find(
-              (item) => `${item.id}:${item.latest_revision}` === event.target.value,
+              (item) => `${item.id}:${item.latest_revision}` === choice,
             );
             if (option !== undefined) onChange({ id: option.id, revision: option.latest_revision });
           }}
-        >
-          {containsSelected ? null : (
-            <option value={selected}>Current profile / revision {value.revision}</option>
-          )}
-          {state.items.map((item) => (
-            <option
-              key={`${item.id}:${item.latest_revision}`}
-              value={`${item.id}:${item.latest_revision}`}
-            >
-              {item.name} / revision {item.latest_revision} / {item.owner_display}
-            </option>
-          ))}
-        </select>
+          options={[
+            ...(containsSelected
+              ? []
+              : [
+                  {
+                    value: selected,
+                    label: `Current profile / revision ${value.revision}`,
+                    unavailable: 'This revision is not in the current catalog.',
+                  },
+                ]),
+            ...state.items.map((item) => ({
+              value: `${item.id}:${item.latest_revision}`,
+              label: `${item.name} / revision ${item.latest_revision} / ${item.owner_display}`,
+            })),
+          ]}
+        />
       </label>
       <p>
         <ReferenceLink

@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use futures_util::TryStreamExt;
 use layer2_core::sandbox::SandboxStatus;
 use mongodb::bson::{doc, DateTime, Document};

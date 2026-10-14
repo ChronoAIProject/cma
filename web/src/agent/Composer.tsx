@@ -71,11 +71,7 @@ export function Composer({
   const noticeId = useId();
   const inputBlocked = !inputAvailability.allowed;
   const notice = inputAvailability.notice ?? pausedNotice;
-  const hasNotice =
-    starting ||
-    submitting ||
-    notice !== undefined ||
-    inputAvailability.savingStartedAt !== undefined;
+  const hasNotice = notice !== undefined || inputAvailability.savingStartedAt !== undefined;
   const usable = canMessage(status);
 
   useLayoutEffect(() => {
@@ -152,8 +148,6 @@ export function Composer({
       <Presence>
         {!hasNotice ? null : (
           <p id={noticeId} className="agent-composer__notice" role="status">
-            {starting ? 'Starting. ' : null}
-            {submitting && !starting ? 'Sending… ' : null}
             {notice}
             {inputAvailability.savingStartedAt === undefined ? null : (
               <>

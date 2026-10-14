@@ -1,5 +1,5 @@
-//! Opt-in browser interoperability: real CMA Bot routes/worker and compiled CMAEG.
-//! Identity, profile catalogue and provider execution are disposable local fakes.
+//! Browser interoperability over real consumer routes, workers, Gateway and Mongo.
+//! Identity, image catalogue, profile materialization, provider and platform APIs are local fakes.
 use super::*;
 use axum::{body::Body, http::Request, middleware::Next};
 use std::path::Path;
@@ -7,27 +7,53 @@ use std::path::Path;
 struct Profiles(BotProfiles);
 #[async_trait::async_trait]
 impl BotProfileResolver for Profiles {
-    async fn resolve(&self, _: &SubjectId, request: &CreateBot) -> Result<BotProfiles, BotError> {
-        let reference = &request.profile;
-        assert_eq!(reference.id, self.0.agent.profile_id);
-        assert_eq!(reference.revision, self.0.agent.revision);
+    async fn resolve(&self, _: &SubjectId, _: &CreateBot) -> Result<BotProfiles, BotError> {
+        panic!("the consumer browser journey must use inline Agent configuration");
+    }
+}
+#[async_trait::async_trait]
+impl layer2_core::bots::BotInlineProfileResolver for Profiles {
+    async fn resolve_inline(
+        &self,
+        owner: &SubjectId,
+        request: &CreateBot,
+        _: Option<&str>,
+        key: &str,
+    ) -> Result<BotProfiles, BotError> {
+        assert_eq!(owner, &SubjectId::new("owner"));
+        assert!(!key.is_empty());
+        assert!(request.image.is_none());
+        assert!(request.repository.is_none());
+        assert!(request.sandbox_profile.is_none());
+        assert!(request.workspace_profile.is_none());
+        let agent = request
+            .inline_agent
+            .as_ref()
+            .expect("inline Agent required");
+        assert_eq!(agent.model.as_deref(), Some("gpt-5"));
+        assert_eq!(agent.reasoning_effort.as_deref(), Some("high"));
+        assert_eq!(agent.permission_mode.as_deref(), Some("guarded"));
+        assert_eq!(
+            agent.system_prompt.as_deref(),
+            Some("Respond with concise updates.")
+        );
+        assert!(agent.skills.is_empty());
+        assert!(agent.permissions.services.is_empty());
         Ok(self.0.clone())
     }
 }
 
 #[tokio::test]
-#[ignore = "requires built web/, installed Playwright browser and compiled CMAEG"]
-async fn dashboard_creates_tests_and_deletes_through_real_cma_and_compiled_gateway() {
+#[ignore = "requires authenticated service Mongo, built web/, Playwright and CMAEG migrations"]
+async fn dashboard_creates_tests_and_deletes_a_gateway_connection_consumer() {
     let remote = Server::start().await;
-    let gateway = Gateway::start(&remote).await;
+    let gateway = consumer_fixture::ConsumerGateway::start(&remote).await;
     let template = bot().await;
     let store = Arc::new(InMemoryBotStore::default());
-    let service = BotService::new(
-        store.clone(),
-        Arc::new(Profiles(template.profiles)),
-        "cma_codex".into(),
-    );
-    let external = lifecycle::external(&remote, &gateway);
+    let profiles = Arc::new(Profiles(template.profiles));
+    let service = BotService::new(store.clone(), profiles.clone(), "cma_codex".into())
+        .with_inline_profiles(profiles);
+    let external = lifecycle::external_at(&remote, &gateway.base, consumer_fixture::PUBLIC);
     let worker = BotWorker::new(service.clone(), external.clone(), "web-fixture".into());
     let router = layer1_public::rest::bot_router(BotControl::new(service, external)).layer(
         axum::middleware::from_fn(|mut request: Request<Body>, next: Next| async move {
@@ -89,4 +115,12 @@ async fn dashboard_creates_tests_and_deletes_through_real_cma_and_compiled_gatew
     assert!(remote.identity.lock().unwrap().routes.is_empty());
     assert!(remote.remote.records.lock().unwrap().is_empty());
     assert!(remote.remote.provider_keys.lock().unwrap().is_empty());
+    {
+        let platform = gateway.platform.lock().unwrap();
+        assert!(platform.webhook.is_empty());
+        assert!(platform.calls.iter().any(|call| call == "setWebhook"));
+        assert!(platform.calls.iter().any(|call| call == "deleteWebhook"));
+    }
+    let (connection, _) = gateway.store.connection(&gateway.connection).await.unwrap();
+    assert!(connection.channel_record.is_none());
 }

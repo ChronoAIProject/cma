@@ -2,12 +2,13 @@
 use crate::channels::resolver::ResolvedChannel;
 use cmaeg_core::{
     activity::Activity,
-    ids::{ConversationId, IdempotencyKey},
+    ids::{ConsumerId, ConversationId, IdempotencyKey},
     problem::{Problem, ProblemCode},
     seal::EventRef,
 };
 use futures_util::future::BoxFuture;
 use std::{sync::Arc, time::Instant};
+use tokio::sync::OwnedSemaphorePermit;
 
 #[derive(Debug)]
 pub struct LaunchRequest {
@@ -19,6 +20,8 @@ pub struct LaunchRequest {
     pub received_at: Instant,
     pub trace: tracing::Span,
     pub timing: Option<crate::telemetry::timing::IngressTiming>,
+    /// The consumer that serves this turn. None means the default consumer.
+    pub consumer: Option<ConsumerId>,
 }
 #[derive(Debug)]
 pub enum LaunchOutcome {
@@ -28,6 +31,20 @@ pub enum LaunchOutcome {
 }
 pub trait TurnLauncher: Send + Sync {
     fn launch(&self, request: LaunchRequest) -> BoxFuture<'_, LaunchOutcome>;
+    /// The permit bounds shared ingress capacity. The default holds it until
+    /// `launch` completes; implementations may release it earlier but must
+    /// keep their acceptance semantics.
+    fn launch_holding(
+        &self,
+        request: LaunchRequest,
+        hold: OwnedSemaphorePermit,
+    ) -> BoxFuture<'_, LaunchOutcome> {
+        Box::pin(async move {
+            let outcome = self.launch(request).await;
+            drop(hold);
+            outcome
+        })
+    }
 }
 /// Explicit refusal for integrations that compose ingress without a turn runner.
 pub struct UnavailableLauncher;

@@ -97,7 +97,12 @@ impl SandboxReconciler {
                     && current.lifecycle.runtime_provision.is_none()
                     && current.lifecycle.operation.is_none()
                     && current.lifecycle.checkpoint_capture.is_none();
-                if observation.generation > current.lifecycle.runtime_generation_high_water
+                if current
+                    .lifecycle
+                    .suspended_runtime
+                    .as_ref()
+                    .is_some_and(|binding| binding.runtime_id == observation.handle.0)
+                    || observation.generation > current.lifecycle.runtime_generation_high_water
                     || (observation.generation == current.lifecycle.runtime_generation_high_water
                         && !settled_unbound)
                     || current.runtime.as_ref().is_some_and(|binding| {
@@ -159,6 +164,20 @@ impl SandboxReconciler {
         inventory: &[RuntimeObservation],
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        // A durable suspension intent may have stopped the Pod before its DB
+        // acknowledgement. Let the same worker retry and verify Pod absence.
+        if super::runtime_attachment::native_pause_teardown(sandbox)
+            || (sandbox.status == SandboxStatus::Retiring
+                && sandbox.lifecycle.home.is_some()
+                && sandbox
+                    .runtime
+                    .as_ref()
+                    .is_some_and(|binding| binding.runtime_id.starts_with("agent-sandbox:")))
+        {
+            // Native retirement also needs the original UID after CRD disappearance:
+            // only its delete waiter can prove the last owned Pod has stopped.
+            return Ok(());
+        }
         let Some(binding) = &sandbox.runtime else {
             if sandbox.requires_runtime_loss_recovery() {
                 self.recover_missing(sandbox, now).await?;

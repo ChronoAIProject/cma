@@ -214,6 +214,7 @@ pub(super) async fn publish_sandbox_profile(
     let id = SandboxProfileId(id.into());
     profiles
         .create_sandbox_profile(SandboxProfile {
+            internal: false,
             availability: Default::default(),
             id: id.clone(),
             owner: SubjectId::new(owner),
@@ -252,6 +253,7 @@ pub(super) async fn publish_workspace_profile(
     let id = WorkspaceProfileId(id.into());
     profiles
         .create_workspace_profile(WorkspaceProfile {
+            internal: false,
             id: id.clone(),
             owner: SubjectId::new(owner),
             name: format!("Workspace {id}"),
@@ -281,6 +283,7 @@ pub(super) async fn publish_workspace_profile(
 
 fn sandbox_content(max_workspaces: u8) -> SandboxProfileContent {
     SandboxProfileContent {
+        runtime_image: None,
         cpu_millis: 1_000,
         memory_mib: 2_048,
         nyxid_services: vec![],
@@ -412,6 +415,7 @@ fn stored_agent(parent: &Workspace, tree: &Worktree, id: &str) -> Agent {
         ]),
         status: AgentStatus::Starting,
         conversation: ConversationState {
+            settings: None,
             conversation_id: None,
             runtime_generation: None,
             last_seq: 0,

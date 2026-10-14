@@ -470,6 +470,7 @@ fn sandbox() -> Sandbox {
             revision: 1,
             digest: "a".repeat(64),
             content: SandboxProfileContent {
+                runtime_image: None,
                 cpu_millis: 1_000,
                 memory_mib: 2_048,
                 nyxid_services: Vec::new(),
@@ -536,6 +537,7 @@ fn live_agent(sandbox: &Sandbox, index: usize) -> Agent {
         capabilities: RuntimeCapabilities::default(),
         status: AgentStatus::Ready,
         conversation: ConversationState {
+            settings: None,
             conversation_id: Some(format!("conversation-{index}")),
             runtime_generation: Some(3),
             last_seq: 1,

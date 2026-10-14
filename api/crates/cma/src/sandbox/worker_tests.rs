@@ -36,8 +36,8 @@ use crate::auth::persistence::SecretValue;
 use super::credential::{CredentialError, CredentialMaterial, SandboxCredentialController};
 use super::live_agents::LiveAgentRegistry;
 use super::worker::{
-    CheckpointObjectPurger, LiveAgentStopper, ProfileWorkspaceProvisioner, SandboxDependencyError,
-    SandboxWorker, SandboxWorkerConfig, SandboxWorkerDependencies, CREDENTIAL_EXPIRY_MARGIN,
+    LiveAgentStopper, ProfileWorkspaceProvisioner, SandboxDependencyError, SandboxWorker,
+    SandboxWorkerConfig, SandboxWorkerDependencies, CREDENTIAL_EXPIRY_MARGIN,
     CREDENTIAL_ROTATION_AGE,
 };
 
@@ -52,6 +52,8 @@ mod lifecycle_failure_clock_tests;
 mod lifecycle_queue_conflict_tests;
 mod lifecycle_queue_tests;
 mod lifecycle_recovery_tests;
+mod native_pool_tests;
+mod native_suspension_tests;
 mod pause_cancellation_tests;
 mod provided_credential_tests;
 mod reconciliation_tests;
@@ -360,34 +362,6 @@ impl LiveAgentStopper for AgentStopRecorder {
     }
 }
 
-struct CheckpointPurgeRecorder {
-    actions: ActionLog,
-    failures: Arc<AtomicUsize>,
-}
-
-#[async_trait::async_trait]
-impl CheckpointObjectPurger for CheckpointPurgeRecorder {
-    async fn purge_checkpoint_objects(
-        &self,
-        _sandbox: &Sandbox,
-        _operation_id: &str,
-    ) -> Result<(), SandboxDependencyError> {
-        self.actions.push("purge-checkpoints");
-        if self
-            .failures
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |value| {
-                value.checked_sub(1)
-            })
-            .is_ok()
-        {
-            return Err(SandboxDependencyError::Transient(
-                "checkpoint cleanup pending".into(),
-            ));
-        }
-        Ok(())
-    }
-}
-
 struct Harness {
     store: Arc<InMemorySandboxStore>,
     service: Arc<SandboxService>,
@@ -397,7 +371,6 @@ struct Harness {
     adapter: Arc<dyn SandboxAdapter>,
     registry: Arc<LiveAgentRegistry>,
     actions: ActionLog,
-    checkpoint_failures: Arc<AtomicUsize>,
     reference: SandboxProfileRef,
     policy: SandboxPolicy,
 }
@@ -422,7 +395,7 @@ impl Harness {
         let reference = seed_sandbox_profile(&profiles, commands, workspace_profiles).await;
         let store = Arc::new(InMemorySandboxStore::default());
         let policy = SandboxPolicy {
-            max_sandboxes_per_owner: 3,
+            max_sandboxes_per_owner: 10,
             max_sandboxes_per_visitor: 1,
             inactivity_pause_after_seconds: 15 * 60,
             checkpoint_interval_seconds: layer2_core::DEFAULT_CHECKPOINT_INTERVAL_SECONDS,
@@ -440,7 +413,6 @@ impl Harness {
         let (adapter, backend) = CodexAdapter::in_memory(CodexSandboxSpec::default());
         let adapter: Arc<dyn SandboxAdapter> = Arc::new(adapter);
         let registry = Arc::new(LiveAgentRegistry::default());
-        let checkpoint_failures = Arc::new(AtomicUsize::new(0));
         let dependencies = SandboxWorkerDependencies {
             store: store.clone(),
             adapter: Arc::clone(&adapter),
@@ -450,10 +422,6 @@ impl Harness {
             }),
             agents: Arc::new(AgentStopRecorder {
                 actions: actions.clone(),
-            }),
-            checkpoints: Arc::new(CheckpointPurgeRecorder {
-                actions: actions.clone(),
-                failures: checkpoint_failures.clone(),
             }),
             registry: registry.clone(),
             updates: DurableAgentUpdateRecorder::new(store.clone()),
@@ -473,7 +441,6 @@ impl Harness {
             adapter,
             registry,
             actions,
-            checkpoint_failures,
             reference,
             policy,
         }
@@ -567,10 +534,6 @@ impl Harness {
             agents: Arc::new(AgentStopRecorder {
                 actions: self.actions.clone(),
             }),
-            checkpoints: Arc::new(CheckpointPurgeRecorder {
-                actions: self.actions.clone(),
-                failures: self.checkpoint_failures.clone(),
-            }),
             registry: self.registry.clone(),
             updates: DurableAgentUpdateRecorder::new(self.store.clone()),
             operations: AgentOperationService::new(self.store.clone(), self.registry.clone()),
@@ -607,10 +570,6 @@ impl Harness {
             agents: Arc::new(AgentStopRecorder {
                 actions: self.actions.clone(),
             }),
-            checkpoints: Arc::new(CheckpointPurgeRecorder {
-                actions: self.actions.clone(),
-                failures: self.checkpoint_failures.clone(),
-            }),
             registry: self.registry.clone(),
             updates: DurableAgentUpdateRecorder::new(self.store.clone()),
             operations: AgentOperationService::new(self.store.clone(), self.registry.clone()),
@@ -638,6 +597,7 @@ async fn seed_workspace_profile(
     let id = WorkspaceProfileId(format!("wkp_worker_{index}"));
     profiles
         .create_workspace_profile(WorkspaceProfile {
+            internal: false,
             id: id.clone(),
             owner: SubjectId::new("owner"),
             name: format!("Workspace {index}"),
@@ -675,6 +635,7 @@ async fn seed_sandbox_profile(
     let id = SandboxProfileId("sbp_worker".into());
     profiles
         .create_sandbox_profile(SandboxProfile {
+            internal: false,
             availability: Default::default(),
             id: id.clone(),
             owner: SubjectId::new("owner"),
@@ -684,6 +645,7 @@ async fn seed_sandbox_profile(
             forked_from: None,
             uses_count: 0,
             draft: SandboxProfileContent {
+                runtime_image: None,
                 cpu_millis: 1_000,
                 memory_mib: 2_048,
                 nyxid_services: vec![ServiceId::new("profile-service")],
@@ -1252,12 +1214,7 @@ async fn delete_cleans_snapshots_before_retirement_and_preserves_history_until_g
     assert_eq!(retired.purge_after, Some(rfc3339_at(now + grace)));
     assert_eq!(
         harness.actions.snapshot(),
-        [
-            "mint:1",
-            "stop-agents",
-            "revoke:provider-key-1",
-            "purge-checkpoints"
-        ]
+        ["mint:1", "stop-agents", "revoke:provider-key-1"]
     );
     assert!(!harness.worker.run_one(&created.id, now).await.unwrap());
     assert!(!harness
@@ -1278,13 +1235,7 @@ async fn delete_cleans_snapshots_before_retirement_and_preserves_history_until_g
         .is_none());
     assert_eq!(
         harness.actions.snapshot(),
-        [
-            "mint:1",
-            "stop-agents",
-            "revoke:provider-key-1",
-            "purge-checkpoints",
-            "purge-checkpoints",
-        ]
+        ["mint:1", "stop-agents", "revoke:provider-key-1"]
     );
     assert!(harness
         .store
@@ -1361,6 +1312,10 @@ async fn failed_retirement_revocation_is_durable_debt_and_retried() {
         SandboxWorkStep::RetryRetiredRevocations
     );
     assert_eq!(retired_with_debt.credential.revoke_debt.len(), 1);
+    assert_eq!(
+        harness.actions.snapshot(),
+        ["mint:1", "stop-agents", "revoke:provider-key-1"]
+    );
     harness.run(&created.id, now).await;
     let settled = harness.stored(&created.id).await;
     assert!(settled.credential.revoke_debt.is_empty());
@@ -1371,8 +1326,7 @@ async fn failed_retirement_revocation_is_durable_debt_and_retried() {
             "mint:1",
             "stop-agents",
             "revoke:provider-key-1",
-            "purge-checkpoints",
-            "revoke:provider-key-1",
+            "revoke:provider-key-1"
         ]
     );
 }
@@ -1464,15 +1418,11 @@ async fn custody_that_appears_after_the_grace_check_blocks_purge_until_revoked()
     let deferred = harness.stored(&active.id).await;
     assert_eq!(deferred.work.step, SandboxWorkStep::RetryRetiredRevocations);
     assert_eq!(deferred.credential.revoke_debt.len(), 1);
-    assert_eq!(
-        harness
-            .actions
-            .snapshot()
-            .iter()
-            .filter(|action| action.as_str() == "purge-checkpoints")
-            .count(),
-        1
-    );
+    assert!(!harness
+        .actions
+        .snapshot()
+        .iter()
+        .any(|action| action.as_str() == "purge-checkpoints"));
 
     harness.run(&active.id, purge_at).await;
     harness.run(&active.id, purge_at).await;

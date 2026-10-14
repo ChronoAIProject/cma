@@ -1,9 +1,8 @@
 //! Durable authority for credential-free runtime preparation and atomic ownership.
 
-use futures_util::TryStreamExt;
 use layer2_core::sandbox::store::SandboxStoreError;
 use layer2_core::sandbox::{WarmSandbox, WarmSandboxState};
-use layer2_core::{SandboxId, SandboxProfileId};
+use layer2_core::SandboxId;
 use mongodb::bson::{doc, Bson, Document};
 use mongodb::{Collection, IndexModel};
 
@@ -13,9 +12,12 @@ use super::sandbox_mongo::{
 
 mod admission;
 mod adoption;
+#[cfg(test)]
 mod hierarchy;
 pub(super) use adoption::{adopt_agent, adopt_workspace};
+#[cfg(test)]
 mod planning;
+mod retirement;
 mod work;
 pub(super) use admission::claim_ready;
 pub(crate) use work::WarmSandboxClaim;
@@ -73,20 +75,6 @@ fn unavailable(error: mongodb::error::Error) -> SandboxStoreError {
 }
 
 impl MongoSandboxStore {
-    pub(crate) async fn warm_profile_owner(
-        &self,
-        id: &SandboxProfileId,
-    ) -> Result<layer2_core::SubjectId, SandboxStoreError> {
-        let document = self
-            .sandbox_profiles
-            .find_one(doc! { "_id": id.as_str() })
-            .await
-            .map_err(unavailable)?
-            .ok_or(SandboxStoreError::NotFound)?;
-        crate::store::sandbox_profiles::read_profile(&document)
-            .map(|profile| profile.owner)
-            .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))
-    }
     pub(crate) async fn warm_sandbox(
         &self,
         id: &SandboxId,
@@ -98,46 +86,5 @@ impl MongoSandboxStore {
             .as_ref()
             .map(read)
             .transpose()
-    }
-
-    /// Includes disabled/retired Profiles while any unowned runtime needs cleanup.
-    pub(crate) async fn warmup_profile_ids(
-        &self,
-    ) -> Result<Vec<SandboxProfileId>, SandboxStoreError> {
-        let mut ids = std::collections::BTreeSet::new();
-        let mut profiles = self
-            .sandbox_profiles
-            .find(doc! {
-                "visibility": "public", "retired_at": Bson::Null,
-                "record.availability.warmup_enabled": true,
-            })
-            .projection(doc! { "_id": 1 })
-            .await
-            .map_err(unavailable)?;
-        while let Some(profile) = profiles.try_next().await.map_err(unavailable)? {
-            ids.insert(SandboxProfileId(
-                profile
-                    .get_str("_id")
-                    .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?
-                    .to_owned(),
-            ));
-        }
-        let records = self
-            .warm_sandboxes
-            .distinct(
-                "profile_id",
-                doc! {
-                    "state": { "$in": ["preparing", "installing", "ready", "retiring"] },
-                },
-            )
-            .await
-            .map_err(unavailable)?;
-        for value in records {
-            let id = value
-                .as_str()
-                .ok_or_else(|| SandboxStoreError::Corrupt("invalid warm Profile ID".into()))?;
-            ids.insert(SandboxProfileId(id.to_owned()));
-        }
-        Ok(ids.into_iter().collect())
     }
 }

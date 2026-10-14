@@ -29,16 +29,25 @@ exports[`Trigger publisher flow > publishes the trureturing setup in five steps 
     },
     "target": {
       "agent_profile": {
-        "id": "agp_codex",
-        "revision": 4,
+        "id": "",
+        "revision": 1,
+      },
+      "inline": {
+        "agent": {
+          "permission_mode": "guarded",
+          "reasoning_effort": "medium",
+          "services": [],
+          "skills": [],
+          "system_prompt": "",
+        },
       },
       "sandbox_profile": {
-        "id": "sbp_standard",
-        "revision": 2,
+        "id": "",
+        "revision": 1,
       },
       "workspace_profile": {
-        "id": "wkp_trureturing",
-        "revision": 3,
+        "id": "",
+        "revision": 1,
       },
     },
   },

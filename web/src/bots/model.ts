@@ -7,7 +7,7 @@ export interface BotClient {
     | 'list'
     | 'get'
     | 'create'
-    | 'available'
+    | 'connections'
     | 'test'
     | 'disable'
     | 'enable'
@@ -26,7 +26,7 @@ export const stateLabels: Record<Bot['state'], string> = {
 const steps: Record<string, string> = {
   admitted: 'Waiting to start',
   queued: 'Waiting to start',
-  verify_external_bot: 'Checking your Telegram bot',
+  verify_external_bot: 'Checking your channel connection',
   mint_agent_key: 'Preparing Agent access',
   mint_route_key: 'Preparing channel access',
   keys_minted: 'Access prepared',
@@ -54,11 +54,19 @@ export const creationSteps = [
   ['create_route', 'Create message route'],
   ['attach_route', 'Connect message route'],
 ] as const;
+const consumerSteps = [
+  ['verify_external_bot', 'Check Event Gateway connection'],
+  ['mint_agent_key', 'Prepare Agent access'],
+  ['create_channel', 'Connect Agent provider'],
+] as const;
+export function setupSteps(bot: Bot) {
+  return bot.connection_ref ? consumerSteps : creationSteps;
+}
 export function creationStepIndex(bot: Bot): number | undefined {
   if (bot.operation?.operation !== 'create') return undefined;
   if (bot.operation.step === 'admitted' || bot.operation.step === 'queued') return -1;
-  if (bot.operation.step === 'keys_minted') return 2.5;
-  const index = creationSteps.findIndex(([step]) => step === bot.operation?.step);
+  if (bot.operation.step === 'keys_minted') return bot.connection_ref ? 1.5 : 2.5;
+  const index = setupSteps(bot).findIndex(([step]) => step === bot.operation?.step);
   return index < 0 ? undefined : index;
 }
 export function operationLabel(bot: Bot): string | undefined {

@@ -15,10 +15,16 @@ use crate::hosted::{
 use crate::wire::{AgentOpenReceipt, FencedReceipt, FencedRequest, ResponseFrame};
 use crate::{AgentLaunch, AgentSlot, ResourceReading};
 
+#[path = "provider_transport_agent_sandbox_tests.rs"]
+mod agent_sandbox;
 #[path = "provider_transport_checkpoint_tests.rs"]
 mod checkpoint;
+#[path = "provider_transport_history_tests.rs"]
+mod history;
 #[path = "provider_transport_restore_tests.rs"]
 mod restore;
+#[path = "provider_transport_retirement_tests.rs"]
+mod retirement;
 
 struct NullStore;
 
@@ -424,6 +430,7 @@ async fn open_pins_one_endpoint_and_retires_the_authenticated_link() {
                 own_credential: false,
                 channel_tool: None,
                 provider_tool: None,
+                access_tool: None,
                 recovered_prompt: None,
             },
             updates,

@@ -324,7 +324,7 @@ impl ConnectionService {
         channel: &ResolvedChannel,
         activity: &Activity,
     ) -> Result<(), Error> {
-        let ActivityKind::Event { ce } = &activity.kind else {
+        let ActivityKind::Event { ce, .. } = &activity.kind else {
             return Ok(());
         };
         if ce.r#type != "telegram.managed_bot_created" {

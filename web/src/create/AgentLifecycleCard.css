@@ -1,0 +1,50 @@
+.agent-lifecycle-step {
+  display: grid;
+  gap: 18px;
+}
+.agent-lifecycle-provisioning {
+  display: grid;
+  gap: 14px;
+}
+.agent-lifecycle-provisioning ol {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.agent-lifecycle-provisioning li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 10px;
+}
+.agent-lifecycle-provisioning li[data-state='Ready'] {
+  border-color: var(--dsw-alias-state-success-primary);
+}
+.agent-lifecycle-provisioning li[data-state='In progress'] {
+  border-color: var(--dsw-alias-brand-primary);
+}
+.agent-lifecycle-provisioning li[data-state='Needs attention'] {
+  border-color: var(--dsw-alias-state-error-primary);
+}
+.agent-lifecycle-provisioning li span,
+.agent-lifecycle-provisioning li small,
+.agent-lifecycle-provisioning__elapsed {
+  color: var(--dsw-alias-label-secondary);
+}
+.agent-lifecycle-provisioning li strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.agent-lifecycle-provisioning li small {
+  grid-column: 1 / -1;
+}
+@media (max-width: 30rem) {
+  .agent-lifecycle-provisioning li {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+  }
+}
