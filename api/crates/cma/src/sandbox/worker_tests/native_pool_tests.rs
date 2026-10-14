@@ -6,6 +6,9 @@ use layer3_adapter::{
     AdapterError, HomeVolumeAttachment, HomeVolumeReceipt, HomeVolumeRequest, HomeVolumeStore,
 };
 
+#[path = "native_prepared_tests.rs"]
+mod native_prepared_tests;
+
 struct Pools {
     store: Arc<InMemorySandboxStore>,
     claim: Mutex<Option<NativePoolClaim>>,
