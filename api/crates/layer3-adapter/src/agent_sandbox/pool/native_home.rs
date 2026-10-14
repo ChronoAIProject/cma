@@ -10,12 +10,18 @@ use kube::{
     ResourceExt,
 };
 use serde_json::json;
+use std::time::Duration;
+
+pub(super) enum NativeHomeAdoption {
+    Ready(Box<HomeVolumeAttachment>),
+    Pending(Box<NativePoolHomeOrigin>),
+}
 
 impl AgentSandboxPools {
     pub(super) async fn adopt_native_vct(
         &self,
         original: &NativePoolClaim,
-    ) -> Result<HomeVolumeAttachment> {
+    ) -> Result<NativeHomeAdoption> {
         let current = self.observe_claim(original).await?;
         let name = current
             .sandbox_name
@@ -84,18 +90,70 @@ impl AgentSandboxPools {
                 ));
             }
         }
-        // Acknowledgement proves initialization completed before credential admission.
-        let latest = self.members.get(name).await.map_err(api_error)?;
-        self.member_owned(&latest, &current)?;
-        if !self.member_spec(&latest, &origin, false)? || !super::super::model::ready(&latest) {
-            return Err(unavailable("native home initialization is still pending"));
+        self.observe_native_home(&origin).await
+    }
+
+    pub(super) async fn wait_native_home(
+        &self,
+        origin: NativePoolHomeOrigin,
+    ) -> Result<HomeVolumeAttachment> {
+        // Only the original published authority may be observed here. Never
+        // replay adoption writes or claim allocation while waiting for Ready.
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                tokio::time::sleep(Duration::from_millis(250)).await;
+                if let NativeHomeAdoption::Ready(home) = self.observe_native_home(&origin).await? {
+                    return Ok(*home);
+                }
+            }
+        })
+        .await
+        .map_err(|_| unavailable("native home initialization is still pending"))?
+    }
+
+    async fn observe_native_home(
+        &self,
+        origin: &NativePoolHomeOrigin,
+    ) -> Result<NativeHomeAdoption> {
+        let original = &origin.claim;
+        let desired = model::claim(&self.config, &original.request)?;
+        let name = original
+            .sandbox_name
+            .as_deref()
+            .ok_or_else(|| rejected("native Sandbox missing"))?;
+        let storage = origin.storage_reference()?;
+        let (claim, member, volume) = tokio::join!(
+            self.claims.get(&original.name),
+            self.members.get(name),
+            self.volumes.get(&storage),
+        );
+        let claim = claim.map_err(api_error)?;
+        super::claims::verify_claim(&claim, &desired)?;
+        if claim.uid().as_deref() != Some(&original.uid) {
+            return Err(rejected("native claim UID changed"));
         }
-        let volume = self
-            .volumes
-            .get(&origin.storage_reference()?)
-            .await
-            .map_err(api_error)?;
-        self.native_attachment(&origin, &volume)
+        if super::claims::receipt(&original.request, &claim)?.sandbox_name != original.sandbox_name
+        {
+            return Err(rejected("native claim changed its assigned Sandbox"));
+        }
+        let encoded =
+            serde_json::to_string(origin).map_err(|_| rejected("invalid native VCT authority"))?;
+        if claim.annotations().get(NATIVE_HOME_ANNOTATION) != Some(&encoded) {
+            return Err(rejected("native claim home authority changed"));
+        }
+        let member = member.map_err(api_error)?;
+        self.member_owned(&member, original)?;
+        if !self.member_spec(&member, origin, false)? {
+            return Err(rejected("native Sandbox home authority changed"));
+        }
+        let attachment = self.native_attachment(origin, &volume.map_err(api_error)?)?;
+        // Ready must acknowledge the annotation's current generation before
+        // the returned attachment can admit runtime credentials.
+        if super::super::model::ready(&member) {
+            Ok(NativeHomeAdoption::Ready(Box::new(attachment)))
+        } else {
+            Ok(NativeHomeAdoption::Pending(Box::new(origin.clone())))
+        }
     }
 
     pub(crate) fn native_attachment(
