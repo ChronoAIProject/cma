@@ -74,7 +74,7 @@ it('creates from only the optional repository and retries the exact request afte
   expect(create.mock.calls[1]?.[1].idempotencyKey).toEqual(options.idempotencyKey);
   expect(screen.getByRole('button', { name: 'Open agent' })).toBeDisabled();
 });
-it('resumes receipt polling after reload, waits for final success and clears the saved request on opening', async () => {
+it('resumes receipt polling after reload and automatically opens exactly once only on final success', async () => {
   sessionStorage.setItem(
     lifecycleStorageKey('owner'),
     JSON.stringify({
@@ -91,11 +91,11 @@ it('resumes receipt polling after reload, waits for final success and clears the
   show(agentClient({ createAgentLifecycle: create, readAgentLifecycle: read }), 'owner', onCreated);
   await waitFor(() => expect(read).toHaveBeenCalledOnce());
   expect(screen.getByRole('button', { name: 'Open agent' })).toBeDisabled();
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Open agent' })).toBeEnabled(), {
-    timeout: 2500,
-  });
-  fireEvent.click(screen.getByRole('button', { name: 'Open agent' }));
-  expect(onCreated).toHaveBeenCalledWith({ id: 'ready-agent', status: 'ready' });
+  expect(onCreated).not.toHaveBeenCalled();
+  await waitFor(() =>
+    expect(onCreated).toHaveBeenCalledWith({ id: 'ready-agent', status: 'ready' }),
+  );
+  expect(onCreated).toHaveBeenCalledOnce();
   expect(sessionStorage.getItem(lifecycleStorageKey('owner'))).toBeNull();
   expect(create).not.toHaveBeenCalled();
 });
