@@ -20,8 +20,9 @@ pub struct WarmPoolView {
     pub revision: u64,
     /// Immutable runtime image selected when this target was created.
     pub image: String,
-    /// Immutable image, resources, home and Pod policy identity.
-    pub config_sha256: String,
+    /// Immutable image, resources, home and Pod policy identity; absent on older servers.
+    #[serde(default, deserialize_with = "present_config_sha256")]
+    pub config_sha256: Option<String>,
     /// CPU reservation for each member, in millicores.
     pub cpu_millis: u32,
     /// Memory reservation for each member, in MiB.
@@ -51,10 +52,18 @@ pub struct WarmPoolList {
     pub default_cpu_millis: u32,
     /// Default member memory reservation, in MiB.
     pub default_memory_mib: u32,
-    /// Exact default configuration; `None` when the server cannot plan it.
+    /// Exact default configuration; `None` on older servers or when it cannot be planned.
+    #[serde(default)]
     pub default_config_sha256: Option<String>,
     /// Whether provider inventory could be observed.
     pub available: bool,
+}
+
+fn present_config_sha256<'de, D>(deserializer: D) -> std::result::Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    String::deserialize(deserializer).map(Some)
 }
 
 /// Create a pool using the server's trusted image and home policy.

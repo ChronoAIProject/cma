@@ -98,7 +98,8 @@ readiness is unknown; inspect `status` and `observed` for reconciliation progres
 
 Pool inventory exposes each target's immutable `config_sha256` and the current
 `default_config_sha256` for the default image, CPU, memory, home, and Pod policy.
-Select default capacity by exact digest equality when the default digest is
-non-null; matching only image and resources can select a retained older policy.
+Older servers omit these fields, which the SDK represents as `None`.
+Select default capacity only when both digests are `Some` and equal;
+matching only image and resources can select a retained older policy.
 Use a new idempotency key to create a target after policy changes. Replaying an
 old key and resizing an old target preserve that target's original policy.

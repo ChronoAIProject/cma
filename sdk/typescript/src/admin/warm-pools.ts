@@ -6,6 +6,7 @@ import {
   integer,
   nullable,
   object,
+  optional,
   text,
   type Output,
 } from '../schema.js';
@@ -14,7 +15,7 @@ export const warmPoolView = object({
   id: text,
   revision: integer,
   image: text,
-  config_sha256: text,
+  config_sha256: optional(text),
   cpu_millis: integer,
   memory_mib: integer,
   target_replicas: integer,
@@ -30,7 +31,7 @@ export const warmPoolList = object({
   default_image: text,
   default_cpu_millis: integer,
   default_memory_mib: integer,
-  default_config_sha256: nullable(text),
+  default_config_sha256: optional(nullable(text)),
   available: boolean,
 });
 export type WarmPoolList = Output<typeof warmPoolList>;
