@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ApiError } from '@chronoai/cma-sdk';
 import type { CmaWebClient } from '../api/client';
-import type { SandboxDetail } from '../api/types';
+import type { AgentDetail, SandboxDetail } from '../api/types';
 import { sandboxLifecycleLabel, sandboxRefreshDelay } from '../sandbox/lifecycle';
+import { bootstrapInputAllowed } from './bootstrap';
 
 export interface SandboxInputAvailability {
   readonly allowed: boolean;
@@ -25,11 +26,13 @@ interface SandboxAvailability {
 }
 
 interface Observation {
+  readonly scope: object;
   readonly agentId: string;
   readonly sandboxId: string;
   readonly sandbox?: SandboxDetail;
   readonly stale: boolean;
   readonly observedAt?: string;
+  readonly bootstrapAllowed?: boolean;
 }
 
 export function useSandboxInput(
@@ -37,8 +40,17 @@ export function useSandboxInput(
   agentId: string | undefined,
   sandboxId: string | undefined,
   queueWhileStarting = false,
+  bootstrap?: AgentDetail['bootstrap'],
+  owner?: string,
 ): SandboxAvailability {
   const [observation, setObservation] = useState<Observation>();
+  const operationId = queueWhileStarting ? bootstrap?.operationId : undefined;
+  const workspaceId = queueWhileStarting ? bootstrap?.workspaceId : undefined;
+  const bootstrapSandboxId = queueWhileStarting ? bootstrap?.sandboxId : undefined;
+  const scope = useMemo(
+    () => ({ client, agentId, sandboxId, operationId, workspaceId, bootstrapSandboxId, owner }),
+    [client, agentId, sandboxId, operationId, workspaceId, bootstrapSandboxId, owner],
+  );
   useEffect(() => {
     if (agentId === undefined || sandboxId === undefined) return;
     const controller = new AbortController();
@@ -51,17 +63,12 @@ export function useSandboxInput(
     const markStale = () => {
       if (controller.signal.aborted) return;
       setObservation((current) => ({
+        scope,
         agentId,
         sandboxId,
-        sandbox:
-          current?.agentId === agentId && current.sandboxId === sandboxId
-            ? current.sandbox
-            : undefined,
+        sandbox: current?.scope === scope ? current.sandbox : undefined,
         stale: true,
-        observedAt:
-          current?.agentId === agentId && current.sandboxId === sandboxId
-            ? current.observedAt
-            : undefined,
+        observedAt: current?.scope === scope ? current.observedAt : undefined,
       }));
     };
     const poll = () => {
@@ -78,22 +85,39 @@ export function useSandboxInput(
         timer = setTimeout(poll, pollInterval);
       }, 10_000);
       deadline = timeout;
-      void client
-        .readSandbox(sandboxId, { signal: AbortSignal.any([controller.signal, request.signal]) })
-        .then((sandbox) => {
+      const signal = AbortSignal.any([controller.signal, request.signal]);
+      void Promise.all([
+        (async () => client.readSandbox(sandboxId, { signal }))(),
+        (async () =>
+          operationId === undefined ? undefined : client.readAgent(agentId, { signal }))(),
+      ])
+        .then(([sandbox, agent]) => {
           if (controller.signal.aborted || request.signal.aborted || pending !== request) return;
           if (sandbox.id !== sandboxId)
             throw new Error('Sandbox identity did not match the Agent.');
+          if (
+            agent !== undefined &&
+            (agent.id !== agentId ||
+              agent.sandbox.id !== sandboxId ||
+              agent.workspace.id !== workspaceId)
+          )
+            throw new Error('Bootstrap Agent identity did not match its parent.');
           if (requestEpoch !== visibilityEpoch || document.hidden) {
             timer = setTimeout(poll, 0);
             return;
           }
           setObservation({
+            scope,
             agentId,
             sandboxId,
             sandbox,
             stale: false,
             observedAt: new Date().toISOString(),
+            bootstrapAllowed:
+              agent !== undefined &&
+              operationId !== undefined &&
+              bootstrapSandboxId === sandboxId &&
+              bootstrapInputAllowed(agent, sandbox, owner, operationId),
           });
           clearTimeout(expiry);
           expiry = setTimeout(markStale, 10000);
@@ -103,7 +127,7 @@ export function useSandboxInput(
         .catch((error: unknown) => {
           if (controller.signal.aborted || request.signal.aborted || pending !== request) return;
           if (error instanceof ApiError && [401, 403, 404].includes(error.status))
-            setObservation({ agentId, sandboxId, stale: true });
+            setObservation({ scope, agentId, sandboxId, stale: true });
           else markStale();
           timer = setTimeout(poll, requestEpoch === visibilityEpoch ? pollInterval : 0);
         })
@@ -128,12 +152,9 @@ export function useSandboxInput(
       clearTimeout(expiry);
       document.removeEventListener('visibilitychange', visibilityChanged);
     };
-  }, [agentId, client, sandboxId]);
+  }, [agentId, bootstrapSandboxId, client, operationId, owner, sandboxId, scope, workspaceId]);
 
-  const current =
-    observation?.agentId === agentId && observation?.sandboxId === sandboxId
-      ? observation
-      : undefined;
+  const current = observation?.scope === scope ? observation : undefined;
   return {
     inputAvailability: inputAvailability(current, queueWhileStarting),
     resourceAvailability: resourceAvailability(current),
@@ -186,6 +207,7 @@ function inputAvailability(
     };
   if (sandbox.status === 'failed' || sandbox.status === 'retired')
     return { allowed: false, notice: 'This Sandbox is unavailable. Messages cannot be sent.' };
+  if (queueWhileStarting && observation.bootstrapAllowed) return { allowed: true };
   if (
     sandbox.lifecycle.operation !== undefined ||
     (sandbox.status !== 'active' && (queueWhileStarting || sandbox.status !== 'paused'))
