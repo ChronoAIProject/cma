@@ -23,6 +23,7 @@ impl AgentSandboxClient {
         &self,
         request: &ProviderSandboxRequest,
     ) -> Result<Option<RuntimeHandle>> {
+        let mut timing = super::provision_timing::ProvisionTiming::new();
         request.validate_volumes()?;
         let Some(first) = request.volumes.first() else {
             return Ok(None);
@@ -53,9 +54,12 @@ impl AgentSandboxClient {
                 "native runtime requires the persisted home attachment",
             ));
         }
-        self.admit_pool_runtime(&origin.claim, &home, request)
-            .await
-            .map(Some)
+        timing.completed("persisted_home_origin");
+        let handle = self
+            .admit_pool_runtime(&origin.claim, &home, request)
+            .await?;
+        timing.completed("admit_pool_runtime");
+        Ok(Some(handle))
     }
 
     pub(super) async fn retirement_pool_origin(
@@ -123,10 +127,12 @@ impl AgentSandboxClient {
         home: &HomeVolumeAttachment,
         request: &ProviderSandboxRequest,
     ) -> Result<RuntimeHandle> {
+        let mut timing = super::provision_timing::ProvisionTiming::new();
         home.receipt.validate_for(&home.request)?;
         self.pools
             .verify_explicit_template_policy(&original.request.pool)
             .await?;
+        timing.completed("admission_template_policy");
         if request.metadata.get("cma/runtime-generation")
             != Some(&original.request.runtime_generation.to_string())
         {
@@ -171,6 +177,7 @@ impl AgentSandboxClient {
             self.pools.member_owned(&actual, &current)?;
             (current, actual)
         };
+        timing.completed("admission_home_proof");
         let name = current
             .sandbox_name
             .as_deref()
@@ -225,11 +232,13 @@ impl AgentSandboxClient {
         }
         let patch = json!({"metadata":{"uid":actual.uid(),"resourceVersion":actual.resource_version(),
             "labels":{OWNER_LABEL:self.config.deployment},"annotations":desired.annotations()}});
+        timing.completed("admission_render_validate");
         let updated = self
             .sandboxes
             .patch(name, &PatchParams::default(), &Patch::Merge(patch))
             .await
             .map_err(api_error)?;
+        timing.completed("admission_publish");
         self.pools.member_owned(&updated, &current)?;
         if updated.uid() != actual.uid() {
             return Err(rejected("native Sandbox UID changed during admission"));
