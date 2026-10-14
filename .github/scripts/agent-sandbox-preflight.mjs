@@ -59,10 +59,10 @@ export function homePolicy(config) {
   const native = fields.map((field) => config[`CHRONO_AGENT_SANDBOX_HOME_${field}`]);
   const legacy = fields.map((field) => config[`CHRONO_SANDBOX_HOME_${field}`]);
   const explicit = config.CHRONO_AGENT_SANDBOX_HOME_MODE || undefined;
-  assert.ok(explicit === undefined || ['native_vct_empty_v1', 'legacy_snapshot'].includes(explicit));
-  const mode = explicit ?? (native.some(Boolean) && !native[2] && !native[3] ? 'native_vct_empty_v1' : 'legacy_snapshot');
-  if (mode === 'native_vct_empty_v1') assert.ok(!native[2] && !native[3]);
-  const values = mode === 'native_vct_empty_v1'
+  assert.ok(explicit === undefined || ['native_vct_empty_v1', 'native_vct_full_home_v2', 'legacy_snapshot'].includes(explicit));
+  const mode = explicit ?? (native.some(Boolean) && !native[2] && !native[3] ? 'native_vct_full_home_v2' : 'legacy_snapshot');
+  if (mode !== 'legacy_snapshot') assert.ok(!native[2] && !native[3]);
+  const values = mode !== 'legacy_snapshot'
     ? native.slice(0, 2).map((value, index) => value || (explicit ? legacy[index] : undefined))
     : native.some(Boolean) ? native : legacy;
   assert.ok(values.every((value) => typeof value === 'string' && value.length > 0));
@@ -195,7 +195,7 @@ export function preflight(options = {}, command = (args, input) => execFileSync(
     assert.ok(!runtimeClass.metadata?.deletionTimestamp);
     assert.ok(dns(runtimeClass.handler));
   });
-  check(policy?.mode === 'native_vct_empty_v1' ? 'native home storage class' : 'ready retained-home seed and storage class', () => {
+  check(policy?.mode !== 'legacy_snapshot' ? 'native home storage class' : 'ready retained-home seed and storage class', () => {
     assert.ok(policy);
     if (policy.mode === 'legacy_snapshot') {
       validateSeed(get('volumesnapshots.snapshot.storage.k8s.io', policy.template), policy.templateUid);

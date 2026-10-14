@@ -32,19 +32,25 @@ pub(super) fn native_from_lookup(
         .map(|key| lookup(key).map(|value| value.filter(|v| !v.is_empty())))
         .collect::<Result<Vec<_>, _>>()?;
     let mode = lookup("CHRONO_AGENT_SANDBOX_HOME_MODE")?.filter(|v| !v.is_empty());
-    if mode
-        .as_deref()
-        .is_some_and(|v| !["native_vct_empty_v1", "legacy_snapshot"].contains(&v))
-    {
+    if mode.as_deref().is_some_and(|v| {
+        ![
+            "native_vct_empty_v1",
+            "native_vct_full_home_v2",
+            "legacy_snapshot",
+        ]
+        .contains(&v)
+    }) {
         return Err(
-            "CHRONO_AGENT_SANDBOX_HOME_MODE must be native_vct_empty_v1 or legacy_snapshot".into(),
+            "CHRONO_AGENT_SANDBOX_HOME_MODE must be native_vct_full_home_v2, native_vct_empty_v1 or legacy_snapshot".into(),
         );
     }
     if values.iter().all(Option::is_none) && mode.is_none() {
         return Ok(fallback.cloned());
     }
-    let empty = mode.as_deref() == Some("native_vct_empty_v1")
-        || (mode.is_none() && values[2].is_none() && values[3].is_none());
+    let empty = matches!(
+        mode.as_deref(),
+        Some("native_vct_empty_v1" | "native_vct_full_home_v2")
+    ) || (mode.is_none() && values[2].is_none() && values[3].is_none());
     if empty {
         if values[2].is_some() || values[3].is_some() {
             return Err("native VCT empty homes cannot specify a snapshot template".into());
@@ -79,7 +85,11 @@ pub(super) fn native_from_lookup(
             return Err(format!("{} must be a lowercase DNS identifier", keys[0]));
         }
         return Ok(Some(HomeVolumePolicy {
-            mode: layer3_adapter::HomeVolumeMode::NativeVctEmptyV1,
+            mode: if mode.as_deref() == Some("native_vct_empty_v1") {
+                layer3_adapter::HomeVolumeMode::NativeVctEmptyV1
+            } else {
+                layer3_adapter::HomeVolumeMode::NativeVctFullHomeV2
+            },
             storage_class: storage,
             capacity_gib,
             template_name: String::new(),

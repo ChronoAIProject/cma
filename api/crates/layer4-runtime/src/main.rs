@@ -67,8 +67,15 @@ async fn main() {
 
 async fn run() -> Result<(), String> {
     let arguments = std::env::args_os().skip(1).collect::<Vec<_>>();
-    if arguments.len() == 2 && arguments[0] == "--initialize-home" {
-        return home_initializer::initialize(
+    if arguments.len() == 2
+        && (arguments[0] == "--initialize-home" || arguments[0] == "--initialize-home-tree")
+    {
+        let initialize = if arguments[0] == "--initialize-home-tree" {
+            home_initializer::initialize_home_tree
+        } else {
+            home_initializer::initialize
+        };
+        return initialize(
             std::path::Path::new(&arguments[1]),
             std::path::Path::new("/usr/share/cma-runtime-home"),
         )
