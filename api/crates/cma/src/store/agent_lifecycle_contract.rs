@@ -7,7 +7,7 @@ use mongodb::{
     Database,
 };
 
-pub(super) async fn verify(db: &Database) {
+pub(in crate::store) async fn verify(db: &Database) {
     let store = MongoAgentLifecycleStore::open(db).await.unwrap();
     let owner = SubjectId::new("lifecycle-owner");
     let request: AgentLifecycleCreateRequest = serde_json::from_value(serde_json::json!({

@@ -309,7 +309,35 @@ fn native_empty_vct_mode_can_share_cluster_without_snapshot_and_rejects_mixed_mo
         .agent_sandbox_home_policy
         .unwrap();
     assert!(policy.is_native_vct());
+    assert_eq!(
+        policy.mode,
+        layer3_adapter::HomeVolumeMode::NativeVctFullHomeV2
+    );
     assert!(policy.template_name.is_empty() && policy.template_generation.is_empty());
+    for (mode, expected) in [
+        (
+            "native_vct_empty_v1",
+            layer3_adapter::HomeVolumeMode::NativeVctEmptyV1,
+        ),
+        (
+            "native_vct_full_home_v2",
+            layer3_adapter::HomeVolumeMode::NativeVctFullHomeV2,
+        ),
+    ] {
+        let mut values = enabled.to_vec();
+        values.push(("CHRONO_AGENT_SANDBOX_HOME_MODE", mode));
+        assert_eq!(
+            configured(&values)
+                .unwrap()
+                .runtime
+                .agent_sandbox_home_policy
+                .unwrap()
+                .mode,
+            expected
+        );
+        values.push(("CHRONO_AGENT_SANDBOX_HOME_TEMPLATE", "forbidden"));
+        assert!(configured(&values).is_err());
+    }
     for (name, value) in [
         ("CHRONO_AGENT_SANDBOX_HOME_MODE", "unknown"),
         ("CHRONO_AGENT_SANDBOX_HOME_MODE", "legacy_snapshot"),

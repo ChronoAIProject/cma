@@ -103,6 +103,10 @@ pub(crate) fn deployment_image(uri: String) -> RuntimeImage {
                 layer3_adapter::runtime_bootstrap::RUNTIME_BOOTSTRAP_LABEL.into(),
                 "1".into(),
             ),
+            (
+                layer3_adapter::runtime_bootstrap::RUNTIME_HOME_LAYOUT_LABEL.into(),
+                "2".into(),
+            ),
         ]),
     }
 }

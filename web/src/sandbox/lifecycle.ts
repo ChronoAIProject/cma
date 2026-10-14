@@ -1,6 +1,10 @@
 import type { SandboxSummary } from '../api/types';
 import { statusLabel } from '../vocabulary/status';
 
+export function transitionRefreshDelay(startedAt: number): number {
+  return Date.now() - startedAt < 10_000 ? 250 : 1500;
+}
+
 export function sandboxChildrenAvailable(sandbox: SandboxSummary): boolean {
   return sandbox.status === 'active' && sandbox.lifecycle?.operation === undefined;
 }

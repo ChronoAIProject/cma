@@ -38,6 +38,8 @@ function renderTree(
     readonly lifecycleBusy?: boolean;
     readonly onAction?: (action: TreeAction) => void;
     readonly onNavigate?: (route: AppRoute) => void;
+    readonly deletingSandboxIds?: ReadonlySet<string>;
+    readonly onViewDeletion?: (sandboxId: string) => void;
   } = {},
 ) {
   return render(
@@ -46,6 +48,8 @@ function renderTree(
       items={options.items ?? navigationFixture(options.paused === true ? 'paused' : 'active')}
       refreshError={options.refreshError}
       lifecycleBusy={options.lifecycleBusy}
+      deletingSandboxIds={options.deletingSandboxIds}
+      onViewDeletion={options.onViewDeletion}
       route={{ kind: 'home' }}
       permissions={options.permissions ?? FULL_ACCESS}
       onNavigate={options.onNavigate ?? vi.fn()}
@@ -239,7 +243,7 @@ describe('Sandbox navigation tree', () => {
     expect(screen.queryByText('agent/one')).not.toBeInTheDocument();
   });
 
-  it.each(['paused', 'reviving', 'pausing', 'rotating', 'provisioning', 'retiring'] as const)(
+  it.each(['paused', 'reviving', 'pausing', 'rotating', 'provisioning'] as const)(
     'hides child navigation for a %s Sandbox but keeps its status page accessible',
     async (status) => {
       const onNavigate = vi.fn();
@@ -252,6 +256,25 @@ describe('Sandbox navigation tree', () => {
       ).not.toBeInTheDocument();
       await userEvent.setup().click(screen.getByRole('link', { name: /Atlas/ }));
       expect(onNavigate).toHaveBeenCalledWith({ kind: 'sandbox', sandboxId: 'sbx_1' });
+    },
+  );
+
+  it.each(['active', 'retiring'] as const)(
+    'keeps accepted deletion progress reachable outside active navigation while the projection is %s',
+    async (status) => {
+      const onViewDeletion = vi.fn();
+      renderTree({
+        items: navigationFixture(status),
+        deletingSandboxIds: new Set(['sbx_1']),
+        onViewDeletion,
+      });
+      expect(screen.queryByRole('treeitem')).not.toBeInTheDocument();
+      expect(screen.queryByText('Agent one')).not.toBeInTheDocument();
+      await userEvent.setup().click(screen.getByText('Deletion progress (1)'));
+      await userEvent
+        .setup()
+        .click(screen.getByRole('button', { name: 'Deletion status for Atlas' }));
+      expect(onViewDeletion).toHaveBeenCalledExactlyOnceWith('sbx_1');
     },
   );
 

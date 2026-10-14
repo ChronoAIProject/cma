@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
 import type { User } from './auth/types';
@@ -16,6 +16,76 @@ const OWNER: User = {
   visitor: false,
   capabilities: ['create_sandbox', 'use_own_sandboxes', 'delete_own_sandbox'],
 };
+
+it('acknowledges pause immediately and refreshes after admission without claiming completion', async () => {
+  let accept: () => void = () => {};
+  const pauseSandbox = vi.fn(
+    () =>
+      new Promise<void>((resolve) => {
+        accept = resolve;
+      }),
+  );
+  const client = agentClient({ pauseSandbox });
+  const readSandbox = vi.spyOn(client, 'readSandbox');
+  const actor = userEvent.setup();
+  render(
+    <CmaClientProvider client={client}>
+      <Console
+        user={OWNER}
+        route={{ kind: 'sandbox', sandboxId: 'sbx_1' }}
+        onNavigate={vi.fn()}
+        onSignOut={vi.fn()}
+      />
+    </CmaClientProvider>,
+  );
+  await actor.click(await screen.findByRole('button', { name: 'Pause' }));
+  expect(screen.getByText('Submitting pause request…')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Pause' })).toBeDisabled();
+  const reads = readSandbox.mock.calls.length;
+  await act(async () => accept());
+  expect(
+    screen.getByText('Pause request accepted. Waiting for the Sandbox to pause.'),
+  ).toBeInTheDocument();
+  expect(screen.queryByText('Sandbox paused.')).not.toBeInTheDocument();
+  expect(readSandbox.mock.calls.length).toBeGreaterThan(reads);
+  expect(pauseSandbox).toHaveBeenCalledTimes(1);
+});
+
+it('removes an accepted deletion from active navigation before cleanup and keeps progress reachable', async () => {
+  let accept: () => void = () => {};
+  const deleteSandbox = vi.fn(
+    () =>
+      new Promise<void>((resolve) => {
+        accept = resolve;
+      }),
+  );
+  const actor = userEvent.setup();
+  render(
+    <CmaClientProvider client={agentClient({ deleteSandbox })}>
+      <Console
+        user={OWNER}
+        route={{ kind: 'sandbox', sandboxId: 'sbx_1' }}
+        onNavigate={vi.fn()}
+        onSignOut={vi.fn()}
+      />
+    </CmaClientProvider>,
+  );
+  await actor.click(await screen.findByRole('button', { name: 'Delete' }));
+  await actor.click(
+    await screen.findByRole('checkbox', { name: 'I understand this Sandbox will be deleted.' }),
+  );
+  await actor.click(screen.getByRole('button', { name: 'Delete Sandbox' }));
+  expect(screen.getByText('Submitting delete request.')).toBeInTheDocument();
+  expect(screen.getByRole('treeitem', { name: /Atlas/ })).toBeInTheDocument();
+  await act(async () => accept());
+  expect(screen.queryByRole('treeitem', { name: /Atlas/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole('dialog', { name: 'Sandbox deleted' })).not.toBeInTheDocument();
+  await actor.click(screen.getAllByRole('button', { name: 'Close' })[0]!);
+  await actor.click(screen.getByText('Deletion progress (1)'));
+  await actor.click(screen.getByRole('button', { name: 'Deletion status for Atlas' }));
+  expect(screen.getByRole('dialog', { name: 'Deleting Sandbox' })).toBeInTheDocument();
+  expect(deleteSandbox).toHaveBeenCalledTimes(1);
+});
 
 it('opens only Agent settings in Details while keeping conversation and tree navigation available', async () => {
   const onNavigate = vi.fn();
@@ -48,6 +118,7 @@ it('opens only Agent settings in Details while keeping conversation and tree nav
   expect(panel.getByLabelText('Reasoning effort')).toHaveTextContent('High');
   expect(panel.getByLabelText('Permission mode')).toHaveTextContent('YOLO (autonomous)');
   expect(panel.getByRole('group', { name: 'Agent key scope' })).toBeVisible();
+  expect(panel.getByRole('button', { name: 'Sandbox operation progress' })).toBeVisible();
   expect(panel.queryByText('https://example.test/chrono-bot.git')).not.toBeInTheDocument();
   expect(panel.queryByRole('heading', { name: 'Creation' })).not.toBeInTheDocument();
   await actor.click(screen.getByRole('button', { name: 'Close Agent details' }));

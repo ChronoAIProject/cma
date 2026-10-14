@@ -14,6 +14,7 @@ interface AgentDetailsProps {
   readonly historyLoading?: boolean;
   readonly open?: boolean;
   readonly onClose?: () => void;
+  readonly onSandboxProgress?: () => void;
 }
 
 export function AgentDetails({
@@ -22,6 +23,7 @@ export function AgentDetails({
   historyLoading = false,
   open = false,
   onClose,
+  onSandboxProgress,
 }: AgentDetailsProps) {
   const heading = useRef<HTMLHeadingElement>(null);
   useEffect(() => {
@@ -67,6 +69,9 @@ export function AgentDetails({
             active={open}
             busy={detail.status !== 'ready' || pending !== undefined || historyLoading}
           />
+          {onSandboxProgress === undefined ? null : (
+            <Button onClick={onSandboxProgress}>Sandbox operation progress</Button>
+          )}
         </div>
       </div>
     </aside>
