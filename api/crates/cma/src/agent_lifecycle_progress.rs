@@ -41,13 +41,14 @@ impl InlineAgentLifecycle {
                 if !sandbox_ready
                     && (sandbox.runtime.is_some() || sandbox.status == SandboxStatus::Active)
                 {
-                    self.progress(lease, "sandbox_ready", "ready", "Agent Sandbox is ready")
-                        .await?;
-                    self.progress(
+                    self.progress_pair(
                         lease,
-                        "key_scope_ready",
-                        "running",
-                        "Configuring Agent key permissions",
+                        ("sandbox_ready", "ready", "Agent Sandbox is ready"),
+                        (
+                            "key_scope_ready",
+                            "running",
+                            "Configuring Agent key permissions",
+                        ),
                     )
                     .await?;
                     sandbox_ready = true;
@@ -57,18 +58,18 @@ impl InlineAgentLifecycle {
                 if !key_ready
                     && (sandbox.credential.delivered || sandbox.status == SandboxStatus::Active)
                 {
-                    self.progress(
+                    self.progress_pair(
                         lease,
-                        "key_scope_ready",
-                        "ready",
-                        "Agent key permissions are ready",
-                    )
-                    .await?;
-                    self.progress(
-                        lease,
-                        "workspace_runtime",
-                        "running",
-                        "Preparing an empty workspace",
+                        (
+                            "key_scope_ready",
+                            "ready",
+                            "Agent key permissions are ready",
+                        ),
+                        (
+                            "workspace_runtime",
+                            "running",
+                            "Preparing an empty workspace",
+                        ),
                     )
                     .await?;
                     key_ready = true;
@@ -84,8 +85,6 @@ impl InlineAgentLifecycle {
                         .into_iter()
                         .find(|workspace| workspace.status == WorkspaceStatus::Ready)
                     {
-                        self.progress(lease, "workspace_runtime", "ready", "Workspace is ready")
-                            .await?;
                         return Ok(workspace.id);
                     }
                 }
@@ -94,5 +93,17 @@ impl InlineAgentLifecycle {
         })
         .await
         .map_err(|_| AgentLifecycleProvisioningError::Unavailable)?
+    }
+
+    pub(super) async fn progress_pair(
+        &self,
+        lease: &LifecycleLease,
+        first: (&str, &str, &str),
+        second: (&str, &str, &str),
+    ) -> Result<(), AgentLifecycleProvisioningError> {
+        self.operations
+            .record_progress_many(lease, &[first, second])
+            .await
+            .map_err(|_| AgentLifecycleProvisioningError::Unavailable)
     }
 }
