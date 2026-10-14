@@ -72,6 +72,11 @@ spec:
             - secretRef:
                 name: cma-agent-manager
           env:
+            # Production opts into one prepared default hierarchy at the
+            # Deployment layer while the shared ConfigMap keeps its safe
+            # default of zero for environments that do not opt in.
+            - name: CHRONO_NATIVE_PREPARED_TARGET
+              value: "1"
             - name: CHRONO_AGENT_SANDBOX_API_SERVER
               valueFrom:
                 configMapKeyRef:
