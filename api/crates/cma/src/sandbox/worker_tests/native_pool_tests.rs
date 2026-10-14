@@ -59,6 +59,7 @@ impl Pools {
                     labels: BTreeMap::from([
                         (layer3_adapter::RUNTIME_CONTRACT_LABEL.into(), "3".into()),
                         ("dev.chrono.cma.runtime-bootstrap".into(), "1".into()),
+                        ("dev.chrono.cma.home-layout".into(), "2".into()),
                     ]),
                 },
                 cpu_millis: 1000,
@@ -200,7 +201,13 @@ impl NativePoolControl for Pools {
         let disk = HomeVolumeAttachment {
             request: original.request.home.clone(),
             receipt: HomeVolumeReceipt {
-                native_authority: None,
+                native_authority: original.request.home.policy.is_native_vct().then(|| {
+                    Box::new(NativePoolHomeOrigin {
+                        claim: original.clone(),
+                        sandbox_uid: "member-uid".into(),
+                        pvc_uid: "pvc-uid".into(),
+                    })
+                }),
                 volume_id: original.request.home.volume_id.clone(),
                 request_sha256: original.request.home.computed_sha256(),
                 storage_reference: "home-warm-member".into(),
@@ -313,8 +320,10 @@ impl HostedBackend for Backend {
             "kubernetes-pvc-v1",
             &["remote", "runtime", "deployment"],
         )?);
-        home.policy.template_name = "remote-seed".into();
-        home.policy.template_generation = "remote-seed-uid".into();
+        if !home.policy.is_native_vct() {
+            home.policy.template_name = "remote-seed".into();
+            home.policy.template_generation = "remote-seed-uid".into();
+        }
         Ok(home)
     }
     fn native_pools(&self) -> Option<&dyn NativePoolControl> {
