@@ -69,6 +69,12 @@ struct InspectionFixture {
     home: HomeVolumeAttachment,
 }
 async fn inspection_fixture(explicit_policy: bool) -> InspectionFixture {
+    inspection_fixture_with_home_authority(explicit_policy, "fixture").await
+}
+async fn inspection_fixture_with_home_authority(
+    explicit_policy: bool,
+    authority: &str,
+) -> InspectionFixture {
     let bound = bound(explicit_policy).await;
     let home = adopted(&bound.fixture, &bound.claim).await;
     let transport = Arc::new(StatusTransport {
@@ -97,10 +103,19 @@ async fn inspection_fixture(explicit_policy: bool) -> InspectionFixture {
         },
     )
     .with_home_volumes(Arc::new(
-        NativeHomeVolumes::new(
-            bound.fixture.kubernetes.clone(),
-            bound.fixture.client.config.clone(),
-            "fixture",
+        crate::RoutedHomeVolumes::new(
+            None,
+            Some((
+                Arc::new(
+                    NativeHomeVolumes::new(
+                        bound.fixture.kubernetes.clone(),
+                        bound.fixture.client.config.clone(),
+                        authority,
+                    )
+                    .unwrap(),
+                ),
+                home.request.policy.clone(),
+            )),
         )
         .unwrap(),
     ));
@@ -136,6 +151,29 @@ fn read_count(fixture: &InspectionFixture) -> usize {
         .iter()
         .all(|(method, _)| method.starts_with("GET ")));
     state.calls.len()
+}
+
+#[tokio::test]
+async fn native_proof_context_with_routed_home_accepts_only_configured_authority() {
+    let fixture = inspection_fixture(false).await;
+    let inspected = fixture
+        .adapter
+        .inspect_runtime(&fixture.adoption)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(inspected.observation.handle, fixture.bound.runtime);
+    assert!(inspected.status.unwrap().credential_ready);
+    assert_eq!(fixture.transport.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(read_count(&fixture), 9);
+
+    let foreign = inspection_fixture_with_home_authority(false, "different-cluster").await;
+    assert!(matches!(
+        foreign.adapter.inspect_runtime(&foreign.adoption).await,
+        Err(AdapterError::Rejected(reason)) if reason == "native home belongs to another authority"
+    ));
+    assert_eq!(foreign.transport.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(read_count(&foreign), 0);
 }
 
 #[tokio::test]
