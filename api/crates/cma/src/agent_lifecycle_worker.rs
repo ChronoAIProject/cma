@@ -97,7 +97,9 @@ impl InlineAgentLifecycle {
             },
         );
         tokio::pin!(work);
-        let mut heartbeat = tokio::time::interval(HEARTBEAT);
+        // Claim already granted a fresh lease; renew only after its first period.
+        let mut heartbeat =
+            tokio::time::interval_at(tokio::time::Instant::now() + HEARTBEAT, HEARTBEAT);
         heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let outcome = loop {
             tokio::select! {
