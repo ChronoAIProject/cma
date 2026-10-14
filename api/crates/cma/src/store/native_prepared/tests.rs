@@ -9,6 +9,7 @@ use layer3_adapter::{HomeVolumeMode, HomeVolumePolicy, HomeVolumeReceipt, Runtim
 
 mod claim_race_tests;
 mod installation_transfer_tests;
+mod workspace_proof_tests;
 
 const NOW: &str = "2026-09-05T00:00:00Z";
 const LATER: &str = "2026-09-05T00:01:00Z";

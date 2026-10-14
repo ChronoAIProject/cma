@@ -116,7 +116,9 @@ pub(in crate::store) async fn claim_ready(
         .validate()
         .map_err(|e| domain(SandboxStoreError::Corrupt(e.to_string())))?;
     record.ownership = Some(ownership);
-    let result=store.native_prepared.replace_one(doc!{"_id":record.payload.id.as_str(),"state":"ready","revision":candidate.get("revision").cloned(),"lease_until":{"$lte":at}},document(&record).map_err(domain)?)
+    let mut replacement = document(&record).map_err(domain)?;
+    super::workspace_proof::retain(&mut replacement, &candidate, &record).map_err(domain)?;
+    let result=store.native_prepared.replace_one(doc!{"_id":record.payload.id.as_str(),"state":"ready","revision":candidate.get("revision").cloned(),"lease_until":{"$lte":at}},replacement)
         .session(&mut *session).await.map_err(AdmissionError::Driver)?;
     if result.matched_count != 1 {
         return Err(domain(SandboxStoreError::Conflict));

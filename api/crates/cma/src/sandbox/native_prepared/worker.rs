@@ -139,13 +139,16 @@ impl NativePreparedWorker {
     async fn run_claim(&self, claim: NativePreparedClaim) -> Result<(), SandboxStoreError> {
         let operation = async {
             if claim.record.state == WarmSandboxState::Retiring {
-                super::retire_step(self.adapter.as_ref(), &claim.record).await
+                super::retire_step(self.adapter.as_ref(), &claim.record)
+                    .await
+                    .map(|next| (next, None))
             } else {
-                super::prepare_step(
+                super::prepare_step_with_proof(
                     self.adapter.as_ref(),
                     &self.deployment_id,
                     &claim.record,
                     &claim.plan.home_policy,
+                    claim.workspace_proof.clone(),
                 )
                 .await
             }
@@ -159,14 +162,14 @@ impl NativePreparedWorker {
                 _ = heartbeat.tick() => self.store.renew_native_prepared_work(&claim, &after(60)).await?,
             }
         };
-        let (next, delay) = match result {
-            Ok(next) => {
+        let (next, proof, delay) = match result {
+            Ok((next, proof)) => {
                 let delay = if next.state == WarmSandboxState::Ready {
                     5
                 } else {
                     0
                 };
-                (next, delay)
+                (next, proof, delay)
             }
             Err(error) => {
                 // Runtime error details can contain output. Keep only durable identity in logs.
@@ -180,11 +183,25 @@ impl NativePreparedWorker {
                 if !retry {
                     next.state = WarmSandboxState::Retiring;
                 }
-                (next, if retry { 5 } else { 30 })
+                (
+                    next,
+                    if retry {
+                        claim.workspace_proof.clone()
+                    } else {
+                        None
+                    },
+                    if retry { 5 } else { 30 },
+                )
             }
         };
         self.store
-            .finish_native_prepared_work(&claim, next, &now_rfc3339(), &after(delay))
+            .finish_native_prepared_work_with_proof(
+                &claim,
+                next,
+                proof,
+                &now_rfc3339(),
+                &after(delay),
+            )
             .await
     }
 }

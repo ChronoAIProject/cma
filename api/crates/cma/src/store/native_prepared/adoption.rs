@@ -94,6 +94,118 @@ pub(super) fn same_runtime(record: &Record, sandbox: &Sandbox) -> bool {
         })
 }
 
+pub(in crate::store) async fn completed_workspace(
+    store: &MongoSandboxStore,
+    sandbox: &Sandbox,
+    workspace: &Workspace,
+) -> Result<Option<layer2_core::sandbox::store::WorkspacePreparationCompletion>, SandboxStoreError>
+{
+    // Coherent current ownership/lease snapshot before the worker's fresh runtime observation.
+    let mut session = store
+        .client
+        .start_session()
+        .snapshot(true)
+        .await
+        .map_err(unavailable)?;
+    let Some(parent) = store
+        .sandboxes
+        .find_one(doc! {"_id":sandbox.id.as_str()})
+        .session(&mut session)
+        .await
+        .map_err(unavailable)?
+    else {
+        return Ok(None);
+    };
+    if super::super::sandboxes::read_sandbox(&parent)? != *sandbox {
+        return Ok(None);
+    }
+    let Some(child) = store
+        .workspaces
+        .find_one(doc! {"_id":workspace.id.as_str()})
+        .session(&mut session)
+        .await
+        .map_err(unavailable)?
+    else {
+        return Ok(None);
+    };
+    if super::super::workspaces::read_workspace(&child)? != *workspace {
+        return Ok(None);
+    }
+    let Some(record) = claimed(store, sandbox, &mut session).await? else {
+        return Ok(None);
+    };
+    let Some(value) = store
+        .native_prepared
+        .find_one(doc! {"_id":sandbox.id.as_str(),"state":"claimed"})
+        .session(&mut session)
+        .await
+        .map_err(unavailable)?
+    else {
+        return Ok(None);
+    };
+    let Some(proof) = super::workspace_proof::read(&value, &record.payload)? else {
+        return Ok(None);
+    };
+    workspace_completion(&record, &proof, sandbox, workspace)
+}
+
+pub(super) fn workspace_completion(
+    record: &Record,
+    proof: &super::NativePreparedWorkspaceProof,
+    sandbox: &Sandbox,
+    workspace: &Workspace,
+) -> Result<Option<layer2_core::sandbox::store::WorkspacePreparationCompletion>, SandboxStoreError>
+{
+    proof.validate(&record.payload)?;
+    let owned = record
+        .ownership
+        .as_ref()
+        .ok_or_else(|| super::model::corrupt("workspace proof ownership missing"))?;
+    let Some(setup) = proof.setup.as_ref() else {
+        return Ok(None);
+    };
+    if sandbox.origin
+        != (SandboxOrigin::Lifecycle {
+            operation_id: owned.operation_id.clone(),
+        })
+        || sandbox.owner != owned.owner
+        || sandbox.profile != owned.sandbox
+        || !same_runtime(record, sandbox)
+        || sandbox.lifecycle.home.as_ref() != record.payload.home.as_ref()
+        || workspace.origin != (WorkspaceOrigin::SandboxProfile { index: 0 })
+        || workspace.owner != owned.owner
+        || workspace.sandbox_id != sandbox.id
+        || workspace.profile != owned.workspace
+        || workspace.id != record.payload.workspaces[0].id
+        || workspace.name != proof.prepare.name
+        || workspace.path != proof.prepare.path
+        || workspace.source != layer2_core::sandbox::WorkspaceSource::Empty
+        || workspace.work.execution != Some(record.payload.plan.execution)
+        || workspace.work.step != layer2_core::sandbox::WorkspaceWorkStep::Prepare
+        || workspace.status != WorkspaceStatus::Preparing
+        || workspace.work.lease.is_none()
+        || workspace
+            .resolved_commit
+            .as_ref()
+            .is_some_and(|commit| commit != &proof.prepare.resolved_commit)
+        || !sandbox.credential.delivered
+        || !matches!(
+            sandbox.status,
+            SandboxStatus::Installing | SandboxStatus::Active
+        )
+        || sandbox.lifecycle.operation.is_some()
+        || sandbox.lifecycle.checkpoint_capture.is_some()
+    {
+        return Ok(None);
+    }
+    Ok(Some(
+        layer2_core::sandbox::store::WorkspacePreparationCompletion {
+            prepare: proof.prepare.clone(),
+            setup: setup.clone(),
+        },
+    ))
+}
+
 pub(in crate::store) async fn adopt_workspace(
     store: &MongoSandboxStore,
     sandbox: &Sandbox,
@@ -186,7 +298,10 @@ pub(in crate::store) async fn adopt_agent(
     let previous = record.payload.revision;
     record.payload.revision = previous.checked_add(1).ok_or(SandboxStoreError::Conflict)?;
     record.payload.updated_at = admission.event_at.clone();
-    let result=store.native_prepared.replace_one(doc!{"_id":record.payload.id.as_str(),"state":"claimed","revision":super::signed(previous,"native prepared revision").map_err(SandboxStoreError::Corrupt)?},document(&record)?)
+    let mut fields = document(&record)?;
+    fields.remove("_id");
+    // Preserve optional validated envelope evidence through Agent ownership publication.
+    let result=store.native_prepared.update_one(doc!{"_id":record.payload.id.as_str(),"state":"claimed","revision":super::signed(previous,"native prepared revision").map_err(SandboxStoreError::Corrupt)?},doc!{"$set":fields})
         .session(session).await.map_err(unavailable)?;
     if result.matched_count != 1 {
         return Err(SandboxStoreError::Conflict);
