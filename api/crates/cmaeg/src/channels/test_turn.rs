@@ -2,7 +2,7 @@
 use super::management::{load, ManagementError, ManagementState};
 use crate::{
     auth::Creator,
-    providers::{ProviderError, ResponsesEvent, TurnRequest},
+    providers::{ProviderError, ResponsesEvent, TurnRequest, TurnStream},
 };
 use cmaeg_core::{
     channel::ConformanceLevel,
@@ -11,6 +11,8 @@ use cmaeg_core::{
 use std::{collections::BTreeMap, time::Duration};
 
 const MIN_BUSY_RETRY_DELAY: Duration = Duration::from_millis(500);
+const STARTUP_TIMEOUT: Duration = Duration::from_secs(90);
+const TURN_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, serde::Serialize)]
 pub struct TestResult {
@@ -24,16 +26,21 @@ pub async fn test_turn(
     creator: &Creator,
     channel_id: &ChannelId,
 ) -> Result<TestResult, ManagementError> {
-    tokio::time::timeout(Duration::from_secs(30), run(state, creator, channel_id))
+    // A new profile binding may still be creating its Agent. Readiness has one
+    // bounded allowance; it must not consume the admitted turn's output budget.
+    let (stream, level) = tokio::time::timeout(STARTUP_TIMEOUT, start(state, creator, channel_id))
+        .await
+        .map_err(|_| unavailable("test provider startup timed out"))??;
+    tokio::time::timeout(TURN_TIMEOUT, complete(stream, level))
         .await
         .map_err(|_| unavailable("test turn timed out"))?
 }
 
-async fn run(
+async fn start(
     state: &ManagementState,
     creator: &Creator,
     channel_id: &ChannelId,
-) -> Result<TestResult, ManagementError> {
+) -> Result<(TurnStream, ConformanceLevel), ManagementError> {
     let current = load(state, creator, channel_id).await?;
     let definition = current.definition;
     // The test turn verifies the binding management created: the default
@@ -73,7 +80,7 @@ async fn run(
         agent_key: credential.clone(),
         event_context: None,
     };
-    let mut stream = loop {
+    let stream = loop {
         match state
             .providers
             .start_turn(&provider.slug, request.clone())
@@ -82,7 +89,7 @@ async fn run(
             Ok(stream) => break stream,
             Err(ProviderError::Busy { retry_after }) => {
                 // Only an explicit refusal permits replay. Keep the same key and
-                // body while the outer deadline also bounds this readiness wait.
+                // body while one startup deadline bounds every readiness wait.
                 tokio::time::sleep(
                     retry_after
                         .unwrap_or(MIN_BUSY_RETRY_DELAY)
@@ -93,6 +100,13 @@ async fn run(
             Err(error) => return Err(ManagementError::Provider(error)),
         }
     };
+    Ok((stream, provider.level))
+}
+
+async fn complete(
+    mut stream: TurnStream,
+    level: ConformanceLevel,
+) -> Result<TestResult, ManagementError> {
     let accepted = stream
         .accepted
         .await
@@ -126,7 +140,7 @@ async fn run(
             .duration_since(stream.request_started)
             .as_millis() as u64,
         first_text,
-        level: provider.level,
+        level,
     })
 }
 
