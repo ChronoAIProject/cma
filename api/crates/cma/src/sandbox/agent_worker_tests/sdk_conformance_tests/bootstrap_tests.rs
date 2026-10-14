@@ -550,3 +550,113 @@ async fn bootstrap_mongo_workspace_claim_defers_without_mutation_until_parent_in
     assert!(claimed.failed.is_none());
     db.drop().await.unwrap();
 }
+
+#[tokio::test(start_paused = true)]
+async fn bootstrap_profile_waits_for_same_claimed_workspace_without_duplicate_effects() {
+    use crate::sandbox::workspace_worker::{
+        WorkspaceWorker, WorkspaceWorkerConfig, WorkspaceWorkerDependencies,
+    };
+    use layer2_core::sandbox::store::WorkspaceWorkerStore;
+    for failed in [false, true] {
+        let fixture = BootstrapHarness::new().await;
+        let h = &fixture.harness;
+        let mut parent = fixture.ready_parent.clone();
+        parent.status = SandboxStatus::Installing;
+        parent.revision += 1;
+        h.store.save_sandbox(1, parent.clone()).await.unwrap();
+        let claimed = h
+            .store
+            .claim_workspace_work(
+                &h.workspace.id,
+                "independent-scheduler",
+                rfc3339_at(h.now),
+                rfc3339_at(h.now + Duration::from_secs(30)),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        let worker = WorkspaceWorker::new(
+            WorkspaceWorkerDependencies {
+                store: h.store.clone(),
+                adapter: h.adapter.clone(),
+            },
+            WorkspaceWorkerConfig::new("profile-worker", DEPLOYMENT_ID),
+        );
+        let before = h.backend.requests().await.len();
+        let (result, ()) = tokio::join!(
+            worker.run_until_ready_observing_bootstrap(&h.workspace.id, &parent, h.now),
+            async {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                let mut published = fixture.ready_workspace.clone();
+                published.revision = claimed.revision + 1;
+                if failed {
+                    published.status = WorkspaceStatus::Failed;
+                    published.ready_at = None;
+                    published.failed = Some(TypedFailure {
+                        class: "fixture_workspace_failure".into(),
+                        detail: "retained terminal workspace failure".into(),
+                    });
+                }
+                h.store
+                    .save_workspace(claimed.revision, published)
+                    .await
+                    .unwrap();
+            }
+        );
+        let result = result.unwrap();
+        assert_eq!(result.workspace.id, h.workspace.id);
+        assert_eq!(
+            result.workspace.status,
+            if failed {
+                WorkspaceStatus::Failed
+            } else {
+                WorkspaceStatus::Ready
+            }
+        );
+        assert_eq!(result.workspace.revision, claimed.revision + 1);
+        assert!(!result.executed_work);
+        assert_eq!(h.backend.requests().await.len(), before);
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn bootstrap_profile_observation_is_bounded_and_keeps_the_other_workers_lease() {
+    use crate::sandbox::workspace_worker::{
+        WorkspaceWorker, WorkspaceWorkerConfig, WorkspaceWorkerDependencies,
+    };
+    use layer2_core::sandbox::store::WorkspaceWorkerStore;
+    let fixture = BootstrapHarness::new().await;
+    let h = &fixture.harness;
+    let mut parent = fixture.ready_parent.clone();
+    parent.status = SandboxStatus::Installing;
+    parent.revision += 1;
+    h.store.save_sandbox(1, parent.clone()).await.unwrap();
+    let claimed = h
+        .store
+        .claim_workspace_work(
+            &h.workspace.id,
+            "independent-scheduler",
+            rfc3339_at(h.now),
+            rfc3339_at(h.now + Duration::from_secs(30)),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    let worker = WorkspaceWorker::new(
+        WorkspaceWorkerDependencies {
+            store: h.store.clone(),
+            adapter: h.adapter.clone(),
+        },
+        WorkspaceWorkerConfig::new("profile-worker", DEPLOYMENT_ID),
+    );
+    let before = h.backend.requests().await.len();
+    let started = tokio::time::Instant::now();
+    let result = worker
+        .run_until_ready_observing_bootstrap(&h.workspace.id, &parent, h.now)
+        .await
+        .unwrap();
+    assert_eq!(started.elapsed(), Duration::from_secs(10));
+    assert_eq!(result.workspace, claimed);
+    assert!(!result.executed_work);
+    assert_eq!(h.backend.requests().await.len(), before);
+}
