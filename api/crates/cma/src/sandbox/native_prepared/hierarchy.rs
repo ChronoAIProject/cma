@@ -12,6 +12,7 @@ pub(super) async fn prepare_step(
     adapter: &dyn SandboxAdapter,
     record: &mut WarmSandbox,
     handle: &RuntimeHandle,
+    proof: &mut Option<super::NativePreparedWorkspaceProof>,
 ) -> layer3_adapter::Result<()> {
     let execution = record.plan.execution;
     let workspace = &mut record.workspaces[0];
@@ -24,7 +25,11 @@ pub(super) async fn prepare_step(
             execution.clone_depth,
         );
         let receipt = adapter.prepare_workspace(handle, &request).await?;
-        workspace.resolved_commit = Some(receipt.resolved_commit);
+        workspace.resolved_commit = Some(receipt.resolved_commit.clone());
+        *proof = Some(
+            super::NativePreparedWorkspaceProof::prepared(record, receipt)
+                .map_err(|e| rejected(&e.to_string()))?,
+        );
         return Ok(());
     }
     if !workspace.setup_ready {
@@ -37,8 +42,23 @@ pub(super) async fn prepare_step(
             execution.total_timeout_seconds,
             layer3_adapter::DEFAULT_COMMAND_OUTPUT_LIMIT_BYTES,
         );
-        adapter.run_workspace_setup(handle, &request).await?;
+        let receipt = adapter.run_workspace_setup(handle, &request).await?;
+        if receipt.operation_id != request.operation_id
+            || receipt.request_sha256 != request.request_sha256
+            || receipt.workspace_id != request.workspace_id
+            || !receipt.commands.is_empty()
+        {
+            return Err(rejected("prepared workspace setup receipt is invalid"));
+        }
         workspace.setup_ready = true;
+        // Legacy partial preparations lack the actual Prepare receipt: never infer it.
+        if let Some(prepared) = proof.as_ref() {
+            *proof = Some(
+                prepared
+                    .completed(record, receipt)
+                    .map_err(|e| rejected(&e.to_string()))?,
+            );
+        }
         return Ok(());
     }
     let agent = &mut workspace.agents[0];

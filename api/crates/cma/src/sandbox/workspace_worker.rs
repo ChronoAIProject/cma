@@ -17,6 +17,7 @@ use self::support::{
 };
 
 mod execution;
+mod prepared;
 mod profile;
 mod removal;
 mod setup;
@@ -146,6 +147,9 @@ impl WorkspaceWorker {
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
         let workspace = self.pin_execution(workspace).await?;
+        if self.transfer_prepared(&workspace, now).await? {
+            return Ok(());
+        }
         let (_, runtime) = match self.runtime(&workspace).await {
             Ok(value) => value,
             Err(failure) => return self.handle_failure(workspace, failure, now).await,
