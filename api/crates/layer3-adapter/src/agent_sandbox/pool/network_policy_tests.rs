@@ -256,6 +256,8 @@ async fn changed_template_refuses_adoption_assignment_and_resume_before_any_writ
                     pod_name: "waiting-pod".into(),
                     pod_uid: "pod-uid".into(),
                     pod_ip: "10.0.0.1".parse().unwrap(),
+                    runtime_container_id: None,
+                    runtime_restart_count: None,
                 };
                 assert!(client
                     .as_ref()
