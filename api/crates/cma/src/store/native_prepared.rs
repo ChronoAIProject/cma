@@ -10,21 +10,14 @@ use mongodb::{Collection, IndexModel};
 
 mod admission;
 mod adoption;
-<<<<<<< HEAD
-mod agent_replay;
-=======
 mod agent_open_ready;
+mod agent_replay;
 pub(in crate::store) use agent_open_ready::open_ready_proof_revision;
->>>>>>> 92c2e24f (Atomically publish prepared agent open and ready)
 mod authority;
 mod model;
 mod planning;
 #[cfg(test)]
-<<<<<<< HEAD
-pub(in crate::store) mod tests;
-=======
 pub(crate) mod tests;
->>>>>>> 92c2e24f (Atomically publish prepared agent open and ready)
 mod tools;
 mod work;
 mod workspace_proof;

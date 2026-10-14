@@ -16,11 +16,8 @@ const AT: &str = "2026-09-05T00:00:10Z";
 const RETRY_AT: &str = "2026-09-05T00:00:20Z";
 const LEASE_END: &str = "2026-09-05T00:01:00Z";
 
-<<<<<<< HEAD
-mod prepared_pair_tests;
-=======
 mod prepared_open_ready_tests;
->>>>>>> 92c2e24f (Atomically publish prepared agent open and ready)
+mod prepared_pair_tests;
 mod retired_runtime_tests;
 mod sign_in_tests;
 

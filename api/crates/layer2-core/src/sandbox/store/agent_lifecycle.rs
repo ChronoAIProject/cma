@@ -194,7 +194,6 @@ pub fn apply_agent_connection_recovery(
 /// Durable agent work discovery, lease fencing, and atomic publication.
 #[async_trait]
 pub trait AgentWorkerStore: Send + Sync {
-<<<<<<< HEAD
     /// Exact durable preparation authority for replaying a worktree/home pair.
     /// Stores without such evidence retain the ordinary individual work steps.
     async fn prepared_agent_replay_matches(
@@ -203,14 +202,16 @@ pub trait AgentWorkerStore: Send + Sync {
         _sandbox: &crate::sandbox::Sandbox,
         _workspace: &crate::sandbox::Workspace,
         _worktree: &Worktree,
-=======
+    ) -> Result<bool, SandboxStoreError> {
+        Ok(false)
+    }
+
     /// Publish a proved prepared open and Ready under the same fresh parent observation.
     /// False means this store has no matching preparation; use ordinary publication.
     async fn commit_prepared_agent_open_ready(
         &self,
         _mutation: AgentWorkMutation,
         _observed: super::PreparedAgentOpenContext,
->>>>>>> 92c2e24f (Atomically publish prepared agent open and ready)
     ) -> Result<bool, SandboxStoreError> {
         Ok(false)
     }

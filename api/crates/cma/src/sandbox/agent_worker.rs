@@ -13,11 +13,8 @@ mod cleanup;
 mod connection;
 mod first_message;
 mod live_skills;
-<<<<<<< HEAD
-mod prepared_replay;
-=======
 mod prepared_open_ready;
->>>>>>> 92c2e24f (Atomically publish prepared agent open and ready)
+mod prepared_replay;
 mod reconcile;
 mod startup;
 mod startup_open;
