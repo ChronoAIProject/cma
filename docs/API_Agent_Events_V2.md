@@ -37,6 +37,27 @@ flag reversal. The flag supplies no command authorization. An older server,
 unknown schema or unavailable discovery route must not cause an uncertain v2
 submission to be resent through v1.
 
+The production ConfigMap enables this selector for new Agent tabs. Rollout requires
+the matching API/Web release, a compare-and-set ConfigMap update, and an API rollout
+so every replica advertises the intended eligibility. Existing tabs retain their
+selected transport; no accepted request changes protocol on rollout or reversal.
+
+Creation opens the actual admitted Agent while it is Starting after checking its
+Agent/worktree/Workspace/Sandbox lineage and a fresh Active parent without an active
+lifecycle operation or checkpoint. The operation receipt itself is never an Agent
+identity. Starting v2 tabs can submit using the existing exact-body/idempotency-key
+journal and clear drafts only after admission. Execution waits for Ready and remains
+behind the creation first-message barrier. Existing AG-UI tabs continue to wait for
+Agent readiness before input. Stale parent reads, access uncertainty, checkpoints,
+and lifecycle operations hold input; recovery of an uncertain v2 submission is an
+explicit action using the retained body and key, with no automatic resubmission.
+
+Early navigation retains the owner/scope-bound creation body, key, operation ID,
+and observed Agent ID. The Agent page continues lifecycle observation and clears
+that creation intent only on confirmed success. If a worker retry requires a new
+connection check, **Continue Agent setup** verifies the operation's connection
+target and resumes the same creation body/key; reload alone never resumes it.
+
 ## Snapshot bootstrap
 
 `GET /api/v2/agents/{agent_id}/events/snapshot` captures a durable high-water
