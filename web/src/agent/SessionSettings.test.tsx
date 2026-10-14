@@ -1,3 +1,4 @@
+import { chooseOptionValue } from '../test/select';
 import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
@@ -17,6 +18,11 @@ it('loads actual settings and retains the same update body and key after an unce
     .mockRejectedValueOnce(new Error('Lost response'))
     .mockResolvedValue({ ...defaults, reasoning_effort: 'medium' });
   const client = agentClient({
+    readAgentModels: async () => [
+      { id: 'gpt-6', label: 'GPT-6' },
+      { id: 'invalid', label: 'Retired model' },
+      { id: 'gpt-6-updated', label: 'Updated model' },
+    ],
     readAgentSettings: async () => defaults,
     updateAgentSettings: update,
   });
@@ -26,10 +32,10 @@ it('loads actual settings and retains the same update body and key after an unce
     </CmaClientProvider>,
   );
   const model = await screen.findByLabelText('Model');
-  expect(model).toHaveValue('gpt-6');
-  expect(screen.getByLabelText('Reasoning effort')).toHaveValue('high');
-  expect(screen.getByLabelText('Permission mode')).toHaveValue('autonomous');
-  await userEvent.selectOptions(screen.getByLabelText('Reasoning effort'), 'medium');
+  expect(model).toHaveTextContent('GPT-6');
+  expect(screen.getByLabelText('Reasoning effort')).toHaveTextContent('High');
+  expect(screen.getByLabelText('Permission mode')).toHaveTextContent('YOLO (autonomous)');
+  await chooseOptionValue(userEvent.setup(), screen.getByLabelText('Reasoning effort'), 'medium');
   await userEvent.click(screen.getByRole('button', { name: 'Apply settings' }));
   await screen.findByText('Lost response');
   expect(model).toBeDisabled();
@@ -42,6 +48,11 @@ it('loads actual settings and retains the same update body and key after an unce
 it('does not offer an apply operation while a turn is active', async () => {
   const update = vi.fn();
   const client = agentClient({
+    readAgentModels: async () => [
+      { id: 'gpt-6', label: 'GPT-6' },
+      { id: 'invalid', label: 'Retired model' },
+      { id: 'gpt-6-updated', label: 'Updated model' },
+    ],
     readAgentSettings: async () => defaults,
     updateAgentSettings: update,
   });
@@ -51,7 +62,7 @@ it('does not offer an apply operation while a turn is active', async () => {
     </CmaClientProvider>,
   );
   await screen.findByLabelText('Model');
-  await userEvent.selectOptions(screen.getByLabelText('Reasoning effort'), 'low');
+  await chooseOptionValue(userEvent.setup(), screen.getByLabelText('Reasoning effort'), 'low');
   expect(screen.getByRole('button', { name: 'Apply settings' })).toBeDisabled();
   expect(update).not.toHaveBeenCalled();
 });
@@ -83,6 +94,11 @@ it('allows correction after a definitive rejection without replaying its command
     .mockRejectedValueOnce(new AgentSettingsError('Invalid model', 422))
     .mockResolvedValue(defaults);
   const client = agentClient({
+    readAgentModels: async () => [
+      { id: 'gpt-6', label: 'GPT-6' },
+      { id: 'invalid', label: 'Retired model' },
+      { id: 'gpt-6-updated', label: 'Updated model' },
+    ],
     readAgentSettings: async () => defaults,
     updateAgentSettings: update,
   });
@@ -92,13 +108,11 @@ it('allows correction after a definitive rejection without replaying its command
     </CmaClientProvider>,
   );
   const model = await screen.findByLabelText('Model');
-  await userEvent.clear(model);
-  await userEvent.type(model, 'invalid');
+  await chooseOptionValue(userEvent.setup(), model, 'invalid');
   await userEvent.click(screen.getByRole('button', { name: 'Apply settings' }));
   await screen.findByText('Invalid model');
   expect(model).toBeEnabled();
-  await userEvent.clear(model);
-  await userEvent.type(model, 'gpt-6-updated');
+  await chooseOptionValue(userEvent.setup(), model, 'gpt-6-updated');
   await userEvent.click(screen.getByRole('button', { name: 'Apply settings' }));
   await screen.findByText('Settings applied to this Agent.');
   expect(update.mock.calls[1]?.[2].idempotencyKey).not.toBe(
@@ -111,7 +125,11 @@ it('waits for runtime confirmation when the server reports pending settings', as
     .fn()
     .mockResolvedValueOnce({ ...defaults, pending: true })
     .mockResolvedValue({ ...defaults, pending: false });
-  const client = agentClient({ readAgentSettings: read, updateAgentSettings: vi.fn() });
+  const client = agentClient({
+    readAgentModels: async () => [{ id: 'gpt-6', label: 'GPT-6' }],
+    readAgentSettings: read,
+    updateAgentSettings: vi.fn(),
+  });
   render(
     <CmaClientProvider client={client}>
       <SessionSettings agentId="agent-one" active busy={false} />
@@ -127,4 +145,64 @@ it('waits for runtime confirmation when the server reports pending settings', as
   ).not.toBeInTheDocument();
   expect(screen.getByLabelText('Model')).toBeEnabled();
   vi.useRealTimers();
+});
+
+it('loads the scoped model catalog, preserves an unavailable current model, and never invents choices', async () => {
+  const readModels = vi
+    .fn()
+    .mockRejectedValueOnce(new Error('Catalog unavailable'))
+    .mockResolvedValue([{ id: 'available-model', label: 'Available model' }]);
+  render(
+    <CmaClientProvider
+      client={agentClient({
+        readAgentModels: readModels,
+        readAgentSettings: async () => defaults,
+        updateAgentSettings: vi.fn(),
+      })}
+    >
+      <SessionSettings agentId="agent-one" active busy={false} />
+    </CmaClientProvider>,
+  );
+  await screen.findByText('Catalog unavailable');
+  expect(screen.getByLabelText('Model')).toBeDisabled();
+  await userEvent.click(screen.getByRole('button', { name: 'Retry models' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Model' }));
+  expect(
+    await screen.findByRole('menuitemradio', {
+      name: /gpt-6 Current model is not in the available catalog/,
+    }),
+  ).toHaveAttribute('aria-disabled', 'true');
+  await userEvent.click(screen.getByRole('menuitemradio', { name: 'Available model' }));
+  expect(screen.getByRole('button', { name: 'Model' })).toHaveTextContent('Available model');
+});
+it('validates scoped Chrono model responses and preserves same-origin authentication', async () => {
+  const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+    new Response(JSON.stringify({ models: [{ id: 'available', label: 'Available' }] }), {
+      status: 200,
+    }),
+  );
+  try {
+    const client = agentSettingsClient();
+    await expect(client.readAgentModels!('agent/one')).resolves.toEqual([
+      { id: 'available', label: 'Available' },
+    ]);
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/v1/agents/agent%2Fone/models',
+      expect.objectContaining({ credentials: 'same-origin', cache: 'no-store' }),
+    );
+    fetch.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          models: [
+            { id: 'duplicate', label: 'First' },
+            { id: 'duplicate', label: 'Second' },
+          ],
+        }),
+        { status: 200 },
+      ),
+    );
+    await expect(client.readAgentModels!('agent-one')).rejects.toThrow('invalid model catalog');
+  } finally {
+    fetch.mockRestore();
+  }
 });

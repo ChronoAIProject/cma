@@ -44,9 +44,9 @@ it('opens only Agent settings in Details while keeping conversation and tree nav
   expect(screen.getByText('The repository is ready.')).toBeInTheDocument();
   await actor.click(screen.getByRole('button', { name: 'Show Agent details' }));
   const panel = within(screen.getByRole('complementary', { name: 'Agent details' }));
-  expect(await panel.findByLabelText('Model')).toHaveValue('gpt-6');
-  expect(panel.getByLabelText('Reasoning effort')).toHaveValue('high');
-  expect(panel.getByLabelText('Permission mode')).toHaveValue('autonomous');
+  expect(await panel.findByLabelText('Model')).toHaveTextContent('gpt-6');
+  expect(panel.getByLabelText('Reasoning effort')).toHaveTextContent('High');
+  expect(panel.getByLabelText('Permission mode')).toHaveTextContent('YOLO (autonomous)');
   expect(panel.getByRole('group', { name: 'Agent key scope' })).toBeVisible();
   expect(panel.queryByText('https://example.test/chrono-bot.git')).not.toBeInTheDocument();
   expect(panel.queryByRole('heading', { name: 'Creation' })).not.toBeInTheDocument();

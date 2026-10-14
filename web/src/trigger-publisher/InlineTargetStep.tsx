@@ -1,3 +1,4 @@
+import { Picker } from '../ui/Picker';
 import * as React from 'react';
 import type { TriggerContent, TriggerInlineTarget } from '@chronoai/cma-sdk';
 import { Presence } from '../ui/Presence';
@@ -74,12 +75,12 @@ export function InlineTargetStep({
     <>
       <div className="trigger-field">
         <label htmlFor="trigger-inline-image">Image</label>
-        <select
+        <Picker
           id="trigger-inline-image"
           value={target.image?.id ?? ''}
           disabled={disabled || imageResolving}
-          onChange={(event) => {
-            const id = event.target.value;
+          onChange={(choice) => {
+            const id = choice;
             const request = ++imageRequest.current;
             if (id === '') {
               setImageFailure(undefined);
@@ -105,14 +106,15 @@ export function InlineTargetStep({
                 if (request === imageRequest.current) setImageResolving(false);
               });
           }}
-        >
-          <option value="">System default image</option>
-          {images.map((image) => (
-            <option key={image.id} value={image.id}>
-              {image.name} ({imageVisibilityLabel(image.visibility)})
-            </option>
-          ))}
-        </select>
+          label="Image"
+          options={[
+            { value: '', label: 'System default image' },
+            ...images.map((image) => ({
+              value: image.id,
+              label: `${image.name} (${imageVisibilityLabel(image.visibility)})`,
+            })),
+          ]}
+        />
         <Presence>
           <div>
             {imageResolving ? (
@@ -139,38 +141,39 @@ export function InlineTargetStep({
       </div>
       <div className="trigger-field">
         <label htmlFor="trigger-inline-reasoning">Reasoning effort</label>
-        <select
+        <Picker
           id="trigger-inline-reasoning"
           value={target.agent.reasoning_effort}
           disabled={disabled}
-          onChange={(event) =>
+          onChange={(choice) =>
             updateAgent({
-              reasoning_effort: event.target.value as typeof target.agent.reasoning_effort,
+              reasoning_effort: choice as typeof target.agent.reasoning_effort,
             })
           }
-        >
-          {(['minimal', 'low', 'medium', 'high', 'x_high'] as const).map((effort) => (
-            <option key={effort} value={effort}>
-              {effort}
-            </option>
-          ))}
-        </select>
+          label="Reasoning effort"
+          options={(['minimal', 'low', 'medium', 'high', 'x_high'] as const).map((effort) => ({
+            value: effort,
+            label: effort,
+          }))}
+        />
       </div>
       <div className="trigger-field">
         <label htmlFor="trigger-inline-permission">Permission level</label>
-        <select
+        <Picker
           id="trigger-inline-permission"
           value={target.agent.permission_mode}
           disabled={disabled}
-          onChange={(event) =>
+          onChange={(choice) =>
             updateAgent({
-              permission_mode: event.target.value as typeof target.agent.permission_mode,
+              permission_mode: choice as typeof target.agent.permission_mode,
             })
           }
-        >
-          <option value="guarded">Guarded</option>
-          <option value="autonomous">Autonomous</option>
-        </select>
+          label="Permission level"
+          options={[
+            { value: 'guarded', label: 'Guarded' },
+            { value: 'autonomous', label: 'Autonomous' },
+          ]}
+        />
       </div>
       <div className="trigger-field">
         <label htmlFor="trigger-inline-skills">Skills (comma separated)</label>

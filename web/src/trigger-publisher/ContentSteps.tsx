@@ -1,3 +1,4 @@
+import { Picker } from '../ui/Picker';
 import { Presence } from '../ui/Presence';
 import type { SetStateAction } from 'react';
 import type { ProfileKind, TriggerContent } from '@chronoai/cma-sdk';
@@ -207,24 +208,26 @@ export function PresentationStep({
       </fieldset>
       <div className="trigger-field">
         <label htmlFor="trigger-theme">Theme</label>
-        <select
+        <Picker
           id="trigger-theme"
           value={presentation.theme}
           disabled={disabled}
-          onChange={(event) =>
+          onChange={(choice) =>
             onChange({
               ...value,
               presentation: {
                 ...presentation,
-                theme: event.target.value as typeof presentation.theme,
+                theme: choice as typeof presentation.theme,
               },
             })
           }
-        >
-          <option value="auto">Match the visitor</option>
-          <option value="light">Light</option>
-          <option value="dark">Dark</option>
-        </select>
+          label="Theme"
+          options={[
+            { value: 'auto', label: 'Match the visitor' },
+            { value: 'light', label: 'Light' },
+            { value: 'dark', label: 'Dark' },
+          ]}
+        />
       </div>
       <label className="trigger-checkbox">
         <input

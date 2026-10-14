@@ -336,26 +336,24 @@ export function BotCreate({
                 </label>
                 <label>
                   Reasoning effort
-                  <select
+                  <Picker
                     value={effort}
-                    onChange={(event) => setEffort(event.target.value as typeof effort)}
-                  >
-                    {EFFORT_CHOICES.map((choice) => (
-                      <option key={choice} value={choice}>
-                        {choice}
-                      </option>
-                    ))}
-                  </select>
+                    onChange={(choice) => setEffort(choice as typeof effort)}
+                    label="Reasoning effort"
+                    options={EFFORT_CHOICES.map((choice) => ({ value: choice, label: choice }))}
+                  />
                 </label>
                 <label>
                   Permission level
-                  <select
+                  <Picker
                     value={permission}
-                    onChange={(event) => setPermission(event.target.value as typeof permission)}
-                  >
-                    <option value="guarded">Guarded</option>
-                    <option value="autonomous">Autonomous</option>
-                  </select>
+                    onChange={(choice) => setPermission(choice as typeof permission)}
+                    label="Permission level"
+                    options={[
+                      { value: 'guarded', label: 'Guarded' },
+                      { value: 'autonomous', label: 'Autonomous' },
+                    ]}
+                  />
                 </label>
               </div>
               <label className="bots__field">
