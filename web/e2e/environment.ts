@@ -130,7 +130,7 @@ export function origin(value: unknown, name: string): string {
 }
 export function outsideRepository(value: unknown, name: string): string {
   const path = required(value, name);
-  const root = realpathSync(fileURLToPath(new URL('../../..', import.meta.url)));
+  const root = realpathSync(fileURLToPath(new URL('../..', import.meta.url)));
   let ancestor = resolve(path);
   while (!existsSync(ancestor) && dirname(ancestor) !== ancestor) ancestor = dirname(ancestor);
   const physical = join(realpathSync(ancestor), relative(ancestor, resolve(path)));
