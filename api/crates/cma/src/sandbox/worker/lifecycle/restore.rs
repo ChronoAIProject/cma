@@ -118,7 +118,7 @@ impl SandboxWorker {
                     .await
             }
         };
-        if let Some(checkpoint) = checkpoint {
+        let native_status = if let Some(checkpoint) = checkpoint {
             let restore = checkpoint.restore_request().map_err(model_error)?;
             let bootstrap = RestoreBootstrapRequest::new(
                 operation_id(&sandbox, "bootstrap_restore")?,
@@ -156,28 +156,39 @@ impl SandboxWorker {
                     )
                     .await;
             }
-        } else if let Err(failure) = self
-            .verify_native_runtime(&sandbox, &handle, generation, false)
-            .await
-        {
-            return self.handle_lifecycle_failure(sandbox, failure, now).await;
-        }
+            None
+        } else {
+            match self
+                .verify_native_runtime(&sandbox, &handle, generation, false)
+                .await
+            {
+                Ok(status) => Some(status),
+                Err(failure) => return self.handle_lifecycle_failure(sandbox, failure, now).await,
+            }
+        };
 
         let stamp = rfc3339_at(now);
         let lease = lifecycle_lease(&sandbox, &self.config.holder)?;
-        let boot_id = match crate::sandbox::runtime_attachment::provisioned_runtime_status(
-            self.dependencies.adapter.as_ref(),
-            &sandbox_spec(&sandbox, &self.config.deployment_id),
-            &handle,
-            generation,
-        )
-        .await
-        {
-            Ok(status) => status.map(|status| status.boot_id),
-            Err(error) => {
-                return self
-                    .handle_lifecycle_failure(sandbox, adapter_failure(error), now)
-                    .await;
+        // Bind the same process whose generation, home, installation and empty
+        // owner state were just validated. A second observation could name a
+        // replacement boot whose recovery state was never checked.
+        let boot_id = if let Some(status) = native_status {
+            Some(status.boot_id)
+        } else {
+            match crate::sandbox::runtime_attachment::provisioned_runtime_status(
+                self.dependencies.adapter.as_ref(),
+                &sandbox_spec(&sandbox, &self.config.deployment_id),
+                &handle,
+                generation,
+            )
+            .await
+            {
+                Ok(status) => status.map(|status| status.boot_id),
+                Err(error) => {
+                    return self
+                        .handle_lifecycle_failure(sandbox, adapter_failure(error), now)
+                        .await;
+                }
             }
         };
         let mut next = sandbox.clone();
