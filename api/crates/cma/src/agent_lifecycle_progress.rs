@@ -22,6 +22,7 @@ impl InlineAgentLifecycle {
         lease: &LifecycleLease,
     ) -> Result<layer2_core::WorkspaceId, AgentLifecycleProvisioningError> {
         tokio::time::timeout(Duration::from_secs(180), async {
+            let started = tokio::time::Instant::now();
             let mut sandbox_ready = false;
             let mut key_ready = false;
             loop {
@@ -88,7 +89,7 @@ impl InlineAgentLifecycle {
                         return Ok(workspace.id);
                     }
                 }
-                tokio::time::sleep(Duration::from_millis(500)).await;
+                tokio::time::sleep(worker::readiness_delay(started)).await;
             }
         })
         .await

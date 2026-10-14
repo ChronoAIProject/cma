@@ -2,6 +2,16 @@
 use super::*;
 use crate::store::HEARTBEAT;
 
+// Warm creation should observe committed readiness promptly. Bound the faster
+// polling window; sequential reads and the worker-slot limit cap its load.
+pub(super) fn readiness_delay(started: tokio::time::Instant) -> Duration {
+    if started.elapsed() < Duration::from_secs(10) {
+        Duration::from_millis(100)
+    } else {
+        Duration::from_millis(500)
+    }
+}
+
 impl InlineAgentLifecycle {
     pub(crate) fn resume_pending(self: &Arc<Self>) {
         let weak = Arc::downgrade(self);
@@ -34,10 +44,11 @@ impl InlineAgentLifecycle {
     ) -> Result<(), AgentLifecycleProvisioningError> {
         use layer2_core::sandbox::AgentStatus;
         tokio::time::timeout(Duration::from_secs(180), async {
+            let started = tokio::time::Instant::now();
             loop {
                 let agent = self.agents.read(caller, id).await.map_err(agent_error)?;
                 match agent.status {
-                    AgentStatus::Starting => tokio::time::sleep(Duration::from_millis(500)).await,
+                    AgentStatus::Starting => tokio::time::sleep(readiness_delay(started)).await,
                     AgentStatus::Ready
                     | AgentStatus::Working
                     | AgentStatus::WaitingApproval
