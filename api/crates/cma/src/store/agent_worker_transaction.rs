@@ -23,6 +23,9 @@ use super::sandbox_mongo::{
 };
 use super::worktrees::{read_worktree, worktree_replacement_fields};
 
+mod prepared_replay;
+#[cfg(test)]
+mod prepared_replay_tests;
 mod sign_in;
 
 #[cfg_attr(test, derive(Clone))]
@@ -280,6 +283,7 @@ async fn apply_publication(
     }
 
     let sign_in_sandbox = sign_in::apply(store, &current, mutation, session).await?;
+    prepared_replay::fence(store, &current, &current_worktree, mutation, session).await?;
     let (final_agent, logs) = final_agent_and_logs(&current, mutation)?;
     ensure_append_capacity(
         &complete_log,

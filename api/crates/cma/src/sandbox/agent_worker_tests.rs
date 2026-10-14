@@ -50,6 +50,7 @@ const DEPLOYMENT_ID: &str = "lifecycle-test";
 mod fixture_store;
 use fixture_store::FixtureStore;
 mod lifecycle_connection_tests;
+mod prepared_pair_tests;
 mod retired_runtime_tests;
 mod runtime_attachment_tests;
 mod sdk_conformance_tests;
