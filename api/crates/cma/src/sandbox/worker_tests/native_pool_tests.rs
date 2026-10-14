@@ -13,6 +13,7 @@ struct Pools {
     failures: Mutex<VecDeque<&'static str>>,
     calls: Mutex<Vec<&'static str>>,
     delay_claim: AtomicBool,
+    delay_claim_reply: AtomicBool,
     pending_claim: AtomicBool,
     observe_error: Mutex<Option<AdapterError>>,
     observed: Notify,
@@ -131,19 +132,24 @@ impl NativePoolControl for Pools {
             self.entered.notify_one();
             self.resume.notified().await;
         }
-        let mut stored = self.claim.lock().unwrap();
-        let claim = stored
-            .get_or_insert_with(|| NativePoolClaim {
-                request: request.clone(),
-                name: "claim".into(),
-                uid: "claim-uid".into(),
-                resource_version: "1".into(),
-                sandbox_name: None,
-            })
-            .clone();
+        let claim = {
+            let mut stored = self.claim.lock().unwrap();
+            stored
+                .get_or_insert_with(|| NativePoolClaim {
+                    request: request.clone(),
+                    name: "claim".into(),
+                    uid: "claim-uid".into(),
+                    resource_version: "1".into(),
+                    sandbox_name: None,
+                })
+                .clone()
+        };
         assert_eq!(claim.request, *request);
-        drop(stored);
         self.lose("claim")?;
+        if self.delay_claim_reply.swap(false, Ordering::SeqCst) {
+            self.entered.notify_one();
+            self.resume.notified().await;
+        }
         Ok(claim)
     }
     async fn observe_claim(
@@ -416,6 +422,7 @@ fn pools(harness: &Harness, failures: &[&'static str]) -> Arc<Pools> {
         failures: Mutex::new(failures.iter().copied().collect()),
         calls: Mutex::new(vec![]),
         delay_claim: AtomicBool::new(false),
+        delay_claim_reply: AtomicBool::new(false),
         pending_claim: AtomicBool::new(false),
         observe_error: Mutex::new(None),
         observed: Notify::new(),
@@ -583,6 +590,9 @@ async fn claim_created_after_deletion_loses_database_cas_and_is_reconciled_witho
 
 #[path = "native_home_routing_tests.rs"]
 mod routing;
+
+#[path = "native_home_admission_conflict_tests.rs"]
+mod admission_conflict;
 
 #[path = "native_claim_assignment_tests.rs"]
 mod assignment;
