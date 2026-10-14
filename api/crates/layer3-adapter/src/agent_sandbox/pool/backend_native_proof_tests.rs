@@ -9,6 +9,9 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 #[path = "backend_policy_read_tests.rs"]
 mod policy_reads;
 
+#[path = "backend_native_status_tests.rs"]
+mod native_status;
+
 struct StatusTransport {
     state: Arc<Mutex<State>>,
     client: AgentSandboxClient,

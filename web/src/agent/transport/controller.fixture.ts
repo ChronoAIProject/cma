@@ -142,13 +142,13 @@ export function harness() {
     fail(code = 'agent_read_unavailable') {
       emit('cma.agent.error', { code, message: 'Temporarily unavailable.' });
     },
-    gap() {
+    gap(reason: 'lagged' | 'reconnected' = 'lagged', turnSequence: number | null = 1) {
       emit('cma.agent.live_gap', {
         agent_id: 'agt_1',
         incarnation,
-        turn_sequence: 1,
-        frames: 1,
-        reason: 'lagged',
+        turn_sequence: turnSequence,
+        frames: reason === 'reconnected' ? null : 1,
+        reason,
       });
     },
     get streaming() {

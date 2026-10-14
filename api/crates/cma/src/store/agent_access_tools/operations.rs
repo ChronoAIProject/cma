@@ -103,7 +103,7 @@ impl MongoAgentAccessToolSource {
             .transpose()?;
         let conversation = previous.and_then(|record| record.conversation);
         require_conversation(&snapshot, conversation.as_deref(), false)?;
-        let binding = HostedAccessToolBinding::new(
+        let mut binding = HostedAccessToolBinding::new(
             &self.origin,
             capability.into(),
             runtime.clone(),
@@ -112,6 +112,21 @@ impl MongoAgentAccessToolSource {
             conversation.clone(),
         )
         .map_err(|_| Error::Refused)?;
+        if conversation.is_none() {
+            if let Some(prepared) = super::super::native_prepared::prepared_conversation(
+                &self.store,
+                &snapshot,
+                request,
+                session,
+            )
+            .await
+            .map_err(|_| Error::Refused)?
+            {
+                binding = binding
+                    .with_prepared_conversation(&prepared)
+                    .map_err(|_| Error::Refused)?;
+            }
+        }
         super::super::resource_access::fence_lineage(&self.store, &snapshot.resource, session)
             .await?;
         self.save(
@@ -151,7 +166,7 @@ impl MongoAgentAccessToolSource {
             .ok_or(Error::Refused)?;
         let mut record = self.read(&document)?;
         validation::request(&snapshot, &record.request, fence)?;
-        let expected = HostedAccessToolBinding::new(
+        let mut expected = HostedAccessToolBinding::new(
             &self.origin,
             capability.clone().into(),
             runtime.clone(),
@@ -160,7 +175,7 @@ impl MongoAgentAccessToolSource {
             record.conversation.clone(),
         )
         .map_err(|_| Error::Refused)?;
-        let initial = HostedAccessToolBinding::new(
+        let mut initial = HostedAccessToolBinding::new(
             &self.origin,
             capability.into(),
             runtime.clone(),
@@ -169,6 +184,27 @@ impl MongoAgentAccessToolSource {
             None,
         )
         .map_err(|_| Error::Refused)?;
+        if let Some(prepared) = super::super::native_prepared::prepared_conversation(
+            &self.store,
+            &snapshot,
+            &record.request,
+            session,
+        )
+        .await
+        .map_err(|_| Error::Refused)?
+        {
+            if conversation != prepared {
+                return Err(Error::Refused);
+            }
+            initial = initial
+                .with_prepared_conversation(&prepared)
+                .map_err(|_| Error::Refused)?;
+            if record.conversation.is_none() {
+                expected = expected
+                    .with_prepared_conversation(&prepared)
+                    .map_err(|_| Error::Refused)?;
+            }
+        }
         // Comparing scope and the exact source-derived binding also excludes a
         // caller-constructed binding carrying another endpoint or capability.
         if record.scope != scope

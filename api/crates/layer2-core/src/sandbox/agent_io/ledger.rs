@@ -177,6 +177,8 @@ pub trait AgentCommandStore: Send + Sync {
 
     /// Atomically deduplicate, assign a per-Agent order, check the bounded queue
     /// and retain the receipt. No TTL may silently make an old key reusable.
+    /// `Conflict` proves this attempt did not commit; an uncertain commit must
+    /// return `Unavailable` so callers retain the original key for recovery.
     async fn reserve_command(
         &self,
         request: CommandReservation,

@@ -11,7 +11,7 @@ use super::agent_work_transition_validation::{
     classify_publication, validate_position, PublicationKind,
 };
 use super::agent_worktree_validation::validate_worktree_delta;
-use super::{AgentWorkMutation, SandboxStoreError};
+use super::{agent_work_prepared_pair::paired_intent, AgentWorkMutation, SandboxStoreError};
 
 /// Stores must read and write-fence both parents in the same transaction as this publication.
 pub fn validate_agent_workspace_binding(
@@ -186,7 +186,7 @@ fn validate_mutation(
     validate_evidence(current, current_worktree, mutation, kind)
 }
 
-fn validate_common(
+pub(super) fn validate_common(
     current: &Agent,
     worktree: &Worktree,
     actual_last_seq: u64,
@@ -318,13 +318,22 @@ fn validate_work_delta(
                 .attempts
                 .checked_add(1)
                 .ok_or(SandboxStoreError::Conflict)?;
+            // An effect-free parent wait already observed a bounded interval.
+            // It may remain due for a readiness wake, while failure retries
+            // still require a strictly later due time.
+            let expected_parent_wait = current.work.step == AgentWorkStep::WaitForWorkspace
+                && current.has_no_runtime_effects()
+                && mutation.agent_logs.is_empty()
+                && mutation.sandbox_event.is_none()
+                && next.work.ready_at == mutation.appended_at;
+            let retry_later = stamp(&next.work.ready_at)? > stamp(&mutation.appended_at)?;
             if next.work.step != current.work.step
                 || next.work.attempts != attempts
                 || next.work.lease.is_some()
                 || next.work.receipts != current.work.receipts
                 || next.work.cleanup_debt != current.work.cleanup_debt
                 || next.work.cleanup_not_before != current.work.cleanup_not_before
-                || stamp(&next.work.ready_at)? <= stamp(&mutation.appended_at)?
+                || !(retry_later || expected_parent_wait)
             {
                 return Err(SandboxStoreError::Conflict);
             }
@@ -355,6 +364,9 @@ fn validate_work_delta(
 }
 
 fn validate_intent_delta(current: &Agent, next: &Agent) -> Result<(), SandboxStoreError> {
+    if paired_intent(current, next) {
+        return Ok(());
+    }
     let debts = &next.work.cleanup_debt;
     let Some(debt) = debts.last() else {
         return Err(SandboxStoreError::Conflict);

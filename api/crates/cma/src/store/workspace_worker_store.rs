@@ -12,6 +12,17 @@ use super::sandbox_mongo::{MongoSandboxStore, DOCUMENT_SCHEMA_VERSION, TRANSACTI
 
 #[async_trait::async_trait]
 impl WorkspaceWorkerStore for MongoSandboxStore {
+    async fn prepared_workspace_completion(
+        &self,
+        sandbox: &layer2_core::sandbox::Sandbox,
+        workspace: &layer2_core::sandbox::Workspace,
+    ) -> Result<
+        Option<layer2_core::sandbox::store::WorkspacePreparationCompletion>,
+        SandboxStoreError,
+    > {
+        super::native_prepared::completed_workspace(self, sandbox, workspace).await
+    }
+
     async fn due_workspace_work(
         &self,
         now: &str,
