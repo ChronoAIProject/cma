@@ -117,6 +117,10 @@ data:
   # image across API upgrades and rollback; drift never admits rotation work.
   # Prove retained-runtime compatibility before deploying any new API image.
   CHRONO_SANDBOX_IMAGE: "asia-southeast1-docker.pkg.dev/chronoai-501608/chrono-pod/cma-runtime@sha256:cad2058fad219bf8e6deb8b061a1d6331d28552990ee6bc8646f8cd5cf11d18b"
+  # Keep one unclaimed native CMA runtime ready for immediate SandboxClaim
+  # admission. The target is persisted by Agent Manager and reconciled through
+  # SandboxTemplate/SandboxWarmPool/SandboxClaim CRDs only.
+  CHRONO_NATIVE_WARM_POOL_TARGET: "1"
   # Native warm pools are managed by immutable image/resources/home policy.
   # The installed APIs and cold allocation path passed deployment acceptance.
   # Verify new pool templates independently before adding operator capacity.
