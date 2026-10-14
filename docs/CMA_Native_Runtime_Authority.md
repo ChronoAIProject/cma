@@ -89,8 +89,9 @@ and refuse publication on either proof's failure.
 Three more native startup boundaries overlap only independent reads. Claim
 admission reads its deterministic existing Claim and current Pool/Template
 binding together. A replay still validates and returns the original Claim even
-if speculative policy reads fail; only a missing Claim consumes that proof
-before creation. Legacy claims keep sequential seed and binding validation.
+if speculative policy reads fail or remain pending; unfinished policy reads are
+dropped once an existing Claim is observed. Only a missing Claim consumes that
+proof before creation. Legacy claims keep sequential seed and binding validation.
 
 Home adoption overlaps current explicit policy with the initial Claim, member
 and PVC read/validation phase. The Claim still supplies validated dependent
