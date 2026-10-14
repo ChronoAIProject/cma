@@ -311,6 +311,10 @@ access levels. Organization membership alone does not establish resource permiss
 
 ## Live settings
 
+`agents().models(agent_id)` returns the admitted model catalog with each model's
+`id`, display `label`, and current runtime `available` flag. A retained runtime
+may return the catalog with every choice unavailable.
+
 `agents().settings(agent_id)` reads desired `model`, `reasoning_effort`,
 `permission_mode` and `pending`. `update_settings(agent_id, &body, &key)` takes
 `UpdateAgentSettingsRequest` with all three settings for an idle Agent and a
@@ -318,6 +322,36 @@ stable `IdempotencyKey`. Retry an uncertain HTTP reply with the exact body and
 key. `pending: true` means the durable desired settings still await runtime
 acknowledgement; read again until `pending` clears before treating them as applied.
 The immutable creation profile is preserved.
+
+## Additive skills
+
+`agents().skills(agent_id)` returns profile and live skill items, their
+`AgentSkillStatus` (`Pending`, `Installed`, or `Failed`), and `pending`,
+`can_install`, and optional `unavailable_reason`. Items may include a display
+name or failure detail. The server determines whether the Agent is idle and its
+exact runtime supports installation.
+
+```rust,no_run
+use cma_sdk::{Client, IdempotencyKey, Result, agents::InstallAgentSkillRequest};
+
+async fn add_skill(client: &Client, agent_id: &str, key: &IdempotencyKey) -> Result<()> {
+    let request = InstallAgentSkillRequest {
+        id: "research".into(), version: "1.0".into(),
+    };
+    let admitted = client.agents().install_skill(agent_id, &request, key).await?;
+    println!("Installation pending: {}", admitted.pending);
+    let current = client.agents().skills(agent_id).await?;
+    for skill in current.items { println!("{} {:?}", skill.id, skill.status); }
+    Ok(())
+}
+```
+
+Installation requires an exact Ornn version and a stable idempotency key. Retry
+an uncertain reply with the same request and key. The `202` result records
+admission; poll `skills()` within your application's deadline until `pending`
+clears, then inspect each item's status before treating it as installed. A
+failed installation is reported explicitly. Installation preserves the original
+creation profile.
 
 ## Service access decisions
 
