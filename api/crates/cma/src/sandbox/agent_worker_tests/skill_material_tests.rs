@@ -297,3 +297,159 @@ async fn invalid_resolved_material_and_runtime_locators_never_create_home_intent
             .is_empty());
     }
 }
+
+#[tokio::test]
+async fn live_skill_install_replays_pinned_material_after_lost_response() {
+    use layer2_core::sandbox::AgentSkillInstallStatus;
+    use layer2_core::{Authorization, Caller, Capability};
+    let original_skill = runtime_skill("7.0", 'a', "archive");
+    let skills = ScriptedSkills::new([Ok(vec![]), Ok(vec![original_skill.clone()])]);
+    let harness = Harness::new(skills.clone()).await;
+    let admitted = harness.admit("live-skill", Vec::new()).await;
+    let ready = harness.drive_ready(&admitted.id).await;
+    let caller = Caller::new(
+        ready.owner.clone(),
+        Authorization::new([Capability::UseOwnSandboxes]),
+    );
+    let operations = AgentOperationService::new(harness.store.clone(), harness.registry.clone());
+    operations
+        .install_skill(
+            &caller,
+            &ready.id,
+            SkillRef {
+                source: SkillSource::Ornn,
+                id: SkillId::new("research"),
+                version: Some("7.0".into()),
+            },
+        )
+        .await
+        .unwrap();
+    harness
+        .backend
+        .lose_next_response(WireOperation::InstallAgentSkill);
+    harness.run(&ready.id, SystemTime::now()).await;
+    let pending = harness.stored(&ready.id).await;
+    assert_eq!(pending.work.step, AgentWorkStep::InstallSkill);
+    assert_eq!(
+        pending.work.live_skills[0].status,
+        AgentSkillInstallStatus::Pending
+    );
+    assert_eq!(
+        pending.work.live_skills[0]
+            .material
+            .as_ref()
+            .unwrap()
+            .version,
+        "7.0"
+    );
+    assert_eq!(skills.calls.load(Ordering::Relaxed), 2);
+    let snapshot = harness.backend.snapshot(&harness.runtime).await.unwrap();
+    assert_eq!(
+        snapshot.homes[&AgentSlot::new(ready.id.as_str())].skills,
+        vec![original_skill.clone()]
+    );
+
+    let unavailable = ScriptedSkills::new([Err(AgentSkillResolutionError::Unavailable(
+        "catalog down".into(),
+    ))]);
+    *unavailable.locators.lock().unwrap() =
+        VecDeque::from([vec![original_skill.source_url.clone()]]);
+    let worker = restarted(&harness, unavailable.clone());
+    // A retained runtime can park pending filesystem work while reconnecting.
+    // Connection publication must re-schedule it after the process is attached.
+    let mut parked = pending.clone();
+    parked
+        .work
+        .schedule(AgentWorkStep::None, layer2_core::now_rfc3339());
+    parked.revision += 1;
+    harness
+        .store
+        .save_agent(pending.revision, parked)
+        .await
+        .unwrap();
+    assert_eq!(
+        worker
+            .reconcile_connections(SystemTime::now())
+            .await
+            .unwrap(),
+        1
+    );
+    assert!(worker.run_one(&ready.id, SystemTime::now()).await.unwrap());
+    assert_eq!(
+        harness.stored(&ready.id).await.work.step,
+        AgentWorkStep::InstallSkill
+    );
+    assert!(worker
+        .run_one(&ready.id, SystemTime::now() + Duration::from_secs(2))
+        .await
+        .unwrap());
+    let installed = harness.stored(&ready.id).await;
+    assert_eq!(installed.work.step, AgentWorkStep::None);
+    assert_eq!(
+        installed.work.live_skills[0].status,
+        AgentSkillInstallStatus::Installed
+    );
+    assert_eq!(
+        installed.work.live_skills[0].material,
+        pending.work.live_skills[0].material
+    );
+    assert_eq!(installed.profile, ready.profile);
+    assert_eq!(installed.work.resolved_skills, ready.work.resolved_skills);
+    assert_eq!(installed.work.receipts, ready.work.receipts);
+    assert_eq!(unavailable.calls.load(Ordering::Relaxed), 0);
+    let snapshot = harness.backend.snapshot(&harness.runtime).await.unwrap();
+    assert_eq!(
+        snapshot.homes[&AgentSlot::new(ready.id.as_str())].skills,
+        vec![original_skill]
+    );
+}
+
+#[tokio::test]
+async fn live_skill_resolution_failure_does_not_fail_the_agent_or_publish_installation() {
+    use layer2_core::sandbox::AgentSkillInstallStatus;
+    use layer2_core::{Authorization, Caller, Capability};
+    let skills = ScriptedSkills::new([
+        Ok(vec![]),
+        Err(AgentSkillResolutionError::NotFound(
+            "not owner accessible".into(),
+        )),
+    ]);
+    let harness = Harness::new(skills).await;
+    let admitted = harness.admit("live-skill-denied", Vec::new()).await;
+    let ready = harness.drive_ready(&admitted.id).await;
+    let caller = Caller::new(
+        ready.owner.clone(),
+        Authorization::new([Capability::UseOwnSandboxes]),
+    );
+    let operations = AgentOperationService::new(harness.store.clone(), harness.registry.clone());
+    operations
+        .install_skill(
+            &caller,
+            &ready.id,
+            SkillRef {
+                source: SkillSource::Ornn,
+                id: SkillId::new("research"),
+                version: Some("7.0".into()),
+            },
+        )
+        .await
+        .unwrap();
+    harness.run(&ready.id, SystemTime::now()).await;
+    let failed = harness.stored(&ready.id).await;
+    assert_eq!(failed.status, AgentStatus::Ready);
+    assert_eq!(failed.work.step, AgentWorkStep::None);
+    assert_eq!(
+        failed.work.live_skills[0].status,
+        AgentSkillInstallStatus::Failed
+    );
+    assert!(failed.work.live_skills[0].material.is_none());
+    assert_eq!(failed.profile, ready.profile);
+    assert!(harness
+        .backend
+        .snapshot(&harness.runtime)
+        .await
+        .unwrap()
+        .homes[&AgentSlot::new(ready.id.as_str())]
+        .skills
+        .is_empty());
+}

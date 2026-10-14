@@ -68,7 +68,7 @@ export function assertRuntimeStatus(status, request, installed, previousBoot) {
   assert.match(status.boot_id, /^[0-9a-f]{32}$/);
   if (previousBoot) assert.notEqual(status.boot_id, previousBoot);
   assert.deepEqual(status, { ...statusRequest(request), boot_id: status.boot_id,
-    installation_ready: installed, credential_ready: false, restore_pending: false, agent_processes: 0 });
+    installation_ready: installed, credential_ready: false, restore_pending: false, agent_processes: 0, agent_skill_install: true });
   return status.boot_id;
 }
 

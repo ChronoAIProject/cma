@@ -195,6 +195,12 @@ impl SandboxWorker {
                 agent
                     .work
                     .schedule(AgentWorkStep::DispatchFirstMessage, stamp.clone());
+            } else if agent.work.live_skills.last().is_some_and(|skill| {
+                skill.status == layer2_core::sandbox::AgentSkillInstallStatus::Pending
+            }) {
+                agent
+                    .work
+                    .schedule(AgentWorkStep::InstallSkill, stamp.clone());
             }
             let logs = vec![
                 AgentLogKind::ConversationOpened {

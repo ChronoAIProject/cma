@@ -19,6 +19,7 @@ pub(super) const MAX_AUTHORITY_RECORDS: usize = 4_096;
 pub(super) enum ResourceKey {
     Worktree { workspace: String, name: String },
     AgentHome { agent_id: String },
+    AgentSkill { agent_id: String, skill_id: String },
     AgentProcess { agent_id: String },
 }
 
@@ -95,6 +96,7 @@ fn admit_once(
     retry_race: bool,
 ) -> Result<()> {
     let records = records(config)?;
+    require_skill_parent(&records, operation)?;
     let incoming = Record::new(config, authority_fence, operation);
     let relevant = records
         .iter()
@@ -125,6 +127,9 @@ pub(crate) fn recovery_fence(config: &RuntimeConfig, operation: &Operation) -> R
     mutation_journal::validate_operation(config, operation)?;
     let (resource, _) = resource_operation(operation);
     let records = records(config)?;
+    if require_skill_parent(&records, operation).is_err() {
+        return Ok(None);
+    }
     Ok(
         current(records.iter().filter(|record| record.resource == resource))
             .filter(|record| record.operation() == *operation)
@@ -283,6 +288,13 @@ fn resource_operation(operation: &Operation) -> (ResourceKey, Disposition) {
             },
             Disposition::Absent,
         ),
+        Subject::InstallAgentSkill { request } => (
+            ResourceKey::AgentSkill {
+                agent_id: request.agent_id.as_str().into(),
+                skill_id: request.skill.id.clone(),
+            },
+            Disposition::Present,
+        ),
         Subject::CreateAgentHome { agent_id } => (
             ResourceKey::AgentHome {
                 agent_id: agent_id.clone(),
@@ -324,3 +336,13 @@ pub(super) fn io_error(operation: &'static str, error: std::io::Error) -> Runtim
 #[cfg(test)]
 #[path = "mutation_authority_tests.rs"]
 mod tests;
+
+fn require_skill_parent(records: &[Record], operation: &Operation) -> Result<()> {
+    let Subject::InstallAgentSkill { request } = &operation.subject else {
+        return Ok(());
+    };
+    if records.iter().any(|record| matches!(&record.resource, ResourceKey::AgentHome { agent_id } if agent_id == request.agent_id.as_str()) && record.disposition == Disposition::Absent) {
+        return Err(RuntimeError::rejected("mutation_authority_retired", "agent home cleanup dominates skill installation"));
+    }
+    Ok(())
+}

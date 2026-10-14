@@ -287,6 +287,15 @@ impl Agent {
             .checked_add(1)
             .ok_or_else(|| SandboxModelError::invalid_value("agent.revision"))?;
         self.requested_stop_reason = Some(reason);
+        if let Some(skill) = self
+            .work
+            .live_skills
+            .last_mut()
+            .filter(|s| s.status == super::AgentSkillInstallStatus::Pending)
+        {
+            skill.status = super::AgentSkillInstallStatus::Failed;
+            skill.error = Some("agent_stopped_before_skill_confirmation".into());
+        }
         self.updated_at = at.clone();
         let cleanup_not_before = self
             .work

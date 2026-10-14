@@ -133,6 +133,44 @@ pub(super) async fn materialize_home(
     }
 }
 
+pub(super) async fn install_skill(
+    adapter: &HostedAdapter,
+    handle: &RuntimeHandle,
+    authority_fence: u64,
+    request: &crate::AgentSkillInstallRequest,
+) -> crate::Result<()> {
+    validate_fence(authority_fence)?;
+    adapter.known_state(handle).await?;
+    if !request.has_valid_sha256()
+        || request.operation_id
+            != format!(
+                "agent:{}:skill:{}:install:v1",
+                request.agent_id.as_str(),
+                request.skill.id
+            )
+    {
+        return Err(AdapterError::Rejected(
+            "invalid skill installation identity".into(),
+        ));
+    }
+    match adapter
+        .exchange(
+            handle,
+            RequestFrame::InstallAgentSkill(FencedRequest::new(authority_fence, request.clone())),
+        )
+        .await?
+    {
+        ResponseFrame::InstallAgentSkill(response)
+            if response.authority_fence == authority_fence && response.receipt.matches(request) =>
+        {
+            Ok(())
+        }
+        _ => Err(AdapterError::Rejected(
+            "runtime returned an uncorrelated skill receipt".into(),
+        )),
+    }
+}
+
 pub(super) async fn remove_home(
     adapter: &HostedAdapter,
     handle: &RuntimeHandle,

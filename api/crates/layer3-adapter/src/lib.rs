@@ -6,6 +6,8 @@
 
 mod adapter;
 mod agent;
+mod agent_skill_install;
+pub use agent_skill_install::{AgentSkillInstallReceipt, AgentSkillInstallRequest};
 mod agent_provider;
 mod capabilities;
 mod checkpoint;
