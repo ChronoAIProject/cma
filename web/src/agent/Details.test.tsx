@@ -1,3 +1,4 @@
+import { chooseOptionValue } from '../test/select';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
@@ -23,9 +24,9 @@ it('shows the three settings and fixed Agent key scopes without technical or lif
     </CmaClientProvider>,
   );
   const panel = within(screen.getByRole('complementary', { name: 'Agent details' }));
-  expect(await panel.findByLabelText('Model')).toHaveValue('gpt-6');
-  expect(panel.getByLabelText('Reasoning effort')).toHaveValue('high');
-  expect(panel.getByLabelText('Permission mode')).toHaveValue('autonomous');
+  expect(await panel.findByLabelText('Model')).toHaveTextContent('gpt-6');
+  expect(panel.getByLabelText('Reasoning effort')).toHaveTextContent('High');
+  expect(panel.getByLabelText('Permission mode')).toHaveTextContent('YOLO (autonomous)');
   expect(panel.getByRole('group', { name: 'Agent key scope' })).toBeVisible();
   for (const scope of [
     'chrono-llm-public Required',
@@ -36,12 +37,15 @@ it('shows the three settings and fixed Agent key scopes without technical or lif
     expect(checkbox).toBeChecked();
     expect(checkbox).toBeDisabled();
   }
-  expect(panel.getAllByRole('heading').map((heading) => heading.textContent)).toEqual(['Details']);
+  expect(panel.getAllByRole('heading').map((heading) => heading.textContent)).toEqual([
+    'Details',
+    'Skills',
+  ]);
   expect(panel.queryByText(AGENT_DETAIL.workspace.path)).not.toBeInTheDocument();
   expect(panel.queryByText(AGENT_DETAIL.worktree.branch)).not.toBeInTheDocument();
   expect(panel.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument();
   expect(panel.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument();
-  await userEvent.selectOptions(panel.getByLabelText('Reasoning effort'), 'medium');
+  await chooseOptionValue(userEvent.setup(), panel.getByLabelText('Reasoning effort'), 'medium');
   await userEvent.click(panel.getByRole('button', { name: 'Apply settings' }));
   await panel.findByText('Settings applied to this Agent.');
   expect(update).toHaveBeenCalledWith(
@@ -71,11 +75,11 @@ it.each(['history', 'working', 'command'] as const)(
     );
     const view = render(draw(true));
     await screen.findByLabelText('Model');
-    await userEvent.selectOptions(screen.getByLabelText('Reasoning effort'), 'medium');
+    await chooseOptionValue(userEvent.setup(), screen.getByLabelText('Reasoning effort'), 'medium');
     expect(screen.getByRole('button', { name: 'Apply settings' })).toBeDisabled();
     expect(update).not.toHaveBeenCalled();
     view.rerender(draw(false));
-    expect(screen.getByLabelText('Reasoning effort')).toHaveValue('medium');
+    expect(screen.getByLabelText('Reasoning effort')).toHaveTextContent('Medium');
     expect(screen.getByRole('button', { name: 'Apply settings' })).toBeEnabled();
   },
 );

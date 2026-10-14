@@ -1,3 +1,4 @@
+import { chooseOptionValue } from '../test/select';
 import { useState } from 'react';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -46,15 +47,19 @@ async function next(user: ReturnType<typeof userEvent.setup>) {
 }
 
 async function selectTargets(user: ReturnType<typeof userEvent.setup>) {
-  const inlineImage = screen.queryByRole('combobox', { name: 'Image' });
+  const inlineImage = screen.queryByRole('button', { name: 'Image' });
   if (inlineImage !== null) {
     await waitFor(() => expect(inlineImage).toBeEnabled());
     return;
   }
   for (const kind of ['sandbox', 'workspace', 'agent'] as const) {
-    const select = screen.getByRole('combobox', { name: `${kind} profile` });
+    const select = screen.getByRole('button', { name: `${kind} profile` });
     await waitFor(() => expect(select).toBeEnabled());
-    await user.selectOptions(select, `${profiles[kind].id}:${String(profiles[kind].revision)}`);
+    await chooseOptionValue(
+      user,
+      select,
+      `${profiles[kind].id}:${String(profiles[kind].revision)}`,
+    );
   }
   await waitFor(() => expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled());
 }
@@ -193,7 +198,7 @@ describe('Trigger publisher flow', () => {
     await screen.findByRole('button', { name: 'Retry original request' });
     expect(screen.getByRole('button', { name: 'Save draft' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'New Trigger' })).toBeDisabled();
-    expect(screen.getByRole('combobox', { name: 'Your Triggers' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Your Triggers' })).toBeDisabled();
     await user.click(screen.getByRole('button', { name: 'Retry original request' }));
     await screen.findByRole('heading', { name: 'Embed revision 1' });
     expect(test.triggers.save).toHaveBeenCalledOnce();
@@ -218,7 +223,7 @@ describe('Trigger publisher flow', () => {
     await user.click(screen.getByRole('checkbox', { name: 'Publish revision 1 of trureturing' }));
     await user.click(screen.getByRole('button', { name: 'Publish revision 1' }));
     await screen.findByRole('heading', { name: 'What it opens' });
-    const picker = screen.getByRole('combobox', { name: 'workspace profile' });
+    const picker = screen.getByRole('button', { name: 'workspace profile' });
     expect(picker).toHaveAttribute('aria-invalid', 'true');
     expect(picker).toHaveAccessibleDescription(/Every referenced profile must be public/);
   });

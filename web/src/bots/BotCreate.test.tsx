@@ -1,3 +1,4 @@
+import { chooseOptionValue } from '../test/select';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ApiError } from '@chronoai/cma-sdk';
@@ -133,9 +134,10 @@ it('submits image-free inline Agent setup without any profile authoring choice',
   await chooseOption(user, 'Event Gateway connection', 'Research channel');
   await user.click(screen.getByRole('button', { name: 'Continue' }));
   await user.type(screen.getByLabelText('Model'), 'gpt-5');
-  await user.selectOptions(screen.getByRole('combobox', { name: 'Reasoning effort' }), 'high');
-  await user.selectOptions(
-    screen.getByRole('combobox', { name: 'Permission level' }),
+  await chooseOptionValue(user, screen.getByRole('button', { name: 'Reasoning effort' }), 'high');
+  await chooseOptionValue(
+    user,
+    screen.getByRole('button', { name: 'Permission level' }),
     'autonomous',
   );
   await user.type(screen.getByLabelText('System prompt'), 'Respond with concise updates.');

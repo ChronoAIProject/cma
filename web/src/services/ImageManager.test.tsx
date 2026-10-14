@@ -1,3 +1,5 @@
+import userEvent from '@testing-library/user-event';
+import { chooseOptionValue } from '../test/select';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { ImageManager } from './ImageManager';
@@ -78,7 +80,7 @@ it('pages the public catalog with its scope and shows version-only responses to 
       denied={vi.fn()}
     />,
   );
-  fireEvent.change(screen.getByLabelText('Image catalog'), { target: { value: 'public' } });
+  await chooseOptionValue(userEvent.setup(), screen.getByLabelText('Image catalog'), 'public');
   fireEvent.click(await screen.findByRole('button', { name: 'Open image' }));
   expect(await screen.findByText('registry/runtime@sha256:example')).toBeVisible();
   expect(screen.queryByRole('button', { name: 'Make public' })).toBeNull();
@@ -90,7 +92,7 @@ it('pages the public catalog with its scope and shows version-only responses to 
     '/api/image-manager/v1/images?scope=public&after=image-one',
     expect.anything(),
   );
-  fireEvent.change(screen.getByLabelText('Image catalog'), { target: { value: 'owned' } });
+  await chooseOptionValue(userEvent.setup(), screen.getByLabelText('Image catalog'), 'owned');
   await waitFor(() => expect(screen.queryByText('registry/runtime@sha256:example')).toBeNull());
   expect(screen.queryByRole('heading', { name: 'Second runtime' })).toBeNull();
 });

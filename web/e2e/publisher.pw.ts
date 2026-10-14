@@ -144,8 +144,13 @@ test('J5 profiles publish to Marketplace, second owner forks, wizard publishes e
     await h.capture(second, `j5-second-owner-${kind}-fork`);
   }
   await page.goto(`${h.config.baseURL}/triggers/manage`);
-  for (const kind of ['sandbox', 'workspace', 'agent'] as const)
-    await page.locator(`#publisher-${kind}`).selectOption(`${ids[kind]}:1`);
+  for (const kind of ['sandbox', 'workspace', 'agent'] as const) {
+    await page.locator(`#publisher-${kind}`).click();
+    await page
+      .getByRole('menu', { name: `${kind} profile`, exact: true })
+      .locator(`[data-id="${ids[kind]}:1"]`)
+      .click();
+  }
   await page.getByRole('button', { name: 'Next', exact: true }).click();
   await page.locator('[aria-label="Agent reuse"] input[value="always_new"]').check();
   await page.getByRole('button', { name: 'Next', exact: true }).click();

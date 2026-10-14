@@ -8,15 +8,7 @@
   display: grid;
   gap: 6px;
 }
-.agent-settings-fields select {
-  width: 100%;
-  min-height: 36px;
-  padding: 0 8px;
-  color: var(--dsw-alias-label-primary);
-  background: var(--dsw-alias-bg-layer-1);
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 8px;
-}
+
 .agent-settings-scopes {
   margin-top: 18px;
   padding: 0;
@@ -41,4 +33,15 @@
 }
 .agent-settings-scopes small {
   color: var(--dsw-alias-label-secondary);
+}
+
+.agent-settings-fields > label {
+  min-width: 0;
+}
+.agent-settings-fields__picker {
+  display: flex;
+  min-width: 0;
+}
+.agent-settings-fields__picker > button {
+  width: 100%;
 }
