@@ -178,6 +178,7 @@ fn can_supersede_with_stop(step: AgentWorkStep) -> bool {
     matches!(
         step,
         AgentWorkStep::InstallSkill
+            | AgentWorkStep::WaitForWorkspace
             | AgentWorkStep::AddWorktree
             | AgentWorkStep::MaterializeHome
             | AgentWorkStep::OpenConversation
