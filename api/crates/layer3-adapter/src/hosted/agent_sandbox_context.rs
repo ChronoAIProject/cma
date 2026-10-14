@@ -43,6 +43,20 @@ pub(super) fn observation(object: &DynamicObject) -> Result<RuntimeObservation> 
 }
 
 impl AgentSandboxBackend {
+    pub(super) async fn bind_resumed(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+    ) -> Result<()> {
+        let mut timing = crate::agent_sandbox::resume_timing::ResumeTiming::new();
+        let pod = self
+            .client
+            .wait_ready(handle, Duration::from_secs(180))
+            .await?;
+        timing.completed("wait_ready");
+        self.assign_and_bind(handle, &pod, request).await
+    }
+
     pub(super) async fn inspect_native_context(
         &self,
         handle: &RuntimeHandle,

@@ -27,7 +27,7 @@ impl NativeRuntimeProof {
     }
 }
 impl AgentSandboxClient {
-    fn native_runtime_home_origin<'a>(
+    pub(super) fn native_runtime_home_origin<'a>(
         &self,
         runtime: &RuntimeHandle,
         home: &'a HomeVolumeAttachment,
