@@ -154,7 +154,37 @@ async fn check(
     adapter: &dyn SandboxAdapter,
     prepared: &WarmSandbox,
 ) -> layer3_adapter::Result<WarmSandbox> {
-    prepare_step(adapter, "test", prepared, &home_tests::home_policy()).await
+    prepare_step(adapter, "test", prepared, &policy()).await
+}
+
+fn policy() -> layer3_adapter::HomeVolumePolicy {
+    layer3_adapter::HomeVolumePolicy {
+        mode: layer3_adapter::HomeVolumeMode::NativeVctFullHomeV2,
+        storage_class: "storage".into(),
+        capacity_gib: 64,
+        template_name: String::new(),
+        template_generation: String::new(),
+    }
+}
+
+async fn advance(
+    harness: &Harness,
+    pools: &Arc<Pools>,
+    record: &WarmSandbox,
+) -> layer3_adapter::Result<WarmSandbox> {
+    let next = check(adapter(harness, pools.clone()).as_ref(), record).await?;
+    Ok(persist(harness, next).await)
+}
+
+async fn ready(harness: &Harness, pools: &Arc<Pools>, mut record: WarmSandbox) -> WarmSandbox {
+    for _ in 0..20 {
+        record = advance(harness, pools, &record).await.unwrap();
+        if record.state == WarmSandboxState::Ready {
+            assert!(record.home.as_ref().unwrap().request.policy.is_native_vct());
+            return record;
+        }
+    }
+    panic!("prepared native VCT hierarchy did not become Ready");
 }
 
 #[tokio::test]
