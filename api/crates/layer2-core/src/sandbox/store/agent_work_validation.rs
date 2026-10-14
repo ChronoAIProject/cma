@@ -11,7 +11,7 @@ use super::agent_work_transition_validation::{
     classify_publication, validate_position, PublicationKind,
 };
 use super::agent_worktree_validation::validate_worktree_delta;
-use super::{AgentWorkMutation, SandboxStoreError};
+use super::{agent_work_prepared_pair::paired_intent, AgentWorkMutation, SandboxStoreError};
 
 /// Stores must read and write-fence both parents in the same transaction as this publication.
 pub fn validate_agent_workspace_binding(
@@ -364,6 +364,9 @@ fn validate_work_delta(
 }
 
 fn validate_intent_delta(current: &Agent, next: &Agent) -> Result<(), SandboxStoreError> {
+    if paired_intent(current, next) {
+        return Ok(());
+    }
     let debts = &next.work.cleanup_debt;
     let Some(debt) = debts.last() else {
         return Err(SandboxStoreError::Conflict);

@@ -63,10 +63,12 @@ pub use agent_lifecycle::{
 };
 pub use agent_sign_in::apply_agent_sign_in;
 mod agent_work_evidence_validation;
+mod agent_work_prepared_pair;
 mod agent_work_transition_validation;
 mod agent_work_validation;
 mod agent_worktree_validation;
 pub use agent_work_evidence_validation::{MAX_AGENT_CLEANUP_DEBT, MAX_AGENT_WORK_RECEIPTS};
+pub use agent_work_prepared_pair::is_prepared_agent_replay_pair;
 pub use agent_work_validation::{
     retired_sandbox_cleanup_is_absent, retiring_sandbox_process_is_absent,
     validate_agent_work_mutation, validate_agent_work_mutation_with_sandbox,
