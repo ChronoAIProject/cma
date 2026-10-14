@@ -242,23 +242,13 @@ export function SkillsSettings({
                   label={`Version for ${entry.name}`}
                   value={version}
                   options={available.map((value) => ({ value, label: value }))}
-                  disabled={
-                    disabled ||
-                    available.length === 0 ||
-                    existing?.status === 'installed' ||
-                    existing?.status === 'pending'
-                  }
+                  disabled={disabled || available.length === 0 || existing !== undefined}
                   onChange={(value) =>
                     setVersions((current) => ({ ...current, [entry.id]: value }))
                   }
                 />
                 <Button
-                  disabled={
-                    disabled ||
-                    !version ||
-                    existing?.status === 'installed' ||
-                    existing?.status === 'pending'
-                  }
+                  disabled={disabled || !version || existing !== undefined}
                   aria-label={`Install ${entry.name}`}
                   onClick={() => void install(entry.id, version)}
                 >
@@ -266,9 +256,14 @@ export function SkillsSettings({
                     ? 'Installed'
                     : existing?.status === 'pending'
                       ? 'Installing…'
-                      : 'Install'}
+                      : existing?.status === 'failed'
+                        ? 'Installation failed'
+                        : 'Install'}
                 </Button>
               </div>
+              {existing?.status === 'failed' ? (
+                <p>This installation failed. This Agent cannot retry or replace this skill.</p>
+              ) : null}
               {available.length === 0 ? <p>No published release is available.</p> : null}
             </li>
           );
