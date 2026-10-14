@@ -313,10 +313,7 @@ async fn completed_step_with_first_prompt(
     if native_id.is_some() {
         assert_eq!(dispatched.conversation.conversation_id, native_id);
     }
-    assert_eq!(
-        backend.calls.load(Ordering::SeqCst),
-        if prior_steps == 3 { 2 } else { 1 }
-    );
+    assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
     let snapshot = harness.backend.snapshot(&harness.runtime).await.unwrap();
     assert_eq!(snapshot.worktrees.len(), 1);
     assert_eq!(snapshot.homes.len(), 1);

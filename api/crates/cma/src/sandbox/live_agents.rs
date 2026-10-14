@@ -11,6 +11,7 @@ use layer3_adapter::{ConversationInputSender, ConversationUpdate};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::AbortHandle;
 
+mod publication;
 mod recovery;
 mod updates;
 pub(crate) use recovery::{
@@ -57,7 +58,7 @@ struct RegistryEntry {
     authority_fence: u64,
     capabilities: RuntimeCapabilities,
     input: ConversationInputSender,
-    activation: Option<oneshot::Sender<()>>,
+    activation: Option<oneshot::Sender<LiveAgentAttachmentIdentity>>,
     published: bool,
     nonce: u64,
     task: AbortHandle,
@@ -128,19 +129,7 @@ impl LiveAgentRegistry {
 
         let nonce = self.next_nonce.fetch_add(1, Ordering::Relaxed) + 1;
         let (activate, activated) = oneshot::channel();
-        let task = spawn_update_task(
-            Arc::downgrade(self),
-            LiveAgentAttachmentIdentity {
-                agent_id: agent_id.clone(),
-                conversation_id: conversation_id.clone(),
-                runtime_generation,
-                authority_fence,
-                nonce,
-            },
-            activated,
-            updates,
-            recorder,
-        );
+        let task = spawn_update_task(Arc::downgrade(self), activated, updates, recorder);
         let entry = RegistryEntry {
             conversation_id: conversation_id.clone(),
             runtime_generation,
@@ -163,36 +152,6 @@ impl LiveAgentRegistry {
             nonce,
             inserted: true,
         })
-    }
-
-    pub(crate) fn publish_and_activate(
-        &self,
-        attachment: &LiveAgentAttachment,
-    ) -> Result<(), LiveAgentRegistryError> {
-        let mut state = self.lock();
-        if exact_entry(&state.entries, attachment).is_some() {
-            return Ok(());
-        }
-        if exact_entry(&state.staged, attachment).is_none() {
-            return Err(LiveAgentRegistryError::NotAttached);
-        }
-        let mut entry = state
-            .staged
-            .remove(&attachment.agent_id)
-            .ok_or(LiveAgentRegistryError::NotAttached)?;
-        let Some(activation) = entry.activation.take() else {
-            entry.task.abort();
-            return Err(LiveAgentRegistryError::NotAttached);
-        };
-        if activation.send(()).is_err() {
-            entry.task.abort();
-            return Err(LiveAgentRegistryError::NotAttached);
-        }
-        entry.published = true;
-        if let Some(replaced) = state.entries.insert(attachment.agent_id.clone(), entry) {
-            replaced.task.abort();
-        }
-        Ok(())
     }
 
     #[cfg(test)]

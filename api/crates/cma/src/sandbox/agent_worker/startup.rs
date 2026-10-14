@@ -23,6 +23,7 @@ const UPDATE_BUFFER: usize = 256;
 
 #[path = "startup_attachment.rs"]
 mod attachment;
+pub(super) use attachment::validated_open_request;
 
 impl AgentWorker {
     pub(super) async fn add_worktree(

@@ -26,10 +26,29 @@ impl AgentWorker {
             Ok(target) => target,
             Err(failure) => return self.handle_failure(agent, failure, now).await,
         };
-        claimed_fence(&agent, &self.config.holder)?;
-        let attachment = match self.reattach(&agent, &context, &target).await {
-            Ok(attachment) => attachment,
-            Err(failure) => return self.handle_failure(agent, failure, now).await,
+        let fence = claimed_fence(&agent, &self.config.holder)?;
+        if let Err(failure) = super::startup::validated_open_request(&agent, &context) {
+            return self.handle_failure(agent, failure, now).await;
+        }
+        // The initial open has already negotiated this exact conversation. Keep
+        // that unpublished stream instead of opening it again. Settings replay
+        // and missing local state still require the full reconnect protocol.
+        let staged = if agent.conversation.settings.is_none() {
+            self.dependencies.registry.staged_attachment(&target, fence)
+        } else {
+            Ok(None)
+        };
+        let attachment = match staged {
+            Ok(Some(attachment)) => attachment,
+            Ok(None) => match self.reattach(&agent, &context, &target).await {
+                Ok(attachment) => attachment,
+                Err(failure) => return self.handle_failure(agent, failure, now).await,
+            },
+            Err(error) => {
+                return self
+                    .handle_failure(agent, registry_failure(error), now)
+                    .await;
+            }
         };
         if let Err(error) = self.dependencies.registry.publish_and_activate(&attachment) {
             self.dependencies.registry.rollback(&attachment);
@@ -37,7 +56,8 @@ impl AgentWorker {
                 .handle_failure(agent, registry_failure(error), now)
                 .await;
         }
-        self.finish_connection_publication(agent, now).await
+        self.finish_connection_publication(agent, &attachment, now)
+            .await
     }
 
     pub(super) async fn connection_context(
@@ -68,9 +88,10 @@ impl AgentWorker {
         Ok(context)
     }
 
-    async fn finish_connection_publication(
+    pub(in crate::sandbox) async fn finish_connection_publication(
         &self,
         mut agent: Agent,
+        attachment: &crate::sandbox::live_agents::LiveAgentAttachment,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
         let fence = claimed_fence(&agent, &self.config.holder)?;
@@ -94,7 +115,13 @@ impl AgentWorker {
                 .progress(agent.clone(), next, now, None, Vec::new(), None, None)
                 .await
             {
-                Ok(()) => return Ok(()),
+                Ok(()) => {
+                    self.dependencies
+                        .registry
+                        .recover_lost_publication(attachment)
+                        .await;
+                    return Ok(());
+                }
                 Err(SandboxStoreError::Conflict) => {
                     let Some(current) = self.dependencies.store.get_agent(&agent.id).await? else {
                         return Err(SandboxStoreError::NotFound);
