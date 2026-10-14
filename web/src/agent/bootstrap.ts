@@ -28,3 +28,25 @@ export function bootstrapInputAllowed(
     parent.lifecycle.pause.reason !== 'checkpoint_in_progress'
   );
 }
+
+/** Queued messages retain their durable v2 receipt while the same home resumes. */
+export function revivalInputAllowed(
+  agent: AgentDetail,
+  parent: SandboxDetail,
+  owner: string | undefined,
+): boolean {
+  return (
+    owner !== undefined &&
+    parent.owner === owner &&
+    agent.sandbox.id === parent.id &&
+    agent.worktree.agentId === agent.id &&
+    agent.worktree.workspaceId === agent.workspace.id &&
+    agent.worktree.sandboxId === parent.id &&
+    ['paused', 'starting', 'ready'].includes(agent.status) &&
+    agent.stopReason === undefined &&
+    parent.status === 'reviving' &&
+    parent.lifecycle?.operation?.purpose === 'revive' &&
+    parent.lifecycle.checkpoint === undefined &&
+    parent.lifecycle.pause.reason !== 'checkpoint_in_progress'
+  );
+}

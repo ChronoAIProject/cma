@@ -3,7 +3,7 @@ import { ApiError } from '@chronoai/cma-sdk';
 import type { CmaWebClient } from '../api/client';
 import type { AgentDetail, SandboxDetail } from '../api/types';
 import { sandboxLifecycleLabel, sandboxRefreshDelay } from '../sandbox/lifecycle';
-import { bootstrapInputAllowed } from './bootstrap';
+import { bootstrapInputAllowed, revivalInputAllowed } from './bootstrap';
 
 export interface SandboxInputAvailability {
   readonly allowed: boolean;
@@ -33,6 +33,7 @@ interface Observation {
   readonly stale: boolean;
   readonly observedAt?: string;
   readonly bootstrapAllowed?: boolean;
+  readonly revivalAllowed?: boolean;
 }
 
 export function useSandboxInput(
@@ -42,14 +43,33 @@ export function useSandboxInput(
   queueWhileStarting = false,
   bootstrap?: AgentDetail['bootstrap'],
   owner?: string,
+  queueWhileReviving = false,
 ): SandboxAvailability {
   const [observation, setObservation] = useState<Observation>();
   const operationId = queueWhileStarting ? bootstrap?.operationId : undefined;
   const workspaceId = queueWhileStarting ? bootstrap?.workspaceId : undefined;
   const bootstrapSandboxId = queueWhileStarting ? bootstrap?.sandboxId : undefined;
   const scope = useMemo(
-    () => ({ client, agentId, sandboxId, operationId, workspaceId, bootstrapSandboxId, owner }),
-    [client, agentId, sandboxId, operationId, workspaceId, bootstrapSandboxId, owner],
+    () => ({
+      client,
+      agentId,
+      sandboxId,
+      operationId,
+      workspaceId,
+      bootstrapSandboxId,
+      owner,
+      queueWhileReviving,
+    }),
+    [
+      client,
+      agentId,
+      sandboxId,
+      operationId,
+      workspaceId,
+      bootstrapSandboxId,
+      owner,
+      queueWhileReviving,
+    ],
   );
   useEffect(() => {
     if (agentId === undefined || sandboxId === undefined) return;
@@ -89,7 +109,9 @@ export function useSandboxInput(
       void Promise.all([
         (async () => client.readSandbox(sandboxId, { signal }))(),
         (async () =>
-          operationId === undefined ? undefined : client.readAgent(agentId, { signal }))(),
+          operationId === undefined && !queueWhileReviving
+            ? undefined
+            : client.readAgent(agentId, { signal }))(),
       ])
         .then(([sandbox, agent]) => {
           if (controller.signal.aborted || request.signal.aborted || pending !== request) return;
@@ -99,7 +121,7 @@ export function useSandboxInput(
             agent !== undefined &&
             (agent.id !== agentId ||
               agent.sandbox.id !== sandboxId ||
-              agent.workspace.id !== workspaceId)
+              (workspaceId !== undefined && agent.workspace.id !== workspaceId))
           )
             throw new Error('Bootstrap Agent identity did not match its parent.');
           if (requestEpoch !== visibilityEpoch || document.hidden) {
@@ -118,6 +140,10 @@ export function useSandboxInput(
               operationId !== undefined &&
               bootstrapSandboxId === sandboxId &&
               bootstrapInputAllowed(agent, sandbox, owner, operationId),
+            revivalAllowed:
+              queueWhileReviving &&
+              agent !== undefined &&
+              revivalInputAllowed(agent, sandbox, owner),
           });
           clearTimeout(expiry);
           expiry = setTimeout(markStale, 10000);
@@ -152,7 +178,17 @@ export function useSandboxInput(
       clearTimeout(expiry);
       document.removeEventListener('visibilitychange', visibilityChanged);
     };
-  }, [agentId, bootstrapSandboxId, client, operationId, owner, sandboxId, scope, workspaceId]);
+  }, [
+    agentId,
+    bootstrapSandboxId,
+    client,
+    operationId,
+    owner,
+    queueWhileReviving,
+    sandboxId,
+    scope,
+    workspaceId,
+  ]);
 
   const current = observation?.scope === scope ? observation : undefined;
   return {
@@ -208,6 +244,7 @@ function inputAvailability(
   if (sandbox.status === 'failed' || sandbox.status === 'retired')
     return { allowed: false, notice: 'This Sandbox is unavailable. Messages cannot be sent.' };
   if (queueWhileStarting && observation.bootstrapAllowed) return { allowed: true };
+  if (observation.revivalAllowed) return { allowed: true };
   if (
     sandbox.lifecycle.operation !== undefined ||
     (sandbox.status !== 'active' && (queueWhileStarting || sandbox.status !== 'paused'))
