@@ -116,6 +116,10 @@ export function useAgentController(
       ? state.detail.bootstrap
       : undefined,
     options.viewerId,
+    state.status === 'ready' &&
+      state.detail.id === agentId &&
+      state.v2 !== undefined &&
+      options.viewerId !== undefined,
   );
   const activeTurn =
     state.status === 'ready' &&
