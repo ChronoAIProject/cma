@@ -6,6 +6,7 @@ mod backend;
 mod retirement_tests;
 mod scheduling_tests;
 mod service_access;
+mod status_reuse_tests;
 use backend::NativeBackend;
 
 struct Fixture {
