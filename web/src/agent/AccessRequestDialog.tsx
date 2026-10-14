@@ -27,7 +27,11 @@ export function AgentAccessRequests({
     if (!enabled) return;
     const request = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let inFlight = false;
     const poll = async () => {
+      if (request.signal.aborted || inFlight || document.hidden) return;
+      clearTimeout(timer);
+      inFlight = true;
       try {
         const next = await accessRequests.list(agentId, request.signal);
         if (request.signal.aborted) return;
@@ -38,13 +42,18 @@ export function AgentAccessRequests({
         setError(
           cause instanceof Error ? cause.message : 'Agent access requests could not be checked.',
         );
+      } finally {
+        inFlight = false;
       }
       if (!request.signal.aborted) timer = setTimeout(() => void poll(), 2000);
     };
+    const onVisibilityChange = () => void poll();
+    document.addEventListener('visibilitychange', onVisibilityChange);
     void poll();
     return () => {
       request.abort();
       clearTimeout(timer);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
     };
   }, [agentId, enabled, refresh]);
   if (!enabled) return null;

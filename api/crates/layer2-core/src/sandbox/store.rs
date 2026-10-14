@@ -16,6 +16,8 @@ pub use service_traits::*;
 
 mod agent;
 pub use agent::AgentStore;
+mod workspace_worker;
+pub use workspace_worker::{WorkspacePreparationCompletion, WorkspaceWorkerStore};
 
 mod agent_control;
 mod background_checkpoint;
@@ -61,10 +63,16 @@ pub use agent_lifecycle::{
 };
 pub use agent_sign_in::apply_agent_sign_in;
 mod agent_work_evidence_validation;
+mod agent_work_prepared_open_ready;
+mod agent_work_prepared_pair;
+pub use agent_work_prepared_open_ready::{
+    validate_prepared_agent_open_ready, PreparedAgentOpenContext,
+};
 mod agent_work_transition_validation;
 mod agent_work_validation;
 mod agent_worktree_validation;
 pub use agent_work_evidence_validation::{MAX_AGENT_CLEANUP_DEBT, MAX_AGENT_WORK_RECEIPTS};
+pub use agent_work_prepared_pair::is_prepared_agent_replay_pair;
 pub use agent_work_validation::{
     retired_sandbox_cleanup_is_absent, retiring_sandbox_process_is_absent,
     validate_agent_work_mutation, validate_agent_work_mutation_with_sandbox,
@@ -258,23 +266,6 @@ pub trait WorkspaceAdmissionStore: Send + Sync {
     ) -> Result<Workspace, SandboxStoreError>;
 }
 
-/// Durable workspace lifecycle discovery and lease fencing.
-#[async_trait]
-pub trait WorkspaceWorkerStore: Send + Sync {
-    async fn due_workspace_work(
-        &self,
-        now: &str,
-        limit: u16,
-    ) -> Result<Vec<WorkspaceId>, SandboxStoreError>;
-    async fn claim_workspace_work(
-        &self,
-        id: &WorkspaceId,
-        holder: &str,
-        now: String,
-        lease_expires_at: String,
-    ) -> Result<Option<Workspace>, SandboxStoreError>;
-}
-
 #[async_trait]
 pub trait WorktreeStore: Send + Sync {
     async fn create_worktree(&self, worktree: Worktree) -> Result<(), SandboxStoreError>;
@@ -310,6 +301,16 @@ pub trait SandboxEventStore: Send + Sync {
 /// Durable lifecycle work discovery, lease fencing and terminal purge.
 #[async_trait]
 pub trait SandboxWorkerStore: Send + Sync {
+    /// Completed installation attached to this exact ownership and runtime.
+    /// The worker must match the current request digest and inspect the live
+    /// process before advancing; this proof never authorizes runtime dispatch.
+    async fn completed_installation_digest(
+        &self,
+        _sandbox: &Sandbox,
+    ) -> Result<Option<String>, SandboxStoreError> {
+        Ok(None)
+    }
+
     async fn due_sandbox_work(
         &self,
         now: &str,

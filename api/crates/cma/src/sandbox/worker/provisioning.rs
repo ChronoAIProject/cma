@@ -5,10 +5,7 @@ use layer2_core::sandbox::store::SandboxStoreError;
 use layer2_core::sandbox::{
     RuntimeBinding, Sandbox, SandboxEventKind, SandboxStatus, SandboxWorkStep,
 };
-use layer3_adapter::{
-    CredentialFrame, InstallRequest, RuntimeAdoptionRequest, RuntimeCredential, RuntimeHandle,
-    RuntimeProvisionRequest,
-};
+use layer3_adapter::{CredentialFrame, RuntimeCredential, RuntimeProvisionRequest};
 
 use super::support::{
     adapter_failure, credential_failure, credential_rotation_at, credential_valid_for_delivery,
@@ -40,50 +37,19 @@ impl SandboxWorker {
                 .await?;
         }
         timing.completed("execution_policy");
-        // A warm admission already owns an installed runtime. Prove that exact
-        // binding before replaying its installation receipt and minting a key.
-        if let Some(binding) = sandbox.runtime.clone() {
-            let adoption = RuntimeAdoptionRequest::new(
-                binding.provision_generation.unwrap_or(1),
-                RuntimeHandle::new(&binding.runtime_id),
-                spec.clone(),
-            )
-            .with_expected_image(&binding.runtime_version);
-            match self.dependencies.adapter.adopt_runtime(&adoption).await {
-                Ok(Some(_)) => {
-                    return self
-                        .advance_status(
-                            sandbox,
-                            SandboxStatus::Installing,
-                            SandboxWorkStep::RunInstall,
-                            now,
-                        )
-                        .await
-                }
-                Ok(None) => {
-                    // No user data or credential has been delivered at this
-                    // stage. Persist a new generation before replacing a lost
-                    // warm runtime; retries reuse this reservation.
-                    let expected = sandbox.revision;
-                    sandbox.runtime = None;
-                    sandbox.lifecycle.runtime_generation_high_water = sandbox
-                        .lifecycle
-                        .runtime_generation_high_water
-                        .checked_add(1)
-                        .ok_or(SandboxStoreError::Conflict)?;
-                    sandbox.revision =
-                        expected.checked_add(1).ok_or(SandboxStoreError::Conflict)?;
-                    self.dependencies
-                        .store
-                        .save_sandbox(expected, sandbox.clone())
-                        .await?;
-                }
-                Err(error) => {
-                    return self
-                        .handle_failure(sandbox, adapter_failure(error), now)
-                        .await
-                }
-            }
+        if sandbox.runtime.is_some() {
+            let digest = self
+                .dependencies
+                .store
+                .completed_installation_digest(&sandbox)
+                .await?;
+            let Some(next) = self
+                .adopt_initial_runtime(sandbox, digest.as_deref(), now)
+                .await?
+            else {
+                return Ok(());
+            };
+            sandbox = next;
         }
         let generation = sandbox.lifecycle.runtime_generation_high_water.max(1);
         let runtime_version = spec
@@ -158,17 +124,8 @@ impl SandboxWorker {
                 .save_sandbox(expected, sandbox.clone())
                 .await?;
         }
-        let execution = sandbox
-            .work
-            .execution
+        let request = super::initial_runtime::installation_request(&sandbox)
             .expect("execution policy was persisted");
-        let request = InstallRequest::with_timeouts(
-            format!("sandbox-install-v1:{}", sandbox.id),
-            sandbox.profile.content.software_install_commands.clone(),
-            execution.command_timeout_seconds,
-            execution.total_timeout_seconds,
-            layer3_adapter::DEFAULT_COMMAND_OUTPUT_LIMIT_BYTES,
-        );
         match self
             .dependencies
             .adapter

@@ -324,11 +324,20 @@ mod control;
 #[path = "native_http_pool.rs"]
 mod native_pool;
 
+#[path = "native_status.rs"]
+mod native_status;
 #[path = "native_transport.rs"]
 mod native_transport;
 
 #[async_trait::async_trait]
 impl super::HostedControlTransport for ProviderHostedControlTransport {
+    async fn inspect_native_status(
+        &self,
+        inspection: &super::NativeStatusInspection<'_>,
+    ) -> crate::Result<Option<crate::RuntimeInspection>> {
+        self.inspect_reused_native_status(inspection).await
+    }
+
     async fn bind_runtime(&self, handle: &RuntimeHandle, sandbox_id: &str) -> crate::Result<()> {
         self.bind_sandbox(handle, sandbox_id).await
     }

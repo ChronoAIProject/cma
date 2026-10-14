@@ -84,7 +84,7 @@ pub(super) fn agent_content(
     agent_content_for(profile, LifecycleBehavior::PromptRepository)
 }
 
-pub(super) fn agent_content_for(
+pub(crate) fn agent_content_for(
     profile: &AgentLifecycleProfile,
     behavior: LifecycleBehavior,
 ) -> Result<AgentProfileContent, AgentLifecycleProvisioningError> {

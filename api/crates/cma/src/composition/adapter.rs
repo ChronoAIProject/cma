@@ -1,17 +1,25 @@
 use crate::config::Config;
 use std::sync::Arc;
 
+pub(super) struct ProductionAdapters {
+    pub owned: Arc<dyn layer3_adapter::SandboxAdapter>,
+    pub preparation: crate::sandbox::native_prepared::NativePreparedWorker,
+}
+
 pub(super) async fn production_adapter(
     config: &Config,
-    subscriptions: Arc<dyn layer3_adapter::hosted::HostedSubscriptionSource>,
-    provider_tools: Arc<dyn layer3_adapter::hosted::HostedProviderToolSource>,
+    store: Arc<crate::store::MongoSandboxStore>,
+    subscriptions: Arc<crate::connections::CodexSubscriptions>,
     access_tools: Arc<dyn layer3_adapter::hosted::HostedAccessToolSource>,
-) -> Result<Arc<dyn layer3_adapter::SandboxAdapter>, String> {
+) -> Result<ProductionAdapters, String> {
     use layer3_adapter::codex::{CodexAdapter, CodexSandboxSpec};
     use layer3_adapter::hosted::{
         HostedDeployment, ProviderHostedBackend, ProviderHostedControlTransport,
     };
     use layer3_adapter::provider::{BatchSandboxReclaimer, SandboxClient};
+
+    let subscriptions = crate::connections::RuntimeSubscriptions::new(store.clone(), subscriptions);
+    let provider_tools = crate::store::MongoProviderToolSource::new(store.clone());
 
     let routing_client = mongodb::Client::with_uri_str(&config.mongodb_uri)
         .await
@@ -161,17 +169,27 @@ pub(super) async fn production_adapter(
     deployment
         .contract()
         .map_err(|error| format!("hosted runtime image is not usable: {error}"))?;
-    let mut adapter = CodexAdapter::with_backend(
-        backends,
-        CodexSandboxSpec {
-            deployment,
-            ..CodexSandboxSpec::default()
-        },
-    )
-    .with_provider_tools(provider_tools)
-    .with_access_tools(access_tools);
+    let backend: Arc<dyn layer3_adapter::hosted::HostedBackend> = Arc::new(backends);
+    let spec = CodexSandboxSpec {
+        deployment,
+        ..CodexSandboxSpec::default()
+    };
+    // Only the bounded native preparation worker receives this adapter. It
+    // has no owner tool sources; that worker receives no credential controller.
+    let mut preparation = CodexAdapter::new(backend.clone(), spec.clone());
+    let mut adapter = CodexAdapter::new(backend, spec)
+        .with_provider_tools(provider_tools)
+        .with_access_tools(access_tools);
     if let Some(homes) = home_store {
+        preparation = preparation.with_home_volumes(homes.clone());
         adapter = adapter.with_home_volumes(homes);
     }
-    Ok(Arc::new(adapter))
+    Ok(ProductionAdapters {
+        owned: Arc::new(adapter),
+        preparation: crate::sandbox::native_prepared::NativePreparedWorker::new(
+            store,
+            Arc::new(preparation),
+            config,
+        )?,
+    })
 }

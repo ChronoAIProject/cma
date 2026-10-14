@@ -8,7 +8,6 @@ mod credentials;
 mod event_routing;
 mod profiles;
 mod routes;
-use adapter::production_adapter;
 use axum::Router;
 use layer1_public::rest::{self, HierarchyState, ProfilesState};
 use layer2_core::{
@@ -48,6 +47,7 @@ pub(crate) struct ControlPlaneComposition {
     pub sandbox_control_scheduler: super::commands::SandboxControlScheduler,
     pub sandbox_lifecycle: SandboxLifecycleComposition,
     pub native_warm_pools: Arc<crate::warm_pools::NativeWarmPools>,
+    pub native_prepared: crate::sandbox::native_prepared::NativePreparedWorker,
     pub agent_access_worker: crate::agent_access_worker::AgentAccessWorker,
 }
 
@@ -98,16 +98,14 @@ impl ControlPlaneComposition {
             &config.public_url,
             &config.auth_encryption_key,
         )?;
-        let adapter = production_adapter(
+        let adapters = adapter::production_adapter(
             config,
-            crate::connections::RuntimeSubscriptions::new(
-                stores.sandbox_model.clone(),
-                subscriptions.clone(),
-            ),
-            crate::store::MongoProviderToolSource::new(stores.sandbox_model.clone()),
+            stores.sandbox_model.clone(),
+            subscriptions.clone(),
             access_tools.clone(),
         )
         .await?;
+        let adapter = adapters.owned;
         let auth = AuthState::with_store_and_nyxid_public_url(
             config.auth_mode.clone(),
             Some(SignInRecords {
@@ -191,6 +189,7 @@ impl ControlPlaneComposition {
             },
             profile_scanner.clone(),
             stores.agent_lifecycle.clone(),
+            Some(stores.sandbox_model.clone()),
         );
         inline_lifecycle.resume_pending();
         let projections = projections
@@ -494,6 +493,7 @@ impl ControlPlaneComposition {
             sandbox_control_scheduler,
             sandbox_lifecycle,
             native_warm_pools,
+            native_prepared: adapters.preparation,
             agent_access_worker: agent_access.worker,
         })
     }
