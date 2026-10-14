@@ -254,6 +254,10 @@ pub struct PodBinding {
     pub pod_name: String,
     pub pod_uid: String,
     pub pod_ip: std::net::IpAddr,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_container_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_restart_count: Option<i32>,
 }
 
 pub(super) fn pod_binding(object: &DynamicObject, pod: &Pod) -> Result<PodBinding> {
@@ -283,6 +287,15 @@ pub(super) fn pod_binding(object: &DynamicObject, pod: &Pod) -> Result<PodBindin
     {
         return Err(rejected("Pod address is not routable"));
     }
+    let container = status.container_statuses.as_ref().and_then(|containers| {
+        containers.iter().find(|container| {
+            container.name == "runtime"
+                && container
+                    .state
+                    .as_ref()
+                    .is_some_and(|state| state.running.is_some())
+        })
+    });
     Ok(PodBinding {
         sandbox_name: object.name_any(),
         sandbox_uid: object
@@ -294,5 +307,7 @@ pub(super) fn pod_binding(object: &DynamicObject, pod: &Pod) -> Result<PodBindin
             .filter(|s| !s.is_empty())
             .ok_or_else(|| rejected("Pod UID missing"))?,
         pod_ip: ip,
+        runtime_container_id: container.and_then(|container| container.container_id.clone()),
+        runtime_restart_count: container.map(|container| container.restart_count),
     })
 }

@@ -49,6 +49,8 @@ fn binding() -> PodBinding {
         pod_name: "claimed-pod".into(),
         pod_uid: "original-pod".into(),
         pod_ip: "10.0.0.1".parse().unwrap(),
+        runtime_container_id: None,
+        runtime_restart_count: None,
     }
 }
 
