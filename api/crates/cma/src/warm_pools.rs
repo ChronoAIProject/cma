@@ -56,6 +56,7 @@ impl PoolTarget {
             id: self.id.clone(),
             revision: self.revision as u64,
             image: self.plan.spec.image.uri.clone(),
+            config_sha256: self.plan.config_sha256.clone(),
             cpu_millis: self.plan.spec.cpu_millis,
             memory_mib: self.plan.spec.memory_mib,
             target_replicas: self.target_replicas,
@@ -167,6 +168,32 @@ impl NativeWarmPools {
         };
         reconcile_one(self.store.as_ref(), provider).await
     }
+
+    fn default_config_sha256(&self) -> Option<String> {
+        default_config_sha256(
+            self.adapter.native_pools(),
+            &self.image,
+            self.home.as_ref(),
+            &self.default_capacity,
+        )
+    }
+}
+
+fn default_config_sha256(
+    provider: Option<&dyn layer3_adapter::agent_sandbox::NativePoolControl>,
+    image: &RuntimeImage,
+    home: Option<&HomeVolumePolicy>,
+    capacity: &layer3_adapter::SandboxCapacity,
+) -> Option<String> {
+    provider?
+        .plan(&NativePoolSpec {
+            image: image.clone(),
+            cpu_millis: capacity.cpu_millis,
+            memory_mib: capacity.memory_mib,
+            home: home?.clone(),
+        })
+        .ok()
+        .map(|plan| plan.config_sha256)
 }
 
 #[async_trait]
@@ -198,6 +225,7 @@ impl WarmPoolAdministration for NativeWarmPools {
             default_image: self.image.uri.clone(),
             default_cpu_millis: self.default_capacity.cpu_millis,
             default_memory_mib: self.default_capacity.memory_mib,
+            default_config_sha256: self.default_config_sha256(),
             available,
         })
     }

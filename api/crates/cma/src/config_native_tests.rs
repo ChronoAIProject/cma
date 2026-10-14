@@ -60,6 +60,15 @@ fn native_namespace_and_connection_do_not_replace_legacy_configuration() {
     .unwrap();
     assert_eq!(config.runtime.sandbox_namespace, "chrono-bot");
     assert_eq!(
+        config
+            .runtime
+            .agent_sandbox
+            .as_ref()
+            .unwrap()
+            .template_fs_group_change_policy,
+        Some(layer3_adapter::agent_sandbox::NativeFsGroupChangePolicy::OnRootMismatch),
+    );
+    assert_eq!(
         config.runtime.agent_sandbox.as_ref().unwrap().namespace,
         "remote-cma"
     );

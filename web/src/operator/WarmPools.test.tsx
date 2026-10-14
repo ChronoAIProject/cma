@@ -30,6 +30,7 @@ describe('native warm pool operations', () => {
       items: [warmPool, { ...warmPool, id: 'pool-2', observed: false, ready_replicas: 3 }],
       default_cpu_millis: 1000,
       default_memory_mib: 1024,
+      default_config_sha256: 'd'.repeat(64),
       default_image: 'registry.example/new-runtime@sha256:' + 'b'.repeat(64),
       available: true,
     });
@@ -49,6 +50,7 @@ describe('native warm pool operations', () => {
       items: [],
       default_cpu_millis: 1000,
       default_memory_mib: 1024,
+      default_config_sha256: 'd'.repeat(64),
       default_image: warmPool.image,
       available: false,
     });
@@ -108,6 +110,7 @@ describe('native warm pool operations', () => {
       items: [{ ...warmPool, revision: 7, target_replicas: 6 }],
       default_cpu_millis: 1000,
       default_memory_mib: 1024,
+      default_config_sha256: 'd'.repeat(64),
       default_image: warmPool.image,
       available: true,
     });
@@ -159,6 +162,7 @@ describe('native warm pool operations', () => {
       items: [{ ...warmPool, revision: 2, target_replicas: 5 }],
       default_cpu_millis: 1000,
       default_memory_mib: 1024,
+      default_config_sha256: 'd'.repeat(64),
       default_image: warmPool.image,
       available: true,
     });
@@ -177,6 +181,7 @@ describe('native warm pool operations', () => {
       items: [warmPool],
       default_cpu_millis: 1000,
       default_memory_mib: 1024,
+      default_config_sha256: 'd'.repeat(64),
       default_image: warmPool.image,
       available: true,
     };

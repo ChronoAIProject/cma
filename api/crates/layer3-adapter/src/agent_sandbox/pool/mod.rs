@@ -12,6 +12,8 @@ mod native_proof;
 pub use native_home_store::NativeHomeVolumes;
 mod management;
 mod model;
+mod pod_policy;
+pub use pod_policy::NativeFsGroupChangePolicy;
 mod reconciliation;
 mod recovery;
 mod runtime;
@@ -152,11 +154,13 @@ impl AgentSandboxPools {
         Ok(())
     }
 
-    pub(crate) async fn verify_explicit_network_policy(
+    pub(crate) async fn verify_explicit_template_policy(
         &self,
         binding: &NativePoolBinding,
     ) -> Result<()> {
-        if binding.pod_policy.template_network_policy.is_some() {
+        if binding.pod_policy.template_network_policy.is_some()
+            || binding.pod_policy.fs_group_change_policy.is_some()
+        {
             self.bound_resources(binding).await?;
         }
         Ok(())
@@ -236,3 +240,6 @@ mod native_home_tests;
 
 #[cfg(test)]
 mod network_policy_tests;
+
+#[cfg(test)]
+mod fs_group_policy_tests;

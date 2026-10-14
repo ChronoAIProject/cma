@@ -2,6 +2,8 @@ use kube::{api::DynamicObject, ResourceExt};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+pub(super) use super::pod_policy::policy_digest;
+pub use super::pod_policy::NativePoolPodPolicy;
 use super::{rejected, AgentSandboxConfig, Result, API_VERSION, DIGEST_ANNOTATION, OWNER_LABEL};
 use crate::{HomeVolumePolicy, HomeVolumeRequest, RuntimeImage};
 
@@ -67,27 +69,6 @@ pub struct NativePoolBinding {
     pub template_name: String,
     pub template_uid: String,
     pub config_sha256: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct NativePoolPodPolicy {
-    pub runtime_class: Option<String>,
-    pub service_account: String,
-    pub image_pull_secrets: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub template_network_policy: Option<super::super::NativeTemplateNetworkPolicy>,
-}
-
-impl From<&AgentSandboxConfig> for NativePoolPodPolicy {
-    fn from(config: &AgentSandboxConfig) -> Self {
-        Self {
-            runtime_class: config.runtime_class.clone(),
-            service_account: config.service_account.clone(),
-            image_pull_secrets: config.image_pull_secrets.clone(),
-            template_network_policy: config.template_network_policy.clone(),
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -168,28 +149,6 @@ pub(super) fn digest(config: &AgentSandboxConfig, spec: &NativePoolSpec) -> Resu
     )
 }
 
-pub(super) fn policy_digest(
-    namespace: &str,
-    deployment: &str,
-    policy: &NativePoolPodPolicy,
-    spec: &NativePoolSpec,
-) -> Result<String> {
-    // Preserve the original tuple and serialized records for historical definitions.
-    let original = (
-        "native-pool-v1",
-        namespace,
-        deployment,
-        &policy.runtime_class,
-        &policy.service_account,
-        &policy.image_pull_secrets,
-        spec,
-    );
-    match &policy.template_network_policy {
-        None => crate::provider_request_digest(&original),
-        Some(network) => crate::provider_request_digest(&("native-pool-v2", original, network)),
-    }
-}
-
 pub(super) fn template(
     config: &AgentSandboxConfig,
     spec: &NativePoolSpec,
@@ -234,6 +193,9 @@ pub(super) fn template(
     });
     if let Some(class) = &config.runtime_class {
         pod["spec"]["runtimeClassName"] = json!(class);
+    }
+    if let Some(policy) = config.template_fs_group_change_policy {
+        pod["spec"]["securityContext"]["fsGroupChangePolicy"] = json!(policy);
     }
     let mut template = json!({"apiVersion":API_VERSION,"kind":"SandboxTemplate",
         "metadata":{"name":name,"namespace":config.namespace,"labels":labels,
@@ -358,6 +320,7 @@ pub(super) fn binding_config(
         service_account: binding.pod_policy.service_account.clone(),
         image_pull_secrets: binding.pod_policy.image_pull_secrets.clone(),
         template_network_policy: binding.pod_policy.template_network_policy.clone(),
+        template_fs_group_change_policy: binding.pod_policy.fs_group_change_policy,
         ..current.clone()
     }
 }
