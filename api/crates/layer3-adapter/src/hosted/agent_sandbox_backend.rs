@@ -12,11 +12,19 @@ use tokio::sync::mpsc;
 pub struct AgentSandboxBackend {
     client: AgentSandboxClient,
     transport: Arc<dyn HostedControlTransport>,
+    assignments: std::sync::Mutex<std::collections::BTreeMap<RuntimeHandle, binding::Assignment>>,
 }
+
+#[path = "agent_sandbox_binding.rs"]
+mod binding;
 
 impl AgentSandboxBackend {
     pub fn new(client: AgentSandboxClient, transport: Arc<dyn HostedControlTransport>) -> Self {
-        Self { client, transport }
+        Self {
+            client,
+            transport,
+            assignments: Default::default(),
+        }
     }
 
     async fn bind(&self, handle: &RuntimeHandle, request: &ProviderSandboxRequest) -> Result<()> {
@@ -24,13 +32,7 @@ impl AgentSandboxBackend {
             .client
             .wait_ready(handle, Duration::from_secs(180))
             .await?;
-        self.client
-            .assign_pool_runtime(handle, &pod, request)
-            .await?;
-        let identity = super::deployment::provider_request_identity(request)?;
-        self.transport
-            .bind_runtime(handle, &identity.sandbox_id)
-            .await
+        self.assign_and_bind(handle, &pod, request).await
     }
 }
 
@@ -107,6 +109,7 @@ impl HostedBackend for AgentSandboxBackend {
         handle: &RuntimeHandle,
         request: &ProviderSandboxRequest,
     ) -> Result<()> {
+        self.forget_assignment(handle);
         self.client.suspend(handle, request).await?;
         self.transport.retire(handle).await
     }
@@ -144,6 +147,7 @@ impl HostedBackend for AgentSandboxBackend {
         original: &RuntimeProvisionReceipt,
         operation_id: &str,
     ) -> Result<RuntimeFinalityReceipt> {
+        self.forget_assignment(original.handle());
         self.transport.retire(original.handle()).await?;
         self.client.finalize(original, operation_id).await
     }
@@ -163,7 +167,7 @@ impl HostedBackend for AgentSandboxBackend {
         let Some(object) = self.client.validate_request(handle, request).await? else {
             return Ok(None);
         };
-        self.bind(handle, request).await?;
+        self.bind_adopted(handle, request, &object).await?;
         Ok(Some(observation(&object)?))
     }
     async fn reclaim(&self, expected: &RuntimeObservation) -> Result<()> {
@@ -212,6 +216,7 @@ impl HostedBackend for AgentSandboxBackend {
             .await
     }
     async fn teardown(&self, handle: &RuntimeHandle) -> Result<()> {
+        self.forget_assignment(handle);
         self.transport.retire(handle).await?;
         self.client.delete(handle).await
     }

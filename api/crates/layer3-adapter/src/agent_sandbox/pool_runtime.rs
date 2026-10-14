@@ -201,7 +201,7 @@ impl AgentSandboxClient {
     }
 
     /// Recheck Template authority only before transitions that admit work or keys.
-    pub(super) async fn verify_explicit_runtime_policy(
+    pub(crate) async fn verify_explicit_runtime_policy(
         &self,
         object: &kube::api::DynamicObject,
     ) -> Result<()> {
