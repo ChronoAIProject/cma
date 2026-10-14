@@ -6,6 +6,7 @@ import { IconSearchOutline16 } from '../../ui/icons';
 import type { ServiceCatalogClient, ServiceCatalogEntry } from '../client';
 import { ReferenceLink } from '../ReferenceLink';
 import { isCodexConnection } from '../modelProvider';
+import '../Profiles.css';
 
 export function ServicePicker({
   catalog,
