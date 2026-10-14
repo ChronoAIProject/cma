@@ -18,6 +18,11 @@ spec:
       app.kubernetes.io/name: cma-event-gateway
   template:
     metadata:
+      annotations:
+        cma.chronoai.dev/candidate: "cabfe5c39240b8907e163fda314d029b0461fed5"
+        cma.chronoai.dev/image-source: "21f3401204becb767e462bf5fb4258d996dc923d"
+        cma.chronoai.dev/ci-run: "38496119196"
+        cma.chronoai.dev/provider-config-sha256: "341b06b8260510c975fd3a9feeaf7a5c2042e403ab802847fdbb76021d954d11"
       labels:
         app.kubernetes.io/name: cma-event-gateway
         app.kubernetes.io/part-of: cma
@@ -44,7 +49,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: cmaeg
-          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-cmaeg@sha256:540c5e73f923e9379b99eec76223c3d9a5fc84119c9bac5d8b24ec6d9dbc11a1
+          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-cmaeg@sha256:0c3068130eaf618ce88dbe47bd7d111d365a5bba816c49f78b4000e8550ef1e7
           imagePullPolicy: IfNotPresent
           ports:
             - name: http

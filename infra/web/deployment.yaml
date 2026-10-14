@@ -13,6 +13,10 @@ spec:
       app.kubernetes.io/name: cma-web
   template:
     metadata:
+      annotations:
+        cma.chronoai.dev/candidate: "ac837aa7ef97b2b6e3ef1afcb872388c1552e94b"
+        cma.chronoai.dev/image-source: "d498b1b5e5541485654b30d9b5c97f80ae3e0962"
+        cma.chronoai.dev/ci-run: "38504776234"
       labels:
         app.kubernetes.io/name: cma-web
         app.kubernetes.io/part-of: cma
@@ -35,7 +39,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: web
-          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-web@sha256:d62695c668be11213ff608287455b69f9a530c2491d8d977db5a28bdb0e8e26b
+          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-web@sha256:477215d347f052c3315a8dafc3be31e89a6c4516772f65bc21e8aee83b884a0f
           imagePullPolicy: IfNotPresent
           ports:
             - name: http

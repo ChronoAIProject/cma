@@ -1,22 +1,33 @@
 # C-001 deployment handoff
 
-For the current deployed artifacts and measured user-flow results, see
+For exact deployed digests, CI/image provenance, measured flows, historical
+failures and receipt paths, see
 [CMA native Sandbox production verification](CMA_Native_Production_Verification.md).
-The prerequisite observations below are the historical 2026-10-13 handoff; the
-verification report records which were subsequently resolved and the measured
-acceptance coverage and limits.
+This document keeps operational instructions and dated infra diagnostics.
+
+The final AM cd37968d, Web ac837 and Gateway cabfe set was Ready at 11:31:31 SGT,
+with exact imageIDs and zero restarts; default runtime remains 37d. Seven public/
+authenticated checks passed at 11:31:59 SGT, including the original protected
+Sandbox and Agent, both paused. Final Web desktop/mobile visual acceptance passed.
+AM and Gateway passed full CI 15/15; Web passed its four required scoped jobs.
+Image Manager activation is deferred.
+
+Final cold Gateway acceptance passed with one actual UI request, one completed
+turn and visible exact acknowledgment in 42.624 seconds. Normal fixture cleanup
+completed at 11:45:14 SGT. Sanitized receipt:
+`/tmp/cma-gateway-cold-live-czmxw4jd/acceptance-receipt.json`.
 
 The three portals ship from one web image: Agent Manager (`/agent-manager`),
 Image Manager (`/image-manager`) and Event Gateway (`/event-gateway`). Their
-backends remain separate services with their own collection schemas. This handoff prepares
-application deployment against the infra-owned native runtime cluster. It does
-not record a successful production rollout or authorize changes to that cluster's
-controllers, RBAC, storage or network policy.
+backends remain separate services with their own collection schemas. This handoff
+defines application deployment against the infra-owned native runtime cluster.
+Infra continues to own its controllers, CRDs, RBAC, storage and network policy;
+CMA's completed application rollout did not change those resources.
 
 The current rollout scope is Agent Manager, Event Gateway and their shared web
 image, with the tested CMA runtime as the system default. Image Manager is
-deferred: leave its Deployment at zero replicas and do not require its Cloud
-Build identity, OAuth client, migrations or builder digest to activate Agent
+deferred: its Deployment is absent; keep it absent or at zero replicas and do
+not require its Cloud Build identity, OAuth client, migrations or builder digest to activate Agent
 Manager. Default-image Agent, Trigger and consumer creation does not call Image
 Manager. Its catalog may be unavailable while the system default remains
 selectable; custom image selection and builds require the later Image Manager
@@ -49,7 +60,11 @@ management receives the dedicated service credential under its exact-origin
 authentication rule. Other internal references use canonical names. The `cmaeg` alias preserves retained CMA configurations during the staged
 rename. Do not rewrite stored pointer identities to match a cosmetic name.
 
-Before the first deployment under canonical names, copy the existing Secret
+The canonical-name cutover is already deployed. The following first-cutover
+procedure applies only when migrating another deployment; do not replay its
+Secret or record transfer against this running release.
+
+Before a first deployment under canonical names, copy the existing Secret
 contents through the approved secret workflow to `cma-agent-manager` and the
 `cma-event-gateway-{auth,master-keys,cma-service-token}` Secrets. Preserve the
 values and key names; renaming a resource is not key rotation. The native
@@ -79,33 +94,35 @@ named old Deployment.
 
 ## Observed deployment prerequisites
 
-These observations were recorded on 2026-10-13. They distinguish current access
-from the remaining application activation steps.
+This table reflects the completed native deployment and remaining measured
+limits on 2026-10-14. Historical failures are retained with dates and outcomes,
+without treating superseded findings as current activation blockers.
 
-| Prerequisite | Observed state | Remaining work |
+| Prerequisite | Verified deployed state | Continuing obligation or coverage limit |
 |---|---|---|
-| Native Kubernetes authentication | Actual CMA Pod received the `chrono-cma@chronoai-501608.iam.gserviceaccount.com` metadata identity; Sandbox and claim reads returned HTTP 200 with the remote CA verified | Exercise the application token refresh path and native lifecycle with the final candidate |
-| Native target | `chrono-bot/chrono-pod-configmap` currently supplies `https://35.240.157.32` and namespace `chrono-pod` | Use these current values; do not use the earlier `cma-test` namespace or infer configuration from last-applied annotations |
-| Native authorization | Fresh CMA Pod metadata token confirms Sandbox get, Claim create, PVC get, and `pods/exec` get/create; PVC create/patch remain denied | VCT integration passes native adapter tests. Verify live allocation with the final image; PVC writes and snapshot reads are not required for new empty native homes |
-| Native persistent home | A pinned diagnostic Python image passed controller-owned 64 GiB RWOP allocation/mount on `home-a`, suspend/resume with the same PVC and saved marker, and Claim deletion with Sandbox/PVC GC | This proves the infrastructure substrate. Verify the final CMA runtime initializer, authenticated assignment/bootstrap and lifecycle before activation; a mandatory seed snapshot is a superseded implementation choice |
-| Published runtime acceptance | Candidate `2bc6fe1c` passed CI and its imported runtime ran under `microvm`, initialized the controller-owned home and accepted authenticated assignment. It then exited with an installation Sandbox identity mismatch. Inspection of the published image found a build-test installation record at `/tmp/cma-checkpoints/runtime-state/install-v2.json` | Keep native activation disabled until the corrected image passes bootstrap, replay, authenticated status and retained-home restart. Build tests must isolate and clean their temporary state; assignment must honor the provided persistent `TMPDIR` instead of reading the waiting process's ambient directory |
-| Runtime network path | `chrono-pod-default` admits TCP 8080 from a single peer combining namespace `sandbox-router` **and** Pod label `app=sandbox-router`; that router is not deployed. Initial northeast connection attempts timed out on TCP 9090 and 8080. A subsequent controller-owned Managed Template policy explicitly allowed the northeast Pod CIDR on TCP 9090, but all 15 allow-phase requests still timed out | Infra must provide and verify the runtime path. Current CMA discovery connects directly to Pod IP TCP 9090 for authenticated HTTP and WebSocket. The measured timeouts do not isolate policy from routing or VPC firewall enforcement; Kubernetes API access alone does not satisfy this requirement. See the Native Template network policy evidence below |
-| Runtime ServiceAccount and storage | Remote `default` exists, is active and has no GSA annotation. A `standard-rwo` canary disk could not attach to the selected N4 node because it uses `pd-balanced`; `home-a` (`hyperdisk-balanced`, CMEK) passed the diagnostic 64 GiB RWOP lifecycle | CMA selects `default` with Pod token automount disabled and `home-a` with the existing 64 GiB home default. A new runtime ServiceAccount is not required; final CMA image/bootstrap acceptance remains separate |
-| Runtime isolation class | The southeast `chrono-pod-sandbox` policy enforces `microvm` or `gvisor`; an isolated Sandbox without `runtimeClassName` was rejected. The diagnostic `microvm`/`home-a` Pod ran successfully | CMA explicitly selects the existing `microvm` RuntimeClass. Class existence and policy compatibility are checked before activation; final CMA image and connection acceptance remain separate |
-| CMA runtime signing key | `chrono-bot/cma-agent-sandbox-control` has been created and read-verified in the northeast CMA cluster, without printing or storing its value locally | Mount the existing Secret during activation and preserve its value across restarts; it is separate from infra's Kubernetes access identity |
-| Canonical application prerequisites | Three canonical Services, Agent Manager/Event Gateway ConfigMaps, and their four health/backend policies have been created and read-verified in northeast. Original credential values match the canonical Secret copies; new required auth/control keys are present | Deploy the verified application images, observe ready endpoints and finish route/alias cutover. Old `cma-api`, `cmaeg` and `cma-web` remain Ready 1/1; no canonical application worker or Image Manager worker has started |
-| Shared MongoDB | Existing `chrono-bot` credentials have been copied to and verified in the canonical application Secrets; original Secrets are retained | Select each service's shared-schema mode and run only its own migration/startup initialization |
-| Gateway record transfer | Read-only production audit found all three legacy collections, 11 valid channel records and no connection/interaction records; destination `eg_*` collections are absent. A real local Mongo/mongosh roundtrip proves all three domains, cursor batches, exact bytes/i64 revisions, expiry, replay and conflict refusal | Repeat the live export after draining writers, initialize only Gateway's new schema, import and verify before starting the replacement. The audit did not migrate production data; its nine Sandboxes and sixteen Agents must remain available through the control-plane rollout |
-| Existing Event Gateway feature settings | Live `cmaeg` has Console and Media enabled, `cma_codex` non-human/media providers and `gpt-transcribe` STT settings, with optional STT/console Secret refs and a 32 MiB in-memory media volume | The controlled Gateway integration restores live source `976e8773` Console/Media/STT code while retaining independent Mongo and portal authentication. Gateway/Core 1,556 tests, strict Clippy and the authenticated Mongo Console/media/portal composition contract pass locally. Keep the old deployment and Secrets until the final integrated source passes native CI and image gates, all three record domains are migrated, and the replacement passes real Console/media/consumer acceptance; empty STT URL and FFmpeg directory preserve the live disabled transcription/transform settings |
-| Image Manager build identity (deferred) | Lookups for the single `cma-image-manager` Google service account returned 404; current operator IAM tests did not grant account creation, policy changes or Cloud Build submission | Does not block the current Agent Manager/Event Gateway rollout. Infra provisions this identity and the permissions below before later Image Manager activation |
-| Application image registry | Candidate `2bc6fe1c` API, Gateway and Web images were imported into `us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry` and their immutable bytes reverified | These images have not been deployed. Publish the corrected candidate after its required CI and image gates, then regenerate the deployment bundle from that candidate's receipts |
-| Native runtime image registry | Candidate `2bc6fe1c` runtime was imported into `asia-southeast1-docker.pkg.dev/chronoai-501608/chrono-pod/cma-runtime`; the remote node pulled and ran its exact digest | Publishing and image-pull access passed. The separate startup failure above prevents native acceptance; publish and test the corrected image before activation |
+| Native Kubernetes authentication | CMA uses the `chrono-cma@chronoai-501608.iam.gserviceaccount.com` metadata identity and verified remote CA; actual native allocation and runtime operations passed through Agent Manager | Preserve renewable metadata authentication and CA/server binding; no dedicated long-duration credential-expiry campaign is claimed |
+| Native target | `chrono-bot/chrono-pod-configmap` supplies `https://35.240.157.32`, namespace `chrono-pod` and the remote CA | Read current fields, not old last-applied annotations or the superseded `cma-test` namespace |
+| Native authorization | Actual metadata principal can read Sandboxes/claims/PVCs and use `pods/exec`; new native homes delegate PVC creation to controllers | Direct PVC create/patch remains unnecessary for new empty VCT homes; preserve exact Pod/PVC identity reads and retained legacy permissions |
+| Native persistent home | Final runtime 37d passed 64 GiB `home-a` initialization, assignment/replay, same-PVC suspend/resume and controller cleanup; real Agent creation and later same-home revive also passed | Retained Sandboxes keep their recorded home and runtime identity; a default-image update does not migrate them |
+| Runtime image residue | Historical candidate `2bc6fe1c` failed startup with a build-test `install-v2.json`; final 37d scan found zero matching residue across all 15 logical layers | Keep isolated build-test state and exact final-image scan/canary checks for future runtime changes |
+| Runtime transport | Deployed `kubernetes-exec` carries runtime HTTP/WebSocket traffic through the authenticated remote API; real model turns and complete history exports passed | Earlier direct Pod-IP and CRI port-forward diagnostics did not establish a working microVM path. They do not require a network change for the selected exec transport |
+| Runtime ServiceAccount/storage/class | New runtime templates select unannotated remote `default`, disable Pod token automount and use `microvm` with 64 GiB RWOP `home-a` volumes | Preserve infra ownership. Historical `standard-rwo`/`pd-balanced` attachment failed on N4; use the verified `home-a` policy |
+| Runtime control key | Existing `chrono-bot/cma-agent-sandbox-control` supplies the mounted application signing key | Preserve the key across restarts; preserve it during application updates |
+| Canonical application workloads | `cma-agent-manager`, `cma-event-gateway` and `cma-web` are deployed; latest readback confirms 1/1 updated Ready, current generations, matching image IDs and zero restarts | Final AM cd37968d, Web ac837 and Gateway cabfe were Ready at 11:31:31 SGT; final Web visual acceptance passed. Keep one Recreate Agent Manager and preserve canonical/compatibility Service routing |
+| Shared MongoDB | Running Agent Manager/Gateway use `chrono-bot` with separate collection ownership; retained durable identities and complete history prefixes survived the AM rollout | Run only each service's migrations. Shared-schema mode is collection ownership, not credential-level isolation |
+| Retained Gateway state | Gateway uses `eg_*` collections and preserves exact `http://cma-api.chrono-bot.svc` authority. Earlier real owner edits, selected-Agent management tests and public custom ingress passed | Do not repeat the historical first-cutover export/import. Preserve original record identities and sealed pointers; final Gateway/browser-specific acceptance remains separately recorded |
+| Gateway cold inline-Agent acceptance | Final measured result and the earlier 5ce/AM 37d failures are recorded in the verification report | Preserve the 90-second startup and fresh 30-second acceptance/completion budgets; only explicit Busy may retry the same body/key |
+| Gateway feature coverage | Integrated source and complete CI include Console/Media/STT code and authenticated Mongo contracts | Selected live routing/channel/model checks do not establish full Console/media/STT, external reply sinks or Trigger acceptance; preserve existing configuration and Secrets |
+| Application image registry | The selected AM cd37968d, Web ac837 and Gateway cabfe digests are published in the established application registry; the verification report lists exact pins | Final AM cd37968d and Gateway cabfe passed full CI 15/15; final Web ac837 passed its four scoped jobs, exact publication and visual acceptance. All selected images are published and Ready; original release receipts remain independently attributable |
+| Native runtime registry | Final 37d runtime is published under `asia-southeast1-docker.pkg.dev/chronoai-501608/chrono-pod/cma-runtime`; native canary and real Agent runtime image-ID checks passed | Preserve this default and retained images during Web/Gateway-only changes |
+| Deferred Image Manager identity | The 2026-10-13 account lookup returned 404 and operator IAM lacked provisioning/build rights; Image Manager has no active Deployment | This is a separate later activation. Infra must provide the documented build identity/permissions before Image Manager migration, scale-up and live build acceptance |
 
 ## C-001 implementation map
 
 The Journey Book is the audit baseline; the current implementation follows the
-requested C-001 changes below. Native lifecycle, Cloud Build and OAuth behavior
-still require the deployment acceptance in this document.
+requested C-001 changes below. Implementation is not a claim that every live
+acceptance item passed. The verification report separates completed native/API
+flows and final visual checks from deferred Cloud Build/OAuth coverage.
 
 | User flows | Prepared application behavior |
 |---|---|
@@ -187,15 +204,12 @@ receipt pins the original Claim, Sandbox and PVC UIDs; controller GC owns disk
 deletion. Conversion to detached PVC mounts exists only for already-admitted
 legacy homes and must not expand the new flow's permission requirements.
 
-The other current non-CRD dependency is `pods/exec` for authenticated assignment
-of an unclaimed runtime. Ordinary runtime operations and conversations already
-use the runtime's HTTP/WebSocket interface. A CRD-only client would need a tested
-replacement for bootstrap authentication, Pod-incarnation verification and
-deletion finality. The served Sandbox status includes Pod IPs, readiness and
-suspension conditions, but no Pod/PVC UID. Access to the remote Kubernetes API
-alone does not prove that the CMA cluster can reach runtime Pod IPs or that a
-remote Service FQDN resolves locally. Keep these as explicit acceptance checks;
-do not remove working identity checks or assume an IP establishes identity.
+The non-CRD runtime dependency is `pods/exec`: CMA uses it for authenticated
+initial assignment and to carry runtime HTTP/WebSocket traffic to the microVM
+guest. Pod/PVC reads retain exact incarnation, home and cleanup checks. Native
+Sandbox status does not provide those UIDs. Direct Pod-IP connectivity and CRI
+port-forward did not establish a working production transport; changing from
+exec requires a separately tested transport and bootstrap contract.
 
 The installed API consists of the core `Sandbox` plus the three extension
 resources `SandboxTemplate`, `SandboxWarmPool` and `SandboxClaim`. The three
@@ -228,13 +242,15 @@ these reads as a separate, tested contract change rather than a storage blocker.
 The Agent Manager ServiceAccount remains `chrono-bot/chrono-bot-ksa` in the
 northeast application cluster. `infra/api/serviceaccount.yaml` declares its
 local Role/RoleBinding and the same-cluster native policy. Those local grants
-do not confer authority in the remote cluster. Infra must provide a separate
-remote identity and namespaced authorization in the assigned native namespace.
+do not confer authority in the remote cluster. The deployed remote metadata
+identity has separately provided namespaced authorization. A new deployment
+must obtain its own reviewed remote identity and grants from infra.
 Validate the actual remote principal's grants; do not apply the northeast
 application manifests to southeast as a substitute. The table below describes
-the **current preflight grant set**, not the minimum permissions intrinsic to
-agent-sandbox. PVC/snapshot and exec rows are under CMA-side simplification;
-they are not an outstanding request for infra to extend its Role:
+the **preflight grant set**, not the minimum permissions intrinsic to
+agent-sandbox. Native empty homes do not require the legacy PVC/snapshot writes;
+exec is the selected production transport. This table is not a request to extend
+infra's Role:
 
 | API/resource | Checked verbs | Purpose |
 |---|---|---|
@@ -242,7 +258,7 @@ they are not an outstanding request for infra to extend its Role:
 | `extensions.agents.x-k8s.io/{sandboxtemplates,sandboxwarmpools,sandboxclaims}` | get, list, create, patch, delete | Native pool administration and claims |
 | core `persistentvolumeclaims` | get, list for new native homes; create, patch, delete only for legacy detached-home paths | Exact owned-volume receipt and cleanup verification; controllers own new VCT volumes |
 | core `pods` | get, list | Verify exact Pod identity and deletion finality |
-| core `pods/exec` | get, create | kube-rs WebSocket assignment over stdin |
+| core `pods/exec` | get, create | kube-rs WebSocket assignment over stdin and selected runtime HTTP/WebSocket transport |
 | `snapshot.storage.k8s.io/volumesnapshots` | get only for legacy snapshot-seeded home mode | Verify a historically pinned initialized seed; not used for new empty native homes |
 
 For new empty native homes, the adapter currently emits PVC get/list, Pod list,
@@ -275,19 +291,21 @@ to every native CMA runtime Pod, including unclaimed warm Pods, by the stable
 control-plane and upstream Sandbox tracking labels. The tracking selector
 excludes retained OpenSandbox Pods. Only Agent Manager Pods in the namespace
 may connect to TCP 9090. That namespace-local selector does not authorize a
-control-plane Pod in another cluster. Infra must configure and verify the
-remote runtime network path for the northeast CMA source, covering both cold
-and warm Pods. Reaching the Kubernetes API alone does not prove runtime
-connectivity. Verify the cluster CNI enforces NetworkPolicy and that an
-unrelated Pod cannot reach the runtime port.
+control-plane Pod in another cluster. A direct-TCP transport would require
+infra to configure and verify cross-cluster ingress for both cold and warm
+Pods. The deployed exec transport instead uses authenticated remote Kubernetes
+requests against the exact runtime Pod. Successful exec traffic does not prove
+Pod-network isolation; any NetworkPolicy enforcement claim requires its own
+independent evidence.
 On 2026-10-13, connection attempts from northeast CMA to the ready diagnostic
 Pod at `10.57.0.97` timed out after four seconds on both TCP 9090 and TCP 8080.
 That diagnostic used a pinned Python image and an Unmanaged Template. The
 subsequent Managed Template diagnostic described below also timed out after
 the controller reconciled an explicit TCP 9090 allow rule. Neither diagnostic
-used the final CMA runtime. The remote network blocker remains unresolved;
-these measurements do not distinguish NetworkPolicy rejection from routing or
-other network enforcement.
+used the final CMA runtime. These historical direct-TCP failures did not isolate
+policy from routing or other enforcement. The selected exec transport does not
+depend on this direct cross-cluster path; the diagnostics are not a current
+requirement to alter infra networking.
 The policy intentionally does not rely on `cma/runtime-name`, which claimed
 warm Pods do not carry. Workload network egress and runtime scheduling remain
 infra policy; check the selected RuntimeClass can schedule the requested image,
@@ -337,8 +355,8 @@ of the original PVC and Pod; CMA never issues a direct PVC delete for this mode.
 CSI must support `ReadWriteOncePod`. Verify the runtime image pin includes the
 initializer as well as runtime pool assignment support before rollout.
 The production preflight checks that the chosen StorageClass exists and uses
-GKE PD CSI. That check does not prove live RWOP provisioning or scheduling;
-those remain activation acceptance checks. The Pod/PVC templates require RWOP,
+GKE PD CSI. That check alone does not prove live RWOP provisioning or scheduling;
+actual home-a canary and Agent-flow receipts recorded here establish those checks. The Pod/PVC templates require RWOP,
 while the GKE provisioner choice is a production check rather than an inherent
 requirement of the agent-sandbox API.
 
@@ -355,9 +373,9 @@ Sandbox removed its Pod while retaining the same PVC UID; resuming created a
 new Pod UID, retained that PVC and read the saved marker with its boot count
 incremented to two. Foreground Claim deletion was followed by controller GC of
 the Sandbox and PVC. This proves the infrastructure lifecycle and persistence
-substrate. It does not prove the final CMA runtime's home initializer,
-authenticated assignment, bootstrap or end-to-end Agent lifecycle, which still
-require the final image and a working remote runtime network path.
+substrate. The diagnostic itself did not prove CMA initialization or Agent behavior.
+Those are covered separately by the final 37d native runtime canary and the real
+Agent creation/resume receipts using the selected exec transport.
 The legacy `CHRONO_SANDBOX_HOME_STORAGE_CLASS=cma-home-v1` remains pinned for
 retained northeast allocations.
 
@@ -421,9 +439,10 @@ Sandbox get, Claim create, PVC get and Pod exec get/create. PVC create/patch
 remain denied. This supersedes the earlier missing-exec observation; no Role or
 RoleBinding was changed by CMA. New native allocation delegates empty VCT
 creation to the controller, so those denied PVC writes are not an infra blocker.
-Exec currently provides the authenticated initial assignment channel. Successful
-authorization checks alone do not prove allocation, assignment, remote runtime
-connectivity or persistent-home acceptance.
+Exec provides authenticated initial assignment and the selected runtime
+HTTP/WebSocket transport. Authorization checks alone do not prove lifecycle
+behavior; the later final-runtime and real Agent receipts supply that separate
+evidence.
 
 The earlier prospective checked-in application configuration passed all 37
 operator preflight checks against the live infra ConfigMap, remote schemas, exact
@@ -433,8 +452,8 @@ found the missing class described above. The expanded preflight adds the
 selected class and known production class requirement. The revised prospective
 `microvm`/`home-a` application configuration passed all 38 checks against live
 infrastructure on 2026-10-13. These checks substitute the checked-in application
-ConfigMap and Deployment for the not-yet-deployed candidate; the remaining
-reads and authorization reviews use the actual clusters. Neither the earlier
+ConfigMap and Deployment for the candidate that was not yet deployed at the
+time; the remaining reads and authorization reviews used the actual clusters. Neither the earlier
 37 checks nor the expanded checks attest a deployed candidate or live runtime
 behavior. Earlier
 `kubectl auth can-i` failures arose from discovery and subresource parsing;
@@ -443,16 +462,20 @@ additional permissions.
 
 ## Build and configure the selected application images
 
-For the current rollout, import the tested `api`, `web`, `runtime` and `cmaeg`
-images from the same reviewed source tree. The existing release workflow still
-publishes all five components when used for a complete release; its publication
-does not deploy to Kubernetes. Pin the final registry digests in the selected
-application manifests. Image Manager remains at `replicas: 0`; its `:unreleased`
-placeholder must be replaced only before its later activation.
+The final selected image pins are already published, deployed and synchronized
+with the four repository manifests. The verification report records exact
+per-component source/run/digest evidence. The following workflow applies to a
+future selected release; publication itself does not deploy workloads.
+
+The complete release workflow publishes all five components when selected;
+publication does not deploy workloads. Image Manager remains absent or at zero
+replicas. Replace its `:unreleased` image only for its later, separately verified
+activation. Pin application manifests only to actual verified registry digests.
 
 For an authorized direct application rollout, the CI `ci-native-image-*`
 artifacts provide the already tested Linux amd64 images. Require passing checks
-for the complete application candidate and verify each artifact's archive
+for the complete application candidate, except the explicitly scoped AM cd37968d
+and Web ac837 gates recorded in the verification report, and verify each artifact's archive
 checksum, `sourceRevision`, `sourceTree`, image ID and workflow run identity.
 A pull-request artifact records GitHub's actual merge checkout: its source tree
 must equal the reviewed deployment candidate's tree, and the image revision
@@ -480,15 +503,21 @@ with `gh run download RUN_ID --repo ChronoAIProject/cma --name ARTIFACT_NAME
 `runtime-image-evidence-RUN_ID-RUN_ATTEMPT` as well. Native image artifacts expire
 after one day, so preserve verified bundles with the deployment evidence.
 
-Before any registry write, require the full run to pass and confirm its head
-matches the selected candidate. Check the artifact run ID/attempt, component,
+Before a registry write, require the selected release gate and confirm its head
+matches the selected candidate. Full CI was required for cabfe; the scoped AM cd37968d gate required Backend,
+Images(api), Repository structure, Secret scanning and Manifests; final Web ac837
+required Images(web), Frontend, Repository structure and Secret scanning. Each scoped gate binds the exact current attempt and separately
+records actual whole-run status. Check the artifact run ID/attempt, component,
 repository, source revision/tree, Linux amd64 platform, archive size and SHA-256
 against `metadata.json`. Inspect the Docker archive's config and require its
 SHA-256 to equal `imageId`; verify the source/revision/version labels and both
 runtime labels above. The runtime evidence must bind the same source revision
-and immutable image ID and report passing execution checks. The four artifacts
-must agree on source revision and tree. A failed or superseded run is not a
-deployment source even if one image job succeeded.
+and immutable image ID and report passing execution checks. Artifacts within a selected
+publication must agree on that candidate's verified merge revision and tree.
+Each independently selected component publication has separate provenance. Confirm the reviewed follow-up file/blob scope and preserve
+the other deployed components. Outside these explicitly authorized scoped gates, a failed full candidate
+run is not a deployment source even if its selected image job succeeded; retained successful baseline images
+remain identified by their own receipts.
 
 Decompress each verified archive into a private evidence directory and import
 with `skopeo copy --dest-authfile AUTH_FILE --digestfile DIGEST_FILE
@@ -518,15 +547,16 @@ and no tenant credentials, and that an exact Pod UID assignment starts the
 authenticated runtime. Imported custom Dockerfiles should extend a tested CMA
 runtime digest and preserve its executable, non-root identity and labels.
 
-Create the `cma-agent-sandbox-control` Secret's `control-key` using the approved
-secret workflow. Its mounted file is required when the native backend is
+For a new deployment, create `cma-agent-sandbox-control` and its `control-key`
+using the approved secret workflow. Production already has this Secret; preserve
+its existing value. Its mounted file is required when the native backend is
 enabled; it must contain 32–8192 bytes. Do not copy a token into a ConfigMap,
 runbook, PR or shell command. Keep the key stable across restarts so retained
 runtime control tokens continue to match. The control-plane Secret volume is
 optional only while the native backend is disabled.
 
-Set the new runtime digest in `CHRONO_SANDBOX_IMAGE` and the matching deployment
-rollout annotation. `CHRONO_AGENT_SANDBOX_RUNTIME_CLASS`, runtime ServiceAccount,
+When a verified runtime is intentionally replaced, set its digest in
+`CHRONO_SANDBOX_IMAGE` and the matching rollout annotation. This release preserves the deployed 37d runtime default. `CHRONO_AGENT_SANDBOX_RUNTIME_CLASS`, runtime ServiceAccount,
 pull secrets, home policy and deployment ID must match the reviewed production
 configuration. Existing pool bindings retain their original Pod policy when a
 later release changes those defaults.
@@ -561,8 +591,8 @@ operations for those collections.
 ## Deferred Image Manager / Cloud Build activation
 
 This is a separate later activation, outside the current Agent Manager/Event
-Gateway rollout. Keep Image Manager at zero replicas until its prerequisites
-are available. Its absence does not block the system-default runtime path.
+Gateway rollout. Keep Image Manager absent or at zero replicas until its
+prerequisites are available. Its absence does not block the system-default runtime path.
 
 When Image Manager is activated, select the existing `chrono-bot`
 database and explicit shared-schema authority mode for Image Manager as well
@@ -620,16 +650,24 @@ reconciled using its original unique build tag without submitting a second job.
 
 ## Read-only preflight and activation order
 
-Keep the checked-in values until infra and image prerequisites are met:
+The production native path is enabled. Preserve these provider and transport
+settings during application updates:
 
 ```text
-CHRONO_SANDBOX_PROVIDER=opensandbox
+CHRONO_SANDBOX_PROVIDER=agent-sandbox
 CHRONO_RETAIN_OPENSANDBOX=true
-CHRONO_AGENT_SANDBOX_ENABLED=false
+CHRONO_AGENT_SANDBOX_ENABLED=true
+CHRONO_AGENT_SANDBOX_RUNTIME_TRANSPORT=kubernetes-exec
 ```
 
-After infra provides the native namespace, remote principal and storage, set
-`NATIVE_NAMESPACE` and `NATIVE_PRINCIPAL` to those reviewed nonsecret identities
+For a future runtime change, select the new default only after exact publication,
+residue scan and native canary pass, and apply that default before restarting
+its consuming Agent Manager. Keep AM at one replica with Recreate strategy.
+Web/Gateway-only changes preserve the runtime configuration and AM Pod. Retained
+Sandboxes keep their recorded images and lifecycle authority.
+
+Using the reviewed native namespace and remote principal, set `NATIVE_NAMESPACE`
+and `NATIVE_PRINCIPAL` to those nonsecret identities
 and run from the repository root:
 
 ```sh
@@ -669,15 +707,37 @@ Each API command has a 10-second server request bound and every command has a
 identity, controller image provenance, OCI runtime compatibility, network
 enforcement or live provisioning.
 
-Then deploy the application release with the native backend enabled and retained
-OpenSandbox support still enabled. Confirm existing runtime recovery before
-selecting `CHRONO_SANDBOX_PROVIDER=agent-sandbox` for new allocations. Keep only
-one Agent Manager replica and its existing Recreate rollout strategy; process
-admission quotas do not yet have shared coordination. Native warm-pool
-administration should start with one member of the verified immutable runtime
-image and grow only after the checks below pass.
+Execute only the selected, verified application patches and record actual Pod
+image IDs, readiness and retained-resource continuity. Keep native and retained
+OpenSandbox support enabled while their resources exist. Agent Manager remains
+one Recreate replica because process admission quotas lack shared coordination.
+Warm-pool acceptance starts with one member of the selected immutable runtime
+and must preserve claimed members when replenishment changes.
 
-## Deployment acceptance still required
+## Deployment acceptance and coverage
+
+The [verification report](CMA_Native_Production_Verification.md) is the measured
+acceptance record, including exact tested versions, final cold result, normal
+cleanup, protected-resource preservation and relevant historical failures.
+The checklist below remains the wider acceptance contract for future changes;
+it is not a claim that every feature received production coverage.
+
+Deferred coverage includes Image Manager/Cloud Build, fresh missing-service
+OAuth, NyxID frontend navigation/binding-key delivery, external reply sinks,
+broad failover, full Console/media/STT, Trigger and cross-user sharing. Native
+exec connectivity does not establish direct Pod-network isolation.
+
+The repository image pins and source/CI annotations are now synchronized with
+the actual deployed receipts. The four synchronized manifests are
+`infra/api/configmap.yaml`, `infra/api/deployment.yaml`,
+`infra/cmaeg/deployment.yaml` and `infra/web/deployment.yaml`.
+The applied patch is `/tmp/cma-final-repo-sync-01/final-manifests.patch`. Their current hashes match
+`/tmp/cma-final-repo-sync-01/resolved-receipts.json` after hashes. This pins AM
+cd37968d, Web ac837, Gateway cabfe and default runtime 37d with their actual image
+sources and CI runs. YAML, configuration key/documentation, native contract and
+route ownership checks passed. The legacy storage seed example and deferred
+Image Manager are preserved. This manifest/document finish does not redefine or
+rebuild the independently identified deployed application images.
 
 Agent access-request tools use the existing auth encryption key to derive a
 separate, deployment-scoped `cma_at_` capability. The `agent_access_tools`
@@ -709,8 +769,9 @@ ACP handshake; an existing bridge cannot claim installation without its exact
 durable receipt. Old runtime, changed creation and retired-Agent credentials
 must fail authentication.
 
-Record source SHA, the four current final image digests, controller digest/revision, native
-API preflight, native home mode and Claim/Sandbox/Pod/PVC UIDs. Record a seed UID
+Record each selected component's candidate, actual image source revision/tree,
+full CI run and registry manifest digest, together with controller provenance,
+native API preflight, home mode and Claim/Sandbox/Pod/PVC UIDs. Record a seed UID
 only when testing the retained legacy mode. Execute these checks after
 deployment; local fixtures do not substitute for them:
 
@@ -759,9 +820,11 @@ deployment; local fixtures do not substitute for them:
   configuration; verify real routing, a model reply and consumer controls.
   Test Sandbox sharing with another authorized user and confirm no legacy
   Profile/snapshot management UI is required.
-- Verify unrelated Pods cannot access native runtime TCP 9090 and runtime Pods
-  have no Kubernetes API token. Retire all acceptance resources and record exact
-  claim/CRD/Pod/PVC cleanup without touching other users' resources.
+- Verify runtime Pods have no Kubernetes API token and the selected exec
+  transport authenticates operations against the exact owned Pod. Record any
+  direct-network isolation test with its own scope; exec connectivity does not
+  demonstrate Pod-network isolation. Retire owned acceptance resources and
+  record exact Claim/Sandbox/Pod/PVC cleanup without affecting user resources.
 
 Reverting the default provider changes only new allocation selection. Keep the
 native backend enabled while any native runtime, suspended binding, pending
@@ -783,14 +846,12 @@ allows are additive: other policies selecting the same Pod can still allow
 traffic. CMA rejects an omitted direction. Named ports are not accepted; use
 explicit TCP/UDP protocols and numeric ports.
 
-The checked-in value remains empty pending an actual cross-cluster network proof.
-The controller's managed default ingress admits its local sandbox-router only,
-so an empty value does not establish direct CMA control-plane connectivity. A
-reviewed custom policy must admit the observed control-plane source on TCP 9090,
-retain the required DNS path and allow the runtime's approved public egress. A
-source CIDR identifies addresses, not an individual CMA deployment; runtime
-authentication remains required. Use the actual runtime image and
-controller-created managed policy in the rollout canary.
+The configured template-policy value remains empty. Native controllers retain
+network policy authority. The selected exec transport does not require direct
+northeast-to-runtime TCP ingress. A future direct-TCP transport must independently
+prove authenticated access with the actual runtime image and controller-owned
+policy, including DNS and approved egress. A source CIDR does not establish CMA
+identity. The following diagnostic is historical and does not block exec.
 
 On 2026-10-13, diagnostic `cma-managed-net-1aa0c364` tested the pinned Python
 runtime using a controller-owned Managed Template policy. The runner verified
@@ -817,13 +878,12 @@ states that Pod traffic is never covered by an `ipBlock` rule. This is a materia
 limitation of using a Pod CIDR as the source selector; it does not establish how
 the southeast dataplane classified this particular remote-cluster source or
 prove the cause of these timeouts. Effective VPC firewall rules could not be
-read because the current account lacks `compute.firewalls.list` and
-`compute.instances.get`; the narrow firewall-flow log query also lacked access.
-Missing cross-cluster firewall rules therefore remain unconfirmed. Infra must
-verify effective ingress to destination node
-`gke-chronoai-prod-asia-south-egress-a-bd6f4de5-bhd9` in
-`asia-southeast1-b` and effective egress from the northeast source for this
-TCP 9090 path before rollout.
+read because the diagnostic account lacked `compute.firewalls.list` and
+`compute.instances.get`; its narrow firewall-flow log query also lacked access.
+Missing cross-cluster firewall rules were therefore unconfirmed. Any future
+direct-TCP transport would require infra to verify effective ingress and egress.
+This historical diagnostic does not block the selected exec transport or
+authorize a networking change.
 
 Policy is frozen in durable pool plans, bindings and claim/home authority. A
 changed deployment policy selects a new pool identity; existing reservations
