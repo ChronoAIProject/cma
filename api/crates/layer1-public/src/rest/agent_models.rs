@@ -89,12 +89,13 @@ pub(crate) async fn list(
         .models(&lineage.sandbox)
         .await
         .map_err(|_| InstanceProblem::Unavailable)?;
-    let available = matches!(lineage.agent.status, AgentStatus::Ready | AgentStatus::Busy)
-        && matches!(
-            lineage.sandbox.status,
-            SandboxStatus::Active | SandboxStatus::CredentialRotating
-        )
-        && lineage.sandbox.lifecycle.checkpoint_capture.is_none()
+    let available = matches!(
+        lineage.agent.status,
+        AgentStatus::Ready | AgentStatus::Working | AgentStatus::WaitingApproval
+    ) && matches!(
+        lineage.sandbox.status,
+        SandboxStatus::Active | SandboxStatus::CredentialRotating
+    ) && lineage.sandbox.lifecycle.checkpoint_capture.is_none()
         && state.support.supported(&lineage.sandbox).await;
     for model in &mut models {
         model.available = available;
