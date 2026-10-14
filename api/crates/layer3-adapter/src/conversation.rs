@@ -56,6 +56,12 @@ pub enum PermissionDecision {
 /// Input sent toward one ACP conversation.
 #[derive(Debug, Clone)]
 pub enum ConversationInput {
+    /// Absolute live settings, acknowledged only after each ACP operation succeeds.
+    Configure {
+        model: String,
+        reasoning_effort: crate::ReasoningEffort,
+        permission: crate::PermissionLevel,
+    },
     Prompt(Vec<ContentBlock>),
     RecoverablePrompt {
         content: Vec<ContentBlock>,

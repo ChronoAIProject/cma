@@ -1,151 +1,16 @@
+use super::binary_support::{assert_no_secrets, curl, free_address, spawn_ready, MountedSecrets};
 use super::*;
-use std::{fs, path::PathBuf, process::Stdio, time::Duration};
+use std::{fs, time::Duration};
 use tokio::process::Command;
 
-struct MountedSecrets {
-    dir: PathBuf,
-}
-impl MountedSecrets {
-    fn new() -> Self {
-        let dir = std::env::temp_dir().join(format!("cmaeg-management-{}", uuid::Uuid::new_v4()));
-        fs::create_dir(&dir).unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).unwrap();
-        }
-        fs::write(
-            dir.join("keys"),
-            format!("1:{}\n", STANDARD_NO_PAD.encode([1_u8; 32])),
-        )
-        .unwrap();
-        fs::write(dir.join("token"), "cma-service\n").unwrap();
-        Self { dir }
-    }
-    fn command(
-        &self,
-        address: &str,
-        cma: &FakeCma,
-        nyxid: &FakeNyxid,
-        provider: &FakeProvider,
-    ) -> Command {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_cmaeg"));
-        command.kill_on_drop(true)
-            .env_remove("CMAEG_MASTER_KEYS")
-            .env_remove("CMAEG_CMA_SERVICE_TOKEN")
-            .env_remove("CMAEG_CMA_CLIENT_ID")
-            .env_remove("CMAEG_CMA_CLIENT_SECRET")
-            .env("CMAEG_LISTEN", address)
-            .env("CMAEG_METRICS_LISTEN", "127.0.0.1:0")
-            .env("CMAEG_PUBLIC_URL", format!("http://{address}"))
-            .env("CMAEG_MASTER_KEYS_FILE", self.dir.join("keys"))
-            .env("CMAEG_CMA_SERVICE_TOKEN_FILE", self.dir.join("token"))
-            .env("CMAEG_CMA_BASE_URL", &cma.base_url)
-            .env("CMAEG_NYXID_BASE_URL", &nyxid.base_url)
-            .env_remove("CMAEG_PROVIDER_CONNECT_TIMEOUT_MS")
-            .env_remove("CMAEG_PROVIDER_REQUEST_TIMEOUT_MS")
-            .env_remove("CMAEG_PROVIDER_MAX_INFLIGHT")
-            .env_remove("CMAEG_TOOLS_NYXID_SLUG")
-            .env_remove("CMAEG_CHANNEL_CACHE_TTL_MS")
-            .env_remove("CMAEG_CHANNEL_NEGATIVE_TTL_MS")
-            .env_remove("CMAEG_CHANNEL_CACHE_MAX")
-            .env_remove("CMAEG_RESTORE_RATE_PER_MINUTE")
-            .env_remove("CMAEG_RESTORE_TIMEOUT_MS")
-            .env_remove("CMAEG_JWKS_TTL_MS")
-            .env_remove("CMAEG_INGRESS_MAX_BODY")
-            .env_remove("CMAEG_INGRESS_INFLIGHT")
-            .env_remove("CMAEG_ACCEPT_BUDGET_MS")
-            .env_remove("CMAEG_TURN_TIMEOUT_MS")
-            .env_remove("CMAEG_DRAIN_SECONDS")
-            .env_remove("CMAEG_BUSY_RETRY_MAX_MS")
-            .env_remove("CMAEG_NYXID_REPLY_TIMEOUT_MS")
-            .env_remove("CMAEG_HEARTBEAT_MS")
-            .env_remove("CMAEG_ACK_TEXT")
-            .env_remove("CMAEG_FAILURE_TEXT")
-            .env("CMAEG_PROVIDERS", json!([{
-                "slug":"cma_codex", "base_url":provider.base_url(), "kind":"responses_http",
-                "paths": {"agent_card":"/.well-known/agent-card.json", "binding":"/api/v1/cmaeg/bindings/{binding_id}",
-                    "conversation":"/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}", "responses":"/api/v2/responses"},
-                "max_inflight":8
-            }]).to_string())
-            .env("RUST_LOG", "cmaeg=trace");
-        command
-    }
-}
-impl Drop for MountedSecrets {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.dir);
-    }
-}
-
-fn assert_no_secrets(value: &str) {
-    for secret in [
-        "nyx_agent_secret",
-        "nyx_route_secret",
-        "aG1hYy1zZWNyZXQ=",
-        "hmac-secret",
-        "cma-service",
-        "token-alice",
-        "fixture-client-secret",
-        "gateway-rekey-fixture",
-    ] {
-        assert!(
-            !value.contains(secret),
-            "secret leaked into response or trace"
-        );
-    }
-}
-
-async fn curl(
-    method: &str,
-    url: &str,
-    file: Option<&std::path::Path>,
-    status: u16,
-) -> serde_json::Value {
-    let mut command = Command::new("curl");
-    command.args([
-        "--silent",
-        "--show-error",
-        "--max-time",
-        "5",
-        "--request",
-        method,
-        "--header",
-        "Authorization: Bearer token-alice",
-        "--header",
-        "Content-Type: application/json",
-        "--write-out",
-        "\n%{http_code}",
-        url,
-    ]);
-    if let Some(file) = file {
-        command
-            .arg("--data-binary")
-            .arg(format!("@{}", file.display()));
-    }
-    let output = command.output().await.unwrap();
-    assert!(
-        output.status.success(),
-        "curl failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let raw = String::from_utf8(output.stdout).unwrap();
-    assert_no_secrets(&raw);
-    let (body, received) = raw.rsplit_once('\n').unwrap();
-    assert_eq!(received, status.to_string(), "{body}");
-    if body.is_empty() {
-        serde_json::Value::Null
-    } else {
-        serde_json::from_str(body).unwrap()
-    }
-}
-
 #[tokio::test]
+#[ignore = "requires authenticated disposable service Mongo fixture"]
 async fn compiled_binary_loads_mounted_secrets_and_serves_curl_without_leaking_credentials() {
     binary_journey(false).await;
 }
 
 #[tokio::test]
+#[ignore = "requires authenticated disposable service Mongo fixture"]
 async fn compiled_binary_renews_cma_auth_from_secret_environment_without_restart() {
     binary_journey(true).await;
 }
@@ -161,12 +26,15 @@ async fn binary_journey(renewable: bool) {
             .store(3, std::sync::atomic::Ordering::SeqCst);
     }
     let files = MountedSecrets::new();
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let address = listener.local_addr().unwrap().to_string();
-    drop(listener);
+    let address = free_address();
     let log_path = files.dir.join("trace.log");
-    let log = fs::File::create(&log_path).unwrap();
     let mut command = files.command(&address, &cma, &nyxid, &provider);
+    let database =
+        database::DatabaseFixture::new(std::path::Path::new(env!("CARGO_BIN_EXE_cmaeg"))).await;
+    database.configure(&mut command);
+    // Gateway records live in Mongo; the CMA origin now identifies the provider
+    // whose management calls may receive the renewable service credential.
+    command.env("CMAEG_CMA_BASE_URL", provider.base_url());
     if renewable {
         command
             .env_remove("CMAEG_MASTER_KEYS_FILE")
@@ -179,30 +47,8 @@ async fn binary_journey(renewable: bool) {
             .env("CMAEG_CMA_CLIENT_ID", "fixture-client")
             .env("CMAEG_CMA_CLIENT_SECRET", "fixture-client-secret");
     }
-    let mut child = command
-        .stdout(Stdio::from(log.try_clone().unwrap()))
-        .stderr(Stdio::from(log))
-        .spawn()
-        .unwrap();
+    let mut child = spawn_ready(command, &address, &log_path).await;
     let base = format!("http://{address}");
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-    loop {
-        if let Ok(response) = reqwest::get(format!("{base}/readyz")).await {
-            if response.status().is_success() {
-                break;
-            }
-        }
-        assert!(
-            child.try_wait().unwrap().is_none(),
-            "{}",
-            fs::read_to_string(&log_path).unwrap()
-        );
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "binary did not become ready"
-        );
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
     let create_file = files.dir.join("create.json");
     fs::write(&create_file, create_body().to_string()).unwrap();
     let created = curl(
@@ -218,15 +64,6 @@ async fn binary_journey(renewable: bool) {
         tokio::time::sleep(Duration::from_millis(3100)).await;
     }
     let read = curl("GET", &format!("{base}/v1/channels/{id}"), None, 200).await;
-    if renewable {
-        assert!(
-            nyxid
-                .service_tokens
-                .calls
-                .load(std::sync::atomic::Ordering::SeqCst)
-                >= 2
-        );
-    }
     assert_eq!(read["definition"]["name"], "support-bot");
     let document = curl("GET", &format!("{base}/openapi.json"), None, 200).await;
     assert!(document["paths"].get("/telegram/{channel_id}").is_some());
@@ -285,11 +122,22 @@ async fn binary_journey(renewable: bool) {
         204,
     )
     .await;
-    assert!(cma.records().is_empty());
-    assert!(provider
-        .requests()
-        .iter()
-        .any(|request| request.method == "DELETE"));
+    curl("GET", &format!("{base}/v1/channels/{id}"), None, 404).await;
+    // Reads now use Gateway Mongo. Provider teardown requires a fresh service
+    // credential and proves renewal after the original credential expires.
+    if renewable {
+        assert!(
+            nyxid
+                .service_tokens
+                .calls
+                .load(std::sync::atomic::Ordering::SeqCst)
+                >= 2
+        );
+    }
+
+    assert!(provider.requests().iter().any(|request| {
+        request.method == "DELETE" && request.authorization.as_deref() == Some("Bearer cma-service")
+    }));
     child.kill().await.unwrap();
     child.wait().await.unwrap();
     let logs = fs::read_to_string(log_path).unwrap();

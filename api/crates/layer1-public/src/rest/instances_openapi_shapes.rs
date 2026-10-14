@@ -11,8 +11,8 @@ use utoipa::ToSchema;
 #[path = "sandbox_lifecycle_view.rs"]
 mod lifecycle;
 pub use lifecycle::{
-    SandboxBackgroundSaveView, SandboxCheckpointView, SandboxCompletedSnapshotView,
-    SandboxLifecycleEligibilityView, SandboxLifecycleOperationView, SandboxLifecycleView,
+    SandboxBackgroundSaveView, SandboxCheckpointView, SandboxLifecycleEligibilityView,
+    SandboxLifecycleOperationView, SandboxLifecycleView,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -49,6 +49,38 @@ pub struct CreateWorkspaceRequest {
     pub trust_confirmed: bool,
     #[serde(default)]
     pub commands_digest: Option<String>,
+}
+
+/// Direct Agent Manager workspace admission. This request carries the source
+/// selected by the caller and does not reference a Workspace Profile.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CreateInlineWorkspaceRequest {
+    pub source: InlineWorkspaceSourceRequest,
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, ToSchema)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum InlineWorkspaceSourceRequest {
+    GitRepository {
+        url: String,
+        #[serde(default)]
+        reference: Option<String>,
+    },
+    Empty,
+}
+
+impl From<InlineWorkspaceSourceRequest> for layer2_core::sandbox::InlineWorkspaceSource {
+    fn from(value: InlineWorkspaceSourceRequest) -> Self {
+        match value {
+            InlineWorkspaceSourceRequest::GitRepository { url, reference } => {
+                Self::GitRepository { url, reference }
+            }
+            InlineWorkspaceSourceRequest::Empty => Self::Empty,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]

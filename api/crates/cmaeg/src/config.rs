@@ -7,15 +7,32 @@ use cmaeg_core::{channel::Secret, seal::MasterKeyRing};
 use reqwest::Url;
 
 mod cache;
+mod console;
 mod delivery;
 mod ingress;
+mod media;
+mod routing;
 mod secrets;
+mod service;
 mod service_account;
+pub use service::*;
+mod stt;
+pub mod transformer;
 mod turns;
 pub use cache::*;
+pub use console::*;
 pub use delivery::*;
 pub use ingress::*;
+pub use media::{
+    MediaConfig, MediaToolProviders, CMAEG_MEDIA_CACHE_BYTES, CMAEG_MEDIA_DOWNLOAD_BYTES_PER_HOUR,
+    CMAEG_MEDIA_ENABLED, CMAEG_MEDIA_INFLIGHT_BYTES, CMAEG_MEDIA_LINK_TTL_SECONDS,
+    CMAEG_MEDIA_MAX_BYTES, CMAEG_MEDIA_MAX_JOBS, CMAEG_MEDIA_PREPARE_BUDGET_MS,
+    CMAEG_MEDIA_RATE_PER_MINUTE, CMAEG_MEDIA_RESPONSE_BYTES, CMAEG_MEDIA_TOOL_PROVIDERS,
+};
+pub use routing::{RoutingConfig, CMAEG_NON_HUMAN_PROVIDERS};
 pub use service_account::*;
+pub use stt::*;
+pub use transformer::{TransformerConfig, CMAEG_MEDIA_FFMPEG_DIR, CMAEG_MEDIA_VIDEO_FRAMES};
 pub use turns::*;
 
 /// The listener address used by CMAEG.
@@ -51,6 +68,14 @@ pub enum ConfigError {
     InvalidMaxInflight { value: String },
     /// A management-plane origin, secret, or slug was invalid.
     InvalidManagement { detail: String },
+    /// An inbound media setting was invalid.
+    InvalidMedia { detail: String },
+    /// The configured media transformer failed its startup checks.
+    MediaTransformer { detail: String },
+    /// A console setting was invalid.
+    InvalidConsole { detail: String },
+    /// A multi-consumer routing setting was invalid.
+    Routing(String),
 }
 
 impl std::fmt::Display for ConfigError {
@@ -77,6 +102,18 @@ impl std::fmt::Display for ConfigError {
             }
             Self::InvalidManagement { detail } => {
                 write!(formatter, "management configuration is invalid: {detail}")
+            }
+            Self::InvalidMedia { detail } => {
+                write!(formatter, "media configuration is invalid: {detail}")
+            }
+            Self::MediaTransformer { detail } => {
+                write!(formatter, "media transformer unavailable: {detail}")
+            }
+            Self::InvalidConsole { detail } => {
+                write!(formatter, "console configuration is invalid: {detail}")
+            }
+            Self::Routing(detail) => {
+                write!(formatter, "routing configuration is invalid: {detail}")
             }
         }
     }
@@ -105,6 +142,11 @@ pub struct Config {
     pub ingress: IngressConfig,
     pub turns: TurnConfig,
     pub delivery: DeliveryConfig,
+    pub media: MediaConfig,
+    pub routing: RoutingConfig,
+    pub stt: SttConfig,
+    pub transformer: TransformerConfig,
+    pub console: ConsoleConfig,
 }
 
 /// Secrets and origins used by the channel management plane.
@@ -135,6 +177,12 @@ impl Config {
         })?;
         let providers_json = env::var(CMAEG_PROVIDERS).unwrap_or_else(|_| "[]".to_owned());
         let providers = ProviderRegistry::parse(&providers_json)?;
+        // Validated against the registry, so it can only follow it.
+        let media = media::config_from_env(&providers)?;
+        let routing = routing::config_from_env(&providers)?;
+        let stt = stt::config_from_env()?;
+        let transformer = transformer::config_from_env()?;
+        transformer.check(&media, &stt)?;
         let provider_connect_timeout = positive_duration(CMAEG_PROVIDER_CONNECT_TIMEOUT_MS, 2_000)?;
         let provider_request_timeout =
             positive_duration(CMAEG_PROVIDER_REQUEST_TIMEOUT_MS, 30_000)?;
@@ -147,6 +195,8 @@ impl Config {
                 value: env::var(CMAEG_PROVIDER_MAX_INFLIGHT).unwrap_or_else(|_| "256".to_owned()),
             })?;
         let management = ManagementConfig::from_env()?;
+        let turns = TurnConfig::from_env()?;
+        media.check_turn_timeout(turns.turn_timeout)?;
         Ok(Self {
             listen,
             metrics_listen,
@@ -158,8 +208,13 @@ impl Config {
             cma_service_account: ServiceAccountConfig::from_env()?,
             channel_cache: ChannelCacheConfig::from_env()?,
             ingress: IngressConfig::from_env()?,
-            turns: TurnConfig::from_env()?,
+            turns,
             delivery: DeliveryConfig::from_env()?,
+            media,
+            routing,
+            stt,
+            transformer,
+            console: ConsoleConfig::from_env()?,
         })
     }
 }

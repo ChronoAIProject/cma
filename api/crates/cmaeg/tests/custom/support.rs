@@ -49,6 +49,27 @@ impl App {
         turn_config: TurnConfig,
         failures: usize,
     ) -> Self {
+        Self::build(edit, provider_config, turn_config, failures, false).await
+    }
+    /// [`App::standard`] with an edited channel, served with the inbound media
+    /// switch on or off.
+    pub async fn media(edit: impl FnOnce(&mut Value), media_enabled: bool) -> Self {
+        Self::build(
+            edit,
+            Default::default(),
+            Default::default(),
+            0,
+            media_enabled,
+        )
+        .await
+    }
+    async fn build(
+        edit: impl FnOnce(&mut Value),
+        provider_config: FakeProviderConfig,
+        turn_config: TurnConfig,
+        failures: usize,
+        media_enabled: bool,
+    ) -> Self {
         let receiver = Receiver::new(failures).await;
         let secret = Secret::new(uuid::Uuid::new_v4().to_string());
         let key = format!("nyx_{}", uuid::Uuid::new_v4().simple());
@@ -82,6 +103,7 @@ impl App {
             ProviderClient::new(registry, Duration::from_secs(1), Duration::from_secs(2), 8)
                 .unwrap(),
         );
+        let delivery = Arc::new(cmaeg::delivery::router::ShardedScheduler::new(delivery));
         let runner = Arc::new(TurnRunner::new(
             providers.clone(),
             tracker.clone(),
@@ -94,7 +116,8 @@ impl App {
             Default::default(),
             runner,
         )
-        .unwrap();
+        .unwrap()
+        .with_media_enabled(media_enabled);
         let tools = ToolsState {
             resolver: fixture.state.resolver.clone(),
             keys: fixture.state.master_keys.clone(),
@@ -102,6 +125,8 @@ impl App {
             delivery,
             tracker: tracker.clone(),
             public_origin: "https://gateway.example".into(),
+            media: None,
+            downloads: Default::default(),
         };
         let router = http::events::router(CustomIngressState {
             ingress,
@@ -162,5 +187,50 @@ impl App {
                 .drain(Instant::now() + Duration::from_secs(30))
                 .await
         );
+    }
+}
+/// A custom-source channel whose ingress launches into the fixture's recording launcher.
+///
+/// Tests call the handler in process so they control the request body's owner.
+pub struct Recorded {
+    pub fixture: Fixture,
+    pub state: CustomIngressState,
+    secret: Secret,
+}
+impl Recorded {
+    pub async fn new() -> Self {
+        let secret = Secret::new(uuid::Uuid::new_v4().to_string());
+        let fixture = Fixture::new(
+            |value| {
+                value["sources"] =
+                    json!([{"type":"custom","auth":{"type":"hmac","key_id":"ingress"}}]);
+                value["partition"]["key"] = "per_event".into();
+                value["reply"]["sinks"] = json!([{"type":"sync"}]);
+                value["secrets"]["hmac_secrets"] = json!([["ingress", secret.as_str()]]);
+            },
+            Default::default(),
+        )
+        .await;
+        let state = CustomIngressState {
+            ingress: fixture.state.clone(),
+            waiters: Arc::new(SyncRegistry::default()),
+        };
+        Self {
+            fixture,
+            state,
+            secret,
+        }
+    }
+    /// A signed structured event request carrying `body`, whose bytes equal `signed`.
+    pub fn request(&self, signed: &[u8], body: axum::body::Body) -> axum::extract::Request {
+        let timestamp = time::OffsetDateTime::now_utc().unix_timestamp().to_string();
+        let signature = webhook::signature(&self.secret, "delivery-1", &timestamp, signed);
+        axum::http::Request::post(format!("/v1/channels/{}/events", self.fixture.id))
+            .header("content-type", "application/cloudevents+json")
+            .header("webhook-id", "delivery-1")
+            .header("webhook-timestamp", timestamp)
+            .header("webhook-signature", signature)
+            .body(body)
+            .unwrap()
     }
 }

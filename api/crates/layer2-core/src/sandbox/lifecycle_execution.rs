@@ -14,6 +14,36 @@ const MAX_FAILURE_DETAIL_BYTES: usize = 4 * 1024;
 mod checkpoints;
 
 impl Sandbox {
+    /// Advance a durable-home pause without capturing or publishing a CMA
+    /// checkpoint. The retained home authority is validated before agents are
+    /// parked and the runtime CRD is torn down.
+    pub fn complete_lifecycle_persistent_pause(
+        &mut self,
+        holder: &str,
+        fence: u64,
+        at: String,
+    ) -> Result<(), SandboxModelError> {
+        self.apply_claimed(holder, fence, at.clone(), at, |next| {
+            if next.lifecycle.home_recovery.is_none()
+                || !matches!(
+                    next.lifecycle.operation,
+                    Some(SandboxLifecycleOperation::Pause {
+                        phase: SandboxPausePhase::CaptureAndPublishCheckpoint,
+                        ..
+                    })
+                )
+            {
+                return Err(invalid_execution());
+            }
+            if let Some(SandboxLifecycleOperation::Pause { phase, .. }) =
+                next.lifecycle.operation.as_mut()
+            {
+                *phase = SandboxPausePhase::PauseAgents;
+            }
+            Ok(())
+        })
+    }
+
     /// Record that every live agent has been durably parked.
     pub fn complete_lifecycle_agent_pause(
         &mut self,
@@ -100,6 +130,7 @@ impl Sandbox {
         fence: u64,
         at: String,
     ) -> Result<(), SandboxModelError> {
+        self.validate_resumed_binding(&binding)?;
         if self.runtime.is_some()
             || !valid_runtime_binding(&binding, &at)
             || self
@@ -131,6 +162,7 @@ impl Sandbox {
                 _ => return Err(invalid_execution()),
             }
             next.runtime = Some(binding);
+            next.lifecycle.suspended_runtime = None;
             next.lifecycle.runtime_provision = None;
             Ok(())
         })

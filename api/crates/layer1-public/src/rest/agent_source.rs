@@ -143,7 +143,7 @@ impl From<AgentSourceReading> for AccessibleAgentSourceView {
             }
         };
         let origin = match original {
-            AgentOrigin::Manual => AgentOriginView::Manual,
+            AgentOrigin::Manual | AgentOrigin::Lifecycle { .. } => AgentOriginView::Manual,
             AgentOrigin::WorkspaceProfile { .. } => AgentOriginView::WorkspaceProfile,
             AgentOrigin::Trigger {
                 trigger_id,

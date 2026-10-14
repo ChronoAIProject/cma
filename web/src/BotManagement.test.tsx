@@ -1,10 +1,15 @@
 import { act, render, screen, waitFor } from '@testing-library/react';
-import { expect, it, vi } from 'vitest';
+import { beforeAll, expect, it, vi } from 'vitest';
 import { CmaClientProvider } from './api/context';
 import { unavailableClient, type CmaWebClient } from './api/client';
 import type { User } from './auth/types';
 import { BotManagement, canManageBots } from './BotManagement';
 import { bot, botClient } from './bots/fixtures.test-support';
+
+beforeAll(async () => {
+  // Compile the lazy route during setup; the test measures viewer isolation.
+  await import('./bots/BotPage');
+});
 
 const owner: User = {
   id: 'owner',
@@ -38,7 +43,6 @@ it('requires Bot authority and a bound client for both navigation and direct rou
   expect(bots.bots.list).not.toHaveBeenCalled();
 });
 it('clears protected records on viewer and client change and ignores late previous reads', async () => {
-  await import('./bots/BotPage');
   let finish: ((value: { items: (typeof bot)[]; next_after: null }) => void) | undefined;
   const old = botClient({
     list: vi.fn(
@@ -54,7 +58,7 @@ it('clears protected records on viewer and client change and ignores late previo
   const next = botClient({ list: vi.fn(async () => ({ items: [], next_after: null })) });
   const second = { ...unavailableClient, botViews: next };
   view.rerender(<Entry user={{ ...owner, id: 'other' }} client={second} />);
-  await screen.findByText('No Bots on this page.');
+  await screen.findByText('No consumers on this page.');
   await act(async () => finish?.({ items: [bot], next_after: null }));
   expect(screen.queryByText(bot.name)).not.toBeInTheDocument();
   view.rerender(
@@ -63,5 +67,5 @@ it('clears protected records on viewer and client change and ignores late previo
   await screen.findByText(bot.name);
   view.rerender(<Entry user={{ ...owner, id: 'third' }} client={second} />);
   expect(screen.queryByText(bot.name)).not.toBeInTheDocument();
-  await screen.findByText('No Bots on this page.');
+  await screen.findByText('No consumers on this page.');
 });

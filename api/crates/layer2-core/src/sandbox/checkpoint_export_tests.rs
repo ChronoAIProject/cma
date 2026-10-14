@@ -11,9 +11,11 @@ use crate::sandbox::SandboxCheckpointConversation;
 
 fn evidence(stamp: &str) -> (HomeSnapshotExportRequest, HomeSnapshotExportReceipt) {
     let home = HomeVolumeRequest {
+        scope: None,
         volume_id: "home-one".into(),
         sandbox_id: "sbx_one".into(),
         policy: HomeVolumePolicy {
+            mode: Default::default(),
             storage_class: "cma-home-v1".into(),
             capacity_gib: 64,
             template_name: "seed".into(),
@@ -22,6 +24,7 @@ fn evidence(stamp: &str) -> (HomeSnapshotExportRequest, HomeSnapshotExportReceip
     };
     let source = HomeVolumeAttachment {
         receipt: HomeVolumeReceipt {
+            native_authority: None,
             volume_id: home.volume_id.clone(),
             request_sha256: home.computed_sha256(),
             storage_reference: "home-pvc".into(),

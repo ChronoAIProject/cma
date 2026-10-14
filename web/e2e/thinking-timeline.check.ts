@@ -223,7 +223,7 @@ for (const theme of ['light', 'dark']) {
         'Run tests',
       ]);
       const beforeNavigation = await elapsed();
-      await page.getByRole('link', { name: 'CMA home', exact: true }).click();
+      await page.locator('.sidebar').getByRole('link', { name: 'CMA home', exact: true }).click();
       await expect(toggle).toHaveCount(0);
       stream = undefined;
       await page.goBack();

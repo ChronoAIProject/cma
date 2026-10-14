@@ -43,3 +43,18 @@ export async function openedOptions(
     .getAllByRole('menuitemradio')
     .map((option) => option.textContent ?? '');
 }
+
+/** Select the exact value through the shared menu's stable option identity. */
+export async function chooseOptionValue(
+  user: UserEvent,
+  trigger: HTMLElement,
+  value: string,
+): Promise<void> {
+  await user.click(trigger);
+  const menu = await screen.findByRole('menu', { name: trigger.getAttribute('aria-label') ?? '' });
+  const option = within(menu)
+    .getAllByRole('menuitemradio')
+    .find((item) => item.dataset.id === value);
+  if (option === undefined) throw new Error(`Picker option unavailable: ${value}`);
+  await user.click(option);
+}

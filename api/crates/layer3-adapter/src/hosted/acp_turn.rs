@@ -14,6 +14,14 @@ impl Bridge {
     ) -> crate::Result<()> {
         let session = self.session().await?;
         match input {
+            ConversationInput::Configure {
+                model,
+                reasoning_effort,
+                permission,
+            } => {
+                self.configure_settings(&session, &model, reasoning_effort, permission)
+                    .await
+            }
             ConversationInput::Prompt(content) => {
                 self.drive_prompt(session, content, None, updates).await
             }

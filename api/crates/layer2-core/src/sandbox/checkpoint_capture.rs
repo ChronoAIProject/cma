@@ -83,7 +83,10 @@ impl Sandbox {
             SandboxImageRotationPhase as Rotation, SandboxLifecycleOperation as Operation,
             SandboxPausePhase as Pause,
         };
-        if self.lifecycle.checkpoint_capture.is_some() {
+        // A retained-home lifecycle never acquired a checkpoint writer hold.
+        // Keep existing historical debt, but do not invent debt when retirement
+        // preempts a native pause whose provider acknowledgement was lost.
+        if self.lifecycle.checkpoint_capture.is_some() || self.retained_home_recovery().is_some() {
             return Ok(());
         }
         let operation = match self.lifecycle.operation.as_ref() {

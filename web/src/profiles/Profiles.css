@@ -384,3 +384,19 @@
   outline: 2px solid var(--dsw-alias-brand-primary);
   outline-offset: 2px;
 }
+
+.profile-service-list {
+  max-height: 320px;
+  overflow: auto;
+  padding: 0 10px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  scrollbar-gutter: stable;
+}
+.profile-service-list > li + li {
+  border-top: 1px solid var(--dsw-alias-border-l1);
+}
+.profile-service-list label > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}

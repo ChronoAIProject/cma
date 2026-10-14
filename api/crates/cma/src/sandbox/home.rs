@@ -25,12 +25,24 @@ pub(super) async fn next_home(
             "released home cannot be provisioned again".into(),
         ));
     }
+    if home
+        .native_pool
+        .as_ref()
+        .is_some_and(|native| native.cleaned || native.cleanup.is_some())
+    {
+        return Err(AdapterError::Rejected(
+            "native home is already retiring".into(),
+        ));
+    }
     let store = adapter.home_volumes().ok_or_else(|| {
         AdapterError::Unsupported("durable home storage is not configured".into())
     })?;
     if let Some(attachment) = home.attachment() {
         store.verify(&attachment).await?;
         return Ok(None);
+    }
+    if home.native_pool.is_some() {
+        return super::home_native::next(adapter, home).await;
     }
     let receipt = store.prepare(&home.request).await?;
     let mut next = home.clone();
@@ -44,6 +56,15 @@ pub(super) async fn release_home(
     home: &mut SandboxHome,
 ) -> Result<(), AdapterError> {
     if !home.released {
+        if home
+            .native_pool
+            .as_ref()
+            .is_some_and(|native| !native.cleaned)
+        {
+            return Err(AdapterError::Rejected(
+                "native claim and Pod cleanup must finish before home release".into(),
+            ));
+        }
         let store = adapter.home_volumes().ok_or_else(|| {
             AdapterError::Unsupported("durable home storage is not configured".into())
         })?;

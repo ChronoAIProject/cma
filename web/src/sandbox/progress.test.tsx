@@ -147,6 +147,7 @@ it('polls incremental Sandbox events, preserves progress on read failure, and sl
         removeWorkspace: true,
         deleteAgent: true,
         stopAgent: true,
+        exportHistory: true,
       }}
       busy={false}
       onAction={vi.fn()}

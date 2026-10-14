@@ -14,6 +14,7 @@ pub struct HostedAgentOpenSettings {
     pub own_credential: bool,
     pub channel_tool: Option<super::HostedChannelToolBinding>,
     pub provider_tool: Option<super::HostedProviderToolBinding>,
+    pub access_tool: Option<super::HostedAccessToolBinding>,
     /// Control-plane correlation for an already admitted turn; not launch data.
     pub recovered_prompt: Option<crate::PromptIdentity>,
 }
@@ -29,6 +30,7 @@ pub trait HostedAgentRuntime: Send + Sync {
             own_credential: request.options.own_credential,
             channel_tool: None,
             provider_tool: None,
+            access_tool: None,
             recovered_prompt: None,
         })
     }
@@ -37,7 +39,79 @@ pub trait HostedAgentRuntime: Send + Sync {
 /// Provider lifecycle and supervisor transport used by a hosted adapter.
 #[async_trait::async_trait]
 pub trait HostedBackend: Send + Sync {
+    async fn reserve_home_request(
+        &self,
+        _runtime: &ProviderSandboxRequest,
+        home: &crate::HomeVolumeRequest,
+    ) -> Result<crate::HomeVolumeRequest> {
+        Ok(home.clone())
+    }
+    async fn verify_home_route(
+        &self,
+        _runtime: &ProviderSandboxRequest,
+        _home: &crate::HomeVolumeRequest,
+    ) -> Result<()> {
+        Ok(())
+    }
+    fn verify_retained_home_route(
+        &self,
+        _handle: &RuntimeHandle,
+        _home: &crate::HomeVolumeRequest,
+    ) -> Result<()> {
+        Ok(())
+    }
+    fn native_pools(&self) -> Option<&dyn crate::agent_sandbox::NativePoolControl> {
+        None
+    }
+    /// Resolve pool authority from the durable home before claim recovery or cleanup.
+    fn native_pools_for_home(
+        &self,
+        _home: &crate::HomeVolumeRequest,
+    ) -> Result<Option<&dyn crate::agent_sandbox::NativePoolControl>> {
+        Ok(self.native_pools())
+    }
+    async fn select_native_pool(
+        &self,
+        _request: &ProviderSandboxRequest,
+        _image: &crate::RuntimeImage,
+        _home: &crate::HomeVolumeRequest,
+    ) -> Result<Option<crate::agent_sandbox::NativePoolBinding>> {
+        Ok(None)
+    }
     async fn provision(&self, request: ProviderSandboxRequest) -> Result<RuntimeHandle>;
+    async fn teardown_retained(&self, _handle: &RuntimeHandle) -> Result<()> {
+        Err(crate::AdapterError::Unsupported(
+            "retained provider deletion is unavailable".into(),
+        ))
+    }
+    async fn suspend(
+        &self,
+        _handle: &RuntimeHandle,
+        _request: &ProviderSandboxRequest,
+    ) -> Result<()> {
+        Err(crate::AdapterError::Unsupported(
+            "provider suspension is unavailable".into(),
+        ))
+    }
+    async fn verify_suspended(
+        &self,
+        _handle: &RuntimeHandle,
+        _request: &ProviderSandboxRequest,
+    ) -> Result<()> {
+        Err(crate::AdapterError::Unsupported(
+            "provider suspension observation is unavailable".into(),
+        ))
+    }
+    async fn resume(
+        &self,
+        _handle: &RuntimeHandle,
+        _previous: &ProviderSandboxRequest,
+        _next: &ProviderSandboxRequest,
+    ) -> Result<()> {
+        Err(crate::AdapterError::Unsupported(
+            "provider resumption is unavailable".into(),
+        ))
+    }
     async fn provision_receipted(
         &self,
         _request: ProviderSandboxRequest,
@@ -74,6 +148,17 @@ pub trait HostedBackend: Send + Sync {
         ))
     }
 
+    /// Optional native optimization. None selects the unchanged full adoption path.
+    /// The returned observation must include status; caller rechecks home afterward.
+    async fn inspect_native_runtime(
+        &self,
+        _handle: &RuntimeHandle,
+        _request: &ProviderSandboxRequest,
+        _home: &crate::HomeVolumeAttachment,
+    ) -> Result<Option<crate::RuntimeInspection>> {
+        Ok(None)
+    }
+
     async fn reclaim(&self, _observation: &RuntimeObservation) -> Result<()> {
         Err(crate::AdapterError::Unsupported(
             "hosted runtime reclamation is not supported".into(),
@@ -106,6 +191,16 @@ pub trait HostedBackend: Send + Sync {
         settings: HostedAgentOpenSettings,
         updates: mpsc::Sender<ConversationUpdate>,
     ) -> Result<(ConversationChannel, FencedReceipt<AgentOpenReceipt>)>;
+
+    async fn export_agent_history(
+        &self,
+        _handle: &RuntimeHandle,
+        _agent: &crate::AgentSlot,
+    ) -> Result<Vec<u8>> {
+        Err(crate::AdapterError::Unsupported(
+            "agent history export is not supported".into(),
+        ))
+    }
 
     async fn teardown(&self, handle: &RuntimeHandle) -> Result<()>;
 }

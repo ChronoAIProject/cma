@@ -6,7 +6,10 @@ use super::agent_openapi_shapes::{
 use super::{agents::AgentRoutesState, instance_problem::InstanceProblem};
 use crate::{AuthenticatedCaller, AuthenticatedResourceCaller, DelegatedCredential};
 use axum::{
+    body::Body,
     extract::{Path, Query, State},
+    http::{header, HeaderValue},
+    response::Response,
     routing::get,
     Json, Router,
 };
@@ -31,6 +34,7 @@ pub(super) fn routes() -> Router<AgentRoutesState> {
     Router::new()
         .route("/api/v1/agents/{id}/events", get(events))
         .route("/api/v1/agents/{id}/transcript", get(transcript))
+        .route("/api/v1/agents/{id}/history", get(history))
         .route("/api/v1/agents/{id}/usage", get(usage))
         .route("/api/v1/agents/{id}/resources", get(resources))
 }
@@ -122,6 +126,56 @@ pub(crate) async fn transcript(
         .map_err(InstanceProblem::from)
         .and_then(public_transcript)
         .map(Json)
+}
+
+/// Download the runtime's original session JSONL after applying the same
+/// Agent history authorization as the transcript projection.
+pub(crate) async fn history(
+    State(state): State<AgentRoutesState>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    resource: Option<AuthenticatedResourceCaller>,
+    Path(id): Path<String>,
+) -> Result<Response, InstanceProblem> {
+    let id = AgentId(id);
+    let lineage = if let Some(resource) = resource {
+        state
+            .reads
+            .history_lineage_authorized(
+                &resource.context,
+                resource.credential.as_ref().map(DelegatedCredential::value),
+                &id,
+            )
+            .await
+    } else {
+        state.reads.lineage(&caller, &id).await
+    }
+    .map_err(InstanceProblem::from)?;
+    let runtime = lineage
+        .sandbox
+        .runtime
+        .as_ref()
+        .ok_or(InstanceProblem::Unavailable)?;
+    let exporter = state
+        .history_exporter
+        .as_ref()
+        .ok_or(InstanceProblem::Unavailable)?;
+    let bytes = exporter
+        .export(&runtime.runtime_id, id.as_str())
+        .await
+        .map_err(|_| InstanceProblem::Unavailable)?;
+    let mut response = Response::new(Body::from(bytes));
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/x-ndjson"),
+    );
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response.headers_mut().insert(
+        header::CONTENT_DISPOSITION,
+        HeaderValue::from_static("attachment; filename=agent-history.jsonl"),
+    );
+    Ok(response)
 }
 
 #[utoipa::path(

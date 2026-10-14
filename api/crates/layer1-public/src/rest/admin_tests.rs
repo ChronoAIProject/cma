@@ -134,6 +134,13 @@ pub(crate) struct Fixture {
 }
 
 pub(crate) fn fixture(inventory: bool) -> Fixture {
+    fixture_with_pools(inventory, None)
+}
+
+pub(crate) fn fixture_with_pools(
+    inventory: bool,
+    pools: Option<Arc<dyn warm_pools::WarmPoolAdministration>>,
+) -> Fixture {
     let activity = Arc::new(MemoryActivity::default());
     let activity_service = ActivityService::new(activity.clone());
     let settings = Arc::new(PlatformSettingsService::new(
@@ -154,6 +161,9 @@ pub(crate) fn fixture(inventory: bool) -> Fixture {
         .with_user_directory(layer2_core::UserDirectory::new(names.clone()));
     if inventory {
         state = state.with_runtime_inventory(Arc::new(FixedInventory));
+    }
+    if let Some(pools) = pools {
+        state = state.with_warm_pools(pools);
     }
     Fixture {
         app: router(state),
@@ -302,6 +312,7 @@ pub(crate) fn sandbox(id: &str, owner: &str, version: &str) -> Sandbox {
             revision: 1,
             digest: "a".repeat(64),
             content: SandboxProfileContent {
+                runtime_image: None,
                 cpu_millis: 1_000,
                 memory_mib: 2_048,
                 nyxid_services: vec![],
@@ -354,6 +365,7 @@ pub(crate) fn sandbox(id: &str, owner: &str, version: &str) -> Sandbox {
 
 pub(crate) fn agent_profile(id: &str, owner: &str, visibility: ProfileVisibility) -> AgentProfile {
     AgentProfile {
+        internal: false,
         id: layer2_core::AgentProfileId(id.into()),
         owner: SubjectId::new(owner),
         name: format!("Agent {id}"),
@@ -404,7 +416,10 @@ async fn settings_support_read_replace_presence_aware_patch_and_reset() {
     assert_eq!(initial.status(), StatusCode::OK);
     let initial = response_json(initial).await;
     assert_eq!(initial["revision"], 0);
-    assert_eq!(initial["settings"]["checkpoints"]["interval_seconds"], 1800);
+    assert!(initial["settings"].get("checkpoints").is_none());
+    assert!(initial["settings"]["retention"]
+        .get("checkpoint_grace_days")
+        .is_none());
 
     let changed = send(
         &fixture.app,
@@ -412,8 +427,7 @@ async fn settings_support_read_replace_presence_aware_patch_and_reset() {
         "/api/v1/admin/settings",
         Some(json!({
             "expected_revision": 0,
-            "marketplace": {"enabled": false},
-            "checkpoints": {"interval_seconds": 600}
+            "marketplace": {"enabled": false}
         })),
         capability,
     )
@@ -422,7 +436,10 @@ async fn settings_support_read_replace_presence_aware_patch_and_reset() {
     let changed = response_json(changed).await;
     assert_eq!(changed["revision"], 1);
     assert_eq!(changed["settings"]["marketplace"]["enabled"], false);
-    assert_eq!(changed["settings"]["checkpoints"]["interval_seconds"], 600);
+    assert!(changed["settings"].get("checkpoints").is_none());
+    assert!(changed["settings"]["retention"]
+        .get("checkpoint_grace_days")
+        .is_none());
     assert_eq!(
         changed["settings"]["inactivity"],
         initial["settings"]["inactivity"]
@@ -484,9 +501,7 @@ async fn settings_refusals_are_confidential_specific_and_revision_safe() {
         json!({"expected_revision": 0}),
         json!({"expected_revision": 0, "marketplace": null}),
         json!({"expected_revision": 0, "inactivity": {"pause_after_seconds": 59}}),
-        json!({"expected_revision": 0, "checkpoints": {"interval_seconds": 59}}),
-        json!({"expected_revision": 0, "checkpoints": {"interval_seconds": 86401}}),
-        json!({"expected_revision": 0, "checkpoints": null}),
+        json!({"expected_revision": 0, "checkpoints": {"interval_seconds": 1800}}),
     ] {
         let response = send(
             &fixture.app,
@@ -553,7 +568,7 @@ async fn collection_operations_return_the_explicit_operator_refusal() {
             "/api/v1/admin/settings",
             Some(json!({
                 "expected_revision": 0,
-                "settings": PlatformSettings::default()
+                "settings": settings::PlatformSettingsBody::from(PlatformSettings::default())
             })),
         ),
         (
@@ -816,7 +831,10 @@ async fn profile_routes_filter_retire_and_protect_deployment_defaults() {
     let protected = send(
         &fixture.app,
         Method::POST,
-        "/api/v1/admin/profiles/agent/agp_default/retire",
+        &format!(
+            "/api/v1/admin/profiles/agent/{}/retire",
+            layer2_core::DEFAULT_AGENT_PROFILE_ID
+        ),
         None,
         [Capability::ControlAnySandbox],
     )
@@ -897,3 +915,6 @@ async fn runtime_inventory_and_activity_each_require_their_exact_capability() {
     .await;
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
 }
+
+#[path = "admin/warm_pools_tests.rs"]
+mod warm_pool_tests;

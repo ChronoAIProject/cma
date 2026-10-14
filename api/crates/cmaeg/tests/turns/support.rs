@@ -36,7 +36,11 @@ pub struct Fixture {
 impl Fixture {
     pub async fn new(fake_config: FakeProviderConfig, config: TurnConfig, capacity: usize) -> Self {
         let fake = FakeProvider::start(fake_config).await;
-        let registry = ProviderRegistry::parse(&json!([{"slug":"cma_codex","base_url":fake.base_url(),"kind":"responses_http","paths":{"agent_card":"/.well-known/agent-card.json","binding":"/api/v1/cmaeg/bindings/{binding_id}","conversation":"/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}","responses":"/api/v2/responses"},"max_inflight":capacity}]).to_string()).unwrap();
+        // Two slugs on one fake, so a channel can be rebound to `nyxbot`.
+        let entry = |slug: &str| json!({"slug":slug,"base_url":fake.base_url(),"kind":"responses_http","paths":{"agent_card":"/.well-known/agent-card.json","binding":"/api/v1/cmaeg/bindings/{binding_id}","conversation":"/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}","responses":"/api/v2/responses"},"max_inflight":capacity});
+        let registry =
+            ProviderRegistry::parse(&json!([entry("cma_codex"), entry("nyxbot")]).to_string())
+                .unwrap();
         let client = Arc::new(
             ProviderClient::new(
                 registry,
@@ -49,6 +53,7 @@ impl Fixture {
         let readiness = Readiness::initialized();
         let tracker = TurnTracker::new(readiness.clone());
         let (delivery, outcomes) = mpsc::channel(64);
+        let delivery = Arc::new(cmaeg::delivery::router::ShardedScheduler::new(delivery));
         let runner = TurnRunner::new(client, tracker.clone(), delivery, config);
         let keys = MasterKeyRing::parse(&format!("1:{}", STANDARD.encode([1; 32]))).unwrap();
         let mut definition: ChannelDefinition = serde_json::from_str(include_str!(
@@ -68,6 +73,7 @@ impl Fixture {
             pointer,
             definition,
             agent_key_hash: [0; 32],
+            consumer_keys: Vec::new(),
             loaded_at: Instant::now(),
             version: 1,
         });
@@ -106,12 +112,15 @@ impl Fixture {
                 conversation_id: conversation_id.clone(),
                 expires_at: time::OffsetDateTime::now_utc().unix_timestamp() + 1800,
                 reply: ReplyAddress::None,
+                consumer: None,
+                lineage: None,
             },
             &self.keys,
         )
         .unwrap();
         LaunchRequest {
             timing: None,
+            consumer: None,
             trace: tracing::Span::current(),
             channel: self.channel.clone(),
             idempotency_key: IdempotencyKey::from_event(&activity.event_id),

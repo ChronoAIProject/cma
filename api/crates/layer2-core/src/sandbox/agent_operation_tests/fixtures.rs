@@ -82,6 +82,7 @@ pub(super) fn test_agent(status: AgentStatus, first_message: Option<&str>) -> Ag
         capabilities: full_capabilities(),
         status,
         conversation: ConversationState {
+            settings: None,
             conversation_id: Some("conversation-operations".into()),
             runtime_generation: Some(3),
             last_seq: 0,

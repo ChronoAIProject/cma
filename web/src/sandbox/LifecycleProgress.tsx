@@ -38,8 +38,7 @@ export function LifecycleProgress({
   const client = suppliedClient ?? contextClient;
   const operation = sandbox.lifecycle?.operation;
   const hasOperation = operation !== undefined;
-  const background = sandbox.lifecycle?.backgroundSave;
-  const hasProgress = hasOperation || background !== undefined;
+  const hasProgress = hasOperation;
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
     if (!hasProgress) return;
@@ -54,47 +53,20 @@ export function LifecycleProgress({
       document.removeEventListener('visibilitychange', tick);
     };
   }, [hasProgress]);
-  if (operation === undefined && background !== undefined && sandbox.status === 'active') {
-    const labels = {
-      capturing: 'Preparing a snapshot',
-      preparing_export: 'Preparing to save',
-      exporting: 'Saving progress in the background',
-      uploading: 'Uploading saved progress',
-      finishing: 'Finishing save',
-      saved: 'Progress saved',
-      cancelled: 'Save will retry when the sandbox is ready',
-    };
-    const elapsed = elapsedDuration(background.startedAt, now);
-    return (
-      <section className="lifecycle-progress" aria-label="Sandbox progress">
-        <p className="lifecycle-progress__stage" aria-live="polite">
-          {labels[background.phase]}
-        </p>
-        <p>You can keep working and sending messages while progress is saved.</p>
-        {background.capturedAt === undefined ? null : (
-          <p>
-            This save includes work up to {new Date(background.capturedAt).toLocaleTimeString()}.
-            Later changes will be included in the next save.
-          </p>
-        )}
-        {elapsed === undefined || ['saved', 'cancelled'].includes(background.phase) ? null : (
-          <p>Elapsed: {elapsed}</p>
-        )}
-      </section>
-    );
-  }
   if (operation === undefined) {
-    const capture = sandbox.lifecycle?.checkpoint;
-    if (sandbox.status === 'active' && capture === undefined) return null;
+    const hasProviderPersistence =
+      sandbox.lifecycle?.backgroundSave !== undefined ||
+      sandbox.lifecycle?.checkpoint !== undefined;
+    if (sandbox.status === 'active' && !hasProviderPersistence) return null;
     return (
       <section className="lifecycle-progress" aria-label="Sandbox progress">
-        <p className="lifecycle-progress__stage">
-          {capture === undefined
-            ? sandboxLifecycleLabel(sandbox)
-            : capture.phase === 'capture'
-              ? 'Saving progress'
-              : 'Finishing save'}
-        </p>
+        <p className="lifecycle-progress__stage">{sandboxLifecycleLabel(sandbox)}</p>
+        {hasProviderPersistence ? (
+          <p>
+            Agent Sandbox persists this Sandbox on its attached PV. CMA does not manage snapshots or
+            S3 transfers.
+          </p>
+        ) : null}
         <SandboxActivity
           client={client}
           sandboxId={sandbox.id}

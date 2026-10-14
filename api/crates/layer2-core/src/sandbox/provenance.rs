@@ -82,7 +82,7 @@ impl AgentCreationProvenance {
             return Err(SandboxStoreError::Conflict);
         }
         let origin = match &agent.origin {
-            AgentOrigin::Manual => AgentCreationOrigin::Manual,
+            AgentOrigin::Manual | AgentOrigin::Lifecycle { .. } => AgentCreationOrigin::Manual,
             AgentOrigin::Trigger {
                 trigger_id,
                 launch_id,
@@ -250,7 +250,7 @@ impl AgentCreationProvenance {
                 })
                 && agent.creation_key.starts_with("channel-allocation:bral_")
                 && self.created_by.is_some() => {}
-            (AgentCreationOrigin::Manual, AgentOrigin::Manual) => {}
+            (AgentCreationOrigin::Manual, AgentOrigin::Manual | AgentOrigin::Lifecycle { .. }) => {}
             (
                 AgentCreationOrigin::Trigger {
                     trigger_id,

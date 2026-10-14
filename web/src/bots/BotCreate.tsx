@@ -1,10 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ChoiceGroup } from '../profiles/ChoiceGroup';
-import { WorkerProfilePicker } from './WorkerProfilePicker';
-import type { CreateBot, EventWorkerProfileRecord } from '@chronoai/cma-sdk';
+import { ApiError, type CreateBot } from '@chronoai/cma-sdk';
 import type { AppRoute } from '../routing/routes';
 import type { CreationClient, CreationProfile } from '../create/client';
-import { ProfilePicker } from '../create/ProfilePicker';
 import '../create/Create.css';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
@@ -12,7 +9,53 @@ import { Picker } from '../ui/Picker';
 import { admissionFor, definiteRefusal, problem, type BotClient } from './model';
 import { BotPolicy, type PolicyDraft } from './BotPolicy';
 import { useBotRead } from './useBotRead';
-import { BotEnvironment, environmentReady, type EnvironmentDraft } from './BotEnvironment';
+import { useProfileViewsClient } from '../api/context';
+import { ServicePicker } from '../profiles/pickers/ServicePicker';
+import { SkillPicker } from '../profiles/pickers/SkillPicker';
+import type { SkillReference } from '../profiles/client';
+import { ConnectionWizard } from '../connections/ConnectionWizard';
+import type { ConnectionTarget } from '../connections/client';
+import {
+  imageVisibilityLabel,
+  listAgentImages,
+  type AgentImageChoice,
+} from '../create/imageCatalog';
+
+const SYSTEM_IMAGE: AgentImageChoice = {
+  id: 'system-default',
+  name: 'System default image',
+  description: 'Maintained by Agent Manager and kept compatible with the default runtime.',
+};
+const EFFORT_CHOICES = ['minimal', 'low', 'medium', 'high', 'x_high'] as const;
+
+function connectionTargetFrom(error: unknown): ConnectionTarget | undefined {
+  if (!(error instanceof ApiError) || error.code !== 'connection_required') return undefined;
+  const value = error.extensions.connection_target;
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+  const target = value as { type?: unknown; id?: unknown; profile?: unknown };
+  if (target.type === 'sandbox_profile') {
+    if (typeof target.profile !== 'object' || target.profile === null) return undefined;
+    const profile = target.profile as { id?: unknown; revision?: unknown };
+    return typeof profile.id === 'string' &&
+      Number.isSafeInteger(profile.revision) &&
+      (profile.revision as number) > 0
+      ? {
+          type: 'sandbox_profile',
+          profile: { id: profile.id, revision: profile.revision as number },
+        }
+      : undefined;
+  }
+  if (
+    (target.type === 'sandbox' ||
+      target.type === 'workspace' ||
+      target.type === 'agent' ||
+      target.type === 'launch') &&
+    typeof target.id === 'string'
+  ) {
+    return { type: target.type, id: target.id };
+  }
+  return undefined;
+}
 
 export interface CreationIntent {
   readonly body: CreateBot;
@@ -24,12 +67,12 @@ export interface CreationIntent {
 }
 export function BotCreate({
   client,
-  profiles,
+  profiles: _profiles,
   onNavigate,
   intent,
   retain,
   initialName = '',
-  initialProfile,
+  initialProfile: _initialProfile,
 }: {
   readonly client: BotClient;
   readonly profiles: CreationClient;
@@ -39,13 +82,30 @@ export function BotCreate({
   readonly initialName?: string;
   readonly initialProfile?: CreationProfile;
 }) {
+  // The creation client remains in the boundary for historical setup links;
+  // new consumers use Image Manager and inline Agent configuration directly.
+  void _profiles;
   const [step, setStep] = useState(intent === undefined ? 0 : 3);
   const [name, setName] = useState(initialName);
   const [botId, setBotId] = useState('');
-  const [profile, setProfile] = useState<CreationProfile | undefined>(initialProfile);
-  const [profileMode, setProfileMode] = useState<'profiles' | 'worker'>('profiles');
-  const [worker, setWorker] = useState<EventWorkerProfileRecord>();
-  const [environment, setEnvironment] = useState<EnvironmentDraft>({ mode: 'default' });
+  const catalog = useProfileViewsClient()?.authoring;
+  const [images, setImages] = useState<readonly AgentImageChoice[]>([SYSTEM_IMAGE]);
+  const [selectedImage, setSelectedImage] = useState(SYSTEM_IMAGE.id);
+  const [imagesLoading, setImagesLoading] = useState(true);
+  const [imagesError, setImagesError] = useState<string>();
+  const [repository, setRepository] = useState('');
+  const initialAgent =
+    _initialProfile?.kind === 'agent' ? _initialProfile.revision.content : undefined;
+  const [model, setModel] = useState(initialAgent?.model ?? '');
+  const [effort, setEffort] = useState<(typeof EFFORT_CHOICES)[number]>(
+    (initialAgent?.thinkingEffort as (typeof EFFORT_CHOICES)[number] | undefined) ?? 'medium',
+  );
+  const [permission, setPermission] = useState<'guarded' | 'autonomous'>(
+    initialAgent?.permissionLevel ?? 'guarded',
+  );
+  const [systemPrompt, setSystemPrompt] = useState(initialAgent?.systemPrompt ?? '');
+  const [scopes, setScopes] = useState<readonly string[]>([]);
+  const [skills, setSkills] = useState<readonly SkillReference[]>([]);
   const [policy, setPolicy] = useState<PolicyDraft>({
     admission: '',
     senders: '',
@@ -54,11 +114,21 @@ export function BotCreate({
   });
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string>();
+  const [connectionTarget, setConnectionTarget] = useState<ConnectionTarget>();
   const active = useRef<AbortController | undefined>(undefined);
   const heading = useRef<HTMLHeadingElement>(null);
-  const read = useMemo(() => (signal: AbortSignal) => client.bots.available({ signal }), [client]);
+  const read = useMemo(
+    () => (signal: AbortSignal) => client.bots.connections({ signal }),
+    [client],
+  );
   const choices = useBotRead(read);
-  const selected = choices.value?.find((bot) => bot.id === botId && bot.platform === 'telegram');
+  const selected = choices.value?.find((connection) => connection.connection_ref === botId);
+  const historicalRevision =
+    intent?.body.event_worker_profile?.revision ?? intent?.body.profile?.revision;
+  const image = useMemo(
+    () => images.find((candidate) => candidate.id === selectedImage) ?? SYSTEM_IMAGE,
+    [images, selectedImage],
+  );
   const admission = admissionFor(policy.admission, policy.senders);
   const ack = Math.round(Number(policy.ackSeconds) * 1000);
   const validName =
@@ -69,13 +139,26 @@ export function BotCreate({
     Number.isSafeInteger(ack) &&
     ack >= 0 &&
     ack <= 60000;
-  const ready = [
-    validName && selected !== undefined && choices.fresh,
-    profileMode === 'worker'
-      ? worker !== undefined
-      : profile?.kind === 'agent' && environmentReady(environment),
-    validPolicy,
-  ];
+  const ready = [validName && selected !== undefined && choices.fresh, true, validPolicy];
+  useEffect(() => {
+    const request = new AbortController();
+    void listAgentImages(request.signal)
+      .then((catalogue) => {
+        if (request.signal.aborted) return;
+        setImages([SYSTEM_IMAGE, ...catalogue.filter((candidate) => !candidate.retired)]);
+        setImagesError(undefined);
+      })
+      .catch((error: unknown) => {
+        if (!request.signal.aborted) {
+          setImages([SYSTEM_IMAGE]);
+          setImagesError(error instanceof Error ? error.message : 'Image choices are unavailable.');
+        }
+      })
+      .finally(() => {
+        if (!request.signal.aborted) setImagesLoading(false);
+      });
+    return () => request.abort();
+  }, []);
   useEffect(() => () => active.current?.abort(), []);
   useEffect(() => {
     heading.current?.focus();
@@ -84,56 +167,28 @@ export function BotCreate({
     if (busy || (intent === undefined && !ready.every(Boolean))) return;
     const command =
       intent ??
-      ((profileMode === 'worker' ? worker === undefined : profile === undefined) ||
-      admission === undefined ||
-      selected === undefined
+      (admission === undefined || selected === undefined
         ? undefined
         : {
             key: crypto.randomUUID(),
-            profileName:
-              profileMode === 'worker' ? (worker?.source.name ?? '') : (profile?.name ?? ''),
-            botName: selected.name,
-            ...(profileMode === 'profiles' && environment.mode === 'custom'
-              ? {
-                  sandboxProfileName: environment.sandbox?.name,
-                  workspaceProfileName: environment.workspace?.name,
-                }
-              : {}),
+            profileName: image.name,
+            botName: selected.label,
             body: {
               name,
-              nyxid_bot_id: selected.id,
-              profile:
-                profileMode === 'worker' && worker
-                  ? worker.source.agent_profile
-                  : {
-                      id: profile?.revision.profileId ?? '',
-                      revision: profile?.revision.revision ?? 0,
-                    },
-              ...(profileMode === 'worker' && worker
-                ? {
-                    event_worker_profile: { id: worker.id, revision: worker.revision },
-                    sandbox_profile: worker.source.sandbox_profile,
-                    workspace_profile: worker.source.workspace_profile,
-                  }
-                : {}),
-              ...(profileMode === 'profiles' &&
-              environment.mode === 'custom' &&
-              environment.sandbox &&
-              environment.workspace
-                ? {
-                    sandbox_profile: {
-                      id: environment.sandbox.revision.profileId,
-                      revision: environment.sandbox.revision.revision,
-                    },
-                    workspace_profile: {
-                      id: environment.workspace.revision.profileId,
-                      revision: environment.workspace.revision.revision,
-                    },
-                  }
-                : {}),
+              connection_ref: selected.connection_ref,
+              ...(image.id === SYSTEM_IMAGE.id ? {} : { image: { id: image.id } }),
+              ...(repository.trim() === '' ? {} : { repository: { url: repository.trim() } }),
+              agent: {
+                model: model.trim() || undefined,
+                reasoning_effort: effort,
+                permission_mode: permission,
+                system_prompt: systemPrompt,
+                skills: skills.map(({ id, version }) => ({ id, version })),
+                permissions: { services: scopes },
+              },
               admission,
               reply: { auto_final: policy.autoFinal, ack_after_ms: ack },
-            },
+            } as CreateBot,
           });
     if (command === undefined) return;
     if (retain(command) === false) return;
@@ -152,26 +207,27 @@ export function BotCreate({
     } catch (error) {
       if (request.signal.aborted) return;
       setFailure(problem(error));
+      setConnectionTarget(connectionTargetFrom(error));
       if (definiteRefusal(error)) retain(undefined);
     } finally {
       if (!request.signal.aborted) setBusy(false);
     }
   };
   const labels = [
-    'Choose a Telegram bot',
-    'Choose the worker configuration',
+    'Choose an Event Gateway connection',
+    'Configure the Agent inline',
     'Choose message rules',
     'Review and create',
   ];
   return (
     <section aria-labelledby="bot-create-title">
       <header className="bots__header">
-        <h1 id="bot-create-title">New Bot</h1>
-        <Button onClick={() => onNavigate({ kind: 'bots' })}>All Bots</Button>
+        <h1 id="bot-create-title">New consumer</h1>
+        <Button onClick={() => onNavigate({ kind: 'bots' })}>All consumers</Button>
       </header>
       <div className="bots__body">
         <div className="bots__form">
-          <ol className="bots__steps" aria-label="Bot creation steps">
+          <ol className="bots__steps" aria-label="Consumer creation steps">
             {labels.map((label, index) => (
               <li key={label} aria-current={step === index ? 'step' : undefined}>
                 {label}
@@ -184,7 +240,7 @@ export function BotCreate({
           {step !== 0 ? null : (
             <>
               <label className="bots__field">
-                Bot name
+                Consumer name
                 <Input
                   value={name}
                   onChange={(event) => setName(event.target.value)}
@@ -193,77 +249,142 @@ export function BotCreate({
               </label>
               <p id="bot-name-help">Use a short name on one line.</p>
               <div className="bots__field">
-                <span>Telegram bot</span>
+                <span>Event Gateway connection</span>
                 <Picker
-                  label="Telegram bot"
+                  label="Event Gateway connection"
                   value={botId}
                   options={[
                     {
                       value: '',
                       label:
                         choices.value === undefined
-                          ? 'Loading Telegram bots'
-                          : 'Choose a Telegram bot',
+                          ? 'Loading Event Gateway connections'
+                          : 'Choose an Event Gateway connection',
                     },
-                    ...(choices.value ?? [])
-                      .filter((bot) => bot.platform === 'telegram')
-                      .map((bot) => ({ value: bot.id, label: bot.name })),
+                    ...(choices.value ?? []).map((connection) => ({
+                      value: connection.connection_ref,
+                      label: connection.label,
+                    })),
                   ]}
                   onChange={setBotId}
                   disabled={!choices.fresh}
                 />
               </div>
               <p>
-                <a
-                  href="https://nyx.chrono-ai.fun/channel-bots"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  Register a Telegram bot in NyxID
-                </a>
-                , then refresh this list.
+                <Button onClick={() => onNavigate({ kind: 'event_gateway' })}>
+                  Open Event Gateway
+                </Button>
+                Complete a channel connection there, then refresh this list.
               </p>
-              <Button onClick={choices.reload}>Refresh Telegram bots</Button>
+              <Button onClick={choices.reload}>Refresh Event Gateway connections</Button>
               {choices.error === undefined ? null : <p role="alert">{choices.error}</p>}
               {choices.value?.length === 0 ? (
-                <p>
-                  No available Telegram bots. A bot with an existing route cannot be connected here.
-                </p>
+                <p>No ready connections. Complete channel setup in Event Gateway first.</p>
               ) : null}
             </>
           )}
           {step !== 1 ? null : (
-            <>
-              {client.eventWorkerProfiles === undefined ? null : (
-                <ChoiceGroup
-                  label="Worker configuration"
-                  value={profileMode}
-                  onChange={setProfileMode}
-                  options={[
-                    { value: 'profiles', label: 'CMA profiles' },
-                    { value: 'worker', label: 'Event Worker Profile' },
-                  ]}
+            <div className="agent-lifecycle-step">
+              <fieldset className="agent-lifecycle-choices">
+                <legend>Runtime image</legend>
+                <p className="profile-field__help">
+                  Image Manager provides private, shared and public images. The system default is
+                  always available.
+                </p>
+                {imagesLoading ? <p role="status">Loading images…</p> : null}
+                {imagesError ? (
+                  <p role="status">{imagesError} Using the system default image.</p>
+                ) : null}
+                {images.map((candidate) => (
+                  <label key={candidate.id} className="agent-lifecycle-choice">
+                    <input
+                      type="radio"
+                      name="consumer-image"
+                      value={candidate.id}
+                      checked={selectedImage === candidate.id}
+                      onChange={() => setSelectedImage(candidate.id)}
+                    />
+                    <span>
+                      <strong>{candidate.name}</strong>
+                      <small>
+                        {candidate.description ?? 'No description'}
+                        {candidate.id === SYSTEM_IMAGE.id
+                          ? ''
+                          : ` · ${imageVisibilityLabel(candidate.visibility)}`}
+                      </small>
+                    </span>
+                  </label>
+                ))}
+              </fieldset>
+              <label className="bots__field">
+                GitHub repository workspace (optional)
+                <Input
+                  type="url"
+                  placeholder="https://github.com/org/repository"
+                  value={repository}
+                  onChange={(event) => setRepository(event.target.value)}
                 />
-              )}
-              {profileMode === 'worker' && client.eventWorkerProfiles ? (
-                <WorkerProfilePicker
-                  client={client.eventWorkerProfiles}
-                  value={worker}
-                  onChange={setWorker}
-                />
-              ) : (
-                <>
-                  <p>Choose a published profile for the Agent’s model, instructions and skills.</p>
-                  <ProfilePicker
-                    client={profiles}
-                    kind="agent"
-                    value={profile}
-                    onChange={setProfile}
+              </label>
+              <div className="agent-lifecycle-grid">
+                <label>
+                  Model
+                  <Input
+                    value={model}
+                    onChange={(event) => setModel(event.target.value)}
+                    placeholder="System default"
                   />
-                  <BotEnvironment client={profiles} value={environment} onChange={setEnvironment} />
-                </>
-              )}
-            </>
+                </label>
+                <label>
+                  Reasoning effort
+                  <Picker
+                    value={effort}
+                    onChange={(choice) => setEffort(choice as typeof effort)}
+                    label="Reasoning effort"
+                    options={EFFORT_CHOICES.map((choice) => ({ value: choice, label: choice }))}
+                  />
+                </label>
+                <label>
+                  Permission level
+                  <Picker
+                    value={permission}
+                    onChange={(choice) => setPermission(choice as typeof permission)}
+                    label="Permission level"
+                    options={[
+                      { value: 'guarded', label: 'Guarded' },
+                      { value: 'autonomous', label: 'Autonomous' },
+                    ]}
+                  />
+                </label>
+              </div>
+              <label className="bots__field">
+                System prompt
+                <textarea
+                  className="profile-textarea"
+                  rows={4}
+                  value={systemPrompt}
+                  onChange={(event) => setSystemPrompt(event.target.value)}
+                  maxLength={32768}
+                />
+              </label>
+              <fieldset className="agent-lifecycle-checks">
+                <legend>Agent key scope</legend>
+                <ServicePicker
+                  catalog={catalog}
+                  value={scopes}
+                  onChange={setScopes}
+                  disabled={busy}
+                />
+              </fieldset>
+              <fieldset className="agent-lifecycle-checks">
+                <legend>Skills</legend>
+                <SkillPicker
+                  catalog={catalog}
+                  value={skills}
+                  onChange={setSkills}
+                  disabled={busy}
+                />
+              </fieldset>
+            </div>
           )}
           {step !== 2 ? null : <BotPolicy value={policy} onChange={setPolicy} />}
           {step !== 3 ? null : (
@@ -271,36 +392,34 @@ export function BotCreate({
               <dl className="bots__facts">
                 <dt>Name</dt>
                 <dd>{intent?.body.name ?? name}</dd>
-                <dt>Telegram bot</dt>
-                <dd>{intent?.botName ?? selected?.name ?? 'Unavailable'}</dd>
+                <dt>Event Gateway connection</dt>
+                <dd>{intent?.botName ?? selected?.label ?? 'Unavailable'}</dd>
                 <dt>
-                  {intent?.body.event_worker_profile || profileMode === 'worker'
-                    ? 'Event Worker Profile'
-                    : 'Agent profile'}
+                  {intent?.body.event_worker_profile
+                    ? 'Historical Event Worker Profile'
+                    : intent?.body.profile
+                      ? 'Historical Agent Profile'
+                      : 'Agent setup'}
                 </dt>
                 <dd>
-                  {intent?.profileName ??
-                    (profileMode === 'worker' ? worker?.source.name : profile?.name)}{' '}
-                  · Version{' '}
-                  {intent?.body.event_worker_profile?.revision ??
-                    intent?.body.profile.revision ??
-                    (profileMode === 'worker' ? worker?.revision : profile?.revision.revision)}
+                  {intent?.profileName ?? image.name}
+                  {historicalRevision === undefined ? '' : ` · Version ${historicalRevision}`}
                 </dd>
-                <dt>Sandbox profile</dt>
+                <dt>{intent?.body.sandbox_profile ? 'Historical Sandbox Profile' : 'Sandbox'}</dt>
                 <dd>
                   {intent?.body.sandbox_profile
                     ? `${intent.sandboxProfileName ?? intent.body.sandbox_profile.id} · Version ${intent.body.sandbox_profile.revision}`
-                    : intent === undefined && environment.mode === 'custom'
-                      ? `${environment.sandbox?.name} · Version ${environment.sandbox?.revision.revision}`
-                      : 'Platform default at creation'}
+                    : intent?.body.profile
+                      ? 'Created from historical Agent setup'
+                      : 'Created from inline Agent setup'}
                 </dd>
-                <dt>Workspace profile</dt>
+                <dt>
+                  {intent?.body.workspace_profile ? 'Historical Workspace Profile' : 'Workspace'}
+                </dt>
                 <dd>
                   {intent?.body.workspace_profile
                     ? `${intent.workspaceProfileName ?? intent.body.workspace_profile.id} · Version ${intent.body.workspace_profile.revision}`
-                    : intent === undefined && environment.mode === 'custom'
-                      ? `${environment.workspace?.name} · Version ${environment.workspace?.revision.revision}`
-                      : 'Platform default at creation'}
+                    : (intent?.body.repository?.url ?? repository.trim()) || 'Empty workspace'}
                 </dd>
                 <dt>Message access</dt>
                 <dd>
@@ -318,18 +437,30 @@ export function BotCreate({
                 <dd>{(intent?.body.reply.ack_after_ms ?? ack) / 1000} seconds</dd>
               </dl>
               <p>
-                The Bot uses your account and the selected environment profiles. Connect the
-                profile’s services and managed model in NyxID before creating it.
+                The consumer uses your account and the Agent setup shown above. Connect any selected
+                services in NyxID so the Agent can use them when responding to messages.
               </p>
               {intent === undefined ? null : (
                 <p role="status">
                   Creation has not been confirmed. Recover the same request to avoid creating a
-                  second Bot.
+                  second consumer.
                 </p>
               )}
             </>
           )}
           {failure === undefined ? null : <p role="alert">{failure}</p>}
+          {connectionTarget === undefined ? null : (
+            <ConnectionWizard
+              target={connectionTarget}
+              presentation="dialog"
+              dialogTitle="Connect services required by this Agent"
+              onReady={() => {
+                setConnectionTarget(undefined);
+                setFailure('Connections verified. Select Create consumer again to continue.');
+              }}
+              onCancel={() => setConnectionTarget(undefined)}
+            />
+          )}
           <footer className="bots__actions">
             <Button
               disabled={busy || intent !== undefined || step === 0}
@@ -351,7 +482,11 @@ export function BotCreate({
                 disabled={busy || (intent === undefined && !ready.every(Boolean))}
                 onClick={() => void submit()}
               >
-                {busy ? 'Creating Bot' : intent === undefined ? 'Create Bot' : 'Recover creation'}
+                {busy
+                  ? 'Creating consumer'
+                  : intent === undefined
+                    ? 'Create consumer'
+                    : 'Recover creation'}
               </Button>
             )}
           </footer>

@@ -14,6 +14,7 @@ const FULL_ACCESS: TreePermissions = {
   removeWorkspace: true,
   stopAgent: true,
   deleteAgent: true,
+  exportHistory: true,
 };
 
 const READ_ONLY: TreePermissions = {
@@ -24,6 +25,7 @@ const READ_ONLY: TreePermissions = {
   removeWorkspace: false,
   stopAgent: false,
   deleteAgent: false,
+  exportHistory: false,
 };
 
 function renderTree(
@@ -320,7 +322,7 @@ describe('Sandbox navigation tree', () => {
 
     await actor.click(screen.getByRole('button', { name: 'Options for chrono-bot' }));
     await actor.click(screen.getByRole('menuitem', { name: 'New agent' }));
-    expect(actions.at(-1)).toEqual({ kind: 'new_agent', workspaceId: 'wsp_1' });
+    expect(actions.at(-1)).toEqual({ kind: 'new_agent', sandboxId: 'sbx_1' });
 
     await actor.click(screen.getByRole('button', { name: 'Options for Agent one' }));
     await actor.click(screen.getByRole('menuitem', { name: 'Stop' }));

@@ -8,3 +8,5 @@ mod service_connection_routes;
 mod trigger_routes;
 
 mod launch_initiation;
+
+mod inline_image_routes;

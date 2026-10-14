@@ -54,7 +54,9 @@ impl FromStr for Platform {
 }
 
 impl ChannelDefinition {
-    /// The platform of the channel's first chat source, if it has one.
+    /// The platform of the channel's first chat source, if it has one. This
+    /// is a channel-level, legacy answer: with several chat sources, act on
+    /// the event's own source through `source_of` or `relay_source_for_route`.
     pub fn relay_platform(&self) -> Option<Platform> {
         self.sources.iter().find_map(|source| match source {
             Source::NyxidRelay { platform, .. } => Some(*platform),

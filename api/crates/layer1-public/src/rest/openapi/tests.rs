@@ -166,7 +166,7 @@ fn every_admin_route_is_documented_and_authenticated() {
         .iter()
         .filter(|(path, _)| path.starts_with("/api/v1/admin/"))
         .collect();
-    assert_eq!(admin.len(), 12);
+    assert_eq!(admin.len(), 14);
     for (_, item) in admin {
         for operation in [
             item.get.as_ref(),
@@ -181,7 +181,7 @@ fn every_admin_route_is_documented_and_authenticated() {
             assert_eq!(operation.security.as_ref().map(Vec::len), Some(2));
         }
     }
-    assert_eq!(operation_ids.len(), 14);
+    assert_eq!(operation_ids.len(), 17);
     assert!(document
         .paths
         .paths
@@ -190,6 +190,11 @@ fn every_admin_route_is_documented_and_authenticated() {
         .paths
         .paths
         .contains_key("/api/v1/admin/runtime-inventory"));
+    let pools = &document.paths.paths["/api/v1/admin/warm-pools"];
+    assert!(pools.get.is_some() && pools.post.is_some());
+    assert!(document.paths.paths["/api/v1/admin/warm-pools/{id}"]
+        .put
+        .is_some());
 }
 
 #[test]
@@ -446,6 +451,64 @@ fn every_trigger_and_launch_wire_schema_is_registered() {
         .as_array()
         .unwrap()
         .contains(&serde_json::json!("first_message_command")));
+}
+
+#[test]
+fn inline_trigger_target_schema_exposes_image_agent_and_repository_contract() {
+    let document = serde_json::to_value(document()).expect("OpenAPI serializes");
+    let schemas = &document["components"]["schemas"];
+    for name in [
+        "TriggerImageBody",
+        "TriggerRepositoryBody",
+        "TriggerInlineWorkspaceBody",
+        "TriggerInlineAgentBody",
+        "TriggerInlineTargetBody",
+        "TriggerSkillBody",
+    ] {
+        assert!(
+            schemas[name].is_object(),
+            "missing inline trigger schema {name}"
+        );
+    }
+
+    assert_eq!(
+        schema_ref(&schemas["TriggerTargetBody"]["properties"]["inline"]),
+        "#/components/schemas/TriggerInlineTargetBody"
+    );
+    assert!(schemas["TriggerInlineTargetBody"]["required"]
+        .as_array()
+        .expect("inline target required fields")
+        .contains(&serde_json::json!("agent")));
+    assert_eq!(
+        schemas["TriggerInlineAgentBody"]["properties"]["reasoning_effort"]["$ref"],
+        "#/components/schemas/ThinkingEffortValue"
+    );
+    assert_eq!(
+        schemas["TriggerInlineAgentBody"]["properties"]["permission_mode"]["$ref"],
+        "#/components/schemas/PermissionLevelValue"
+    );
+    let repository_reference_type = &schemas["TriggerRepositoryBody"]["properties"]["ref"]["type"];
+    assert!(
+        repository_reference_type == "string"
+            || repository_reference_type
+                .as_array()
+                .is_some_and(|types| types.contains(&serde_json::json!("string")))
+    );
+    assert_eq!(
+        schema_ref(&schemas["TriggerInlineWorkspaceBody"]["properties"]["repository"]),
+        "#/components/schemas/TriggerRepositoryBody"
+    );
+}
+
+fn schema_ref(value: &serde_json::Value) -> &str {
+    value["$ref"]
+        .as_str()
+        .or_else(|| {
+            value["oneOf"]
+                .as_array()
+                .and_then(|variants| variants.iter().find_map(|variant| variant["$ref"].as_str()))
+        })
+        .expect("schema contains a component reference")
 }
 
 #[test]

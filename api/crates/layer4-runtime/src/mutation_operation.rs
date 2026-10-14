@@ -12,6 +12,9 @@ pub(crate) enum Subject {
         workspace: String,
         name: String,
     },
+    InstallAgentSkill {
+        request: layer3_adapter::AgentSkillInstallRequest,
+    },
     CreateAgentHome {
         agent_id: String,
     },
@@ -37,6 +40,27 @@ pub(crate) struct Operation {
 }
 
 impl Operation {
+    pub(crate) fn install_agent_skill(request: &layer3_adapter::AgentSkillInstallRequest) -> Self {
+        let mut request = request.clone();
+        // The supervisor routes archives through its local proxy. Persist only
+        // the path so a control-plane origin change cannot break durable replay.
+        if let Ok(url) = url::Url::parse(&request.skill.source_url) {
+            request.skill.source_url = url.path().to_owned();
+            if let Some(query) = url.query() {
+                request.skill.source_url.push('?');
+                request.skill.source_url.push_str(query);
+            }
+        }
+        Self {
+            operation_id: request.operation_id.clone(),
+            request_sha256: request.request_sha256.clone(),
+            payload_sha256: request.request_sha256.clone(),
+            subject: Subject::InstallAgentSkill {
+                request: request.clone(),
+            },
+        }
+    }
+
     pub(crate) fn add_worktree(request: &layer3_adapter::WorktreeRequest) -> Self {
         Self {
             operation_id: request.operation_id.clone(),

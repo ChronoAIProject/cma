@@ -12,6 +12,8 @@ const IMAGE: &str = "runtime-warm-test";
 
 #[path = "home_policy_tests.rs"]
 mod home_policy_tests;
+#[path = "retirement_tests.rs"]
+mod retirement_tests;
 
 fn bounds() -> ProfileCapacityBounds {
     ProfileCapacityBounds {
@@ -37,6 +39,7 @@ async fn fixture(
     let profiles = MongoProfileStore::open(&client, &name).await.unwrap();
     let source = sandbox("sbx_unused", "unused");
     let mut profile = SandboxProfile {
+        internal: false,
         id: source.profile.id,
         owner: source.owner,
         name: "Warm environment".into(),
@@ -428,6 +431,7 @@ async fn claimed_home_transfers_atomically_and_refuses_the_previous_warm_worker(
     let mut home = layer2_core::sandbox::SandboxHome::reserve(
         &next.id,
         layer3_adapter::HomeVolumePolicy {
+            mode: Default::default(),
             storage_class: "storage".into(),
             capacity_gib: 64,
             template_name: "seed".into(),
@@ -436,6 +440,7 @@ async fn claimed_home_transfers_atomically_and_refuses_the_previous_warm_worker(
     )
     .unwrap();
     home.bind(layer3_adapter::HomeVolumeReceipt {
+        native_authority: None,
         volume_id: home.request.volume_id.clone(),
         request_sha256: home.request.computed_sha256(),
         storage_reference: "fixture-home".into(),

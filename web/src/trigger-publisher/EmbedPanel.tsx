@@ -1,3 +1,4 @@
+import { Picker } from '../ui/Picker';
 import { Presence } from '../ui/Presence';
 import { useEffect, useState } from 'react';
 import type { TriggerDocument, TriggerEmbed, TriggerStatistics } from '@chronoai/cma-sdk';
@@ -90,17 +91,16 @@ export function EmbedPanel({
         <>
           <div className="trigger-field">
             <label htmlFor="embed-placement">Placement</label>
-            <select
+            <Picker
               id="embed-placement"
               value={selectedId}
-              onChange={(event) => setPlacementId(event.target.value)}
-            >
-              {placements.map((placement) => (
-                <option key={placement.id} value={placement.id}>
-                  {placement.label || placement.source_url}
-                </option>
-              ))}
-            </select>
+              onChange={(choice) => setPlacementId(choice)}
+              label="Placement"
+              options={placements.map((placement) => ({
+                value: placement.id,
+                label: placement.label || placement.source_url,
+              }))}
+            />
           </div>
           <>
             {failure === undefined ? (

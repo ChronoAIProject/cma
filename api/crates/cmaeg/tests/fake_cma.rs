@@ -31,6 +31,8 @@ struct StateData {
     pub fail_put: Arc<AtomicBool>,
     pub get_delay_ms: Arc<AtomicU64>,
     pub gets: Arc<AtomicU64>,
+    put_conflicts: Arc<AtomicU64>,
+    lists: Arc<AtomicU64>,
 }
 
 pub struct FakeCma {
@@ -38,6 +40,11 @@ pub struct FakeCma {
     pub fail_put: Arc<AtomicBool>,
     pub get_delay_ms: Arc<AtomicU64>,
     pub gets: Arc<AtomicU64>,
+    /// Upcoming writes to an existing record that lose a race: each first
+    /// simulates a concurrent writer by bumping the version, then answers 409.
+    pub put_conflicts: Arc<AtomicU64>,
+    /// Record listing requests served.
+    pub lists: Arc<AtomicU64>,
     state: StateData,
     shutdown: Option<oneshot::Sender<()>>,
 }
@@ -51,6 +58,8 @@ impl FakeCma {
             fail_put: Arc::new(AtomicBool::new(fail_put)),
             get_delay_ms: Arc::default(),
             gets: Arc::default(),
+            put_conflicts: Arc::default(),
+            lists: Arc::default(),
         };
         let router = Router::new()
             .route("/api/v1/gateway/channel-records", get(list_records))
@@ -89,9 +98,23 @@ impl FakeCma {
             fail_put: state.fail_put.clone(),
             get_delay_ms: state.get_delay_ms.clone(),
             gets: state.gets.clone(),
+            put_conflicts: state.put_conflicts.clone(),
+            lists: state.lists.clone(),
             state,
             shutdown: Some(shutdown),
         }
+    }
+
+    /// Store a record directly at version 1, as an earlier writer left it.
+    pub fn seed(&self, record_id: &str, owner: &str, blob: Vec<u8>) {
+        self.state.records.lock().unwrap().insert(
+            record_id.to_owned(),
+            Stored {
+                owner: owner.to_owned(),
+                blob,
+                version: 1,
+            },
+        );
     }
 
     pub fn records(&self) -> BTreeMap<String, StoredView> {
@@ -169,6 +192,20 @@ async fn put_record(
         );
         return Json(json!({"record_id":record_id,"version":1,"updated_at":"now"})).into_response();
     };
+    if state
+        .put_conflicts
+        .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+            left.checked_sub(1)
+        })
+        .is_ok()
+    {
+        existing.version += 1;
+        return (
+            StatusCode::CONFLICT,
+            Json(json!({"actual":existing.version})),
+        )
+            .into_response();
+    }
     if body.expected_version != Some(existing.version) {
         return (
             StatusCode::CONFLICT,
@@ -225,6 +262,7 @@ async fn list_records(
     State(state): State<StateData>,
     query: axum::extract::Query<BTreeMap<String, String>>,
 ) -> Response {
+    state.lists.fetch_add(1, Ordering::SeqCst);
     let records = state.records.lock().unwrap();
     let items: Vec<_> = records.iter().filter(|(id, record)| {
         query.get("owner").is_none_or(|owner| owner == &record.owner)

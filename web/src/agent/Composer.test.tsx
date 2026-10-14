@@ -105,7 +105,7 @@ it('retains an editable draft and reports saving while holding both Enter and Se
   expect(onSend).toHaveBeenCalledWith('Keep this draft', expect.any(Function));
 });
 
-it('shows Starting without a Stop control before admission, but preserves Stop for actual ongoing work during saving', async () => {
+it('silently awaits admission and preserves Stop for actual ongoing work during saving', async () => {
   const onStop = vi.fn();
   const actor = userEvent.setup();
   const { rerender } = render(
@@ -119,7 +119,7 @@ it('shows Starting without a Stop control before admission, but preserves Stop f
       onStop={onStop}
     />,
   );
-  expect(screen.getByRole('status')).toHaveTextContent('Starting.');
+  expect(screen.queryByText('Starting.', { exact: true })).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
   expect(screen.queryByRole('button', { name: 'Stop response' })).not.toBeInTheDocument();
   rerender(

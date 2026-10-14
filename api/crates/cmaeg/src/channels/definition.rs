@@ -1,9 +1,7 @@
 //! Build validated protocol definitions from management requests.
 
-use std::collections::BTreeSet;
-
 use cmaeg_core::{
-    channel::{ChannelDefinition, ChannelSecrets, CustomAuth, ProviderBinding, Secret, Source},
+    channel::{ChannelDefinition, CustomAuth, ProviderBinding, Secret, Source},
     ids::{BindingId, RecordId},
     profile::{NyxIdIdentity, NyxIdIdentityKind},
     seal::ChannelPointer,
@@ -12,7 +10,9 @@ use cmaeg_core::{
 use ring::digest::{digest, SHA256};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
+use super::definition_sources::{build_secrets, build_sources, validate_credentials};
 pub use super::requests::*;
+use super::write_gate::{self, WriteFlags};
 
 pub fn build_definition(
     request: &ChannelCreateRequest,
@@ -20,6 +20,7 @@ pub fn build_definition(
     record_id: RecordId,
     binding_id: BindingId,
     level: cmaeg_core::channel::ConformanceLevel,
+    flags: WriteFlags,
 ) -> Result<ChannelDefinition, ValidationError> {
     let credentials = &request.credentials;
     if credentials.agent_key.as_str().is_empty() {
@@ -53,13 +54,14 @@ pub fn build_definition(
         connection_ref: request.connection_ref.clone(),
         partition: request.partition.clone(),
         reply: request.reply.clone(),
+        routing: None,
         secrets: build_secrets(credentials),
         created_at: OffsetDateTime::now_utc()
             .format(&Rfc3339)
             .map_err(|error| ValidationError::new("/created_at", error.to_string()))?,
         version: 0,
     };
-    validate_definition(&definition)?;
+    validate_definition(None, &definition, flags)?;
     Ok(definition)
 }
 
@@ -120,6 +122,7 @@ pub fn validate_update_request(request: &ChannelUpdateRequest) -> Result<(), Val
 pub fn build_update(
     request: &ChannelUpdateRequest,
     current: &ChannelDefinition,
+    flags: WriteFlags,
 ) -> Result<ChannelDefinition, ValidationError> {
     if request.provider.target != current.provider.target {
         return Err(ValidationError::new(
@@ -176,165 +179,15 @@ pub fn build_update(
         connection_ref: request.connection_ref.clone(),
         partition: request.partition.clone(),
         reply: request.reply.clone(),
+        // No request carries routing yet, so a full update keeps the stored
+        // policy, exactly as it keeps the consumer keys in the secrets.
+        routing: current.routing.clone(),
         secrets: credentials,
         created_at: current.created_at.clone(),
         version: current.version,
     };
-    validate_definition(&definition)?;
+    validate_definition(Some(current), &definition, flags)?;
     Ok(definition)
-}
-
-fn build_sources(sources: &[SourceRequest]) -> Result<Vec<Source>, ValidationError> {
-    let mut result = Vec::with_capacity(sources.len());
-    for (index, source) in sources.iter().enumerate() {
-        let pointer = format!("/sources/{index}");
-        if let SourceRequest::NyxidRelay {
-            issuer,
-            platform,
-            trust_normalized,
-            ..
-        } = source
-        {
-            // Refuse up front: a stored source like this would admit no callbacks,
-            // so a bot moved onto it would go silent. Ingress still refuses one as
-            // defense in depth for definitions stored before this check existed.
-            if !platform.verifies_raw_event() && !trust_normalized {
-                return Err(ValidationError::new(
-                    format!("{pointer}/trust_normalized"),
-                    "the platform has no raw-event verifier; set trust_normalized to true to admit its normalized callbacks",
-                ));
-            }
-            let parsed = reqwest::Url::parse(issuer).map_err(|_| {
-                ValidationError::new(format!("{pointer}/issuer"), "must be an HTTPS origin")
-            })?;
-            if parsed.scheme() != "https"
-                || parsed.host_str().is_none()
-                || parsed.username() != ""
-                || parsed.password().is_some()
-                || parsed.query().is_some()
-                || parsed.fragment().is_some()
-                || parsed.path() != "/"
-            {
-                return Err(ValidationError::new(
-                    format!("{pointer}/issuer"),
-                    "must be an HTTPS origin",
-                ));
-            }
-        }
-        result.push(match source {
-            SourceRequest::Telegram {
-                bot_id,
-                bot_username,
-                admission,
-            } => Source::Telegram {
-                bot_id: bot_id.clone(),
-                bot_username: bot_username.clone(),
-                admission: admission.clone(),
-            },
-            SourceRequest::NyxidRelay {
-                issuer,
-                key_id,
-                route_ids,
-                platform,
-                bot_username,
-                bot_id,
-                trust_normalized,
-                admission,
-            } => Source::NyxidRelay {
-                issuer: issuer.clone(),
-                jwks_url: format!("{}/.well-known/jwks.json", issuer.trim_end_matches('/')),
-                key_id: key_id.clone(),
-                route_ids: route_ids.clone(),
-                platform: *platform,
-                bot_username: bot_username.clone(),
-                bot_id: bot_id.clone(),
-                trust_normalized: *trust_normalized,
-                admission: admission.clone(),
-            },
-            SourceRequest::Custom {
-                auth,
-                prompt_template,
-                schema,
-            } => Source::Custom {
-                auth: auth.clone(),
-                prompt_template: prompt_template.clone(),
-                schema: schema.clone(),
-            },
-        });
-        if result.len() > 4 {
-            return Err(ValidationError::new(pointer, "too many sources"));
-        }
-    }
-    Ok(result)
-}
-
-fn build_secrets(credentials: &CredentialsRequest) -> ChannelSecrets {
-    ChannelSecrets {
-        agent_key_hash: hash_secret(credentials.agent_key.as_str()),
-        channel_key: credentials.channel_key.clone(),
-        hmac_secrets: credentials
-            .hmac_secrets
-            .iter()
-            .map(|secret| (secret.key_id.clone(), secret.secret.clone()))
-            .collect(),
-        provider_credential: Some(credentials.agent_key.clone()),
-        telegram_bot_token: credentials.telegram_bot_token.clone(),
-        telegram_webhook_secret: credentials.telegram_webhook_secret.clone(),
-    }
-}
-
-fn validate_credentials(credentials: &CredentialsRequest) -> Result<(), ValidationError> {
-    for (pointer, value) in [
-        ("/credentials/agent_key", Some(&credentials.agent_key)),
-        ("/credentials/channel_key", credentials.channel_key.as_ref()),
-    ] {
-        if let Some(value) = value {
-            if value.as_str().is_empty()
-                || value.as_str().len() > 16_384
-                || !value
-                    .as_str()
-                    .bytes()
-                    .all(|byte| (33..=126).contains(&byte))
-            {
-                return Err(ValidationError::new(
-                    pointer,
-                    "must contain 1..=16384 printable bearer bytes",
-                ));
-            }
-        }
-    }
-    let mut keys = BTreeSet::new();
-    for (index, secret) in credentials.hmac_secrets.iter().enumerate() {
-        if secret.key_id.is_empty() || secret.key_id.len() > 512 {
-            return Err(ValidationError::new(
-                format!("/credentials/hmac_secrets/{index}/key_id"),
-                "must contain 1..=512 bytes",
-            ));
-        }
-        if secret.secret.as_str().is_empty() || secret.secret.as_str().len() > 4_096 {
-            return Err(ValidationError::new(
-                format!("/credentials/hmac_secrets/{index}/secret"),
-                "must contain 1..=4096 bytes",
-            ));
-        }
-        use base64::Engine as _;
-        if base64::engine::general_purpose::STANDARD
-            .decode(secret.secret.as_str())
-            .is_err()
-        {
-            return Err(ValidationError::new(
-                format!("/credentials/hmac_secrets/{index}/secret"),
-                "must be base64",
-            ));
-        }
-        if !keys.insert(&secret.key_id) {
-            return Err(ValidationError::new(
-                "/credentials/hmac_secrets",
-                "key ids must be unique",
-            ));
-        }
-    }
-    Ok(())
 }
 
 pub fn hash_secret(secret: &str) -> String {
@@ -367,7 +220,15 @@ pub fn channel_pointer(
     Ok(pointer)
 }
 
-fn validate_definition(definition: &ChannelDefinition) -> Result<(), ValidationError> {
+/// Validate a definition a management write would store, replacing `current`
+/// (`None` for a create). The write gate runs first, so a write it refuses
+/// reports the legacy error it always has before any check below can answer.
+fn validate_definition(
+    current: Option<&ChannelDefinition>,
+    definition: &ChannelDefinition,
+    flags: WriteFlags,
+) -> Result<(), ValidationError> {
+    write_gate::check(current, definition, flags)?;
     definition.validate()?;
     if definition.profile.metadata.owner.subject != definition.owner.subject {
         return Err(ValidationError::new(
@@ -381,6 +242,8 @@ fn validate_definition(definition: &ChannelDefinition) -> Result<(), ValidationE
             "must match the profile provider",
         ));
     }
+    validate_consumer_owners(definition)?;
+    validate_consumer_keys(definition)?;
     let credentials = CredentialsRequest {
         agent_key: definition
             .secrets
@@ -437,6 +300,51 @@ fn validate_definition(definition: &ChannelDefinition) -> Result<(), ValidationE
     Ok(())
 }
 
+/// Every additional consumer acts for the channel owner, as `default` does.
+fn validate_consumer_owners(definition: &ChannelDefinition) -> Result<(), ValidationError> {
+    let consumers = definition
+        .routing
+        .iter()
+        .flat_map(|routing| &routing.consumers);
+    for (index, consumer) in consumers.enumerate() {
+        if consumer.profile.metadata.owner.subject != definition.owner.subject {
+            return Err(ValidationError::new(
+                format!("/routing/consumers/{index}/profile/metadata/owner/subject"),
+                "must match the authenticated channel owner",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Each additional consumer's sealed key must hash to its public
+/// `agent_key_hash`. Tool calls authenticate a consumer by that hash while
+/// the provider is handed the key, so a mismatched pair would admit one key
+/// and bind another. Readers refuse such a definition as well as writers.
+pub(crate) fn validate_consumer_keys(
+    definition: &ChannelDefinition,
+) -> Result<(), ValidationError> {
+    let consumers = definition
+        .routing
+        .iter()
+        .flat_map(|routing| &routing.consumers);
+    for (index, consumer) in consumers.enumerate() {
+        let matches = definition
+            .secrets
+            .consumer_keys
+            .iter()
+            .find(|(id, _)| id == &consumer.id)
+            .is_some_and(|(_, key)| hash_secret(key.as_str()) == consumer.agent_key_hash);
+        if !matches {
+            return Err(ValidationError::new(
+                format!("/routing/consumers/{index}/agent_key_hash"),
+                "does not match the consumer's agent key",
+            ));
+        }
+    }
+    Ok(())
+}
+
 impl ChannelCreateRequest {
     pub(crate) fn fingerprint(&self) -> String {
         let mut value = serde_json::json!({
@@ -464,3 +372,7 @@ impl ChannelCreateRequest {
         hash_secret(&cmaeg_core::profile::canonical_json(value))
     }
 }
+
+#[cfg(test)]
+#[path = "definition_tests.rs"]
+mod tests;

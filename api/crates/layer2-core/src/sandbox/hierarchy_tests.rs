@@ -34,6 +34,7 @@ fn sandbox(id: &str, owner: &str, status: SandboxStatus) -> Sandbox {
             revision: 1,
             digest: "a".repeat(64),
             content: SandboxProfileContent {
+                runtime_image: None,
                 cpu_millis: 1_000,
                 memory_mib: 2_048,
                 nyxid_services: vec![],
@@ -148,6 +149,7 @@ fn agent(parent: &Workspace, worktree: &Worktree, id: &str) -> Agent {
         capabilities: crate::RuntimeCapabilities::new([crate::RuntimeCapability::Conversation]),
         status: AgentStatus::Starting,
         conversation: ConversationState {
+            settings: None,
             conversation_id: None,
             runtime_generation: None,
             last_seq: 0,

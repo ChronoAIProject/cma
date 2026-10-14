@@ -1,0 +1,47 @@
+.agent-skills {
+  display: grid;
+  gap: 10px;
+  margin-top: 24px;
+  min-width: 0;
+}
+.agent-skills > h2 {
+  margin: 0;
+}
+.agent-skills__list {
+  display: grid;
+  gap: 0;
+  min-width: 0;
+  max-height: 320px;
+  overflow: auto;
+  padding: 0 10px;
+  margin: 0;
+  list-style: none;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  scrollbar-gutter: stable;
+}
+.agent-skills__list:empty {
+  display: none;
+}
+.agent-skills__list > li {
+  display: grid;
+  gap: 6px;
+  padding: 12px 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.agent-skills__list > li + li {
+  border-top: 1px solid var(--dsw-alias-border-l1);
+}
+.agent-skills__list p,
+.agent-skills__list span {
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
+}
+.agent-skills__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}

@@ -5,7 +5,13 @@ mod agent;
 pub mod agent_artifacts;
 mod agent_context;
 pub mod agent_io;
+pub mod agent_live_skills;
 mod agent_operation;
+mod agent_settings;
+pub use agent_live_skills::{AgentSkillInstallStatus, AgentSkillInstallation};
+mod agent_settings_recovery;
+mod agent_settings_validation;
+pub use agent_settings::AgentSettings;
 mod agent_operation_dispatch;
 mod agent_operation_queue;
 mod agent_operation_service;
@@ -49,6 +55,8 @@ mod first_message_dispatch;
 mod first_message_service;
 mod hierarchy;
 mod home;
+mod home_native;
+pub use home_native::SandboxNativePool;
 mod home_recovery;
 mod inactivity;
 mod launch_recovery;
@@ -229,7 +237,10 @@ pub use title_store::{
     AgentTitleStoreError, InMemoryAgentTitleStore, SetAgentTitleOutcome, StoredAgentTitle,
 };
 pub use workspace::{Workspace, WorkspaceOrigin, WorkspaceSource};
-pub use workspace_service::{CreateWorkspace, WorkspaceService, WorkspaceServiceError};
+pub use workspace_service::{
+    CreateInlineWorkspace, CreateWorkspace, InlineWorkspaceSource, WorkspaceService,
+    WorkspaceServiceError,
+};
 pub use workspace_work::{WorkspaceWorkLease, WorkspaceWorkState, WorkspaceWorkStep};
 pub use worktree::Worktree;
 
@@ -279,3 +290,7 @@ mod title_store_tests;
 mod title_value_tests;
 #[cfg(test)]
 mod workspace_service_tests;
+
+pub mod agent_access;
+pub mod agent_access_tool;
+mod suspended_runtime;

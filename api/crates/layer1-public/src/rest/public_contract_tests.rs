@@ -8,7 +8,9 @@ use layer2_core::Authorization;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+mod agent_access_cases;
 mod agent_cases;
+mod agent_customization_cases;
 mod agent_event_cases;
 mod artifact_cases;
 mod authoring_cases;
@@ -26,6 +28,7 @@ mod gateway_cases;
 mod gateway_interaction_cases;
 mod inventory;
 mod inventory_cases;
+mod lifecycle_cases;
 mod provenance_cases;
 mod queued_cancellation_cases;
 mod replay;
@@ -38,11 +41,11 @@ mod shared_agent_cases;
 mod shared_hierarchy_cases;
 mod shared_source_cases;
 mod shared_stream_cases;
-mod snapshot_cases;
 mod source_cases;
 mod state_cases;
 mod symbols;
 mod trigger_cases;
+mod warm_pool_cases;
 
 use symbols::Symbols;
 
@@ -141,6 +144,18 @@ fn paths() -> Vec<PathBuf> {
 }
 
 async fn scenario(name: &str) -> Scenario {
+    if let Some(scenario) = agent_customization_cases::scenario(name).await {
+        return scenario;
+    }
+    if let Some(scenario) = agent_access_cases::scenario(name) {
+        return scenario;
+    }
+    if let Some(scenario) = warm_pool_cases::scenario(name) {
+        return scenario;
+    }
+    if let Some(scenario) = lifecycle_cases::scenario(name).await {
+        return scenario;
+    }
     if let Some(scenario) = bot_setup_cases::scenario(name).await {
         return scenario;
     }
@@ -205,9 +220,6 @@ async fn scenario(name: &str) -> Scenario {
         return scenario;
     }
     if let Some(scenario) = source_cases::scenario(name).await {
-        return scenario;
-    }
-    if let Some(scenario) = snapshot_cases::scenario(name).await {
         return scenario;
     }
     if let Some(scenario) = credential_cases::scenario(name).await {

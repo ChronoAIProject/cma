@@ -1,82 +1,105 @@
-import { render, screen } from '@testing-library/react';
+import { chooseOptionValue } from '../test/select';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
-import { AGENT_DETAIL } from '../test/agent';
+import { CmaClientProvider } from '../api/context';
+import { AGENT_DETAIL, agentClient } from '../test/agent';
 import { AgentDetails } from './Details';
-import { NamedReferences } from '../test/references';
 
-it.each(['ready', 'stopped'] as const)(
-  'holds %s Agent lifecycle controls until history hydration finishes',
-  (status) => {
-    const draw = (historyLoading: boolean) => (
-      <AgentDetails
-        detail={{ ...AGENT_DETAIL, status }}
-        historyLoading={historyLoading}
-        onNavigate={vi.fn()}
-        onStop={vi.fn()}
-        onDelete={vi.fn()}
-      />
+const defaults = {
+  model: 'gpt-6',
+  reasoning_effort: 'high',
+  permission_mode: 'autonomous',
+} as const;
+
+it('shows the three settings and fixed Agent key scopes without technical or lifecycle panels', async () => {
+  const update = vi.fn().mockResolvedValue({ ...defaults, reasoning_effort: 'medium' });
+  const client = agentClient({
+    readAgentSettings: async () => defaults,
+    updateAgentSettings: update,
+  });
+  render(
+    <CmaClientProvider client={client}>
+      <AgentDetails detail={AGENT_DETAIL} open />
+    </CmaClientProvider>,
+  );
+  const panel = within(screen.getByRole('complementary', { name: 'Agent details' }));
+  expect(await panel.findByLabelText('Model')).toHaveTextContent('gpt-6');
+  expect(panel.getByLabelText('Reasoning effort')).toHaveTextContent('High');
+  expect(panel.getByLabelText('Permission mode')).toHaveTextContent('YOLO (autonomous)');
+  expect(panel.getByRole('group', { name: 'Agent key scope' })).toBeVisible();
+  for (const scope of [
+    'chrono-llm-public Required',
+    'ornn-api Required',
+    'github Already granted',
+  ]) {
+    const checkbox = panel.getByRole('checkbox', { name: scope });
+    expect(checkbox).toBeChecked();
+    expect(checkbox).toBeDisabled();
+  }
+  expect(panel.getAllByRole('heading').map((heading) => heading.textContent)).toEqual([
+    'Details',
+    'Skills',
+  ]);
+  expect(panel.queryByText(AGENT_DETAIL.workspace.path)).not.toBeInTheDocument();
+  expect(panel.queryByText(AGENT_DETAIL.worktree.branch)).not.toBeInTheDocument();
+  expect(panel.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument();
+  expect(panel.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument();
+  await chooseOptionValue(userEvent.setup(), panel.getByLabelText('Reasoning effort'), 'medium');
+  await userEvent.click(panel.getByRole('button', { name: 'Apply settings' }));
+  await panel.findByText('Settings applied to this Agent.');
+  expect(update).toHaveBeenCalledWith(
+    AGENT_DETAIL.id,
+    { ...defaults, reasoning_effort: 'medium' },
+    expect.objectContaining({ idempotencyKey: expect.any(String) }),
+  );
+});
+
+it.each(['history', 'working', 'command'] as const)(
+  'holds settings updates during %s and preserves the draft until the Agent is ready',
+  async (busy) => {
+    const update = vi.fn();
+    const client = agentClient({
+      readAgentSettings: async () => defaults,
+      updateAgentSettings: update,
+    });
+    const draw = (blocked: boolean) => (
+      <CmaClientProvider client={client}>
+        <AgentDetails
+          open
+          detail={{ ...AGENT_DETAIL, status: blocked && busy === 'working' ? 'working' : 'ready' }}
+          historyLoading={blocked && busy === 'history'}
+          pending={blocked && busy === 'command' ? 'send' : undefined}
+        />
+      </CmaClientProvider>
     );
-    const { rerender } = render(draw(true));
-    expect(screen.getByRole('status')).toHaveTextContent('Loading conversation activity.');
-    expect(screen.getByRole('button', { name: 'Stop' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Delete' })).toBeDisabled();
-    rerender(draw(false));
-    expect(screen.queryByText('Loading conversation activity.')).not.toBeInTheDocument();
-    expect(
-      screen.getByRole('button', { name: status === 'ready' ? 'Stop' : 'Delete' }),
-    ).toBeEnabled();
+    const view = render(draw(true));
+    await screen.findByLabelText('Model');
+    await chooseOptionValue(userEvent.setup(), screen.getByLabelText('Reasoning effort'), 'medium');
+    expect(screen.getByRole('button', { name: 'Apply settings' })).toBeDisabled();
+    expect(update).not.toHaveBeenCalled();
+    view.rerender(draw(false));
+    expect(screen.getByLabelText('Reasoning effort')).toHaveTextContent('Medium');
+    expect(screen.getByRole('button', { name: 'Apply settings' })).toBeEnabled();
   },
 );
 
-it('shows lineage, profile, Worktree, first-message delivery, and guarded controls', async () => {
-  const onStop = vi.fn();
-  const actor = userEvent.setup();
-  render(
-    <NamedReferences>
-      <AgentDetails detail={AGENT_DETAIL} onNavigate={vi.fn()} onStop={onStop} onDelete={vi.fn()} />
-    </NamedReferences>,
+it('focuses the Details heading on open and restores the opener on close', async () => {
+  const onClose = vi.fn();
+  const client = agentClient({ readAgentSettings: async () => defaults });
+  const draw = (open: boolean) => (
+    <CmaClientProvider client={client}>
+      <button>Open details</button>
+      <AgentDetails detail={AGENT_DETAIL} open={open} onClose={onClose} />
+    </CmaClientProvider>
   );
-  for (const band of [
-    'Sandbox',
-    'Workspace',
-    'Worktree',
-    'Agent profile',
-    'First-message delivery',
-  ]) {
-    expect(screen.getByRole('heading', { name: band })).toBeInTheDocument();
-  }
-  expect(screen.getByText('agent/one')).toBeInTheDocument();
-  expect(await screen.findByRole('link', { name: 'GitHub' })).toHaveAttribute(
-    'href',
-    'https://nyx.chrono-ai.fun/services/catalog-github',
-  );
-  expect(await screen.findByRole('link', { name: 'TypeScript' })).toHaveAttribute(
-    'href',
-    'https://ornn.chrono-ai.fun/skills/typescript',
-  );
-  expect(screen.getAllByText('Completed')).toHaveLength(2);
-  expect(screen.getByRole('button', { name: 'Delete' })).toBeDisabled();
-  await actor.click(screen.getByRole('button', { name: 'Stop' }));
-  await actor.click(screen.getByRole('button', { name: /^Stop$/ }));
-  expect(onStop).toHaveBeenCalledOnce();
-});
-
-it('requires explicit acknowledgement before deleting a stopped Agent', async () => {
-  const onDelete = vi.fn();
-  const actor = userEvent.setup();
-  render(
-    <AgentDetails
-      detail={{ ...AGENT_DETAIL, status: 'stopped' }}
-      onNavigate={vi.fn()}
-      onStop={vi.fn()}
-      onDelete={onDelete}
-    />,
-  );
-  await actor.click(screen.getByRole('button', { name: 'Delete' }));
-  const confirm = screen.getByRole('button', { name: 'Delete Agent' });
-  expect(confirm).toBeDisabled();
-  await actor.click(screen.getByRole('checkbox'));
-  await actor.click(confirm);
-  expect(onDelete).toHaveBeenCalledOnce();
+  const view = render(draw(false));
+  const opener = screen.getByRole('button', { name: 'Open details' });
+  opener.focus();
+  view.rerender(draw(true));
+  expect(screen.getByRole('heading', { name: 'Details' })).toHaveFocus();
+  await userEvent.click(screen.getByRole('button', { name: 'Close Agent details' }));
+  expect(onClose).toHaveBeenCalledOnce();
+  view.rerender(draw(false));
+  expect(opener).toHaveFocus();
 });

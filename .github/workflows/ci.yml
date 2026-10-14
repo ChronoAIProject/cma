@@ -43,6 +43,8 @@ jobs:
         run: ruby .github/scripts/ci-contract-tests.rb provider
       - name: Staging authority and evidence regressions
         run: node --test .github/scripts/staging-authority.test.mjs .github/scripts/deployment-observer.test.mjs .github/scripts/mongo-contract-tests.test.mjs
+      - name: Gateway sealed-record migration regressions
+        run: node --test .github/scripts/export-gateway-records.test.mjs
       - name: Install harness dependencies
         working-directory: web
         run: npm ci
@@ -157,6 +159,14 @@ jobs:
             infra/cmaeg/serviceaccount.yaml \
             infra/cmaeg/httproute.yaml infra/cmaeg/healthcheckpolicy.yaml \
             infra/cmaeg/gcpbackendpolicy.yaml \
+            infra/image-manager/Dockerfile \
+            infra/image-manager/configmap.yaml \
+            infra/image-manager/deployment.yaml \
+            infra/image-manager/gcpbackendpolicy.yaml \
+            infra/image-manager/healthcheckpolicy.yaml \
+            infra/image-manager/secret.yaml \
+            infra/image-manager/service.yaml \
+            infra/image-manager/serviceaccount.yaml \
             infra/runtime/Dockerfile \
             infra/storage/home-seed.yaml infra/storage/home-template.yaml \
             infra/web/Dockerfile infra/web/configmap.yaml infra/web/deployment.yaml \
@@ -170,6 +180,10 @@ jobs:
           fi
       - name: Gateway diagrams match reviewed Markdown
         run: python3 .github/scripts/render-cmaeg-diagrams.py --check
+      - name: Native Sandbox deployment preflight regressions
+        run: |
+          node --test .github/scripts/agent-sandbox-preflight.test.mjs
+          ruby .github/scripts/agent-sandbox-manifest-contract.rb
       - name: docs/ contains only markdown
         run: |
           bad=$(find docs -type f ! -name '*.md' || true)
@@ -216,6 +230,12 @@ jobs:
           hits=$(grep -rniE 'agui|\ba2a\b|\bmcp\b|codex|claude[_-]?code' api/crates/layer2-core/src || true)
           if [ -n "$hits" ]; then
             echo "::error::protocol or kernel name found in layer2-core:"; echo "$hits"; exit 1
+          fi
+      - name: Image Manager has no Agent or Gateway dependencies
+        run: |
+          if grep -qE 'layer[1-4]-|cmaeg|path *=.*["/]cma["/]|cma-agent-manager' api/crates/cma-image-manager/Cargo.toml; then
+            echo '::error::Image Manager cannot depend on Agent or Gateway implementation crates'
+            exit 1
           fi
 
   secrets:
@@ -300,6 +320,22 @@ jobs:
         # Retain the complete corpus and two bounded fixtures on slower runners.
         timeout-minutes: 75
         run: bash ../.github/scripts/mongo-contract-tests.sh
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24.15.0
+      - name: Prepare compiled gateway browser contract
+        working-directory: .
+        run: |
+          npm ci --prefix web
+          npm ci --prefix sdk/typescript --omit=dev --ignore-scripts
+          npm run build --prefix web
+      - name: Install gateway contract browser
+        timeout-minutes: 10
+        working-directory: web
+        run: npx --no-install playwright install --with-deps chromium
+      - name: Image Manager authenticated Mongo isolation
+        timeout-minutes: 10
+        run: bash ../.github/scripts/image-manager-mongo-contract.sh
       - name: Doctests
         run: cargo test --doc --workspace --locked
 
@@ -512,7 +548,7 @@ jobs:
           ./kubeconform -strict -summary -output text \
             -schema-location default \
             -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
-            infra/api/*.yaml infra/cmaeg/*.yaml infra/web/*.yaml infra/storage/*.yaml
+            infra/api/*.yaml infra/cmaeg/*.yaml infra/image-manager/*.yaml infra/web/*.yaml infra/storage/*.yaml
       - name: kube-linter
         uses: stackrox/kube-linter-action@v1
         with:
@@ -530,7 +566,7 @@ jobs:
         # Adding a value here adds a check named "Images (<value>)" and leaves
         # the existing names untouched, so branch protection keeps reporting.
         # The new check is not required until it is added to the ruleset.
-        component: [api, web, runtime, cmaeg]
+        component: [api, web, runtime, cmaeg, image-manager]
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       # arm64 builds run under emulation on the amd64 runner.
