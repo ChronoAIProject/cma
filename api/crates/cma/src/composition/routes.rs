@@ -42,3 +42,21 @@ pub(super) fn compose(
         ))
         .layer(DefaultBodyLimit::max(REQUEST_BODY_LIMIT_BYTES))
 }
+
+/// Bind the public catalogue to owner lineage, exact credential custody and
+/// the current runtime's explicitly advertised model-selection capability.
+pub(super) fn models(
+    config: &crate::config::Config,
+    reads: Arc<layer2_core::sandbox::AgentReadService>,
+    credentials: Arc<dyn crate::sandbox::SandboxCredentialController>,
+    adapter: Arc<dyn layer3_adapter::SandboxAdapter>,
+) -> Result<Router, String> {
+    Ok(layer1_public::rest::agent_models_router(
+        reads,
+        crate::agent_models::ChronoAgentModels::new(
+            &config.runtime.platform_base_url,
+            credentials,
+        )?,
+        Arc::new(crate::projections::AdapterAgentModelSupport(adapter)),
+    ))
+}

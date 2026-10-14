@@ -245,9 +245,11 @@ impl ControlPlaneComposition {
             CmaProfileAuthoringSource::production(config, Arc::clone(&auth))?,
         );
         let sandbox_credentials = credentials::sandbox_credentials(config, auth.clone(), &stores);
-        let agent_models = crate::agent_models::ChronoAgentModels::new(
-            &config.runtime.platform_base_url,
+        let model_routes = routes::models(
+            config,
+            projections.reads(),
             sandbox_credentials.clone(),
+            adapter.clone(),
         )?;
         if !auth.requires_credential() {
             tracing::warn!(
@@ -390,13 +392,7 @@ impl ControlPlaneComposition {
             "cma_codex".into(),
         );
         let resource_routes = rest::profiles_router(profiles)
-            .merge(rest::agent_models_router(
-                projections.reads(),
-                agent_models,
-                Arc::new(crate::projections::AdapterAgentModelSupport(
-                    adapter.clone(),
-                )),
-            ))
+            .merge(model_routes)
             .merge(agent_access.owner_routes)
             .merge(rest::event_workers::router(event_workers.clone()))
             .merge(layer1_public::rest::agent_artifacts_router(
