@@ -27,6 +27,15 @@ const DEFAULT_READY_POLL: Duration = Duration::from_millis(500);
 /// Runtime control-link implementation paired with the provider lifecycle.
 #[async_trait::async_trait]
 pub trait HostedControlTransport: Send + Sync {
+    /// Optional native status exchange whose fresh proof is made after checkout.
+    /// None retains the original backend inspection and transport behavior.
+    async fn inspect_native_status(
+        &self,
+        _inspection: &super::NativeStatusInspection<'_>,
+    ) -> crate::Result<Option<crate::RuntimeInspection>> {
+        Ok(None)
+    }
+
     async fn bind_runtime(&self, _handle: &RuntimeHandle, _sandbox_id: &str) -> crate::Result<()> {
         Ok(())
     }
