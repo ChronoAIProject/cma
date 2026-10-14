@@ -79,6 +79,15 @@ pub trait HostedBackend: Send + Sync {
         Ok(None)
     }
     async fn provision(&self, request: ProviderSandboxRequest) -> Result<RuntimeHandle>;
+    /// Carry persisted home identity through provisioning without rediscovering it.
+    /// Backends must still prove current resource authority before any effect.
+    async fn provision_with_home(
+        &self,
+        request: ProviderSandboxRequest,
+        _home: &crate::HomeVolumeAttachment,
+    ) -> Result<RuntimeHandle> {
+        self.provision(request).await
+    }
     async fn teardown_retained(&self, _handle: &RuntimeHandle) -> Result<()> {
         Err(crate::AdapterError::Unsupported(
             "retained provider deletion is unavailable".into(),
