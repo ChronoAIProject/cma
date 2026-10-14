@@ -223,6 +223,26 @@ async fn binding_is_durable_before_capacity_and_lost_ack_replays_original_uid() 
 }
 
 #[test]
+fn default_target_is_stable_and_pins_exact_plan_and_capacity() {
+    let original = target();
+    let body = ConfigureWarmPoolBody {
+        cpu_millis: original.requested.cpu_millis,
+        memory_mib: original.requested.memory_mib,
+        target_replicas: 1,
+    };
+    let first = default_target(original.plan.clone(), body.clone());
+    let second = default_target(original.plan.clone(), body);
+    assert_eq!(first.id, second.id);
+    assert_eq!(first.actor, SYSTEM_ACTOR);
+    assert_eq!(first.target_replicas, 1);
+    assert_eq!(first.requested.cpu_millis, original.plan.spec.cpu_millis);
+    assert_eq!(first.requested.memory_mib, original.plan.spec.memory_mib);
+    assert_eq!(first.plan, original.plan);
+    assert!(first.binding.is_none());
+    assert_eq!(first.applied_revision, 0);
+}
+
+#[test]
 fn configure_replay_keeps_original_image_policy_and_rejects_changed_input() {
     let original = target();
     let body = original.requested.clone();
