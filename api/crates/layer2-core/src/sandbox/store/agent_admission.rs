@@ -161,6 +161,24 @@ impl AgentAdmission {
     }
 
     pub fn materialize(&self, workspace: &Workspace) -> Result<AgentCreation, SandboxStoreError> {
+        self.materialize_with_parent_wait(workspace, false)
+    }
+
+    /// Keep a fresh bootstrap reservation effect-free even if its Workspace
+    /// finished just before the parent publishes Active.
+    pub fn materialize_for_parent(
+        &self,
+        workspace: &Workspace,
+        parent: &crate::sandbox::Sandbox,
+    ) -> Result<AgentCreation, SandboxStoreError> {
+        self.materialize_with_parent_wait(workspace, self.admits_bootstrap(workspace, parent))
+    }
+
+    fn materialize_with_parent_wait(
+        &self,
+        workspace: &Workspace,
+        wait_for_parent: bool,
+    ) -> Result<AgentCreation, SandboxStoreError> {
         if let AgentOrigin::Lifecycle { operation_id } = &self.origin {
             let digest = content_digest(&self.origin)
                 .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
@@ -203,8 +221,9 @@ impl AgentAdmission {
         }
         let number = workspace.next_worktree_number;
         let name = format!("wt-{number}");
-        let pending = workspace.status == crate::sandbox::WorkspaceStatus::Preparing
-            && matches!(self.origin, AgentOrigin::Lifecycle { .. });
+        let pending = wait_for_parent
+            || (workspace.status == crate::sandbox::WorkspaceStatus::Preparing
+                && matches!(self.origin, AgentOrigin::Lifecycle { .. }));
         let base_commit = if pending {
             // Explicit WaitForWorkspace state: this is absence of a base, never a Git revision.
             String::new()

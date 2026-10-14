@@ -239,7 +239,7 @@ impl InMemorySandboxStore {
             });
         }
 
-        let creation = admission.materialize(&workspace)?;
+        let creation = admission.materialize_for_parent(&workspace, &sandbox)?;
         let provenance = super::provenance::creation_record(
             &state,
             &admission,
