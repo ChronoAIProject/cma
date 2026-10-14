@@ -152,7 +152,7 @@ impl HomeVolumeStore for NativeHomeVolumes {
             .native_authority
             .as_deref()
             .ok_or_else(|| rejected("native home authority missing"))?;
-        if self.pools.recover_native_vct(&origin.claim).await?.as_ref() != Some(home) {
+        if self.pools.recover_known_native_vct(origin).await?.as_ref() != Some(home) {
             return Err(rejected("native home identity changed or disappeared"));
         }
         Ok(())
