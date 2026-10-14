@@ -471,7 +471,22 @@ async fn native_migration_keeps_same_cluster_legacy_inventory_and_scope_once() {
     let old_scope = legacy.allocation_scope().unwrap();
     let native = homes(&fixture);
     assert!(native.accepts_scope(&old_scope));
-    assert_ne!(native.allocation_scope(), Some(old_scope));
+    let native_scope = native.allocation_scope().unwrap();
+    assert_ne!(native_scope, old_scope);
+    let native_only = crate::RoutedHomeVolumes::new(
+        None,
+        Some((std::sync::Arc::new(native.clone()), spec().home)),
+    )
+    .unwrap();
+    assert!(native_only.accepts_scope(&old_scope));
+    assert!(native_only.accepts_scope(&native_scope));
+    assert!(!native_only.accepts_scope(
+        &crate::HomeVolumeScope::from_authority(
+            "kubernetes-pvc-v1",
+            &["foreign-cluster", "cma-test", "cma-test"],
+        )
+        .unwrap()
+    ));
     let claim = super::home_tests::assigned(&fixture).await;
     let home = adopted(&fixture, &claim).await;
     let routes = crate::RoutedHomeVolumes::new(
@@ -480,6 +495,8 @@ async fn native_migration_keeps_same_cluster_legacy_inventory_and_scope_once() {
     )
     .unwrap();
     assert!(routes.shares_legacy_authority());
+    assert!(routes.accepts_scope(&old_scope));
+    assert!(routes.accepts_scope(&native_scope));
     assert_eq!(routes.inventory().await.unwrap(), vec![home.clone()]);
     routes.verify(&home).await.unwrap();
     let new = routes.reserve_for(true, &home.request).unwrap();
