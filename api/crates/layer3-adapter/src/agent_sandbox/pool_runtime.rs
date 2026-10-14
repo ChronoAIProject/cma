@@ -127,21 +127,54 @@ impl AgentSandboxClient {
         self.pools
             .verify_explicit_network_policy(&original.request.pool)
             .await?;
-        if self.pools.recover_home(original).await?.as_ref() != Some(home)
-            || request.metadata.get("cma/runtime-generation")
-                != Some(&original.request.runtime_generation.to_string())
+        if request.metadata.get("cma/runtime-generation")
+            != Some(&original.request.runtime_generation.to_string())
         {
             return Err(rejected(
                 "native runtime requires its original persisted claim/home",
             ));
         }
-        let current = self.pools.observe_claim(original).await?;
+        let (current, actual) = if home.request.policy.is_native_vct() {
+            let origin = home
+                .receipt
+                .native_authority
+                .as_deref()
+                .ok_or_else(|| rejected("native home authority missing"))?;
+            if original.name != origin.claim.name
+                || original.uid != origin.claim.uid
+                || original.request != origin.claim.request
+                || original
+                    .sandbox_name
+                    .as_ref()
+                    .is_some_and(|name| Some(name) != origin.claim.sandbox_name.as_ref())
+            {
+                return Err(rejected(
+                    "native runtime requires its original persisted claim/home",
+                ));
+            }
+            // One fresh proof of the persisted Claim/Sandbox/PVC graph per
+            // admission. Its member resourceVersion still fences publication.
+            let actual = self.pools.prove_native_home(home).await?;
+            (origin.claim.clone(), actual)
+        } else {
+            if self.pools.recover_home(original).await?.as_ref() != Some(home) {
+                return Err(rejected(
+                    "native runtime requires its original persisted claim/home",
+                ));
+            }
+            let current = self.pools.observe_claim(original).await?;
+            let name = current
+                .sandbox_name
+                .as_deref()
+                .ok_or_else(|| unavailable("native claim is not assigned"))?;
+            let actual = self.sandboxes.get(name).await.map_err(api_error)?;
+            self.pools.member_owned(&actual, &current)?;
+            (current, actual)
+        };
         let name = current
             .sandbox_name
             .as_deref()
             .ok_or_else(|| unavailable("native claim is not assigned"))?;
-        let actual = self.sandboxes.get(name).await.map_err(api_error)?;
-        self.pools.member_owned(&actual, &current)?;
         let origin: NativePoolHomeOrigin = serde_json::from_str(
             actual
                 .annotations()
@@ -159,7 +192,12 @@ impl AgentSandboxClient {
                 "native runtime has conflicting adoption authority",
             ));
         }
-        let desired = self.pools.runtime_desired(&origin, request, name).await?;
+        let desired = if home.request.policy.is_native_vct() {
+            self.pools
+                .runtime_desired_for_home(&origin, home, request, name)?
+        } else {
+            self.pools.runtime_desired(&origin, request, name).await?
+        };
         if actual
             .annotations()
             .contains_key(pool::RUNTIME_REQUEST_ANNOTATION)
