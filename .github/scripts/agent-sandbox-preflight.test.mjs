@@ -357,7 +357,7 @@ test('empty native homes need no snapshot API or PVC mutation authority', () => 
 
 test('empty native mode uses explicit storage pair and rejects seed mixing or malformed capacity', () => {
   assert.equal(homePolicy(emptyConfig).mode, 'native_vct_empty_v1');
-  assert.equal(homePolicy({ ...emptyConfig, CHRONO_AGENT_SANDBOX_HOME_MODE: '' }).mode, 'native_vct_empty_v1');
+  assert.equal(homePolicy({ ...emptyConfig, CHRONO_AGENT_SANDBOX_HOME_MODE: '' }).mode, 'native_vct_full_home_v2');
   const borrowed = homePolicy({ ...legacyConfig, CHRONO_AGENT_SANDBOX_HOME_MODE: 'native_vct_empty_v1' });
   assert.equal(borrowed.storageClass, 'cma-home-v1');
   assert.equal(borrowed.template, undefined);
@@ -367,4 +367,17 @@ test('empty native mode uses explicit storage pair and rejects seed mixing or ma
     { CHRONO_AGENT_SANDBOX_HOME_MODE: 'unknown' },
     { CHRONO_AGENT_SANDBOX_HOME_CAPACITY_GIB: '032' },
   ]) assert.throws(() => homePolicy({ ...emptyConfig, ...change }));
+});
+
+test('full home v2 is explicit or inferred and has the same controller storage prerequisites', () => {
+  const config = { ...emptyConfig, CHRONO_AGENT_SANDBOX_HOME_MODE: 'native_vct_full_home_v2' };
+  const { command } = fixture(() => false, config, remoteOptions);
+  assert.equal(preflight(remoteOptions, command).passed, true);
+  assert.equal(homePolicy(config).mode, 'native_vct_full_home_v2');
+  const borrowed = homePolicy({ ...legacyConfig, CHRONO_AGENT_SANDBOX_HOME_MODE: 'native_vct_full_home_v2' });
+  assert.equal(borrowed.storageClass, 'cma-home-v1');
+  assert.equal(borrowed.template, undefined);
+  for (const field of ['TEMPLATE', 'TEMPLATE_UID']) {
+    assert.throws(() => homePolicy({ ...config, [`CHRONO_AGENT_SANDBOX_HOME_${field}`]: 'forbidden' }));
+  }
 });
