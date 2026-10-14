@@ -194,6 +194,18 @@ pub fn apply_agent_connection_recovery(
 /// Durable agent work discovery, lease fencing, and atomic publication.
 #[async_trait]
 pub trait AgentWorkerStore: Send + Sync {
+    /// Exact durable preparation authority for replaying a worktree/home pair.
+    /// Stores without such evidence retain the ordinary individual work steps.
+    async fn prepared_agent_replay_matches(
+        &self,
+        _agent: &Agent,
+        _sandbox: &crate::sandbox::Sandbox,
+        _workspace: &crate::sandbox::Workspace,
+        _worktree: &Worktree,
+    ) -> Result<bool, SandboxStoreError> {
+        Ok(false)
+    }
+
     async fn live_agent_connections(
         &self,
         page: &PageRequest,

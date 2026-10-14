@@ -99,7 +99,7 @@ impl AgentWorker {
     }
 }
 
-fn holds_startup_authority(agent: &Agent, holder: &str, now: SystemTime) -> bool {
+pub(super) fn holds_startup_authority(agent: &Agent, holder: &str, now: SystemTime) -> bool {
     agent.status == AgentStatus::Starting
         && agent.requested_stop_reason.is_none()
         && agent.deleted_at.is_none()
