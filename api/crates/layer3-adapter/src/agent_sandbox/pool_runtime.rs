@@ -331,7 +331,17 @@ impl AgentSandboxClient {
         if !object.annotations().contains_key(NATIVE_HOME_ANNOTATION) {
             return Ok(None);
         }
-        self.verify_explicit_runtime_policy(&object).await?;
+        let origin: NativePoolHomeOrigin =
+            serde_json::from_str(&object.annotations()[NATIVE_HOME_ANNOTATION])
+                .map_err(|_| rejected("invalid native runtime origin"))?;
+        origin.validate_for(
+            &self.config.namespace,
+            &self.config.deployment,
+            &origin.claim.request.home,
+        )?;
+        if !origin.claim.request.home.policy.is_native_vct() {
+            self.verify_explicit_runtime_policy(&object).await?;
+        }
         let mut environment = request.env.clone();
         environment.insert(
             "CHRONO_RUNTIME_CONTROL_TOKEN".into(),
@@ -342,9 +352,6 @@ impl AgentSandboxClient {
             pod_uid: expected.pod_uid.clone(),
             environment,
         };
-        let origin: NativePoolHomeOrigin =
-            serde_json::from_str(&object.annotations()[NATIVE_HOME_ANNOTATION])
-                .map_err(|_| rejected("invalid native runtime origin"))?;
         if origin.claim.request.home.policy.is_native_vct() {
             return self
                 .assign_native_runtime(runtime, expected, request, &bootstrap, &origin)

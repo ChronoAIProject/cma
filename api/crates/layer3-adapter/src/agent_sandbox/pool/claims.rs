@@ -34,15 +34,24 @@ impl AgentSandboxPools {
     /// generation, so a changed image/pool cannot allocate a second claim on retry.
     pub async fn claim(&self, request: &NativePoolClaimRequest) -> Result<NativePoolClaim> {
         let desired = model::claim(&self.config, request)?;
-        let actual = match self
-            .claims
-            .get_opt(&desired.name_any())
-            .await
-            .map_err(api_error)?
-        {
+        let name = desired.name_any();
+        // Both reads use the already persisted native reservation. Existing
+        // claims retain replay precedence: only a miss consumes the policy proof.
+        let (observed, binding) = tokio::join!(self.claims.get_opt(&name), async {
+            if request.home.policy.is_native_vct() {
+                Some(self.verify_binding(&request.pool).await)
+            } else {
+                None
+            }
+        });
+        let actual = match observed.map_err(api_error)? {
             Some(actual) => actual,
             None => {
-                self.verify_binding(&request.pool).await?;
+                if let Some(binding) = binding {
+                    binding?;
+                } else {
+                    self.verify_binding(&request.pool).await?;
+                }
                 create(&self.claims, &desired).await?
             }
         };
