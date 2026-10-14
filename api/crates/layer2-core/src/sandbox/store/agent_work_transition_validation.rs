@@ -1,6 +1,7 @@
 use crate::sandbox::{Agent, AgentStatus, AgentWorkStep, Worktree, WorktreeStatus};
 use crate::seconds_from_rfc3339;
 
+use super::agent_work_prepared_pair::{paired_completion, paired_intent};
 use super::SandboxStoreError;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -131,7 +132,9 @@ pub(super) fn classify_publication(
             return Ok(PublicationKind::StartupNotice);
         }
         return Ok(
-            if next.work.cleanup_debt.len() == current.work.cleanup_debt.len() + 1 {
+            if next.work.cleanup_debt.len() == current.work.cleanup_debt.len() + 1
+                || paired_intent(current, next)
+            {
                 PublicationKind::Intent
             } else {
                 PublicationKind::Retry
@@ -166,7 +169,9 @@ pub(super) fn classify_publication(
     {
         return Ok(PublicationKind::Delete);
     }
-    if current.status == next.status && legal_advance(from, to) {
+    if current.status == next.status
+        && (legal_advance(from, to) || paired_completion(current, next))
+    {
         Ok(PublicationKind::Advance)
     } else {
         Err(SandboxStoreError::Conflict)
