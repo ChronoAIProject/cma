@@ -146,12 +146,19 @@ it('retains the recorded save time on a failed refresh but holds input until a f
   expect(result.current).toEqual({ allowed: true });
 });
 
-it('expires an allowed observation when a refresh stalls without overlapping requests', async () => {
+it('aborts a stalled refresh, recovers on a fresh read and refuses the timed-out reply', async () => {
   vi.useFakeTimers();
+  let late: ((sandbox: SandboxDetail) => void) | undefined;
   const readSandbox = vi
     .fn()
     .mockResolvedValueOnce(sandboxFixture())
-    .mockImplementation(() => new Promise<SandboxDetail>(() => {}));
+    .mockImplementationOnce(
+      () =>
+        new Promise<SandboxDetail>((resolve) => {
+          late = resolve;
+        }),
+    )
+    .mockResolvedValue(sandboxFixture());
   const client = agentClient({ readSandbox });
   const { result, unmount } = renderHook(
     () => useSandboxInput(client, 'agt_1', 'sbx_1').inputAvailability,
@@ -161,8 +168,18 @@ it('expires an allowed observation when a refresh stalls without overlapping req
   await act(() => vi.advanceTimersByTimeAsync(10000));
   expect(result.current.allowed).toBe(false);
   expect(result.current.notice).toContain('Reconnecting');
-  await act(() => vi.advanceTimersByTimeAsync(20000));
+  await act(() => vi.advanceTimersByTimeAsync(4999));
   expect(readSandbox).toHaveBeenCalledTimes(2);
+  const signal = readSandbox.mock.calls[1]?.[1].signal;
+  expect(signal.aborted).toBe(false);
+  await act(() => vi.advanceTimersByTimeAsync(1));
+  expect(signal.aborted).toBe(true);
+  expect(result.current.allowed).toBe(false);
+  await act(() => vi.advanceTimersByTimeAsync(5000));
+  expect(readSandbox).toHaveBeenCalledTimes(3);
+  expect(result.current.allowed).toBe(true);
+  await act(async () => late?.(saving('capture')));
+  expect(result.current.allowed).toBe(true);
   unmount();
 });
 
@@ -201,8 +218,7 @@ it('holds input after returning to a hidden tab until a new foreground read comp
   await act(async () => {
     resolveRead(sandboxFixture());
   });
-  expect(result.current.allowed).toBe(false);
-  await act(() => vi.advanceTimersByTimeAsync(0));
+  // The abandoned background read cannot keep the new foreground read blocked.
   expect(result.current.allowed).toBe(true);
   expect(readSandbox).toHaveBeenCalledTimes(3);
   unmount();
@@ -225,7 +241,7 @@ it('ignores late reads from another Agent and never overlaps or continues after 
     ({ agentId }) => useSandboxInput(client, agentId, 'sbx_1').inputAvailability,
     { initialProps: { agentId: 'agt_1' } },
   );
-  await act(() => vi.advanceTimersByTimeAsync(20000));
+  await act(() => vi.advanceTimersByTimeAsync(5000));
   expect(readSandbox).toHaveBeenCalledTimes(1);
   rerender({ agentId: 'agt_2' });
   await act(async () => {
