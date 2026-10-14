@@ -214,12 +214,94 @@ async fn bootstrap_expected_wait_defers_without_failure_logs_or_runtime_effects(
     assert_eq!(waiting.work.attempts, 1);
     assert_eq!(
         waiting.work.ready_at,
-        rfc3339_at(h.now + Duration::from_secs(2))
+        rfc3339_at(h.now + Duration::from_secs(1))
     );
     assert!(waiting.failure.is_none());
     assert_eq!(h.store.agent_log(&agent.id, 0, 100).await.unwrap(), logs);
     assert_eq!(h.backend.requests().await.len(), before);
     assert!(!h.worker.run_one(&agent.id, h.now).await.unwrap());
+}
+
+#[tokio::test(start_paused = true)]
+async fn bootstrap_readiness_after_observation_budget_does_not_wait_for_failure_backoff() {
+    let fixture = BootstrapHarness::new().await;
+    let h = &fixture.harness;
+    let agent = fixture.admit(None).await;
+    let before = h.backend.requests().await.len();
+    h.run(&agent.id, h.now).await;
+    let waiting = h.stored(&agent.id).await;
+    assert_eq!(waiting.work.step, AgentWorkStep::WaitForWorkspace);
+    assert!(waiting.has_no_runtime_effects());
+    assert_eq!(h.backend.requests().await.len(), before);
+
+    fixture.ready().await;
+    // Readiness arrives just after the bounded wait, before the old extra
+    // one-second delay or the configured thirty-second failure retry.
+    let ready_at = h.now + Duration::from_millis(1_100);
+    assert!(h.worker.run_scheduled(&agent.id, ready_at).await.unwrap());
+    let ready = h.stored(&agent.id).await;
+    assert_eq!(ready.status, AgentStatus::Ready);
+    assert_eq!(ready.work.receipts.len(), 3);
+    assert!(ready.work.cleanup_debt.is_empty());
+    assert!(!h.worker.run_scheduled(&agent.id, ready_at).await.unwrap());
+}
+
+#[tokio::test(start_paused = true)]
+async fn bootstrap_due_parent_wait_still_observes_a_bounded_interval_without_busy_retry() {
+    let fixture = BootstrapHarness::new().await;
+    let h = &fixture.harness;
+    let agent = fixture.admit(None).await;
+    let before = h.backend.requests().await.len();
+    for attempt in 0..2 {
+        let started = tokio::time::Instant::now();
+        assert!(h
+            .worker
+            .run_scheduled(&agent.id, h.now + Duration::from_secs(attempt))
+            .await
+            .unwrap());
+        assert_eq!(started.elapsed(), Duration::from_secs(1));
+        let waiting = h.stored(&agent.id).await;
+        assert_eq!(waiting.work.step, AgentWorkStep::WaitForWorkspace);
+        assert!(waiting.work.lease.is_none());
+        assert!(waiting.has_no_runtime_effects());
+    }
+    assert_eq!(h.backend.requests().await.len(), before);
+}
+
+#[tokio::test(start_paused = true)]
+async fn bootstrap_readiness_does_not_override_future_work_or_another_workers_lease() {
+    for leased in [false, true] {
+        let fixture = BootstrapHarness::new().await;
+        let h = &fixture.harness;
+        let agent = fixture.admit(None).await;
+        if leased {
+            h.store
+                .claim_agent_work(
+                    &agent.id,
+                    "other-worker",
+                    rfc3339_at(h.now),
+                    rfc3339_at(h.now + Duration::from_secs(60)),
+                )
+                .await
+                .unwrap()
+                .unwrap();
+        } else {
+            let mut future = agent.clone();
+            future.work.ready_at = rfc3339_at(h.now + Duration::from_secs(60));
+            future.revision += 1;
+            h.store.save_agent(agent.revision, future).await.unwrap();
+        }
+        let before = h.stored(&agent.id).await;
+        let requests = h.backend.requests().await.len();
+        fixture.ready().await;
+        assert!(!h
+            .worker
+            .run_scheduled(&agent.id, h.now + Duration::from_secs(1))
+            .await
+            .unwrap());
+        assert_eq!(h.stored(&agent.id).await, before);
+        assert_eq!(h.backend.requests().await.len(), requests);
+    }
 }
 
 #[tokio::test(start_paused = true)]

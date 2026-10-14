@@ -28,7 +28,9 @@ mod subscriptions;
 mod update_relay;
 
 pub use adapter::HostedAdapter;
-pub use agent_sandbox_backend::{AgentSandboxBackend, RuntimeBackends, RuntimeRoutingStore};
+pub use agent_sandbox_backend::{
+    AgentSandboxBackend, NativeStatusInspection, RuntimeBackends, RuntimeRoutingStore,
+};
 pub use backend::{HostedAgentOpenSettings, HostedAgentRuntime, HostedBackend};
 pub use channel_tools::{HostedChannelToolBinding, HostedChannelToolSource};
 pub use checkpoint_store::{

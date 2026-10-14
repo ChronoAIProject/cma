@@ -50,13 +50,21 @@ impl SandboxWorker {
             _ => false,
         };
         if requires_adoption {
-            if let Err(error) = crate::sandbox::runtime_attachment::adopt_bound_runtime(
+            let inspection_started = std::time::Instant::now();
+            let attached = crate::sandbox::runtime_attachment::adopt_bound_runtime(
                 self.dependencies.adapter.as_ref(),
                 &sandbox,
                 &self.config.deployment_id,
             )
-            .await
-            {
+            .await;
+            tracing::info!(
+                sandbox_id = %sandbox.id,
+                step = ?sandbox.work.step,
+                elapsed_ms = inspection_started.elapsed().as_millis() as u64,
+                succeeded = attached.is_ok(),
+                "Sandbox runtime inspection completed"
+            );
+            if let Err(error) = attached {
                 return self
                     .handle_failure(sandbox, support::adapter_failure(error), now)
                     .await;

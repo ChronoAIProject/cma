@@ -75,6 +75,7 @@ const SANDBOX_COLLECTIONS: &[&str] = &[
     SANDBOX_ADMISSIONS,
     CHECKPOINTS,
     WARM_SANDBOXES,
+    super::native_prepared::COLLECTION,
 ];
 const PROFILE_COLLECTIONS: &[&str] = &[
     AGENT_PROFILES,
@@ -122,6 +123,7 @@ pub struct MongoSandboxStore {
     #[cfg(test)]
     pub(super) warm_agent_revisions: Collection<Document>,
     pub(super) warm_sandboxes: Collection<Document>,
+    pub(super) native_prepared: Collection<Document>,
     pub(super) warm_runtime_version: Option<String>,
     pub(super) warm_home_policy: Option<layer3_adapter::HomeVolumePolicy>,
     pub(crate) warmup_changed: std::sync::Arc<tokio::sync::Notify>,
@@ -189,6 +191,7 @@ impl MongoSandboxStore {
             #[cfg(test)]
             warm_agent_revisions: majority_collection(&database, AGENT_PROFILE_REVISIONS),
             warm_sandboxes: majority_collection(&database, WARM_SANDBOXES),
+            native_prepared: majority_collection(&database, super::native_prepared::COLLECTION),
             warm_runtime_version: None,
             warm_home_policy: None,
             warmup_changed: std::sync::Arc::new(tokio::sync::Notify::new()),
@@ -220,6 +223,7 @@ impl MongoSandboxStore {
         super::sandbox_events::ensure_indexes(&store.sandbox_events).await?;
         super::checkpoints::ensure_indexes(&store.checkpoints).await?;
         super::warm_sandboxes::ensure_indexes(&store.warm_sandboxes).await?;
+        super::native_prepared::ensure_indexes(&store.native_prepared).await?;
         tracing::info!(database = name, "sandbox-model Mongo store ready");
         Ok(store)
     }

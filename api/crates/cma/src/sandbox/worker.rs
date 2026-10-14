@@ -17,6 +17,7 @@ use layer2_core::sandbox::SandboxPolicy;
 
 mod execute;
 mod home;
+mod initial_runtime;
 mod lifecycle;
 mod provision_timing;
 mod provisioning;

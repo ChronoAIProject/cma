@@ -797,6 +797,58 @@ one Recreate replica because process admission quotas lack shared coordination.
 Warm-pool acceptance starts with one member of the selected immutable runtime
 and must preserve claimed members when replenishment changes.
 
+### Prepared default Agent hierarchy
+
+The native pool can additionally prepare one or two complete default hierarchies
+using `CHRONO_NATIVE_PREPARED_TARGET=1` or `2`. The checked-in ConfigMap keeps a
+safe default of `0`; the production API Deployment explicitly overrides it to
+`1`, while environments without that Deployment override remain disabled.
+Enable this after a matching native pool is ready, with the same pinned runtime
+image, CPU/memory and `native_vct_full_home_v2` home policy. Preparation acquires a
+real native Claim and home, initializes the empty workspace and worktree, and
+opens the default idle Agent session. It does not issue owner credentials,
+resolve owner access tools, clone a user's repository or send a model prompt.
+
+The separate `native_prepared_sandboxes` collection contains the global target
+fence and reservation records. Count reservation documents by `state` to verify
+`preparing`, `installing`, `ready`, `claimed`, `retiring` and `retired` separately.
+Native pool `ready` counts describe unclaimed native members; a prepared
+hierarchy has already claimed its member and therefore is not part of that
+count. Only a recently verified `ready` reservation with identical canonical
+runtime/profile content may be consumed by explicit default Agent Manager
+creation. The authenticated owner's quota, name and idempotency checks remain
+in the admission transaction. Claimed rows retain the exact Sandbox, Workspace,
+Agent, worktree, home and session identity for reconciliation.
+
+For an exactly matched consumed preparation, owned Agent startup replays the
+worktree and Agent-home requests in one attempt after a fresh runtime inspection.
+It records both ordered cleanup debts before either request, executes each
+resource's writer fence, then atomically publishes both matching receipts and
+completion logs. Publication writes revision-conditioned auxiliary fences on
+the live Sandbox, Workspace, Worktree and claimed preparation. A changed parent,
+worker lease or preparation cannot publish success. An interrupted attempt keeps
+both debts; recovery can replay the pair or use the ordinary individual steps
+when preparation evidence is unavailable. No runtime request is omitted, and
+metadata conflict retries contain publication only.
+
+For acceptance, record a ready reservation's IDs and native Claim/member/PVC
+identity; submit one explicit create; verify that the resulting owned hierarchy
+retains those identities and starts its first message only after credential and
+access-tool handoff. Measure request-to-Ready latency on that actual create;
+local ACP session reuse alone does not establish end-to-end latency. Requests
+with unmatched settings or no ready reservation continue through normal
+creation. Reservations refresh their session health every five seconds, expire
+after thirty minutes, and retain cleanup authority on failures. Retiring rows
+count against the two-reservation cap until cleanup completes.
+
+To disable preparation in production, set the explicit Deployment
+`CHRONO_NATIVE_PREPARED_TARGET=0` override (or remove it to inherit the ConfigMap
+default) and restart Agent Manager. The ConfigMap default remains `0`. This
+retires only unclaimed reservations; claimed owned Sandboxes keep their existing
+lifecycle. Run the compatible cleanup worker until unclaimed retirement debt is
+cleared before rolling back to a binary that does not know the separate
+collection.
+
 ## Deployment acceptance and coverage
 
 The [verification report](CMA_Native_Production_Verification.md) is the measured

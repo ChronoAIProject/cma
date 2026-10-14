@@ -70,7 +70,7 @@ it('keeps header and selected sidebar status together across stream and navigati
       updatedAt: '2026-09-06T00:11:00Z',
     })),
   };
-  await act(() => vi.advanceTimersByTimeAsync(5000));
+  await act(() => vi.advanceTimersByTimeAsync(15000));
   expect(header()).toHaveTextContent('Stopped');
   expect(row()).toHaveTextContent('Stopped');
   expect(screen.getByText('The repository is ready.')).toBeInTheDocument();

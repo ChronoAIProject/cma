@@ -10,6 +10,9 @@ data:
   CHRONO_SANDBOX_PROVIDER: "agent-sandbox"
   CHRONO_RETAIN_OPENSANDBOX: "true"
   CHRONO_AGENT_SANDBOX_ENABLED: "true"
+  # Explicitly enable 1 or 2 only after the matching native pool is ready.
+  # Prepared hierarchies hold native Claims/PVCs but receive no owner key or prompt.
+  CHRONO_NATIVE_PREPARED_TARGET: "0"
   # Verified remote microvm path; exec reaches the guest's loopback runtime.
   # Native Pod lifecycle and persistent homes remain controller-owned.
   CHRONO_AGENT_SANDBOX_RUNTIME_TRANSPORT: "kubernetes-exec"

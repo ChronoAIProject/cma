@@ -15,6 +15,7 @@ pub(crate) struct RuntimeConfig {
     pub agent_sandbox_connection: Option<layer3_adapter::agent_sandbox::RemoteKubernetesConfig>,
     pub agent_sandbox_runtime_transport: layer3_adapter::hosted::NativeRuntimeTransport,
     pub allocate_agent_sandbox: bool,
+    pub native_prepared_target: u8,
     pub retain_opensandbox: bool,
     pub sandbox_base_url: String,
     pub sandbox_api_key: String,
@@ -36,6 +37,7 @@ impl fmt::Debug for RuntimeConfig {
             .field("sandbox_image", &self.sandbox_image)
             .field("sandbox_namespace", &self.sandbox_namespace)
             .field("home_policy", &self.home_policy)
+            .field("native_prepared_target", &self.native_prepared_target)
             .field("upstream_base_url", &self.upstream_base_url)
             .field("upstream_wire_api", &self.upstream_wire_api)
             .field("platform_base_url", &self.platform_base_url)
@@ -99,6 +101,21 @@ impl RuntimeConfig {
         let home_policy = super::home::from_lookup(lookup)?;
         let agent_sandbox_home_policy =
             super::home::native_from_lookup(lookup, home_policy.as_ref())?;
+        let native_prepared_target = match lookup("CHRONO_NATIVE_PREPARED_TARGET")?.as_deref() {
+            None | Some("0") => 0,
+            Some("1") => 1,
+            Some("2") => 2,
+            _ => return Err("CHRONO_NATIVE_PREPARED_TARGET must be 0, 1 or 2".into()),
+        };
+        if native_prepared_target > 0
+            && (!allocate_agent_sandbox
+                || agent_sandbox.is_none()
+                || !agent_sandbox_home_policy
+                    .as_ref()
+                    .is_some_and(|policy| policy.mounts_full_home()))
+        {
+            return Err("CHRONO_NATIVE_PREPARED_TARGET requires agent-sandbox allocation and a full native home".into());
+        }
         // The deployment keeps the remote ConfigMap projected while native
         // allocation is disabled so it can be enabled without a manifest
         // rewrite. Do not validate or compose that optional remote target until
@@ -130,6 +147,7 @@ impl RuntimeConfig {
             agent_sandbox_connection,
             agent_sandbox_runtime_transport,
             allocate_agent_sandbox,
+            native_prepared_target,
             retain_opensandbox,
             sandbox_base_url,
             sandbox_api_key,
