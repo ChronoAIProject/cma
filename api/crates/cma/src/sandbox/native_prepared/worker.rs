@@ -1,0 +1,194 @@
+//! Bounded leased preparation, always saving a transition before the next effect.
+use std::sync::Arc;
+use std::time::{Duration, SystemTime};
+
+use layer2_core::profiles::{
+    AgentProvider, ModelAccess, SandboxProfileContent, WorkspaceLocation, WorkspaceProfileContent,
+};
+use layer2_core::sandbox::{SandboxStoreError, WarmSandboxState};
+use layer2_core::{now_rfc3339, rfc3339_at, ServiceId};
+use layer3_adapter::{AdapterError, SandboxAdapter};
+use tokio::sync::watch;
+use tokio::task::{JoinHandle, JoinSet};
+use tokio::time::MissedTickBehavior;
+
+use crate::config::Config;
+use crate::store::{MongoSandboxStore, NativePreparedClaim, NativePreparedPlan};
+
+pub(crate) struct NativePreparedWorker {
+    store: Arc<MongoSandboxStore>,
+    adapter: Arc<dyn SandboxAdapter>,
+    deployment_id: String,
+    desired: Option<NativePreparedPlan>,
+    target: u8,
+}
+
+impl NativePreparedWorker {
+    pub(crate) fn new(
+        store: Arc<MongoSandboxStore>,
+        adapter: Arc<dyn SandboxAdapter>,
+        config: &Config,
+    ) -> Result<Self, String> {
+        let target = config.runtime.native_prepared_target;
+        let desired = if target == 0 {
+            None
+        } else {
+            let services = crate::config::REQUIRED_BASELINE_SERVICES
+                .iter()
+                .map(|id| ServiceId::new(*id))
+                .collect::<Vec<_>>();
+            let mut reaches = config.baseline_services.clone();
+            reaches.extend(services.clone());
+            Some(
+                NativePreparedPlan::new(
+                    SandboxProfileContent {
+                        runtime_image: None,
+                        cpu_millis: config.default_profiles.cpu_millis,
+                        memory_mib: config.default_profiles.memory_mib,
+                        nyxid_services: services,
+                        agent_provider: AgentProvider::Codex,
+                        model_access: ModelAccess::ChronoaiManaged,
+                        max_workspaces: 16,
+                        max_agents_per_workspace: 16,
+                        workspace_profiles: vec![],
+                        software_install_commands: vec![],
+                        environment_variables: vec![],
+                    },
+                    WorkspaceProfileContent {
+                        name: "workspace".into(),
+                        location: WorkspaceLocation::Directory {
+                            name: "workspace".into(),
+                        },
+                        setup_commands: vec![],
+                        agent_profiles: vec![],
+                    },
+                    crate::agent_lifecycle::prepared_default_agent_profile()?,
+                    reaches,
+                    config.runtime.sandbox_image.clone(),
+                    config.execution,
+                    config
+                        .runtime
+                        .agent_sandbox_home_policy
+                        .clone()
+                        .ok_or("native prepared home policy missing")?,
+                )
+                .map_err(|error| error.to_string())?,
+            )
+        };
+        Ok(Self {
+            store,
+            adapter,
+            deployment_id: config.deployment_id.clone(),
+            desired,
+            target,
+        })
+    }
+
+    pub(crate) fn spawn(self, mut shutdown: watch::Receiver<bool>) -> JoinHandle<()> {
+        tokio::spawn(async move {
+            let worker = Arc::new(self);
+            let mut jobs = JoinSet::new();
+            let mut ticker = tokio::time::interval(Duration::from_secs(2));
+            ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
+            loop {
+                if *shutdown.borrow() {
+                    break;
+                }
+                tokio::select! {
+                    _ = shutdown.changed() => break,
+                    result = jobs.join_next(), if !jobs.is_empty() => {
+                        if let Some(Err(error)) = result { tracing::error!(%error, "native preparation worker task failed"); }
+                    }
+                    _ = ticker.tick() => {
+                        if let Err(error) = worker.store.reconcile_native_prepared_target(worker.desired.as_ref(), worker.target, &now_rfc3339()).await {
+                            tracing::warn!(%error, "native preparation target reconciliation deferred");
+                            continue;
+                        }
+                    },
+                }
+                if *shutdown.borrow() {
+                    break;
+                }
+                while jobs.len() < 2 {
+                    match worker
+                        .store
+                        .claim_native_prepared_work(&now_rfc3339(), &after(60))
+                        .await
+                    {
+                        Ok(Some(claim)) => {
+                            let worker = worker.clone();
+                            jobs.spawn(async move {
+                                if let Err(error) = worker.run_claim(claim).await {
+                                    tracing::warn!(%error, "native preparation step requires reconciliation");
+                                }
+                            });
+                        }
+                        Ok(None) => break,
+                        Err(error) => {
+                            tracing::warn!(%error, "native preparation claim deferred");
+                            break;
+                        }
+                    }
+                }
+            }
+            jobs.abort_all();
+            while jobs.join_next().await.is_some() {}
+        })
+    }
+
+    async fn run_claim(&self, claim: NativePreparedClaim) -> Result<(), SandboxStoreError> {
+        let operation = async {
+            if claim.record.state == WarmSandboxState::Retiring {
+                super::retire_step(self.adapter.as_ref(), &claim.record).await
+            } else {
+                super::prepare_step(
+                    self.adapter.as_ref(),
+                    &self.deployment_id,
+                    &claim.record,
+                    &claim.plan.home_policy,
+                )
+                .await
+            }
+        };
+        tokio::pin!(operation);
+        let mut heartbeat = tokio::time::interval(Duration::from_secs(20));
+        heartbeat.set_missed_tick_behavior(MissedTickBehavior::Skip);
+        let result = loop {
+            tokio::select! {
+                result = &mut operation => break result,
+                _ = heartbeat.tick() => self.store.renew_native_prepared_work(&claim, &after(60)).await?,
+            }
+        };
+        let (next, delay) = match result {
+            Ok(next) => {
+                let delay = if next.state == WarmSandboxState::Ready {
+                    5
+                } else {
+                    0
+                };
+                (next, delay)
+            }
+            Err(error) => {
+                // Runtime error details can contain output. Keep only durable identity in logs.
+                tracing::warn!(sandbox_id = %claim.record.id, "native preparation effect deferred; retaining exact authority");
+                let mut next = claim.record.clone();
+                let retry = matches!(error, AdapterError::Unavailable(_))
+                    && matches!(
+                        next.state,
+                        WarmSandboxState::Preparing | WarmSandboxState::Installing
+                    );
+                if !retry {
+                    next.state = WarmSandboxState::Retiring;
+                }
+                (next, if retry { 5 } else { 30 })
+            }
+        };
+        self.store
+            .finish_native_prepared_work(&claim, next, &now_rfc3339(), &after(delay))
+            .await
+    }
+}
+
+fn after(seconds: u64) -> String {
+    rfc3339_at(SystemTime::now() + Duration::from_secs(seconds))
+}

@@ -53,11 +53,18 @@ mod workspace;
 mod image;
 pub(crate) use image::{ImageManagerResolver, ImageResolver};
 #[path = "agent_lifecycle_validation.rs"]
-mod validation;
+pub(crate) mod validation;
 use validation::{
     agent_content, agent_error, repository_location, sandbox_error, services, validate_request,
     workspace_error,
 };
+
+/// Use the same defaults for explicit inline creation and credential-free preparation.
+pub(crate) fn prepared_default_agent_profile(
+) -> Result<layer2_core::profiles::AgentProfileContent, String> {
+    validation::agent_content(&layer1_public::rest::AgentLifecycleProfile::default())
+        .map_err(|error| format!("default Agent preparation profile is invalid: {error:?}"))
+}
 
 pub(crate) struct InlineAgentLifecycle {
     sandbox: Arc<SandboxService>,
@@ -68,6 +75,7 @@ pub(crate) struct InlineAgentLifecycle {
     bounds: ProfileCapacityBounds,
     capacity: layer3_adapter::SandboxCapacity,
     operations: Arc<MongoAgentLifecycleStore>,
+    native_prepared: Option<Arc<crate::store::MongoSandboxStore>>,
     self_ref: OnceLock<Weak<Self>>,
     worker_slots: Arc<tokio::sync::Semaphore>,
 }
@@ -97,6 +105,7 @@ impl InlineAgentLifecycle {
         capacity: layer3_adapter::SandboxCapacity,
         scanner: Arc<dyn layer2_core::profiles::PublicValueScanner>,
         operations: Arc<MongoAgentLifecycleStore>,
+        native_prepared: Option<Arc<crate::store::MongoSandboxStore>>,
     ) -> Arc<Self> {
         let instance = Arc::new(Self {
             sandbox,
@@ -107,6 +116,7 @@ impl InlineAgentLifecycle {
             bounds,
             capacity,
             operations,
+            native_prepared,
             self_ref: OnceLock::new(),
             worker_slots: Arc::new(tokio::sync::Semaphore::new(crate::store::DISCOVERY_BATCH)),
         });
@@ -216,7 +226,18 @@ impl InlineAgentLifecycle {
                 .map_err(|_| AgentLifecycleProvisioningError::Unavailable)?;
             sandbox.id
         };
-        let early_admission = behavior == LifecycleBehavior::PromptRepository;
+        let has_prepared_hierarchy = match &self.native_prepared {
+            Some(store) => store
+                .consumed_native_prepared_for_sandbox(&sandbox_id)
+                .await
+                .map_err(|_| AgentLifecycleProvisioningError::Unavailable)?
+                .is_some(),
+            None => false,
+        };
+        // Prepared sessions are adopted only after owner credentials and parent readiness.
+        // WaitForWorkspace remains effect-free for ordinary cold admission.
+        let early_admission =
+            behavior == LifecycleBehavior::PromptRepository && !has_prepared_hierarchy;
         let workspace_id = if early_admission {
             self.reserve_bootstrap_workspace(
                 caller,
