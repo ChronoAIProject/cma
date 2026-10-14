@@ -1,10 +1,82 @@
 # CMA native Sandbox production verification — 2026-10-14
 
-CMA Agent Manager, Event Gateway and Web are deployed, and the final cold
-Gateway user flow passed. Results below identify their tested version. Evidence
-paths are operator-local artifacts, not repository files.
+## Combined performance and full-home release — PR #1016
 
-## Final deployed set
+Candidate `04ccbd6a` contains the native-home authority fix, faster durable
+lifecycle progress and readiness observation, immediate Sandbox action feedback,
+and full `/home` persistence for new native allocations. PR #1016 merged directly
+into `develop`.
+
+| Source and verification | Exact identity |
+| --- | --- |
+| Reviewed candidate | `04ccbd6a3adb9ec2c2f46ab9d2b01ae93c6f7b9f` |
+| PR #1016 merge into `develop` | `fea975499c745febfcbf4bcfcaa71c3967835ca3` |
+| Actual CI image checkout | `993591d35f937e26cdc3c2756a596dc4132e6282` |
+| Candidate, merged `develop`, and image source tree | `b4c87d5d66897c3922d4da0768ac90bf2fe319d1` |
+| CI | [38539408542](https://github.com/ChronoAIProject/cma/actions/runs/38539408542), attempt 1; full 15/15 jobs passed |
+
+The completed publication receipt records these exact registry manifest digests.
+They identify imported CI image bytes; Docker config image IDs remain separate
+identities in the receipts.
+
+| Published component | Registry manifest digest |
+| --- | --- |
+| Agent Manager | `sha256:d6242f4dae1ac07f26805216855331df3ef78233f5cb02986d780b9fc7ea0075` |
+| Shared Web | `sha256:38f1c94685325465e4391b8aa0b1e9bd78cfae7367b8de921e6fddd6d103e43c` |
+| Default runtime | `sha256:cad2058fad219bf8e6deb8b061a1d6331d28552990ee6bc8646f8cd5cf11d18b` |
+| Event Gateway, retained | `sha256:0c3068130eaf618ce88dbe47bd7d111d365a5bba816c49f78b4000e8550ef1e7` |
+
+API and Web use the established
+`us-central1-docker.pkg.dev/example-project-01/example-registry-02/` repositories
+`cma-api` and `cma-web`; runtime uses
+`asia-southeast1-docker.pkg.dev/example-project-02/example-registry-01/cma-runtime`.
+
+| Combined release evidence | Receipt SHA-256 |
+| --- | --- |
+| `/tmp/cma-direct-home-v2-publish-01/publication-report.json` | `b06759305bb12851227a47310d19f5e188785f34481a4bff33e6c91bbf38937d` |
+| `/tmp/cma-direct-home-v2-publish-01/import-receipts.jsonl` | `0773163de2c13e3a3306c2021fe33734bb2ad874487e2dc5fe09805655ca7a59` |
+
+Publication proved the actual PR merge parents `[ab789bde, 04ccbd6a]`, equal
+candidate/merge/CI trees, exact run attempt and artifact identities, runtime
+execution evidence, and destination manifest/config readback. The repository
+pins now match this completed publication.
+
+Deployment, pool readiness, fresh Agent creation latency, and same-PVC
+whole-home/history acceptance remain pending. Publication does not establish
+those live results.
+
+The release selects API, shared Web and runtime images while retaining Event
+Gateway. One Web image implements all three portals; Image Manager backend
+activation remains deferred. New native allocations use
+`native_vct_full_home_v2`, mounting the PVC `home` subdirectory at `/home` and
+running `--initialize-home-tree`. Existing `native_vct_empty_v1` allocations keep
+their recorded image, original `/home/cma` mount, initializer and home authority.
+The new default does not migrate existing volumes.
+
+## Prior Agent follow-up — 16:26:14 SGT
+
+Before this combined release, candidate `03cbd332` was Ready at **16:26:14 SGT on
+2026-10-14**. Agent Manager generation 15, Web generation 91, and retained Gateway
+generation 6 each had one updated Ready replica, exact published imageID and zero
+restarts. The default runtime was `a955564d`. PR #1007 merged as `ab789bde`, with
+actual CI image checkout `89fc1aaef7d71b80200f8e6af9670738c843e029` and equal tree
+`7312f2b7bad364092fbb8a05d80d9dbffb1c9685`. CI run
+[38528498008](https://github.com/ChronoAIProject/cma/actions/runs/38528498008),
+attempt 1, passed all 15 jobs.
+
+| Prior release evidence | Receipt SHA-256 |
+| --- | --- |
+| `/tmp/cma-agent-followup-publish-04/publication-report.json` | `45cb6e81fb1ce3ae48bc6600b289944fe03fc3706d519a4abc5b228bf33d88c9` |
+| `/tmp/cma-agent-followup-rollout-01/readiness.json` | `73b5bbafa878d20c8e2d2af8d669779c1d7d301ac49d0959aa80b673eaac5a62` |
+| `/tmp/cma-agent-followup-pool-01/ready.json` | `f652d6733a06a1a468512901ca98df60a4985ea8004f3999f0a876c69f8860fa` |
+
+The pool receipt observed two Ready replicas at 16:26:50 SGT. A later owner
+attempt reported **Needs attention** during Sandbox preparation. These prior
+readiness receipts do not establish successful fresh Agent timing or live skill
+installation. The combined release includes the authority correction; its live
+outcome requires separate evidence. Receipt paths are operator-local artifacts.
+
+## Earlier verified baseline — 11:31:31 SGT
 
 At **11:31:31 SGT**, Agent Manager, Web and Event Gateway each had one updated
 Ready replica, current observed generation, the exact published imageID and
@@ -63,7 +135,7 @@ At **11:31:59 SGT**, all seven public/owner checks returned HTTP 200: Web `/`, A
 `/ready`, Gateway `/readyz`, authenticated non-visitor owner session, valid owner
 inventory, and the original protected Sandbox/Agent, both still paused.
 
-## Measured acceptance
+## Earlier measured acceptance
 
 | Flow and tested version | Actual result | Evidence |
 | --- | --- | --- |
@@ -83,7 +155,7 @@ It proves successful stored-event replay, not a fresh refused-settings flow.
 The earlier caller retry and ready-Agent Gateway checks do not substitute for
 the final cold management-test result.
 
-## Cleanup and protected resources
+## Earlier cleanup and protected resources
 
 | Fixture | Normal cleanup result | Receipt |
 | --- | --- | --- |
@@ -129,7 +201,7 @@ identified. Exec connectivity does not prove direct Pod-network isolation.
 A default runtime update does not migrate retained Sandboxes; the MCP approval
 flow intentionally used retained runtime 028aca.
 
-The four repository image/config manifests are synchronized to final receipts;
-YAML, configuration key/documentation, native contract and route ownership
-checks passed. Operational instructions and infra ownership boundaries are in
+The earlier four-manifest synchronization and its YAML, configuration
+key/documentation, native contract and route ownership checks apply to the
+versions identified above. Operational instructions and infra ownership boundaries are in
 [CMA deployment readiness](CMA_Deployment_Readiness.md).
