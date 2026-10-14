@@ -25,6 +25,10 @@
 .agent-settings-scopes > div {
   grid-template-columns: minmax(0, 1fr);
 }
+.agent-settings-scopes label > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
 .agent-settings-scopes legend {
   margin-bottom: 8px;
   font-weight: 600;
