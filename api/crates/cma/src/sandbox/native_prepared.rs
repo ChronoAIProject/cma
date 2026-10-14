@@ -4,7 +4,7 @@ use layer2_core::profiles::{AgentProvider, ModelAccess, WorkspaceLocation};
 use layer2_core::sandbox::{RuntimeBinding, SandboxHome, WarmSandbox, WarmSandboxState};
 use layer3_adapter::{
     AdapterError, HomeVolumePolicy, InstallRequest, RuntimeAdoptionRequest, RuntimeHandle,
-    RuntimeProvisionRequest, SandboxAdapter, SandboxSpec,
+    RuntimeProvisionRequest, RuntimeStatusRequest, SandboxAdapter, SandboxSpec,
 };
 
 mod hierarchy;
@@ -240,12 +240,29 @@ async fn verify_runtime(
     let handle = RuntimeHandle::new(&runtime.runtime_id);
     let request = RuntimeAdoptionRequest::new(1, handle.clone(), spec.clone())
         .with_expected_image(&record.plan.runtime_version);
-    if adapter.adopt_runtime(&request).await?.is_none() {
+    let Some(inspected) = adapter.inspect_runtime(&request).await? else {
         return Ok(None);
+    };
+    let observed = &inspected.observation;
+    if observed.handle != handle
+        || observed.sandbox_id != record.id.as_str()
+        || observed.generation != 1
+        || !observed.lifecycle.is_running()
+    {
+        return Err(rejected("prepared runtime observation changed"));
     }
-    let status = super::runtime_attachment::provisioned_runtime_status(adapter, spec, &handle, 1)
-        .await?
+    let status = inspected
+        .status
         .ok_or_else(|| rejected("prepared runtime process identity missing"))?;
+    let home = spec
+        .home_volume
+        .as_ref()
+        .ok_or_else(|| rejected("prepared runtime process identity missing"))?;
+    status.validate_for(&RuntimeStatusRequest {
+        sandbox_id: record.id.to_string(),
+        generation: 1,
+        home_identity: home.identity()?,
+    })?;
     let agents = record.workspaces[0]
         .agents
         .iter()
