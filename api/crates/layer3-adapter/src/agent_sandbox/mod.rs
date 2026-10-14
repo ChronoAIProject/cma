@@ -150,23 +150,29 @@ impl AgentSandboxClient {
     }
 
     pub async fn pod_binding(&self, runtime: &RuntimeHandle) -> Result<PodBinding> {
-        let object = self
-            .get(runtime)
-            .await?
-            .ok_or_else(|| unavailable("Sandbox no longer exists"))?;
+        let (name, _) = parse_handle(runtime)?;
+        let parameters = ListParams::default().labels(&pods::selector(name)).limit(3);
+        // The handle already supplies the selector. Both reads remain fresh;
+        // consume Sandbox authority and readiness before any Pod result.
+        let (object, page) = tokio::join!(self.get(runtime), self.pods.list(&parameters));
+        let object = object?.ok_or_else(|| unavailable("Sandbox no longer exists"))?;
         if object.metadata.deletion_timestamp.is_some() || !model::ready(&object) {
             return Err(unavailable("Sandbox is not ready"));
         }
-        let name = object.name_any();
-        let page = self
-            .pods
-            .list(
-                &ListParams::default()
-                    .labels(&pods::selector(&name))
-                    .limit(3),
-            )
-            .await
-            .map_err(api_error)?;
+        let page = if object.name_any() == name {
+            page
+        } else {
+            // Preserve discovery from the returned object's name even for a
+            // misaddressed API response; a speculative selector is not proof.
+            self.pods
+                .list(
+                    &ListParams::default()
+                        .labels(&pods::selector(&object.name_any()))
+                        .limit(3),
+                )
+                .await
+        }
+        .map_err(api_error)?;
         self.pod_binding_from_page(&object, page)
     }
 
