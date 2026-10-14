@@ -27,8 +27,11 @@ import { AgentSourceLabel, useAgentSource } from './source';
 import { useAgentProvenance } from './provenance';
 import { QueuedMessageNotice } from './QueuedMessageNotice';
 import { AgentAccessRequests } from './AccessRequestDialog';
+import type { CmaWebClient } from '../api/client';
+import { AgentLifecycleFollowup } from '../create/AgentLifecycleFollowup';
 
 interface AgentSurfaceProps {
+  readonly lifecycleClient?: CmaWebClient;
   readonly accessUncertain?: boolean;
   readonly draft?: AgentDraft;
   readonly viewerId?: string;
@@ -65,6 +68,7 @@ function SandboxLink({
 }
 
 export function AgentSurface({
+  lifecycleClient,
   draft,
   agentId,
   controller,
@@ -276,7 +280,12 @@ export function AgentSurface({
           </span>
           <Button
             size="sm"
-            disabled={readOnly || controller.pending !== undefined || historyIncomplete}
+            disabled={
+              readOnly ||
+              controller.pending !== undefined ||
+              historyIncomplete ||
+              (status === 'starting' && !controller.inputAvailability.allowed)
+            }
             onClick={() => void controller.recoverPending?.()}
           >
             Recover pending request
@@ -291,6 +300,10 @@ export function AgentSurface({
       )}
 
       <QueuedMessageNotice control={controller.queuedMessage} readOnly={readOnly} />
+
+      {!readOnly && lifecycleClient !== undefined && viewerId !== undefined ? (
+        <AgentLifecycleFollowup client={lifecycleClient} viewerId={viewerId} agentId={agentId} />
+      ) : null}
 
       <div className="agent-surface__conversation">
         {status === 'starting' ||
@@ -328,6 +341,7 @@ export function AgentSurface({
           pausedNotice={pausedNotice}
           running={running}
           queueWhileRunning={state.v2 !== undefined}
+          queueWhileStarting={state.v2 !== undefined}
           starting={starting}
           controlsUnavailable={controller.controlsUnavailable}
           requestPending={controller.pendingMessage !== undefined}

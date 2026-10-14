@@ -739,6 +739,24 @@ body and original target. Use the existing status band and compact Button for
 Keep the draft editable and clear only the draft matching a retained acceptance.
 A refused intent may be corrected after an authoritative admission refusal.
 
+A newly admitted Agent may open while its recorded state is **Starting**, after
+verified Agent/Worktree/Workspace/Sandbox lineage and a fresh Active parent without
+an operation or save in progress. Keep the actual Starting label and recorded
+preparation visible. Responses v2 tabs offer the normal editable composer,
+**Message Agent** placeholder and **Send message** without an extra Starting or
+sending notification in the composer. Clear the matching draft only on durable admission; the creation first
+message keeps its earlier queue position. Existing AG-UI tabs wait for readiness.
+Missing/stale parent state, access uncertainty, saving or lifecycle changes hold
+Starting input and its explicit uncertain-request recovery.
+
+Early navigation retains the owner-scoped creation request and follows its
+operation on the Agent page until confirmed success. If a worker restart requires
+connections again, reuse the status band and compact **Continue Agent setup**
+Button, then the existing connection dialog. A successful check resumes the same
+request; navigation and reload alone never resubmit it. A read failure offers
+**Retry setup status** without replacing the conversation or draft. Viewer,
+client or Agent changes cancel pending setup reads and connection callbacks.
+
 For the latest locally accepted message, a fresh public observation may offer
 **Cancel queued message** before execution starts. Reuse the existing status
 band and compact Button, with a bounded preview identifying that message. Keep
@@ -2042,3 +2060,5 @@ draft. Summary readers never receive the management history control.
 | 2026-10-14 | Acknowledge Pause and Resume immediately, distinguish durable acceptance from observed completion, and briefly accelerate targeted progress reads. Remove accepted Sandbox deletions from Live/Paused navigation while retaining a separate deletion-progress disclosure and same-request recovery. |
 
 | 2026-10-14 | Preserve navigation to retained Agent conversations and history while Sandboxes pause, remain paused or resume. Keep actual lifecycle labels and closed progress disclosures, retain drafts, and hold pending-operation input and child runtime mutations until authoritative readiness. |
+
+| 2026-10-14 | Open actual admitted Agents while Starting after lineage and parent checks; allow durable v2 queued input with receipt-based draft acknowledgement. Retain creation setup through early navigation and offer explicit same-request continuation when a worker rechecks connections. Preserve existing transports and hold input/recovery during uncertain access or parent lifecycle work. |

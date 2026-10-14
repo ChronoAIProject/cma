@@ -87,7 +87,13 @@ export function useAgentActions({
       )
         return;
       const current = stateRef.current;
+      if (current.status !== 'ready' || current.detail.id !== agentId) return;
       const session = current.status === 'ready' ? current.v2 : undefined;
+      if (
+        current.detail.status === 'starting' &&
+        (session === undefined || typeof approval !== 'string')
+      )
+        return;
       if (session === undefined) replayAbortRef.current?.abort();
       const controller = new AbortController();
       actionAbortRef.current = controller;
@@ -257,6 +263,13 @@ export function useAgentActions({
   const recoverPending = async () => {
     if (currentContext.current !== context) return;
     if (v2 === undefined || actionAbortRef.current !== undefined || historyIncomplete) return;
+    const current = stateRef.current;
+    if (
+      current.status === 'ready' &&
+      current.detail.status === 'starting' &&
+      !inputAvailability.allowed
+    )
+      return;
     const controller = new AbortController();
     actionAbortRef.current = controller;
     actionKindRef.current = 'send';
