@@ -1,5 +1,12 @@
+import { useEffect, useState } from 'react';
 import type { AgentLifecycleCreateReceipt, AgentLifecycleOperationView } from '../api/client';
-import { provisioningNames } from '../vocabulary/steps';
+import {
+  agentProvisioningSteps,
+  orderedProvisioningEvents,
+  provisioningDuration,
+  provisioningStepDuration,
+  provisioningStepState,
+} from './agentProvisioning';
 
 export function AgentProvisioningProgress({
   receipt,
@@ -9,18 +16,40 @@ export function AgentProvisioningProgress({
   readonly operation?: AgentLifecycleOperationView;
 }) {
   const status = operation?.status ?? receipt.status ?? 'queued';
-  const readyPhases = new Set(
-    operation?.events.filter((event) => event.status === 'ready').map((event) => event.phase),
+  const events = orderedProvisioningEvents(operation);
+  const active = ['queued', 'running', 'waiting_for_connection'].includes(status);
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    if (!active) return;
+    const tick = () => {
+      if (!document.hidden) setNow(Date.now());
+    };
+    tick();
+    const timer = setInterval(tick, 1000);
+    document.addEventListener('visibilitychange', tick);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', tick);
+    };
+  }, [active]);
+  const startedAt = events.find((event) => event.status === 'running')?.occurred_at;
+  const completedAt = events
+    .filter((event) => event.phase === 'agent_startup' && event.status === 'ready')
+    .at(-1)?.occurred_at;
+  const elapsed = provisioningDuration(
+    startedAt,
+    active ? now : status === 'succeeded' ? Date.parse(completedAt ?? '') : NaN,
   );
-  const sandboxReady = readyPhases.has('sandbox_ready');
-  const runtimeReady = readyPhases.has('workspace_runtime');
-  const keyScopeReady = readyPhases.has('key_scope_ready') || status === 'succeeded';
-  const state = (done: boolean, previous: boolean) =>
-    done ? 'Ready' : previous ? 'In progress' : 'Waiting';
   return (
     <section className="agent-lifecycle-provisioning" aria-label="Agent provisioning progress">
-      <h3>{status === 'failed' ? 'Agent provisioning needs attention' : 'Agent accepted'}</h3>
-      <p>
+      <h3>
+        {status === 'failed'
+          ? 'Agent provisioning needs attention'
+          : status === 'succeeded'
+            ? 'Agent ready'
+            : 'Preparing your Agent'}
+      </h3>
+      <p role="status">
         {status === 'failed'
           ? (operation?.error ?? 'Agent provisioning failed.')
           : status === 'waiting_for_connection'
@@ -29,19 +58,25 @@ export function AgentProvisioningProgress({
               ? 'Your Agent is ready to open.'
               : 'Your Agent is being prepared. You can close this dialog and return to follow its progress.'}
       </p>
+      {elapsed === undefined ? null : (
+        <p className="agent-lifecycle-provisioning__elapsed">Provisioning elapsed: {elapsed}</p>
+      )}
       <ol>
-        <li data-state={state(sandboxReady, true)}>
-          <strong>{provisioningNames.sandbox}</strong>
-          <span>{state(sandboxReady, true)}</span>
-        </li>
-        <li data-state={state(runtimeReady, sandboxReady)}>
-          <strong>{provisioningNames.workspace}</strong>
-          <span>{state(runtimeReady, sandboxReady)}</span>
-        </li>
-        <li data-state={state(keyScopeReady, runtimeReady)}>
-          <strong>{provisioningNames.key_scope}</strong>
-          <span>{state(keyScopeReady, runtimeReady)}</span>
-        </li>
+        {agentProvisioningSteps.map(({ phase, label }) => {
+          const state = provisioningStepState(phase, events, operation);
+          const duration = provisioningStepDuration(phase, events, status, now);
+          return (
+            <li
+              key={phase}
+              data-state={state}
+              aria-current={state === 'In progress' ? 'step' : undefined}
+            >
+              <strong>{label}</strong>
+              <span aria-live="polite">{state}</span>
+              {duration === undefined ? null : <small>{duration} elapsed</small>}
+            </li>
+          );
+        })}
       </ol>
     </section>
   );
