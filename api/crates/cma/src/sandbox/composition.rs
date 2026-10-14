@@ -113,7 +113,8 @@ impl SandboxLifecycleComposition {
             AgentWorkerConfig::new(
                 format!("{}:agent", config.holder),
                 config.deployment_id.clone(),
-            ),
+            )
+            .with_parent_readiness(Arc::clone(&dependencies.store.agent_parent_ready)),
         );
         let sandbox_worker = SandboxWorker::new(
             SandboxWorkerDependencies {

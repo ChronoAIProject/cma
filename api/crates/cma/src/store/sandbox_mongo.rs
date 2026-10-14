@@ -130,6 +130,8 @@ pub struct MongoSandboxStore {
     // Coalesced process-local hints; durable discovery owns recovery and authority.
     pub(crate) sandbox_admitted: std::sync::Arc<tokio::sync::Notify>,
     pub(crate) agent_admitted: std::sync::Arc<tokio::sync::Notify>,
+    // Broadcast to already leased parent waiters without consuming scheduler hints.
+    pub(crate) agent_parent_ready: std::sync::Arc<tokio::sync::Notify>,
 }
 
 impl MongoSandboxStore {
@@ -197,6 +199,7 @@ impl MongoSandboxStore {
             warmup_changed: std::sync::Arc::new(tokio::sync::Notify::new()),
             sandbox_admitted: std::sync::Arc::new(tokio::sync::Notify::new()),
             agent_admitted: std::sync::Arc::new(tokio::sync::Notify::new()),
+            agent_parent_ready: std::sync::Arc::new(tokio::sync::Notify::new()),
         };
         super::sandboxes::ensure_indexes(&store.sandboxes).await?;
         super::workspaces::ensure_indexes(&store.workspaces).await?;
