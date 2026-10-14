@@ -31,6 +31,7 @@ const requiredPrefixes = [
   'store::sandbox_reconciliation::mongo_integration_tests::channel_home_retention::',
   'sandbox::agent_worker_tests::sdk_conformance_tests::mongo_tests::',
   'sandbox::agent_worker_tests::first_message_contention_tests::',
+  'sandbox::agent_worker::prepared_open_ready::',
 ];
 
 function fixture(scenario) {
