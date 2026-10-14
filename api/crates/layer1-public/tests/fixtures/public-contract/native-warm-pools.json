@@ -28,13 +28,15 @@
               "observed": false,
               "status": "pending",
               "resource_name": null,
-              "error": null
+              "error": null,
+              "config_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
             }
           ],
           "default_image": "registry/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           "default_cpu_millis": 1000,
           "default_memory_mib": 1024,
-          "available": true
+          "available": true,
+          "default_config_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
         },
         "bodyKind": "json"
       },
@@ -148,7 +150,8 @@
           "observed": false,
           "status": "pending",
           "resource_name": null,
-          "error": null
+          "error": null,
+          "config_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
         },
         "bodyKind": "json"
       },
@@ -350,7 +353,8 @@
           "observed": false,
           "status": "pending",
           "resource_name": null,
-          "error": null
+          "error": null,
+          "config_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
         },
         "bodyKind": "json"
       },

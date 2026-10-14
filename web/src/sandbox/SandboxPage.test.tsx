@@ -293,9 +293,15 @@ it.each(['paused', 'reviving', 'provisioning', 'pausing', 'retiring'] as const)(
       />,
     );
     expect(await screen.findByRole('button', { name: 'New workspace' })).toBeDisabled();
-    expect(screen.queryByRole('button', { name: 'New agent' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: 'Agent one' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('heading', { name: 'Workspaces' })).not.toBeInTheDocument();
+    if (['paused', 'pausing', 'reviving'].includes(status)) {
+      expect(await screen.findByRole('link', { name: 'Agent one' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'New agent' })).toBeDisabled();
+      expect(screen.getByRole('heading', { name: 'Workspaces' })).toBeInTheDocument();
+    } else {
+      expect(screen.queryByRole('button', { name: 'New agent' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('link', { name: 'Agent one' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('heading', { name: 'Workspaces' })).not.toBeInTheDocument();
+    }
     if (status === 'paused') {
       expect(screen.getByRole('button', { name: 'Resume' })).toBeEnabled();
       expect(screen.getByText(/Your work is preserved/)).toBeInTheDocument();

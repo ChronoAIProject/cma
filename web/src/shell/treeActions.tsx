@@ -33,7 +33,7 @@ export function sandboxActions(
       id: 'new_workspace',
       label: 'New workspace',
       icon: <IconPlusOutline16 />,
-      disabled: busy || !sandboxChildrenAvailable(sandbox),
+      disabled: busy || stale || !sandboxChildrenAvailable(sandbox),
       reason: !sandboxChildrenAvailable(sandbox)
         ? 'Available when the Sandbox is active.'
         : undefined,
@@ -75,6 +75,7 @@ export function workspaceActions(
   workspace: WorkspaceDetail,
   permissions: TreePermissions,
   busy: boolean,
+  runtimeAvailable = true,
 ): TreeRowAction[] {
   const actions: TreeRowAction[] = [];
   if (permissions.createAgent)
@@ -82,8 +83,12 @@ export function workspaceActions(
       id: 'new_agent',
       label: 'New agent',
       icon: <IconPlusOutline16 />,
-      disabled: busy || workspace.status !== 'ready',
-      reason: workspace.status !== 'ready' ? 'The Workspace is not ready.' : undefined,
+      disabled: busy || !runtimeAvailable || workspace.status !== 'ready',
+      reason: !runtimeAvailable
+        ? 'Available when the Sandbox is active.'
+        : workspace.status !== 'ready'
+          ? 'The Workspace is not ready.'
+          : undefined,
     });
   if (permissions.removeWorkspace)
     actions.push({
@@ -91,20 +96,31 @@ export function workspaceActions(
       label: 'Remove',
       icon: <IconTrashOutline16 />,
       danger: true,
-      disabled: busy || workspace.status === 'removing',
-      reason: workspace.status === 'removing' ? 'Deletion is already in progress.' : undefined,
+      disabled: busy || !runtimeAvailable || workspace.status === 'removing',
+      reason: !runtimeAvailable
+        ? 'Available when the Sandbox is active.'
+        : workspace.status === 'removing'
+          ? 'Deletion is already in progress.'
+          : undefined,
     });
   return actions;
 }
 
-export function agentActions(status: AgentStatus, permissions: TreePermissions): TreeRowAction[] {
+export function agentActions(
+  status: AgentStatus,
+  permissions: TreePermissions,
+  runtimeAvailable = true,
+): TreeRowAction[] {
   const actions: TreeRowAction[] = [];
   if (permissions.stopAgent)
     actions.push({
       id: 'stop_agent',
       label: 'Stop',
       icon: <IconStopFill16 />,
-      disabled: !['starting', 'ready', 'working', 'waiting_approval', 'paused'].includes(status),
+      disabled:
+        !runtimeAvailable ||
+        !['starting', 'ready', 'working', 'waiting_approval', 'paused'].includes(status),
+      reason: !runtimeAvailable ? 'Available when the Sandbox is active.' : undefined,
     });
   if (permissions.deleteAgent)
     actions.push({
@@ -112,10 +128,12 @@ export function agentActions(status: AgentStatus, permissions: TreePermissions):
       label: 'Delete',
       icon: <IconTrashOutline16 />,
       danger: true,
-      disabled: !['stopped', 'failed'].includes(status),
-      reason: !['stopped', 'failed'].includes(status)
-        ? 'Stop this Agent before deleting it and its Worktree.'
-        : undefined,
+      disabled: !runtimeAvailable || !['stopped', 'failed'].includes(status),
+      reason: !runtimeAvailable
+        ? 'Available when the Sandbox is active.'
+        : !['stopped', 'failed'].includes(status)
+          ? 'Stop this Agent before deleting it and its Worktree.'
+          : undefined,
     });
   if (permissions.exportHistory)
     actions.push({

@@ -19,6 +19,7 @@ fn native_transport(address: std::net::SocketAddr) -> ProviderHostedControlTrans
             runtime_class: None,
             image_pull_secrets: vec![],
             template_network_policy: None,
+            template_fs_group_change_policy: None,
             control_key: "fixture".repeat(8),
         },
         "fixture",

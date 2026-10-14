@@ -56,6 +56,7 @@ mod sdk_conformance_tests;
 mod settings_replay_tests;
 mod sign_in_tests;
 mod skill_material_tests;
+mod staged_connection_tests;
 mod startup_publication_tests;
 mod startup_scheduling_tests;
 mod warm_handoff_tests;

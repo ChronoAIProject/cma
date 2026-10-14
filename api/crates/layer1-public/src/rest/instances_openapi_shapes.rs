@@ -8,6 +8,8 @@ use layer2_core::sandbox::{
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+use super::profiles_openapi_shapes::{AgentProviderValue, ModelAccessValue};
+
 #[path = "sandbox_lifecycle_view.rs"]
 mod lifecycle;
 pub use lifecycle::{
@@ -228,6 +230,10 @@ impl From<WorkspaceHierarchySummary> for OwnerWorkspaceSummaryView {
 pub struct OwnerSandboxDetailView {
     #[serde(flatten)]
     pub sandbox: SandboxView,
+    /// Agent provider pinned when this Sandbox was created.
+    pub agent_provider: AgentProviderValue,
+    /// Model access pinned when this Sandbox was created.
+    pub model_access: ModelAccessValue,
     pub workspaces: Vec<OwnerWorkspaceSummaryView>,
     pub workspace_count: u64,
     pub worktree_count: u64,
@@ -238,6 +244,17 @@ impl From<SandboxHierarchyView> for OwnerSandboxDetailView {
     fn from(value: SandboxHierarchyView) -> Self {
         Self {
             sandbox: SandboxView::from(&value.sandbox),
+            agent_provider: match value.sandbox.profile.content.agent_provider {
+                layer2_core::profiles::AgentProvider::Codex => AgentProviderValue::Codex,
+            },
+            model_access: match value.sandbox.profile.content.model_access {
+                layer2_core::profiles::ModelAccess::ChronoaiManaged => {
+                    ModelAccessValue::ChronoaiManaged
+                }
+                layer2_core::profiles::ModelAccess::OwnCredentials => {
+                    ModelAccessValue::OwnCredentials
+                }
+            },
             workspaces: value.workspaces.into_iter().map(Into::into).collect(),
             workspace_count: value.counts.workspaces,
             worktree_count: value.counts.worktrees,

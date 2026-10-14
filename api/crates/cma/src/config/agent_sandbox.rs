@@ -1,5 +1,6 @@
 use layer3_adapter::agent_sandbox::{
-    AgentSandboxConfig, NativeTemplateNetworkPolicy, RemoteKubernetesAuth, RemoteKubernetesConfig,
+    AgentSandboxConfig, NativeFsGroupChangePolicy, NativeTemplateNetworkPolicy,
+    RemoteKubernetesAuth, RemoteKubernetesConfig,
 };
 
 pub(super) fn transport_from_lookup(
@@ -55,6 +56,9 @@ pub(super) fn from_lookup(
                 NativeTemplateNetworkPolicy::parse(&value).map_err(|error| error.to_string())
             })
             .transpose()?,
+        // Persist this new-pool capability in its immutable policy. Retained
+        // pools reconstruct the old policy rather than inheriting this default.
+        template_fs_group_change_policy: Some(NativeFsGroupChangePolicy::OnRootMismatch),
         control_key,
     };
     value.validate().map_err(|e| e.to_string())?;

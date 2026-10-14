@@ -24,6 +24,10 @@ pub(crate) struct LiveAgentAttachmentIdentity {
 #[async_trait::async_trait]
 pub(crate) trait LiveAgentConnectionLossHandler: Send + Sync {
     async fn connection_lost(&self, attachment: LiveAgentAttachmentIdentity);
+
+    async fn publication_lost(&self, attachment: LiveAgentAttachmentIdentity) {
+        self.connection_lost(attachment).await;
+    }
 }
 
 pub(crate) struct DurableAgentConnectionLossHandler {
@@ -39,6 +43,16 @@ impl DurableAgentConnectionLossHandler {
 #[async_trait::async_trait]
 impl LiveAgentConnectionLossHandler for DurableAgentConnectionLossHandler {
     async fn connection_lost(&self, attachment: LiveAgentAttachmentIdentity) {
+        self.recover(attachment, false).await;
+    }
+
+    async fn publication_lost(&self, attachment: LiveAgentAttachmentIdentity) {
+        self.recover(attachment, true).await;
+    }
+}
+
+impl DurableAgentConnectionLossHandler {
+    async fn recover(&self, attachment: LiveAgentAttachmentIdentity, publication_only: bool) {
         loop {
             let current = match self.store.get_agent(&attachment.agent_id).await {
                 Ok(Some(agent)) => agent,
@@ -64,6 +78,11 @@ impl LiveAgentConnectionLossHandler for DurableAgentConnectionLossHandler {
             if current.conversation.conversation_id.as_deref() != Some(&attachment.conversation_id)
                 || current.conversation.runtime_generation != Some(attachment.runtime_generation)
                 || current.work.next_fence <= attachment.authority_fence
+                // A newer lifecycle claim owns recovery once publication has
+                // completed. Never let its predecessor reschedule that route.
+                || (publication_only
+                    && attachment.authority_fence.checked_add(1)
+                        != Some(current.work.next_fence))
             {
                 return;
             }
@@ -178,7 +197,6 @@ impl LiveAgentRegistry {
     }
 }
 
-#[cfg(test)]
 impl super::LiveAgentAttachment {
     pub(crate) fn identity(&self) -> LiveAgentAttachmentIdentity {
         LiveAgentAttachmentIdentity {
