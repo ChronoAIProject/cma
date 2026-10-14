@@ -186,7 +186,7 @@ fn validate_mutation(
     validate_evidence(current, current_worktree, mutation, kind)
 }
 
-fn validate_common(
+pub(super) fn validate_common(
     current: &Agent,
     worktree: &Worktree,
     actual_last_seq: u64,
