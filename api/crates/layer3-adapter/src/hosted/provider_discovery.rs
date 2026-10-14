@@ -57,6 +57,7 @@ impl ProviderHostedControlTransport {
             state: Arc::new(Mutex::new(TransportState::default())),
             subscriptions: None,
             native_transport: NativeRuntimeTransport::Direct,
+            native_http_budget: Arc::new(tokio::sync::Semaphore::new(32)),
         })
     }
 
@@ -87,13 +88,21 @@ impl ProviderHostedControlTransport {
                 RuntimeEndpoint::parse(client.base_url(), &advertised.endpoint)
             }
             RuntimeDiscovery::AgentSandbox(client) => {
-                let binding = client.pod_binding(handle).await?;
+                let (identity, cached) = self.native_endpoint_state(handle).await;
+                let binding = match cached {
+                    Some(binding) if self.native_transport != NativeRuntimeTransport::Direct => {
+                        binding
+                    }
+                    _ => client.pod_binding(handle).await?,
+                };
                 let address = std::net::SocketAddr::new(binding.pod_ip, SUPERVISOR_PORT);
                 let endpoint =
                     RuntimeEndpoint::parse("http://runtime.invalid", &format!("http://{address}"))?
                         .with_control_token(client.control_token(&binding.sandbox_name));
                 Ok(if self.native_transport != NativeRuntimeTransport::Direct {
-                    endpoint.with_native_binding(handle.clone(), binding)
+                    endpoint
+                        .with_native_binding(handle.clone(), binding)
+                        .with_native_identity(identity)
                 } else {
                     endpoint
                 })

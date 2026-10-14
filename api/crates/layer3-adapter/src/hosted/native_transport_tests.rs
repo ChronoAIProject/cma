@@ -23,6 +23,7 @@ const ERROR_SECRET: &str = "fixture-sensitive-error-body";
 #[derive(Clone, Copy)]
 enum Mode {
     Success,
+    Persistent,
     ReplaceOnOpen,
     Forbidden,
     Throttled,
@@ -44,9 +45,15 @@ enum Mode {
 struct State {
     replaced: AtomicBool,
     wrong_owner: AtomicBool,
+    restarted: AtomicBool,
+    missing_incarnation: AtomicBool,
+    hold_response: AtomicBool,
+    fault: AtomicUsize,
+    pod_reads: AtomicUsize,
     opened: AtomicUsize,
     active: AtomicUsize,
     requests: StdMutex<Vec<String>>,
+    runtimes: StdMutex<BTreeMap<String, String>>,
 }
 struct Active(Arc<State>);
 impl Drop for Active {
@@ -55,7 +62,7 @@ impl Drop for Active {
     }
 }
 struct Fixture {
-    transport: ProviderHostedControlTransport,
+    transport: Arc<ProviderHostedControlTransport>,
     state: Arc<State>,
     task: tokio::task::JoinHandle<()>,
 }
@@ -68,22 +75,36 @@ impl Drop for Fixture {
 fn handle() -> RuntimeHandle {
     RuntimeHandle::new("agent-sandbox:claimed:sandbox-uid")
 }
-fn object() -> Value {
+fn object(name: &str) -> Value {
     json!({"apiVersion":"agents.x-k8s.io/v1beta1","kind":"Sandbox",
-        "metadata":{"name":"claimed","namespace":"fixture","uid":"sandbox-uid","resourceVersion":"7","generation":1,
+        "metadata":{"name":name,"namespace":"fixture","uid":sandbox_uid(name),"resourceVersion":"7","generation":1,
             "labels":{"cma/control-plane":"fixture"}},
         "status":{"conditions":[{"type":"Ready","status":"True","observedGeneration":1}]}})
 }
-fn pods(state: &State) -> Value {
-    let hash = "claimed".bytes().fold(2_166_136_261u32, |hash, byte| {
+fn sandbox_uid(name: &str) -> String {
+    if name == "claimed" {
+        "sandbox-uid".into()
+    } else {
+        format!("{name}-uid")
+    }
+}
+fn name_hash(name: &str) -> String {
+    let hash = name.bytes().fold(2_166_136_261u32, |hash, byte| {
         (hash ^ u32::from(byte)).wrapping_mul(16_777_619)
     });
+    format!("{hash:08x}")
+}
+fn pods(state: &State, name: &str) -> Value {
     json!({"apiVersion":"v1","kind":"PodList","metadata":{"resourceVersion":"8"},"items":[{
-        "metadata":{"name":"claimed-pod","namespace":"fixture","uid":if state.replaced.load(Ordering::SeqCst) {"replacement-pod"} else {"original-pod"},
-            "labels":{"cma/control-plane":"fixture","agents.x-k8s.io/sandbox-name-hash":format!("{hash:08x}")},
-            "ownerReferences":[{"apiVersion":"agents.x-k8s.io/v1beta1","kind":"Sandbox","name":"claimed",
-                "uid":if state.wrong_owner.load(Ordering::SeqCst) {"foreign-owner"} else {"sandbox-uid"},"controller":true}]},
-        "status":{"phase":"Running","podIP":"10.0.0.1","conditions":[{"type":"Ready","status":"True"}]}}]})
+        "metadata":{"name":format!("{name}-pod"),"namespace":"fixture","uid":if state.replaced.load(Ordering::SeqCst) {"replacement-pod"} else {"original-pod"},
+            "labels":{"cma/control-plane":"fixture","agents.x-k8s.io/sandbox-name-hash":name_hash(name)},
+            "ownerReferences":[{"apiVersion":"agents.x-k8s.io/v1beta1","kind":"Sandbox","name":name,
+                "uid":if state.wrong_owner.load(Ordering::SeqCst) {"foreign-owner".to_string()} else {sandbox_uid(name)},"controller":true}]},
+        "status":{"phase":"Running","podIP":"10.0.0.1","conditions":[{"type":"Ready","status":"True"}],
+        "containerStatuses":[{"name":"runtime","image":"runtime","imageID":"sha256:runtime","ready":true,
+            "restartCount":if state.restarted.load(Ordering::SeqCst) {1} else {0},
+            "containerID":if state.missing_incarnation.load(Ordering::SeqCst) {""} else if state.restarted.load(Ordering::SeqCst) {"containerd://replacement"} else {"containerd://original"},
+            "state":{"running":{}}}]}}]})
 }
 
 impl Fixture {
@@ -116,6 +137,11 @@ impl Fixture {
         )
         .unwrap();
         let state = Arc::new(State::default());
+        state
+            .runtimes
+            .lock()
+            .unwrap()
+            .insert("claimed".into(), token.clone());
         let served = state.clone();
         let task = tokio::spawn(async move {
             let mut tasks = tokio::task::JoinSet::new();
@@ -131,7 +157,7 @@ impl Fixture {
             }
         });
         Self {
-            transport,
+            transport: Arc::new(transport),
             state,
             task,
         }
@@ -188,11 +214,18 @@ async fn api_request(
     if path.contains("/portforward?") || path.contains("/exec?") {
         let is_exec = transport_mode == NativeRuntimeTransport::KubernetesExec;
         let url = url::Url::parse(&format!("http://fixture{path}")).unwrap();
+        let name = url
+            .path()
+            .strip_prefix("/api/v1/namespaces/fixture/pods/")
+            .unwrap()
+            .split('/')
+            .next()
+            .unwrap()
+            .strip_suffix("-pod")
+            .unwrap();
+        let token = state.runtimes.lock().unwrap()[name].clone();
+        assert!(!text.contains(&token));
         if is_exec {
-            assert_eq!(
-                url.path(),
-                "/api/v1/namespaces/fixture/pods/claimed-pod/exec"
-            );
             assert_eq!(
                 url.query_pairs()
                     .filter(|(k, _)| k == "command")
@@ -253,11 +286,29 @@ async fn api_request(
         if matches!(mode, Mode::StallAfterOpen) && state.opened.load(Ordering::SeqCst) > 0 {
             std::future::pending::<()>().await;
         }
-        let body = if path.ends_with("/sandboxes/claimed") {
-            object()
+        let body = if let Some(name) =
+            path.strip_prefix("/apis/agents.x-k8s.io/v1beta1/namespaces/fixture/sandboxes/")
+        {
+            object(name)
         } else {
             assert!(path.starts_with("/api/v1/namespaces/fixture/pods?"));
-            pods(&state)
+            state.pod_reads.fetch_add(1, Ordering::SeqCst);
+            let url = url::Url::parse(&format!("http://fixture{path}")).unwrap();
+            let selector = url
+                .query_pairs()
+                .find(|(key, _)| key == "labelSelector")
+                .unwrap()
+                .1
+                .into_owned();
+            let name = state
+                .runtimes
+                .lock()
+                .unwrap()
+                .keys()
+                .find(|name| selector.contains(&name_hash(name)))
+                .unwrap()
+                .clone();
+            pods(&state, &name)
         }
         .to_string();
         let _ = socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await;
@@ -415,88 +466,174 @@ async fn serve_runtime(
     state: Arc<State>,
     token: String,
 ) {
-    let Some(request) = read_request(&mut stream).await else {
-        return;
-    };
-    assert!(request
-        .to_ascii_lowercase()
-        .contains(&format!("x-cma-runtime-token: {token}")));
-    assert!(!request.to_ascii_lowercase().contains("authorization:"));
-    assert!(!request.contains(API_TOKEN));
-    state.requests.lock().unwrap().push(request.clone());
-    match mode {
-        Mode::LostResponse => return,
-        Mode::Stall => {
-            std::future::pending::<()>().await;
+    loop {
+        let Some(request) = read_request(&mut stream).await else {
             return;
+        };
+        assert!(request
+            .to_ascii_lowercase()
+            .contains(&format!("x-cma-runtime-token: {token}")));
+        assert!(!request.to_ascii_lowercase().contains("authorization:"));
+        assert!(!request.contains(API_TOKEN));
+        state.requests.lock().unwrap().push(request.clone());
+        while state.hold_response.load(Ordering::SeqCst) {
+            tokio::time::sleep(Duration::from_millis(5)).await;
         }
-        Mode::HttpError => {
-            let body = format!("{ERROR_SECRET} {token}");
-            let _ = stream
-                .write_all(
-                    format!(
+        match state.fault.swap(0, Ordering::SeqCst) {
+            1 => return,
+            2 => {
+                let _ = stream
+                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n{}")
+                    .await;
+                return;
+            }
+            3 => {
+                let _ = stream
+                    .write_all(b"HTTP/1.1 500 Error\r\nContent-Length: 100\r\n\r\nprivate")
+                    .await;
+                return;
+            }
+            4 => {
+                let _ = stream
+                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbad")
+                    .await;
+                return;
+            }
+            5 => {
+                let _ = stream
+                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 999999999\r\n\r\n")
+                    .await;
+                std::future::pending::<()>().await;
+            }
+            6 => {
+                let body =
+                    serde_json::to_string(&ResponseFrame::Failure(crate::wire::WireFailure {
+                        operation: crate::wire::WireOperation::Install,
+                        code: "mismatched".into(),
+                        detail: "wrong operation".into(),
+                        retryable: false,
+                    }))
+                    .unwrap();
+                let _ = stream
+                    .write_all(
+                        format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{body}",
+                            body.len()
+                        )
+                        .as_bytes(),
+                    )
+                    .await;
+                continue;
+            }
+            _ => {}
+        }
+        match mode {
+            Mode::LostResponse => return,
+            Mode::Stall => {
+                std::future::pending::<()>().await;
+                return;
+            }
+            Mode::HttpError => {
+                let body = format!("{ERROR_SECRET} {token}");
+                let _ = stream
+                    .write_all(
+                        format!(
                         "HTTP/1.1 500 Internal Server Error\r\nContent-Length: {}\r\n\r\n{body}",
                         body.len()
                     )
-                    .as_bytes(),
-                )
-                .await;
-            return;
-        }
-        Mode::LargeBody => {
-            let _ = stream
-                .write_all(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n40\r\n")
-                .await;
-            let _ = stream.write_all(&[b'x'; 64]).await;
-            let _ = stream.write_all(b"\r\n").await;
-            std::future::pending::<()>().await;
-        }
-        _ => {}
-    }
-    if request.to_ascii_lowercase().contains("upgrade: websocket") {
-        assert!(request.starts_with("GET /runtime/agents/agent-a/conversation?outputAck=1 "));
-        let key = request
-            .lines()
-            .find_map(|line| {
-                line.split_once(':')
-                    .filter(|(k, _)| k.eq_ignore_ascii_case("sec-websocket-key"))
-                    .map(|(_, v)| v.trim())
-            })
-            .unwrap();
-        let accept = tokio_tungstenite::tungstenite::handshake::derive_accept_key(key.as_bytes());
-        stream.write_all(format!("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n").as_bytes()).await.unwrap();
-        let mut socket = tokio_tungstenite::WebSocketStream::from_raw_socket(
-            stream,
-            tokio_tungstenite::tungstenite::protocol::Role::Server,
-            None,
-        )
-        .await;
-        while let Some(Ok(message)) = socket.next().await {
-            if socket.send(message).await.is_err() {
+                        .as_bytes(),
+                    )
+                    .await;
                 return;
             }
+            Mode::LargeBody => {
+                let _ = stream
+                    .write_all(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n40\r\n")
+                    .await;
+                let _ = stream.write_all(&[b'x'; 64]).await;
+                let _ = stream.write_all(b"\r\n").await;
+                std::future::pending::<()>().await;
+            }
+            _ => {}
         }
-    } else {
-        let body = if request.starts_with("POST /runtime/control ") {
-            if matches!(mode, Mode::WireError) {
-                serde_json::to_string(&ResponseFrame::Failure(crate::wire::WireFailure {
-                    operation: crate::wire::WireOperation::Resources,
-                    code: "runtime_failure".into(),
-                    detail: format!("echoed credential {token}"),
-                    retryable: false,
-                }))
-                .unwrap()
-            } else {
-                serde_json::to_string(&ResponseFrame::Resources(ResourceReading::default()))
-                    .unwrap()
+        if request.to_ascii_lowercase().contains("upgrade: websocket") {
+            assert!(request.starts_with("GET /runtime/agents/agent-a/conversation?outputAck=1 "));
+            let key = request
+                .lines()
+                .find_map(|line| {
+                    line.split_once(':')
+                        .filter(|(k, _)| k.eq_ignore_ascii_case("sec-websocket-key"))
+                        .map(|(_, v)| v.trim())
+                })
+                .unwrap();
+            let accept =
+                tokio_tungstenite::tungstenite::handshake::derive_accept_key(key.as_bytes());
+            stream.write_all(format!("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n").as_bytes()).await.unwrap();
+            let mut socket = tokio_tungstenite::WebSocketStream::from_raw_socket(
+                stream,
+                tokio_tungstenite::tungstenite::protocol::Role::Server,
+                None,
+            )
+            .await;
+            while let Some(Ok(message)) = socket.next().await {
+                if socket.send(message).await.is_err() {
+                    return;
+                }
             }
         } else {
-            assert!(request.starts_with("GET /runtime/agents/agent-a/history "));
-            "{\"history\":[]}".into()
-        };
-        let _ = stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await;
+            let body = if request.starts_with("POST /runtime/control ") {
+                if matches!(mode, Mode::WireError) {
+                    serde_json::to_string(&ResponseFrame::Failure(crate::wire::WireFailure {
+                        operation: crate::wire::WireOperation::Resources,
+                        code: "runtime_failure".into(),
+                        detail: format!("echoed credential {token}"),
+                        retryable: false,
+                    }))
+                    .unwrap()
+                } else if matches!(mode, Mode::Persistent) {
+                    persistent_response(&request)
+                } else {
+                    serde_json::to_string(&ResponseFrame::Resources(ResourceReading::default()))
+                        .unwrap()
+                }
+            } else {
+                assert!(request.starts_with("GET /runtime/agents/agent-a/history "));
+                "{\"history\":[]}".into()
+            };
+            let connection = if matches!(mode, Mode::Persistent) {
+                "keep-alive"
+            } else {
+                "close"
+            };
+            if stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: {connection}\r\n\r\n{body}", body.len()).as_bytes()).await.is_err() { return; }
+            if matches!(mode, Mode::Persistent) {
+                continue;
+            }
+        }
+        return;
     }
 }
+
+fn persistent_response(request: &str) -> String {
+    let (_, body) = request.split_once("\r\n\r\n").unwrap();
+    let response = match serde_json::from_str::<RequestFrame>(body).unwrap() {
+        RequestFrame::Install(request) => ResponseFrame::Install(crate::InstallReceipt {
+            operation_id: request.operation_id,
+            request_sha256: request.request_sha256,
+            commands: vec![],
+        }),
+        RequestFrame::RuntimeStatus(request) => ResponseFrame::RuntimeStatus(serde_json::from_value(json!({
+            "sandbox_id":request.sandbox_id,"generation":request.generation,"home_identity":request.home_identity,
+            "boot_id":"a".repeat(32),"installation_ready":true,"credential_ready":false,"restore_pending":false,"agent_processes":0
+        })).unwrap()),
+        RequestFrame::Resources => ResponseFrame::Resources(ResourceReading::default()),
+        _ => panic!("unexpected persistent fixture operation"),
+    };
+    serde_json::to_string(&response).unwrap()
+}
+
+#[path = "native_http_reuse_tests.rs"]
+mod reuse_tests;
 
 #[tokio::test]
 async fn native_api_stream_carries_authenticated_control_history_and_websocket() {

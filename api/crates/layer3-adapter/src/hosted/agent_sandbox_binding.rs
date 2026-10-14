@@ -100,7 +100,11 @@ impl AgentSandboxBackend {
     ) -> Result<()> {
         let identity = super::super::deployment::provider_request_identity(request)?;
         self.transport
-            .bind_runtime(handle, &identity.sandbox_id)
+            .bind_native_runtime(
+                handle,
+                &identity.sandbox_id,
+                &crate::provider_request_digest(request)?,
+            )
             .await
     }
 }

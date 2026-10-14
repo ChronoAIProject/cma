@@ -31,6 +31,16 @@ pub trait HostedControlTransport: Send + Sync {
         Ok(())
     }
 
+    /// Exact acknowledged native assignment identity for transport reuse.
+    async fn bind_native_runtime(
+        &self,
+        handle: &RuntimeHandle,
+        sandbox_id: &str,
+        _request_sha256: &str,
+    ) -> crate::Result<()> {
+        self.bind_runtime(handle, sandbox_id).await
+    }
+
     async fn exchange(
         &self,
         handle: &RuntimeHandle,
