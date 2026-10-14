@@ -73,6 +73,10 @@ impl ControlPlaneComposition {
         let users = UserDirectory::new(stores.users.clone());
         let profile_policy = profile_route_policy();
         let authoring_bounds = profile_policy.capacity_bounds;
+        let default_capacity = layer3_adapter::SandboxCapacity {
+            cpu_millis: config.default_profiles.cpu_millis,
+            memory_mib: config.default_profiles.memory_mib,
+        };
         let profile_scanner = Arc::clone(&profile_policy.public_value_scanner);
         profiles::seed_profiles(&stores, config, &profile_policy).await?;
 
@@ -183,10 +187,7 @@ impl ControlPlaneComposition {
             stores.sandbox_profiles.clone(),
             image_resolver.clone(),
             authoring_bounds,
-            layer3_adapter::SandboxCapacity {
-                cpu_millis: config.default_profiles.cpu_millis,
-                memory_mib: config.default_profiles.memory_mib,
-            },
+            default_capacity,
             profile_scanner.clone(),
             stores.agent_lifecycle.clone(),
             Some(stores.sandbox_model.clone()),
@@ -212,10 +213,7 @@ impl ControlPlaneComposition {
             adapter.clone(),
             config.runtime.sandbox_image.clone(),
             config.runtime.agent_sandbox_home_policy.clone(),
-            layer3_adapter::SandboxCapacity {
-                cpu_millis: config.default_profiles.cpu_millis,
-                memory_mib: config.default_profiles.memory_mib,
-            },
+            default_capacity,
             config.runtime.native_warm_pool_target,
         );
         let admin = layer1_public::rest::admin::AdminState::new(
@@ -317,10 +315,7 @@ impl ControlPlaneComposition {
             public_origin: config.public_url.clone(),
             worker_holder: worker_holder.clone(),
             profile_bounds: authoring_bounds,
-            capacity: layer3_adapter::SandboxCapacity {
-                cpu_millis: config.default_profiles.cpu_millis,
-                memory_mib: config.default_profiles.memory_mib,
-            },
+            capacity: default_capacity,
             profile_scanner: profile_scanner.clone(),
             image_resolver: image_resolver.clone(),
         })?;
