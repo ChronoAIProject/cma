@@ -1,8 +1,8 @@
 //! Agent Manager's durable inline lifecycle provisioning facade.
 //!
 //! HTTP admission is intentionally short. It records the complete request in
-//! Mongo, returns an operation id, and lets a leased worker drive the three
-//! user-facing gates. The record is reclaimed on process restart.
+//! Mongo, returns an operation id, and lets a leased worker drive the
+//! user-facing provisioning stages. The record is reclaimed on process restart.
 
 use async_trait::async_trait;
 use layer1_public::rest::{
@@ -40,6 +40,8 @@ mod profiles;
 
 #[path = "agent_lifecycle_sandbox.rs"]
 mod existing_sandbox;
+#[path = "agent_lifecycle_progress.rs"]
+mod progress;
 #[path = "agent_lifecycle_worker.rs"]
 mod worker;
 #[path = "agent_lifecycle_workspace.rs"]
@@ -129,47 +131,6 @@ impl InlineAgentLifecycle {
         .map_err(|_| AgentLifecycleProvisioningError::Forbidden)
     }
 
-    async fn wait_for_agent_workspace(
-        &self,
-        caller: &Caller,
-        sandbox_id: &layer2_core::SandboxId,
-    ) -> Result<layer2_core::WorkspaceId, AgentLifecycleProvisioningError> {
-        tokio::time::timeout(Duration::from_secs(180), async {
-            loop {
-                let sandbox = self
-                    .sandbox
-                    .read(caller, sandbox_id)
-                    .await
-                    .map_err(sandbox_error)?;
-                if matches!(
-                    sandbox.status,
-                    SandboxStatus::Failed | SandboxStatus::Retiring | SandboxStatus::Retired
-                ) {
-                    return Err(AgentLifecycleProvisioningError::Conflict(
-                        "Sandbox provisioning failed".into(),
-                    ));
-                }
-                if sandbox.status == SandboxStatus::Active {
-                    let page = self
-                        .workspaces
-                        .list(caller, sandbox_id, &Default::default())
-                        .await
-                        .map_err(workspace_error)?;
-                    if let Some(workspace) = page
-                        .items
-                        .into_iter()
-                        .find(|workspace| workspace.status == WorkspaceStatus::Ready)
-                    {
-                        return Ok(workspace.id);
-                    }
-                }
-                tokio::time::sleep(Duration::from_millis(500)).await;
-            }
-        })
-        .await
-        .map_err(|_| AgentLifecycleProvisioningError::Unavailable)?
-    }
-
     async fn provision(
         &self,
         caller: &Caller,
@@ -204,16 +165,13 @@ impl InlineAgentLifecycle {
             behavior,
         )
         .await?;
-        self.operations
-            .append_event(
-                &lease,
-                1,
-                "sandbox_ready",
-                "running",
-                "Creating the Agent Sandbox",
-            )
-            .await
-            .map_err(|_| AgentLifecycleProvisioningError::Unavailable)?;
+        self.progress(
+            &lease,
+            "sandbox_ready",
+            "running",
+            "Preparing the Agent Sandbox",
+        )
+        .await?;
         let sandbox_id = if let Some(id) = existing_sandbox_id {
             SandboxId(id)
         } else {
@@ -256,17 +214,11 @@ impl InlineAgentLifecycle {
                 .map_err(|_| AgentLifecycleProvisioningError::Unavailable)?;
             sandbox.id
         };
-        let workspace_id = self.wait_for_agent_workspace(caller, &sandbox_id).await?;
-        self.operations
-            .append_event(
-                &lease,
-                2,
-                "sandbox_ready",
-                "ready",
-                "Agent Sandbox is ready",
-            )
-            .await
-            .map_err(|_| AgentLifecycleProvisioningError::Unavailable)?;
+        let workspace_id = self
+            .wait_for_agent_workspace(caller, &sandbox_id, &lease)
+            .await?;
+        self.progress(&lease, "agent_startup", "running", "Starting your Agent")
+            .await?;
         let agent_id = if let Some(id) = existing_agent_id {
             AgentId(id)
         } else {
@@ -306,26 +258,8 @@ impl InlineAgentLifecycle {
             agent.id
         };
         self.wait_for_agent_ready(caller, &agent_id).await?;
-        self.operations
-            .append_event(
-                &lease,
-                3,
-                "workspace_runtime",
-                "ready",
-                "Agent runtime is ready; initial instructions are queued for the Agent",
-            )
-            .await
-            .map_err(|_| AgentLifecycleProvisioningError::Unavailable)?;
-        self.operations
-            .append_event(
-                &lease,
-                4,
-                "key_scope_ready",
-                "ready",
-                "Agent key scope configuration is ready",
-            )
-            .await
-            .map_err(|_| AgentLifecycleProvisioningError::Unavailable)?;
+        self.progress(&lease, "agent_startup", "ready", "Your Agent is ready")
+            .await?;
         Ok(agent_id.to_string())
     }
 }
