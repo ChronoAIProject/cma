@@ -77,7 +77,7 @@ pub(super) fn parse(body: Value) -> Result<ParsedRequest, Box<Response>> {
         if !matches!(value, Value::String(_)) {
             return Err(refusal(
                 "model",
-                "model, when supplied, must be a string; CMA accepts it but echoes the configured Agent Profile model.",
+                "model, when supplied, must be a string; CMA uses the Agent's configured conversation model.",
             ));
         }
     }

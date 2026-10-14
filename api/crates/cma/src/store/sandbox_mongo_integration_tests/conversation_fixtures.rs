@@ -33,6 +33,7 @@ pub(super) fn begin_conversation_turn(mut agent: Agent) -> AgentConversationMuta
         appended_at: NOW.into(),
         agent_logs: vec![
             AgentLogKind::TurnStarted {
+                model: None,
                 turn_sequence,
                 origin_key: None,
             },

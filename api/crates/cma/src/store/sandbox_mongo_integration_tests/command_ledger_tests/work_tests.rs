@@ -68,6 +68,7 @@ pub(super) fn message_mutation(
                 state: AgentOperationDelivery::DispatchFenced,
             },
             AgentLogKind::TurnStarted {
+                model: Some(agent.settings().model),
                 turn_sequence: turn,
                 origin_key: Some(format!("command:{}", claim.command_id.as_str())),
             },

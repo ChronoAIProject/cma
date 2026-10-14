@@ -195,6 +195,7 @@ async fn consented_pause_agent_fence_loses_to_a_new_turn_without_partial_pause()
             appended_at: at,
             agent_logs: vec![
                 AgentLogKind::TurnStarted {
+                    model: None,
                     turn_sequence: turn,
                     origin_key: None,
                 },
