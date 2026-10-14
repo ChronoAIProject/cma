@@ -43,7 +43,8 @@ export function useSandboxInput(
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     let expiry: ReturnType<typeof setTimeout> | undefined;
-    let inFlight = false;
+    let pending: AbortController | undefined;
+    let deadline: ReturnType<typeof setTimeout> | undefined;
     let visibilityEpoch = 0;
     let pollInterval = 5000;
     const markStale = () => {
@@ -63,14 +64,23 @@ export function useSandboxInput(
       }));
     };
     const poll = () => {
-      if (controller.signal.aborted || inFlight || document.hidden) return;
+      if (controller.signal.aborted || pending !== undefined || document.hidden) return;
       clearTimeout(timer);
-      inFlight = true;
+      const request = new AbortController();
+      pending = request;
       const requestEpoch = visibilityEpoch;
+      const timeout = setTimeout(() => {
+        if (controller.signal.aborted || pending !== request) return;
+        request.abort();
+        pending = undefined;
+        markStale();
+        timer = setTimeout(poll, pollInterval);
+      }, 10_000);
+      deadline = timeout;
       void client
-        .readSandbox(sandboxId, { signal: controller.signal })
+        .readSandbox(sandboxId, { signal: AbortSignal.any([controller.signal, request.signal]) })
         .then((sandbox) => {
-          if (controller.signal.aborted) return;
+          if (controller.signal.aborted || request.signal.aborted || pending !== request) return;
           if (sandbox.id !== sandboxId)
             throw new Error('Sandbox identity did not match the Agent.');
           if (requestEpoch !== visibilityEpoch || document.hidden) {
@@ -90,14 +100,15 @@ export function useSandboxInput(
           timer = setTimeout(poll, pollInterval);
         })
         .catch((error: unknown) => {
-          if (controller.signal.aborted) return;
+          if (controller.signal.aborted || request.signal.aborted || pending !== request) return;
           if (error instanceof ApiError && [401, 403, 404].includes(error.status))
             setObservation({ agentId, sandboxId, stale: true });
           else markStale();
           timer = setTimeout(poll, requestEpoch === visibilityEpoch ? pollInterval : 0);
         })
         .finally(() => {
-          inFlight = false;
+          clearTimeout(timeout);
+          if (pending === request) pending = undefined;
         });
     };
     const visibilityChanged = () => {
@@ -110,6 +121,8 @@ export function useSandboxInput(
     poll();
     return () => {
       controller.abort();
+      pending?.abort();
+      clearTimeout(deadline);
       clearTimeout(timer);
       clearTimeout(expiry);
       document.removeEventListener('visibilitychange', visibilityChanged);
