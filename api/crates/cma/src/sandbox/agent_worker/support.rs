@@ -122,13 +122,22 @@ impl AgentWorker {
                 "checkpoint writer resumption is pending",
             ));
         }
+        let inspection_started = std::time::Instant::now();
         let attached = crate::sandbox::runtime_attachment::adopt_bound_runtime(
             self.dependencies.adapter.as_ref(),
             &sandbox,
             &self.config.deployment_id,
         )
-        .await
-        .map_err(adapter_failure)?;
+        .await;
+        tracing::info!(
+            agent_id = %agent.id,
+            sandbox_id = %sandbox.id,
+            step = ?agent.work.step,
+            elapsed_ms = inspection_started.elapsed().as_millis() as u64,
+            succeeded = attached.is_ok(),
+            "Agent runtime inspection completed"
+        );
+        let attached = attached.map_err(adapter_failure)?;
         Ok(AgentContext {
             sandbox,
             workspace,
