@@ -34,6 +34,7 @@ mod conversation_fold;
 mod conversation_fold_support;
 mod conversation_recorder;
 mod creation_admission;
+mod lifecycle_bootstrap;
 mod provenance;
 mod provenance_inventory;
 mod provenance_service;

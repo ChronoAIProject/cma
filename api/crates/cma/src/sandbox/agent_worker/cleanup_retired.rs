@@ -12,7 +12,9 @@ impl AgentWorker {
             .get_sandbox(&agent.sandbox_id)
             .await?
             .ok_or(SandboxStoreError::NotFound)?;
-        if !retired_sandbox_cleanup_is_absent(agent, &sandbox) {
+        let unstarted = agent.has_no_runtime_effects()
+            && matches!(agent.status, AgentStatus::Stopped | AgentStatus::Failed);
+        if !unstarted && !retired_sandbox_cleanup_is_absent(agent, &sandbox) {
             return Ok(false);
         }
         let workspace = self
@@ -31,27 +33,29 @@ impl AgentWorker {
             self.handle_failure(agent.clone(), failure, now).await?;
             return Ok(true);
         }
-        match self.dependencies.adapter.runtime_inventory().await {
-            Ok(inventory)
-                if inventory
-                    .iter()
-                    .all(|runtime| runtime.sandbox_id != sandbox.id.as_str()) => {}
-            Ok(_) => {
-                self.handle_failure(
-                    agent.clone(),
-                    WorkerFailure::retryable(
-                        "retired_runtime_present",
-                        "runtime cleanup is not yet confirmed by the provider",
-                    ),
-                    now,
-                )
-                .await?;
-                return Ok(true);
-            }
-            Err(error) => {
-                self.handle_failure(agent.clone(), cleanup_failure(error), now)
+        if !unstarted {
+            match self.dependencies.adapter.runtime_inventory().await {
+                Ok(inventory)
+                    if inventory
+                        .iter()
+                        .all(|runtime| runtime.sandbox_id != sandbox.id.as_str()) => {}
+                Ok(_) => {
+                    self.handle_failure(
+                        agent.clone(),
+                        WorkerFailure::retryable(
+                            "retired_runtime_present",
+                            "runtime cleanup is not yet confirmed by the provider",
+                        ),
+                        now,
+                    )
                     .await?;
-                return Ok(true);
+                    return Ok(true);
+                }
+                Err(error) => {
+                    self.handle_failure(agent.clone(), cleanup_failure(error), now)
+                        .await?;
+                    return Ok(true);
+                }
             }
         }
         let next = match agent.work.step {
