@@ -79,8 +79,7 @@ it('removes an accepted deletion from active navigation before cleanup and keeps
   expect(screen.getByRole('treeitem', { name: /Atlas/ })).toBeInTheDocument();
   await act(async () => accept());
   expect(screen.queryByRole('treeitem', { name: /Atlas/ })).not.toBeInTheDocument();
-  expect(screen.queryByRole('dialog', { name: 'Sandbox deleted' })).not.toBeInTheDocument();
-  await actor.click(screen.getAllByRole('button', { name: 'Close' })[0]!);
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   await actor.click(screen.getByText('Deletion progress (1)'));
   await actor.click(screen.getByRole('button', { name: 'Deletion status for Atlas' }));
   expect(screen.getByRole('dialog', { name: 'Deleting Sandbox' })).toBeInTheDocument();

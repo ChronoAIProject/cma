@@ -10,6 +10,7 @@ export interface SandboxActionRequest {
   readonly action: Extract<TreeAction, { kind: 'pause_sandbox' | 'revive_sandbox' }>;
   readonly key: string;
   readonly phase: 'submitting' | 'accepted' | 'uncertain' | 'complete' | 'failed';
+  readonly hidden?: boolean;
 }
 
 export function SandboxActionStatus({
@@ -90,6 +91,9 @@ export function SandboxActionStatus({
       document.removeEventListener('visibilitychange', poll);
     };
   }, [client, request.key, request.phase, resume, sandboxId]);
+  // Hiding the notice only changes presentation; confirmed state is still
+  // observed so the target's controls can unlock without a page reload.
+  if (request.hidden && request.phase !== 'failed') return null;
   const action = resume ? 'Resume' : 'Pause';
   return (
     <section className="console__navigation-status" aria-label="Sandbox request">
@@ -110,8 +114,10 @@ export function SandboxActionStatus({
           View Sandbox progress
         </Button>
       )}
-      {request.phase === 'complete' || request.phase === 'failed' ? (
-        <Button onClick={onClose}>Dismiss status</Button>
+      {request.phase !== 'submitting' ? (
+        <Button onClick={onClose}>
+          {request.phase === 'accepted' ? 'Hide progress' : 'Dismiss status'}
+        </Button>
       ) : null}
     </section>
   );
