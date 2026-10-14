@@ -14,6 +14,7 @@ pub struct AgentSandboxConfig {
     pub service_account: String,
     pub image_pull_secrets: Vec<String>,
     pub template_network_policy: Option<super::NativeTemplateNetworkPolicy>,
+    pub template_fs_group_change_policy: Option<super::NativeFsGroupChangePolicy>,
     pub control_key: String,
 }
 
@@ -26,6 +27,10 @@ impl std::fmt::Debug for AgentSandboxConfig {
             .field("service_account", &self.service_account)
             .field("image_pull_secrets", &self.image_pull_secrets)
             .field("template_network_policy", &self.template_network_policy)
+            .field(
+                "template_fs_group_change_policy",
+                &self.template_fs_group_change_policy,
+            )
             .field("control_key", &"<redacted>")
             .finish()
     }
