@@ -126,7 +126,8 @@ async fn workspace_preparation_uses_the_exact_bound_replacement_runtime() {
     let ready = worker
         .run_until_ready(&workspace.id, harness.now)
         .await
-        .unwrap();
+        .unwrap()
+        .workspace;
     assert_eq!(ready.status, WorkspaceStatus::Ready);
     let inventory = adapter.runtime_inventory().await.unwrap();
     assert_eq!(inventory.len(), 1);

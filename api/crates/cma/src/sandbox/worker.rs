@@ -44,6 +44,12 @@ pub(crate) enum SandboxDependencyError {
 
 #[async_trait::async_trait]
 pub(crate) trait ProfileWorkspaceProvisioner: Send + Sync {
+    /// The durable workspace worker validates current parent and runtime
+    /// authority itself. Other provisioners retain the caller's adoption check.
+    fn requires_runtime_adoption(&self) -> bool {
+        true
+    }
+
     async fn create_profile_workspace(
         &self,
         sandbox: &Sandbox,
