@@ -68,6 +68,30 @@ older image parse them. Runtime and full-home storage are unchanged by this
 API/Web-only candidate. Capture retained workload and conversation evidence
 before and after any repair, as for an upgrade.
 
+The per-turn model correction in `c8ee3872` adds optional `model` evidence to
+durable `TurnStarted` events. The value is captured from the selected Agent
+settings in the same fenced transaction that admits the turn; later settings
+changes cannot rewrite a completed response's model. The new reader accepts
+older events without this field. Older API binaries use strict event
+deserialization and reject a new event containing `model`, so compatibility is
+one-way: **after the first model-bearing turn is committed, every Agent Manager
+reader and rollback image must include `c8ee3872` or an equivalent compatible
+reader, as well as all preceding durable-format support**. A pre-`c8ee3872` image
+is no longer a valid rollback even after that turn completes or its Agent stops.
+
+Before allowing the new writer to serve traffic, retain an immutable compatible
+API image digest and record its source revision and readiness checks in the
+rollout evidence. For the next combined performance/lifecycle candidate, the
+standalone `c8ee3872` API build is the compatibility floor; keep its digest as the
+rollback target instead of the previously deployed API digest. Complete the
+transition of old Agent Manager readers before accepting new model-bearing
+turns; do not leave an old replica serving retained histories during a mixed
+rollout. A rollback changes the application image only and must preserve the
+stored events, message receipts, original PVCs and conversations. Verify both a
+retained model-bearing turn and a new turn after recovery. Do not remove the
+field, rewrite history, or relax MongoDB validation to enable an older image.
+This field does not change the runtime protocol or whole-home storage layout.
+
 The preceding `03cbd332` Agent Manager/shared Web release was Ready at
 16:26:14 SGT on 2026-10-14, with two Ready default-pool replicas observed at
 16:26:50 SGT. Its fresh Agent acceptance was not completed. The earlier
