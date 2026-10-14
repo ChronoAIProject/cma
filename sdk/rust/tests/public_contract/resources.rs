@@ -31,6 +31,53 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
         };
     }
     match op {
+        "GET /api/v1/agents/{id}/models" => c.check(client.agents().models(c.param("id")).await),
+        "GET /api/v1/agents/{id}/skills" => c.check(client.agents().skills(c.param("id")).await),
+        "POST /api/v1/agents/{id}/skills" => c.check(
+            client
+                .agents()
+                .install_skill(c.param("id"), &c.body()?, &c.key()?)
+                .await,
+        ),
+        "GET /api/v1/agents/{id}/access-requests" => {
+            c.check(client.agents().access_requests(c.param("id")).await)
+        }
+        "POST /api/v1/agents/{id}/access-requests/{request_id}/approve" => c.check(
+            client
+                .agents()
+                .approve_access_request(c.param("id"), c.param("request_id"), &c.body()?, &c.key()?)
+                .await,
+        ),
+        "POST /api/v1/agents/{id}/access-requests/{request_id}/deny" => c.check(
+            client
+                .agents()
+                .deny_access_request(c.param("id"), c.param("request_id"), &c.key()?)
+                .await,
+        ),
+        "GET /api/v1/agents/{id}/settings" => {
+            c.check(client.agents().settings(c.param("id")).await)
+        }
+        "PATCH /api/v1/agents/{id}/settings" => c.check(
+            client
+                .agents()
+                .update_settings(c.param("id"), &c.body()?, &c.key()?)
+                .await,
+        ),
+        "POST /api/v1/agents" => c.check(
+            client
+                .agents()
+                .create_lifecycle(&c.body()?, &c.key()?)
+                .await,
+        ),
+        "GET /api/v1/agent-lifecycle/{id}" => {
+            c.check(client.agents().read_lifecycle(c.param("id")).await)
+        }
+        "POST /api/v1/sandboxes/{id}/workspaces/inline" => c.check(
+            client
+                .workspaces()
+                .create_inline(c.param("id"), &c.body()?, &c.key()?)
+                .await,
+        ),
         "PUT /api/v1/gateway/channel-records/{record_id}" => c.check(
             client
                 .gateway_records()

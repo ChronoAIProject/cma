@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cma-image-manager
+  namespace: chrono-bot
+data:
+  CMA_IM_LISTEN: "0.0.0.0:8080"
+  CMA_IM_MONGODB_DATABASE: "chrono-bot"
+  CMA_IM_MONGODB_AUTHORITY_MODE: "shared-schema"
+  CMA_IM_NYXID_ISSUER: "https://nyx-api.chrono-ai.fun"
+  CMA_IM_WEB_ORIGIN: "https://bot.chrono-ai.fun"
+  CMA_IM_COOKIE_KEY_FILE: "/var/run/cma-image-manager/cookie-key"
+  # Image Manager owns the build workflow. Cloud Build executes the Docker
+  # steps with this same workload identity; there is no second build account.
+  # Pin the tested builder digest before enabling replicas.
+  CMA_IM_BUILD_SERVICE_ACCOUNT: "projects/chronoai-501608/serviceAccounts/cma-image-manager@chronoai-501608.iam.gserviceaccount.com"
+  CMA_IM_BUILDER_IMAGE: ""
+  # Empty uses GKE Workload Identity; a rotating token file is supported for local integration.
+  CMA_IM_GOOGLE_TOKEN_FILE: ""

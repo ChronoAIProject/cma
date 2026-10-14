@@ -3,8 +3,10 @@
 mod acp;
 mod acp_handshake;
 mod acp_inbound;
+mod acp_settings;
 mod acp_turn;
 mod adapter;
+mod agent_sandbox_backend;
 mod backend;
 mod channel_tools;
 mod checkpoint_store;
@@ -25,11 +27,15 @@ mod subscriptions;
 mod update_relay;
 
 pub use adapter::HostedAdapter;
+pub use agent_sandbox_backend::{AgentSandboxBackend, RuntimeBackends, RuntimeRoutingStore};
 pub use backend::{HostedAgentOpenSettings, HostedAgentRuntime, HostedBackend};
 pub use channel_tools::{HostedChannelToolBinding, HostedChannelToolSource};
 pub use checkpoint_store::{
     CheckpointArchiveDownload, CheckpointArchiveReceipt, CheckpointArchiveStore,
     CheckpointArchiveStoreFactory, CheckpointArchiveUpload, MAX_CHECKPOINT_ARCHIVE_BYTES,
+};
+pub(crate) use deployment::{
+    provider_request_fingerprint, provider_request_identity, scoped_model_base_url,
 };
 pub use deployment::{
     HostedDeployment, MODEL_PROXY_BASE_URL, NYXID_PROXY_BASE_URL, PLACEHOLDER_CREDENTIAL,
@@ -39,7 +45,7 @@ pub use provider_backend::{HostedControlTransport, ProviderHostedBackend};
 pub use provider_tools::{
     HostedProviderToolBinding, HostedProviderToolSource, HostedToolOpenReceipt,
 };
-pub use provider_transport::ProviderHostedControlTransport;
+pub use provider_transport::{NativeRuntimeTransport, ProviderHostedControlTransport};
 pub use subscriptions::{HostedSubscriptionCredential, HostedSubscriptionSource};
 
 #[cfg(test)]
@@ -61,3 +67,6 @@ mod cleanup_tests;
 #[cfg(test)]
 #[path = "recovery_tests.rs"]
 mod recovery_tests;
+
+mod access_tools;
+pub use access_tools::{HostedAccessToolBinding, HostedAccessToolSource};

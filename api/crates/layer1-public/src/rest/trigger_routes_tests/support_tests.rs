@@ -362,22 +362,44 @@ pub struct TestApp {
 
 impl TestApp {
     pub async fn new() -> Self {
-        Self::configured(false, Arc::new(FixedSandboxCredentialPrerequisite::Ready)).await
+        Self::configured(
+            false,
+            Arc::new(FixedSandboxCredentialPrerequisite::Ready),
+            None,
+        )
+        .await
     }
 
     pub async fn private_profiles() -> Self {
-        Self::configured(true, Arc::new(FixedSandboxCredentialPrerequisite::Ready)).await
+        Self::configured(
+            true,
+            Arc::new(FixedSandboxCredentialPrerequisite::Ready),
+            None,
+        )
+        .await
     }
 
     pub async fn with_credential_prerequisite(
         prerequisite: Arc<dyn SandboxCredentialPrerequisite>,
     ) -> Self {
-        Self::configured(false, prerequisite).await
+        Self::configured(false, prerequisite, None).await
+    }
+
+    pub async fn with_inline_materializer(
+        materializer: Arc<super::inline_image_routes::CredentialMaterializer>,
+    ) -> Self {
+        Self::configured(
+            false,
+            Arc::new(FixedSandboxCredentialPrerequisite::Ready),
+            Some(materializer),
+        )
+        .await
     }
 
     async fn configured(
         private_profiles: bool,
         prerequisite: Arc<dyn SandboxCredentialPrerequisite>,
+        materializer: Option<Arc<super::inline_image_routes::CredentialMaterializer>>,
     ) -> Self {
         let profiles = Arc::new(InMemoryProfileStore::default());
         let (agent, _workspace, sandbox) = publish_profiles(&profiles, private_profiles).await;
@@ -435,11 +457,16 @@ impl TestApp {
         }
         let broker = Arc::new(StubBroker::default());
         broker.set_requirement(ServiceRequirementState::Missing);
-        let trigger_service = TriggerService::new(
-            definitions.clone(),
-            launches.clone(),
-            UserDirectory::new(Arc::new(EmptyDirectory)),
-        );
+        let directory = UserDirectory::new(Arc::new(EmptyDirectory));
+        let trigger_service = match materializer {
+            Some(materializer) => TriggerService::new_with_inline_materializer(
+                definitions.clone(),
+                launches.clone(),
+                directory,
+                materializer,
+            ),
+            None => TriggerService::new(definitions.clone(), launches.clone(), directory),
+        };
         let launch_service = LaunchService::new(
             definitions.clone(),
             profiles.clone(),
@@ -503,6 +530,7 @@ impl TestApp {
             capabilities: RuntimeCapabilities::new([RuntimeCapability::Conversation]),
             status: AgentStatus::Ready,
             conversation: ConversationState {
+                settings: None,
                 conversation_id: Some("conversation".into()),
                 runtime_generation: Some(1),
                 last_seq: 1,
@@ -690,6 +718,7 @@ async fn publish_profiles(
     let agent_id = AgentProfileId("agp_route_agent".into());
     profiles
         .create_agent_profile(AgentProfile {
+            internal: false,
             id: agent_id.clone(),
             owner: SubjectId::new(OWNER),
             name: "Route Agent".into(),
@@ -725,6 +754,7 @@ async fn publish_profiles(
     let workspace_id = WorkspaceProfileId("wkp_route_workspace".into());
     profiles
         .create_workspace_profile(WorkspaceProfile {
+            internal: false,
             id: workspace_id.clone(),
             owner: SubjectId::new(OWNER),
             name: "Route Workspace".into(),
@@ -756,6 +786,7 @@ async fn publish_profiles(
     let sandbox_id = SandboxProfileId("sbp_route_sandbox".into());
     profiles
         .create_sandbox_profile(SandboxProfile {
+            internal: false,
             availability: Default::default(),
             id: sandbox_id.clone(),
             owner: SubjectId::new(OWNER),
@@ -765,6 +796,7 @@ async fn publish_profiles(
             forked_from: None,
             uses_count: 0,
             draft: SandboxProfileContent {
+                runtime_image: None,
                 cpu_millis: 1_000,
                 memory_mib: 2_048,
                 nyxid_services: vec![ServiceId::new("github")],

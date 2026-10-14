@@ -44,6 +44,10 @@ pub enum AgentLogKind {
         previous_generation: u64,
         runtime_generation: u64,
     },
+    SkillInstallationChanged {
+        skill_id: String,
+        status: super::AgentSkillInstallStatus,
+    },
     WorkStepCompleted {
         step: AgentWorkStep,
     },

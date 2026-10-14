@@ -10,7 +10,7 @@ const settings = {
     agent_profile: { id: 'agp_default', revision: 3 },
   },
   inactivity: { pause_after_seconds: 900 },
-  retention: { checkpoint_grace_days: 0, agent_log_days: 7 },
+  retention: { agent_log_days: 7 },
   limits: { max_sandboxes_per_user: 5, visitor_max_sandboxes: 1, visitor_max_launches_per_day: 10 },
   triggers: { enabled: true, orchestration_paused: false },
   marketplace: { enabled: true },
@@ -80,22 +80,20 @@ describe('public operator administration', () => {
     });
   });
 
-  it('round-trips snapshot intervals and validates patches before sending', async () => {
+  it('preserves retired snapshot fields from older reads without sending new controls', async () => {
     const t = fixture();
-    const current = { ...settings, checkpoints: { interval_seconds: 1800, future: 'preserved' } };
+    const current = {
+      ...settings,
+      checkpoints: { interval_seconds: 1800, future: 'preserved' },
+      retention: { ...settings.retention, checkpoint_grace_days: 7 },
+    };
     t.answer({ revision: 1, settings: current });
-    expect((await t.admin.readSettings()).settings).toEqual(current);
-    await t.admin.patchSettings({ expected_revision: 1, checkpoints: { interval_seconds: 600 } });
+    expect((await t.admin.readSettings()).settings).toMatchObject(current);
+    await t.admin.patchSettings({ expected_revision: 1, marketplace: { enabled: false } });
     expect(JSON.parse(String(t.calls[1]!.init.body))).toEqual({
       expected_revision: 1,
-      checkpoints: { interval_seconds: 600 },
+      marketplace: { enabled: false },
     });
-    for (const interval_seconds of [0, 59, 86401, 1.5]) {
-      expect(() =>
-        t.admin.patchSettings({ expected_revision: 1, checkpoints: { interval_seconds } }),
-      ).toThrow(ValidationError);
-    }
-    expect(t.calls).toHaveLength(2);
   });
   it('encodes Sandbox filters and accepts required nullable paging fields', async () => {
     const t = fixture();

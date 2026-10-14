@@ -63,6 +63,7 @@ pub use agent_sign_in::apply_agent_sign_in;
 mod agent_work_evidence_validation;
 mod agent_work_transition_validation;
 mod agent_work_validation;
+mod agent_worktree_validation;
 pub use agent_work_evidence_validation::{MAX_AGENT_CLEANUP_DEBT, MAX_AGENT_WORK_RECEIPTS};
 pub use agent_work_validation::{
     retired_sandbox_cleanup_is_absent, retiring_sandbox_process_is_absent,
@@ -84,6 +85,8 @@ mod lifecycle_execution;
 pub use lifecycle_execution::*;
 mod maintenance;
 pub use maintenance::*;
+mod quiet_pause;
+pub use quiet_pause::apply_consented_quiet_pause;
 #[cfg(test)]
 mod agent_work_validation_tests;
 mod lifecycle_agent_validation;
@@ -211,12 +214,13 @@ pub enum WorkspaceAdmissionKind {
     Manual,
     SandboxProfile,
     Trigger,
+    Lifecycle,
 }
 
 impl WorkspaceAdmissionKind {
     pub const fn allowed_status(self) -> SandboxStatus {
         match self {
-            Self::Manual | Self::Trigger => SandboxStatus::Active,
+            Self::Manual | Self::Trigger | Self::Lifecycle => SandboxStatus::Active,
             Self::SandboxProfile => SandboxStatus::Installing,
         }
     }
@@ -427,7 +431,8 @@ struct State {
     worktrees: HashMap<WorktreeId, Worktree>,
     agents: HashMap<AgentId, Agent>,
     agent_reuse_bindings: HashMap<(SubjectId, String), (AgentId, String)>,
-    sandbox_admissions: HashMap<(SubjectId, String), (SandboxId, SandboxAdmissionName, String)>,
+    sandbox_admissions:
+        HashMap<(SubjectId, String, String), (SandboxId, SandboxAdmissionName, String)>,
     sandbox_events: HashMap<SandboxId, Vec<SandboxEvent>>,
     agent_logs: HashMap<AgentId, Vec<AgentLogEntry>>,
     agent_message_checkpoints: HashMap<AgentId, AgentMessageCheckpoint>,

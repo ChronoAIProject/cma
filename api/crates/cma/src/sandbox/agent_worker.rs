@@ -12,6 +12,7 @@ use super::live_agents::{DurableAgentConnectionLossHandler, LiveAgentRegistry};
 mod cleanup;
 mod connection;
 mod first_message;
+mod live_skills;
 mod reconcile;
 mod startup;
 mod startup_open;
@@ -98,11 +99,23 @@ impl AgentWorker {
         else {
             return Ok(false);
         };
-        Box::pin(self.execute(agent, now + started.elapsed())).await?;
+        let claim_ms = started.elapsed().as_millis() as u64;
+        let step = agent.work.step;
+        let executing = tokio::time::Instant::now();
+        let result = Box::pin(self.execute(agent, now + started.elapsed())).await;
+        tracing::info!(
+            agent_id = %id,
+            ?step,
+            claim_ms,
+            execution_ms = executing.elapsed().as_millis() as u64,
+            published = result.is_ok(),
+            "Agent work attempt completed"
+        );
+        result?;
         Ok(true)
     }
 
-    /// Follow already-prepared startup steps immediately, keeping each durable claim.
+    /// Follow committed startup steps immediately, keeping each durable claim.
     pub(crate) async fn run_scheduled(
         &self,
         id: &AgentId,
@@ -117,17 +130,15 @@ impl AgentWorker {
             let Some(agent) = self.dependencies.store.get_agent(id).await? else {
                 break;
             };
-            if agent.work.warm_conversation_id.is_none()
-                || !matches!(
-                    agent.work.step,
-                    AgentWorkStep::AddWorktree
-                        | AgentWorkStep::MaterializeHome
-                        | AgentWorkStep::OpenConversation
-                        | AgentWorkStep::PublishReady
-                        | AgentWorkStep::PublishConnection
-                        | AgentWorkStep::DispatchFirstMessage
-                )
-                || !agent.work.is_due(&rfc3339_at(now + started.elapsed()))
+            if !matches!(
+                agent.work.step,
+                AgentWorkStep::AddWorktree
+                    | AgentWorkStep::MaterializeHome
+                    | AgentWorkStep::OpenConversation
+                    | AgentWorkStep::PublishReady
+                    | AgentWorkStep::PublishConnection
+                    | AgentWorkStep::DispatchFirstMessage
+            ) || !agent.work.is_due(&rfc3339_at(now + started.elapsed()))
             {
                 break;
             }
@@ -140,6 +151,7 @@ impl AgentWorker {
 
     async fn execute(&self, agent: Agent, now: SystemTime) -> Result<(), SandboxStoreError> {
         match agent.work.step {
+            AgentWorkStep::InstallSkill => self.install_skill(agent, now).await,
             AgentWorkStep::AddWorktree => self.add_worktree(agent, now).await,
             AgentWorkStep::MaterializeHome => self.materialize_home(agent, now).await,
             AgentWorkStep::OpenConversation => self.open_conversation(agent, now).await,

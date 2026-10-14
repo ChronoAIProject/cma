@@ -128,7 +128,8 @@ async fn http_errors_and_openapi_share_the_management_contract() {
         401,
     )
     .await;
-    expect_problem(client.get(&url).send().await.unwrap(), 405).await;
+    expect_problem(client.get(&url).send().await.unwrap(), 401).await;
+    expect_problem(client.patch(&url).send().await.unwrap(), 405).await;
     expect_problem(
         client.get(format!("{base}/absent")).send().await.unwrap(),
         404,
@@ -261,6 +262,7 @@ async fn http_errors_and_openapi_share_the_management_contract() {
             "createChannel",
             "deleteChannel",
             "getChannel",
+            "listChannels",
             "recoverChannel",
             "rekeyChannel",
             "testChannel",

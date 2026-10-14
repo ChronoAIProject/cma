@@ -24,6 +24,22 @@ export type EventId = Output<typeof EventIdSchema>;
 export const AttachmentKindSchema = enumeration('image', 'file', 'audio', 'video', 'other');
 export type AttachmentKind = Output<typeof AttachmentKindSchema>;
 
+export const MediaVariantSchema = enumeration(
+  'photo',
+  'document',
+  'audio',
+  'voice',
+  'video',
+  'video_note',
+  'animation',
+  'sticker',
+  'image',
+  'file',
+  'media',
+  'embedded',
+);
+export type MediaVariant = Output<typeof MediaVariantSchema>;
+
 export const MessageRefSchema = text;
 export type MessageRef = Output<typeof MessageRefSchema>;
 export const ReplyTargetRefSchema = text;
@@ -148,6 +164,8 @@ export const ProblemCodeSchema = enumeration(
   'payload_too_large',
   'unsupported_media_type',
   'internal',
+  'attachment_not_found',
+  'media_unavailable',
 );
 export type ProblemCode = Output<typeof ProblemCodeSchema>;
 

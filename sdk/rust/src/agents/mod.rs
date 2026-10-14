@@ -7,17 +7,27 @@ use crate::{
 };
 use reqwest::{Method, StatusCode};
 
+mod access_requests;
+pub use access_requests::*;
 mod artifacts;
 mod channel_usage;
 mod events;
+mod lifecycle;
+mod models;
 mod provenance;
+mod settings;
 mod shared;
+mod skills;
 mod types;
 pub use artifacts::*;
 pub use channel_usage::*;
 pub use events::*;
+pub use lifecycle::*;
+pub use models::*;
 pub use provenance::*;
+pub use settings::*;
 pub use shared::*;
+pub use skills::*;
 pub use types::*;
 
 /// Owner Agent list filters and opaque pagination.

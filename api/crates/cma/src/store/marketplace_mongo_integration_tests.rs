@@ -125,6 +125,7 @@ fn bounds() -> ProfileCapacityBounds {
 
 fn agent_profile(id: &str, owner: &str, name: &str) -> AgentProfile {
     AgentProfile {
+        internal: false,
         id: AgentProfileId(id.into()),
         owner: SubjectId(owner.into()),
         name: name.into(),
@@ -149,6 +150,7 @@ fn agent_profile(id: &str, owner: &str, name: &str) -> AgentProfile {
 
 fn workspace_profile(id: &str, agent: AgentProfileRef) -> WorkspaceProfile {
     WorkspaceProfile {
+        internal: false,
         id: WorkspaceProfileId(id.into()),
         owner: SubjectId("publisher".into()),
         name: "Beta workspace".into(),
@@ -174,6 +176,7 @@ fn workspace_profile(id: &str, agent: AgentProfileRef) -> WorkspaceProfile {
 
 fn sandbox_profile(id: &str, workspaces: Vec<WorkspaceProfileRef>) -> SandboxProfile {
     SandboxProfile {
+        internal: false,
         availability: Default::default(),
         id: SandboxProfileId(id.into()),
         owner: SubjectId("publisher".into()),
@@ -183,6 +186,7 @@ fn sandbox_profile(id: &str, workspaces: Vec<WorkspaceProfileRef>) -> SandboxPro
         forked_from: None,
         uses_count: 0,
         draft: SandboxProfileContent {
+            runtime_image: None,
             cpu_millis: 2_000,
             memory_mib: 4_096,
             nyxid_services: vec![],

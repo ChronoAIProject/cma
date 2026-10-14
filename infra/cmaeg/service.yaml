@@ -1,18 +1,38 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: cmaeg
+  name: cma-event-gateway
   namespace: chrono-bot
   labels:
-    app.kubernetes.io/name: cmaeg
+    app.kubernetes.io/name: cma-event-gateway
     app.kubernetes.io/part-of: cma
 spec:
   type: ClusterIP
   selector:
-    app.kubernetes.io/name: cmaeg
+    app.kubernetes.io/name: cma-event-gateway
   ports:
     - name: http
       port: 80
       targetPort: http
       protocol: TCP
 # Metrics remain on the pod's private port 9091, outside the public Service.
+---
+# Retained CMA configurations address http://cmaeg during the staged service
+# rename. This alias reaches the same canonical gateway Pods and HTTP port.
+apiVersion: v1
+kind: Service
+metadata:
+  name: cmaeg
+  namespace: chrono-bot
+  labels:
+    app.kubernetes.io/name: cma-event-gateway
+    app.kubernetes.io/part-of: cma
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: cma-event-gateway
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP

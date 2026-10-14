@@ -34,11 +34,13 @@ pub(super) async fn authorize(
         sandbox.visibility,
         sandbox.retired_at.as_deref(),
         "target.sandbox_profile",
+        target.inline.is_some(),
     )?;
     fence(
         &store.profiles.sandbox_profiles,
         &target.sandbox_profile.id.0,
         sandbox.owner.as_str(),
+        target.inline.is_some(),
         session,
     )
     .await?;
@@ -71,11 +73,13 @@ pub(super) async fn authorize(
         workspace.visibility,
         workspace.retired_at.as_deref(),
         "target.workspace_profile",
+        target.inline.is_some(),
     )?;
     fence(
         &store.profiles.workspace_profiles,
         &target.workspace_profile.id.0,
         workspace.owner.as_str(),
+        target.inline.is_some(),
         session,
     )
     .await?;
@@ -95,11 +99,13 @@ pub(super) async fn authorize(
         agent.visibility,
         agent.retired_at.as_deref(),
         "target.agent_profile",
+        target.inline.is_some(),
     )?;
     fence(
         &store.profiles.agent_profiles,
         &target.agent_profile.id.0,
         agent.owner.as_str(),
+        target.inline.is_some(),
         session,
     )
     .await?;
@@ -361,19 +367,26 @@ async fn fence(
     collection: &Collection<Document>,
     id: &str,
     profile_owner: &str,
+    allow_owned_inline: bool,
     session: &mut ClientSession,
 ) -> Result<(), TransactionProfileError> {
+    let mut filter = doc! {
+        "_id": id,
+        "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+        "owner": profile_owner,
+        "retired_at": Bson::Null,
+        "record.retired_at": Bson::Null,
+    };
+    if allow_owned_inline {
+        filter.insert("visibility", doc! { "$in": ["public", "private"] });
+        filter.insert("record.visibility", doc! { "$in": ["public", "private"] });
+    } else {
+        filter.insert("visibility", "public");
+        filter.insert("record.visibility", "public");
+    }
     let result = collection
         .update_one(
-            doc! {
-                "_id": id,
-                "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-                "owner": profile_owner,
-                "visibility": "public",
-                "record.visibility": "public",
-                "retired_at": Bson::Null,
-                "record.retired_at": Bson::Null,
-            },
+            filter,
             doc! { "$inc": { "trigger_publication_fence": 1_i64 } },
         )
         .session(session)
@@ -392,13 +405,15 @@ fn require_public(
     visibility: ProfileVisibility,
     retired_at: Option<&str>,
     field: &'static str,
+    allow_owned_inline: bool,
 ) -> Result<(), TransactionProfileError> {
     if retired_at.is_some()
-        || (visibility == ProfileVisibility::Private && trigger_owner != profile_owner)
+        || (visibility == ProfileVisibility::Private
+            && (!allow_owned_inline || trigger_owner != profile_owner))
     {
         return Err(transaction_unavailable(field));
     }
-    if visibility == ProfileVisibility::Private {
+    if visibility == ProfileVisibility::Private && !allow_owned_inline {
         return Err(TransactionProfileError::Domain(
             TriggerReferenceError::NotPublic { field }.into(),
         ));

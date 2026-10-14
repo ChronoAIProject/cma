@@ -2,11 +2,41 @@
 use super::names;
 use std::{
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU8, Ordering},
         Arc, Mutex, OnceLock,
     },
     time::{Duration, Instant},
 };
+
+/// What a turn's attachments did to its path to the provider. A turn only
+/// ever moves up this order, so the label names the largest delay source.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum MediaLabel {
+    /// No preparation and no order fence: the latency SLO applies.
+    None,
+    /// Eager media items were prepared before the provider turn started.
+    Prepared,
+    /// The turn waited for an earlier turn of its conversation.
+    Fenced,
+}
+
+impl MediaLabel {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Prepared => "prepared",
+            Self::Fenced => "fenced",
+        }
+    }
+
+    fn from_u8(value: u8) -> Self {
+        match value {
+            0 => Self::None,
+            1 => Self::Prepared,
+            _ => Self::Fenced,
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct IngressTiming(Arc<Inner>);
@@ -18,6 +48,7 @@ struct Inner {
     received: OnceLock<Instant>,
     written: OnceLock<Instant>,
     cold: AtomicBool,
+    media: AtomicU8,
     restore: Mutex<Duration>,
     verify: Mutex<Duration>,
 }
@@ -30,6 +61,7 @@ impl IngressTiming {
             received: OnceLock::new(),
             written: OnceLock::new(),
             cold: AtomicBool::new(false),
+            media: AtomicU8::new(MediaLabel::None as u8),
             restore: Mutex::new(Duration::ZERO),
             verify: Mutex::new(Duration::ZERO),
         }))
@@ -47,18 +79,28 @@ impl IngressTiming {
     pub fn is_cold(&self) -> bool {
         self.0.cold.load(Ordering::Relaxed)
     }
+    /// Raise the media label; a lower label never replaces a higher one.
+    pub fn mark_media(&self, label: MediaLabel) {
+        self.0.media.fetch_max(label as u8, Ordering::Relaxed);
+    }
+    pub fn media(&self) -> MediaLabel {
+        MediaLabel::from_u8(self.0.media.load(Ordering::Relaxed))
+    }
     /// Called after a successful socket write containing this request's first byte.
     pub fn written(&self, at: Instant) {
         if self.0.written.set(at).is_ok() {
             if let Some(received) = self.0.received.get() {
                 let seconds = at.saturating_duration_since(*received).as_secs_f64();
+                let media = self.media().as_str();
                 metrics::histogram!(names::INGRESS_TO_PROVIDER,
-                    names::SOURCE => self.0.source, names::COLD => if self.is_cold() { "true" } else { "false" })
+                    names::SOURCE => self.0.source, names::COLD => if self.is_cold() { "true" } else { "false" },
+                    names::MEDIA => media)
                     .record(seconds);
                 tracing::info!(
                     parent: &self.0.request_span,
                     source = self.0.source,
                     cold = self.is_cold(),
+                    media,
                     ingress_to_provider_ms = seconds * 1000.0,
                     "ingress socket write"
                 );
@@ -111,4 +153,25 @@ impl Drop for Phase<'_> {
 }
 fn millis(duration: Duration) -> f64 {
     duration.as_secs_f64() * 1000.0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_media_label_only_rises() {
+        let timing = IngressTiming::new("custom");
+        assert_eq!(timing.media(), MediaLabel::None);
+        timing.mark_media(MediaLabel::Prepared);
+        assert_eq!(timing.media(), MediaLabel::Prepared);
+        timing.mark_media(MediaLabel::Fenced);
+        timing.mark_media(MediaLabel::Prepared);
+        timing.mark_media(MediaLabel::None);
+        assert_eq!(timing.media(), MediaLabel::Fenced);
+        assert_eq!(
+            [MediaLabel::None, MediaLabel::Prepared, MediaLabel::Fenced].map(MediaLabel::as_str),
+            ["none", "prepared", "fenced"]
+        );
+    }
 }

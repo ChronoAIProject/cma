@@ -6,6 +6,14 @@ import { SignInLanding } from './SignInLanding';
 afterEach(() => vi.useRealTimers());
 
 describe('the signed-out invitation', () => {
+  it('introduces all three services alongside the CMA character', () => {
+    render(<SignInLanding onSignIn={vi.fn()} />);
+    for (const name of ['Agent Manager', 'Image Manager', 'Event Gateway']) {
+      expect(screen.getByRole('heading', { name })).toBeInTheDocument();
+    }
+    expect(screen.getByRole('complementary', { name: 'CMA services' })).toBeInTheDocument();
+  });
+
   it('reveals the cloud after five seconds, not glasses lettering', () => {
     vi.useFakeTimers();
     render(<SignInLanding onSignIn={vi.fn()} />);

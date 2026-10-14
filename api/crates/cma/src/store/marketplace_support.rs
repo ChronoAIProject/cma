@@ -87,6 +87,14 @@ impl StoredProfile {
         }
     }
 
+    pub fn internal(&self) -> bool {
+        match self {
+            Self::Agent(profile) => profile.internal,
+            Self::Workspace(profile) => profile.internal,
+            Self::Sandbox(profile) => profile.internal,
+        }
+    }
+
     pub fn visibility(&self) -> ProfileVisibility {
         match self {
             Self::Agent(profile) => profile.visibility,
@@ -231,7 +239,10 @@ pub(super) fn marketplace_summary(
     authors: &std::collections::BTreeMap<String, String>,
 ) -> Result<MarketplaceSummary, MarketplaceError> {
     let profile = decode_profile(kind, document)?;
-    if profile.visibility() != ProfileVisibility::Public || profile.retired_at().is_some() {
+    if profile.internal()
+        || profile.visibility() != ProfileVisibility::Public
+        || profile.retired_at().is_some()
+    {
         return Err(MarketplaceError::Corrupt(
             "marketplace query returned a hidden profile".into(),
         ));
@@ -270,6 +281,7 @@ pub(super) async fn find_public_profile(
         .find_one(doc! {
             "_id": id,
             "visibility": "public",
+            "record.internal": { "$ne": true },
             "retired_at": Bson::Null,
         })
         .await

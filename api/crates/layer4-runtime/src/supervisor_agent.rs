@@ -15,6 +15,43 @@ use crate::mutation_journal::{self, Begin, Operation, Ticket};
 use crate::paths::{path_is_directory, safe_component};
 
 impl Supervisor {
+    pub(super) async fn install_agent_skill(
+        &self,
+        authority_fence: u64,
+        request: layer3_adapter::AgentSkillInstallRequest,
+    ) -> Result<ResponseFrame> {
+        crate::agent_skill_install::validate(&request)?;
+        let operation = Operation::install_agent_skill(&request);
+        if !mutation_journal::admitted(&self.config, &operation)? {
+            crate::agent_skill_install::preflight(&self.config, &request)?;
+        }
+        match mutation_journal::begin::<layer3_adapter::AgentSkillInstallReceipt>(
+            &self.config,
+            &operation,
+        )? {
+            Begin::Completed(receipt) => Ok(ResponseFrame::InstallAgentSkill(FencedReceipt::new(
+                authority_fence,
+                receipt,
+            ))),
+            Begin::Failed(error) | Begin::Indeterminate(error) => Err(error),
+            Begin::New(ticket) | Begin::Started(ticket) => {
+                self.execute_install_agent_skill(authority_fence, request, ticket)
+                    .await
+            }
+        }
+    }
+    pub(super) async fn execute_install_agent_skill(
+        &self,
+        authority_fence: u64,
+        request: layer3_adapter::AgentSkillInstallRequest,
+        ticket: Ticket,
+    ) -> Result<ResponseFrame> {
+        let result = crate::agent_skill_install::install(&self.config, &self.http, &request).await;
+        finish(ticket, result, |receipt| {
+            ResponseFrame::InstallAgentSkill(FencedReceipt::new(authority_fence, receipt))
+        })
+    }
+
     pub(super) async fn materialize_agent_home(
         &self,
         authority_fence: u64,

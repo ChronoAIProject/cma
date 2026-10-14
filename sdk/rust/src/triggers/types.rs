@@ -1,6 +1,9 @@
 //! Publisher and anonymous Trigger wire documents.
 
-use crate::profiles::{AgentProvider, EnvironmentVariable, ProfileReference, ThinkingEffort};
+use crate::profiles::{
+    AgentProvider, EnvironmentVariable, PermissionLevel, ProfileReference, SkillReference,
+    ThinkingEffort,
+};
 use serde::{Deserialize, Serialize};
 
 string_enum! { /// Approved external button label.
@@ -35,8 +38,8 @@ pub struct Presentation {
     pub signup_hint: Option<String>,
 }
 
-/// Exact immutable profiles selected at every hierarchy level.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Inline Agent configuration or legacy immutable profile revisions.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Target {
     /// Sandbox profile revision.
     pub sandbox_profile: ProfileReference,
@@ -44,6 +47,70 @@ pub struct Target {
     pub workspace_profile: ProfileReference,
     /// Agent profile revision.
     pub agent_profile: ProfileReference,
+    /// Inline image and Agent configuration for new Trigger launches.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inline: Option<TriggerInlineTarget>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Image Manager selection for an inline Trigger Agent.
+pub struct TriggerImage {
+    /// Image Manager identifier.
+    pub id: String,
+    /// Optional Image Manager version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    /// Immutable OCI reference returned by Image Manager.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Optional GitHub workspace source for an inline Trigger.
+pub struct TriggerRepository {
+    /// HTTPS GitHub repository URL.
+    pub url: String,
+    /// Optional branch, tag, or commit reference.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+/// Inline workspace settings.
+pub struct TriggerInlineWorkspace {
+    /// Optional repository source.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository: Option<TriggerRepository>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Inline model, permission, skill, and service scope.
+pub struct TriggerInlineAgent {
+    /// Optional model override.
+    pub model: Option<String>,
+    /// Requested reasoning effort.
+    pub reasoning_effort: ThinkingEffort,
+    /// Guarded or autonomous execution policy.
+    pub permission_mode: PermissionLevel,
+    /// Skills selected from Ornn.
+    pub skills: Vec<SkillReference>,
+    /// Initial system instructions.
+    pub system_prompt: String,
+    /// NyxID service identifiers granted to the Agent.
+    pub services: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Inline Trigger target configuration.
+pub struct TriggerInlineTarget {
+    /// Optional Image Manager image.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<TriggerImage>,
+    /// Inline Agent configuration.
+    pub agent: TriggerInlineAgent,
+    /// Optional workspace configuration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<TriggerInlineWorkspace>,
 }
 
 /// Reuse decisions recorded in a Trigger revision.

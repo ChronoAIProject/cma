@@ -53,9 +53,11 @@ mod lifecycle_connection_tests;
 mod retired_runtime_tests;
 mod runtime_attachment_tests;
 mod sdk_conformance_tests;
+mod settings_replay_tests;
 mod sign_in_tests;
 mod skill_material_tests;
 mod startup_publication_tests;
+mod startup_scheduling_tests;
 mod warm_handoff_tests;
 mod workspace_removal_tests;
 
@@ -293,6 +295,7 @@ fn sandbox(id: &SandboxId, owner: SubjectId, stamp: &str) -> Sandbox {
             revision: 1,
             digest: "a".repeat(64),
             content: SandboxProfileContent {
+                runtime_image: None,
                 cpu_millis: 1_000,
                 memory_mib: 2_048,
                 nyxid_services: vec![ServiceId::new("ornn-api")],

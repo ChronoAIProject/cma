@@ -3,17 +3,21 @@ use super::{
     projection::Projection,
 };
 use crate::{
+    delivery::router::DeliverySink,
     ingress::launch::{LaunchOutcome, LaunchRequest},
     providers::TurnStream,
 };
 use cmaeg_core::problem::{Problem, ProblemCode};
 use std::sync::Arc;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::oneshot;
 
+/// Project `stream` into delivery commands. `provider` labels the acceptance
+/// metric with the serving consumer's provider.
 pub(super) async fn consume(
     mut stream: TurnStream,
     turn: Arc<LaunchRequest>,
-    delivery: &mpsc::Sender<DeliveryCommand>,
+    provider: &str,
+    delivery: &dyn DeliverySink,
     admitted: &mut Option<oneshot::Sender<LaunchOutcome>>,
 ) -> Result<&'static str, &'static str> {
     let mut acceptance_pending = true;
@@ -25,7 +29,7 @@ pub(super) async fn consume(
                 acceptance_pending = false;
                 let accepted = accepted.map_err(|_| "stream_lost")?;
                 metrics::histogram!(crate::telemetry::names::PROVIDER_ACCEPT,
-                    crate::telemetry::names::PROVIDER => turn.channel.definition.provider.slug.to_string())
+                    crate::telemetry::names::PROVIDER => provider.to_owned())
                     .record(accepted.at.saturating_duration_since(stream.request_started).as_secs_f64());
                 tracing::info!(metric="cmaeg_provider_accept_seconds",duration_seconds=accepted.at.saturating_duration_since(stream.request_started).as_secs_f64(),"provider accepted turn");
                 if let Some(sender) = admitted.take() {let _ = sender.send(LaunchOutcome::Accepted {response_id:accepted.response_id.clone()});}
@@ -47,12 +51,12 @@ pub(super) async fn consume(
     }
 }
 pub(super) async fn send(
-    delivery: &mpsc::Sender<DeliveryCommand>,
+    delivery: &dyn DeliverySink,
     turn: &Arc<LaunchRequest>,
     outcome: TurnOutcome,
 ) -> Result<(), &'static str> {
     delivery
-        .send(DeliveryCommand::StreamOutcome {
+        .submit(DeliveryCommand::StreamOutcome {
             turn: turn.clone(),
             outcome,
         })

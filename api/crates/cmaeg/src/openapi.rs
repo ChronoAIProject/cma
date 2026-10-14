@@ -8,7 +8,13 @@ use utoipa::OpenApi;
     info(title = "CMA Event Gateway", version = "1.0"),
     servers((url = "/v1")),
     modifiers(&ManagementSecurity, &ProfileCompatibility, &ProtocolBase),
-    components(schemas(crate::providers::EventContextSnapshot, cmaeg_core::channel::ProviderTarget)),
+    // Query parameter schemas are referenced, not collected, so they are
+    // registered here.
+    components(schemas(
+        crate::providers::EventContextSnapshot,
+        cmaeg_core::channel::ProviderTarget,
+        crate::tools::AttachmentViewKind,
+    )),
     paths(
         http::connections::capabilities,
         http::connections::create,
@@ -16,6 +22,8 @@ use utoipa::OpenApi;
         http::connections::read,
         http::connections::cancel,
         http::management::create_channel,
+        http::management::list_channels,
+        http::management::permission_catalog,
         http::creation::recover_channel,
         http::management::get_channel,
         http::management::update_channel,
@@ -30,6 +38,8 @@ use utoipa::OpenApi;
         http::tools::send_typing,
         http::tools::read_event_context,
         http::tools::verify_event_context,
+        http::tools::read_event_attachment,
+        http::media::download_media,
         http::reply_targets::create_reply_target,
         http::reply_targets::reply_to_target,
     )
@@ -45,6 +55,10 @@ impl utoipa::Modify for ManagementSecurity {
             ("creatorBearer", "NyxID creator bearer token"),
             ("serviceBearer", "CMA service token; rekey only"),
             ("agentBearer", "NyxID bot agent key; tools only"),
+            (
+                "mediaBearer",
+                "Single-use media link capability minted by readEventAttachment view download; Authorization header only",
+            ),
         ] {
             components.add_security_scheme(
                 name,

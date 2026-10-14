@@ -114,6 +114,7 @@ pub(super) async fn retire_profile(
             doc! {
                 "_id": id,
                 "owner": owner.as_str(),
+                "record.internal": { "$ne": true },
                 "document_schema_version": DOCUMENT_SCHEMA_VERSION,
             },
             doc! {
@@ -150,7 +151,7 @@ pub(super) async fn list_profiles<T: DeserializeOwned>(
     decode: fn(&Document) -> Result<T, ProfileStoreError>,
 ) -> Result<ProfilePage<T>, ProfileStoreError> {
     validate_page(page)?;
-    let mut filter = Document::new();
+    let mut filter = doc! { "record.internal": { "$ne": true } };
     if let Some(owner) = owner {
         filter.insert("owner", owner.as_str());
     }

@@ -10,7 +10,6 @@ import {
   IconFollowsystemOutline16,
   IconGoalOutline16,
   IconLightOutline16,
-  IconPersonalizationOutline16,
   IconRightUpOutline16,
   IconSettingsOutline16,
 } from '../ui/icons';
@@ -33,7 +32,6 @@ interface ProfileMenuProps {
 
 const MENU_ROUTES: Readonly<Record<string, AppRoute>> = {
   inventory: { kind: 'inventory' },
-  profiles: { kind: 'profiles' },
   bots: { kind: 'bots' },
   triggers: { kind: 'triggers' },
   developer: { kind: 'developer' },
@@ -71,8 +69,9 @@ export function ProfileMenu({
     ...(user.capabilities.includes('use_own_sandboxes')
       ? [{ id: 'inventory', icon: <IconBrowseOutline16 />, label: 'Agents' }]
       : []),
-    { id: 'profiles', icon: <IconPersonalizationOutline16 />, label: 'Profiles' },
-    ...(bots ? [{ id: 'bots', icon: <IconSettingsOutline16 />, label: 'Bot settings' }] : []),
+    ...(bots && !user.visitor
+      ? [{ id: 'bots', icon: <IconCodeOutline16 />, label: 'Event Gateway consumers' }]
+      : []),
     ...(!user.visitor && user.capabilities.includes('publish_triggers')
       ? [{ id: 'triggers', icon: <IconGoalOutline16 />, label: 'CMA Trigger' }]
       : []),

@@ -16,16 +16,16 @@
 apiVersion: networking.gke.io/v1
 kind: HealthCheckPolicy
 metadata:
-  name: cma-api
+  name: cma-agent-manager
   namespace: chrono-bot
   labels:
-    app.kubernetes.io/name: cma-api
+    app.kubernetes.io/name: cma-agent-manager
     app.kubernetes.io/part-of: cma
 spec:
   targetRef:
     group: ""
     kind: Service
-    name: cma-api
+    name: cma-agent-manager
   default:
     config:
       type: HTTP

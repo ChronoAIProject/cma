@@ -143,11 +143,6 @@ fn assert_safe(value: &Value) {
 #[tokio::test]
 async fn whole_sandbox_reader_gets_safe_hierarchy_and_owner_keeps_exact_legacy_json() {
     let (fixture, _, _, _) = fixture(true, Reply::Member).await;
-    let before = fixture
-        .store
-        .read_sandbox_hierarchy(&SandboxId("sbx_route".into()))
-        .await
-        .unwrap();
     for (index, path) in PATHS.iter().enumerate() {
         let mut legacy = request(path, "owner-a");
         legacy.extensions_mut().remove::<CallerContext>();
@@ -173,24 +168,6 @@ async fn whole_sandbox_reader_gets_safe_hierarchy_and_owner_keeps_exact_legacy_j
             assert_eq!(shared["agent_count"], 2);
         }
     }
-    // Archive download needs personal authority even when all metadata is shared.
-    let (status, _) = agents::json_response(
-        &fixture.router,
-        request(
-            "/api/v1/sandboxes/sbx_route/snapshots/1/download",
-            "recipient",
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
-    assert_eq!(
-        fixture
-            .store
-            .read_sandbox_hierarchy(&SandboxId("sbx_route".into()))
-            .await
-            .unwrap(),
-        before
-    );
 }
 
 #[tokio::test]

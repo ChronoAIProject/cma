@@ -1,6 +1,6 @@
 //! Public projections and sanitized management refusals.
 use super::{
-    management::{ChannelResponse, EndpointResponse, ProviderResponse},
+    management::{ChannelListItem, ChannelResponse, EndpointResponse, ProviderResponse},
     problems::{no_store, problem},
 };
 use crate::channels::management::{ManagementError, ManagementState};
@@ -33,6 +33,48 @@ pub(super) fn channel_response(
             custom_event_url: format!("{}/v1/channels/{}/events", state.public_url, channel_id),
         },
         definition: super::schema::PublicChannelDefinition::new(definition, version),
+    })
+}
+
+/// Show every valid owned record without manufacturing a replacement sealed ID.
+pub(super) fn channel_list_item(
+    state: &ManagementState,
+    record: &crate::channels::management::RecordedChannel,
+) -> Result<ChannelListItem, ManagementError> {
+    if !record.valid {
+        return Err(ManagementError::Internal(
+            "retained channel is invalid".into(),
+        ));
+    }
+    let definition = &record.definition;
+    let known = definition
+        .creation
+        .as_ref()
+        .map(|creation| {
+            crate::console::channel_ids::opens_to(
+                &creation.channel_id,
+                &definition.record_id,
+                &state.master_keys,
+                &state.records,
+            )
+            .map_err(|_| ManagementError::Internal("retained channel ID is invalid".into()))?;
+            channel_response(
+                state,
+                &creation.channel_id,
+                definition,
+                record.version,
+                provider_response(definition),
+                &definition.record_id,
+            )
+        })
+        .transpose()?;
+    Ok(ChannelListItem {
+        channel_id: known.as_ref().map(|response| response.channel_id.clone()),
+        endpoints: known.map(|response| response.endpoints),
+        record_id: definition.record_id.to_string(),
+        version: record.version,
+        provider: provider_response(definition),
+        definition: super::schema::PublicChannelDefinition::new(definition, record.version),
     })
 }
 

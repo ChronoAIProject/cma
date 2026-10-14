@@ -13,6 +13,8 @@ import {
   workspaceDetail,
   workspaceSummary,
   worktree,
+  createInlineWorkspaceRequest,
+  type CreateInlineWorkspaceRequest,
   type CreateWorkspaceRequest,
 } from './instances/types.js';
 
@@ -63,6 +65,21 @@ export class Workspaces {
       body: input(createWorkspaceRequest, body),
       expectedStatus: 201,
     });
+  }
+
+  /** Admit a workspace from an inline source selected in Agent Manager. */
+  createInline(sandboxId: string, body: CreateInlineWorkspaceRequest, options: CommandOptions) {
+    return read(
+      this.config,
+      `/api/v1/sandboxes/${segment(sandboxId)}/workspaces/inline`,
+      workspace,
+      {
+        ...command(options),
+        method: 'POST',
+        body: input(createInlineWorkspaceRequest, body),
+        expectedStatus: 201,
+      },
+    );
   }
 
   delete(id: string, options: CommandOptions) {

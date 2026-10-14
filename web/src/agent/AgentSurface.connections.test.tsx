@@ -4,6 +4,7 @@ import { AGENT_DETAIL, AGENT_TRANSCRIPT } from '../test/agent';
 import { workspaceFixture } from '../test/hierarchy';
 import { ConnectionFailure, connectionClient, type ConnectionReport } from '../connections/client';
 import { AgentSurface } from './AgentSurface';
+import { accessRequests } from './accessRequests';
 import { conversationFromTranscript } from './conversation';
 import type { AgentController } from './controller';
 
@@ -29,6 +30,7 @@ const missing: ConnectionReport = {
 
 beforeEach(() => {
   sessionStorage.clear();
+  vi.spyOn(accessRequests, 'list').mockResolvedValue([]);
   vi.spyOn(connectionClient, 'check').mockResolvedValue(connected);
   vi.spyOn(connectionClient, 'start');
   vi.spyOn(window, 'open').mockReturnValue(null);
@@ -83,7 +85,7 @@ it('checks each send in the background, holds duplicate submissions, and sends t
   );
   submit();
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-  expect(screen.getByText('Sending…')).toBeInTheDocument();
+  expect(screen.queryByText('Sending…')).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
   expect(test.field).toBeEnabled();
   expect(test.send).not.toHaveBeenCalled();
@@ -197,4 +199,21 @@ it('aborts a background check and ignores its late reply after leaving the Agent
   expect(signal?.aborted).toBe(true);
   await act(async () => finish(connected));
   expect(test.send).not.toHaveBeenCalled();
+});
+
+it('keeps one durable access dialog when the Agent surface and resource footer refresh', async () => {
+  vi.mocked(accessRequests.list).mockResolvedValue([
+    {
+      id: 'access-request',
+      agent_id: 'agt_1',
+      status: 'pending',
+      services: ['api-github'],
+      reason: 'Read repository',
+    },
+  ]);
+  const view = await setup();
+  await screen.findByRole('dialog', { name: 'Agent key access' });
+  submit();
+  await waitFor(() => expect(view.send).toHaveBeenCalledOnce());
+  expect(screen.getAllByRole('dialog', { name: 'Agent key access' })).toHaveLength(1);
 });

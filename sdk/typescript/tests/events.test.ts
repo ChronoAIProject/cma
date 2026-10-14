@@ -20,6 +20,11 @@ const agentEvents = {
   },
   work_step_completed: { type: 'work_step_completed', step: 'publish_ready' },
   work_step_failed: { type: 'work_step_failed', step: 'open_conversation', failure },
+  skill_installation_changed: {
+    type: 'skill_installation_changed',
+    skill_id: 'skill-1',
+    status: 'installed',
+  },
   turn_started: { type: 'turn_started', turn_sequence: 1 },
   turn_metadata_set: {
     type: 'turn_metadata_set',

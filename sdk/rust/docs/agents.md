@@ -2,6 +2,43 @@
 
 <!-- nav: 5 Agents -->
 
+Use `agents().create_lifecycle` for Image Manager selections and inline Agent
+configuration. Omit the image to use the deployment default. Persist the exact
+request and key before submission so an uncertain result can be retried safely.
+
+```rust,no_run
+use cma_sdk::{Client, IdempotencyKey};
+use cma_sdk::agents::{AgentLifecycleCreateRequest, AgentLifecycleStatus};
+# async fn provision(client: Client) -> Result<(), Box<dyn std::error::Error>> {
+let key = IdempotencyKey::new(std::env::var("CMA_CREATE_KEY")?)?;
+let request = AgentLifecycleCreateRequest {
+    workspace_id: None,
+    sandbox_id: None,
+    name: "Research".into(), image: None, repository: None, profile: None,
+};
+let receipt = client.agents().create_lifecycle(&request, &key).await?;
+let operation = client.agents().read_lifecycle(&receipt.id).await?;
+if operation.status == AgentLifecycleStatus::Succeeded {
+    // Only now is operation.agent_id ready to open.
+}
+# Ok(())
+# }
+```
+
+The receipt acknowledges durable admission. Poll `read_lifecycle` until global
+success; a phase event's `ready` state is only one gate. `WaitingForConnection`
+supplies missing services and an owner-bound connection target. After the owner
+verifies those connections, repeat `create_lifecycle` with the original request
+and key to resume the same operation. `Failed` is terminal and includes a safe
+error when available.
+
+Set `workspace_id: Some(existing_id)` to add an Agent to an owned, ready Workspace.
+Omit `image` and `repository` in this mode. The Agent inherits the existing
+Sandbox key scope; extra service scopes are refused and selecting a subset does
+not reduce the inherited scope. This path requires permission to use the
+Workspace and does not require permission to create a new Sandbox. Reusing the
+same idempotency key with another Workspace is a conflict.
+
 One Agent belongs to one allocated Worktree in an owned Workspace and Sandbox.
 Its frozen Agent profile controls model, reasoning effort, permissions, and
 skills. An Agent's conversation is shared by REST, AG-UI, and Responses.
@@ -271,3 +308,83 @@ older servers. Personal ownership reports only whether the current caller owns
 the resource; organization ownership supplies an ID for matching the caller's
 current organization choices. Use the resource's current capabilities to display
 access levels. Organization membership alone does not establish resource permissions.
+
+## Live settings
+
+`agents().models(agent_id)` returns the admitted model catalog with each model's
+`id`, display `label`, and current runtime `available` flag. A retained runtime
+may return the catalog with every choice unavailable.
+
+`agents().settings(agent_id)` reads desired `model`, `reasoning_effort`,
+`permission_mode` and `pending`. `update_settings(agent_id, &body, &key)` takes
+`UpdateAgentSettingsRequest` with all three settings for an idle Agent and a
+stable `IdempotencyKey`. Retry an uncertain HTTP reply with the exact body and
+key. `pending: true` means the durable desired settings still await runtime
+acknowledgement; read again until `pending` clears before treating them as applied.
+The immutable creation profile is preserved.
+
+## Additive skills
+
+`agents().skills(agent_id)` returns profile and live skill items, their
+`AgentSkillStatus` (`Pending`, `Installed`, or `Failed`), and `pending`,
+`can_install`, and optional `unavailable_reason`. Items may include a display
+name or failure detail. The server determines whether the Agent is idle and its
+exact runtime supports installation.
+
+```rust,no_run
+use cma_sdk::{Client, IdempotencyKey, Result, agents::InstallAgentSkillRequest};
+
+async fn add_skill(client: &Client, agent_id: &str, key: &IdempotencyKey) -> Result<()> {
+    let request = InstallAgentSkillRequest {
+        id: "research".into(), version: "1.0".into(),
+    };
+    let admitted = client.agents().install_skill(agent_id, &request, key).await?;
+    println!("Installation pending: {}", admitted.pending);
+    let current = client.agents().skills(agent_id).await?;
+    for skill in current.items { println!("{} {:?}", skill.id, skill.status); }
+    Ok(())
+}
+```
+
+Installation requires an exact Ornn version and a stable idempotency key. Retry
+an uncertain reply with the same request and key. The `202` result records
+admission; poll `skills()` within your application's deadline until `pending`
+clears, then inspect each item's status before treating it as installed. A
+failed installation is reported explicitly. Installation preserves the original
+creation profile.
+
+## Service access decisions
+
+`agents().access_requests(agent_id)` reads `AgentAccessRequestList` for the
+current owner. Each request carries its exact Agent identity, request ID,
+service selection, reason and durable status. Approval requires an explicit
+`ApproveAgentAccessRequest` and `IdempotencyKey`; denial uses
+`deny_access_request(agent_id, request_id, &key)`. Services contain 1–32 ASCII
+identifiers of 1–128 bytes using letters, digits, hyphens and underscores.
+
+```rust,no_run
+use cma_sdk::{Client, IdempotencyKey, Result, agents::{AgentAccessRequest, ApproveAgentAccessRequest}};
+
+async fn approve_services(
+    client: &Client,
+    agent_id: &str,
+    request_id: &str,
+    services: Vec<String>,
+    key: &IdempotencyKey,
+) -> Result<AgentAccessRequest> {
+    client.agents().approve_access_request(
+        agent_id, request_id, &ApproveAgentAccessRequest { services }, key,
+    ).await
+}
+```
+
+Use the same body and key after an uncertain reply: the durable service returns
+current progress on replay. `AgentAccessStatus::Connecting` and `Applying` include
+a connection target naming this access request for the owner's service connection
+flow. Recheck that target if a connection expires while access is being applied;
+reconnecting preserves the approved scope and the current request.
+`Applying` awaits runtime verification; only `Succeeded` confirms applied access.
+Read the list again after connecting services. `Denied` and `Failed` are terminal,
+with an optional safe `error` detail. The SDK rejects crossed Agent/request
+identities, inconsistent connection targets and duplicate list IDs. Listing never
+approves services or resumes an Agent.

@@ -145,12 +145,22 @@ fn advance_phase(
         .ok_or_else(invalid_execution)?
     {
         SandboxLifecycleOperation::Pause { phase, .. } => match phase {
-            SandboxPausePhase::CaptureAndPublishCheckpoint => Err(invalid_execution()),
+            SandboxPausePhase::CaptureAndPublishCheckpoint => {
+                if expected.lifecycle.home_recovery.is_some() {
+                    expected.complete_lifecycle_persistent_pause(holder, fence, at.into())
+                } else {
+                    Err(invalid_execution())
+                }
+            }
             SandboxPausePhase::PauseAgents => {
                 expected.complete_lifecycle_agent_pause(holder, fence, at.into())
             }
             SandboxPausePhase::TeardownRuntime => {
-                expected.complete_lifecycle_runtime_teardown(holder, fence, at.into())
+                if submitted.lifecycle.suspended_runtime.is_some() {
+                    expected.complete_lifecycle_runtime_suspension(holder, fence, at.into())
+                } else {
+                    expected.complete_lifecycle_runtime_teardown(holder, fence, at.into())
+                }
             }
             SandboxPausePhase::PublishPaused => {
                 expected.publish_lifecycle_paused(holder, fence, at.into())

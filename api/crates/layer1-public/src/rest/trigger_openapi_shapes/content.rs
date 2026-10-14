@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::rest::profiles_openapi_shapes::{
-    AgentProfileReference, SandboxProfileReference, WorkspaceProfileReference,
+    AgentProfileReference, PermissionLevelValue, SandboxProfileReference, ThinkingEffortValue,
+    WorkspaceProfileReference,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -159,9 +160,72 @@ pub struct TriggerPresentationBody {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TriggerTargetBody {
+    #[serde(default)]
     pub sandbox_profile: SandboxProfileReference,
+    #[serde(default)]
     pub workspace_profile: WorkspaceProfileReference,
+    #[serde(default)]
     pub agent_profile: AgentProfileReference,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inline: Option<TriggerInlineTargetBody>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TriggerImageBody {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TriggerRepositoryBody {
+    pub url: String,
+    #[serde(default, rename = "ref", skip_serializing_if = "Option::is_none")]
+    pub reference: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TriggerInlineWorkspaceBody {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository: Option<TriggerRepositoryBody>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TriggerInlineAgentBody {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    pub reasoning_effort: ThinkingEffortValue,
+    pub permission_mode: PermissionLevelValue,
+    #[serde(default)]
+    pub skills: Vec<TriggerSkillBody>,
+    #[serde(default)]
+    pub system_prompt: String,
+    #[serde(default)]
+    pub services: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TriggerSkillBody {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TriggerInlineTargetBody {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<TriggerImageBody>,
+    pub agent: TriggerInlineAgentBody,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<TriggerInlineWorkspaceBody>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -242,6 +306,48 @@ impl From<TriggerContentBody> for domain::TriggerContent {
                     layer2_core::AgentProfileId(value.target.agent_profile.id),
                     value.target.agent_profile.revision,
                 ),
+                inline: value
+                    .target
+                    .inline
+                    .map(|inline| domain::TriggerInlineTarget {
+                        image: inline.image.map(|image| domain::TriggerImage {
+                            id: image.id,
+                            version: image.version,
+                            reference: image.reference,
+                        }),
+                        agent: domain::TriggerInlineAgent {
+                            model: inline.agent.model,
+                            reasoning_effort: inline.agent.reasoning_effort.into(),
+                            permission_mode: inline.agent.permission_mode.into(),
+                            skills: inline
+                                .agent
+                                .skills
+                                .into_iter()
+                                .map(|skill| layer2_core::profiles::SkillRef {
+                                    source: layer2_core::profiles::SkillSource::Ornn,
+                                    id: layer2_core::SkillId::new(skill.id),
+                                    version: skill.version,
+                                })
+                                .collect(),
+                            system_prompt: inline.agent.system_prompt,
+                            services: inline
+                                .agent
+                                .services
+                                .into_iter()
+                                .map(layer2_core::ServiceId::new)
+                                .collect(),
+                        },
+                        workspace: inline.workspace.map(|workspace| {
+                            domain::TriggerInlineWorkspace {
+                                repository: workspace.repository.map(|repository| {
+                                    domain::TriggerRepository {
+                                        url: repository.url,
+                                        reference: repository.reference,
+                                    }
+                                }),
+                            }
+                        }),
+                    }),
             },
             reuse: domain::ReusePolicy {
                 sandbox: value.reuse.sandbox.into(),
@@ -280,6 +386,44 @@ impl From<domain::TriggerContent> for TriggerContentBody {
                     id: value.target.agent_profile.id.to_string(),
                     revision: value.target.agent_profile.revision,
                 },
+                inline: value.target.inline.map(|inline| TriggerInlineTargetBody {
+                    image: inline.image.map(|image| TriggerImageBody {
+                        id: image.id,
+                        version: image.version,
+                        reference: image.reference,
+                    }),
+                    agent: TriggerInlineAgentBody {
+                        model: inline.agent.model,
+                        reasoning_effort: inline.agent.reasoning_effort.into(),
+                        permission_mode: inline.agent.permission_mode.into(),
+                        skills: inline
+                            .agent
+                            .skills
+                            .into_iter()
+                            .map(|skill| TriggerSkillBody {
+                                id: skill.id.to_string(),
+                                version: skill.version,
+                            })
+                            .collect(),
+                        system_prompt: inline.agent.system_prompt,
+                        services: inline
+                            .agent
+                            .services
+                            .into_iter()
+                            .map(|service| service.to_string())
+                            .collect(),
+                    },
+                    workspace: inline
+                        .workspace
+                        .map(|workspace| TriggerInlineWorkspaceBody {
+                            repository: workspace.repository.map(|repository| {
+                                TriggerRepositoryBody {
+                                    url: repository.url,
+                                    reference: repository.reference,
+                                }
+                            }),
+                        }),
+                }),
             },
             reuse: TriggerReuseBody {
                 sandbox: value.reuse.sandbox.into(),

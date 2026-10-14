@@ -161,11 +161,12 @@ impl Native {
     fn receipt(&self, actor: i64, date: i64, update_id: i64) -> Activity {
         let raw = json!({"update_id":update_id,"message":{"message_id":101,"date":date,"chat":{"id":actor,"type":"private"},"from":{"id":actor,"is_bot":false,"first_name":"Alice"},"managed_bot_created":{"bot":{"id":88,"is_bot":true,"first_name":"Paper assistant","username":"paper_fixture_bot"}}}});
         let crate::ingress::telegram::Outcome::Admitted(observed) =
-            crate::ingress::telegram::observe(raw, "77", Some("manager_fixture_bot")).unwrap()
+            crate::ingress::telegram::observe(raw, "77", Some("manager_fixture_bot"), false)
+                .unwrap()
         else {
             panic!("fixture must pass native normalization")
         };
-        crate::ingress::telegram::launch(
+        let built = crate::ingress::telegram::launch(
             self.channel.clone(),
             "77",
             *observed,
@@ -173,8 +174,11 @@ impl Native {
             Instant::now(),
             now(),
         )
-        .unwrap()
-        .activity
+        .unwrap();
+        let crate::ingress::media_guard::Built::Launch(request) = built else {
+            panic!("fixture must launch")
+        };
+        request.activity
     }
     fn methods(&self) -> Vec<String> {
         self.peer
@@ -328,7 +332,7 @@ async fn managed_creation_reserves_before_button_then_verifies_exact_child_and_k
     app.begin(false).await;
     assert!(app.peer.reserved_before_button.load(Ordering::SeqCst));
     let receipt = app.receipt(42, now(), 101);
-    let cmaeg_core::activity::ActivityKind::Event { ce } = &receipt.kind else {
+    let cmaeg_core::activity::ActivityKind::Event { ce, .. } = &receipt.kind else {
         unreachable!()
     };
     assert_eq!(ce.data.as_ref().unwrap()["bot"]["id"], "88");

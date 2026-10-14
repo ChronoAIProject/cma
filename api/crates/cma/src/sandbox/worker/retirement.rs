@@ -15,9 +15,14 @@ use super::SandboxWorker;
 impl SandboxWorker {
     pub(super) async fn stop_agents(
         &self,
-        sandbox: Sandbox,
+        mut sandbox: Sandbox,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        if let Err(error) = self.remove_stopped_native_runtime(&mut sandbox).await {
+            return self
+                .retry_failure(sandbox, adapter_failure(error), now)
+                .await;
+        }
         let runtime = sandbox
             .runtime
             .as_ref()
@@ -123,6 +128,37 @@ impl SandboxWorker {
         mut sandbox: Sandbox,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        // Suspension may have reached Kubernetes before its database acknowledgement.
+        // Native deletion proves CRD and Pod absence without a running process.
+        let retained = sandbox.lifecycle.suspended_runtime.as_deref().or_else(|| {
+            sandbox.runtime.as_ref().filter(|binding| {
+                sandbox.lifecycle.home.is_some() && binding.runtime_id.starts_with("agent-sandbox:")
+            })
+        });
+        if let Some(binding) = retained {
+            if let Some(home) = &sandbox.lifecycle.home {
+                if let Err(error) = self.dependencies.adapter.verify_retained_home_route(
+                    &RuntimeHandle::new(&binding.runtime_id),
+                    &home.request,
+                ) {
+                    return self
+                        .retry_failure(sandbox, adapter_failure(error), now)
+                        .await;
+                }
+            }
+            if let Err(error) = self
+                .dependencies
+                .adapter
+                .teardown_retained_runtime(&RuntimeHandle::new(&binding.runtime_id))
+                .await
+            {
+                return self
+                    .retry_failure(sandbox, adapter_failure(error), now)
+                    .await;
+            }
+            sandbox.lifecycle.suspended_runtime = None;
+            sandbox.runtime = None;
+        }
         if let Some(binding) = &sandbox.runtime {
             if let Err(error) = crate::sandbox::runtime_attachment::adopt_bound_runtime(
                 self.dependencies.adapter.as_ref(),
@@ -178,6 +214,14 @@ impl SandboxWorker {
         mut sandbox: Sandbox,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        if sandbox.runtime.is_some() || sandbox.lifecycle.suspended_runtime.is_some() {
+            return Err(SandboxStoreError::Corrupt(
+                "home release still has a bound runtime".into(),
+            ));
+        }
+        if let Some(failure) = self.cleanup_native_home(&mut sandbox, now).await? {
+            return self.retry_failure(sandbox, failure, now).await;
+        }
         if sandbox.lifecycle.background_checkpoint.is_some() {
             return self
                 .retry_failure(
@@ -188,11 +232,6 @@ impl SandboxWorker {
                 .await;
         }
         if let Some(home) = &mut sandbox.lifecycle.home {
-            if sandbox.runtime.is_some() {
-                return Err(SandboxStoreError::Corrupt(
-                    "home release still has a bound runtime".into(),
-                ));
-            }
             if let Err(error) =
                 crate::sandbox::home::release_home(self.dependencies.adapter.as_ref(), home).await
             {
@@ -213,18 +252,8 @@ impl SandboxWorker {
                     .await
             }
         };
-        // Archive retention ends with the runtime, independently of history retention.
-        // The purger fences late publications and retries exact object deletions.
-        if let Err(error) = self
-            .dependencies
-            .checkpoints
-            .purge_checkpoint_objects(&sandbox, &operation_id(&sandbox))
-            .await
-        {
-            return self
-                .retry_failure(sandbox, dependency_failure(error), now)
-                .await;
-        }
+        // Agent-sandbox owns the runtime state on the durable home PVC. CMA
+        // does not purge checkpoint archives during retirement.
         let purge_at = now + policy.retention_grace;
         sandbox.purge_after = Some(rfc3339_at(purge_at));
         let next = if sandbox.credential.revoke_debt.is_empty() {
@@ -391,16 +420,6 @@ impl SandboxWorker {
                 sandbox.credential.queue_revoke(id, rfc3339_at(now));
             }
             return self.defer_purge_for_revocation(sandbox, now).await;
-        }
-        if let Err(error) = self
-            .dependencies
-            .checkpoints
-            .purge_checkpoint_objects(&sandbox, &operation_id(&sandbox))
-            .await
-        {
-            return self
-                .retry_failure(sandbox, dependency_failure(error), now)
-                .await;
         }
         self.dependencies
             .store

@@ -4,6 +4,7 @@ use cmaeg::{
     turns::outcomes::TurnOutcome,
     TurnConfig,
 };
+use cmaeg_core::{ids::ConsumerId, problem::ProblemCode};
 use std::time::{Duration, Instant};
 
 #[tokio::test]
@@ -274,4 +275,45 @@ async fn broken_streams_and_total_timeout_emit_named_failures() {
         );
         fixture.fake.close().await;
     }
+}
+#[tokio::test]
+async fn the_default_consumer_named_explicitly_serves_the_turn() {
+    let mut fixture = Fixture::new(Default::default(), Default::default(), 4).await;
+    let mut request = fixture.request("explicit-default");
+    request.consumer = Some(ConsumerId::default_consumer());
+    assert!(matches!(
+        fixture.runner.launch(request).await,
+        LaunchOutcome::Accepted { .. }
+    ));
+    let outcomes = fixture.terminal().await;
+    assert!(matches!(
+        outcomes.last(),
+        Some(TurnOutcome::Completed { .. })
+    ));
+    let requests = fixture.fake.requests();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(
+        requests[0].authorization.as_deref(),
+        Some("Bearer runtime-test-provider-bearer")
+    );
+    fixture.fake.close().await;
+}
+#[tokio::test]
+async fn a_turn_for_an_unconfigured_consumer_fails_before_any_provider_call() {
+    let mut fixture = Fixture::new(Default::default(), Default::default(), 4).await;
+    let mut request = fixture.request("unserved");
+    request.consumer = Some(ConsumerId::parse("csm_0123456789ab").unwrap());
+    let LaunchOutcome::Refused(problem) = fixture.runner.launch(request).await else {
+        panic!("a turn without a serving consumer must be refused");
+    };
+    assert_eq!(problem.status, 503);
+    assert_eq!(problem.code, ProblemCode::ProviderUnavailable);
+    assert_eq!(problem.detail.as_deref(), Some("provider_unavailable"));
+    let outcomes = fixture.terminal().await;
+    assert!(
+        matches!(outcomes.as_slice(), [TurnOutcome::Failed { code, .. }] if code == "provider_unavailable"),
+        "{outcomes:?}"
+    );
+    assert!(fixture.fake.requests().is_empty());
+    fixture.fake.close().await;
 }

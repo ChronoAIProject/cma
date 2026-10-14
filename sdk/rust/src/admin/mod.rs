@@ -9,8 +9,10 @@ use crate::{
 use reqwest::{Method, StatusCode};
 mod settings;
 mod types;
+mod warm_pools;
 pub use settings::*;
 pub use types::*;
+pub use warm_pools::*;
 
 /// Operator Sandbox filters.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

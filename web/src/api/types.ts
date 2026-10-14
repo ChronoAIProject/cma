@@ -64,11 +64,6 @@ export interface SandboxLifecycle {
     readonly startedAt: string;
     readonly epoch: number;
   };
-  readonly latestSnapshot?: {
-    readonly epoch: number;
-    readonly savedAt: string;
-    readonly downloadUrl: string;
-  };
   readonly backgroundSave?: {
     readonly phase:
       | 'capturing'
@@ -311,6 +306,15 @@ export interface CreateWorkspaceInput {
   readonly workspaceProfile: ProfileSelection;
   readonly trustConfirmed?: boolean;
   readonly commandsDigest?: string;
+}
+
+export type InlineWorkspaceSource =
+  | { readonly type: 'git_repository'; readonly url: string; readonly reference?: string }
+  | { readonly type: 'empty' };
+
+export interface CreateInlineWorkspaceInput {
+  readonly source: InlineWorkspaceSource;
+  readonly name?: string;
 }
 
 export interface CreateAgentInput {

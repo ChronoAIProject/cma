@@ -12,10 +12,10 @@
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
-  name: cma-api
+  name: cma-agent-manager
   namespace: chrono-bot
   labels:
-    app.kubernetes.io/name: cma-api
+    app.kubernetes.io/name: cma-agent-manager
     app.kubernetes.io/part-of: cma
 spec:
   parentRefs:
@@ -32,7 +32,7 @@ spec:
       backendRefs:
         - group: ""
           kind: Service
-          name: cma-api
+          name: cma-agent-manager
           port: 80
           weight: 1
 ---
@@ -52,6 +52,54 @@ spec:
   hostnames:
     - bot.chrono-ai.fun
   rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api/event-gateway
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /
+      backendRefs:
+        - group: ""
+          kind: Service
+          name: cma-event-gateway
+          port: 80
+          weight: 1
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api/image-manager
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /
+      backendRefs:
+        - group: ""
+          kind: Service
+          name: cma-image-manager
+          port: 80
+          weight: 1
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api/agent-manager
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /api
+      backendRefs:
+        - group: ""
+          kind: Service
+          name: cma-agent-manager
+          port: 80
+          weight: 1
     # Keep the browser on one origin without placing the web pod in the API's
     # trusted-proxy chain. API, auth, and exact discovery matches win over `/`,
     # so GFE forwards the original client chain straight to the control plane.
@@ -71,7 +119,7 @@ spec:
       backendRefs:
         - group: ""
           kind: Service
-          name: cma-api
+          name: cma-agent-manager
           port: 80
           weight: 1
     - matches:

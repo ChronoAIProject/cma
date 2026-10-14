@@ -13,6 +13,68 @@ pub enum Classification {
 // Exact backend-invalid cases not claimed as typed HTTP replay. Each is checked
 // against its source shape or the SDK's real preflight, then its shared error is decoded.
 pub const LOCAL_CASES: &[(&str, Classification)] = &[
+    ("agent-skills-install-invalid-id", Classification::Local),
+    (
+        "agent-skills-install-invalid-version",
+        Classification::Local,
+    ),
+    ("agent-skills-install-missing-key", Classification::Local),
+    ("agent-skills-install-invalid-key", Classification::Local),
+    (
+        "agent-skills-install-unknown-field",
+        Classification::TypedShape,
+    ),
+    (
+        "agent-skills-install-missing-media-type",
+        Classification::MediaType,
+    ),
+    (
+        "agent-skills-install-malformed-json",
+        Classification::RawJson,
+    ),
+    (
+        "agent-skills-install-oversized-body",
+        Classification::BodySize,
+    ),
+    ("agent-access-approve-missing-key", Classification::Local),
+    ("agent-access-approve-invalid-key", Classification::Local),
+    ("agent-access-approve-invalid-json", Classification::RawJson),
+    (
+        "agent-access-approve-missing-media-type",
+        Classification::MediaType,
+    ),
+    ("agent-access-deny-missing-key", Classification::Local),
+    ("agent-access-deny-invalid-key", Classification::Local),
+    ("agent-access-deny-invalid-json", Classification::RawJson),
+    (
+        "agent-access-deny-missing-media-type",
+        Classification::MediaType,
+    ),
+    ("settings-state-agent-invalid-input", Classification::Local),
+    (
+        "settings-agent-input-unavailable-invalid-key",
+        Classification::Local,
+    ),
+    (
+        "settings-agent-input-unavailable-missing-key",
+        Classification::Local,
+    ),
+    (
+        "settings-agent-input-unavailable-invalid-body",
+        Classification::TypedShape,
+    ),
+    (
+        "settings-agent-input-unavailable-invalid-body-reused-key",
+        Classification::TypedShape,
+    ),
+    (
+        "settings-agent-input-unavailable-missing-media-type",
+        Classification::MediaType,
+    ),
+    (
+        "settings-malformed-post-api-v1-agents-id-input",
+        Classification::RawJson,
+    ),
     (
         "gateway-connection-list-invalid-query",
         Classification::TypedShape,

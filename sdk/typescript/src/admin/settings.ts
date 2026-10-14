@@ -13,12 +13,6 @@ const pauseSeconds = (value: unknown) => {
     throw new ProtocolError('pause_after_seconds must be between 60 and 86400');
   return number;
 };
-const checkpointSeconds = (value: unknown) => {
-  const number = integer(value);
-  if (number < 60 || number > 86_400)
-    throw new ProtocolError('interval_seconds must be between 60 and 86400');
-  return number;
-};
 const sections = {
   defaults: object({
     sandbox_profile: profileReference,
@@ -26,8 +20,7 @@ const sections = {
     agent_profile: profileReference,
   }),
   inactivity: object({ pause_after_seconds: pauseSeconds }),
-  checkpoints: optional(object({ interval_seconds: checkpointSeconds })),
-  retention: object({ checkpoint_grace_days: u32, agent_log_days: u32 }),
+  retention: object({ agent_log_days: u32 }),
   limits: object({
     max_sandboxes_per_user: u32,
     visitor_max_sandboxes: u32,
@@ -62,9 +55,6 @@ export function platformSettings(value: unknown): PlatformSettings {
       },
     },
     inactivity: { ...record(raw.inactivity), ...known.inactivity },
-    ...(known.checkpoints === undefined
-      ? {}
-      : { checkpoints: { ...record(raw.checkpoints), ...known.checkpoints } }),
     retention: { ...record(raw.retention), ...known.retention },
     limits: { ...record(raw.limits), ...known.limits },
     triggers: { ...record(raw.triggers), ...known.triggers },
@@ -83,7 +73,6 @@ const patchFields = object({
   expected_revision: integer,
   defaults: optional(sections.defaults),
   inactivity: optional(sections.inactivity),
-  checkpoints: sections.checkpoints,
   retention: optional(sections.retention),
   limits: optional(sections.limits),
   triggers: optional(sections.triggers),

@@ -202,6 +202,7 @@ pub(super) fn service_with_profile_corruption(
 
 pub(super) fn profile(id: &str, owner: &str, visibility: ProfileVisibility) -> AgentProfile {
     AgentProfile {
+        internal: false,
         id: AgentProfileId(id.into()),
         owner: SubjectId::new(owner),
         name: "Research agent".into(),
@@ -245,6 +246,7 @@ fn sandbox(status: SandboxStatus, limit: u8) -> Sandbox {
             revision: 1,
             digest: "a".repeat(64),
             content: SandboxProfileContent {
+                runtime_image: None,
                 cpu_millis: 1_000,
                 memory_mib: 2_048,
                 nyxid_services: vec![],

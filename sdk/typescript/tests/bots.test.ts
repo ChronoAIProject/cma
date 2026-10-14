@@ -1,5 +1,11 @@
 import { expect, it, vi } from 'vitest';
-import { createClient, ProtocolError, TransportError, type CreateBot } from '../src/index.js';
+import {
+  createClient,
+  ProtocolError,
+  TransportError,
+  ValidationError,
+  type CreateBot,
+} from '../src/index.js';
 
 const body: CreateBot = {
   name: 'Test bot',
@@ -95,4 +101,31 @@ it('exposes the complete lifecycle and keeps opaque channel values unchanged', a
   }
   fetch.mockResolvedValueOnce(response({ ...bot, state: 'future-success' }));
   await expect(client.bots.get('bot_one')).rejects.toBeInstanceOf(ProtocolError);
+});
+
+it('creates a consumer from a gateway connection without a legacy bot identifier', async () => {
+  const connection_ref = 'opaque-gateway-connection';
+  const fetch = vi.fn().mockResolvedValueOnce(response([{ connection_ref, label: 'Research' }]));
+  const client = createClient({ baseUrl: 'https://cma.test', fetch });
+  expect(await client.bots.connections()).toEqual([{ connection_ref, label: 'Research' }]);
+  expect(new URL(fetch.mock.calls[0]![0]).pathname).toBe('/api/v1/bots/connections');
+  const request = { ...body, nyxid_bot_id: undefined, connection_ref };
+  fetch.mockResolvedValueOnce(response({ ...bot, nyxid_bot_id: '', connection_ref }, 201));
+  expect(
+    (await client.bots.create(request, { idempotencyKey: 'connection-request' })).connection_ref,
+  ).toBe(connection_ref);
+  expect(JSON.parse(fetch.mock.calls[1]![1].body)).toEqual({
+    ...body,
+    nyxid_bot_id: undefined,
+    connection_ref,
+  });
+  for (const invalid of [
+    { ...body, connection_ref },
+    { ...body, nyxid_bot_id: undefined },
+  ]) {
+    expect(() => client.bots.create(invalid, { idempotencyKey: 'invalid' })).toThrow(
+      ValidationError,
+    );
+  }
+  expect(fetch).toHaveBeenCalledTimes(2);
 });

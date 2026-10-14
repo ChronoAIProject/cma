@@ -32,6 +32,10 @@ export * from './agui/index.js';
 export * from './launch/index.js';
 export type { CommandOptions, EventOptions, PageOptions, ResourcePage } from './resources.js';
 export type * from './agents/types.js';
+export type * from './agents/lifecycle.js';
+export type * from './agents/models.js';
+export type * from './agents/skills.js';
+export type * from './agents/access-requests.js';
 export type * from './agents/shared.js';
 export type * from './agents/provenance.js';
 export type * from './agents/artifacts.js';
@@ -101,3 +105,5 @@ export { Cmaeg, type CmaegConfig } from './cmaeg/index.js';
 export * as cmaeg from './cmaeg/index.js';
 
 export * from './event-worker-profiles.js';
+
+export type { AgentSettings, UpdateAgentSettingsRequest } from './agents/settings.js';

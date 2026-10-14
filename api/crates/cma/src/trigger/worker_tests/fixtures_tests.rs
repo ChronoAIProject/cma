@@ -564,7 +564,9 @@ impl LaunchResourceDriver for FakeDriver {
             } => {
                 let launch_id = match &request.origin {
                     SandboxOrigin::Trigger { launch_id } => launch_id.clone(),
-                    SandboxOrigin::Manual => return Err(Self::missing_profile()),
+                    SandboxOrigin::Manual | SandboxOrigin::Lifecycle { .. } => {
+                        return Err(Self::missing_profile())
+                    }
                 };
                 let context = self
                     .context_for_sandbox(&request.profile)
@@ -732,9 +734,9 @@ impl LaunchResourceDriver for FakeDriver {
                         trigger_id,
                         launch_id,
                     } => (trigger_id.clone(), launch_id.clone()),
-                    AgentOrigin::Manual | AgentOrigin::WorkspaceProfile { .. } => {
-                        return Err(Self::missing_profile())
-                    }
+                    AgentOrigin::Manual
+                    | AgentOrigin::Lifecycle { .. }
+                    | AgentOrigin::WorkspaceProfile { .. } => return Err(Self::missing_profile()),
                 };
                 let context = self
                     .context_for_agent(&request.profile)
@@ -837,6 +839,7 @@ pub(super) fn frozen_inputs(
     };
     let workspace_ref = WorkspaceProfileRef::new(workspace_id, revision);
     let sandbox_content = SandboxProfileContent {
+        runtime_image: None,
         cpu_millis: 1_000,
         memory_mib: 2_048,
         nyxid_services: Vec::new(),
@@ -872,6 +875,7 @@ pub(super) fn frozen_inputs(
             sandbox_profile: sandbox_ref,
             workspace_profile: workspace_ref,
             agent_profile: agent_ref,
+            inline: None,
         },
         reuse: ReusePolicy {
             sandbox: SandboxReusePolicy::AlwaysNew,
@@ -1130,6 +1134,7 @@ pub(super) fn agent_resource(
         capabilities: RuntimeCapabilities::new([RuntimeCapability::Conversation]),
         status,
         conversation: ConversationState {
+            settings: None,
             conversation_id: was_ready.then(|| format!("conversation-{}", id.as_str())),
             runtime_generation: was_ready.then_some(1),
             last_seq: 1,

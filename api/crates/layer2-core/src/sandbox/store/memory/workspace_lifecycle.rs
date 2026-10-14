@@ -205,6 +205,10 @@ fn validate_fresh(
         (&workspace.origin, kind),
         (WorkspaceOrigin::Manual, WorkspaceAdmissionKind::Manual)
             | (
+                WorkspaceOrigin::Lifecycle { .. },
+                WorkspaceAdmissionKind::Lifecycle
+            )
+            | (
                 WorkspaceOrigin::SandboxProfile { .. },
                 WorkspaceAdmissionKind::SandboxProfile
             )

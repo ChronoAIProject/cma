@@ -1,14 +1,9 @@
 import { Presence } from './ui/Presence';
-import { ProfileViews, Operations, TriggerPublisherPage } from './ConsolePages';
+import { Operations, TriggerPublisherPage } from './ConsolePages';
 import { BotManagement, isBotRoute, canManageBots } from './BotManagement';
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { LandingCharacter } from './landing/LandingCharacter';
-import {
-  useCmaClient,
-  useProfileViewsClient,
-  useOperatorClient,
-  usePublisherClient,
-} from './api/context';
+import { useCmaClient, useOperatorClient, usePublisherClient } from './api/context';
 import { canOpenOperations } from './operator/capabilities';
 import { AgentSurface } from './agent/AgentSurface';
 import { useAgentDraft } from './agent/draft';
@@ -17,6 +12,7 @@ import { useAgentController } from './agent/controller';
 import { sameAgent } from './agent/status';
 import type { User } from './auth/types';
 import { ProfileMenu } from './profile/ProfileMenu';
+import { LegacyProfileNotice } from './profile/LegacyProfileNotice';
 import type { AppRoute } from './routing/routes';
 import { AppFrame } from './shell/AppFrame';
 import { Sidebar } from './shell/Sidebar';
@@ -27,15 +23,11 @@ import { useResourceActions, type CreateAction } from './ResourceActions';
 import { Button } from './ui/Button';
 import { IconNewChatOutline16 } from './ui/icons';
 import './Console.css';
-import type { ProfileUse } from './profiles/marketplace/client';
 import { useAgentAccess } from './resources/agentAccess';
 import { SharedAgent } from './resources/SharedAgent';
 import { SharedAgentDetails } from './resources/SharedAgentDetails';
 import { AgentInventory } from './resources/AgentInventory';
-import { SharingButton } from './resources/SharingButton';
-import { ArtifactButton } from './resources/ArtifactButton';
 import { ArtifactPublicationScope } from './resources/artifactRecovery';
-import { ChannelUsage } from './resources/ChannelUsage';
 import { SandboxAccessPage } from './resources/SandboxAccessPage';
 import { WorkspaceContents } from './resources/WorkspaceContents';
 import { scopeValue } from './resources/scope';
@@ -49,7 +41,6 @@ interface ConsoleProps {
   readonly onSignOut: () => void;
   readonly onNavigate: (route: AppRoute) => void;
   readonly onCreate?: (action: CreateAction) => void;
-  readonly onUseProfile?: (selection: ProfileUse) => void;
   readonly hierarchyRevision?: number;
 }
 
@@ -59,7 +50,6 @@ export function Console({
   onSignOut,
   onNavigate,
   onCreate,
-  onUseProfile,
   hierarchyRevision = 0,
 }: ConsoleProps) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -88,7 +78,6 @@ export function Console({
     route.kind === 'agent' && (client.resourceViews === undefined || agentAccess.personalReady)
       ? route.agentId
       : undefined;
-  const profiles = useProfileViewsClient();
   const operator = useOperatorClient();
   const publisher = usePublisherClient();
   const navigation = useNavigation(client);
@@ -122,14 +111,16 @@ export function Console({
   const canUse = user.capabilities.includes('use_own_sandboxes');
   const canCreate = !user.visitor && canUse && onCreate !== undefined;
   const canCreateInScope = canCreate && navigationScope === '' && scopeReady;
-  const canCreateSandbox = canCreate && user.capabilities.includes('create_sandbox');
   const permissions: TreePermissions = {
     createAgent: canCreate,
+    // Workspace creation is an inline Agent Manager operation. The legacy
+    // profile picker remains available only to compatibility handoffs.
     createWorkspace: canCreate,
     pauseSandbox: canUse,
     removeWorkspace: canUse,
     stopAgent: canUse,
     deleteAgent: canUse,
+    exportHistory: canUse,
     deleteSandbox: user.capabilities.includes('delete_own_sandbox'),
   };
   const ready = agent.state.status === 'ready' ? agent.state : undefined;
@@ -226,39 +217,10 @@ export function Console({
   ) : route.kind === 'event_worker_profiles' ||
     route.kind === 'event_worker_profile' ||
     route.kind === 'profiles' ||
-    route.kind === 'profile' ||
-    route.kind === 'marketplace' ||
-    route.kind === 'marketplace_profile' ? (
-    profiles === undefined ? (
-      <section className="console__empty">
-        <h1>Profiles unavailable</h1>
-      </section>
-    ) : (
-      <Suspense
-        fallback={
-          <section className="console__empty" role="status">
-            Loading profiles
-          </section>
-        }
-      >
-        <ProfileViews
-          key={JSON.stringify(route)}
-          route={route}
-          viewerId={user.id}
-          client={profiles}
-          onNavigate={onNavigate}
-          canManage={!user.visitor && user.capabilities.includes('manage_own_profiles')}
-          onUse={
-            canCreate &&
-            (route.kind !== 'marketplace_profile' ||
-              route.profileKind !== 'sandbox' ||
-              canCreateSandbox)
-              ? onUseProfile
-              : undefined
-          }
-        />
-      </Suspense>
-    )
+    route.kind === 'profile' ? (
+    <LegacyProfileNotice />
+  ) : route.kind === 'marketplace' || route.kind === 'marketplace_profile' ? (
+    <LegacyProfileNotice />
   ) : route.kind === 'operations' ? (
     operator !== undefined && canOpenOperations(user.capabilities) ? (
       <Suspense
@@ -320,9 +282,6 @@ export function Console({
           >
             New agent
           </Button>
-          {canCreateSandbox ? (
-            <Button onClick={() => onCreate?.({ kind: 'new_sandbox' })}>New sandbox</Button>
-          ) : null}
         </div>
       ) : null}
     </section>
@@ -339,49 +298,8 @@ export function Console({
             open={detailsOpen}
             onClose={() => setDetailsOpen(false)}
             detail={ready?.detail}
-            workspace={ready?.workspace}
             historyLoading={ready?.historyLoading}
             pending={agent.pending}
-            actionError={agent.actionError}
-            onNavigate={onNavigate}
-            onStop={agent.stop}
-            onDelete={agent.delete}
-            channelUsage={
-              detailsOpen && ready !== undefined && client.resourceViews !== undefined ? (
-                <ChannelUsage
-                  key={ready.detail.id}
-                  client={client.resourceViews}
-                  id={ready.detail.id}
-                />
-              ) : undefined
-            }
-            artifacts={
-              detailsOpen && ready !== undefined && client.resourceViews !== undefined ? (
-                <ArtifactButton
-                  publicationScope={artifactPublicationScope}
-                  key={ready.detail.id}
-                  client={client.resourceViews}
-                  id={ready.detail.id}
-                />
-              ) : undefined
-            }
-            sharing={
-              detailsOpen && ready !== undefined && client.resourceViews !== undefined ? (
-                <SharingButton
-                  client={client.resourceViews}
-                  target={{
-                    kind: 'agent',
-                    id: ready.detail.id,
-                    name: ready.detail.title?.trim() || 'Untitled agent',
-                  }}
-                  sandbox={{
-                    kind: 'sandbox',
-                    id: ready.detail.sandbox.id,
-                    name: ready.detail.sandbox.name,
-                  }}
-                />
-              ) : undefined
-            }
           />
         ) : shared !== undefined ? (
           <SharedAgentDetails

@@ -58,6 +58,7 @@ fn sandbox(
             revision: 1,
             digest: "a".repeat(64),
             content: SandboxProfileContent {
+                runtime_image: None,
                 cpu_millis: 1_000,
                 memory_mib: 2_048,
                 nyxid_services: vec![],
@@ -187,6 +188,7 @@ fn agent(sandbox: &Sandbox, id: &str, status: AgentStatus) -> Agent {
         ]),
         status,
         conversation: ConversationState {
+            settings: None,
             conversation_id: Some(format!("conversation-{id}")),
             runtime_generation: Some(1),
             last_seq: 0,

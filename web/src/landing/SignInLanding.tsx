@@ -36,9 +36,26 @@ export function SignInLanding({ onSignIn }: { readonly onSignIn: () => Promise<v
       className={`auth-gate sign-in-landing${entering ? ' sign-in-landing--entering' : ''}`}
       aria-busy={entering}
     >
-      <div className="brand-home sign-in-landing__brand">
-        <LandingCharacter key={String(failed)} onActivate={activate} />
-        <h1>ChronoAI Managed Agent</h1>
+      <div className="sign-in-landing__layout">
+        <div className="brand-home sign-in-landing__brand">
+          <LandingCharacter key={String(failed)} onActivate={activate} />
+          <h1>ChronoAI Managed Agent</h1>
+        </div>
+        <aside className="sign-in-landing__services" aria-label="CMA services">
+          <p className="sign-in-landing__eyebrow">One console, three services</p>
+          <article>
+            <h2>Agent Manager</h2>
+            <p>Create and operate persistent agents with their own workspaces.</p>
+          </article>
+          <article>
+            <h2>Image Manager</h2>
+            <p>Choose a trusted public or private runtime image for each agent.</p>
+          </article>
+          <article>
+            <h2>Event Gateway</h2>
+            <p>Connect event channels and deliver verified events to your agents.</p>
+          </article>
+        </aside>
         <Presence>
           {failed ? (
             <div role="alert">

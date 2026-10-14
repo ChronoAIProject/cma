@@ -24,7 +24,7 @@ impl AgentOperationService {
             .ok_or(AgentOperationError::Forbidden)
     }
 
-    pub(super) async fn owned_agent(
+    pub(in crate::sandbox) async fn owned_agent(
         &self,
         caller: &Caller,
         id: &AgentId,

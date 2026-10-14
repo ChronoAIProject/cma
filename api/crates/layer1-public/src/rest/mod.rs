@@ -15,6 +15,10 @@ mod bot_setups;
 mod bots;
 pub use bot_setups::bot_setup_router;
 pub use bots::bot_router;
+mod agent_access_requests;
+pub use agent_access_requests::agent_access_requests_router;
+#[cfg(test)]
+mod agent_access_requests_tests;
 mod agent_artifacts;
 mod agent_openapi_shapes;
 pub use agent_artifacts::agent_artifacts_router;
@@ -22,8 +26,12 @@ pub use agent_artifacts::agent_artifacts_router;
 mod agent_artifacts_tests;
 mod agent_channel_usage;
 mod agent_command_admission;
+mod agent_models;
 mod agent_operate;
+mod agent_settings;
+mod agent_skills;
 pub use agent_channel_usage::agent_channel_usage_router;
+pub use agent_skills::AgentSkillRuntimeSupport;
 #[cfg(test)]
 mod agent_channel_usage_tests;
 mod agent_provenance;
@@ -35,6 +43,8 @@ mod agent_reads;
 mod agent_shared_shapes;
 mod agent_source;
 pub use agent_provenance::agent_provenance_router;
+mod agent_history;
+mod agent_lifecycle;
 #[cfg(test)]
 mod agent_provenance_tests;
 mod agents;
@@ -124,6 +134,14 @@ mod triggers;
 mod workspaces;
 mod worktrees;
 
+pub use agent_history::{AgentHistoryExportError, AgentHistoryExporter};
+pub use agent_lifecycle::{
+    AgentLifecycleConnectionRequired, AgentLifecycleCreateReceipt, AgentLifecycleCreateRequest,
+    AgentLifecycleEventView, AgentLifecycleImageReference, AgentLifecycleOperationReadError,
+    AgentLifecycleOperationReader, AgentLifecycleOperationView, AgentLifecyclePermissions,
+    AgentLifecycleProfile, AgentLifecycleProvisioner, AgentLifecycleProvisioningError,
+    AgentLifecycleRepository, AgentLifecycleSkill,
+};
 pub use agent_source::agent_source_router;
 pub use agents::{agent_router, AgentRoutesState};
 pub use embed::{
@@ -405,3 +423,8 @@ mod tests {
 }
 
 pub mod event_workers;
+
+pub use agent_models::{
+    agent_models_router, AgentModelCatalog, AgentModelCatalogError, AgentModelRuntimeSupport,
+    AgentModelView, AgentModelsView,
+};

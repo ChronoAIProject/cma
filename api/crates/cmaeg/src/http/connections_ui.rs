@@ -8,6 +8,8 @@ use axum::{
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use sha2::{Digest, Sha256};
 
+use super::html::escape;
+
 const STYLE: &str = include_str!("connections_ui.css");
 
 pub(crate) struct ConnectionSetupPage {
@@ -285,15 +287,6 @@ fn allowed_link(value: &str) -> bool {
         && url.password().is_none()
         && url.port_or_known_default() == Some(443)
         && matches!(url.host_str(), Some("t.me" | "core.telegram.org"))
-}
-
-fn escape(value: &str) -> String {
-    value
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&#39;")
 }
 
 #[cfg(test)]

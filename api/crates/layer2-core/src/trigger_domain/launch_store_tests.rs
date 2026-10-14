@@ -31,6 +31,7 @@ fn content() -> TriggerContent {
             sandbox_profile: SandboxProfileRef::new(SandboxProfileId("sbp_one".into()), 1),
             workspace_profile: WorkspaceProfileRef::new(WorkspaceProfileId("wkp_one".into()), 1),
             agent_profile: AgentProfileRef::new(AgentProfileId("agp_one".into()), 1),
+            inline: None,
         },
         reuse: ReusePolicy {
             sandbox: SandboxReusePolicy::ReuseExisting,

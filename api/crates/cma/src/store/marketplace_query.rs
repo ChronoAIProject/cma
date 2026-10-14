@@ -72,6 +72,7 @@ async fn query_collection(
     let mut filter = doc! {
         "document_schema_version": DOCUMENT_SCHEMA_VERSION,
         "visibility": "public",
+        "record.internal": { "$ne": true },
         "retired_at": Bson::Null,
         "last_revision": { "$gt": 0_i64 },
         "latest_published_at": { "$type": "string" },

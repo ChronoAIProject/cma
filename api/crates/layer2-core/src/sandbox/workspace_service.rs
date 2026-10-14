@@ -1,19 +1,8 @@
 mod binding;
+mod inline;
+mod lifecycle;
+pub use inline::{CreateInlineWorkspace, InlineWorkspaceSource};
 mod support;
-use support::{profile_error, require, require_launch, store_error, trust_error, workspace};
-
-use std::sync::Arc;
-
-use serde::{Deserialize, Serialize};
-
-use crate::profiles::store::{ProfileStoreError, ProfileUseRecorder, WorkspaceProfileStore};
-use crate::profiles::{
-    content_digest, require_trust_confirmation, MarketplaceError, MarketplaceLocator,
-    ProfileVisibility, WorkspaceLocation, WorkspaceProfileRef, WorkspaceProfileRevision,
-    WorkspaceProfileSnapshot,
-};
-use crate::{now_rfc3339, Caller, Capability, SandboxId, SubjectId, WorkspaceId};
-
 use super::service_trust::{validate_workspace_profile, validate_workspace_revision};
 use super::store::{
     Page, PageRequest, SandboxStoreError, WorkspaceAdmission, WorkspaceAdmissionKind,
@@ -23,6 +12,18 @@ use super::{
     Sandbox, Workspace, WorkspaceOrigin, WorkspaceSource, WorkspaceStatus, WorkspaceWorkState,
     WorkspaceWorkStep,
 };
+use crate::profiles::store::{ProfileStoreError, ProfileUseRecorder, WorkspaceProfileStore};
+use crate::profiles::{
+    content_digest, require_trust_confirmation, MarketplaceError, MarketplaceLocator,
+    ProfileVisibility, WorkspaceLocation, WorkspaceProfileContent, WorkspaceProfileRef,
+    WorkspaceProfileRevision, WorkspaceProfileSnapshot,
+};
+use crate::{
+    now_rfc3339, Caller, Capability, SandboxId, SubjectId, WorkspaceId, WorkspaceProfileId,
+};
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use support::{profile_error, require, require_launch, store_error, trust_error, workspace};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -154,6 +155,60 @@ impl WorkspaceService {
             request.confirmed_digest.as_deref(),
         )
         .map_err(trust_error)?;
+        self.admit(
+            &sandbox,
+            &revision,
+            WorkspaceOrigin::Manual,
+            WorkspaceAdmissionKind::Manual,
+        )
+        .await
+    }
+
+    /// Admit one workspace from an inline source and hand it to the normal
+    /// agent-sandbox workspace worker. No Workspace Profile is read or
+    /// published on this path.
+    pub async fn create_inline(
+        &self,
+        caller: &Caller,
+        sandbox_id: &SandboxId,
+        request: CreateInlineWorkspace,
+    ) -> Result<Workspace, WorkspaceServiceError> {
+        require(caller)?;
+        let sandbox = self.owned_sandbox(caller, sandbox_id).await?;
+        self.connections.check_sandbox(&sandbox).await?;
+        if !sandbox.accepts_creation_admission() {
+            return Err(WorkspaceServiceError::SandboxNotReady);
+        }
+        let (location, default_name) = match request.source {
+            InlineWorkspaceSource::GitRepository { url, reference } => (
+                WorkspaceLocation::GitRepository { url, reference },
+                String::new(),
+            ),
+            InlineWorkspaceSource::Empty => (
+                WorkspaceLocation::Directory {
+                    name: request.name.clone().unwrap_or_else(|| "workspace".into()),
+                },
+                request.name.clone().unwrap_or_else(|| "workspace".into()),
+            ),
+        };
+        let content = WorkspaceProfileContent {
+            location,
+            name: request.name.unwrap_or(default_name),
+            setup_commands: Vec::new(),
+            agent_profiles: Vec::new(),
+        };
+        let published_at = now_rfc3339();
+        content
+            .validate()
+            .map_err(|error| WorkspaceServiceError::InvalidProfile(error.to_string()))?;
+        let revision = WorkspaceProfileRevision {
+            profile_id: WorkspaceProfileId::generate(),
+            revision: 1,
+            digest: content_digest(&content)
+                .map_err(|error| WorkspaceServiceError::InvalidProfile(error.to_string()))?,
+            content,
+            published_at,
+        };
         self.admit(
             &sandbox,
             &revision,

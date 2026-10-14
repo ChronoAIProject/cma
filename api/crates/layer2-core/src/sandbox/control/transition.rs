@@ -1,5 +1,6 @@
 use crate::sandbox::store::{
-    apply_command, PendingApplication, SandboxLifecycleCommand, SandboxLifecycleCommandDisposition,
+    apply_sandbox_lifecycle_command, SandboxLifecycleCommand, SandboxLifecycleCommandApplication,
+    SandboxLifecycleCommandDisposition,
 };
 use crate::sandbox::{Sandbox, SandboxEventKind, SandboxReviveCause, SandboxStatus};
 
@@ -83,12 +84,16 @@ pub fn plan_sandbox_control(
         }
     };
     Ok(
-        match apply_command(current.clone(), &command).map_err(|_| SandboxControlError::Corrupt)? {
-            PendingApplication::Commit { sandbox, event, .. } => SandboxControlPlan::Transition {
-                sandbox: Box::new(sandbox),
-                event,
-            },
-            PendingApplication::Accepted(outcome) => SandboxControlPlan::NoChange {
+        match apply_sandbox_lifecycle_command(current.clone(), &command)
+            .map_err(|_| SandboxControlError::Corrupt)?
+        {
+            SandboxLifecycleCommandApplication::Commit { sandbox, event, .. } => {
+                SandboxControlPlan::Transition {
+                    sandbox: Box::new(sandbox),
+                    event,
+                }
+            }
+            SandboxLifecycleCommandApplication::Accepted(outcome) => SandboxControlPlan::NoChange {
                 disposition: match outcome.disposition {
                     SandboxLifecycleCommandDisposition::AlreadyScheduled => {
                         SandboxControlDisposition::AlreadyScheduled
@@ -101,7 +106,7 @@ pub fn plan_sandbox_control(
                     }
                 },
             },
-            PendingApplication::NotEligible(_) => {
+            SandboxLifecycleCommandApplication::NotEligible(_) => {
                 SandboxControlPlan::Reject(SandboxControlFailure::NotEligible)
             }
         },

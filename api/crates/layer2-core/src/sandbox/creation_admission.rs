@@ -7,7 +7,7 @@ use super::{
 impl WorkspaceAdmissionKind {
     pub fn accepts(self, sandbox: &Sandbox) -> bool {
         match self {
-            Self::Manual | Self::Trigger => sandbox.accepts_creation_admission(),
+            Self::Manual | Self::Trigger | Self::Lifecycle => sandbox.accepts_creation_admission(),
             Self::SandboxProfile => {
                 sandbox.status == SandboxStatus::Installing
                     && sandbox.lifecycle.checkpoint_capture.is_none()
