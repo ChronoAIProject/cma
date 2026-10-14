@@ -85,7 +85,7 @@ it('checks each send in the background, holds duplicate submissions, and sends t
   );
   submit();
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-  expect(screen.getByText('Sending…')).toBeInTheDocument();
+  expect(screen.queryByText('Sending…')).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
   expect(test.field).toBeEnabled();
   expect(test.send).not.toHaveBeenCalled();
