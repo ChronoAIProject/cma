@@ -8,6 +8,45 @@ use layer2_core::sandbox::{
 };
 use mongodb::{bson::doc, ClientSession};
 
+pub(in crate::store) async fn completed_installation_digest(
+    store: &MongoSandboxStore,
+    sandbox: &Sandbox,
+) -> Result<Option<String>, SandboxStoreError> {
+    use layer2_core::sandbox::SandboxWorkStep;
+    if sandbox.status != SandboxStatus::Provisioning
+        || sandbox.work.step != SandboxWorkStep::ProvisionRuntime
+        || sandbox.lifecycle.operation.is_some()
+        || !matches!(sandbox.origin, SandboxOrigin::Lifecycle { .. })
+        || !sandbox.credential.source.is_managed()
+        || sandbox.credential.key_generation != 0
+        || sandbox.credential.delivered
+        || sandbox.credential.current.is_some()
+        || sandbox.credential.pending.is_some()
+        || !sandbox.credential.revoke_debt.is_empty()
+        || !sandbox.credential.service_grants.is_empty()
+        || sandbox
+            .lifecycle
+            .home
+            .as_ref()
+            .is_none_or(|home| home.native_pool.is_none())
+    {
+        return Ok(None);
+    }
+    let mut session = store.client.start_session().await.map_err(unavailable)?;
+    let Some(record) = claimed(store, sandbox, &mut session).await? else {
+        return Ok(None);
+    };
+    let mut reaches = sandbox.credential.reaches.clone();
+    reaches.sort();
+    reaches.dedup();
+    if sandbox.work.execution != Some(record.payload.plan.execution)
+        || reaches != record.payload.plan.reaches
+    {
+        return Ok(None);
+    }
+    Ok(record.payload.installed_request_sha256)
+}
+
 pub(super) async fn claimed(
     store: &MongoSandboxStore,
     sandbox: &Sandbox,

@@ -18,7 +18,7 @@ mod tests;
 mod tools;
 mod work;
 pub(super) use admission::{claim_ready, ClaimOutcome};
-pub(super) use adoption::{adopt_agent, adopt_workspace};
+pub(super) use adoption::{adopt_agent, adopt_workspace, completed_installation_digest};
 pub(crate) use model::NativePreparedPlan;
 use model::Record;
 pub(super) use tools::prepared_conversation;
