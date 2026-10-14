@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 187,
+  "openapi_operations": 190,
   "operations": {
     "GET /api/v1/organizations": {
       "classification": "openapi",
@@ -2711,6 +2711,51 @@
         "invalid_idempotency_key",
         "invalid_json",
         "json_content_type_required"
+      ]
+    },
+    "GET /api/v1/agents/{id}/models": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_models.rs# Owner authority, exact runtime support, and durable admission define the customization contract.",
+      "required_problems": [
+        "agent_not_found",
+        "forbidden",
+        "instance_service_unavailable",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/agents/{id}/skills": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_skills.rs# Owner authority, exact runtime support, and durable admission define the customization contract.",
+      "required_problems": [
+        "agent_not_found",
+        "forbidden",
+        "instance_service_unavailable",
+        "not_authenticated"
+      ]
+    },
+    "POST /api/v1/agents/{id}/skills": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_skills.rs# Owner authority, exact runtime support, and durable admission define the customization contract.",
+      "required_problems": [
+        "agent_not_found",
+        "agent_not_ready",
+        "agent_operation_in_flight",
+        "connections_required",
+        "forbidden",
+        "hierarchy_service_unavailable",
+        "idempotency_in_flight",
+        "idempotency_key_reused",
+        "idempotency_recovery_required",
+        "instance_service_unavailable",
+        "invalid_agent_request",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "sandbox_checkpoint_in_progress",
+        "sandbox_credential_setup_required",
+        "store_failed"
       ]
     }
   }
