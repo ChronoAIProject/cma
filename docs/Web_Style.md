@@ -745,6 +745,20 @@ agree and a fresh account check succeeds after the last read. Continue to hold
 Send until complete history, current Sandbox state and required connections are
 verified; an early activity page alone does not authorize interaction.
 
+Once a retained creation operation names its actual Agent, its modal may prepare
+that exact Agent's transport while lineage is checked. Transfer the same v2
+selection once into navigation, keeping the loader's fresh account check and the
+existing persisted transport choice. Closing or changing the creation scope
+cancels preparation; account and local sign-in epoch changes invalidate it. A
+reload uses the normal freshly authorized opening path.
+
+After current personal access is verified for an exact Agent, check required
+connections while its conversation loads. Keep the result bound to that Agent,
+viewer, client and uninterrupted authorization generation. Refused or uncertain
+access discards the result and cancels pending checks. Send still waits for full
+history and current Sandbox eligibility, and each click freshly checks connections
+before submitting the captured draft. No extra preparation notice is introduced.
+
 A newly admitted Agent may open while its recorded state is **Starting**, after
 verified Agent/Worktree/Workspace/Sandbox lineage and a fresh Active parent without
 an operation or save in progress. Keep the actual Starting label and recorded
@@ -2070,3 +2084,5 @@ draft. Summary readers never receive the management history control.
 | 2026-10-14 | Open actual admitted Agents while Starting after lineage and parent checks; allow durable v2 queued input with receipt-based draft acknowledgement. Retain creation setup through early navigation and offer explicit same-request continuation when a worker rechecks connections. Preserve existing transports and hold input/recovery during uncertain access or parent lifecycle work. |
 
 | 2026-10-14 | Load independent Responses v2 Agent projections and the first activity page concurrently, while retaining the account check after all required reads and every history, Sandbox and connection barrier before Send. |
+
+| 2026-10-14 | Prepare transport for the actual created Agent during lineage reads, hand it to one navigation load with fresh entry authorization, and overlap exact-Agent connection verification with authorized conversation loading. Preserve retained transport choices, cancel stale account/target generations, and keep all history, parent and click-time Send checks. |

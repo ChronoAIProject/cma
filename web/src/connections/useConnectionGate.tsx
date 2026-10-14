@@ -12,7 +12,7 @@ interface PendingAction {
 }
 
 /** Keep the original operation in memory; only the verified server result releases it. */
-export function useConnectionGate(enabled = true) {
+export function useConnectionGate(enabled = true, scope?: object) {
   const [pending, setPending] = useState<PendingAction>();
   const [interactive, setInteractive] = useState(false);
   const [error, setError] = useState<string>();
@@ -24,7 +24,7 @@ export function useConnectionGate(enabled = true) {
       active.current = undefined;
       setPending(undefined);
     },
-    [enabled],
+    [enabled, scope],
   );
   const run = (target: ConnectionTarget, action: () => void, forceSubscription = false) => {
     if (!enabled || active.current !== undefined) return;
