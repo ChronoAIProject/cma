@@ -233,10 +233,15 @@ pub(super) fn validate_evidence(
                     && code.as_ref().is_none_or(|value| valid_notice_text(value, 512))
                     && message.as_ref().is_none_or(|value| valid_notice_text(value, 4096))
         ),
-        PublicationKind::Retry => matches!(
-            mutation.agent_logs.as_slice(),
-            [AgentLogKind::WorkStepFailed { step, .. }] if *step == current.work.step
-        ),
+        PublicationKind::Retry => {
+            (current.work.step == AgentWorkStep::WaitForWorkspace
+                && current.has_no_runtime_effects()
+                && mutation.agent_logs.is_empty())
+                || matches!(
+                    mutation.agent_logs.as_slice(),
+                    [AgentLogKind::WorkStepFailed { step, .. }] if *step == current.work.step
+                )
+        }
         PublicationKind::Advance => matches!(
             mutation.agent_logs.as_slice(),
             [AgentLogKind::WorkStepCompleted { step }] if *step == current.work.step
