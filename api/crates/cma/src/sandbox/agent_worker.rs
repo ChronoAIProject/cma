@@ -12,6 +12,7 @@ use super::live_agents::{DurableAgentConnectionLossHandler, LiveAgentRegistry};
 mod cleanup;
 mod connection;
 mod first_message;
+mod live_skills;
 mod reconcile;
 mod startup;
 mod startup_open;
@@ -138,6 +139,7 @@ impl AgentWorker {
 
     async fn execute(&self, agent: Agent, now: SystemTime) -> Result<(), SandboxStoreError> {
         match agent.work.step {
+            AgentWorkStep::InstallSkill => self.install_skill(agent, now).await,
             AgentWorkStep::AddWorktree => self.add_worktree(agent, now).await,
             AgentWorkStep::MaterializeHome => self.materialize_home(agent, now).await,
             AgentWorkStep::OpenConversation => self.open_conversation(agent, now).await,

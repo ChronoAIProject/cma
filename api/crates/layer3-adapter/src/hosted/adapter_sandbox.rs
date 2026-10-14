@@ -284,6 +284,15 @@ impl SandboxAdapter for HostedAdapter {
         agent::materialize_home(self, handle, authority_fence, request).await
     }
 
+    async fn install_agent_skill(
+        &self,
+        handle: &RuntimeHandle,
+        authority_fence: u64,
+        request: &crate::AgentSkillInstallRequest,
+    ) -> crate::Result<()> {
+        agent::install_skill(self, handle, authority_fence, request).await
+    }
+
     async fn remove_agent_home(
         &self,
         handle: &RuntimeHandle,

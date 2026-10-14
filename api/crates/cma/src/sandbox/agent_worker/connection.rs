@@ -75,16 +75,21 @@ impl AgentWorker {
     ) -> Result<(), SandboxStoreError> {
         let fence = claimed_fence(&agent, &self.config.holder)?;
         for _ in 0..MAX_PUBLICATION_RETRIES {
-            let next = if agent
-                .conversation
-                .first_message
-                .as_ref()
-                .is_some_and(|message| message.state == FirstMessageDelivery::Queued)
-            {
-                AgentWorkStep::DispatchFirstMessage
-            } else {
-                AgentWorkStep::None
-            };
+            let next =
+                if agent
+                    .conversation
+                    .first_message
+                    .as_ref()
+                    .is_some_and(|message| message.state == FirstMessageDelivery::Queued)
+                {
+                    AgentWorkStep::DispatchFirstMessage
+                } else if agent.work.live_skills.last().is_some_and(|s| {
+                    s.status == layer2_core::sandbox::AgentSkillInstallStatus::Pending
+                }) {
+                    AgentWorkStep::InstallSkill
+                } else {
+                    AgentWorkStep::None
+                };
             match self
                 .progress(agent.clone(), next, now, None, Vec::new(), None, None)
                 .await
@@ -114,13 +119,15 @@ impl AgentWorker {
     }
 }
 
-fn restored_connection_is_ready(sandbox: &Sandbox, agent: &Agent) -> bool {
+pub(super) fn restored_connection_is_ready(sandbox: &Sandbox, agent: &Agent) -> bool {
     let Some(operation) = sandbox.lifecycle.operation.as_ref() else {
         return false;
     };
     // Reconnection must settle before final activation, but grants no message admission.
-    agent.work.step == AgentWorkStep::PublishConnection
-        && sandbox.status == operation.expected_status()
+    matches!(
+        agent.work.step,
+        AgentWorkStep::PublishConnection | AgentWorkStep::InstallSkill
+    ) && sandbox.status == operation.expected_status()
         && matches!(
             operation,
             SandboxLifecycleOperation::Revive {
