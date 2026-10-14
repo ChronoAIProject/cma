@@ -26,7 +26,8 @@ export function EventGateway({
       const value = await serviceRequest<{ first_text: string }>(
         'event-gateway',
         `/v1/channels/${segment(id)}/test`,
-        { method: 'POST' },
+        // Allow the Gateway's 90-second startup and 30-second completion windows.
+        { method: 'POST', signal: AbortSignal.timeout(125_000) },
       );
       setResult(value.first_text);
     } catch (e) {
