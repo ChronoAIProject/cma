@@ -31,7 +31,7 @@ export function SandboxOverview({
   readonly onAction: (action: TreeAction) => void;
   readonly onNavigate: (route: AppRoute) => void;
 }) {
-  const [settings, setSettings] = useState<SandboxProfileSettings>();
+  const [profileSettings, setSettings] = useState<SandboxProfileSettings>();
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [contents, setContents] = useState<{
     workspaces: readonly WorkspaceDetail[];
@@ -39,8 +39,14 @@ export function SandboxOverview({
     failed: boolean;
   }>();
   const [retry, setRetry] = useState(0);
+  const { agentProvider, modelAccess } = sandbox;
+  const hasPinnedSettings = agentProvider !== undefined && modelAccess !== undefined;
+  const settings = hasPinnedSettings
+    ? { agentProvider, modelAccess, nyxidServices: sandbox.nyxidServices ?? [] }
+    : profileSettings;
   const { id: profileId, revision: profileRevision, digest: profileDigest } = sandbox.profile;
   useEffect(() => {
+    if (hasPinnedSettings) return;
     const abort = new AbortController();
     void client
       .readSandboxProfileSettings(
@@ -57,7 +63,7 @@ export function SandboxOverview({
         if (!abort.signal.aborted) setSettingsLoaded(true);
       });
     return () => abort.abort();
-  }, [client, profileId, profileRevision, profileDigest, retry]);
+  }, [client, profileId, profileRevision, profileDigest, hasPinnedSettings, retry]);
   useEffect(() => {
     const abort = new AbortController();
     void (async () => {
