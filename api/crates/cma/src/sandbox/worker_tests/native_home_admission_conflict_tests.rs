@@ -11,7 +11,9 @@ use layer2_core::sandbox::{
     AgentOrigin, AgentWorkStep, Workspace, WorkspaceOrigin, WorkspaceSource, WorkspaceStatus,
     WorkspaceWorkState, WorkspaceWorkStep,
 };
-use layer2_core::{AgentId, AgentProfileId, RuntimeCapabilities, WorkspaceId, WorktreeId};
+use layer2_core::{
+    AgentId, AgentProfileId, RuntimeCapabilities, RuntimeCapability, WorkspaceId, WorktreeId,
+};
 
 async fn admit_early_agent(harness: &Harness, parent: &Sandbox, at: String) {
     let reference = &parent.profile.content.workspace_profiles[0];
@@ -83,7 +85,7 @@ async fn admit_early_agent(harness: &Harness, parent: &Sandbox, at: String) {
                 digest: content_digest(&content).unwrap(),
                 content,
             },
-            capabilities: RuntimeCapabilities::default(),
+            capabilities: RuntimeCapabilities::new([RuntimeCapability::Conversation]),
             title: None,
             first_message: None,
             creation_key: format!("lifecycle:{}", content_digest(&origin).unwrap()),
