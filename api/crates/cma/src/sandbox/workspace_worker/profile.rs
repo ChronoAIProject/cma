@@ -43,7 +43,7 @@ impl ProfileWorkspaceProvisioner for DurableProfileWorkspaceProvisioner {
             })?;
         let drained = self
             .worker
-            .run_until_ready(&workspace.id, SystemTime::now())
+            .run_until_ready_observing_bootstrap(&workspace.id, sandbox, SystemTime::now())
             .await
             .map_err(|error| SandboxDependencyError::Transient(error.to_string()))?;
         let workspace = drained.workspace;
