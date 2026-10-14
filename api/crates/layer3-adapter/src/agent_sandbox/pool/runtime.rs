@@ -134,7 +134,11 @@ fn validate_request(
         ));
     }
     let expected = [
-        ("cma-home", "/home/cma", "home"),
+        (
+            "cma-home",
+            home.request.policy.mount_path("/home/cma"),
+            "home",
+        ),
         ("cma-state", "/var/lib/cma-runtime", "state"),
         ("cma-transfer", "/var/lib/cma-transfer", "transfer"),
     ];

@@ -173,6 +173,23 @@ fn router(local: &Arc<Store>, remote: &Arc<Store>) -> RoutedHomeVolumes {
     .unwrap()
 }
 
+#[test]
+fn configured_authorities_are_recognized_without_selecting_an_allocation_default() {
+    let local = Store::new("local");
+    let remote = Store::new("remote");
+    let foreign = Store::new("foreign");
+    let router = router(&local, &remote);
+    assert!(router.allocation_scope().is_none());
+    assert!(router.accepts_scope(&local.scope));
+    assert!(router.accepts_scope(&remote.scope));
+    assert!(!router.accepts_scope(&foreign.scope));
+    let remote_only =
+        RoutedHomeVolumes::new(None, Some((remote.clone(), policy("remote")))).unwrap();
+    assert!(remote_only.accepts_scope(&remote.scope));
+    assert!(!remote_only.accepts_scope(&local.scope));
+    assert!(local.calls.lock().unwrap().is_empty() && remote.calls.lock().unwrap().is_empty());
+}
+
 #[tokio::test]
 async fn cold_native_intent_survives_lost_response_reopen_and_seed_configuration_change() {
     let local = Store::new("local");

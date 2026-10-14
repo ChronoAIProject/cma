@@ -46,6 +46,17 @@ const savingSandbox = (phase: 'capture' | 'resume_writers'): SandboxDetail => ({
   },
 });
 
+it.each(['pausing', 'reviving', 'retiring'] as const)(
+  'keeps underlying %s activity closed until requested',
+  async (status) => {
+    lifecyclePage(async () => sandboxFixture(status));
+    const disclosure = await screen.findByText('Sandbox operation progress');
+    expect(screen.queryByRole('region', { name: 'Sandbox progress' })).not.toBeInTheDocument();
+    fireEvent.click(disclosure);
+    expect(await screen.findByRole('region', { name: 'Sandbox progress' })).toBeInTheDocument();
+  },
+);
+
 it('explains provider persistence while workspace, pause and delete actions remain usable', async () => {
   lifecyclePage(async () => ({
     ...sandboxFixture(),

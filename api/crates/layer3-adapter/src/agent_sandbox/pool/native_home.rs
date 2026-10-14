@@ -225,7 +225,7 @@ impl AgentSandboxPools {
                 .annotations()
                 .get("cma/home-layout")
                 .map(String::as_str)
-                != Some("native-vct-empty-v1")
+                != policy.native_layout()
             || owners.len() != 1
             || !owners.iter().all(|o| {
                 o.api_version == "agents.x-k8s.io/v1beta1"

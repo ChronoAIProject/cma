@@ -221,24 +221,24 @@ export async function bootstrapProbe(onStage = () => {}) {
       return waitingEnvironment(podUid, socket, temporary);
     };
     const firstEnvironment = freshEnvironment(`ci-${randomUUID()}`);
-    const initialize = spawnSync(executable, ['--initialize-home', volume], {
+    const initialize = spawnSync(executable, ['--initialize-home-tree', volume], {
       env: firstEnvironment, encoding: 'utf8', timeout: 30000, stdio: ['ignore', 'pipe', 'pipe'],
     });
     assert.ok(!initialize.error && !initialize.signal);
     assert.equal(initialize.status, 0);
-    for (const name of ['home', 'state', 'transfer', '.cma-home-layout-v1']) {
+    for (const name of ['home', 'home/cma', 'home/.codex', 'state', 'transfer', '.cma-home-layout-v2']) {
       const metadata = lstatSync(join(volume, name));
       assert.ok(metadata.isDirectory() && !metadata.isSymbolicLink());
       assert.equal(metadata.uid, 10001);
     }
-    assertPublicHomeSeed(join(volume, 'home'));
+    assertPublicHomeSeed(join(volume, 'home', 'cma'));
     assert.deepEqual(readdirSync(join(volume, 'state')), []);
     assert.deepEqual(readdirSync(join(volume, 'transfer')), []);
     const request = { version: 1, pod_uid: firstEnvironment.CHRONO_RUNTIME_POD_UID, environment: {
       CHRONO_SANDBOX_ID: `ci-bootstrap-${randomUUID()}`, CHRONO_RUNTIME_GENERATION: '1',
       CHRONO_RUNTIME_HOME_IDENTITY: randomBytes(32).toString('base64url'),
       CHRONO_RUNTIME_CONTROL_TOKEN: randomBytes(32).toString('hex'),
-      CHRONO_RUNTIME_HOME: join(volume, 'home'), CHRONO_RUNTIME_STATE_ROOT: join(volume, 'state'),
+      CHRONO_RUNTIME_HOME: join(volume, 'home', 'cma'), CHRONO_RUNTIME_STATE_ROOT: join(volume, 'state'),
       CHRONO_RUNTIME_BIND: `127.0.0.1:${port}`, TMPDIR: join(volume, 'transfer'),
     } };
     complete('bootstrap-native-initialization');
@@ -267,7 +267,7 @@ export async function bootstrapProbe(onStage = () => {}) {
     const install = installRequest(['printf \'installed\\n\' >> "$HOME/ci-bootstrap-install-count"']);
     const installed = await control(base, install, request.environment.CHRONO_RUNTIME_CONTROL_TOKEN);
     assertInstallReceipt(installed, install);
-    const marker = () => readFileSync(join(volume, 'home', 'ci-bootstrap-install-count'), 'utf8');
+    const marker = () => readFileSync(join(volume, 'home', 'cma', 'ci-bootstrap-install-count'), 'utf8');
     assertInstallReplay(await control(base, install, request.environment.CHRONO_RUNTIME_CONTROL_TOKEN), installed, marker());
     assert.equal(await authenticatedStatus(running, base, request, true), firstBoot);
     for (const temporary of temporaries) assert.equal(existsSync(join(temporary, 'cma-checkpoints')), false);
