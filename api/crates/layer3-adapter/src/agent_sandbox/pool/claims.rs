@@ -35,22 +35,26 @@ impl AgentSandboxPools {
     pub async fn claim(&self, request: &NativePoolClaimRequest) -> Result<NativePoolClaim> {
         let desired = model::claim(&self.config, request)?;
         let name = desired.name_any();
-        // Both reads use the already persisted native reservation. Existing
-        // claims retain replay precedence: only a miss consumes the policy proof.
-        let (observed, binding) = tokio::join!(self.claims.get_opt(&name), async {
-            if request.home.policy.is_native_vct() {
-                Some(self.verify_binding(&request.pool).await)
-            } else {
-                None
+        // Speculate only for native homes. Replay must not wait for policy:
+        // dropping its pending read is safe because neither branch can write.
+        let observed = self.claims.get_opt(&name);
+        let binding = self.verify_binding(&request.pool);
+        tokio::pin!(observed, binding);
+        let (observed, policy) = if request.home.policy.is_native_vct() {
+            tokio::select! {
+                observed = &mut observed => (observed, None),
+                policy = &mut binding => (observed.await, Some(policy)),
             }
-        });
+        } else {
+            (observed.await, None)
+        };
         let actual = match observed.map_err(api_error)? {
             Some(actual) => actual,
             None => {
-                if let Some(binding) = binding {
-                    binding?;
+                if let Some(policy) = policy {
+                    policy?;
                 } else {
-                    self.verify_binding(&request.pool).await?;
+                    binding.await?;
                 }
                 create(&self.claims, &desired).await?
             }

@@ -100,6 +100,31 @@ async fn native_claim_reads_overlap_and_create_waits_for_both_orders() {
 }
 
 #[tokio::test]
+async fn native_claim_replay_returns_without_waiting_for_pending_policy_reads() {
+    let fixture = fixture().await;
+    let claim = assigned_spec(&fixture, &spec()).await;
+    let paths = paths(&claim);
+    let gates: BTreeMap<_, _> = paths.iter().map(|p| (p.clone(), Gate::new())).collect();
+    let reads = Reads::new(&fixture, BTreeMap::new(), gates.clone());
+    let pools = reads.pools(&fixture);
+    let request = claim.request.clone();
+    let task = tokio::spawn(async move { pools.claim(&request).await });
+    for gate in gates.values() {
+        gate.wait().await;
+    }
+    // Keep both speculative Pool/Template responses pending. A recorded Claim
+    // is enough for replay, including recovery after a lost creation response.
+    gates[&paths[0]].respond();
+    let replay = tokio::time::timeout(Duration::from_secs(2), task)
+        .await
+        .expect("Claim replay waited for speculative policy")
+        .unwrap()
+        .unwrap();
+    assert_eq!(replay, claim);
+    assert_eq!(reads.calls.lock().unwrap().len(), 3);
+}
+
+#[tokio::test]
 async fn native_claim_replay_ignores_policy_failure_but_retains_claim_error_precedence() {
     let fixture = fixture().await;
     let claim = assigned_spec(&fixture, &spec()).await;
@@ -132,7 +157,11 @@ async fn native_claim_replay_ignores_policy_failure_but_retains_claim_error_prec
             capacity,
             "{error:?}"
         );
-        assert_eq!(reads.calls.lock().unwrap().len(), 3);
+        let calls = reads.calls.lock().unwrap();
+        assert_eq!(calls.iter().filter(|path| **path == paths[0]).count(), 1);
+        if capacity {
+            assert_eq!(calls.len(), 3, "missing Claim must consume policy proof");
+        }
     }
 }
 
