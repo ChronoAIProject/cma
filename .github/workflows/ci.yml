@@ -26,6 +26,8 @@ jobs:
         run: ruby .github/scripts/ci-contract.rb release
       - name: Release contract mutation regressions
         run: ruby .github/scripts/ci-contract-tests.rb release
+      - name: API Cargo cache bridge regressions
+        run: python3 .github/scripts/api-cargo-cache-tests.py
       - name: Runtime image evidence and provenance regressions
         run: node --test .github/scripts/runtime-image-evidence.test.mjs .github/scripts/release-runtime-input.test.mjs
 
@@ -572,6 +574,29 @@ jobs:
       # arm64 builds run under emulation on the amd64 runner.
       - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      # GHA layer export excludes Cargo cache mounts. Archive restoration uses
+      # GitHub's current-ref/default-branch cache isolation; PR merge-ref caches
+      # cannot seed develop or another PR. Fork requests do not use this bridge.
+      - name: Prepare API Cargo cache identity
+        if: matrix.component == 'api' && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
+        id: api-cargo-cache
+        run: python3 .github/scripts/api-cargo-cache.py prepare
+      - name: Restore API Cargo cache archive
+        if: matrix.component == 'api' && steps.api-cargo-cache.outcome == 'success'
+        id: api-cargo-cache-restore
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        timeout-minutes: 3
+        continue-on-error: true
+        with:
+          path: ${{ runner.temp }}/cma-api-cargo-cache/data
+          key: ${{ steps.api-cargo-cache.outputs.key }}
+          restore-keys: ${{ steps.api-cargo-cache.outputs.prefix }}
+          fail-on-cache-miss: false
+          enableCrossOsArchive: false
+      - name: Inject API Cargo cache mounts
+        if: matrix.component == 'api' && steps.api-cargo-cache.outcome == 'success'
+        timeout-minutes: 3
+        run: python3 .github/scripts/api-cargo-cache.py inject
       # Proves the Dockerfile builds for every architecture the cluster may
       # schedule onto. Discarded via cacheonly rather than loaded: the docker
       # exporter behind `load: true` cannot export a multi-platform manifest
@@ -621,6 +646,11 @@ jobs:
             CHRONO_BUILD_SHA=${{ github.sha }}
             OS_SECURITY_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
           cache-from: type=gha,scope=${{ matrix.component }}
+      - name: Extract API Cargo cache before pruning
+        if: matrix.component == 'api' && steps.api-cargo-cache.outcome == 'success' && steps.api-cargo-cache-restore.outputs.cache-hit != 'true'
+        id: api-cargo-cache-export
+        timeout-minutes: 3
+        run: python3 .github/scripts/api-cargo-cache.py extract
       - name: Release build cache before image checks
         # Native Docker image bytes are independent of BuildKit's build cache.
         # The cache is already exported above; free its toolchain/build layers
@@ -677,3 +707,12 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 1
+      - name: Save accepted API Cargo cache archive
+        if: success() && matrix.component == 'api' && steps.api-cargo-cache-export.outputs.ready == 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        timeout-minutes: 3
+        continue-on-error: true
+        with:
+          path: ${{ runner.temp }}/cma-api-cargo-cache/data
+          key: ${{ steps.api-cargo-cache.outputs.key }}
+          enableCrossOsArchive: false
