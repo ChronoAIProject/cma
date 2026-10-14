@@ -111,6 +111,8 @@ export interface WorkspaceSummary {
 }
 
 export interface SandboxDetail extends SandboxSummary {
+  readonly agentProvider?: SandboxProfileSettings['agentProvider'];
+  readonly modelAccess?: SandboxProfileSettings['modelAccess'];
   readonly nyxidServices?: readonly string[];
   readonly limits: {
     readonly maxWorkspaces: number;

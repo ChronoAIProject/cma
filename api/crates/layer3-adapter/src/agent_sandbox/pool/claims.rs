@@ -52,6 +52,15 @@ impl AgentSandboxPools {
 
     /// A persisted claim receipt never silently acquires a replacement claim UID.
     pub async fn observe_claim(&self, original: &NativePoolClaim) -> Result<NativePoolClaim> {
+        self.observe_claim_resource(original)
+            .await
+            .map(|(current, _)| current)
+    }
+
+    pub(super) async fn observe_claim_resource(
+        &self,
+        original: &NativePoolClaim,
+    ) -> Result<(NativePoolClaim, DynamicObject)> {
         let desired = model::claim(&self.config, &original.request)?;
         if original.name != desired.name_any() || !super::super::model::dns_label(&original.uid) {
             return Err(rejected("native claim receipt is invalid"));
@@ -70,7 +79,7 @@ impl AgentSandboxPools {
         if original.sandbox_name.is_some() && original.sandbox_name != current.sandbox_name {
             return Err(rejected("native claim changed its assigned Sandbox"));
         }
-        Ok(current)
+        Ok((current, actual))
     }
 
     /// Request foreground deletion, then let the lifecycle worker establish both

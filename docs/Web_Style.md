@@ -450,10 +450,11 @@ activity filters. Loading and refused facts never become the Unknown origin
 category. No private actor or external source references appear in rows.
 
 Expansion and navigation are separate keyboard-operable commands, with named
-`aria-expanded` state. A collapsed group retains its count. Paused or reviving
-Sandboxes hide their descendants and expansion controls until fully Active with
-no pending lifecycle operation; revive has an explicit moving state that becomes
-a still glyph under reduced motion. Loading and failed child reads never
+`aria-expanded` state. A collapsed group retains its count. Paused, pausing and
+reviving Sandboxes retain descendant navigation and expansion for authorized
+Agent conversations and history. Runtime mutations remain unavailable until
+Active with no pending lifecycle operation. Revive has an explicit moving state
+that becomes a still glyph under reduced motion. Loading and failed child reads never
 masquerade as empty groups.
 
 Menus expose only public operations: Sandbox New workspace/Pause/Delete,
@@ -1182,8 +1183,9 @@ button until cleanup is confirmed; it does not expose child navigation.
 Each group has a 32px disclosure header (44px on narrow screens), 8px internal
 spacing, existing 13px secondary text, and a tabular count aligned to the right.
 Separate groups by 16px. Each expanded group contains its own accessible tree.
-Workspace children and expansion controls exist only when the Workspace is Ready
-inside an available live Sandbox; preparing and deleting rows remain informational.
+Workspace children and expansion controls exist when the Workspace is Ready
+inside an active, paused, pausing or reviving Sandbox; preparing and deleting
+Workspace rows remain informational.
 
 Sandbox state labels are Live, Starting, Resuming, Pausing, Paused, Deleting and
 Deleted. A genuine failure is explicitly Needs attention, never a successful state.
@@ -1197,7 +1199,7 @@ never a resource state. Header and sidebar use the same resource vocabulary.
 |---|---|
 | Sandbox provisioning | Recorded preparation and child progress; no invented percentage or success. |
 | Sandbox active | Workspaces and Agents; New workspace within limits, Pause, confirmed Delete. |
-| Sandbox paused | Only the Sandbox row is available in navigation; selecting it opens status, preserved-work information and the public Resume action. |
+| Sandbox paused | Retained Workspaces and Agent history remain navigable; the Sandbox page shows preserved-work information and the public Resume action. Existing durable message admission may revive a settled paused Sandbox. |
 | Sandbox pausing, reviving or rotating | Durable history and recorded progress; no conflicting command or input that could be lost. |
 | Agent starting | Recorded preparation; retain an unsent draft until readiness. |
 | Agent ready or working | Conversation and composer; Interrupt only during active work; Stop. |
@@ -1210,13 +1212,17 @@ unreported remain unknown. Failed commands never destroy successful content.
 Delete removes an Agent and its Worktree and requires the irreversible-action
 safeguard; Stop is a distinct operation.
 
-Paused, preparing, reviving, rotating and deleting Sandboxes expose no child
-Workspace or Agent navigation, including the Workspace band on the Sandbox page.
-Children return only after the Sandbox is active and its lifecycle operation has
-finished. An ordinary checkpoint save on an active Sandbox retains its readable
-children. Resume availability still comes from the public lifecycle record.
-The Sandbox page names the current state and explains why its children are
-unavailable. Pause, Resume and deletion show a brief state by default; their
+Paused, pausing and reviving Sandboxes keep retained Workspace and Agent navigation,
+including the Workspace band on the Sandbox page. Child rows show the parent's
+actual Pausing, Paused or Resuming state while preserving terminal child failures
+and stops. Opening an Agent shows its existing conversation and history; pending
+lifecycle work holds Send, approval decisions and runtime mutations without
+discarding drafts. It never admits a message merely because history is visible.
+Preparing, rotating and deleting Sandboxes keep their existing navigation limits.
+An ordinary checkpoint save on an active Sandbox retains its readable children.
+Resume availability still comes from the public lifecycle record. The Sandbox
+page names the current state and the available history. Pause, Resume and deletion
+show a brief state by default; their
 plain-language stages, activity and elapsed time are inside a closed
 **Sandbox operation progress** disclosure. Agent Details includes a standard
 Button to reach this Sandbox page. Initial creation progress remains visible.
@@ -2034,3 +2040,5 @@ draft. Summary readers never receive the management history control.
 | 2026-10-14 | Make consumer review fact labels wrap within their existing grid column, matching values and preserving accurate wording without overlap at narrow widths. |
 
 | 2026-10-14 | Acknowledge Pause and Resume immediately, distinguish durable acceptance from observed completion, and briefly accelerate targeted progress reads. Remove accepted Sandbox deletions from Live/Paused navigation while retaining a separate deletion-progress disclosure and same-request recovery. |
+
+| 2026-10-14 | Preserve navigation to retained Agent conversations and history while Sandboxes pause, remain paused or resume. Keep actual lifecycle labels and closed progress disclosures, retain drafts, and hold pending-operation input and child runtime mutations until authoritative readiness. |

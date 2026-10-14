@@ -1,6 +1,6 @@
 //! Sandbox, Workspace, and Worktree REST resource models.
 
-use crate::profiles::ProfileReference;
+use crate::profiles::{AgentProvider, ModelAccess, ProfileReference};
 use serde::{Deserialize, Serialize};
 
 string_enum! { /// Persisted Sandbox lifecycle status.
@@ -120,6 +120,10 @@ pub struct SandboxDetail {
     /// Sandbox and hierarchy counts, flattened on the wire.
     #[serde(flatten)]
     pub summary: SandboxSummary,
+    /// Pinned Agent provider; absent on older servers.
+    pub agent_provider: Option<AgentProvider>,
+    /// Pinned model access; absent on older servers.
+    pub model_access: Option<ModelAccess>,
     /// Workspace summaries in this Sandbox.
     pub workspaces: Vec<WorkspaceSummary>,
 }

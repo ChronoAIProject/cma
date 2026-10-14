@@ -5,17 +5,39 @@ failures and receipt paths, see
 [CMA native Sandbox production verification](CMA_Native_Production_Verification.md).
 This document keeps operational instructions and dated infra diagnostics.
 
-The final AM cd37968d, Web ac837 and Gateway cabfe set was Ready at 11:31:31 SGT,
-with exact imageIDs and zero restarts; default runtime remains 37d. Seven public/
-authenticated checks passed at 11:31:59 SGT, including the original protected
-Sandbox and Agent, both paused. Final Web desktop/mobile visual acceptance passed.
-AM and Gateway passed full CI 15/15; Web passed its four required scoped jobs.
-Image Manager activation is deferred.
+The combined performance and full-home candidate `04ccbd6a` merged through
+PR #1016 as `fea97549`. CI run
+[38539408542](https://github.com/ChronoAIProject/cma/actions/runs/38539408542),
+attempt 1, passed all 15 jobs. Exact API/Web/runtime image publication is
+complete and the checked-in pins match its receipt. AM/Web and retained Gateway
+were Ready at **18:02:50 SGT**, and the new full-home pool reached two observed
+Ready replicas at **18:04:03 SGT**. One fresh UI creation succeeded in **21.122
+seconds** to the visible Agent surface/enabled composer; the five-second target
+was not met. Model, skill, scope revision and Stop acceptance subsequently
+passed. Pause/resume retained the exact PVC and conversation, but actual
+completion exceeded five seconds and kubelet changed filesystem modes on
+remount; strict whole-home persistence therefore failed. Exact digests, identities
+and measured boundaries are in the
+[combined release report](CMA_Native_Production_Verification.md#combined-performance-and-full-home-release--pr-1016).
 
-Final cold Gateway acceptance passed with one actual UI request, one completed
-turn and visible exact acknowledgment in 42.624 seconds. Normal fixture cleanup
-completed at 11:45:14 SGT. Sanitized receipt:
-`/tmp/cma-gateway-cold-live-czmxw4jd/acceptance-receipt.json`.
+The follow-up source introduces a separately identified native pool policy with
+`fsGroupChangePolicy: OnRootMismatch`. Existing pool/template/home records keep
+their original policy; activate fresh capacity only when its `config_sha256`
+exactly equals the non-null administration `default_config_sha256`. Matching
+only image and resources can select an old policy and is insufficient. Fresh
+whole-home mode preservation and timing still require live verification.
+
+After a new-policy pool or binding is persisted, any API rollback must retain
+support for the optional `fs_group_change_policy` field and v3 pool identity.
+Older binaries reject that persisted field through strict deserialization; do
+not roll Agent Manager back to the pre-policy image after activation. Runtime
+`cad2058` and the current full-home layout remain compatible and unchanged.
+
+The preceding `03cbd332` Agent Manager/shared Web release was Ready at
+16:26:14 SGT on 2026-10-14, with two Ready default-pool replicas observed at
+16:26:50 SGT. Its fresh Agent acceptance was not completed. The earlier
+cd37968d/ac837/cabfe Gateway flow passed in 42.624 seconds; that result remains
+associated with its original tested versions. Image Manager activation is deferred.
 
 The three portals ship from one web image: Agent Manager (`/agent-manager`),
 Image Manager (`/image-manager`) and Event Gateway (`/event-gateway`). Their
@@ -24,8 +46,8 @@ defines application deployment against the infra-owned native runtime cluster.
 Infra continues to own its controllers, CRDs, RBAC, storage and network policy;
 CMA's completed application rollout did not change those resources.
 
-The current rollout scope is Agent Manager, Event Gateway and their shared web
-image, with the tested CMA runtime as the system default. Image Manager is
+The combined rollout scope is Agent Manager, the shared web image and the
+system default runtime, retaining the verified Event Gateway. Image Manager is
 deferred: its Deployment is absent; keep it absent or at zero replicas and do
 not require its Cloud Build identity, OAuth client, migrations or builder digest to activate Agent
 Manager. Default-image Agent, Trigger and consumer creation does not call Image
@@ -94,9 +116,10 @@ named old Deployment.
 
 ## Observed deployment prerequisites
 
-This table reflects the completed native deployment and remaining measured
-limits on 2026-10-14. Historical failures are retained with dates and outcomes,
-without treating superseded findings as current activation blockers.
+This table records native deployment prerequisites and measurements from the
+versions named on 2026-10-14. The combined release status above is tracked
+separately; earlier runtime and portal measurements do not verify its full-home
+layout or creation latency.
 
 | Prerequisite | Verified deployed state | Continuing obligation or coverage limit |
 |---|---|---|
@@ -108,13 +131,13 @@ without treating superseded findings as current activation blockers.
 | Runtime transport | Deployed `kubernetes-exec` carries runtime HTTP/WebSocket traffic through the authenticated remote API; real model turns and complete history exports passed | Earlier direct Pod-IP and CRI port-forward diagnostics did not establish a working microVM path. They do not require a network change for the selected exec transport |
 | Runtime ServiceAccount/storage/class | New runtime templates select unannotated remote `default`, disable Pod token automount and use `microvm` with 64 GiB RWOP `home-a` volumes | Preserve infra ownership. Historical `standard-rwo`/`pd-balanced` attachment failed on N4; use the verified `home-a` policy |
 | Runtime control key | Existing `chrono-bot/cma-agent-sandbox-control` supplies the mounted application signing key | Preserve the key across restarts; preserve it during application updates |
-| Canonical application workloads | `cma-agent-manager`, `cma-event-gateway` and `cma-web` are deployed; latest readback confirms 1/1 updated Ready, current generations, matching image IDs and zero restarts | Final AM cd37968d, Web ac837 and Gateway cabfe were Ready at 11:31:31 SGT; final Web visual acceptance passed. Keep one Recreate Agent Manager and preserve canonical/compatibility Service routing |
+| Canonical application workloads | Combined 04ccbd6a AM generation 16/Web generation 92 and retained cabfe Gateway generation 6 were Ready at 18:02:50 SGT with exact imageIDs and zero restarts | Keep one Recreate Agent Manager and preserve canonical/compatibility Service routing; record exact candidate/imageIDs for the combined rollout |
 | Shared MongoDB | Running Agent Manager/Gateway use `chrono-bot` with separate collection ownership; retained durable identities and complete history prefixes survived the AM rollout | Run only each service's migrations. Shared-schema mode is collection ownership, not credential-level isolation |
 | Retained Gateway state | Gateway uses `eg_*` collections and preserves exact `http://cma-api.chrono-bot.svc` authority. Earlier real owner edits, selected-Agent management tests and public custom ingress passed | Do not repeat the historical first-cutover export/import. Preserve original record identities and sealed pointers; final Gateway/browser-specific acceptance remains separately recorded |
 | Gateway cold inline-Agent acceptance | Final measured result and the earlier 5ce/AM 37d failures are recorded in the verification report | Preserve the 90-second startup and fresh 30-second acceptance/completion budgets; only explicit Busy may retry the same body/key |
 | Gateway feature coverage | Integrated source and complete CI include Console/Media/STT code and authenticated Mongo contracts | Selected live routing/channel/model checks do not establish full Console/media/STT, external reply sinks or Trigger acceptance; preserve existing configuration and Secrets |
-| Application image registry | The selected AM cd37968d, Web ac837 and Gateway cabfe digests are published in the established application registry; the verification report lists exact pins | Final AM cd37968d and Gateway cabfe passed full CI 15/15; final Web ac837 passed its four scoped jobs, exact publication and visual acceptance. All selected images are published and Ready; original release receipts remain independently attributable |
-| Native runtime registry | Final 37d runtime is published under `asia-southeast1-docker.pkg.dev/chronoai-501608/chrono-pod/cma-runtime`; native canary and real Agent runtime image-ID checks passed | Preserve this default and retained images during Web/Gateway-only changes |
+| Application image registry | Combined candidate 04ccbd6a passed all 15 CI jobs; API/Web registry digests are published and pinned from the completed receipt | Preserve Gateway cabfe; match immutable pins and provenance to publication and live readiness independently |
+| Native runtime registry | Combined cad2058f runtime is published and selected; two full-home v2 pool replicas were Ready at 18:04:03 SGT with exact runtime/mount/initializer proof | Live same-PVC whole-home persistence still needs separate acceptance; retained homes keep their original images |
 | Deferred Image Manager identity | The 2026-10-13 account lookup returned 404 and operator IAM lacked provisioning/build rights; Image Manager has no active Deployment | This is a separate later activation. Infra must provide the documented build identity/permissions before Image Manager migration, scale-up and live build acceptance |
 
 ## C-001 implementation map
@@ -577,8 +600,12 @@ runtime control tokens continue to match. The control-plane Secret volume is
 optional only while the native backend is disabled.
 
 When a verified runtime is intentionally replaced, set its digest in
-`CHRONO_SANDBOX_IMAGE` and the matching rollout annotation. This release preserves the deployed 37d runtime default. `CHRONO_AGENT_SANDBOX_RUNTIME_CLASS`, runtime ServiceAccount,
-pull secrets, home policy and deployment ID must match the reviewed production
+`CHRONO_SANDBOX_IMAGE` and the matching rollout annotation. For this combined
+release, update the runtime pin and
+`CHRONO_AGENT_SANDBOX_HOME_MODE=native_vct_full_home_v2` atomically before the
+Agent Manager restart. Retained Sandboxes keep their recorded image and home
+mode. `CHRONO_AGENT_SANDBOX_RUNTIME_CLASS`, runtime ServiceAccount, pull secrets,
+home policy and deployment ID must match the reviewed production
 configuration. Existing pool bindings retain their original Pod policy when a
 later release changes those defaults.
 
@@ -748,17 +775,21 @@ OAuth, NyxID frontend navigation/binding-key delivery, external reply sinks,
 broad failover, full Console/media/STT, Trigger and cross-user sharing. Native
 exec connectivity does not establish direct Pod-network isolation.
 
-The repository image pins and source/CI annotations are now synchronized with
-the actual deployed receipts. The four synchronized manifests are
-`infra/api/configmap.yaml`, `infra/api/deployment.yaml`,
-`infra/cmaeg/deployment.yaml` and `infra/web/deployment.yaml`.
-The applied patch is `/tmp/cma-final-repo-sync-01/final-manifests.patch`. Their current hashes match
-`/tmp/cma-final-repo-sync-01/resolved-receipts.json` after hashes. This pins AM
-cd37968d, Web ac837, Gateway cabfe and default runtime 37d with their actual image
-sources and CI runs. YAML, configuration key/documentation, native contract and
-route ownership checks passed. The legacy storage seed example and deferred
-Image Manager are preserved. This manifest/document finish does not redefine or
-rebuild the independently identified deployed application images.
+The API/Web/default-runtime pins and source/CI annotations in
+`infra/api/configmap.yaml`, `infra/api/deployment.yaml` and
+`infra/web/deployment.yaml` match the completed combined publication receipt.
+The Gateway manifest retains its verified cabfe image. Repository synchronization
+records published identities. The verification report separately records
+completed rollout/pool readiness, the 21.122-second creation measurement, and
+remaining live acceptance.
+
+The earlier four-manifest synchronization for AM cd37968d, Web ac837, Gateway
+cabfe and default runtime 37d is retained in
+`/tmp/cma-final-repo-sync-01/resolved-receipts.json` and
+`/tmp/cma-final-repo-sync-01/final-manifests.patch`. Those historical hashes do
+not describe the new combined pins. The legacy storage seed example and
+deferred Image Manager are preserved. Updating manifests does not rebuild the
+independently identified application images.
 
 Agent access-request tools use the existing auth encryption key to derive a
 separate, deployment-scoped `cma_at_` capability. The `agent_access_tools`

@@ -1,10 +1,181 @@
 # CMA native Sandbox production verification — 2026-10-14
 
-CMA Agent Manager, Event Gateway and Web are deployed, and the final cold
-Gateway user flow passed. Results below identify their tested version. Evidence
-paths are operator-local artifacts, not repository files.
+## Combined performance and full-home release — PR #1016
 
-## Final deployed set
+Candidate `04ccbd6a` contains the native-home authority fix, faster durable
+lifecycle progress and readiness observation, immediate Sandbox action feedback,
+and full `/home` persistence for new native allocations. PR #1016 merged directly
+into `develop`.
+
+| Source and verification | Exact identity |
+| --- | --- |
+| Reviewed candidate | `04ccbd6a3adb9ec2c2f46ab9d2b01ae93c6f7b9f` |
+| PR #1016 merge into `develop` | `fea975499c745febfcbf4bcfcaa71c3967835ca3` |
+| Actual CI image checkout | `993591d35f937e26cdc3c2756a596dc4132e6282` |
+| Candidate, merged `develop`, and image source tree | `b4c87d5d66897c3922d4da0768ac90bf2fe319d1` |
+| CI | [38539408542](https://github.com/ChronoAIProject/cma/actions/runs/38539408542), attempt 1; full 15/15 jobs passed |
+
+The completed publication receipt records these exact registry manifest digests.
+They identify imported CI image bytes; Docker config image IDs remain separate
+identities in the receipts.
+
+| Published component | Registry manifest digest |
+| --- | --- |
+| Agent Manager | `sha256:d6242f4dae1ac07f26805216855331df3ef78233f5cb02986d780b9fc7ea0075` |
+| Shared Web | `sha256:38f1c94685325465e4391b8aa0b1e9bd78cfae7367b8de921e6fddd6d103e43c` |
+| Default runtime | `sha256:cad2058fad219bf8e6deb8b061a1d6331d28552990ee6bc8646f8cd5cf11d18b` |
+| Event Gateway, retained | `sha256:0c3068130eaf618ce88dbe47bd7d111d365a5bba816c49f78b4000e8550ef1e7` |
+
+API and Web use the established
+`us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/` repositories
+`cma-api` and `cma-web`; runtime uses
+`asia-southeast1-docker.pkg.dev/chronoai-501608/chrono-pod/cma-runtime`.
+
+| Combined release evidence | Receipt SHA-256 |
+| --- | --- |
+| `/tmp/cma-direct-home-v2-publish-01/publication-report.json` | `b06759305bb12851227a47310d19f5e188785f34481a4bff33e6c91bbf38937d` |
+| `/tmp/cma-direct-home-v2-publish-01/import-receipts.jsonl` | `0773163de2c13e3a3306c2021fe33734bb2ad874487e2dc5fe09805655ca7a59` |
+| `/tmp/cma-direct-home-v2-rollout-01/readiness.json` | `f3be18bcb55b5d1e8b8a33fe452d63cfc05015ddff98a18360e7db3922e5cce9` |
+| `/tmp/cma-performance-home-v2-pool-direct-01/ready.json` | `79d1377a1bd56229020a535865a80d1afed1377183336aeb811db999342ef79f` |
+| `/tmp/cma-agent-followup-live-FINAL_04cc_01/report.json` | `b5ce344ab796f7737179057f0505efbbe8411ccfce279661084c70a97a180f12` |
+
+Publication proved the actual PR merge parents `[ab789bde, 04ccbd6a]`, equal
+candidate/merge/CI trees, exact run attempt and artifact identities, runtime
+execution evidence, and destination manifest/config readback. The repository
+pins now match this completed publication.
+
+At **18:02:50 SGT**, Agent Manager generation **16**, Web generation **92**,
+and retained Gateway generation **6** each had one updated Ready replica, current
+observed generation, the exact published imageID and zero restarts. The rollout
+atomically changed the default runtime and home mode before restarting AM, then
+updated Web. Gateway configuration and specification were retained.
+
+At **18:04:03 SGT**, the new default pool had **two observed Ready replicas** at
+1,000 millicores and 1,024 MiB each. Native template inspection confirmed the
+exact runtime, `/home` mount with subPath `home`, full-home initializer and
+matching pool/template UIDs. The receipt preserved nine extant native bindings
+and the infra `python-a` pool/template; it recorded unrelated owner activity
+without treating revision changes as a release failure. No old pool was resized.
+
+A fresh actual UI creation at **18:04:18 SGT** used one creation request and
+succeeded, automatically opening the Agent with an enabled composer. Browser
+click-to-visible surface/composer time was **21.122 seconds**; the lifecycle
+terminal state was observed at **19.818 seconds** and the admission response took
+**159.22 ms**. These clocks measure different boundaries. The under-five-second
+creation target **was not met**. The matching Agent/Sandbox/Workspace identities
+and browser timing samples are retained in the creation receipt.
+
+The same fresh fixture subsequently passed real inference with `gpt-6`,
+`gpt-6-astra`, then `gpt-6`; all 15 eligible model options were enabled. Ornn
+skill installation, exact request replay, and the next real turn reading the
+installed skill passed. The scope-revision flow passed through a real Codex MCP
+request, owner popup approval, delivered key generation, and exactly one
+automatic notification in the original conversation; reload did not duplicate
+the notification. The selected NyxID connection was already satisfied, so that
+live run did not exercise a fresh external OAuth callback. Stop showed
+Accepted/Waiting followed by Confirmed.
+
+Delete then passed on that stopped test fixture. Click-to-submitting feedback
+was **6.9 ms**, accepted feedback **289.8 ms**, and disappearance from active
+navigation **289.9 ms**. Cleanup navigation and underlying progress began closed
+and could be opened. The same request reached confirmed retirement in
+**34.420 seconds**. Immediate user-visible removal met the target; the background
+cleanup time is reported separately in `lifecycle-acceptance/delete-report.json`.
+
+Pause UI feedback took **1.8 ms**, accepted feedback **175.9 ms**, and Agent
+paused observation **1.547 seconds**; Sandbox completion took **8.797 seconds**.
+Resume submitting feedback took **1.530 seconds**, accepted feedback **1.781 seconds**, Agent
+ready observation **28.118 seconds**, and Sandbox completion **29.273 seconds**.
+Default underlying progress stayed hidden. Neither actual Sandbox completion
+met five seconds. The original helper incorrectly counted a stale "Sandbox
+paused." banner as resume feedback and completion at 0.2 ms; the timings here
+use the retained current-action UI events. The actual "Sandbox resumed."
+message appeared at **28.948 seconds**. The replacement helper requires exact
+current-action texts and a newly observed submission before UI completion.
+The paused capture proved zero owned Pods and the retained
+PVC; resume created a new Pod on the same PVC UID
+`34a4b736-c503-402f-95ea-13a24def6a5c`.
+
+Whole-home content and conversation checks passed across that Pod replacement:
+15 entries covered `/home/cma`, `/home/.codex`, and a sibling directory,
+including symlinks and staged, dirty and untracked Git state. Native conversation,
+transcript and event prefixes survived, and a real recall turn returned the
+earlier marker. **Strict filesystem persistence failed:** kubelet's default
+fsGroup remount handling changed POSIX modes, including `0600` to `0660` and
+`0750` to `0770`. No data was reseeded or permissions repaired to claim a pass.
+New-policy mode preservation requires a new fixture after the follow-up rollout.
+
+Evidence is retained under `/tmp/cma-agent-followup-live-FINAL_04cc_01/`:
+`acceptance/models-durable-continuation-report.json`, `acceptance/skill-report.json`,
+`scope-acceptance-02/report.json`, `acceptance/stop-report.json`, and
+`lifecycle-acceptance/{pause,resume}-report.json`. Whole-home evidence and the
+explicit failure report are under `/tmp/cma-whole-home-FINAL_04cc_01/`.
+
+The release selects API, shared Web and runtime images while retaining Event
+Gateway. One Web image implements all three portals; Image Manager backend
+activation remains deferred. New native allocations use
+`native_vct_full_home_v2`, mounting the PVC `home` subdirectory at `/home` and
+running `--initialize-home-tree`. Existing `native_vct_empty_v1` allocations keep
+their recorded image, original `/home/cma` mount, initializer and home authority.
+The new default does not migrate existing volumes.
+
+## Follow-up performance work awaiting production measurements
+
+The adapter overlaps independent fresh native authority reads while preserving
+Claim, Sandbox, Pod and PVC identity checks, policy validation, the final
+resourceVersion compare-and-swap, and post-resume home checks. Contextual resume
+uses the recorded home to render both generations after one graph proof. The
+focused no-explicit-policy transition now performs seven GETs and one PATCH,
+compared with twelve GETs and one PATCH before this change. These are request
+counts established by controlled tests, not measured production latency.
+
+Initial Agent connection publication reuses its exact locally staged conversation
+when the durable open receipt matches and no settings need replay. Missing local
+state still reconnects the recorded conversation. Update activation carries the
+current publication authority; a stream lost during publication retains durable
+recovery work. This removes the redundant second conversation open from normal
+startup without creating another conversation or weakening restart recovery.
+
+Paused, pausing and resuming Sandboxes retain navigation to their existing
+Workspaces and Agents. History and drafts remain visible. Runtime actions and
+message input follow the actual lifecycle state; an accepted resume does not
+advertise a ready runtime. Detailed underlying progress remains optional.
+
+The retained production resume sample spent approximately ten of its eleven
+Pod-startup seconds before containers started. Its initializer completed in the
+same recorded second, and the runtime became Ready in the second it started.
+The readiness probe has zero initial delay and a two-second period. There is no
+evidence from that sample that reducing probe delays would remove the dominant
+wait. The new default OnRootMismatch policy avoids recursive fsGroup remount
+processing when the volume root already has the expected ownership and mode;
+its permission preservation and timing must be measured on a fresh allocation.
+The original sample has no retained events sufficient to separate volume,
+network and sandbox setup time, so that wait is not attributed solely to fsGroup.
+
+## Prior Agent follow-up — 16:26:14 SGT
+
+Before this combined release, candidate `03cbd332` was Ready at **16:26:14 SGT on
+2026-10-14**. Agent Manager generation 15, Web generation 91, and retained Gateway
+generation 6 each had one updated Ready replica, exact published imageID and zero
+restarts. The default runtime was `a955564d`. PR #1007 merged as `ab789bde`, with
+actual CI image checkout `89fc1aaef7d71b80200f8e6af9670738c843e029` and equal tree
+`7312f2b7bad364092fbb8a05d80d9dbffb1c9685`. CI run
+[38528498008](https://github.com/ChronoAIProject/cma/actions/runs/38528498008),
+attempt 1, passed all 15 jobs.
+
+| Prior release evidence | Receipt SHA-256 |
+| --- | --- |
+| `/tmp/cma-agent-followup-publish-04/publication-report.json` | `45cb6e81fb1ce3ae48bc6600b289944fe03fc3706d519a4abc5b228bf33d88c9` |
+| `/tmp/cma-agent-followup-rollout-01/readiness.json` | `73b5bbafa878d20c8e2d2af8d669779c1d7d301ac49d0959aa80b673eaac5a62` |
+| `/tmp/cma-agent-followup-pool-01/ready.json` | `f652d6733a06a1a468512901ca98df60a4985ea8004f3999f0a876c69f8860fa` |
+
+The pool receipt observed two Ready replicas at 16:26:50 SGT. A later owner
+attempt reported **Needs attention** during Sandbox preparation. These prior
+readiness receipts do not establish successful fresh Agent timing or live skill
+installation. The combined release includes the authority correction; its live
+outcome requires separate evidence. Receipt paths are operator-local artifacts.
+
+## Earlier verified baseline — 11:31:31 SGT
 
 At **11:31:31 SGT**, Agent Manager, Web and Event Gateway each had one updated
 Ready replica, current observed generation, the exact published imageID and
@@ -63,7 +234,7 @@ At **11:31:59 SGT**, all seven public/owner checks returned HTTP 200: Web `/`, A
 `/ready`, Gateway `/readyz`, authenticated non-visitor owner session, valid owner
 inventory, and the original protected Sandbox/Agent, both still paused.
 
-## Measured acceptance
+## Earlier measured acceptance
 
 | Flow and tested version | Actual result | Evidence |
 | --- | --- | --- |
@@ -83,7 +254,7 @@ It proves successful stored-event replay, not a fresh refused-settings flow.
 The earlier caller retry and ready-Agent Gateway checks do not substitute for
 the final cold management-test result.
 
-## Cleanup and protected resources
+## Earlier cleanup and protected resources
 
 | Fixture | Normal cleanup result | Receipt |
 | --- | --- | --- |
@@ -129,7 +300,7 @@ identified. Exec connectivity does not prove direct Pod-network isolation.
 A default runtime update does not migrate retained Sandboxes; the MCP approval
 flow intentionally used retained runtime 028aca.
 
-The four repository image/config manifests are synchronized to final receipts;
-YAML, configuration key/documentation, native contract and route ownership
-checks passed. Operational instructions and infra ownership boundaries are in
+The earlier four-manifest synchronization and its YAML, configuration
+key/documentation, native contract and route ownership checks apply to the
+versions identified above. Operational instructions and infra ownership boundaries are in
 [CMA deployment readiness](CMA_Deployment_Readiness.md).

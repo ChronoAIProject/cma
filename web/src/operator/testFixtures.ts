@@ -86,6 +86,7 @@ export const stored: StoredPlatformSettings = { revision: 4, settings };
 export const warmPool: WarmPoolView = {
   id: 'pool-1',
   revision: 1,
+  config_sha256: 'c'.repeat(64),
   image: `registry.example/cma-runtime@sha256:${'a'.repeat(64)}`,
   cpu_millis: 1000,
   memory_mib: 4096,
@@ -112,6 +113,7 @@ export function operatorClient() {
       items: [warmPool],
       default_cpu_millis: 1000,
       default_memory_mib: 1024,
+      default_config_sha256: 'd'.repeat(64),
       default_image: warmPool.image,
       available: true,
     }),

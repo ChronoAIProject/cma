@@ -19,6 +19,8 @@ pub(super) struct NativeBackend {
     pub lose_suspend: Arc<AtomicBool>,
     pub lose_resume: Arc<AtomicBool>,
     pub lose_delete: Arc<AtomicBool>,
+    pub reject_credential: Arc<AtomicBool>,
+    pub status_override: Arc<Mutex<Option<layer3_adapter::RuntimeStatus>>>,
     pub calls: ActionLog,
 }
 
@@ -176,7 +178,23 @@ impl HostedBackend for NativeBackend {
         handle: &RuntimeHandle,
         request: RequestFrame,
     ) -> layer3_adapter::Result<ResponseFrame> {
-        self.inner.exchange(&self.pod(handle).await?, request).await
+        if matches!(request, RequestFrame::Credential(_))
+            && self.reject_credential.load(Ordering::SeqCst)
+        {
+            return Err(layer3_adapter::AdapterError::Rejected(
+                "fixture credential delivery rejected".into(),
+            ));
+        }
+        let mut response = self
+            .inner
+            .exchange(&self.pod(handle).await?, request)
+            .await?;
+        if let ResponseFrame::RuntimeStatus(status) = &mut response {
+            if let Some(replacement) = self.status_override.lock().unwrap().as_ref() {
+                *status = replacement.clone();
+            }
+        }
+        Ok(response)
     }
     async fn open_agent(
         &self,

@@ -10,7 +10,7 @@ use crate::{
     Result, RuntimeHandle,
 };
 
-const ASSIGN_TIMEOUT: Duration = Duration::from_secs(30);
+pub(super) const ASSIGN_TIMEOUT: Duration = Duration::from_secs(30);
 const RECEIPT_LIMIT: usize = 1024;
 const STDERR_LIMIT: usize = 4096;
 
@@ -24,16 +24,7 @@ impl AgentSandboxClient {
         expected: &PodBinding,
         request: &RuntimeBootstrapRequest,
     ) -> Result<RuntimeBootstrapReceipt> {
-        request.validate()?;
-        let (name, uid) = super::parse_handle(runtime)?;
-        if expected.sandbox_name != name
-            || expected.sandbox_uid != uid
-            || expected.pod_uid != request.pod_uid
-            || request.environment.get("CHRONO_RUNTIME_CONTROL_TOKEN")
-                != Some(&self.control_token(name))
-        {
-            return Err(rejected("runtime assignment authority mismatch"));
-        }
+        self.validate_assignment(runtime, expected, request)?;
         tokio::time::timeout(ASSIGN_TIMEOUT, async {
             let before = self.assignment_identity(runtime, expected, request).await?;
             let receipt = self.deliver_assignment(&expected.pod_name, request).await?;
@@ -49,6 +40,25 @@ impl AgentSandboxClient {
         })
         .await
         .map_err(|_| unavailable("runtime assignment timed out"))?
+    }
+
+    pub(super) fn validate_assignment(
+        &self,
+        runtime: &RuntimeHandle,
+        expected: &PodBinding,
+        request: &RuntimeBootstrapRequest,
+    ) -> Result<()> {
+        request.validate()?;
+        let (name, uid) = super::parse_handle(runtime)?;
+        if expected.sandbox_name != name
+            || expected.sandbox_uid != uid
+            || expected.pod_uid != request.pod_uid
+            || request.environment.get("CHRONO_RUNTIME_CONTROL_TOKEN")
+                != Some(&self.control_token(name))
+        {
+            return Err(rejected("runtime assignment authority mismatch"));
+        }
+        Ok(())
     }
 
     async fn assignment_identity(
@@ -92,7 +102,7 @@ impl AgentSandboxClient {
         Ok(object)
     }
 
-    async fn deliver_assignment(
+    pub(super) async fn deliver_assignment(
         &self,
         pod_name: &str,
         request: &RuntimeBootstrapRequest,
