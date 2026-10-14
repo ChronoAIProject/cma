@@ -22,6 +22,9 @@ const LATER: &str = "2026-09-05T00:01:00Z";
 #[path = "warm_sandboxes/mongo_integration_tests.rs"]
 mod warmup;
 
+#[path = "sandbox_admission_wake_mongo_tests.rs"]
+mod admission_wake;
+
 async fn database(prefix: &str) -> (Client, String) {
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
         .expect("CHRONO_TEST_MONGODB_URI must name a MongoDB replica set");

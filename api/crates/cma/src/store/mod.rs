@@ -1,6 +1,8 @@
 //! Durable adapters that do not depend on a resource aggregate.
 
 pub mod activity;
+#[cfg(test)]
+mod admission_wake_test_support;
 pub(crate) mod agent_access_requests;
 mod agent_access_tools;
 mod agent_admission;
