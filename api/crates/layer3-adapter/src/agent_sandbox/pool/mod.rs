@@ -252,3 +252,5 @@ mod policy_read_tests;
 mod read_fixture;
 #[cfg(test)]
 mod selection_read_tests;
+#[cfg(test)]
+mod native_startup_read_tests;
