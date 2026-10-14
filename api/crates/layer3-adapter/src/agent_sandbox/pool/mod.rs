@@ -248,3 +248,5 @@ mod fs_group_policy_tests;
 mod policy_read_tests;
 #[cfg(test)]
 mod read_fixture;
+#[cfg(test)]
+mod selection_read_tests;

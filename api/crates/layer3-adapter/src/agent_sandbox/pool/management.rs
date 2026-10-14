@@ -104,19 +104,8 @@ impl AgentSandboxPools {
                 memory_mib: quantity("memory", "Mi")?,
                 home: home.policy.clone(),
             };
-            let policy = NativePoolPodPolicy::from(&self.config);
-            if let Some(pool) = self
-                .inventory()
-                .await?
-                .into_iter()
-                .find(|pool| pool.binding.spec == spec && pool.binding.pod_policy == policy)
-            {
-                return Ok(Some(pool.binding));
-            }
-            // A zero-sized pool is the controller's cold-creation template. The
-            // claim controller falls back to createSandbox when no warm member exists.
             return self
-                .ensure_cold_pool(&spec)
+                .exact_native_pool(&spec)
                 .await
                 .map(|pool| Some(pool.binding));
         }
@@ -139,6 +128,32 @@ impl AgentSandboxPools {
         } else {
             Ok(None)
         }
+    }
+
+    /// New native reservations know their complete immutable configuration.
+    /// Read that exact pair in one wave; historical pools remain discoverable
+    /// through inventory and persisted bindings without delaying this selection.
+    async fn exact_native_pool(&self, spec: &NativePoolSpec) -> Result<NativePoolStatus> {
+        let desired_template = model::template(&self.config, spec)?;
+        let template_name = desired_template.name_any();
+        let pool_name = model::pool_name(&model::digest(&self.config, spec)?);
+        let (template, pool) = tokio::join!(
+            self.templates.get_opt(&template_name),
+            self.pools.get_opt(&pool_name),
+        );
+        let template = template.map_err(api_error)?;
+        if let Some(template) = &template {
+            model::verify(template, &desired_template)?;
+        }
+        let Some(pool) = pool.map_err(api_error)? else {
+            // A zero-sized pool is the controller's cold-creation template.
+            // Re-read before creation to preserve concurrent-create recovery.
+            return self.ensure_cold_pool(spec).await;
+        };
+        let template = template.ok_or_else(|| rejected("native pool template is missing"))?;
+        let desired_pool = model::pool(&self.config, spec, &template, target(&pool)?)?;
+        model::verify(&pool, &desired_pool)?;
+        status(binding(&self.config, spec, &template, &pool)?, &pool)
     }
 
     /// Create a cold template without ever changing an administrator's replica target.
