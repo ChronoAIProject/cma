@@ -99,7 +99,19 @@ impl AgentWorker {
         else {
             return Ok(false);
         };
-        Box::pin(self.execute(agent, now + started.elapsed())).await?;
+        let claim_ms = started.elapsed().as_millis() as u64;
+        let step = agent.work.step;
+        let executing = tokio::time::Instant::now();
+        let result = Box::pin(self.execute(agent, now + started.elapsed())).await;
+        tracing::info!(
+            agent_id = %id,
+            ?step,
+            claim_ms,
+            execution_ms = executing.elapsed().as_millis() as u64,
+            published = result.is_ok(),
+            "Agent work attempt completed"
+        );
+        result?;
         Ok(true)
     }
 

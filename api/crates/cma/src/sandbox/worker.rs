@@ -171,6 +171,7 @@ impl SandboxWorker {
         id: &SandboxId,
         now: SystemTime,
     ) -> Result<bool, SandboxStoreError> {
+        let claiming = tokio::time::Instant::now();
         let now_stamp = rfc3339_at(now);
         let lease_expires = rfc3339_at(now + self.config.lease_duration);
         let Some(sandbox) = self
@@ -181,8 +182,18 @@ impl SandboxWorker {
         else {
             return Ok(false);
         };
+        let claim_ms = claiming.elapsed().as_millis() as u64;
         let started = tokio::time::Instant::now();
-        if let Err(error) = Box::pin(self.execute(sandbox.clone(), now)).await {
+        let result = Box::pin(self.execute(sandbox.clone(), now)).await;
+        tracing::info!(
+            sandbox_id = %id,
+            step = ?sandbox.work.step,
+            claim_ms,
+            execution_ms = started.elapsed().as_millis() as u64,
+            published = result.is_ok(),
+            "Sandbox work attempt completed"
+        );
+        if let Err(error) = result {
             if error != SandboxStoreError::Conflict
                 || !self
                     .retry_conflicted_lifecycle(&sandbox, now + started.elapsed())
