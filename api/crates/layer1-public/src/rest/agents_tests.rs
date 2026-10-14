@@ -6,6 +6,7 @@ use std::{
 mod conversation_fixtures;
 mod creation_delegation;
 mod lifecycle;
+mod models;
 mod settings;
 pub(crate) use conversation_fixtures::{conversation_fixture, conversation_fixture_with_registry};
 

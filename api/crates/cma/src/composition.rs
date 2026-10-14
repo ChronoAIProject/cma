@@ -242,6 +242,10 @@ impl ControlPlaneComposition {
             CmaProfileAuthoringSource::production(config, Arc::clone(&auth))?,
         );
         let sandbox_credentials = credentials::sandbox_credentials(config, auth.clone(), &stores);
+        let agent_models = crate::agent_models::ChronoAgentModels::new(
+            &config.runtime.platform_base_url,
+            sandbox_credentials.clone(),
+        )?;
         if !auth.requires_credential() {
             tracing::warn!(
                 "running with a trusted fixed subject; this mode is for local development only"
@@ -383,6 +387,7 @@ impl ControlPlaneComposition {
             "cma_codex".into(),
         );
         let resource_routes = rest::profiles_router(profiles)
+            .merge(rest::agent_models_router(projections.reads(), agent_models))
             .merge(agent_access.owner_routes)
             .merge(rest::event_workers::router(event_workers.clone()))
             .merge(layer1_public::rest::agent_artifacts_router(
