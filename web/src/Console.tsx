@@ -107,6 +107,7 @@ export function Console({
     },
     onCreate,
     user.id,
+    onNavigate,
   );
   const canUse = user.capabilities.includes('use_own_sandboxes');
   const canCreate = !user.visitor && canUse && onCreate !== undefined;
@@ -195,7 +196,7 @@ export function Console({
           viewerId={user.id}
           revision={revision}
           permissions={permissions}
-          busy={actions.pending}
+          busy={actions.pending || actions.deletingSandboxIds.has(route.sandboxId)}
           onAction={actions.select}
           onNavigate={onNavigate}
         />
@@ -300,6 +301,11 @@ export function Console({
             detail={ready?.detail}
             historyLoading={ready?.historyLoading}
             pending={agent.pending}
+            onSandboxProgress={
+              ready === undefined
+                ? undefined
+                : () => onNavigate({ kind: 'sandbox', sandboxId: ready.detail.sandbox.id })
+            }
           />
         ) : shared !== undefined ? (
           <SharedAgentDetails
@@ -367,6 +373,8 @@ export function Console({
                     }))}
                     refreshError={navigation.refreshError}
                     lifecycleBusy={actions.pending}
+                    deletingSandboxIds={actions.deletingSandboxIds}
+                    onViewDeletion={actions.viewDeletion}
                     route={route}
                     permissions={permissions}
                     onNavigate={(next) => {
