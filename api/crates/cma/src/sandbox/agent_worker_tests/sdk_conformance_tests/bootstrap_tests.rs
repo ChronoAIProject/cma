@@ -459,3 +459,94 @@ async fn bootstrap_parent_failure_terminalizes_queued_v2_without_runtime_effects
     assert!(probe.inputs().is_empty());
     assert_eq!(h.backend.requests().await.len(), before);
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable local replica set"]
+async fn bootstrap_mongo_workspace_claim_defers_without_mutation_until_parent_install_ready() {
+    use layer2_core::sandbox::store::WorkspaceWorkerStore;
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI").expect("disposable local Mongo required");
+    assert!(uri.starts_with("mongodb://127.0.0.1:") || uri.starts_with("mongodb://localhost:"));
+    let client = mongodb::Client::with_uri_str(uri).await.unwrap();
+    let db = client.database(&format!(
+        "cma_bootstrap_workspace_claim_{}",
+        uuid::Uuid::new_v4().simple()
+    ));
+    let store = crate::store::MongoSandboxStore::open(&client, db.name())
+        .await
+        .unwrap();
+    let fixture = BootstrapHarness::new().await;
+    let h = &fixture.harness;
+    let parent = h
+        .store
+        .get_sandbox(&h.workspace.sandbox_id)
+        .await
+        .unwrap()
+        .unwrap();
+    store
+        .admit_sandbox(
+            SandboxAdmission::new(
+                parent.clone(),
+                SandboxAdmissionName::Exact(parent.name.clone()),
+                4,
+                rfc3339_at(h.now),
+            )
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    store.create_workspace(h.workspace.clone()).await.unwrap();
+    let now = rfc3339_at(h.now);
+    let expires = rfc3339_at(h.now + Duration::from_secs(30));
+    assert!(store
+        .claim_workspace_work(
+            &h.workspace.id,
+            "workspace-worker",
+            now.clone(),
+            expires.clone()
+        )
+        .await
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        store.get_workspace(&h.workspace.id).await.unwrap().unwrap(),
+        h.workspace
+    );
+    let mut installing = parent.clone();
+    installing.status = SandboxStatus::Installing;
+    installing.runtime = fixture.ready_parent.runtime.clone();
+    installing.lifecycle.runtime_generation_high_water =
+        fixture.ready_parent.lifecycle.runtime_generation_high_water;
+    installing.revision += 1;
+    store
+        .save_sandbox(parent.revision, installing.clone())
+        .await
+        .unwrap();
+    assert!(store
+        .claim_workspace_work(
+            &h.workspace.id,
+            "workspace-worker",
+            now.clone(),
+            expires.clone()
+        )
+        .await
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        store.get_workspace(&h.workspace.id).await.unwrap().unwrap(),
+        h.workspace
+    );
+    let revision = installing.revision;
+    installing.credential = fixture.ready_parent.credential.clone();
+    installing.revision += 1;
+    store.save_sandbox(revision, installing).await.unwrap();
+    let claimed = store
+        .claim_workspace_work(&h.workspace.id, "workspace-worker", now, expires)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(claimed.work.step, WorkspaceWorkStep::Prepare);
+    assert_eq!(claimed.work.attempts, 0);
+    assert_eq!(claimed.revision, h.workspace.revision + 1);
+    assert!(claimed.failed.is_none());
+    db.drop().await.unwrap();
+}
