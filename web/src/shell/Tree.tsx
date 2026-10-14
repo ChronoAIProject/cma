@@ -58,6 +58,7 @@ interface TreeProps {
   readonly items: readonly NavigationSandbox[];
   readonly refreshError?: string;
   readonly lifecycleBusy?: boolean;
+  readonly busySandboxIds?: ReadonlySet<string>;
   readonly deletingSandboxIds?: ReadonlySet<string>;
   readonly onViewDeletion?: (sandboxId: string) => void;
   readonly route: AppRoute;
@@ -98,6 +99,7 @@ export function Tree({
   items,
   refreshError,
   lifecycleBusy = false,
+  busySandboxIds,
   deletingSandboxIds,
   onViewDeletion,
   route,
@@ -202,12 +204,13 @@ export function Tree({
                   onKeyDown={keyboardNavigation}
                 >
                   {group.items.map(({ sandbox, workspaces }) => {
+                    const sandboxBusy = lifecycleBusy || busySandboxIds?.has(sandbox.id) === true;
                     const originalWorkspaces =
                       items.find((item) => item.sandbox.id === sandbox.id)?.workspaces ?? [];
                     const sandboxNode = `sandbox:${sandbox.id}`;
                     const childrenAvailable = sandboxChildrenReadable(sandbox);
                     const runtimeAvailable =
-                      !lifecycleBusy && !refreshError && sandboxChildrenAvailable(sandbox);
+                      !sandboxBusy && !refreshError && sandboxChildrenAvailable(sandbox);
                     const sandboxExpanded = childrenAvailable && !collapsed.has(sandboxNode);
                     const paused = sandbox.status === 'paused';
                     return (
@@ -263,7 +266,7 @@ export function Tree({
                             sandbox,
                             permissions,
                             refreshError !== undefined,
-                            lifecycleBusy,
+                            sandboxBusy,
                           )}
                           onNavigate={onNavigate}
                           onToggle={childrenAvailable ? () => toggle(sandboxNode) : undefined}
@@ -325,7 +328,7 @@ export function Tree({
                                       actions={workspaceActions(
                                         workspace,
                                         permissions,
-                                        lifecycleBusy,
+                                        sandboxBusy,
                                         runtimeAvailable,
                                       )}
                                       onNavigate={onNavigate}

@@ -130,3 +130,26 @@ it('backs off on transient read failure and never reports completion after lost 
   await act(() => vi.advanceTimersByTimeAsync(10_000));
   expect(readSandbox).toHaveBeenCalledTimes(2);
 });
+
+it('hides accepted progress while continuing to verify the target state', async () => {
+  vi.useFakeTimers();
+  let sandbox = sandboxFixture('pausing');
+  const onSettled = vi.fn();
+  const onClose = vi.fn();
+  const props = {
+    client: agentClient({ readSandbox: vi.fn(async () => sandbox) }),
+    request,
+    onSettled,
+    onClose,
+  };
+  const view = render(<SandboxActionStatus {...props} />);
+  await act(async () => {});
+  fireEvent.click(screen.getByRole('button', { name: 'Hide progress' }));
+  expect(onClose).toHaveBeenCalledOnce();
+  view.rerender(<SandboxActionStatus {...props} request={{ ...request, hidden: true }} />);
+  expect(screen.queryByRole('region', { name: 'Sandbox request' })).not.toBeInTheDocument();
+  expect(onSettled).not.toHaveBeenCalled();
+  sandbox = sandboxFixture('paused');
+  await act(() => vi.advanceTimersByTimeAsync(250));
+  expect(onSettled).toHaveBeenCalledExactlyOnceWith(true);
+});
