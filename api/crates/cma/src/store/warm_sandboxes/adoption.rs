@@ -76,7 +76,7 @@ pub(in crate::store) async fn adopt_agent(
     session: &mut ClientSession,
 ) -> Result<AgentCreation, SandboxStoreError> {
     let Some(warm) = claimed(store, sandbox, session).await? else {
-        return admission.materialize(workspace);
+        return admission.materialize_for_parent(workspace, sandbox);
     };
     let Some((prepared, plan)) = warm
         .workspaces
@@ -84,7 +84,7 @@ pub(in crate::store) async fn adopt_agent(
         .zip(&warm.plan.workspaces)
         .find(|(row, _)| row.id == workspace.id)
     else {
-        return admission.materialize(workspace);
+        return admission.materialize_for_parent(workspace, sandbox);
     };
     let Some((index, (agent, profile))) = prepared
         .agents
@@ -93,13 +93,13 @@ pub(in crate::store) async fn adopt_agent(
         .enumerate()
         .find(|(_, (_, profile))| **profile == admission.profile)
     else {
-        return admission.materialize(workspace);
+        return admission.materialize_for_parent(workspace, sandbox);
     };
     if *profile != admission.profile
         || !prepared.is_ready()
         || prepared.resolved_commit != workspace.resolved_commit
     {
-        return admission.materialize(workspace);
+        return admission.materialize_for_parent(workspace, sandbox);
     }
     if store
         .agents
@@ -109,7 +109,7 @@ pub(in crate::store) async fn adopt_agent(
         .map_err(super::unavailable)?
         .is_some()
     {
-        return admission.materialize(workspace);
+        return admission.materialize_for_parent(workspace, sandbox);
     }
     let mut admitted = admission.clone();
     admitted.agent_id = agent.id.clone();
