@@ -29,6 +29,7 @@ mod checkpoint;
 #[cfg(test)]
 mod checkpoint_tests;
 mod cleanup_admission;
+mod contention;
 mod implementation;
 
 pub(super) use checkpoint::carry_fields as carry_checkpoint_fields;
@@ -61,9 +62,7 @@ async fn commit_conversation(
     ensure_append_batch_size(mutation.agent_logs.len())?;
     let mut last_transient = None;
     for attempt in 0..TRANSACTION_ATTEMPTS {
-        if attempt > 0 {
-            tokio::task::yield_now().await;
-        }
+        contention::backoff(attempt).await;
         let mut session = match store.client.start_session().await {
             Ok(session) => session,
             Err(error) if is_transient(&error) => {
@@ -129,10 +128,7 @@ async fn commit_conversation(
             }
         }
     }
-    Err(SandboxStoreError::Unavailable(format!(
-        "agent conversation transaction exhausted its retry budget: {}",
-        last_transient.unwrap_or_else(|| "no driver result".into())
-    )))
+    Err(contention::exhausted(last_transient))
 }
 
 async fn apply_mutation(
