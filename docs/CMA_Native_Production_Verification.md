@@ -1,188 +1,135 @@
 # CMA native Sandbox production verification — 2026-10-14
 
-CMA remains in `example-cluster-02`, namespace `chrono-bot`.
-Its runtime Sandboxes run in the independent `example-cluster-01`,
-namespace `example-registry-01`. Only CMA application code/configuration and CMA-owned
-lifecycle resources were changed. Infra-owned agent-sandbox controllers, CRDs,
-RBAC, network policies and storage configuration were not changed.
+CMA Agent Manager, Event Gateway and Web are deployed, and the final cold
+Gateway user flow passed. Results below identify their tested version. Evidence
+paths are operator-local artifacts, not repository files.
 
-Agent Manager uses the `chrono-bot-ksa` workload identity and the infra-provided
-`example-namespace-02` CA/server/namespace. Authentication uses renewable Google
-metadata credentials. Runtime HTTP and WebSocket traffic travels through the
-remote Kubernetes `pods/exec` API; CRI port-forward could not reach this
-`microvm` runtime's network namespace. Native `SandboxTemplate` volume claim
-templates own the empty 64 GiB `home-a` PVCs. CMA does not need PVC create/patch
-or seed snapshots for this allocation path.
+## Final deployed set
 
-## Running artifacts
+At **11:31:31 SGT**, Agent Manager, Web and Event Gateway each had one updated
+Ready replica, current observed generation, the exact published imageID and
+zero restarts. CMA runs in northeast `chrono-bot`; native Sandboxes run in
+southeast `example-registry-01`. One Web image implements all three portals. Image Manager
+activation remains deferred.
 
-Agent Manager source `80d27862d3ae4d39fdba968f68d234c550cbeec3` is deployed and Ready.
-This includes the scope-change resume, repeated creation and borrowed-binding
-conversation lookup corrections. Live Agent creation, retained conversation
-recovery, owner-approved access revision and real Gateway event delivery have
-passed. Agent Manager, Event Gateway and Web are Ready;
-Image Manager has no Deployment. The shared MongoDB is `chrono-bot`, with service-owned
-collection prefixes and startup migrations kept separate.
+| Component | Candidate | Registry manifest digest |
+| --- | --- | --- |
+| Agent Manager | `cd37968d` | `sha256:b641e4e1795acac4e0586ac4db01ba43d55b3e2c7d3d1bea5b0e54b2b5f99eef` |
+| Default runtime | `37d6f95c` | `sha256:1c44be8aaa7b88c0190d17ca44f4f6e0f9a8aec880038c5d4da9cb2bc8c68e8b` |
+| Web | `ac837aa7` | `sha256:477215d347f052c3315a8dafc3be31e89a6c4516772f65bc21e8aee83b884a0f` |
+| Event Gateway | `cabfe5c3` | `sha256:0c3068130eaf618ce88dbe47bd7d111d365a5bba816c49f78b4000e8550ef1e7` |
 
-| Component | Immutable image digest |
-| --- | --- |
-| Agent Manager | `sha256:fec55c01d66aeb9ff24439867d198f679496f4d797ccd3c33c55609ed7307e1e` |
-| Event Gateway | `sha256:540c5e73f923e9379b99eec76223c3d9a5fc84119c9bac5d8b24ec6d9dbc11a1` |
-| Web | `sha256:d62695c668be11213ff608287455b69f9a530c2491d8d977db5a28bdb0e8e26b` |
-| Default runtime | `sha256:028aca56ea54349300433d0bcf0d45b48a9ce83f7e6697207fb5dd8b4184bc5b` |
-
-Web source `412e046e24fb8dbc778ca9129f1adf51b2a7d8aa` was published from the
-passed CI image artifact of merge revision
-`7a8ca05dfc23a7339d896884403a2c7b713b5a89`; the Web, TypeScript SDK and Web Dockerfile
-inputs are identical between those revisions. A real owner UI edit returned
-HTTP 200, advanced the conditional version from 2 to 3, and preserved the selected existing Agent
-through persistence and reload; unrelated channel policy and Agent history
-remained unchanged.
-
-The runtime is published in
+Application images use
+`us-central1-docker.pkg.dev/example-project-01/example-registry-02/` repositories
+`cma-api`, `cma-web` and `cma-cmaeg`. Runtime uses
 `asia-southeast1-docker.pkg.dev/example-project-02/example-registry-01/cma-runtime`.
-Agent Manager is packaged as an amd64 musl release binary overlay on the existing
-application image, retaining its runtime dependencies, nonroot user and
-entrypoint. This local overlay is not a CI-published image.
+The following are actual CI image source revisions, not inferred PR merge SHAs.
 
-The final Deployment and Pod readback confirmed one updated Ready replica for
-each application and zero container restarts. Actual Pod image IDs matched all
-three application digests above. Public `/`, `/agent-manager`, `/event-gateway`
-and authenticated `/auth/session` returned HTTP 200. The Image Manager Deployment
-was independently confirmed absent. The recorded API ConfigMap and all three
-application Deployment manifests passed a server-side dry-run against the
-explicit northeast context and `chrono-bot` namespace.
+| Component | Actual image source revision | Source tree | CI |
+| --- | --- | --- | --- |
+| AM | `b8f6ae10d048cd95593ef9efb88ff88195d82216` | `73a43035bda9d9f07e38ac378ab9eb44dfc2e17f` | 38502541842 attempt 1; full 15/15 passed |
+| Runtime | `1d2473a3e7f8e5961f75b63725ebc0742f973fe7` | `b84818d8dbbe22ee84ebd575aec0cb94c650e7fa` | 38482643832; full 15/15 passed |
+| Web | `d498b1b5e5541485654b30d9b5c97f80ae3e0962` | `f99e9ae871af0b291d657c71f1ddc8db637d759d` | 38504776234 attempt 1; four required jobs passed |
+| Gateway | `21f3401204becb767e462bf5fb4258d996dc923d` | `aae602e75dc85ff5f8cb7aabb14c8504aef619ea` | 38496119196; full 15/15 passed |
 
-## Actual user flows
+AM publication required Backend, Images(api), Repository structure, Secret scanning
+and Manifests. Its full run was in progress at publication, then completed 15/15
+at the 11:32:56 SGT observation. Web required Images(web), Frontend, Repository
+structure and Secret scanning; its full run was in progress at publication.
+Scoped publication and full-run observations are separate evidence. At the
+11:47:00 SGT check, Web had 13 successful jobs of 14 created, with Backend still
+running; no full Web CI success is claimed. Current snapshot:
+`/tmp/cma-scope-text-01/full-ci-current-observation.json`.
 
-- API creation `f034959d722543838d1d753ad8883f9a` completed native allocation,
-  empty Workspace creation, Agent startup, the automatic initial prompt and a
-  real completed Codex response.
-- Existing-Sandbox creation `bb1fc8543ce34794aa4f028670da9924` omitted the profile,
-  image and repository. It created a distinct empty Workspace/Agent in the same
-  Sandbox and applied `gpt-6`, `high`, `autonomous` and exactly
-  `chrono-llm-public,ornn-api`. Its first model turn completed.
-- Browser creation `e78ca958585246c68192216ce463671a` independently passed the
-  revised minimal form, omitted-field defaults, fixed baseline scope checkboxes,
-  exact initial prompt and completed assistant reply, including reload.
-- Optional repository creation `a1baaf5d944641eb8d0820fd3488ce2f` preserved
-  `source.type=empty` and put the public example repository URL in the first
-  durable prompt. Codex ran three tool calls and completed the initial turn.
-  CMA did not programmatically clone the selected repository.
-- Pause/resume physically replaced the runtime Pod while retaining the same
-  Sandbox and PVC UID `643a2b90-2bc1-43a6-b4c0-c9321d24b021`. Both original Agents
-  retained their Workspace IDs, native conversation identities and complete
-  prior transcript/event prefixes. A subsequent model turn returned the exact
-  `CMA_NATIVE_RESUME_OK` marker in the original conversation.
-- A second ordinary browser "New agent" creation, operation
-  `de84f6e9bf314e2aa4b04788ffc176c0`, completed on source `80d27862` with the same
-  default title as an earlier creation. The Sandbox name uses the durable
-  operation ID; the visible Agent title and minimal form remain unchanged.
-- Live Codex called `agent_key_scope_revision`; owner approval returned HTTP 200
-  for the exact baseline scopes plus `cma-trigger-github-observer-staging`.
-  Request `aar_a8cb7464d8630a8dd051bfc3daf7c05c66cbc1ad53e508f57c4145006b7c2f0e`
-  reached `succeeded`. The additive grant was recorded once, its credential
-  generation floor was 2 and delivered generation was 3. The original native
-  conversation received one automatic notification and a completed Codex
-  acknowledgment, without a manually submitted follow-up message. Reload and
-  exact same-decision replay retained that single notification.
-- This run used an already satisfied NyxID service connection. It exercised real
-  owner/session/exact-scope checks and automatic key-delivery notification; it
-  did not require or exercise a new third-party service OAuth callback. The
-  independent Gateway login did exercise a real NyxID OAuth callback.
-
-Earlier live acceptance exposed and corrected retained-owner cookie attribution,
-native resume using newly granted scope as old identity, repeated default-name
-creation, and borrowed conversation alias lookup. The original failed permission
-request remains preserved in acceptance evidence; it was not reset or rewritten
-in MongoDB. Its disposable Sandbox was retired through the CMA API and its exact
-Claim, Sandbox and PVC were confirmed gone from the remote cluster.
-
-The persisted owner Sandbox limit was updated through the conditional admin API
-from three to ten, revision 6 to 7; the other platform settings were read back
-and verified unchanged.
-
-Gateway provider management now uses the same `example-host-01.example-namespace.svc` origin as
-its preserved ChannelPointers. This restores the exact-origin service credential
-selection after the service rename. The original isolated channel creation
-retry returned HTTP 201 with the original record and binding. After correcting
-borrowed-conversation alias resolution, the real owner UI's **Send test event**
-returned HTTP 200 and rendered actual model text. Exactly one completed turn was
-added to the selected Agent's original native conversation. A subsequent browser
-reload verified the retained target and channel version without repeating the
-model request.
-
-The same isolated channel then accepted one authenticated structured CloudEvent
-at its advertised public endpoint with HTTP 202. The event produced one completed
-model acknowledgment in the original conversation while preserving prior history,
-profile and Workspace. The owner UI deleted this disposable channel with a
-version-guarded request (HTTP 204); lookup returned 404, and the borrowed Agent
-and completed transcript remained intact. The original Telegram channel stayed
-at version 6. These tests configured no external reply sinks and sent no external
-messages.
-
-## Validation and evidence limits
-
-The scope-resume correction passed five native lifecycle tests, one retained
-legacy service-access test, four new adapter regressions, seven suspension
-checks and one native pool resume check. These groups overlap and are not
-added into a total. Naming corrections passed four lifecycle admission tests,
-including concurrent creation and pre-update lost-response recovery. Binding
-resolution passed 19 core tests and all 34 Responses v2 tests, including the
-actual Gateway management-test request shape without event context. Strict
-all-target/all-feature Clippy passed for CMA, its adapter, core and public API.
-
-Merged native transport: 342 adapter tests and 31 focused application tests passed.
-The approval fix passed two nonignored regressions using the real cookie resolver
-and one integration test on an isolated authenticated local MongoDB replica set.
-Strict application Clippy passed after simplifying one existing optional lookup.
-The Gateway pending-media regression passed with 300 overlapping provider waits,
-256 free ingress permits and all 301 callbacks accepted. Its bounded admission
-batches avoid falsely requiring unlimited simultaneous HTTP admission.
-
-The production UI transport flag remains false, so owner Agent conversations use
-Agent Manager's AG-UI path. Gateway readiness, routing, independent OIDC login,
-owner session, channel editing, management test and authenticated custom-event
-delivery passed. Gateway acceptance used supported caller-provided binding and
-channel bearer credentials; it does not establish NyxID binding-key issuance or
-delivery through third-party reply sinks. Automatic scope-update notification
-uniqueness was checked through successful delivery, reload and exact approval
-replay, not a process-crash/failover campaign.
-
-Browser automation occasionally timed out while attaching or reloading. The
-successful management model request was not repeated: its reload assertion was
-recovered independently against the exact task-owned tab. The combined evidence
-preserves both the original successful business assertions and that reload.
-
-## Evidence index
-
-The following local reports contain redacted acceptance receipts rather than
-credentials. They are execution artifacts on the operator workstation, not
-repository files.
-
-| Acceptance | Local report |
+| Release evidence | Receipt |
 | --- | --- |
-| Minimal browser creation on deployed source | `/tmp/cma-real-portal-owner-proof-j9MtV6/report.json` |
-| Actual MCP request, approval and automatic continuation | `/tmp/cma-real-permission-revision-9mPk6y/report.json` |
-| Native allocation and retained Agent continuity | `/tmp/cma-native-live-accept-f034/` |
-| Optional repository first prompt | `/tmp/cma-optional-repo-f034/status-redacted.json` |
-| Gateway independent OIDC callback | `/tmp/cma-real-gateway-oidc-KQHAo4/report.json` |
-| Gateway target-preserving owner edit | `/tmp/cma-real-gateway-edit-ZRzlk6/report.json` |
-| Gateway management event and recovered reload | `/tmp/cma-real-gateway-business-reload-r0ThOP/report.json` |
-| Real custom ingress, model response and channel cleanup | `/tmp/cma-real-gateway-ingress-Vk2ucc/report.json` |
-| Failed browser Sandbox cleanup | `/tmp/cma-failed-browser-cleanup-80d.json` |
-| Successful permission Sandbox cleanup | `/tmp/cma-successful-permission-cleanup-80d.json` |
-| Main native/Gateway Sandbox cleanup | `/tmp/cma-main-disposable-cleanup-80d.json` |
+| AM exact publication and CI observations | `/tmp/cma-native-conflict-01/publication-report.json`; `full-ci-at-publication.json`; `full-ci-final.json` in that directory |
+| Web exact publication and publication-time CI | `/tmp/cma-scope-text-01/publication-report.json`; `full-ci-at-publication.json` in that directory |
+| Gateway exact publication | `/tmp/cma-test-timeout-01/publication-report.json` |
+| Runtime publication, residue scan and canary | `/tmp/cma-release-final-37d6f95c-01/publication-report.json`; `/tmp/cma-release-final-37d6f95c-01/runtime-residue-scan.json`; `/tmp/cma-runtime-final-37d6f95c-01/result.json` |
+| Final complete rollout/configuration | `/tmp/cma-rollout-native-conflict-01/plan.json`; `/tmp/cma-rollout-native-conflict-01/readiness.json` |
+| Public and owner readback | `/tmp/cma-public-endpoints-final.json` |
+| Synchronized repository manifests | `/tmp/cma-final-repo-sync-01/resolved-receipts.json` |
 
-The successful permission-test Sandbox reached `retired` revision 67 after a
-single CMA DELETE accepted with HTTP 202. Its exact Claim, Sandbox, Pod and PVC
-were confirmed absent. Native identities in that cleanup receipt were observed
-after the permission flow succeeded; they are not evidence of pre-grant identity.
+AM generation 13 uses Pod UID `b65b0274-3d86-40e3-8c0c-5e7fba98a910`.
+Web generation 89 retained UID `1ea4ec73-3628-4dd7-800a-6ed6eb9dc430`;
+Gateway generation 6 retained UID `2de69466-5794-4ea5-9ff0-a5ba584ffddc`.
+Deployment UIDs are unchanged. AM remains singleton/Recreate with native
+agent-sandbox enabled and authenticated `kubernetes-exec` transport. Runtime 37d
+and Gateway origin `http://example-host-01.example-namespace.svc` are preserved. No infra-owned
+controller, CRD, RBAC, storage or network policy was changed.
 
-After Gateway acceptance, the main disposable Sandbox
-`sbx_dae93c090e9f4bf38e25c353ff981b13` was also retired through one CMA API
-DELETE (HTTP 202), reaching revision 220. Before deletion the receipt preserved
-the selected ready Agent's 57 events and three completed turns, with sensitive
-content excluded. The original Claim, Sandbox, final Pod and PVC were all
-confirmed absent by captured names and UIDs. Cleanup used normal CMA lifecycle
-operations; the user's original Sandbox was not touched.
+At **11:31:59 SGT**, all seven public/owner checks returned HTTP 200: Web `/`, AM
+`/ready`, Gateway `/readyz`, authenticated non-visitor owner session, valid owner
+inventory, and the original protected Sandbox/Agent, both still paused.
+
+## Measured acceptance
+
+| Flow and tested version | Actual result | Evidence |
+| --- | --- | --- |
+| Three creation contexts — AM/runtime 37d | New Sandbox, existing Sandbox and existing Workspace each preserved a 79-byte UTF-8 title, empty workspace, `gpt-6/high/autonomous`, mandatory scopes and target identity. Each completed a real first turn; identical operation replay returned 202 with the same operation. Native imageID matched runtime 37d. | `/tmp/cma-final-owner-new-37d6f95c.json`; `/tmp/cma-final-owner-existing-sandbox-37d6f95c.json`; `/tmp/cma-final-owner-existing-workspace-37d6f95c.json` |
+| Persistent home/history — AM/runtime 37d | Native canary passed assignment/replay and same-PVC suspend/resume. API exports were identical UTF-8 JSONL, 43,428 bytes and 20 records, across five requests. Retained Mongo identities/history prefixes and protected original history survived rollout. | `/tmp/cma-final-history-export-37d-zo5ye6_a/report.json`; `/tmp/cma-final-rollout-after-37d6f95c-zht4aiai/reviewed.json`; `/tmp/cma-secondary-model-resume.json` |
+| Owner Details/settings/model/history — Web c63, AM 37d | Details exposed only model, reasoning, permission mode and key scope, with both mandatory scopes fixed. Three changes/restores returned 200, runtime acknowledgment, reload persistence and stored-event replay. Two actual turns used native-confirmed gpt-5.6-sol and gpt-6. Two menu downloads matched independent HTTP export: 98,511 bytes, 46 records. | `/tmp/cma-final-agent-ui-proof-FigMWZ/acceptance-reconciled.json`; `/tmp/cma-final-agent-ui-proof-FigMWZ/native-model-proof.json` |
+| Final service-picker appearance — Web ac837 | At 11:20:13 SGT, 1442 and 390 px checks each measured 105 service rows/431 elements with zero overflow. Screenshots passed review. Viewport restored; Agent/Sandbox stayed paused at revision 85; zero revives, settings changes, prompts or unexpected mutations. | `/tmp/cma-final-details-style-proof-kHhQRd/report.json` |
+| Owner-approved MCP continuation across AM replacement — AM 37d/Web 5ce, retained runtime 028aca | One owner approval returned 200; exact connections were ready; credential generation advanced 2 to 3. Original conversation automatically completed one acknowledgment at turn 56, with no new prompt and preserved prefix/reload. | `/tmp/cma-final-warm-approval-proof-xwfmHa/report.json`; `/tmp/cma-final-warm-approval-resume.json` |
+| Earlier portal/runtime flows — versions in individual receipts | Browser creation and optional repository first prompt passed. Pause/resume retained home/conversation identities. Warm-pool adoption used its existing native resources; resize to zero preserved the claimed Agent/PVC, rejected stale revision with 409 and removed unclaimed resources. | `/tmp/cma-real-portal-owner-proof-j9MtV6/report.json`; `/tmp/cma-optional-repo-f034/status-redacted.json`; `/tmp/cma-native-live-accept-f034/`; `/tmp/cma-native-warm-live-8ur5fbbq/report.json` |
+| Hosted callback — already-connected service | Registered return URL and official hosted completion passed; temporary binding removed and all 47 original bindings preserved. This was not a fresh missing-service OAuth journey. | `/tmp/cma-fixed-connection-callback-client-receipt.json`; `/tmp/cma-real-hosted-callback-proof-xG2iZH/report.json` |
+| Earlier Gateway routing — versions in individual receipts | Independent OIDC login, target-preserving edit, selected-Agent management test and custom-event ingress completed actual model responses. Original Telegram channel preserved. An earlier explicit Busy response admitted zero turns; a caller retry completed one acknowledgment. | `/tmp/cma-real-gateway-ingress-Vk2ucc/report.json`; `/tmp/cma-gateway-inline-live-Gzcyq5/report.json` |
+| Final cold inline-Agent Gateway — AM cd379/Web ac837/Gateway cabfe | Passed at 11:43:56 SGT: zero pre-test Agents; one actual UI click/POST returned HTTP 200 with the exact acknowledgment visible after 42.624 seconds. One ready Agent, one completed turn, one user/assistant pair and 19 contiguous events; reported acceptance latency 97 ms | `/tmp/cma-gateway-cold-live-czmxw4jd/acceptance-receipt.json` |
+
+The c63 functional receipt reconciles an initial empty CDP body capture using
+actual downloads and independent HTTP, without repeating settings or prompts.
+It proves successful stored-event replay, not a fresh refused-settings flow.
+The earlier caller retry and ready-Agent Gateway checks do not substitute for
+the final cold management-test result.
+
+## Cleanup and protected resources
+
+| Fixture | Normal cleanup result | Receipt |
+| --- | --- | --- |
+| Retained warm permission fixture | DELETE 202; revocation event 71; exact Claim/Sandbox/Pod/PVC absent at 09:24:45 SGT. Disabled application pool target/ready stayed zero; application/native and infra python-a pool UIDs preserved. | `/tmp/cma-warm-retained-cleanup-report.json` |
+| Failed 5ce cold fixture | Original DELETE 202; Sandbox/Agent retired; exact four native resources/channel absent and dedicated key revoked by 09:32:19 SGT. Lease/home races converged without extra mutations or forced deletes. | `/tmp/cma-gateway-cold-live-lm2syu_a/owner-retire-receipt.json` |
+| AM 37d provisioning-failure fixture | Normal channel DELETE 204 retired the Sandbox; channel/key and four exact original native resources absent by 10:36:34 SGT. | `/tmp/cma-gateway-cold-live-14esj40l/failed-provision-native-exact-absence.json` |
+| Primary paused acceptance fixture — AM 37d | DELETE and same-key replay returned 202; retired revision 98; credential event 78 completed. Original Claim/Sandbox/PVC absent at 11:21:16 SGT; Pod already absent while paused. One transient stop_agents failure converged normally; no forced delete. | `/tmp/cma-final-primary-paused-cleanup.json` |
+| Final cold fixture | Passed by 11:45:14 SGT: channel DELETE 204 then 404; Agent deleted at 11:44:29 and Sandbox retired at 11:45:06; all four original native resource UIDs absent, dedicated key revoked/404, disposable row absent after reload | `/tmp/cma-gateway-cold-live-czmxw4jd/acceptance-receipt.json` |
+
+The protected original Sandbox and Agent are distinct from these owned fixtures;
+the final seven-check public readback confirmed both remained paused.
+
+## Corrections and relevant historical failures
+
+| Earlier evidence | Failure and final correction | Original receipt |
+| --- | --- | --- |
+| Runtime 2bc6 | Build-test installation residue caused a Sandbox identity mismatch. Final 37d isolates build state, honors persistent TMPDIR and passed a zero-residue scan across 15 logical layers plus native canary/application flows. | `/tmp/cma-release-final-37d6f95c-01/runtime-residue-scan.json`; original diagnosis retained in [deployment handoff](CMA_Deployment_Readiness.md) |
+| Settings event compatibility before 5ce | Missing TypeScript update_settings parsing hid Agent pages/approval. Regressions reproduced it; final source includes the parser and c63 live stored-success replay passed. | `/tmp/cma-paused-page-error-evidence.json`; `/tmp/cma-settings-event-compat-receipt.json` |
+| 5ce cold management test | HTTP 503 provider_unavailable, zero admitted input/turns. Gateway cabfe separates 90-second startup from a fresh 30-second acceptance/completion budget; Web/default SDK callers allow 125 seconds. Only explicit Busy retries the same body/key; ingress remains 660 seconds. | `/tmp/cma-gateway-cold-live-lm2syu_a/report.json` |
+| AM 37d native provisioning | Kubernetes 409 on the first home-authority patch caused terminal validation; zero Workspace/Agent creations and zero test POSTs. Final AM retries only exact 409 Conflict after rereading/revalidating original identities; AlreadyExists/unknown 409/ownership/UID/spec refusals remain terminal. | `/tmp/cma-gateway-cold-live-14esj40l/provision-failure-receipt.json`; `/tmp/cma-native-home-conflict-receipt.json` |
+| Web e189/af1 picker visuals | e189 loaded styles but overflowed the grid. af1 fixed the grid yet a real 278 px unbreakable label still overflowed a 257 px field. Final ac837 scopes min-width:0/overflow-wrap:anywhere and passed actual desktop/mobile production checks. | `/tmp/cma-final-details-style-proof-FI8Ptt/report.json`; `/tmp/cma-final-details-style-proof-5qXLnB/report.json` |
+
+Focused verification also passed the 48 KiB history regression, 28 native
+transport checks and strict Clippy; four pinned ACP suites covered seven
+settings/model/reload/credential cases. Those ACP suites used an isolated Pod
+based on the prior runtime, separately from final-image acceptance. Final AM
+conflict tests covered fresh versions, identical UIDs, no duplicate allocation/
+PVC writes and replacement-UID refusal. Final Web local checks reproduced the
+actual catalogue failure and passed 429 elements at 1442/1280/390/320 px plus
+extra unbroken text. Receipts: `/tmp/cma-full-pinned-acp-receipt.json`,
+`/tmp/cma-native-home-conflict-receipt.json`,
+`/tmp/cma-details-scope-text-receipt.json`. Component CI results are above.
+
+## Coverage limits
+
+Image Manager build/catalog activation, fresh missing-service OAuth, NyxID
+frontend automatic navigation/binding-key delivery, external reply sinks,
+broad process-crash/failover, full Console/media/STT, Trigger delivery and
+cross-user sharing are not established here. Existing Agent UI uses AG-UI; no
+production UI transport-flag switch is claimed. Runtime canary results use
+operator identity and local status; real application flows are separately
+identified. Exec connectivity does not prove direct Pod-network isolation.
+A default runtime update does not migrate retained Sandboxes; the MCP approval
+flow intentionally used retained runtime 028aca.
+
+The four repository image/config manifests are synchronized to final receipts;
+YAML, configuration key/documentation, native contract and route ownership
+checks passed. Operational instructions and infra ownership boundaries are in
+[CMA deployment readiness](CMA_Deployment_Readiness.md).
