@@ -6,6 +6,9 @@ use crate::{
 };
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
+#[path = "backend_policy_read_tests.rs"]
+mod policy_reads;
+
 struct StatusTransport {
     state: Arc<Mutex<State>>,
     client: AgentSandboxClient,
