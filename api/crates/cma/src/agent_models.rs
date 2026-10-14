@@ -14,6 +14,7 @@ use crate::sandbox::SandboxCredentialController;
 
 const MAX_BYTES: usize = 1024 * 1024;
 const MAX_MODELS: usize = 1000;
+const USER_AGENT: &str = concat!("chrono-cma/", env!("CARGO_PKG_VERSION"));
 
 pub(crate) struct ChronoAgentModels {
     http: reqwest::Client,
@@ -30,6 +31,7 @@ impl ChronoAgentModels {
             http: reqwest::Client::builder()
                 .timeout(Duration::from_secs(15))
                 .redirect(reqwest::redirect::Policy::none())
+                .user_agent(USER_AGENT)
                 .build()
                 .map_err(|_| "model catalogue HTTP client is unavailable")?,
             origin: reqwest::Url::parse(origin).map_err(|_| "model catalogue origin is invalid")?,
@@ -49,6 +51,7 @@ impl ChronoAgentModels {
         let response = self
             .http
             .get(url)
+            .header(reqwest::header::ACCEPT, "application/json")
             .bearer_auth(bearer)
             .send()
             .await
@@ -123,6 +126,8 @@ struct Listing {
 struct Model {
     id: String,
     #[serde(default)]
+    display_name: Option<String>,
+    #[serde(default)]
     name: Option<String>,
 }
 
@@ -137,9 +142,13 @@ fn parse(body: &[u8]) -> Result<Vec<AgentModelView>, AgentModelCatalogError> {
         if !valid_text(&model.id) || !ids.insert(model.id.clone()) {
             return Err(unavailable());
         }
+        if !agent_model(&model.id) {
+            continue;
+        }
         let label = model
-            .name
+            .display_name
             .filter(|name| valid_text(name))
+            .or_else(|| model.name.filter(|name| valid_text(name)))
             .unwrap_or_else(|| model.id.clone());
         models.push(AgentModelView {
             id: model.id,
@@ -148,6 +157,20 @@ fn parse(body: &[u8]) -> Result<Vec<AgentModelView>, AgentModelCatalogError> {
     }
     models.sort_by(|a, b| a.id.cmp(&b.id));
     Ok(models)
+}
+
+/// Chrono's catalogue mixes text and image models without capability metadata.
+/// Keep this admitted ID contract aligned with the managed ACP catalogue:
+/// ^gpt-[0-9][A-Za-z0-9._-]*$ or codex-auto-review. Entries are still discovered
+/// from the exact Sandbox service; this predicate never adds catalogue rows.
+fn agent_model(id: &str) -> bool {
+    id == "codex-auto-review"
+        || id.strip_prefix("gpt-").is_some_and(|suffix| {
+            suffix.as_bytes().first().is_some_and(u8::is_ascii_digit)
+                && suffix
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+        })
 }
 fn valid_text(value: &str) -> bool {
     !value.is_empty()

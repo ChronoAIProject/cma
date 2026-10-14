@@ -422,7 +422,23 @@ separate interface from CMA's unsupported `/api/v1/mcp` route.
 current Sandbox key to query the Chrono LLM `/models` API. The portal uses the
 Agent Manager prefix `/api/agent-manager/v1/agents/{id}/models`. The response is
 `Cache-Control: no-store`; the list contains provider results without adding
-hardcoded choices. The existing settings PATCH applies the selected model.
+hardcoded choices. Labels prefer the provider's `display_name`, then `name`,
+then the model ID. The existing settings PATCH applies the selected model.
+
+Chrono's current `/models` response includes image-only models and does not
+provide modality or supported-endpoint metadata (`type` is `model` for every
+entry). The Agent catalog therefore admits only provider-returned IDs matching
+`^gpt-[0-9][A-Za-z0-9._-]*$` or exactly `codex-auto-review`, the same ID contract
+used by managed ACP model discovery. This excludes `gpt-image-*` and unknown
+model families. It describes catalog eligibility; an already-running retained
+runtime may still require an upgrade before it can accept a newer model ID.
+
+Requests use an explicit `chrono-cma/<version>` User-Agent and
+`Accept: application/json`. Production verification on 2026-10-14 confirmed
+that the existing scoped Sandbox key can read `/models`: a Python-urllib
+User-Agent was denied by the upstream perimeter, while no User-Agent and a
+normal CMA client User-Agent returned the same 20 model IDs. The route does not
+need `/v1/models` (which returned 404), an owner-token fallback, or wider scope.
 
 The caller must own the Agent. Foreign or missing Agents return 404 before any
 upstream request. Missing, expired, or mismatched Sandbox credential custody,
