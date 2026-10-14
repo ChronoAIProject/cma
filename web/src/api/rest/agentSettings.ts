@@ -64,15 +64,18 @@ export function agentSettingsClient(): Pick<
             !('id' in model) ||
             typeof model.id !== 'string' ||
             !model.id.trim() ||
-            model.id.length > 128 ||
+            model.id.length > 256 ||
             !('label' in model) ||
             typeof model.label !== 'string' ||
-            !model.label.trim(),
+            !model.label.trim() ||
+            ('available' in model && typeof model.available !== 'boolean'),
         ) ||
         new Set(value.models.map((model: { id: string }) => model.id)).size !== value.models.length
       )
         throw new ProtocolError('Agent Manager returned an invalid model catalog.');
-      return value.models as { id: string; label: string }[];
+      return (value.models as { id: string; label: string; available?: boolean }[]).map(
+        (model) => ({ ...model, available: model.available === true }),
+      );
     },
     readAgentSettings: (id, options) => settingsRequest(id, { signal: options?.signal }),
     updateAgentSettings: (id, settings, options) =>

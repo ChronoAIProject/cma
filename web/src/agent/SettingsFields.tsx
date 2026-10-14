@@ -36,7 +36,11 @@ export function SettingsFields({
                     unavailable: 'Current model is not in the available catalog.',
                   },
                 ]),
-            ...models.map((model) => ({ value: model.id, label: model.label })),
+            ...models.map((model) => ({
+              value: model.id,
+              label: model.label,
+              unavailable: model.available ? undefined : 'This Agent cannot select this model yet.',
+            })),
           ]}
           onChange={(model) => onChange({ ...value, model })}
         />
