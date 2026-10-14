@@ -17,6 +17,9 @@ pub struct AgentSandboxBackend {
 
 #[path = "agent_sandbox_binding.rs"]
 mod binding;
+#[path = "agent_sandbox_context.rs"]
+mod context;
+use context::observation;
 
 impl AgentSandboxBackend {
     pub fn new(client: AgentSandboxClient, transport: Arc<dyn HostedControlTransport>) -> Self {
@@ -34,47 +37,6 @@ impl AgentSandboxBackend {
             .await?;
         self.assign_and_bind(handle, &pod, request).await
     }
-}
-
-fn observation(object: &DynamicObject) -> Result<RuntimeObservation> {
-    let identity = super::deployment::provider_metadata_identity(object.annotations())?;
-    let ready = object
-        .data
-        .pointer("/status/conditions")
-        .and_then(|v| v.as_array())
-        .is_some_and(|cs| {
-            cs.iter().any(|c| {
-                c["type"] == "Ready"
-                    && c["status"] == "True"
-                    && c["observedGeneration"].as_i64() == object.metadata.generation
-            })
-        });
-    let state = if object.metadata.deletion_timestamp.is_some() {
-        "terminating"
-    } else if object
-        .data
-        .pointer("/spec/operatingMode")
-        .and_then(|value| value.as_str())
-        == Some("Suspended")
-    {
-        "suspended"
-    } else if ready {
-        "running"
-    } else {
-        "pending"
-    };
-    Ok(RuntimeObservation {
-        sandbox_id: identity.sandbox_id,
-        generation: identity.generation,
-        handle: crate::agent_sandbox::handle(object)?,
-        image_sha256: identity.image_sha256,
-        spec_fingerprint: identity.spec_fingerprint,
-        runtime_contract: identity.runtime_contract,
-        lifecycle: RuntimeLifecycle {
-            state: state.into(),
-            reason: None,
-        },
-    })
 }
 
 #[async_trait::async_trait]
@@ -170,6 +132,15 @@ impl HostedBackend for AgentSandboxBackend {
         self.bind_adopted(handle, request, &object).await?;
         Ok(Some(observation(&object)?))
     }
+    async fn inspect_native_runtime(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &HomeVolumeAttachment,
+    ) -> Result<Option<RuntimeInspection>> {
+        self.inspect_native_context(handle, request, home).await
+    }
+
     async fn reclaim(&self, expected: &RuntimeObservation) -> Result<()> {
         let Some(object) = self.client.get(&expected.handle).await? else {
             return Ok(());
@@ -428,6 +399,16 @@ impl HostedBackend for RuntimeBackends {
         request: &ProviderSandboxRequest,
     ) -> Result<Option<RuntimeObservation>> {
         self.for_handle(handle)?.adopt(handle, request).await
+    }
+    async fn inspect_native_runtime(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &HomeVolumeAttachment,
+    ) -> Result<Option<RuntimeInspection>> {
+        self.for_handle(handle)?
+            .inspect_native_runtime(handle, request, home)
+            .await
     }
     async fn reclaim(&self, observation: &RuntimeObservation) -> Result<()> {
         self.for_handle(&observation.handle)?

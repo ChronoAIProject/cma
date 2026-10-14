@@ -95,10 +95,10 @@ pub use provider_finality::{
 };
 pub use runtime::{
     CommandReceipt, CredentialFrame, InstallReceipt, InstallRequest, RuntimeAdoptionRequest,
-    RuntimeCredential, RuntimeHandle, RuntimeImage, RuntimeLifecycle, RuntimeObservation,
-    RuntimeProvisionRequest, SandboxCapacity, SandboxSpec, DEFAULT_COMMAND_OUTPUT_LIMIT_BYTES,
-    DEFAULT_COMMAND_TIMEOUT_SECONDS, DEFAULT_HOME_DIRECTORY, DEFAULT_SUPERVISOR_PROGRAM,
-    DEFAULT_TOTAL_TIMEOUT_SECONDS,
+    RuntimeCredential, RuntimeHandle, RuntimeImage, RuntimeInspection, RuntimeLifecycle,
+    RuntimeObservation, RuntimeProvisionRequest, SandboxCapacity, SandboxSpec,
+    DEFAULT_COMMAND_OUTPUT_LIMIT_BYTES, DEFAULT_COMMAND_TIMEOUT_SECONDS, DEFAULT_HOME_DIRECTORY,
+    DEFAULT_SUPERVISOR_PROGRAM, DEFAULT_TOTAL_TIMEOUT_SECONDS,
 };
 pub use runtime_output::{RuntimeOutputReceipt, RuntimeOutputSource};
 pub use runtime_status::{valid_home_identity, RuntimeStatus, RuntimeStatusRequest};
