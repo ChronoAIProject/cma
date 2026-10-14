@@ -313,9 +313,10 @@ RUN set -eux; \
 COPY --from=build /out/layer4-runtime /usr/local/bin/layer4-runtime
 
 # Native SandboxTemplates use this same image as a non-root init container:
-# layer4-runtime --initialize-home /mnt/cma-home seeds a fresh VCT volume with
-# this image's public home and empty state/transfer directories. Completed
-# volumes retain all user contents across Pod suspension and replacement.
+# --initialize-home-tree /mnt/cma-home seeds home/cma and creates home/.codex;
+# home mounts at /home, with separate persistent state/transfer directories.
+# --initialize-home retains the v1 home -> /home/cma layout. Both versions
+# reject the other's marker and preserve completed volumes across Pod recreation.
 
 # Persist untouched provider conversations before publishing an Agent as Ready.
 # These exact-source patches and restart proofs use synthetic credentials and
@@ -391,4 +392,5 @@ LABEL org.opencontainers.image.source="https://github.com/ChronoAIProject/cma" \
       org.opencontainers.image.revision="${CHRONO_BUILD_SHA}" \
       org.opencontainers.image.version="${CHRONO_BUILD}" \
       dev.chrono.cma.runtime-contract="3" \
-      dev.chrono.cma.runtime-bootstrap="1"
+      dev.chrono.cma.runtime-bootstrap="1" \
+      dev.chrono.cma.home-layout="2"

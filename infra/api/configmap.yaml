@@ -34,7 +34,7 @@ data:
   # Existing hyperdisk class supports the microvm pool's N4 nodes; keep 64 GiB.
   # Empty-home RWOP allocation and same-PVC suspend/resume passed in production.
   # Retained historical allocations keep their persisted policy and authority.
-  CHRONO_AGENT_SANDBOX_HOME_MODE: "native_vct_empty_v1"
+  CHRONO_AGENT_SANDBOX_HOME_MODE: "native_vct_full_home_v2"
   CHRONO_AGENT_SANDBOX_HOME_STORAGE_CLASS: "home-a"
   CHRONO_AGENT_SANDBOX_HOME_CAPACITY_GIB: "64"
   CHRONO_AGENT_SANDBOX_HOME_TEMPLATE: ""

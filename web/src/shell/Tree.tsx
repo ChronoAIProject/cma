@@ -3,6 +3,7 @@ import { useId, useState } from 'react';
 import { sandboxChildrenAvailable, sandboxLifecycleLabel } from '../sandbox/lifecycle';
 import type { AppRoute } from '../routing/routes';
 import { StateDot } from '../ui/StateDot';
+import { Button } from '../ui/Button';
 import {
   IconAgentPresetOutline16,
   IconBranchOutline16,
@@ -52,6 +53,8 @@ interface TreeProps {
   readonly items: readonly NavigationSandbox[];
   readonly refreshError?: string;
   readonly lifecycleBusy?: boolean;
+  readonly deletingSandboxIds?: ReadonlySet<string>;
+  readonly onViewDeletion?: (sandboxId: string) => void;
   readonly route: AppRoute;
   readonly permissions: TreePermissions;
   readonly onNavigate: (route: AppRoute) => void;
@@ -90,20 +93,29 @@ export function Tree({
   items,
   refreshError,
   lifecycleBusy = false,
+  deletingSandboxIds,
+  onViewDeletion,
   route,
   permissions,
   onNavigate,
   onAction,
 }: TreeProps) {
-  const facts = useTreeCreation(viewerId, items, refreshError === undefined);
-  const channelIds = treeAgentIds(items);
+  const deletingItems = items.filter(
+    ({ sandbox }) =>
+      sandbox.status !== 'retired' &&
+      (sandbox.status === 'retiring' || deletingSandboxIds?.has(sandbox.id)),
+  );
+  const visibleItems = items.filter(
+    (item) => item.sandbox.status !== 'retired' && !deletingItems.includes(item),
+  );
+  const facts = useTreeCreation(viewerId, visibleItems, refreshError === undefined);
+  const channelIds = treeAgentIds(visibleItems);
   const channelFacts = useChannelFacts(
     resourceClient,
     channelIds,
     refreshError === undefined,
     viewerId,
   );
-  const visibleItems = items.filter(({ sandbox }) => sandbox.status !== 'retired');
   const groupId = useId();
   const groups = [
     {
@@ -130,6 +142,25 @@ export function Tree({
 
   return (
     <div className="resource-tree">
+      {deletingItems.length === 0 ? null : (
+        <details className="resource-tree__notice">
+          <summary>Deletion progress ({deletingItems.length})</summary>
+          {deletingItems.map(({ sandbox }) => (
+            <Button
+              key={sandbox.id}
+              size="sm"
+              aria-label={`Deletion status for ${sandbox.name}`}
+              onClick={() =>
+                onViewDeletion
+                  ? onViewDeletion(sandbox.id)
+                  : onNavigate({ kind: 'sandbox', sandboxId: sandbox.id })
+              }
+            >
+              {sandbox.name}
+            </Button>
+          ))}
+        </details>
+      )}
       <Presence>
         {refreshError === undefined ? null : (
           <p className="resource-tree__notice" role="alert">

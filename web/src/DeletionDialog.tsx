@@ -7,6 +7,7 @@ import {
   deletionTarget,
   observeDeletion,
   requestDeletion,
+  restoreDeletion,
   type DeletionObservation,
   type DeletionRequest,
 } from './deletion';
@@ -16,6 +17,7 @@ import { Button } from './ui/Button';
 import { ProvisioningProgress } from './sandbox/ProvisioningProgress';
 import { LiveActivity } from './sandbox/LiveActivity';
 import { activityEntries } from './sandbox/activity';
+import { transitionRefreshDelay } from './sandbox/lifecycle';
 
 export function DeletionDialog({
   client,
@@ -23,6 +25,7 @@ export function DeletionDialog({
   initial,
   restored,
   onChanged,
+  onAccepted,
   onClose,
 }: {
   readonly client: CmaWebClient;
@@ -30,6 +33,7 @@ export function DeletionDialog({
   readonly initial: DeletionRequest;
   readonly restored: boolean;
   readonly onChanged: () => void;
+  readonly onAccepted?: (request: DeletionRequest) => void;
   readonly onClose: () => void;
 }) {
   const [request, setRequest] = useState(initial);
@@ -48,8 +52,10 @@ export function DeletionDialog({
   const target = deletionTarget(request.action);
   const persist = (value: DeletionRequest | undefined) => {
     try {
-      if (value === undefined) localStorage.removeItem(deletionStorageKey(viewerId));
-      else localStorage.setItem(deletionStorageKey(viewerId), JSON.stringify(value));
+      if (value === undefined) {
+        if (restoreDeletion(viewerId)?.key === request.key)
+          localStorage.removeItem(deletionStorageKey(viewerId));
+      } else localStorage.setItem(deletionStorageKey(viewerId), JSON.stringify(value));
     } catch {
       /* The server still owns the operation when browser storage is unavailable. */
     }
@@ -61,6 +67,7 @@ export function DeletionDialog({
     let events: DeletionObservation['events'] = [];
     let agentEvents: DeletionObservation['agentEvents'] = [];
     let reading = false;
+    const startedAt = Date.now();
     const poll = () => {
       if (reading || controller.signal.aborted || document.hidden || completed.current) return;
       clearTimeout(timer);
@@ -82,12 +89,14 @@ export function DeletionDialog({
           if (next.complete) {
             completed.current = true;
             try {
-              localStorage.removeItem(deletionStorageKey(viewerId));
+              if (restoreDeletion(viewerId)?.key === request.key)
+                localStorage.removeItem(deletionStorageKey(viewerId));
             } catch {
               /* Optional browser recovery. */
             }
             changed.current();
-          } else timer = setTimeout(poll, 1500);
+          } else
+            timer = setTimeout(poll, request.accepted ? transitionRefreshDelay(startedAt) : 1500);
         })
         .catch((error: unknown) => {
           if (controller.signal.aborted) return;
@@ -129,6 +138,7 @@ export function DeletionDialog({
       const accepted = { ...request, accepted: true };
       persist(accepted);
       setRequest(accepted);
+      onAccepted?.(accepted);
       changed.current();
     } catch (error: unknown) {
       setCommandError(
@@ -205,18 +215,21 @@ export function DeletionDialog({
               ? 'Delete request accepted. Cleanup continues even if you close this page.'
               : 'The delete request has not been confirmed. Check the same request before trying another action.'}
       </p>
-      {observation === undefined ? null : (
-        <ProvisioningProgress title="Deletion progress" steps={observation.steps} />
-      )}
-      <LiveActivity
-        entries={activityEntries(
-          observation?.agentEvents ?? observation?.events ?? [],
-          request.action.kind === 'delete_agent' ? 'agent' : 'sandbox',
+      <details>
+        <summary>Cleanup progress</summary>
+        {observation === undefined ? null : (
+          <ProvisioningProgress title="Deletion progress" steps={observation.steps} />
         )}
-        syncedAt={observation?.observedAt}
-        stale={readError !== undefined}
-        loading={observation === undefined && readError === undefined}
-      />
+        <LiveActivity
+          entries={activityEntries(
+            observation?.agentEvents ?? observation?.events ?? [],
+            request.action.kind === 'delete_agent' ? 'agent' : 'sandbox',
+          )}
+          syncedAt={observation?.observedAt}
+          stale={readError !== undefined}
+          loading={observation === undefined && readError === undefined}
+        />
+      </details>
       <Presence>
         {observation?.failure === undefined ? null : (
           <p role="alert">

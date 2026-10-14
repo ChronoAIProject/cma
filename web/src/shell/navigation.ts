@@ -49,6 +49,7 @@ export async function loadNavigation(
         if (sandbox.id !== summary.id)
           throw new Error('Sandbox hierarchy referred to different resources.');
         if (sandbox.status === 'retired') return undefined;
+        if (sandbox.status === 'retiring') return { sandbox, workspaces: [] };
         const workspaces = await Promise.all(
           sandbox.workspaces.map(async (summary) => {
             const workspace = await client.readWorkspace(summary.id, { signal });

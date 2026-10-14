@@ -328,7 +328,7 @@ acceptance, node capacity, image compatibility or live RWOP scheduling.
 
 Keep the legacy `CHRONO_SANDBOX_HOME_*` settings pinned to the northeast seed
 and retained allocations. For new native homes in southeast, set
-`CHRONO_AGENT_SANDBOX_HOME_MODE=native_vct_empty_v1`,
+`CHRONO_AGENT_SANDBOX_HOME_MODE=native_vct_full_home_v2`,
 `CHRONO_AGENT_SANDBOX_HOME_STORAGE_CLASS`, and
 `CHRONO_AGENT_SANDBOX_HOME_CAPACITY_GIB` (1–1024 GiB). Leave
 `CHRONO_AGENT_SANDBOX_HOME_TEMPLATE` and
@@ -338,10 +338,15 @@ mode may inherit storage class/capacity from the legacy configuration, but using
 an explicit southeast storage pair makes the cluster boundary clear.
 
 The native Sandbox controller creates one PVC per Sandbox from the volume claim
-template. The pinned runtime image supplies the `--initialize-home` init command,
-which mounts the PVC root as UID/GID 10001 and initializes the `home`, `state`,
-and `transfer` layout before the runtime starts. It uses a completion marker to
-make Pod recreation safe. The runtime receives credentials only after CMA
+template. The pinned runtime image supplies the `--initialize-home-tree` init
+command, which mounts the PVC root as UID/GID 10001. It seeds the public user
+home into `home/cma`, creates writable `home/.codex`, and initializes separate
+`state` and `transfer` directories before the runtime starts. The runtime mounts
+the PVC's `home` at **`/home`**, preserving all contents including `/home/.codex`;
+its `HOME` and working directory remain `/home/cma`. Runtime state and transfers
+remain mounted at `/var/lib/cma-runtime` and `/var/lib/cma-transfer`. The durable
+`.cma-home-layout-v2` completion marker makes Pod recreation safe without
+re-seeding or modifying retained owner contents. The runtime receives credentials only after CMA
 records and verifies the original Claim, Sandbox, and PVC UIDs. A zero-replica
 CMA-owned pool supplies the controller's cold SandboxClaim fallback when no
 warm pool exists. Pool scaling and cold fallback use the same template contract.
@@ -353,7 +358,23 @@ and Pod exec get/create to deliver runtime assignment. Pause preserves the
 Sandbox and PVC. Delete retires the Claim/Sandbox and waits for controller GC
 of the original PVC and Pod; CMA never issues a direct PVC delete for this mode.
 CSI must support `ReadWriteOncePod`. Verify the runtime image pin includes the
-initializer as well as runtime pool assignment support before rollout.
+initializer as well as runtime pool assignment support before rollout. V2 pool
+admission requires image metadata `dev.chrono.cma.home-layout=2`. CMA declares
+this capability for its deployment-owned runtime pin; the runtime image evidence
+probe checks the actual OCI label and executes both initializer versions. Roll
+out the new runtime pin, CMA binary and v2 default configuration together.
+
+Retained `native_vct_empty_v1` homes keep the original `home` → `/home/cma`
+mount and `--initialize-home` initializer with `.cma-home-layout-v1`. Their
+policy serialization, request digests, pool identities and native authority
+scope remain stable. V2 uses a distinct persisted policy and pool identity;
+changing the default never migrates or reinterprets an existing PVC. Either
+initializer refuses the other version's completion or staging marker before
+changing the volume. The historical native authority scope still identifies
+the same cluster/namespace/deployment; the persisted policy identifies layout.
+To roll back new allocation defaults, explicitly select `native_vct_empty_v1`
+while retaining a CMA version that understands existing v2 records. Do not
+roll back the runtime image pin of a retained v2 pool to a v1-only image.
 The production preflight checks that the chosen StorageClass exists and uses
 GKE PD CSI. That check alone does not prove live RWOP provisioning or scheduling;
 actual home-a canary and Agent-flow receipts recorded here establish those checks. The Pod/PVC templates require RWOP,

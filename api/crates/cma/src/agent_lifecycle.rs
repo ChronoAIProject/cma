@@ -217,8 +217,12 @@ impl InlineAgentLifecycle {
         let workspace_id = self
             .wait_for_agent_workspace(caller, &sandbox_id, &lease)
             .await?;
-        self.progress(&lease, "agent_startup", "running", "Starting your Agent")
-            .await?;
+        self.progress_pair(
+            &lease,
+            ("workspace_runtime", "ready", "Workspace is ready"),
+            ("agent_startup", "running", "Starting your Agent"),
+        )
+        .await?;
         let agent_id = if let Some(id) = existing_agent_id {
             AgentId(id)
         } else {

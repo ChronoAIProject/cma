@@ -21,6 +21,7 @@ mod lifecycle;
 mod provisioning;
 mod retained_retirement;
 mod retirement;
+mod scheduling;
 mod support;
 
 pub(crate) const CREDENTIAL_ROTATION_AGE: Duration = Duration::from_secs(12 * 60 * 60);
@@ -188,6 +189,7 @@ impl SandboxWorker {
         tracing::info!(
             sandbox_id = %id,
             step = ?sandbox.work.step,
+            lifecycle_phase = ?scheduling::phase(&sandbox),
             claim_ms,
             execution_ms = started.elapsed().as_millis() as u64,
             published = result.is_ok(),
@@ -249,17 +251,14 @@ impl SandboxWorker {
         if !progressed {
             return Ok(false);
         }
-        // Installation and credential binding need no polling delay between
-        // committed steps. Each step still acquires its own current lease.
+        // Follow committed local progress without waiting for another sweep.
+        // Every effect still requires a fresh store-issued lease and fence.
         for _ in 0..16 {
             let Some(sandbox) = self.dependencies.store.get_sandbox(id).await? else {
                 break;
             };
-            if !matches!(
-                sandbox.status,
-                layer2_core::sandbox::SandboxStatus::Provisioning
-                    | layer2_core::sandbox::SandboxStatus::Installing
-            ) || sandbox.runtime.is_none()
+            if !scheduling::can_follow(&sandbox)
+                || sandbox.work.attempts != 0
                 || !sandbox.work.is_due(&rfc3339_at(now + started.elapsed()))
             {
                 break;

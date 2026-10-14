@@ -35,6 +35,7 @@ export function validateImage(image, commit, expectedId) {
   assert.equal(image.Config.Labels['org.opencontainers.image.source'], source);
   assert.equal(image.Config.Labels['dev.chrono.cma.runtime-contract'], '3');
   assert.equal(image.Config.Labels['dev.chrono.cma.runtime-bootstrap'], '1');
+  assert.equal(image.Config.Labels['dev.chrono.cma.home-layout'], '2');
 }
 
 function validateProbeChecks(proof, expected, requiredChecks) {
@@ -108,7 +109,7 @@ export function campaign(imageRef, commit, output, command = docker) {
       assert.match(sourceReference, /^ghcr\.io\/chronoaiproject\/cma-runtime@sha256:[0-9a-f]{64}$/);
       assert.ok(image.RepoDigests.includes(sourceReference));
     }
-    evidence.image = { Id: image.Id, RepoDigests: sourceReference ? [sourceReference] : [], Os: image.Os, Architecture: image.Architecture, Config: { User: image.Config.User, Labels: Object.fromEntries(['org.opencontainers.image.revision', 'org.opencontainers.image.source', 'dev.chrono.cma.runtime-contract', 'dev.chrono.cma.runtime-bootstrap'].map((key) => [key, image.Config.Labels[key]])) } };
+    evidence.image = { Id: image.Id, RepoDigests: sourceReference ? [sourceReference] : [], Os: image.Os, Architecture: image.Architecture, Config: { User: image.Config.User, Labels: Object.fromEntries(['org.opencontainers.image.revision', 'org.opencontainers.image.source', 'dev.chrono.cma.runtime-contract', 'dev.chrono.cma.runtime-bootstrap', 'dev.chrono.cma.home-layout'].map((key) => [key, image.Config.Labels[key]])) } };
     stage = 'volume-create';
     command(['volume', 'create', '--label', label, identity]);
     stage = 'container-create';

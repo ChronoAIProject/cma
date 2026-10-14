@@ -21,7 +21,11 @@ pub(super) fn render(
         .env
         .insert("CHRONO_RUNTIME_HOME_IDENTITY".into(), identity);
     for (name, mount_path, sub_path) in [
-        ("cma-home", spec.home_directory.as_str(), "home"),
+        (
+            "cma-home",
+            home.request.policy.mount_path(spec.home_directory.as_str()),
+            "home",
+        ),
         ("cma-state", "/var/lib/cma-runtime", "state"),
         ("cma-transfer", TRANSFER_ROOT, "transfer"),
     ] {

@@ -50,6 +50,7 @@ pub enum HomeVolumeMode {
     #[default]
     LegacySnapshot,
     NativeVctEmptyV1,
+    NativeVctFullHomeV2,
 }
 impl HomeVolumeMode {
     fn is_legacy(&self) -> bool {
@@ -72,7 +73,28 @@ pub struct HomeVolumePolicy {
 
 impl HomeVolumePolicy {
     pub fn is_native_vct(&self) -> bool {
-        self.mode == HomeVolumeMode::NativeVctEmptyV1
+        self.mode != HomeVolumeMode::LegacySnapshot
+    }
+
+    /// Persisted layout decides the mount, including after a default changes.
+    pub fn mounts_full_home(&self) -> bool {
+        self.mode == HomeVolumeMode::NativeVctFullHomeV2
+    }
+
+    pub(crate) fn mount_path<'a>(&self, user_home: &'a str) -> &'a str {
+        if self.mounts_full_home() {
+            "/home"
+        } else {
+            user_home
+        }
+    }
+
+    pub(crate) fn native_layout(&self) -> Option<&'static str> {
+        match self.mode {
+            HomeVolumeMode::LegacySnapshot => None,
+            HomeVolumeMode::NativeVctEmptyV1 => Some("native-vct-empty-v1"),
+            HomeVolumeMode::NativeVctFullHomeV2 => Some("native-vct-full-home-v2"),
+        }
     }
 
     pub fn validate(&self) -> Result<()> {
@@ -82,7 +104,7 @@ impl HomeVolumePolicy {
                 HomeVolumeMode::LegacySnapshot => {
                     !identifier(&self.template_name) || !identifier(&self.template_generation)
                 }
-                HomeVolumeMode::NativeVctEmptyV1 => {
+                HomeVolumeMode::NativeVctEmptyV1 | HomeVolumeMode::NativeVctFullHomeV2 => {
                     !self.template_name.is_empty() || !self.template_generation.is_empty()
                 }
             }
@@ -137,8 +159,10 @@ impl HomeVolumeRequest {
             digest.update(b"cma-home-request-scope-v1\0");
             digest.update(scope.0.as_bytes());
         }
-        if self.policy.is_native_vct() {
-            digest.update(b"cma-native-vct-empty-v1\0");
+        match self.policy.mode {
+            HomeVolumeMode::LegacySnapshot => {}
+            HomeVolumeMode::NativeVctEmptyV1 => digest.update(b"cma-native-vct-empty-v1\0"),
+            HomeVolumeMode::NativeVctFullHomeV2 => digest.update(b"cma-native-vct-full-home-v2\0"),
         }
         format!("{:x}", digest.finalize())
     }
