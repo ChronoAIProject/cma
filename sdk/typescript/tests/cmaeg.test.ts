@@ -1,7 +1,14 @@
 import { createHmac } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
-import { Cmaeg, ApiError, ProtocolError, TimeoutError, TransportError } from '../src/index.js';
+import {
+  Cmaeg,
+  ApiError,
+  ProtocolError,
+  RequestAborted,
+  TimeoutError,
+  TransportError,
+} from '../src/index.js';
 import { signWebhook } from '../src/cmaeg/signing.js';
 import { ChannelCreateRequestSchema, ChannelUpdateRequestSchema } from '../src/cmaeg/types.js';
 import type { CloudEvent } from '../src/cmaeg/types.js';
@@ -188,6 +195,67 @@ describe('independent CMAEG client', () => {
       TransportError,
     );
     expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('waits through cold channel startup and completion on one test request', async () => {
+    vi.useFakeTimers();
+    try {
+      const fetch = vi
+        .fn<typeof globalThis.fetch>()
+        .mockImplementation(
+          () =>
+            new Promise((resolve) =>
+              setTimeout(() => resolve(json(sample('TestChannelResponse'))), 120_000),
+            ),
+        );
+      const client = new Cmaeg({ baseUrl: 'https://gateway.example', fetch });
+      const result = client.testChannel('cold-channel');
+      const expected = expect(result).resolves.toEqual(sample('TestChannelResponse'));
+      await vi.advanceTimersByTimeAsync(120_000);
+      await expected;
+      expect(fetch).toHaveBeenCalledOnce();
+      expect(fetch.mock.calls[0]?.[1]?.signal?.aborted).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([undefined, 25])(
+    'bounds a single test request with its default or caller deadline: %s',
+    async (timeoutMs) => {
+      vi.useFakeTimers();
+      try {
+        const fetch = vi
+          .fn<typeof globalThis.fetch>()
+          .mockImplementation(() => new Promise(() => {}));
+        const client = new Cmaeg({ baseUrl: 'https://gateway.example', fetch });
+        const result = client.testChannel('cold-channel', { timeoutMs });
+        const expected = expect(result).rejects.toBeInstanceOf(TimeoutError);
+        const deadline = timeoutMs ?? 125_000;
+        await vi.advanceTimersByTimeAsync(deadline - 1);
+        expect(fetch).toHaveBeenCalledOnce();
+        expect(fetch.mock.calls[0]?.[1]?.signal?.aborted).toBe(false);
+        await vi.advanceTimersByTimeAsync(1);
+        await expected;
+        expect(fetch.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
+        expect(fetch).toHaveBeenCalledOnce();
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it('preserves caller cancellation without retrying a channel test', async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>().mockImplementation(() => new Promise(() => {}));
+    const controller = new AbortController();
+    const client = new Cmaeg({ baseUrl: 'https://gateway.example', fetch });
+    const result = client.testChannel('cold-channel', { signal: controller.signal });
+    const expected = expect(result).rejects.toBeInstanceOf(RequestAborted);
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+    controller.abort();
+    await expected;
+    expect(fetch.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
+    expect(fetch).toHaveBeenCalledOnce();
   });
 });
 

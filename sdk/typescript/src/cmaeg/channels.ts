@@ -80,6 +80,8 @@ export class CmaegChannels {
   testChannel(channelId: string, options: OperationOptions = {}) {
     return read(this.config, `/v1/channels/${segment(channelId)}/test`, TestChannelResponseSchema, {
       ...options,
+      // Allow the Gateway's 90-second startup and 30-second completion windows.
+      timeoutMs: options.timeoutMs ?? 125_000,
       method: 'POST',
     });
   }
