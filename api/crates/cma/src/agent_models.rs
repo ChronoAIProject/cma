@@ -153,6 +153,7 @@ fn parse(body: &[u8]) -> Result<Vec<AgentModelView>, AgentModelCatalogError> {
         models.push(AgentModelView {
             id: model.id,
             label,
+            available: false,
         });
     }
     models.sort_by(|a, b| a.id.cmp(&b.id));

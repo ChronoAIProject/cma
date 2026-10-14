@@ -425,5 +425,6 @@ mod tests {
 pub mod event_workers;
 
 pub use agent_models::{
-    agent_models_router, AgentModelCatalog, AgentModelCatalogError, AgentModelView, AgentModelsView,
+    agent_models_router, AgentModelCatalog, AgentModelCatalogError, AgentModelRuntimeSupport,
+    AgentModelView, AgentModelsView,
 };

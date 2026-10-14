@@ -390,7 +390,13 @@ impl ControlPlaneComposition {
             "cma_codex".into(),
         );
         let resource_routes = rest::profiles_router(profiles)
-            .merge(rest::agent_models_router(projections.reads(), agent_models))
+            .merge(rest::agent_models_router(
+                projections.reads(),
+                agent_models,
+                Arc::new(crate::projections::AdapterAgentModelSupport(
+                    adapter.clone(),
+                )),
+            ))
             .merge(agent_access.owner_routes)
             .merge(rest::event_workers::router(event_workers.clone()))
             .merge(layer1_public::rest::agent_artifacts_router(
