@@ -269,16 +269,15 @@ async fn native_prepared_concurrent_target_fence_caps_and_expiry_preserves_lease
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(
+    assert_ne!(
         store
             .claim_native_prepared_work(NOW, LATER)
             .await
             .unwrap()
             .unwrap()
             .record
-            .id
-            != claim.record.id,
-        true
+            .id,
+        claim.record.id
     );
     assert!(store
         .claim_native_prepared_work(NOW, LATER)
