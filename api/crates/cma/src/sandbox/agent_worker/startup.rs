@@ -284,8 +284,15 @@ impl AgentWorker {
             Ok(attachment) => attachment,
             Err(failure) => return self.handle_failure(agent, failure, now).await,
         };
-        let result = self
-            .startup_progress(
+        let result = async {
+            if self
+                .publish_prepared_open_ready(&agent, &context, &evidence, &attachment, now)
+                .await?
+            {
+                tracing::info!(agent_id = %agent.id, "Prepared Agent Open and Ready published atomically");
+                return Ok(());
+            }
+            self.startup_progress(
                 agent,
                 AgentWorkStep::PublishReady,
                 now,
@@ -293,7 +300,9 @@ impl AgentWorker {
                 Some((conversation_id, generation)),
                 &context.sandbox,
             )
-            .await;
+            .await
+        }
+        .await;
         match result {
             Ok(()) => Ok(()),
             Err(error) => {

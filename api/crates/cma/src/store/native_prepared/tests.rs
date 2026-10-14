@@ -5,11 +5,17 @@ use layer2_core::sandbox::store::*;
 use layer2_core::sandbox::*;
 use layer2_core::{ServiceId, SubjectId, WorkspaceProfileId};
 use layer3_adapter::agent_sandbox::*;
-use layer3_adapter::{HomeVolumeMode, HomeVolumePolicy, HomeVolumeReceipt, RuntimeImage};
+use layer3_adapter::{
+    HomeVolumeMode, HomeVolumePolicy, HomeVolumeReceipt, HomeVolumeScope, RuntimeImage,
+};
 
 pub(in crate::store) mod agent_replay_tests;
 mod claim_race_tests;
+<<<<<<< HEAD
 mod installation_transfer_tests;
+=======
+pub(crate) mod open_ready_fixture;
+>>>>>>> 92c2e24f (Atomically publish prepared agent open and ready)
 mod workspace_proof_tests;
 
 const NOW: &str = "2026-09-05T00:00:00Z";
@@ -69,6 +75,13 @@ fn actual_profiles(
 fn ready(mut record: Record) -> Record {
     let warm = &mut record.payload;
     let mut home = SandboxHome::reserve(&warm.id, record.plan.home_policy.clone()).unwrap();
+    home.request.scope = Some(
+        HomeVolumeScope::from_authority(
+            "native-vct-empty-v1",
+            &["open-ready-test", "default", "open-ready"],
+        )
+        .unwrap(),
+    );
     let request = NativePoolClaimRequest {
         pool: NativePoolBinding {
             spec: NativePoolSpec {

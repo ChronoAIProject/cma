@@ -15,6 +15,7 @@ use super::sandbox_mongo::{MongoSandboxStore, DOCUMENT_SCHEMA_VERSION, TRANSACTI
 
 #[async_trait::async_trait]
 impl AgentWorkerStore for MongoSandboxStore {
+<<<<<<< HEAD
     async fn prepared_agent_replay_matches(
         &self,
         agent: &layer2_core::sandbox::Agent,
@@ -40,6 +41,15 @@ impl AgentWorkerStore for MongoSandboxStore {
         )
         .await?
         .is_some())
+=======
+    async fn commit_prepared_agent_open_ready(
+        &self,
+        mutation: AgentWorkMutation,
+        observed: layer2_core::sandbox::store::PreparedAgentOpenContext,
+    ) -> Result<bool, SandboxStoreError> {
+        super::agent_worker_transaction::commit_prepared_agent_open_ready(self, mutation, observed)
+            .await
+>>>>>>> 92c2e24f (Atomically publish prepared agent open and ready)
     }
 
     async fn live_agent_connections(
