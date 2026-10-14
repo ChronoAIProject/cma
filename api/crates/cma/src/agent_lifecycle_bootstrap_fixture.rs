@@ -7,8 +7,7 @@ use layer2_core::sandbox::store::{
 use layer2_core::sandbox::{Sandbox, SandboxOrigin, SandboxWorkState, SandboxWorkStep};
 use tokio::sync::OwnedSemaphorePermit;
 
-#[path = "agent_lifecycle_workspace_fixture.rs"]
-mod existing;
+use super::super::fixture as existing;
 
 pub(super) struct Fixture {
     pub db: mongodb::Database,
