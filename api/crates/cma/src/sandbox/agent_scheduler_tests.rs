@@ -28,6 +28,7 @@ struct Probe {
     fail_poll: AtomicBool,
     block_poll: AtomicBool,
     block_reconcile: AtomicBool,
+    poll_release: Mutex<Option<Arc<Notify>>>,
 }
 
 impl Probe {
@@ -52,6 +53,7 @@ impl Probe {
             sweep_interval: Duration::from_secs(1),
             concurrency,
             drain_timeout: Duration::from_secs(5),
+            admitted: Arc::new(Notify::new()),
         }
     }
 }
@@ -76,14 +78,19 @@ impl AgentScheduleWork for Probe {
             return Err(SandboxStoreError::Unavailable("probe poll failed".into()));
         }
         // A stale discovery result may still offer locally running IDs.
-        Ok(self
+        let ids = self
             .jobs
             .lock()
             .unwrap()
             .keys()
             .take(usize::from(limit))
             .cloned()
-            .collect())
+            .collect();
+        let release = self.poll_release.lock().unwrap().take();
+        if let Some(release) = release {
+            release.notified().await;
+        }
+        Ok(ids)
     }
 
     async fn reconcile(&self, _now: SystemTime) -> Result<usize, SandboxStoreError> {
@@ -323,3 +330,6 @@ async fn already_signalled_shutdown_starts_no_work() {
     assert_eq!(probe.reconciles.load(Ordering::SeqCst), 0);
     assert!(probe.calls.lock().unwrap().is_empty());
 }
+
+#[path = "agent_scheduler_wake_tests.rs"]
+mod wake_tests;

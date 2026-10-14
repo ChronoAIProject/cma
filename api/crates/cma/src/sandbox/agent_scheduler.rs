@@ -6,7 +6,7 @@ use std::time::{Duration, SystemTime};
 
 use layer2_core::sandbox::store::{SandboxStoreError, MAX_PAGE_SIZE};
 use layer2_core::AgentId;
-use tokio::sync::watch;
+use tokio::sync::{watch, Notify};
 use tokio::task::{Id, JoinError, JoinHandle, JoinSet};
 use tokio::time::MissedTickBehavior;
 
@@ -21,6 +21,7 @@ pub(crate) struct AgentScheduler {
     sweep_interval: Duration,
     concurrency: usize,
     drain_timeout: Duration,
+    admitted: Arc<Notify>,
 }
 
 #[async_trait::async_trait]
@@ -46,12 +47,13 @@ impl AgentScheduleWork for AgentWorker {
 }
 
 impl AgentScheduler {
-    pub(crate) fn new(worker: Arc<AgentWorker>) -> Self {
+    pub(crate) fn new(worker: Arc<AgentWorker>, admitted: Arc<Notify>) -> Self {
         Self {
             worker,
             sweep_interval: SWEEP_INTERVAL,
             concurrency: MAX_CONCURRENT_AGENTS,
             drain_timeout: DRAIN_TIMEOUT,
+            admitted,
         }
     }
 
@@ -76,6 +78,9 @@ impl AgentScheduler {
                         }
                     }
                     _ = ticker.tick() => work.poll(),
+                    // Keep one coalesced hint through a full queue, full capacity,
+                    // or an in-progress discovery that may predate the admission.
+                    _ = self.admitted.notified(), if work.can_discover() => work.discover(),
                 }
                 if !*shutdown.borrow() {
                     work.fill_slots();
@@ -151,7 +156,15 @@ impl ScheduledWork {
             self.kinds.insert(task.id(), TaskKind::Reconcile);
             self.reconciling = true;
         }
-        if !self.polling && self.queued.is_empty() && self.in_flight.len() < self.concurrency {
+        self.discover();
+    }
+
+    fn can_discover(&self) -> bool {
+        !self.polling && self.queued.is_empty() && self.in_flight.len() < self.concurrency
+    }
+
+    fn discover(&mut self) {
+        if self.can_discover() {
             let worker = Arc::clone(&self.worker);
             let task = self.tasks.spawn(async move {
                 worker
