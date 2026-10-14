@@ -48,11 +48,19 @@ export function SessionSettings({
       }
     })();
     return () => request.abort();
-  }, [active, agentId, client, modelsReload]);
+  }, [active, agentId, busy, client, modelsReload]);
   const [intent, setIntent] = useState<{ key: string; body: AgentSettingsView } | undefined>(
     undefined,
   );
   const mutation = useRef<AbortController | undefined>(undefined);
+  const unavailableModelChange = Boolean(
+    value &&
+    saved &&
+    value.model !== saved.model &&
+    !models.some((model) => model.id === value.model && model.available),
+  );
+  const draft =
+    unavailableModelChange && !intent && value && saved ? { ...value, model: saved.model } : value;
   useEffect(() => () => mutation.current?.abort(), []);
   useEffect(() => {
     if (!active || !client.readAgentSettings) return;
@@ -89,15 +97,15 @@ export function SessionSettings({
     };
   }, [active, agentId, client, reload]);
   const update = async () => {
-    if (mutation.current || pending || busy || !value || !client.updateAgentSettings) return;
+    if (mutation.current || pending || busy || !draft || !client.updateAgentSettings) return;
     const request = new AbortController();
     mutation.current = request;
     const retained = intent ?? {
       key: crypto.randomUUID(),
       body: {
-        model: value.model.trim(),
-        reasoning_effort: value.reasoning_effort,
-        permission_mode: value.permission_mode,
+        model: draft.model.trim(),
+        reasoning_effort: draft.reasoning_effort,
+        permission_mode: draft.permission_mode,
       },
     };
     setIntent(retained);
@@ -133,12 +141,12 @@ export function SessionSettings({
     return <p>Agent settings are unavailable from this connection.</p>;
   return (
     <div className="agent-settings">
-      {value ? (
+      {draft ? (
         <SettingsFields
-          value={value}
+          value={draft}
           models={models}
           modelsLoading={modelsLoading}
-          disabled={pending || intent !== undefined || value.pending === true}
+          disabled={pending || intent !== undefined || draft.pending === true}
           onChange={(next) => {
             setValue(next);
             setConfirmed(false);
@@ -156,6 +164,11 @@ export function SessionSettings({
         </div>
       ) : models.length === 0 ? (
         <p role="status">No models are available for this Agent.</p>
+      ) : models.every((model) => !model.available) ? (
+        <p role="status">
+          Model changes are unavailable for this Agent. You can still change reasoning effort and
+          permissions.
+        </p>
       ) : null}
       {value?.pending ? (
         <p role="status">Waiting for the runtime to confirm these settings.</p>
@@ -163,13 +176,13 @@ export function SessionSettings({
       {busy ? <p role="status">Settings can be changed after the current turn finishes.</p> : null}
       {error ? <p role="alert">{error}</p> : null}
       {confirmed ? <p role="status">Settings applied to this Agent.</p> : null}
-      {value ? (
+      {draft ? (
         <Button
           disabled={
             pending ||
             busy ||
-            !value.model.trim() ||
-            (!intent && JSON.stringify(value) === JSON.stringify(saved))
+            !draft.model.trim() ||
+            (!intent && JSON.stringify(draft) === JSON.stringify(saved))
           }
           onClick={() => void update()}
         >

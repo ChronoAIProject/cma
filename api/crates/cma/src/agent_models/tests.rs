@@ -42,11 +42,13 @@ fn provider_catalogue_is_the_only_source_of_selectable_models() {
         vec![
             AgentModelView {
                 id: "gpt-6".into(),
-                label: "gpt-6".into()
+                label: "gpt-6".into(),
+                available: false,
             },
             AgentModelView {
                 id: "gpt-6-sol".into(),
-                label: "GPT-6 Sol".into()
+                label: "GPT-6 Sol".into(),
+                available: false,
             }
         ]
     );
