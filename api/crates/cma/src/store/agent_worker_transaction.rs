@@ -23,7 +23,15 @@ use super::sandbox_mongo::{
 };
 use super::worktrees::{read_worktree, worktree_replacement_fields};
 
+mod prepared_replay;
+#[cfg(test)]
+mod prepared_replay_tests;
+mod publication_log;
 mod sign_in;
+use publication_log::{final_agent_and_logs, insert_logs};
+mod prepared_open_ready;
+#[cfg(test)]
+mod prepared_open_ready_tests;
 
 #[cfg_attr(test, derive(Clone))]
 pub(super) struct PublicationReceipt {
@@ -61,6 +69,26 @@ pub(super) async fn commit_agent_work(
     store: &MongoSandboxStore,
     mutation: AgentWorkMutation,
 ) -> Result<(), SandboxStoreError> {
+    commit_agent_work_observed(store, mutation, None).await
+}
+
+pub(super) async fn commit_prepared_agent_open_ready(
+    store: &MongoSandboxStore,
+    mutation: AgentWorkMutation,
+    observed: layer2_core::sandbox::store::PreparedAgentOpenContext,
+) -> Result<bool, SandboxStoreError> {
+    if !prepared_open_ready::eligible(store, &mutation, &observed).await? {
+        return Ok(false);
+    }
+    commit_agent_work_observed(store, mutation, Some(&observed)).await?;
+    Ok(true)
+}
+
+async fn commit_agent_work_observed(
+    store: &MongoSandboxStore,
+    mutation: AgentWorkMutation,
+    observed: Option<&layer2_core::sandbox::store::PreparedAgentOpenContext>,
+) -> Result<(), SandboxStoreError> {
     ensure_append_batch_size(mutation.agent_logs.len())?;
     let mut last_transient = None;
     for attempt in 0..TRANSACTION_ATTEMPTS {
@@ -82,7 +110,12 @@ pub(super) async fn commit_agent_work(
             }
             return Err(SandboxStoreError::Unavailable(error.to_string()));
         }
-        let receipt = match apply_publication(store, &mutation, &mut session).await {
+        let publication = if observed.is_some() {
+            apply_publication_observed(store, &mutation, observed, &mut session).await
+        } else {
+            apply_publication(store, &mutation, &mut session).await
+        };
+        let receipt = match publication {
             Ok(receipt) => receipt,
             Err(ApplyError::Domain(error)) => {
                 let _ = session.abort_transaction().await;
@@ -146,6 +179,15 @@ pub(super) async fn commit_agent_work(
 async fn apply_publication(
     store: &MongoSandboxStore,
     mutation: &AgentWorkMutation,
+    session: &mut mongodb::ClientSession,
+) -> Result<PublicationReceipt, ApplyError> {
+    apply_publication_observed(store, mutation, None, session).await
+}
+
+async fn apply_publication_observed(
+    store: &MongoSandboxStore,
+    mutation: &AgentWorkMutation,
+    observed: Option<&layer2_core::sandbox::store::PreparedAgentOpenContext>,
     session: &mut mongodb::ClientSession,
 ) -> Result<PublicationReceipt, ApplyError> {
     let current_row = store
@@ -220,7 +262,16 @@ async fn apply_publication(
             }
         }
     }
-    if (current.status == AgentStatus::Paused
+    if let Some(observed) = observed {
+        layer2_core::sandbox::store::validate_prepared_agent_open_ready(
+            &current,
+            &current_worktree,
+            complete_log.entry_count(),
+            mutation,
+        )
+        .map_err(ApplyError::Domain)?;
+        prepared_open_ready::fence(store, &current, &current_worktree, observed, session).await?;
+    } else if (current.status == AgentStatus::Paused
         && current.work.step == AgentWorkStep::CloseProcess
         && mutation.agent.work.step == AgentWorkStep::PublishStopped
         || matches!(current.status, AgentStatus::Stopped | AgentStatus::Failed)
@@ -280,6 +331,7 @@ async fn apply_publication(
     }
 
     let sign_in_sandbox = sign_in::apply(store, &current, mutation, session).await?;
+    prepared_replay::fence(store, &current, &current_worktree, mutation, session).await?;
     let (final_agent, logs) = final_agent_and_logs(&current, mutation)?;
     ensure_append_capacity(
         &complete_log,
@@ -323,28 +375,6 @@ async fn apply_publication(
         event,
         sign_in_sandbox,
     })
-}
-
-fn final_agent_and_logs(
-    current: &Agent,
-    mutation: &AgentWorkMutation,
-) -> Result<(Agent, Vec<AgentLogEntry>), ApplyError> {
-    let final_agent = mutation.agent.clone();
-    final_agent
-        .validate_conversation()
-        .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?;
-    let logs = mutation
-        .agent_logs
-        .iter()
-        .enumerate()
-        .map(|(offset, kind)| AgentLogEntry {
-            agent_id: final_agent.id.clone(),
-            seq: current.conversation.last_seq + offset as u64 + 1,
-            appended_at: mutation.appended_at.clone(),
-            kind: kind.clone(),
-        })
-        .collect();
-    Ok((final_agent, logs))
 }
 
 async fn advance_agent(
@@ -447,28 +477,6 @@ async fn advance_worktree(
     } else {
         Err(ApplyError::Domain(SandboxStoreError::Conflict))
     }
-}
-
-async fn insert_logs(
-    store: &MongoSandboxStore,
-    logs: &[AgentLogEntry],
-    session: &mut mongodb::ClientSession,
-) -> Result<(), ApplyError> {
-    for entry in logs {
-        store
-            .agent_log
-            .insert_one(log_document(entry).map_err(ApplyError::Domain)?)
-            .session(&mut *session)
-            .await
-            .map_err(|error| {
-                if is_duplicate_key(&error) {
-                    ApplyError::Domain(SandboxStoreError::SequenceConflict)
-                } else {
-                    ApplyError::Driver(error)
-                }
-            })?;
-    }
-    Ok(())
 }
 
 fn classify_aggregate_write(error: mongodb::error::Error) -> ApplyError {

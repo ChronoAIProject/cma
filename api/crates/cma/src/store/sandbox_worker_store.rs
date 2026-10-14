@@ -16,6 +16,13 @@ use super::sandboxes::read_sandbox;
 
 #[async_trait::async_trait]
 impl SandboxWorkerStore for MongoSandboxStore {
+    async fn completed_installation_digest(
+        &self,
+        sandbox: &layer2_core::sandbox::Sandbox,
+    ) -> Result<Option<String>, SandboxStoreError> {
+        super::native_prepared::completed_installation_digest(self, sandbox).await
+    }
+
     async fn due_sandbox_work(
         &self,
         now: &str,

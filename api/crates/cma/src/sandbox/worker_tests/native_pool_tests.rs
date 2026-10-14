@@ -6,6 +6,9 @@ use layer3_adapter::{
     AdapterError, HomeVolumeAttachment, HomeVolumeReceipt, HomeVolumeRequest, HomeVolumeStore,
 };
 
+#[path = "native_prepared_tests.rs"]
+mod native_prepared_tests;
+
 struct Pools {
     store: Arc<InMemorySandboxStore>,
     claim: Mutex<Option<NativePoolClaim>>,
@@ -13,6 +16,7 @@ struct Pools {
     failures: Mutex<VecDeque<&'static str>>,
     calls: Mutex<Vec<&'static str>>,
     delay_claim: AtomicBool,
+    delay_claim_reply: AtomicBool,
     pending_claim: AtomicBool,
     observe_error: Mutex<Option<AdapterError>>,
     observed: Notify,
@@ -55,6 +59,7 @@ impl Pools {
                     labels: BTreeMap::from([
                         (layer3_adapter::RUNTIME_CONTRACT_LABEL.into(), "3".into()),
                         ("dev.chrono.cma.runtime-bootstrap".into(), "1".into()),
+                        ("dev.chrono.cma.home-layout".into(), "2".into()),
                     ]),
                 },
                 cpu_millis: 1000,
@@ -131,19 +136,24 @@ impl NativePoolControl for Pools {
             self.entered.notify_one();
             self.resume.notified().await;
         }
-        let mut stored = self.claim.lock().unwrap();
-        let claim = stored
-            .get_or_insert_with(|| NativePoolClaim {
-                request: request.clone(),
-                name: "claim".into(),
-                uid: "claim-uid".into(),
-                resource_version: "1".into(),
-                sandbox_name: None,
-            })
-            .clone();
+        let claim = {
+            let mut stored = self.claim.lock().unwrap();
+            stored
+                .get_or_insert_with(|| NativePoolClaim {
+                    request: request.clone(),
+                    name: "claim".into(),
+                    uid: "claim-uid".into(),
+                    resource_version: "1".into(),
+                    sandbox_name: None,
+                })
+                .clone()
+        };
         assert_eq!(claim.request, *request);
-        drop(stored);
         self.lose("claim")?;
+        if self.delay_claim_reply.swap(false, Ordering::SeqCst) {
+            self.entered.notify_one();
+            self.resume.notified().await;
+        }
         Ok(claim)
     }
     async fn observe_claim(
@@ -191,7 +201,13 @@ impl NativePoolControl for Pools {
         let disk = HomeVolumeAttachment {
             request: original.request.home.clone(),
             receipt: HomeVolumeReceipt {
-                native_authority: None,
+                native_authority: original.request.home.policy.is_native_vct().then(|| {
+                    Box::new(NativePoolHomeOrigin {
+                        claim: original.clone(),
+                        sandbox_uid: "member-uid".into(),
+                        pvc_uid: "pvc-uid".into(),
+                    })
+                }),
                 volume_id: original.request.home.volume_id.clone(),
                 request_sha256: original.request.home.computed_sha256(),
                 storage_reference: "home-warm-member".into(),
@@ -304,8 +320,10 @@ impl HostedBackend for Backend {
             "kubernetes-pvc-v1",
             &["remote", "runtime", "deployment"],
         )?);
-        home.policy.template_name = "remote-seed".into();
-        home.policy.template_generation = "remote-seed-uid".into();
+        if !home.policy.is_native_vct() {
+            home.policy.template_name = "remote-seed".into();
+            home.policy.template_generation = "remote-seed-uid".into();
+        }
         Ok(home)
     }
     fn native_pools(&self) -> Option<&dyn NativePoolControl> {
@@ -416,6 +434,7 @@ fn pools(harness: &Harness, failures: &[&'static str]) -> Arc<Pools> {
         failures: Mutex::new(failures.iter().copied().collect()),
         calls: Mutex::new(vec![]),
         delay_claim: AtomicBool::new(false),
+        delay_claim_reply: AtomicBool::new(false),
         pending_claim: AtomicBool::new(false),
         observe_error: Mutex::new(None),
         observed: Notify::new(),
@@ -583,6 +602,9 @@ async fn claim_created_after_deletion_loses_database_cas_and_is_reconciled_witho
 
 #[path = "native_home_routing_tests.rs"]
 mod routing;
+
+#[path = "native_home_admission_conflict_tests.rs"]
+mod admission_conflict;
 
 #[path = "native_claim_assignment_tests.rs"]
 mod assignment;

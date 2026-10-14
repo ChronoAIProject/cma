@@ -257,3 +257,46 @@ it('recovers a revoked service while applying and waits for durable success afte
   await act(() => vi.advanceTimersByTimeAsync(2000));
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 });
+
+it('pauses hidden access-request reads and resumes without overlapping an unfinished read', async () => {
+  vi.useFakeTimers();
+  const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true);
+  let resolveRead: (value: AgentAccessRequest[]) => void = () => {};
+  vi.mocked(accessRequests.list)
+    .mockImplementationOnce(
+      () =>
+        new Promise<AgentAccessRequest[]>((resolve) => {
+          resolveRead = resolve;
+        }),
+    )
+    .mockResolvedValue([]);
+  const { unmount } = show();
+  await act(() => vi.advanceTimersByTimeAsync(10000));
+  expect(accessRequests.list).not.toHaveBeenCalled();
+  hidden.mockReturnValue(false);
+  await act(async () => {
+    document.dispatchEvent(new Event('visibilitychange'));
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  await act(() => vi.advanceTimersByTimeAsync(10000));
+  expect(accessRequests.list).toHaveBeenCalledTimes(1);
+  hidden.mockReturnValue(true);
+  await act(async () => {
+    resolveRead([]);
+  });
+  await act(() => vi.advanceTimersByTimeAsync(10000));
+  expect(accessRequests.list).toHaveBeenCalledTimes(1);
+  hidden.mockReturnValue(false);
+  await act(async () => {
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  expect(accessRequests.list).toHaveBeenCalledTimes(2);
+  await act(() => vi.advanceTimersByTimeAsync(2000));
+  expect(accessRequests.list).toHaveBeenCalledTimes(3);
+  unmount();
+  await act(async () => {
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  await act(() => vi.advanceTimersByTimeAsync(10000));
+  expect(accessRequests.list).toHaveBeenCalledTimes(3);
+});

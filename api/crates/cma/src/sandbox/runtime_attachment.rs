@@ -1,7 +1,7 @@
 use layer2_core::sandbox::Sandbox;
 use layer3_adapter::{
-    AdapterError, RuntimeAdoptionRequest, RuntimeHandle, RuntimeStatus, RuntimeStatusRequest,
-    SandboxAdapter, SandboxSpec,
+    AdapterError, RuntimeAdoptionRequest, RuntimeHandle, RuntimeInspection, RuntimeStatus,
+    RuntimeStatusRequest, SandboxAdapter, SandboxSpec,
 };
 
 use super::runtime_mapping::sandbox_spec;
@@ -111,8 +111,18 @@ pub(crate) async fn adopt_bound_runtime(
         .inspect_runtime(&request)
         .await?
         .ok_or_else(runtime_absent)?;
-    let observed = inspected.observation;
-    if observed.handle != handle
+    validate_bound_inspection(sandbox, generation, &inspected)?;
+    Ok(handle)
+}
+
+pub(crate) fn validate_bound_inspection(
+    sandbox: &Sandbox,
+    generation: u64,
+    inspected: &RuntimeInspection,
+) -> layer3_adapter::Result<()> {
+    let binding = sandbox.runtime.as_ref().ok_or_else(runtime_absent)?;
+    let observed = &inspected.observation;
+    if observed.handle.as_str() != binding.runtime_id
         || observed.sandbox_id != sandbox.id.as_str()
         || observed.generation != generation
         || !observed.lifecycle.is_running()
@@ -124,9 +134,10 @@ pub(crate) async fn adopt_bound_runtime(
     if sandbox.lifecycle.home.is_some() {
         let status = inspected
             .status
+            .as_ref()
             .ok_or_else(|| AdapterError::Rejected("runtime process status missing".into()))?;
         if !sandbox
-            .runtime_process_matches(&status)
+            .runtime_process_matches(status)
             .map_err(|_| AdapterError::Rejected("runtime process identity is invalid".into()))?
         {
             return Err(AdapterError::Unavailable(
@@ -134,7 +145,7 @@ pub(crate) async fn adopt_bound_runtime(
             ));
         }
     }
-    Ok(handle)
+    Ok(())
 }
 
 /// Persist this process identity with the first binding, before installation or credentials.

@@ -14,6 +14,7 @@ mod home;
 mod home_native;
 mod live_agent_stopper;
 mod live_agents;
+pub(crate) mod native_prepared;
 mod policy;
 mod provenance_backfill;
 pub(crate) use provenance_backfill::AgentProvenanceBackfill;

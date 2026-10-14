@@ -56,6 +56,14 @@ pub enum SandboxRuntimeLossApplication {
 
 #[async_trait]
 pub trait SandboxReconciliationStore: Send + Sync {
+    /// Read the exact unowned home reservation before the fresh owned Sandbox read.
+    async fn unowned_home_reservation(
+        &self,
+        _id: &SandboxId,
+    ) -> Result<Option<crate::sandbox::SandboxHome>, SandboxStoreError> {
+        Ok(None)
+    }
+
     /// Read unowned home authority before owned authority, across atomic warm claims.
     async fn unowned_home_authority(
         &self,
