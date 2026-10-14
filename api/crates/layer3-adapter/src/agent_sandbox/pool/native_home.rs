@@ -22,22 +22,19 @@ impl AgentSandboxPools {
         &self,
         original: &NativePoolClaim,
     ) -> Result<NativeHomeAdoption> {
-        let current = self.observe_claim(original).await?;
+        let (current, claim) = self.observe_claim_resource(original).await?;
         let name = current
             .sandbox_name
             .as_deref()
             .ok_or_else(|| unavailable("native claim has no assigned Sandbox"))?;
-        let claim = self.claims.get(&current.name).await.map_err(api_error)?;
-        if claim.uid().as_deref() != Some(&original.uid) {
-            return Err(rejected("native claim UID changed"));
-        }
-        let member = self.members.get(name).await.map_err(api_error)?;
+        let volume_name = format!("home-{name}");
+        // Only validated Claim assignment supplies these names. Retain this
+        // Claim's resourceVersion for publication and member-before-PVC errors.
+        let (member, volume) =
+            tokio::join!(self.members.get(name), self.volumes.get(&volume_name),);
+        let member = member.map_err(api_error)?;
         self.member_owned(&member, &current)?;
-        let volume = self
-            .volumes
-            .get(&format!("home-{name}"))
-            .await
-            .map_err(api_error)?;
+        let volume = volume.map_err(api_error)?;
         let origin = if let Some(encoded) = claim.annotations().get(NATIVE_HOME_ANNOTATION) {
             serde_json::from_str::<NativePoolHomeOrigin>(encoded)
                 .map_err(|_| rejected("invalid native VCT authority"))?
