@@ -62,7 +62,10 @@ impl RuntimeProvisionReceipt {
             || !identifier(&self.pre_dispatch_list_version)
             || !digest(&self.request_sha256)
             || !digest(&self.provider_response_sha256)
-            || self.handle.0 != self.incarnation.name
+            || !(self.handle.0 == self.incarnation.name
+                || crate::agent_sandbox::parse_handle(&self.handle).is_ok_and(|(name, uid)| {
+                    name == self.incarnation.name && uid == self.incarnation.uid
+                }))
         {
             return Err(invalid());
         }

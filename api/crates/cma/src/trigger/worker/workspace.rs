@@ -237,6 +237,8 @@ fn valid_workspace(
                 reference.id == profile.profile_id && reference.revision == profile.revision
             }),
         (WorkspaceOrigin::Trigger { launch_id }, true) => valid_origin_id(launch_id),
+        (WorkspaceOrigin::Lifecycle { operation_id }, true) => valid_origin_id(operation_id),
+        (WorkspaceOrigin::Lifecycle { .. }, false) => false,
         (WorkspaceOrigin::Trigger { launch_id }, false) => launch_id == launch.id.as_str(),
         (WorkspaceOrigin::Manual | WorkspaceOrigin::SandboxProfile { .. }, false) => false,
     };

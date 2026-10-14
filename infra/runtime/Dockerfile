@@ -137,7 +137,7 @@ ARG CODEX_NATIVE_SHA256_ARM64=e23d0be344d2496986c985cd3db61e6f649b1ddd900e6afc1b
 ARG CODEX_LAUNCHER_SHA256=134063e133f0b4244fa3b251acf973d4fe4b4aeeacbdc135211bf480f59f1477
 ARG CODEX_ACP_VERSION=1.4.0
 ARG CODEX_ACP_UPSTREAM_SHA256=ba74f54f7c89ba61858e544eb3afefbb0c1b90f2b23a136664828816a8430dbf
-ARG CODEX_ACP_SHA256=d43c6cbda951f3f8f08a1ef1063803e703bf20c4167b2b2cd876c6f5a5a4cb0a
+ARG CODEX_ACP_SHA256=af393f07cda5fcea0c89b2659440094ebe31ca1c65b1920457b4126de4b7d602
 
 # Node is downloaded from upstream and verified against digests recorded here.
 # Both Codex packages are JavaScript launchers for pinned native/runtime code.
@@ -268,6 +268,9 @@ ARG NYXID_SKILL_COMMIT=0ac096837c7436b05b71b374207a42320776715d
 ARG NYXID_SKILL_ARCHIVE_SHA256=6559072f4d4ab35b466cdf64ae0ae86ee3fb89a36f67925ed1ba4eb781ee23b8
 ARG ORNN_SKILL_COMMIT=052024a6927306f2455843b850a948d77ac67f9d
 ARG ORNN_SKILL_ARCHIVE_SHA256=a5788101f78d364e14b57bfc2fa1755702833b239b280ed6ce60c5abd3a442c3
+# The pinned NyxID skill has two reviewed internal aliases. Fresh-volume
+# initialization accepts only regular files/directories, so materialize
+# these aliases in the immutable public seed while retaining the image home.
 RUN set -eux; \
     groupadd --gid 10001 cma; \
     useradd --create-home --uid 10001 --gid 10001 --shell /bin/bash cma; \
@@ -295,9 +298,24 @@ RUN set -eux; \
     test -s /home/cma/.codex/skills/ornn-agent-manual-cli/SKILL.md; \
     test "$(find /home/cma/.codex/skills -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort | paste -sd, -)" = "nyxid,ornn-agent-manual-cli"; \
     chown -R 10001:10001 /home/cma /var/lib/cma-runtime /var/lib/cma-transfer; \
+    test ! -e /home/cma/.codex/auth.json; \
+    test ! -e /home/cma/.nyxid/access_token; \
+    test ! -e /home/cma/.cma/provider/codex/auth.json; \
+    test "$(find /home/cma -type l -printf '%P\n' | sort | paste -sd, -)" = ".codex/skills/nyxid/POST_INSTALL.md,.codex/skills/nyxid/tools"; \
+    test "$(readlink /home/cma/.codex/skills/nyxid/POST_INSTALL.md)" = "references/post-install.md"; \
+    test "$(readlink /home/cma/.codex/skills/nyxid/tools)" = "scripts"; \
+    cp -aL /home/cma /usr/share/cma-runtime-home; \
+    test -z "$(find /usr/share/cma-runtime-home ! -type d ! -type f -print -quit)"; \
+    chown -R root:root /usr/share/cma-runtime-home; \
+    chmod -R a+rX,go-w /usr/share/cma-runtime-home; \
     rm -rf /tmp/baseline-skills /tmp/nyxid-source.tar.gz /tmp/ornn-source.tar.gz
 
 COPY --from=build /out/layer4-runtime /usr/local/bin/layer4-runtime
+
+# Native SandboxTemplates use this same image as a non-root init container:
+# layer4-runtime --initialize-home /mnt/cma-home seeds a fresh VCT volume with
+# this image's public home and empty state/transfer directories. Completed
+# volumes retain all user contents across Pod suspension and replacement.
 
 # Persist untouched provider conversations before publishing an Agent as Ready.
 # These exact-source patches and restart proofs use synthetic credentials and
@@ -305,8 +323,10 @@ COPY --from=build /out/layer4-runtime /usr/local/bin/layer4-runtime
 RUN --mount=type=bind,source=api/crates/layer3-adapter/src/codex,target=/tmp/cma-codex-source,readonly \
     node /tmp/cma-codex-source/persist_conversations.cjs \
     && node /tmp/cma-codex-source/subscription_auth.cjs \
+    && node /tmp/cma-codex-source/managed_model_catalog.cjs \
     && echo "${CODEX_ACP_SHA256}  /usr/local/lib/node_modules/@agentclientprotocol/codex-acp/dist/index.js" | sha256sum -c - \
-    && node --test /tmp/cma-codex-source/persist_conversations.test.cjs /tmp/cma-codex-source/subscription_auth.test.cjs /tmp/cma-codex-source/native_tools.test.cjs
+    && node --test /tmp/cma-codex-source/persist_conversations.test.cjs /tmp/cma-codex-source/subscription_auth.test.cjs /tmp/cma-codex-source/native_tools.test.cjs /tmp/cma-codex-source/managed_model_catalog.test.cjs /tmp/cma-codex-source/live_skill_install.test.cjs \
+    && test ! -e /tmp/cma-checkpoints
 
 # Refresh the final filesystem after expensive dependency layers are cached.
 # CI and release builds vary this value so cached OS packages cannot hide a
@@ -370,4 +390,5 @@ ARG CHRONO_BUILD=development
 LABEL org.opencontainers.image.source="https://github.com/ChronoAIProject/cma" \
       org.opencontainers.image.revision="${CHRONO_BUILD_SHA}" \
       org.opencontainers.image.version="${CHRONO_BUILD}" \
-      dev.chrono.cma.runtime-contract="3"
+      dev.chrono.cma.runtime-contract="3" \
+      dev.chrono.cma.runtime-bootstrap="1"

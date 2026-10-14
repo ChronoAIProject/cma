@@ -19,6 +19,7 @@ mod execute;
 mod home;
 mod lifecycle;
 mod provisioning;
+mod retained_retirement;
 mod retirement;
 mod support;
 
@@ -62,22 +63,12 @@ pub(crate) trait LiveAgentStopper: Send + Sync {
     ) -> Result<(), SandboxDependencyError>;
 }
 
-#[async_trait::async_trait]
-pub(crate) trait CheckpointObjectPurger: Send + Sync {
-    async fn purge_checkpoint_objects(
-        &self,
-        sandbox: &Sandbox,
-        operation_id: &str,
-    ) -> Result<(), SandboxDependencyError>;
-}
-
 pub(crate) struct SandboxWorkerDependencies {
     pub store: Arc<dyn SandboxLifecycleStore>,
     pub adapter: Arc<dyn SandboxAdapter>,
     pub credentials: Arc<dyn SandboxCredentialController>,
     pub workspaces: Arc<dyn ProfileWorkspaceProvisioner>,
     pub agents: Arc<dyn LiveAgentStopper>,
-    pub checkpoints: Arc<dyn CheckpointObjectPurger>,
     pub registry: Arc<LiveAgentRegistry>,
     pub updates: Arc<dyn AgentUpdateRecorder>,
     pub operations: Arc<AgentOperationService>,
@@ -180,6 +171,7 @@ impl SandboxWorker {
         id: &SandboxId,
         now: SystemTime,
     ) -> Result<bool, SandboxStoreError> {
+        let claiming = tokio::time::Instant::now();
         let now_stamp = rfc3339_at(now);
         let lease_expires = rfc3339_at(now + self.config.lease_duration);
         let Some(sandbox) = self
@@ -190,8 +182,18 @@ impl SandboxWorker {
         else {
             return Ok(false);
         };
+        let claim_ms = claiming.elapsed().as_millis() as u64;
         let started = tokio::time::Instant::now();
-        if let Err(error) = Box::pin(self.execute(sandbox.clone(), now)).await {
+        let result = Box::pin(self.execute(sandbox.clone(), now)).await;
+        tracing::info!(
+            sandbox_id = %id,
+            step = ?sandbox.work.step,
+            claim_ms,
+            execution_ms = started.elapsed().as_millis() as u64,
+            published = result.is_ok(),
+            "Sandbox work attempt completed"
+        );
+        if let Err(error) = result {
             if error != SandboxStoreError::Conflict
                 || !self
                     .retry_conflicted_lifecycle(&sandbox, now + started.elapsed())

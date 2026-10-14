@@ -42,6 +42,7 @@ pub(super) fn validate_position(
         _ => true,
     };
     let positioned = match agent.work.step {
+        AgentWorkStep::InstallSkill => false,
         AgentWorkStep::AddWorktree
         | AgentWorkStep::MaterializeHome
         | AgentWorkStep::OpenConversation
@@ -186,7 +187,9 @@ fn legal_advance(from: AgentWorkStep, to: AgentWorkStep) -> bool {
             | (AgentWorkStep::OpenConversation, AgentWorkStep::PublishReady)
             | (
                 AgentWorkStep::PublishConnection,
-                AgentWorkStep::DispatchFirstMessage | AgentWorkStep::None
+                AgentWorkStep::DispatchFirstMessage
+                    | AgentWorkStep::InstallSkill
+                    | AgentWorkStep::None
             )
             | (AgentWorkStep::DispatchFirstMessage, AgentWorkStep::None)
             | (AgentWorkStep::FenceInteraction, AgentWorkStep::CloseProcess)

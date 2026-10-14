@@ -126,3 +126,20 @@ async fn mcp_update_requires_both_references_to_name_the_same_event() {
         assert_eq!(result["error"]["code"], code);
     }
 }
+
+/// `tools/list` captured before tool metadata moved into a per-tool table; any
+/// difference in names, descriptions, schemas or hints is a wire change.
+const TOOLS_LIST_GOLDEN: &str = include_str!("../fixtures/mcp-tools-list.json");
+
+#[tokio::test]
+async fn tools_list_matches_the_pre_refactor_golden_document() {
+    let app = App::new().await;
+    let list = app
+        .rpc(json!({"jsonrpc":"2.0","id":1,"method":"tools/list"}))
+        .await
+        .json::<Value>()
+        .await
+        .unwrap();
+    let golden: Value = serde_json::from_str(TOOLS_LIST_GOLDEN).unwrap();
+    assert_eq!(list["result"], golden);
+}

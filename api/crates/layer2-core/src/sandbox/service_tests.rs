@@ -26,6 +26,8 @@ use tokio::sync::Notify;
 
 #[path = "service_credential_tests.rs"]
 mod credential_prerequisite_tests;
+#[path = "service_lifecycle_tests.rs"]
+mod lifecycle_tests;
 
 const NOW: &str = "2026-09-05T00:00:00Z";
 const LATER: &str = "2026-09-05T00:01:00Z";
@@ -346,9 +348,9 @@ impl SandboxAdmissionStore for RacingStore {
     async fn sandbox_admission_replay(
         &self,
         owner: &SubjectId,
-        launch_id: &str,
+        origin: &SandboxOrigin,
     ) -> Result<Option<crate::sandbox::store::SandboxAdmissionReplay>, SandboxStoreError> {
-        self.inner.sandbox_admission_replay(owner, launch_id).await
+        self.inner.sandbox_admission_replay(owner, origin).await
     }
 
     async fn admit_sandbox(
@@ -387,6 +389,7 @@ fn profile(
     unsafe_content: bool,
 ) -> SandboxProfile {
     SandboxProfile {
+        internal: false,
         availability: Default::default(),
         id: SandboxProfileId(id.into()),
         owner: SubjectId(owner.into()),
@@ -396,6 +399,7 @@ fn profile(
         forked_from: None,
         uses_count: 0,
         draft: SandboxProfileContent {
+            runtime_image: None,
             cpu_millis: 1_000,
             memory_mib: 2_048,
             nyxid_services: vec![ServiceId::new("profile-service")],
@@ -427,6 +431,7 @@ fn profile(
 
 fn workspace_profile(id: &str, owner: &str, setup_commands: Vec<String>) -> WorkspaceProfile {
     WorkspaceProfile {
+        internal: false,
         id: WorkspaceProfileId(id.into()),
         owner: SubjectId(owner.into()),
         name: "workspace profile".into(),

@@ -1,3 +1,4 @@
+import { Picker } from '../ui/Picker';
 import { Presence } from '../ui/Presence';
 import { useCallback, useRef, useState } from 'react';
 import type { AdminProfileSummary, ProfileKind, ProfileVisibility } from '@chronoai/cma-sdk';
@@ -42,28 +43,30 @@ export function Profiles({
       >
         <label className="operator-field">
           <span>Kind</span>
-          <select
-            aria-label="Profile kind"
+          <Picker
+            label="Profile kind"
             value={kind}
-            onChange={(event) => setKind(event.target.value as ProfileKind | '')}
-          >
-            <option value="">All kinds</option>
-            <option value="sandbox">Sandbox</option>
-            <option value="workspace">Workspace</option>
-            <option value="agent">Agent</option>
-          </select>
+            onChange={(choice) => setKind(choice as ProfileKind | '')}
+            options={[
+              { value: '', label: 'All kinds' },
+              { value: 'sandbox', label: 'Sandbox' },
+              { value: 'workspace', label: 'Workspace' },
+              { value: 'agent', label: 'Agent' },
+            ]}
+          />
         </label>
         <label className="operator-field">
           <span>Visibility</span>
-          <select
-            aria-label="Profile visibility"
+          <Picker
+            label="Profile visibility"
             value={visibility}
-            onChange={(event) => setVisibility(event.target.value as ProfileVisibility | '')}
-          >
-            <option value="">All visibility</option>
-            <option value="public">Public</option>
-            <option value="private">Private</option>
-          </select>
+            onChange={(choice) => setVisibility(choice as ProfileVisibility | '')}
+            options={[
+              { value: '', label: 'All visibility' },
+              { value: 'public', label: 'Public' },
+              { value: 'private', label: 'Private' },
+            ]}
+          />
         </label>
         <label className="operator-field">
           <span>Owner</span>

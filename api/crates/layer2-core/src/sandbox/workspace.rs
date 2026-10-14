@@ -16,6 +16,7 @@ pub enum WorkspaceOrigin {
     Manual,
     SandboxProfile { index: u16 },
     Trigger { launch_id: String },
+    Lifecycle { operation_id: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -75,7 +76,11 @@ impl Workspace {
         if let Some(execution) = self.work.execution {
             execution.validate()?;
         }
-        if let WorkspaceOrigin::Trigger { launch_id } = &self.origin {
+        if let WorkspaceOrigin::Trigger { launch_id }
+        | WorkspaceOrigin::Lifecycle {
+            operation_id: launch_id,
+        } = &self.origin
+        {
             if launch_id.trim().is_empty()
                 || launch_id.len() > 128
                 || launch_id.chars().any(char::is_control)

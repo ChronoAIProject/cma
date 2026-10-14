@@ -287,6 +287,10 @@ impl Supervisor {
                 self.remove_worktree(request.authority_fence, request.request)
                     .await
             }
+            RequestFrame::InstallAgentSkill(request) => {
+                self.install_agent_skill(request.authority_fence, request.request)
+                    .await
+            }
             RequestFrame::MaterializeAgentHome(request) => {
                 self.materialize_agent_home(request.authority_fence, request.request)
                     .await
@@ -417,6 +421,10 @@ impl Supervisor {
             .await
             .get(&AgentSlot::new(agent_id))
             .map(|agent| Arc::clone(&agent.bridge))
+    }
+
+    pub(crate) async fn export_history(&self, agent_id: &str) -> Result<Vec<u8>> {
+        crate::history::export(&self.config, agent_id).await
     }
 
     pub(crate) fn checkpoint_store(&self) -> &CheckpointStore {

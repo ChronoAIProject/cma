@@ -34,7 +34,15 @@ async fn published_hold_verification_uses_authenticated_control_without_archive_
     let (transport, provider, runtime) = transport_fixture(json_response(&response)).await;
     let handle = RuntimeHandle::new("runtime-1");
     transport.bind_runtime(&handle, "sandbox-a").await.unwrap();
-    let backend = ProviderHostedBackend::new(transport.client.clone(), Arc::new(transport));
+    let backend = ProviderHostedBackend::new(
+        match &transport.client {
+            RuntimeDiscovery::Provider(client) => client.as_ref().clone(),
+            _ => unreachable!(),
+        },
+        Arc::new(transport),
+        "checkpoint-test",
+    )
+    .unwrap();
 
     assert_eq!(
         backend
@@ -122,11 +130,12 @@ async fn initial_hold_still_publishes_the_complete_archive() {
     .unwrap();
     let handle = RuntimeHandle::new("runtime-1");
     let store = Arc::new(CaptureStore::default());
-    transport.state.lock().await.archives.insert(
+    transport.state.lock().await.bindings.insert(
         handle.clone(),
-        BoundArchive {
+        BoundRuntime {
             sandbox_id: "sandbox-a".into(),
-            store: store.clone(),
+            request_sha256: None,
+            store: Some(store.clone()),
         },
     );
 

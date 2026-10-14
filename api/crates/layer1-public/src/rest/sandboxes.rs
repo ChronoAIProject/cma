@@ -59,51 +59,6 @@ pub(super) fn routes() -> Router<HierarchyState> {
             post(super::sandbox_service_access::grant),
         )
         .route("/api/v1/sandboxes/{id}/events", get(events))
-        .route(
-            "/api/v1/sandboxes/{id}/snapshots/{epoch}/download",
-            get(download_snapshot),
-        )
-}
-
-#[utoipa::path(get, path = "/api/v1/sandboxes/{id}/snapshots/{epoch}/download", tag = "sandboxes", params(("id" = String, Path), ("epoch" = u64, Path)), responses((status = 200, content_type = "application/octet-stream"), (status = 404, body = crate::rest::ProblemDocument)))]
-pub(super) async fn download_snapshot(
-    State(state): State<HierarchyState>,
-    AuthenticatedCaller(caller): AuthenticatedCaller,
-    Path((id, epoch)): Path<(String, u64)>,
-) -> Result<Response, HierarchyProblem> {
-    let snapshot = state
-        .hierarchy
-        .snapshot(&caller, &SandboxId(id), epoch)
-        .await
-        .map_err(HierarchyProblem::sandbox_read)?;
-    let stream = futures_util::stream::unfold(snapshot.chunks, |mut chunks| async move {
-        chunks
-            .recv()
-            .await
-            .map(|chunk| (chunk.map_err(std::io::Error::other), chunks))
-    });
-    Ok((
-        [
-            (
-                axum::http::header::CONTENT_TYPE,
-                "application/octet-stream".to_owned(),
-            ),
-            (
-                axum::http::header::CONTENT_LENGTH,
-                snapshot.size_bytes.to_string(),
-            ),
-            (
-                axum::http::header::CONTENT_DISPOSITION,
-                format!("attachment; filename=\"cma-snapshot-{epoch}.cma\""),
-            ),
-            (
-                axum::http::header::CACHE_CONTROL,
-                "private, no-store".to_owned(),
-            ),
-        ],
-        axum::body::Body::from_stream(stream),
-    )
-        .into_response())
 }
 
 #[utoipa::path(

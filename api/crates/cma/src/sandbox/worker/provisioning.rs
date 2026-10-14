@@ -82,6 +82,10 @@ impl SandboxWorker {
             }
         }
         let generation = sandbox.lifecycle.runtime_generation_high_water.max(1);
+        let runtime_version = spec
+            .runtime_image
+            .clone()
+            .unwrap_or_else(|| self.config.runtime_version.clone());
         match self
             .dependencies
             .adapter
@@ -109,7 +113,7 @@ impl SandboxWorker {
                     boot_id,
                     provision_generation: Some(generation),
                     runtime_id: handle.0,
-                    runtime_version: self.config.runtime_version.clone(),
+                    runtime_version,
                     bound_at: rfc3339_at(now),
                 });
                 next.lifecycle.runtime_generation_high_water = generation;

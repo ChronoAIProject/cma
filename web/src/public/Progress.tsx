@@ -3,9 +3,8 @@ import { useEffect, useState } from 'react';
 import type { Launch, TriggerPreview } from '@chronoai/cma-sdk';
 import { Button } from '../ui/Button';
 import { IconCopyOutline16 } from '../ui/icons';
-import { BrandLoading, LandingCharacter } from '../landing/LandingCharacter';
-import { blockedStates, requestStates, stepStates } from '../vocabulary/states';
-import { progressDetail, stepNames, stepOrder } from '../vocabulary/steps';
+import { BrandLoading } from '../landing/LandingCharacter';
+import { blockedStates, requestStates } from '../vocabulary/states';
 import { failureRemediation } from '../vocabulary/errors';
 import { publicCopy } from '../vocabulary/needs';
 import { type AppRouter } from '../routing/routes';
@@ -15,7 +14,7 @@ import { ConnectionWizard } from '../connections/ConnectionWizard';
 import type { ConnectionTarget } from '../connections/client';
 import { useRecordedProgress } from './useRecordedProgress';
 import { createIntent } from './intent';
-import { LaunchSandboxProgress } from '../sandbox/LaunchSandboxProgress';
+import { LaunchProgress } from './LaunchProgress';
 
 export function Progress({
   client,
@@ -40,8 +39,6 @@ export function Progress({
   const blocked = record?.blocked_reason;
   const agentId =
     record?.resolution.agent.state === 'pending' ? undefined : record?.resolution.agent.id;
-  const sandboxId =
-    record?.resolution.sandbox.state === 'pending' ? undefined : record?.resolution.sandbox.id;
   useEffect(() => {
     if ((record?.state === 'ready' || record?.state === 'completed') && agentId !== undefined)
       onNavigate({ kind: 'agent', agentId }, { replace: true });
@@ -108,53 +105,7 @@ export function Progress({
       <p role="status" aria-live="polite">
         {summary}
       </p>
-      <ol className="public-timeline">
-        {stepOrder.map((key) => {
-          const step = record.steps.find((item) => item.key === key);
-          const state =
-            step?.status === 'blocked' && blocked?.type === 'sandbox_paused_reviving'
-              ? 'running'
-              : (step?.status ?? 'pending');
-          const label =
-            state === 'blocked' && blocked?.type === 'orchestration_paused'
-              ? blockedStates.orchestration_paused
-              : stepStates[state];
-          const detail = progressDetail(step?.safe_detail);
-          return (
-            <li
-              key={key}
-              className={`public-step${state === 'failed' ? ' public-step--failed' : ''}`}
-            >
-              <span className="public-step__icon" aria-hidden="true">
-                <LandingCharacter
-                  compact
-                  state={
-                    state === 'completed'
-                      ? 'completed'
-                      : state === 'failed'
-                        ? 'failed'
-                        : state === 'running'
-                          ? 'running'
-                          : 'pending'
-                  }
-                />
-              </span>
-              <div>
-                <div className="public-step__line">
-                  <h2>{stepNames[key]}</h2>
-                  <span>{label}</span>
-                </div>
-                {detail === undefined ? null : <p>{detail}</p>}
-                {key === 'sandbox' &&
-                record.state === 'sandbox_pending' &&
-                sandboxId !== undefined ? (
-                  <LaunchSandboxProgress key={sandboxId} sandboxId={sandboxId} />
-                ) : null}
-              </div>
-            </li>
-          );
-        })}
-      </ol>
+      <LaunchProgress record={record} />
       {progress.observedAt === undefined ? null : (
         <p className="public-observed">
           {progress.error === undefined
@@ -172,6 +123,7 @@ export function Progress({
       </Presence>
       {blocked?.type === 'connection_required' ? (
         <ConnectionWizard
+          presentation="dialog"
           target={connectionTarget}
           onReady={progress.refresh}
           onCancel={() => back(record)}

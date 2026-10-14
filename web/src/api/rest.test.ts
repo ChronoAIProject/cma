@@ -46,22 +46,12 @@ describe('public REST web binding', () => {
         pause: { allowed: false, reason: 'checkpoint_in_progress' },
         revive: { allowed: false, reason: 'not_paused' },
         checkpoint: { phase, started_at: NOW, epoch: 7 },
-        latest_snapshot: {
-          epoch: 6,
-          saved_at: NOW,
-          download_url: '/api/v1/sandboxes/sandbox-1/snapshots/6/download',
-        },
         operation: { purpose: 'pause', phase: 'capture_and_publish_checkpoint', started_at: NOW },
       };
       const expected = {
         pause: lifecycle.pause,
         revive: lifecycle.revive,
         checkpoint: { phase, startedAt: NOW, epoch: 7 },
-        latestSnapshot: {
-          epoch: 6,
-          savedAt: NOW,
-          downloadUrl: '/api/v1/sandboxes/sandbox-1/snapshots/6/download',
-        },
         operation: { purpose: 'pause', phase: 'capture_and_publish_checkpoint', startedAt: NOW },
       };
       test.reply({ items: [{ ...WIRE_SANDBOX_DETAIL, lifecycle }] });
@@ -217,6 +207,10 @@ describe('public REST web binding', () => {
         },
       ],
     });
+    test.reply({ sequence: 1 });
+    const history = await client.exportAgentHistory('agent-1');
+    expect(await history.text()).toBe('{"sequence":1}');
+    expect(test.fetch.mock.calls.at(-1)?.[0]).toBe('/api/v1/agents/agent-1/history');
     test.reply({
       agent_id: 'agent-1',
       through_seq: 1,

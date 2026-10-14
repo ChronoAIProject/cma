@@ -252,6 +252,7 @@ async fn projection_components<S: FixtureStore>(
     let stamp = rfc3339_at(harness.now);
     profiles
         .create_agent_profile(AgentProfile {
+            internal: false,
             id: snapshot.id.clone(),
             owner: harness.workspace.owner.clone(),
             name: "SDK conformance".into(),

@@ -3,7 +3,14 @@ use super::{
     event::key, intents::DeliveryCommand, pacing::Pacing, relay_client::RelayClient, send::Sender,
     worker,
 };
-use crate::{telemetry::names, turns::TurnTracker, DeliveryConfig};
+use crate::{
+    telemetry::names,
+    turns::{
+        observer::{ActivityObserver, NoopObserver},
+        TurnTracker,
+    },
+    DeliveryConfig,
+};
 use cmaeg_core::seal::MasterKeyRing;
 use std::{
     future::Future,
@@ -37,12 +44,34 @@ impl DeliveryEngine {
         tracker: Arc<TurnTracker>,
         custom: super::custom::CustomDelivery,
     ) -> Self {
+        Self::start_observed(
+            receiver,
+            keys,
+            relay,
+            config,
+            tracker,
+            custom,
+            Arc::new(NoopObserver),
+        )
+    }
+
+    /// Start the engine reporting every delivery step's outcome to `observer`.
+    pub fn start_observed(
+        receiver: mpsc::Receiver<DeliveryCommand>,
+        keys: Arc<MasterKeyRing>,
+        relay: RelayClient,
+        config: DeliveryConfig,
+        tracker: Arc<TurnTracker>,
+        custom: super::custom::CustomDelivery,
+        observer: Arc<dyn ActivityObserver>,
+    ) -> Self {
         let sender = Arc::new(Sender {
             custom,
             keys,
             relay,
             pacing: Pacing::default(),
             consumed: Mutex::new(Default::default()),
+            observer,
         });
         let (stop, stopping) = oneshot::channel();
         let task = tokio::spawn(run(receiver, stopping, sender, config, tracker));

@@ -11,9 +11,11 @@ use crate::{
 
 fn attachment() -> HomeVolumeAttachment {
     let request = HomeVolumeRequest {
+        scope: None,
         volume_id: "home-fixture".into(),
         sandbox_id: "sandbox-fixture".into(),
         policy: HomeVolumePolicy {
+            mode: Default::default(),
             storage_class: "storage".into(),
             capacity_gib: 64,
             template_name: "seed".into(),
@@ -21,6 +23,7 @@ fn attachment() -> HomeVolumeAttachment {
         },
     };
     let receipt = HomeVolumeReceipt {
+        native_authority: None,
         volume_id: request.volume_id.clone(),
         request_sha256: request.computed_sha256(),
         storage_reference: "home-one".into(),
@@ -218,3 +221,6 @@ async fn retained_v3_runtime_without_live_removal_protocol_cannot_claim_capabili
             | crate::wire::RequestFrame::WorkspaceRemovalSupport(_)
     )));
 }
+
+#[path = "resume_tests.rs"]
+mod resume;

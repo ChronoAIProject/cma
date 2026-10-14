@@ -1,13 +1,25 @@
 //! Telegram platform transport. Errors and tracing never contain token-bearing URLs.
+mod files;
 mod management;
+#[cfg(test)]
+mod tests;
+mod transport;
 use cmaeg_core::channel::Secret;
-use reqwest::{Client, Url};
+pub use files::{FileError, TelegramFile};
+use reqwest::{
+    header::{HeaderMap, HeaderValue, CONTENT_TYPE},
+    Client, Url,
+};
 use serde_json::{json, Value};
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
+pub use transport::{HttpTransport, TelegramTransport};
 
 #[derive(Clone)]
 pub struct TelegramClient {
+    /// File downloads stream their body to the caller, so they keep the
+    /// client; every Bot API call goes through `transport`.
     http: Client,
+    transport: Arc<dyn TelegramTransport>,
     origin: Url,
     timeout: Duration,
 }
@@ -34,51 +46,57 @@ impl TelegramClient {
             .build()
             .map_err(|_| config_error())?;
         Ok(Self {
+            transport: Arc::new(HttpTransport { http: http.clone() }),
             http,
             origin,
             timeout,
         })
     }
+    /// Send Bot API calls through `transport` instead of HTTP, as tests
+    /// answering in process do. File downloads still use HTTP.
+    pub fn with_transport(mut self, transport: Arc<dyn TelegramTransport>) -> Self {
+        self.transport = transport;
+        self
+    }
     pub fn production(timeout: Duration) -> Result<Self, crate::ConfigError> {
         Self::new("https://api.telegram.org", timeout)
     }
-    async fn call(&self, token: &Secret, method: &str, body: &Value) -> Result<Value, Error> {
+    /// Sends one Bot API call and returns its HTTP status with the parsed body.
+    ///
+    /// Callers that must read Telegram's own `description`, for example to
+    /// tell a too-large file from other refusals, use this form; everything
+    /// else uses `call`, which maps the outcome onto [`Error`].
+    async fn call_raw(
+        &self,
+        token: &Secret,
+        method: &str,
+        body: &Value,
+    ) -> Result<(reqwest::StatusCode, Value), Error> {
         let value = token.as_str();
-        let valid = value.split_once(':').is_some_and(|(id, key)| {
-            id.parse::<i64>().is_ok_and(|id| id > 0)
-                && !key.is_empty()
-                && key.len() <= 256
-                && key
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
-        });
-        if !valid {
+        if !valid_token(value) {
             return Err(Error::Rejected);
         }
         let endpoint = self
             .origin
             .join(&format!("/bot{value}/{method}"))
             .map_err(|_| Error::Rejected)?;
-        let mut response = self
-            .http
-            .post(endpoint)
-            .timeout(self.timeout)
-            .json(body)
-            .send()
+        let Ok(body) = serde_json::to_vec(body) else {
+            return Err(Error::Unconfirmed);
+        };
+        let mut headers = HeaderMap::new();
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        let reply = self
+            .transport
+            .post(endpoint, headers, body, self.timeout)
             .await
             .map_err(|_| Error::Unconfirmed)?;
-        if response.content_length().is_some_and(|size| size > 32_768) {
-            return Err(Error::Unconfirmed);
-        }
-        let status = response.status();
-        let mut bytes = Vec::new();
-        while let Some(chunk) = response.chunk().await.map_err(|_| Error::Unconfirmed)? {
-            if bytes.len() + chunk.len() > 32_768 {
-                return Err(Error::Unconfirmed);
-            }
-            bytes.extend_from_slice(&chunk);
-        }
+        let status = reply.status;
+        let bytes = reply.body.map_err(|_| Error::Unconfirmed)?;
         let value: Value = serde_json::from_slice(&bytes).map_err(|_| Error::Unconfirmed)?;
+        Ok((status, value))
+    }
+    async fn call(&self, token: &Secret, method: &str, body: &Value) -> Result<Value, Error> {
+        let (status, value) = self.call_raw(token, method, body).await?;
         if status.as_u16() == 429 || value["error_code"] == 429 {
             return Err(Error::RateLimited(
                 value["parameters"]["retry_after"]
@@ -175,6 +193,18 @@ impl TelegramClient {
         }
         Ok(())
     }
+}
+/// `<positive bot ID>:<key>` with a key of URL-safe characters, so a token
+/// can never change the path it is embedded in.
+fn valid_token(value: &str) -> bool {
+    value.split_once(':').is_some_and(|(id, key)| {
+        id.parse::<i64>().is_ok_and(|id| id > 0)
+            && !key.is_empty()
+            && key.len() <= 256
+            && key
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+    })
 }
 fn positive(value: &Value) -> Result<String, Error> {
     value

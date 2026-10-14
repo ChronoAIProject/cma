@@ -33,6 +33,9 @@ use super::super::sandbox_mongo::{start_transaction, MongoSandboxStore};
 
 const NOW: &str = "2026-09-05T00:00:00Z";
 
+#[path = "agent_admission_wake_mongo_tests.rs"]
+mod admission_wake;
+
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn trigger_profile_reuse_is_atomic_and_replays_the_same_agent_after_newer_creation() {
@@ -261,6 +264,7 @@ fn sandbox(suffix: &str) -> Sandbox {
             revision: 1,
             digest: "a".repeat(64),
             content: SandboxProfileContent {
+                runtime_image: None,
                 cpu_millis: 1_000,
                 memory_mib: 2_048,
                 nyxid_services: vec![],

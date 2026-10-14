@@ -51,7 +51,7 @@ let settings = {
     agent_profile: { id: 'agp_default', revision: 3 },
   },
   inactivity: { pause_after_seconds: 900 },
-  retention: { checkpoint_grace_days: 7, agent_log_days: 30 },
+  retention: { agent_log_days: 30 },
   limits: { max_sandboxes_per_user: 10, visitor_max_sandboxes: 1, visitor_max_launches_per_day: 5 },
   triggers: { enabled: true, orchestration_paused: false },
   marketplace: { enabled: true },
@@ -320,8 +320,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(
   await clickText('[role="tab"]', 'Platform settings');
   await page.waitForSelector('[aria-label="Pause after (seconds)"]');
   await page.locator('[aria-label="Pause after (seconds)"]').fill('600');
-  await page.waitForSelector('option[value="agent-public:7"]');
-  await page.select('[aria-label="Default agent profile"]', 'agent-public:7');
+  assert.equal(await page.$('[aria-label="Default agent profile"]'), null);
   await clickText('label', 'Orchestration paused');
   assert.deepEqual(
     await page.$$eval('form input:invalid', (inputs) =>
@@ -346,8 +345,8 @@ ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(
   assert.equal(writes.length, 2);
   assert.equal(writes[1].body.settings.inactivity.pause_after_seconds, 600);
   assert.deepEqual(writes[1].body.settings.defaults.agent_profile, {
-    id: 'agent-public',
-    revision: 7,
+    id: 'agp_default',
+    revision: 3,
   });
   assert.equal(writes[1].body.settings.triggers.orchestration_paused, true);
   for (const view of ['Sandboxes', 'Profiles', 'Platform settings', 'Activity']) {
@@ -432,7 +431,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(
           'drawer focus trap and restore',
           'tab keyboard navigation',
           'confirmation acknowledgement',
-          'defaults exact revision',
+          'hidden compatibility defaults retain exact revision',
           'trigger pause',
           'settings conflict without automatic retry',
           'sandbox retirement',

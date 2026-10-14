@@ -1,20 +1,51 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: cmaeg
+  name: cma-event-gateway
   namespace: chrono-bot
   labels:
-    app.kubernetes.io/name: cmaeg
+    app.kubernetes.io/name: cma-event-gateway
     app.kubernetes.io/part-of: cma
 data:
+  CMAEG_MONGODB_DATABASE: "chrono-bot"
+  CMAEG_MONGODB_AUTHORITY_MODE: "shared-schema"
+  CMAEG_WEB_ORIGIN: "https://bot.chrono-ai.fun"
+  CMAEG_COOKIE_KEY_FILE: "/var/run/cma-event-gateway-auth/cookie-key"
   CMAEG_LISTEN: "0.0.0.0:8090"
   CMAEG_METRICS_LISTEN: "0.0.0.0:9091"
   CMAEG_PUBLIC_URL: "https://bot-gateway.chrono-ai.fun"
+  # Existing Nyx ChannelPointers and sealed records bind this exact authority.
+  # The cma-api Service aliases canonical Agent Manager Pods without rewriting
+  # those identities. Provider dispatch below uses the canonical Service DNS.
   CMAEG_CMA_BASE_URL: "http://example-host-01.example-namespace.svc"
   CMAEG_NYXID_BASE_URL: "https://nyx-api.chrono-ai.fun"
   CMAEG_TOOLS_NYXID_SLUG: "cmaeg"
   CMAEG_PROVIDERS: >-
     [{"slug":"cma_codex","base_url":"http://example-host-01.example-namespace.svc","kind":"responses_http","paths":{"agent_card":"/.well-known/agent-card.json","binding":"/api/v1/cmaeg/bindings/{binding_id}","conversation":"/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}","responses":"/api/v2/responses"},"max_inflight":256},{"slug":"nyxbot","base_url":"https://nyx-api.chrono-ai.fun","kind":"responses_http","paths":{"agent_card":"/api/v1/nyxbot/agent-card","binding":"/api/v1/nyxbot/bindings/{binding_id}","conversation":"/api/v1/nyxbot/bindings/{binding_id}/conversations/{conversation_id}","responses":"/api/v1/nyxbot/responses"},"max_inflight":256}]
+  CMAEG_MEDIA_TOOL_PROVIDERS: "cma_codex"
+  CMAEG_NON_HUMAN_PROVIDERS: "cma_codex"
+  CMAEG_MEDIA_ENABLED: "true"
+  CMAEG_MEDIA_MAX_BYTES: "20971520"
+  CMAEG_MEDIA_INFLIGHT_BYTES: "67108864"
+  CMAEG_MEDIA_RESPONSE_BYTES: "25165824"
+  CMAEG_MEDIA_MAX_JOBS: "6"
+  CMAEG_MEDIA_CACHE_BYTES: "33554432"
+  CMAEG_MEDIA_RATE_PER_MINUTE: "60"
+  CMAEG_MEDIA_DOWNLOAD_BYTES_PER_HOUR: "268435456"
+  CMAEG_MEDIA_LINK_TTL_SECONDS: "120"
+  CMAEG_MEDIA_PREPARE_BUDGET_MS: "15000"
+  CMAEG_MEDIA_FFMPEG_DIR: ""
+  CMAEG_MEDIA_VIDEO_FRAMES: "6"
+  CMAEG_STT_MAX_SECONDS: "600"
+  CMAEG_STT_MAX_BYTES: "20971520"
+  CMAEG_STT_RATE_PER_MINUTE: "20"
+  CMAEG_STT_CHANNEL_SECONDS_PER_HOUR: "3600"
+  CMAEG_STT_SECONDS_PER_HOUR: "36000"
+  CMAEG_STT_EAGER_MAX_SECONDS: "300"
+  CMAEG_STT_URL: ""
+  CMAEG_STT_MODEL: "gpt-transcribe"
+  CMAEG_STT_FORMATS: "mp3,mp4,mpeg,mpga,m4a,wav,webm"
+  CMAEG_STT_TIMEOUT_MS: "30000"
   CMAEG_PROVIDER_CONNECT_TIMEOUT_MS: "2000"
   CMAEG_PROVIDER_REQUEST_TIMEOUT_MS: "30000"
   CMAEG_PROVIDER_MAX_INFLIGHT: "256"
@@ -34,3 +65,17 @@ data:
   CMAEG_FAILURE_TEXT: "Sorry, I couldn’t finish that request. Please try again."
   CMAEG_DRAIN_SECONDS: "600"
   CMAEG_BUSY_RETRY_MAX_MS: "180000"
+  CMAEG_CONSOLE_ENABLED: "true"
+  CMAEG_CONSOLE_CLIENT_ID: "85619590-ec86-40bb-a96b-657bb89b4aa8"
+  CMAEG_CONSOLE_LOGIN_RATE_PER_MINUTE: "60"
+  CMAEG_CONSOLE_SESSION_TTL_MS: "28800000"
+  CMAEG_CONSOLE_SESSION_IDLE_MS: "1800000"
+  CMAEG_CONSOLE_SESSIONS_MAX: "1000"
+  CMAEG_CONSOLE_SESSIONS_PER_SUBJECT: "5"
+  CMAEG_CONSOLE_INDEX_MAX_RECORDS: "100000"
+  CMAEG_CONSOLE_INDEX_RESYNC_MS: "600000"
+  CMAEG_CONSOLE_SUMMARY_CACHE_MAX: "2000"
+  CMAEG_CONSOLE_CHANNEL_IDS_MAX: "20000"
+  CMAEG_CONSOLE_ACTIVITY_PER_CHANNEL: "100"
+  CMAEG_CONSOLE_ACTIVITY_MAX_BYTES: "33554432"
+  CMAEG_CONSOLE_PRODUCERS_PER_CHANNEL: "32"

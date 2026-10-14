@@ -1,5 +1,6 @@
 mod composition;
 mod connections_nyxid;
+mod inline;
 
 #[cfg(test)]
 mod connections_nyxid_tests;
@@ -21,6 +22,7 @@ mod worker_tests;
 )]
 pub(crate) use self::{connections_nyxid::CmaServiceConnectionBroker, policy::LiveLaunchPolicy};
 pub(crate) use composition::{TriggerComposition, TriggerCompositionDependencies};
+pub(crate) use inline::InlineTriggerProfileMaterializer;
 pub(crate) use scheduler::LaunchScheduler;
 
 #[cfg(test)]

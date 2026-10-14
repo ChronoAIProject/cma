@@ -1,9 +1,35 @@
-use cmaeg::turns::render_input::render;
+use cmaeg::turns::{
+    render_input::{self, ResponsesInputItem},
+    render_media::{Audience, RenderMedia},
+};
 use cmaeg_core::{
     activity::{Activity, ActivityKind, InteractionResult, SourceKind},
     channel::{ChannelDefinition, Platform},
 };
 use serde_json::json;
+/// Without attachments neither the audience nor a nonce may change a byte.
+fn render(activity: &Activity, definition: &ChannelDefinition) -> Vec<ResponsesInputItem> {
+    let plain = render_input::render(
+        activity,
+        definition,
+        &RenderMedia::empty(None),
+        Audience {
+            tools: false,
+            downloads: false,
+        },
+    );
+    let fenced = render_input::render(
+        activity,
+        definition,
+        &RenderMedia::empty(Some("0123456789ab".into())),
+        Audience {
+            tools: true,
+            downloads: true,
+        },
+    );
+    assert_eq!(plain, fenced);
+    plain
+}
 fn fixtures() -> (Activity, ChannelDefinition) {
     let activity = serde_json::from_str(include_str!(
         "../../../cmaeg-core/tests/fixtures/activity.json"
@@ -24,6 +50,7 @@ fn renders_neutral_text_and_strips_only_bot_address_tokens() {
         attachments: vec![],
         mentions_bot: true,
         reply_to: Some("earlier".parse().unwrap()),
+        album_id: None,
     };
     let rendered = render(&activity, &definition);
     assert_eq!(
@@ -59,13 +86,19 @@ fn cloud_event_data_is_canonical_and_bounded_without_splitting_utf8() {
     ))
     .unwrap();
     event.data = Some(json!({"z":1,"a":2}));
-    activity.kind = ActivityKind::Event { ce: event.clone() };
+    activity.kind = ActivityKind::Event {
+        ce: event.clone(),
+        attachments: Vec::new(),
+    };
     assert!(render(&activity, &definition)[0]["content"][0]["text"]
         .as_str()
         .unwrap()
         .ends_with("{\"a\":2,\"z\":1}"));
     event.data = Some(json!("🤖".repeat(10000)));
-    activity.kind = ActivityKind::Event { ce: event };
+    activity.kind = ActivityKind::Event {
+        ce: event,
+        attachments: Vec::new(),
+    };
     let input = render(&activity, &definition);
     let text = input[0]["content"][0]["text"].as_str().unwrap();
     assert!(text.split_once('\n').unwrap().1.len() <= 8192);
@@ -96,6 +129,7 @@ fn lark_and_feishu_strip_only_leading_mention_keys() {
                 attachments: vec![],
                 mentions_bot,
                 reply_to: None,
+                album_id: None,
             };
             assert_eq!(
                 render(&activity, &definition)[0]["content"][0]["text"],
@@ -104,4 +138,41 @@ fn lark_and_feishu_strip_only_leading_mention_keys() {
             );
         }
     }
+}
+#[test]
+fn lark_post_placeholders_name_their_embedded_kind() {
+    let (mut activity, definition) = fixtures();
+    activity.source = SourceKind::NyxidRelay {
+        platform: Platform::Lark,
+        route_id: "route".into(),
+    };
+    let embedded = |reference: &str, kind: &str| {
+        serde_json::from_value(json!({"reference": reference, "kind": kind, "variant": "embedded"}))
+            .unwrap()
+    };
+    activity.kind = ActivityKind::Message {
+        text: "Weekly update\nsee the chart".into(),
+        attachments: vec![
+            embedded("lark:img_v3_chart", "image"),
+            embedded("lark:file_v3_demo", "video"),
+        ],
+        mentions_bot: false,
+        reply_to: None,
+        album_id: None,
+    };
+    let input = render_input::render(
+        &activity,
+        &definition,
+        &RenderMedia::empty(None),
+        Audience {
+            tools: true,
+            downloads: false,
+        },
+    );
+    assert_eq!(
+        input[0]["content"][0]["text"],
+        "Weekly update\nsee the chart\n\n[Attachments: 2.]\n\
+         [0] image embedded in the post · not retrievable through this channel\n\
+         [1] video embedded in the post · not retrievable through this channel"
+    );
 }

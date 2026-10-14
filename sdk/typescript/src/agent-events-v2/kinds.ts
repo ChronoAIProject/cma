@@ -29,6 +29,10 @@ export const v2AgentEventKind = tagged({
   runtime_changed: kind('runtime_changed', {}),
   work_completed: kind('work_completed', { step: agentWorkStep }),
   work_failed: kind('work_failed', { step: agentWorkStep, failure }),
+  skill_installation_changed: kind('skill_installation_changed', {
+    skill_id: text,
+    status: enumeration('pending', 'installed', 'failed'),
+  }),
   turn_started: kind('turn_started', { turn_sequence: positiveInteger }),
   turn_metadata: kind('turn_metadata', {
     turn_sequence: positiveInteger,

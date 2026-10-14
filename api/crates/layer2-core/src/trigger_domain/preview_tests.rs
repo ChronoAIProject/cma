@@ -61,6 +61,7 @@ fn fixture(
     environment_variables: Vec<EnvironmentVariable>,
 ) -> Fixture {
     let sandbox_content = SandboxProfileContent {
+        runtime_image: None,
         cpu_millis: 2_000,
         memory_mib: 4_096,
         nyxid_services: Vec::new(),
@@ -106,6 +107,7 @@ fn fixture(
         sandbox_profile: SandboxProfileRef::new(sandbox.profile_id.clone(), sandbox.revision),
         workspace_profile: WorkspaceProfileRef::new(target.profile_id.clone(), target.revision),
         agent_profile: AgentProfileRef::new(agent.profile_id.clone(), agent.revision),
+        inline: None,
     };
     let revision = TriggerRevision::new(
         1,

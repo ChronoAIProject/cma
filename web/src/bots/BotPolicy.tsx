@@ -18,12 +18,12 @@ export function BotPolicy({
   return (
     <>
       <div className="bots__field">
-        <span>Who can talk to this Bot</span>
+        <span>Who can talk to this consumer</span>
         <Picker
           label="Admission policy"
           value={value.admission}
           options={[
-            { value: '', label: 'Choose who can talk to this Bot' },
+            { value: '', label: 'Choose who can talk to this consumer' },
             { value: 'private', label: 'Private chats only' },
             { value: 'allowlist', label: 'Selected senders in private chats' },
             { value: 'mention', label: 'Private chats and groups with a mention' },
@@ -37,7 +37,7 @@ export function BotPolicy({
       </div>
       {value.admission !== 'allowlist' ? null : (
         <div className="bots__field">
-          <label htmlFor="bot-senders">Telegram sender IDs</label>
+          <label htmlFor="bot-senders">Sender IDs</label>
           <Input
             id="bot-senders"
             value={value.senders}
@@ -57,7 +57,7 @@ export function BotPolicy({
         />
         Send the Agent’s final answer automatically
       </label>
-      <p>When this is off, the Agent must explicitly send replies using its Bot tools.</p>
+      <p>When this is off, the Agent must explicitly send replies using its reply tools.</p>
       <div className="bots__field">
         <label htmlFor="bot-ack">Acknowledgement delay (seconds)</label>
         <Input

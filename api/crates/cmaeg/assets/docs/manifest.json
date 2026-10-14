@@ -64,5 +64,11 @@
     "index": 0,
     "sha256": "6749c7a34c99e07138ae8fcfccb3fe801103f9f4b42e7824e6171ef817984e3b",
     "name": "architecture-0"
+  },
+  {
+    "source": "CMAEG_Architecture.md",
+    "index": 1,
+    "sha256": "85b38235dde811586cebe405ab92528997e701ea95fec62205b46a7491771069",
+    "name": "architecture-1"
   }
 ]

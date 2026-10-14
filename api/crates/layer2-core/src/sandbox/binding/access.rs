@@ -110,6 +110,17 @@ impl BindingAccessService {
                 )
                 .await?
         } else {
+            // Management creates one canonical conversation for a borrowed
+            // Agent, regardless of the transport alias. Context-free turns
+            // (including the Gateway test) must resolve the same mapping.
+            let id = if binding.existing_agent.is_some() {
+                if !super::model::valid_id(id, 8) {
+                    return Err(BindingError::NotFound);
+                }
+                super::EXISTING_AGENT_CONVERSATION
+            } else {
+                id
+            };
             self.store
                 .binding_conversation(&binding.binding_id, binding.generation, id)
                 .await?

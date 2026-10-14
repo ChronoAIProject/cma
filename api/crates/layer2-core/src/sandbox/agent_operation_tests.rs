@@ -9,7 +9,9 @@ mod first_message_tests;
 mod fixtures;
 mod ledger_tests;
 mod linear_input_tests;
+mod live_skill_tests;
 mod queued_message_tests;
+mod settings_tests;
 
 use std::sync::atomic::Ordering;
 use std::sync::Arc;

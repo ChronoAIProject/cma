@@ -48,6 +48,16 @@ pub(super) fn workspace_indexes() -> Vec<IndexModel> {
             )
             .build(),
         IndexModel::builder()
+            .keys(doc! { "sandbox_id": 1, "origin_operation_id": 1 })
+            .options(
+                IndexOptions::builder()
+                    .name("workspaces_sandbox_lifecycle_origin".to_string())
+                    .unique(true)
+                    .partial_filter_expression(doc! { "origin_type": "lifecycle" })
+                    .build(),
+            )
+            .build(),
+        IndexModel::builder()
             .keys(doc! { "work_pending": 1, "work_ready_at": 1, "work_lease_expires_at": 1 })
             .options(
                 IndexOptions::builder()
@@ -82,6 +92,7 @@ pub(super) fn workspace_document(workspace: &Workspace) -> Result<Document, Sand
         "origin_type": origin_type,
         "origin_index": origin_index,
         "origin_launch_id": origin_launch_id,
+        "origin_operation_id": operation_origin(&workspace.origin),
         "status": record_bson(&workspace.status).map_err(SandboxStoreError::Corrupt)?,
         "removed_at": nullable(workspace.removed_at.as_ref()),
         "work_pending": workspace.work.step.is_pending(),
@@ -116,6 +127,8 @@ pub(super) fn read_workspace(document: &Document) -> Result<Workspace, SandboxSt
         || !string_field_matches(document, "origin_type", origin_type)
         || document.get("origin_index") != Some(&origin_index)
         || document.get("origin_launch_id") != Some(&origin_launch_id)
+        || document.get("origin_operation_id").unwrap_or(&Bson::Null)
+            != &operation_origin(&workspace.origin)
         || document.get("status") != Some(&status)
         || document.get("removed_at") != Some(&nullable(workspace.removed_at.as_ref()))
         || document.get_bool("work_pending").ok() != Some(workspace.work.step.is_pending())
@@ -153,6 +166,14 @@ fn origin_fields(origin: &WorkspaceOrigin) -> (&'static str, Bson, Bson) {
         WorkspaceOrigin::Trigger { launch_id } => {
             ("trigger", Bson::Null, Bson::String(launch_id.clone()))
         }
+        WorkspaceOrigin::Lifecycle { .. } => ("lifecycle", Bson::Null, Bson::Null),
+    }
+}
+
+fn operation_origin(origin: &WorkspaceOrigin) -> Bson {
+    match origin {
+        WorkspaceOrigin::Lifecycle { operation_id } => Bson::String(operation_id.clone()),
+        _ => Bson::Null,
     }
 }
 
@@ -334,10 +355,20 @@ mod tests {
         );
         assert_eq!(
             indexes[3].keys,
+            doc! { "sandbox_id": 1, "origin_operation_id": 1 }
+        );
+        let options = indexes[3].options.as_ref().unwrap();
+        assert_eq!(options.unique, Some(true));
+        assert_eq!(
+            options.partial_filter_expression.as_ref(),
+            Some(&doc! { "origin_type": "lifecycle" })
+        );
+        assert_eq!(
+            indexes[4].keys,
             doc! { "work_pending": 1, "work_ready_at": 1, "work_lease_expires_at": 1 }
         );
         assert_eq!(
-            indexes[3].options.as_ref().unwrap().name.as_deref(),
+            indexes[4].options.as_ref().unwrap().name.as_deref(),
             Some("workspaces_due_work")
         );
     }

@@ -102,15 +102,29 @@ pub(super) async fn act(
 }
 
 fn error(error: BotError) -> Response {
-    let (status, code) = match error {
+    let (status, code) = match &error {
         BotError::Forbidden => (StatusCode::FORBIDDEN, "setup_authority_required"),
         BotError::NotFound => (StatusCode::NOT_FOUND, "setup_not_found"),
         BotError::Conflict => (StatusCode::CONFLICT, "setup_changed"),
         BotError::Invalid(_) => (StatusCode::BAD_REQUEST, "invalid_setup"),
+        BotError::ConnectionRequired { .. } => {
+            (StatusCode::UNPROCESSABLE_ENTITY, "connection_required")
+        }
         BotError::Unavailable => (StatusCode::SERVICE_UNAVAILABLE, "setup_unavailable"),
     };
-    super::problem_response(
-        status,
-        super::problem_document(status, code, &error.to_string(), code),
-    )
+    let mut body = super::problem_document(status, code, &error.to_string(), code);
+    if let BotError::ConnectionRequired {
+        services,
+        connection_target,
+    } = error
+    {
+        if let Some(object) = body.as_object_mut() {
+            object.insert(
+                "services".into(),
+                serde_json::to_value(services).expect("service identifiers are JSON values"),
+            );
+            object.insert("connection_target".into(), connection_target);
+        }
+    }
+    super::problem_response(status, body)
 }

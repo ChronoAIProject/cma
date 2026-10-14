@@ -1,4 +1,5 @@
 import type { ResolvedConfig } from './config.js';
+import { ProtocolError } from './errors.js';
 import type { OperationOptions } from './http.js';
 import { command, input, query, read, segment, type CommandOptions } from './resources.js';
 import {
@@ -17,6 +18,17 @@ import {
 } from './schema.js';
 
 const profile = object({ id: text, revision: positiveInteger });
+const image = object({ id: text, version: optional(text) });
+const repository = object({ url: text, ref: optional(text) });
+const inlineSkill = object({ id: text, version: optional(text) });
+const inlineAgent = object({
+  model: optional(text),
+  reasoning_effort: optional(text),
+  permission_mode: optional(enumeration('guarded', 'autonomous')),
+  system_prompt: optional(text),
+  skills: array(inlineSkill),
+  permissions: object({ services: array(text) }),
+});
 const identityPolicy = tagged({
   deny: variant('deny', {}),
   open: variant('open', {}),
@@ -32,22 +44,35 @@ const admission = tagged({
   }),
 });
 export { admission as botAdmissionSchema };
-const createBot = object({
+const createBotFields = object({
   name: text,
-  nyxid_bot_id: text,
-  profile,
+  nyxid_bot_id: optional(text),
+  connection_ref: optional(text),
+  image: optional(image),
+  repository: optional(repository),
+  agent: optional(inlineAgent),
+  profile: optional(profile),
   sandbox_profile: optional(profile),
   workspace_profile: optional(profile),
   event_worker_profile: optional(profile),
   admission,
   reply: object({ auto_final: boolean, ack_after_ms: integer }),
 });
+const createBot = (value: unknown) => {
+  const parsed = createBotFields(value);
+  if (Boolean(parsed.nyxid_bot_id) === Boolean(parsed.connection_ref))
+    throw new ProtocolError('choose exactly one connection_ref or legacy nyxid_bot_id');
+  if (Boolean(parsed.profile) === Boolean(parsed.agent))
+    throw new ProtocolError('choose exactly one profile or inline agent configuration');
+  return parsed;
+};
 const test = object({ accepted_after_ms: integer, first_text: text, level: text, tested_at: text });
 const bot = object({
   bot_id: text,
   owner: text,
   name: text,
   nyxid_bot_id: text,
+  connection_ref: optional(text),
   profile,
   sandbox_profile: optional(profile),
   workspace_profile: optional(profile),
@@ -73,11 +98,13 @@ const bot = object({
   last_test: nullable(test),
 });
 const externalBot = object({ id: text, name: text, platform: text });
+const connection = object({ connection_ref: text, label: text });
 export type Bot = Output<typeof bot>;
 export type CreateBot = Output<typeof createBot>;
 export type BotAdmission = Output<typeof admission>;
 export type BotTest = Output<typeof test>;
 export type ExternalBot = Output<typeof externalBot>;
+export type BotConnection = Output<typeof connection>;
 export interface BotListOptions extends OperationOptions {
   readonly after?: string;
   readonly limit?: number;
@@ -107,6 +134,9 @@ export class Bots {
   }
   available(options: OperationOptions = {}) {
     return read(this.config, `${base}/nyxid-bots`, array(externalBot), options);
+  }
+  connections(options: OperationOptions = {}) {
+    return read(this.config, `${base}/connections`, array(connection), options);
   }
   test(id: string, options: OperationOptions = {}) {
     return read(this.config, `${base}/${segment(id)}/test`, test, { ...options, method: 'POST' });

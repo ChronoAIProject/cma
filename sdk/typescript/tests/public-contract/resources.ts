@@ -3,6 +3,29 @@ import type { AgentProvenanceInventoryOptions } from '../../src/agents.js';
 import type { AccessibleSandboxListOptions } from '../../src/sandboxes.js';
 
 export const resourceDispatch: Record<string, Dispatch> = {
+  'GET /api/v1/agents/{id}/models': ({ client, param }) => client.agents.models(param('id')),
+  'GET /api/v1/agents/{id}/skills': ({ client, param }) => client.agents.skills(param('id')),
+  'POST /api/v1/agents/{id}/skills': ({ client, param, body, command }) =>
+    client.agents.installSkill(param('id'), body, command),
+  'GET /api/v1/agents/{id}/access-requests': ({ client, param }) =>
+    client.agents.accessRequests(param('id')),
+  'POST /api/v1/agents/{id}/access-requests/{request_id}/approve': ({
+    client,
+    param,
+    body,
+    command,
+  }) => client.agents.approveAccessRequest(param('id'), param('request_id'), body, command),
+  'POST /api/v1/agents/{id}/access-requests/{request_id}/deny': ({ client, param, command }) =>
+    client.agents.denyAccessRequest(param('id'), param('request_id'), command),
+  'GET /api/v1/agents/{id}/settings': ({ client, param }) => client.agents.settings(param('id')),
+  'PATCH /api/v1/agents/{id}/settings': ({ client, param, body, command }) =>
+    client.agents.updateSettings(param('id'), body, command),
+  'POST /api/v1/agents': ({ client, body, command }) =>
+    client.agents.createLifecycle(body, command),
+  'GET /api/v1/agent-lifecycle/{id}': ({ client, param }) =>
+    client.agents.readLifecycle(param('id')),
+  'POST /api/v1/sandboxes/{id}/workspaces/inline': ({ client, param, body, command }) =>
+    client.workspaces.createInline(param('id'), body, command),
   'PUT /api/v1/cmaeg/bindings/{binding_id}': ({ client, param, body }) =>
     client.providerBindings.put(param('binding_id'), body),
   'GET /api/v1/cmaeg/bindings/{binding_id}': ({ client, param }) =>

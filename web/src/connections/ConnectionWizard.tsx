@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { LandingCharacter } from '../landing/LandingCharacter';
 import { Button } from '../ui/Button';
+import { Modal } from '../ui/Modal';
 import {
   connectionClient,
   connectionUrl,
@@ -20,6 +21,8 @@ interface WizardProps {
   readonly onCancel?: () => void;
   readonly forceSubscription?: boolean;
   readonly expectedOwner?: string;
+  readonly presentation?: 'inline' | 'dialog';
+  readonly dialogTitle?: string;
   readonly client?: ConnectionClient;
 }
 
@@ -41,6 +44,8 @@ function ConnectionSequence({
   onRetry,
   forceSubscription = false,
   expectedOwner,
+  presentation = 'inline',
+  dialogTitle = 'Connect required services',
   client = connectionClient,
 }: WizardProps & { readonly onRetry: () => void }) {
   const key = JSON.stringify(target);
@@ -295,7 +300,7 @@ function ConnectionSequence({
   };
   const connected = report?.services.filter((row) => row.state === 'satisfied').length ?? 0;
   const missing = report?.services.filter((row) => row.state !== 'satisfied') ?? [];
-  return (
+  const content = (
     <section
       className="connection-wizard"
       aria-label="Required connections"
@@ -383,5 +388,21 @@ function ConnectionSequence({
         {running || onCancel !== undefined ? <Button onClick={cancel}>Cancel</Button> : null}
       </div>
     </section>
+  );
+  if (presentation === 'inline') return content;
+  // Check connected sessions without moving focus. Open recovery only when
+  // the server reports work to do, or verification needs a retry.
+  return (
+    <Modal
+      open={
+        !done &&
+        (error !== undefined ||
+          (report !== undefined && (!report.ready || forceSubscription || handoff !== undefined)))
+      }
+      title={dialogTitle}
+      onClose={cancel}
+    >
+      {content}
+    </Modal>
   );
 }

@@ -70,7 +70,10 @@ module CIContract
     step(gate, "Release contract mutation regressions", "ruby .github/scripts/ci-contract-tests.rb release")
     step(gate, "Runtime image evidence and provenance regressions", "node --test .github/scripts/runtime-image-evidence.test.mjs .github/scripts/release-runtime-input.test.mjs")
     images = job(ci, "images", "Images")
-    require!(!images.key?("if") && images.dig("strategy", "matrix", "component") == %w[api web runtime cmaeg], "all image gates must execute")
+    require!(!images.key?("if") && images.dig("strategy", "matrix", "component") == %w[api web runtime cmaeg image-manager], "all image gates must execute")
+    %w[images image-exports].each do |id|
+      require!(publish.dig("jobs", id, "strategy", "matrix", "component") == %w[api web runtime cmaeg image-manager], "release #{id} must include every service image")
+    end
     step(images, "Execute built runtime image contract", 'node .github/scripts/runtime-image-evidence.mjs run cma-runtime:ci "$GITHUB_SHA" "$RUNNER_TEMP/runtime-image-evidence.json"', "matrix.component == 'runtime'")
     step(images, "Require passing runtime image evidence", 'node .github/scripts/runtime-image-evidence.mjs verify cma-runtime:ci "$GITHUB_SHA" "$RUNNER_TEMP/runtime-image-evidence.json"', "always() && matrix.component == 'runtime'")
     artifact(images, "always() && matrix.component == 'runtime'", "runtime-image-evidence")
@@ -141,6 +144,11 @@ module CIContract
     backend = job(ci, "backend", "Backend")
     mongo = step(backend, "Disposable real Mongo persistence contracts", "bash ../.github/scripts/mongo-contract-tests.sh")
     require!(mongo["timeout-minutes"] == 75, "Mongo proof must retain its 75-minute bound")
+    step(backend, "Prepare compiled gateway browser contract", "npm ci --prefix web\nnpm ci --prefix sdk/typescript --omit=dev --ignore-scripts\nnpm run build --prefix web\n")
+    step(backend, "Install gateway contract browser", "npx --no-install playwright install --with-deps chromium")
+    order(backend, ["Prepare compiled gateway browser contract", "Install gateway contract browser", "Image Manager authenticated Mongo isolation"])
+    sandbox_mongo = step(backend, "Image Manager authenticated Mongo isolation", "bash ../.github/scripts/image-manager-mongo-contract.sh")
+    require!(sandbox_mongo["timeout-minutes"] == 10, "Sandbox Manager isolation proof must remain bounded")
     require!(workflow["permissions"] == { "contents" => "read" }, "remote workflow permissions broadened")
     require!(workflow.dig("concurrency", "cancel-in-progress") == false, "remote writers cannot be cancelled by a newer run")
     triggers = workflow["on"] || workflow[true]

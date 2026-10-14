@@ -9,15 +9,138 @@ per-Agent homes. It does not create one pod per Agent or run Agents in a main
 checkout. Software installation completes as `cma` before credential delivery
 or activation of the credential-bearing loopback proxy.
 
-The final image must demonstrate whole-home writer-fenced checkpoint/restore,
-operation receipts, credential generations, per-Agent configuration and exact
-conversation resumption. Changing `CHRONO_SANDBOX_IMAGE` requires an immutable
-digest and triggers recorded rotation; a new tag or label is not evidence.
+The final image must demonstrate operation receipts, credential generations,
+per-Agent configuration and exact conversation resumption. Retained OpenSandbox
+runtimes must still support releasing writer holds left by earlier deployments.
+CMA no longer captures or restores whole-home archives. Changing
+`CHRONO_SANDBOX_IMAGE` requires an immutable digest and triggers recorded rotation;
+a new tag or label is not evidence.
 See [CMA Model](CMA_Model.md) for the current contract and
 [Operations](CMA_Operations.md) for the final verification register.
 
 The additive conversation acknowledgement protocol and its rollout limits are
 documented in [Runtime output acknowledgement](CMA_Runtime_Output_Recovery.md).
+
+For the `agent-sandbox` provider, the attached home persistent volume is the
+persistence authority. Its runtime transport has no CMA checkpoint archive
+store. Checkpoint capture, writer holds, writer-resume commands and archive
+restore/bootstrap are refused as unsupported before Kubernetes discovery or
+runtime HTTP requests. Runtime ownership bindings, subscriptions, normal
+control operations and Agent history export remain independent of archive
+storage. Production also constructs the retained OpenSandbox transport without
+archive authority. Its only remaining checkpoint command is release of an existing
+writer hold, which requires no archive access. Startup no longer reads checkpoint
+bucket or storage machine credentials, and the storage proxy HTTP implementation
+has been removed. Historical manifests and their object-key validation remain
+readable; blob upload, download and deletion return Unsupported. CMA does not
+claim historical objects were deleted, and archive-only paused Sandboxes need an
+explicit migration outside CMA before revival.
+
+Native pause patches the admitted `agents.x-k8s.io/v1beta1` Sandbox to
+`operatingMode: Suspended` and waits for all Pods owned by that CRD UID to
+disappear, including terminating Pods. CMA persists the retained runtime binding
+separately from a live runtime and preserves it during reconciliation and
+retirement. Resume patches that same CRD name and UID to `Running` with a newly
+reserved runtime generation. The pinned image, original PVC UID and configuration
+remain exact; the replacement process must report a different boot identity.
+Changing the default image does not change a suspended Sandbox on resume.
+
+The native adapter accepts a retry after a lost pause or resume response only
+when the provider still has the exact old suspended or exact next running spec.
+It rejects replacement UIDs, image changes, incomplete Pod inventories and stale
+resource versions. Retirement deletes the retained CRD and proves Pod absence
+before releasing the home. It can also finish when deletion preempts a pause or
+resume whose response was lost, without contacting the stopped runtime process.
+
+Local HTTP transport tests cover native operation without archive storage,
+cross-Sandbox binding refusal, rejection of archive operations before I/O and
+legacy writer-release recovery without an archive store.
+They do not establish production PV pause/revive/delete acceptance or native
+warm-pool readiness.
+
+Images supporting native pool initialization additionally declare
+`dev.chrono.cma.runtime-bootstrap=1`. Their `--wait-for-assignment` mode requires
+the Pod UID from the downward API and starts only a mode-0600 Unix socket outside
+the tenant home; it has no tenant identity, control token or TCP listener. The
+control plane delivers a bounded configuration through Kubernetes exec stdin to
+the fixed `/usr/local/bin/layer4-runtime --assign-runtime` command. The waiting
+process checks the exact Pod UID and admits only the first valid configuration.
+An identical request can replay after acknowledgement loss; a different request
+cannot replace it. The control token remains in memory and is excluded from
+child environments. Normal authenticated runtime startup follows assignment.
+
+The native exec sender checks CRD/Pod identity and persisted Sandbox, generation
+and home authority before and after delivery. It requires a successful exec
+exit status and an exact request-digest receipt, bounds both output streams,
+and does not propagate remote output in errors. Local tests exercise kube-rs
+WebSocket exec and real runtime processes, including Pod replacement refusal,
+bounded output without EOF, authenticated startup and retained-home restart.
+The native pool client configures immutable `SandboxTemplate` and
+`SandboxWarmPool` resources keyed by image digest, CPU/memory, initialized home
+policy and Pod policy. It pins seed/template/pool UIDs and counts ready replicas
+only after the controller observes the pool generation. Each template provisions
+an independent PVC; claims carry only `warmPoolRef`, because claim-level env or
+volume templates force upstream cold allocation. Persist a claim request before
+calling `claim`, and its returned UID before `observe_claim` or `adopt_home`.
+
+Home adoption records the original claim, Sandbox and PVC UIDs on the claim,
+converts the same Sandbox from a volume template to an explicit reference to
+the same PVC, and waits for the controller to observe that generation. Only then
+does it remove the PVC owner reference and record retained-home metadata. This
+prevents the controller from re-adopting a detached PVC. No Pod operation is
+issued during conversion. Lost mutation replies replay against the same UIDs.
+The attachment must be persisted before runtime assignment. `recover_home`
+recovers an adopted PVC against the original claim receipt even after claim or
+seed removal; storage cleanup without an attachment also checks a bounded,
+complete inventory, rejecting duplicate or inconsistent adoption records.
+
+Local Kubernetes HTTP fixtures cover pool/claim operations, controller-observed
+home adoption, original Pod policy retention and recovery of lost replies.
+Pod discovery and pause/delete observation use the upstream controller's
+`agents.x-k8s.io/sandbox-name-hash` label, then validate the original Sandbox
+owner UID. This supports claimed warm Pods without claim-specific CMA labels
+that upstream metadata reconciliation would remove. The hash is only a search
+hint; matching labels alone never grant runtime ownership. CRD deletion
+observation uses name and UID without filtering on a mutable management label.
+The production native backend recognizes an adopted home and admits its original
+claim-owned Sandbox with a metadata-only runtime binding. It validates the
+original image/resources/mounts and the complete request fingerprint, preserves
+the waiting Pod template and sends assignment before binding transport. Retries
+and resume keep the original CRD/PVC and Pod policy; resumed Pods receive the
+reserved newer generation through exec. Claim ownership is checked again around
+credential delivery. Runtime deletion first deletes the original claim, then
+waits for the CRD, owned Pods and claim to disappear; lost deletion replies can
+recover claim identity from the retained PVC.
+
+The lifecycle worker selects its provider before home allocation and records
+the selected pool request, original claim UID, assigned Sandbox and home receipt
+in separate durable transitions. Retries preserve the selected image and Pod
+policy. A reservation already committed to ordinary storage stays on that path.
+Native reservations cannot allocate an ordinary replacement PVC on retry.
+
+Retirement also handles claims that never reached runtime admission. It records
+discovered claim/member identities before requesting claim-first deletion, then
+observes claim, owned Sandbox and Pod absence before disk release. Cleanup does
+not recreate missing claims. A late creation after database retirement is found
+by native claim reconciliation; orphan cleanup records its plan on the original
+claim. Retained-home cleanup checks native finality even if the member CRD has
+already disappeared. Incomplete inventories or unknown orphan Pod parents keep
+cleanup pending.
+
+Operators manage native capacity through `/api/v1/admin/warm-pools` and the Warm
+pools tab. Targets persist the configured system image, resources and original
+Pod policy before provider I/O. Initial pool creation uses zero replicas until
+the pool/template UIDs are acknowledged in Mongo; later scaling always uses
+that original binding. Changes to deployment defaults never retarget an existing
+pool. The former profile prewarming worker now only retires unowned legacy
+reservations; new creation no longer claims legacy prepared environments.
+
+Kube-rs HTTP/WebSocket fixtures exercise this backend with failed exec, exact
+replay, a restarted control-plane client and a new Pod on resume. Worker tests
+cover durable stages, response loss, partial retirement and late claims. These
+fixtures emulate controller observations and assignment reception. Production
+controller compatibility and real lifecycle acceptance remain deployment gates;
+see [deployment handoff](CMA_Deployment_Readiness.md).
 
 The historical provider observations in sections 1-7 below remain unchanged.
 They establish only behavior on their recorded versions. Section 8 records

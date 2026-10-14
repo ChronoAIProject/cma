@@ -20,6 +20,7 @@ mod api_bearer;
 mod binding;
 mod custody;
 mod delegated;
+mod personal_owner;
 mod resource;
 mod sandbox_controls;
 

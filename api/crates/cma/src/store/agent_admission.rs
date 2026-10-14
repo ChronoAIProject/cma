@@ -72,6 +72,20 @@ impl MongoSandboxStore {
         reuse_existing: bool,
         initiation: Option<layer2_core::trigger_domain::LaunchInitiation>,
     ) -> Result<AgentAdmissionResult, SandboxStoreError> {
+        let result = self
+            .commit_agent_admission(admission, reuse_existing, initiation)
+            .await?;
+        // No work or authority travels in this hint; the scheduler discovers and claims.
+        self.agent_admitted.notify_one();
+        Ok(result)
+    }
+
+    async fn commit_agent_admission(
+        &self,
+        admission: AgentAdmission,
+        reuse_existing: bool,
+        initiation: Option<layer2_core::trigger_domain::LaunchInitiation>,
+    ) -> Result<AgentAdmissionResult, SandboxStoreError> {
         let mut last_transient = None;
         let mut retries = retry::AdmissionRetries::new();
         while retries.next().await {
@@ -337,9 +351,9 @@ async fn apply_admission(
         .checked_add(1)
         .ok_or(ApplyError::Domain(SandboxStoreError::Conflict))?;
     let cause = match admission.origin {
-        AgentOrigin::Manual | AgentOrigin::WorkspaceProfile { .. } => {
-            SandboxReviveCause::AgentCreation
-        }
+        AgentOrigin::Manual
+        | AgentOrigin::Lifecycle { .. }
+        | AgentOrigin::WorkspaceProfile { .. } => SandboxReviveCause::AgentCreation,
         AgentOrigin::Trigger { .. } => SandboxReviveCause::TriggerLaunch,
     };
     let revival = next_sandbox

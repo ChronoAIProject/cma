@@ -2,6 +2,41 @@
 
 <!-- nav: 5 Agents -->
 
+Use `agents.createLifecycle` to create an Agent from an Image Manager selection
+and inline configuration. Omit `image` for the deployment default. Persist the
+exact request and idempotency key before sending it; an uncertain response must
+be retried with the same body and key.
+
+```ts
+import type { Cma, AgentLifecycleCreateRequest } from '@chronoai/cma-sdk';
+
+export async function provisionAgent(client: Cma, idempotencyKey: string) {
+  const request: AgentLifecycleCreateRequest = {
+    name: 'Research',
+    profile: { permission_mode: 'guarded', reasoning_effort: 'medium' },
+  };
+  const receipt = await client.agents.createLifecycle(request, { idempotencyKey });
+  return client.agents.readLifecycle(receipt.id);
+}
+```
+
+The receipt acknowledges durable admission. Poll `readLifecycle(receipt.id)`
+until the global `status` is `succeeded` before opening `agent_id`. A phase event
+whose status is `ready` is only one gate. `waiting_for_connection` includes the
+missing services and an owner-bound target for the connection flow. After the
+owner verifies those connections, repeat the original `createLifecycle` call
+with its exact request and key to resume the same operation and child resources.
+`failed` is terminal; surface its safe error to the caller.
+
+Set `workspace_id` to add an Agent to an existing Workspace owned by the caller.
+The Workspace must be ready. Omit `image` and `repository` because the selected
+Workspace supplies both. This mode requires permission to use the Workspace;
+permission to create a new Sandbox is unnecessary. The Agent inherits its parent
+Sandbox's key scope. Omit `profile.permissions.services`, or provide a subset of
+the inherited services; additional services are rejected and a subset does not
+reduce the inherited scope. Reusing the same idempotency key with another
+Workspace is a conflict.
+
 One Agent belongs to one Worktree in a Workspace and Sandbox. Its REST,
 AG-UI and Responses interfaces project the same conversation, not separate chats.
 REST detail, transcript, events and usage also support current organization or
@@ -298,3 +333,89 @@ older servers. Personal ownership reports only whether the current caller owns
 the resource; organization ownership supplies an ID for matching the caller's
 current organization choices. Use the resource's current capabilities to display
 access levels. Organization membership alone does not establish resource permissions.
+
+## Live settings
+
+`agents.settings(agentId)` reads the owner's desired `model`, `reasoning_effort`,
+`permission_mode` and `pending`. `agents.updateSettings(agentId, body,
+{ idempotencyKey })` supplies all three settings for an idle Agent. Retain the
+exact body and key when an HTTP reply is uncertain. `pending: true` records
+accepted desired settings; read again until runtime acknowledgement clears
+`pending` before treating them as applied. The immutable creation profile is
+preserved.
+
+`agents.models(agentId)` returns `{ models }`, where each model has `id`, `label`
+and `available`. Only select rows whose `available` flag is true: this reflects
+both the Agent's admitted model service and current runtime support. The catalog
+does not change settings; use `updateSettings` with the chosen model ID.
+
+## Live skills
+
+`agents.skills(agentId)` reads `{ items, pending, can_install, unavailable_reason? }`.
+Each item contains `id`, exact `version`, `source: 'ornn'`, and a `status` of
+`pending`, `installed`, or `failed`, with optional `name` and `error`.
+Use `can_install` and `unavailable_reason` to present current runtime support and
+readiness; current authorization and readiness are checked again during admission.
+
+```ts
+import { createClient } from '@chronoai/cma-sdk';
+
+export async function addSkill(
+  agentId: string,
+  skillId: string,
+  exactVersion: string,
+  installationKey: string,
+) {
+  const cma = createClient();
+  return cma.agents.installSkill(
+    agentId,
+    { id: skillId, version: exactVersion },
+    { idempotencyKey: installationKey },
+  );
+}
+```
+
+Choose an explicit skill and version from `profileAuthoring.searchSkills`. A `202`
+response records accepted installation work. Reuse the unchanged body and key
+after an uncertain reply, then read `skills` again until the selected item is
+`installed` or `failed`. Only `installed` confirms runtime acknowledgement.
+Installation is additive and preserves the immutable creation profile.
+
+## Service access decisions
+
+`agents.accessRequests(agentId)` returns `{ items }` for the authenticated owner.
+Each request has an `id`, exact `agent_id`, `services`, `reason` and durable `status`.
+`approveAccessRequest` sends the owner's explicit service selection with a stable
+idempotency key. `denyAccessRequest` sends an explicit denial with its own key.
+Services contain 1–32 ASCII identifiers of 1–128 characters using letters, digits,
+hyphens and underscores. Authentication and current ownership are checked by the
+service; the SDK does not infer approval from an Agent message.
+
+```ts
+import { createClient } from '@chronoai/cma-sdk';
+
+export async function approveServices(
+  agentId: string,
+  requestId: string,
+  services: string[],
+  decisionKey: string,
+) {
+  const cma = createClient();
+  return cma.agents.approveAccessRequest(
+    agentId,
+    requestId,
+    { services },
+    { idempotencyKey: decisionKey },
+  );
+}
+```
+
+Retry an uncertain decision with the unchanged body and original key. The durable
+service returns current progress on replay. `connecting` and `applying` include
+`connection.target = { type: 'agent_access_request', id: requestId }` for the
+owner's connection flow. Recheck that target if a connection expires while access
+is being applied; reconnecting preserves the approved scope and current request.
+`applying` means runtime verification is pending; only `succeeded` confirms applied
+access. Read the list again after a connection return. `denied` and `failed` are
+terminal outcomes; an optional `error` supplies safe failure detail. SDK validation rejects crossed Agent/request identities,
+inconsistent connection targets, and duplicate list IDs.

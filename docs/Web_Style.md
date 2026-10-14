@@ -1315,6 +1315,10 @@ names wrap within the drawer. Absent, empty and unreported are distinct.
 First-message delivery is recorded with timestamps, never inferred from a
 visible message or a successful Agent create.
 
+Consumer review facts retain their two-column grid. Both labels and values use
+`overflow-wrap: anywhere` so long labels such as **Acknowledgement delay** wrap
+inside their own column on narrow viewports without overlapping the value.
+
 Opening Details focuses its heading; closing restores the opener when present.
 Stop has explicit confirmation. Delete has §12.4's acknowledgement and stays
 disabled until allowed. Failure stays beside its controls and preserves history.
@@ -2010,3 +2014,5 @@ draft. Summary readers never receive the management history control.
 | 2026-09-23 | Retain Event Worker Profile save requests in owner-scoped browser session storage across reloads, require explicit same-request retry, and keep saved workers readable and retireable when source catalogue entries are removed. |
 
 | 2026-09-23 | Align the view inventory with the unified Profile library and owner Bots; remove the retired Bridge setup specification while preserving historical changelog entries and Agent provenance vocabulary. |
+
+| 2026-10-14 | Make consumer review fact labels wrap within their existing grid column, matching values and preserving accurate wording without overlap at narrow widths. |

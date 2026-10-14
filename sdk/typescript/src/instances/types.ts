@@ -157,3 +157,11 @@ export const createWorkspaceRequest = object({
   commands_digest: optional(text),
 });
 export type CreateWorkspaceRequest = Output<typeof createWorkspaceRequest>;
+export const createInlineWorkspaceRequest = object({
+  source: tagged({
+    git_repository: variant('git_repository', { url: text, reference: optional(text) }),
+    empty: variant('empty', {}),
+  }),
+  name: optional(text),
+});
+export type CreateInlineWorkspaceRequest = Output<typeof createInlineWorkspaceRequest>;

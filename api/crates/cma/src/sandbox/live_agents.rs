@@ -345,6 +345,13 @@ impl AgentRuntimeRegistry for LiveAgentRegistry {
         })
     }
 
+    async fn request_reconnect(
+        &self,
+        target: &AgentRuntimeTarget,
+    ) -> Result<(), AgentRuntimeError> {
+        self.reconnect_target(target).await
+    }
+
     async fn fence(
         &self,
         agent_id: &AgentId,

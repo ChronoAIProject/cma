@@ -1,6 +1,10 @@
 //! CMA control plane composition while replacement resource routes are rebuilt.
 
 mod activity;
+mod agent_access;
+mod agent_access_worker;
+mod agent_lifecycle;
+mod agent_models;
 mod auth;
 mod bot_setups;
 mod commands;
@@ -18,6 +22,7 @@ mod sandbox;
 mod shutdown;
 mod store;
 mod trigger;
+mod warm_pools;
 
 use std::{future::IntoFuture, net::SocketAddr, sync::Arc, time::Duration};
 
@@ -63,6 +68,21 @@ async fn main() {
         )
         .init();
 
+    let arguments: Vec<_> = std::env::args().skip(1).collect();
+    if arguments == ["--print-runtime-role"] {
+        match std::env::var("CHRONO_MONGODB_DATABASE") {
+            Ok(database) => println!("{}", store::isolation::role(&database)),
+            Err(_) => {
+                eprintln!("CHRONO_MONGODB_DATABASE is required");
+                std::process::exit(2)
+            }
+        }
+        return;
+    }
+    if !arguments.is_empty() {
+        eprintln!("usage: cma [--print-runtime-role]");
+        std::process::exit(2)
+    }
     if let Err(error) = serve().await {
         tracing::error!(error = %error, "CMA stopped");
         std::process::exit(1);
@@ -107,6 +127,8 @@ async fn serve() -> Result<(), String> {
             .sandbox_control_scheduler
             .spawn(shutdown.subscribe()),
     );
+    shutdown.push(composition.native_warm_pools.spawn(shutdown.subscribe()));
+    shutdown.push(composition.agent_access_worker.spawn(shutdown.subscribe()));
     composition.sandbox_lifecycle.spawn(&mut shutdown);
     shutdown.push(composition.provenance_backfill.spawn(shutdown.subscribe()));
     let http_signal = shutdown.subscribe();

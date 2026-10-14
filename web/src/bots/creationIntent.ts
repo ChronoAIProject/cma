@@ -21,9 +21,12 @@ export function useCreationIntent(viewer: string) {
         typeof intent.profileName !== 'string' ||
         typeof intent.botName !== 'string' ||
         typeof intent.body?.name !== 'string' ||
-        typeof intent.body.nyxid_bot_id !== 'string' ||
-        typeof intent.body.profile?.id !== 'string' ||
-        !Number.isSafeInteger(intent.body.profile.revision) ||
+        (typeof intent.body.connection_ref !== 'string' &&
+          typeof intent.body.nyxid_bot_id !== 'string') ||
+        ((intent.body.profile === undefined ||
+          typeof intent.body.profile.id !== 'string' ||
+          !Number.isSafeInteger(intent.body.profile.revision)) &&
+          intent.body.agent === undefined) ||
         !intent.body.admission ||
         typeof intent.body.reply?.auto_final !== 'boolean' ||
         !Number.isSafeInteger(intent.body.reply.ack_after_ms)

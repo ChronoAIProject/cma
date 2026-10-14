@@ -2,7 +2,7 @@ import type { EffectiveAccess, ResourceShare } from '@chronoai/cma-sdk';
 import type { ResourceViewsClient } from './client';
 
 export interface ShareTarget {
-  readonly kind: 'agent' | 'sandbox';
+  readonly kind: 'sandbox';
   readonly id: string;
   readonly name: string;
 }
@@ -20,9 +20,7 @@ export function sharingDeadline(access: EffectiveAccess, started: number): numbe
 }
 
 export function matchesShare(share: ResourceShare, target: ShareTarget): boolean {
-  return target.kind === 'agent'
-    ? share.selector.kind === 'agent' && share.selector.agent_id === target.id
-    : share.selector.kind === 'sandbox' && share.selector.sandbox_id === target.id;
+  return share.selector.kind === 'sandbox' && share.selector.sandbox_id === target.id;
 }
 
 export async function loadSharing(
@@ -56,15 +54,9 @@ export const shareModes = [
   { value: 'org_roles', label: 'Use organization roles' },
 ] as const;
 
-export function shareExposure(kind: ShareTarget['kind'], mode: ResourceShare['mode']): string {
+export function shareExposure(mode: ResourceShare['mode']): string {
   const scope =
-    kind === 'agent'
-      ? 'Members can read this Agent’s details and history. This grant provides no parent, sibling or file access.'
-      : 'Members can read this Sandbox, every Workspace and Agent within it, and allowed scoped files. This includes future resources in the Sandbox.';
+    'Members can read this Sandbox, every Workspace and Agent within it, and allowed scoped files. This includes future resources in the Sandbox.';
   if (mode === 'view') return `${scope} All recipients have view access only.`;
-  return `${scope} ${
-    kind === 'agent'
-      ? 'Organization admins can interact and answer approvals only when the server proves isolation or a compatible whole-Sandbox grant.'
-      : 'Organization admins can also interact, answer approvals and manage the Sandbox and its Agents under current server permissions.'
-  } Members and viewers cannot interact.`;
+  return `${scope} Organization admins can also interact, answer approvals and manage the Sandbox and its Agents under current server permissions. Members and viewers cannot interact.`;
 }

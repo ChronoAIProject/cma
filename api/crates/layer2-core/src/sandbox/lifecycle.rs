@@ -175,6 +175,8 @@ pub struct SandboxLifecycleState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime_provision: Option<SandboxRuntimeProvisionReservation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suspended_runtime: Option<Box<super::RuntimeBinding>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checkpoint_capture: Option<SandboxCheckpointCapture>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub background_checkpoint: Option<Box<super::SandboxBackgroundCheckpoint>>,
@@ -204,6 +206,7 @@ impl Default for SandboxLifecycleState {
             home_recovery: None,
             runtime_generation_high_water: 0,
             runtime_provision: None,
+            suspended_runtime: None,
             checkpoint_capture: None,
             background_checkpoint: None,
             checkpoint_epoch_high_water: 0,
@@ -218,25 +221,30 @@ impl Default for SandboxLifecycleState {
 
 impl SandboxLifecycleState {
     pub fn validate(&self, sandbox: &Sandbox) -> Result<(), SandboxModelError> {
+        sandbox.validate_suspended_runtime()?;
         if let Some(capture) = &self.background_checkpoint {
             capture.validate(sandbox)?;
         }
         if let Some(recovery) = &self.home_recovery {
             recovery.validate_for(sandbox)?;
-            if !matches!(
+            let operation_allows_home = matches!(
                 self.operation,
                 Some(
-                    SandboxLifecycleOperation::Revive { .. }
+                    SandboxLifecycleOperation::Pause { .. }
+                        | SandboxLifecycleOperation::Revive { .. }
                         | SandboxLifecycleOperation::ImageRotation { .. }
                 )
-            ) || (recovery.resume_pause.is_some()
-                && !matches!(
-                    self.operation,
-                    Some(SandboxLifecycleOperation::Revive {
-                        cause: SandboxReviveCause::RuntimeLost,
-                        ..
-                    })
-                ))
+            ) || (sandbox.status == SandboxStatus::Paused
+                && self.operation.is_none());
+            if !operation_allows_home
+                || (recovery.resume_pause.is_some()
+                    && !matches!(
+                        self.operation,
+                        Some(SandboxLifecycleOperation::Revive {
+                            cause: SandboxReviveCause::RuntimeLost,
+                            ..
+                        })
+                    ))
             {
                 return Err(invalid_lifecycle());
             }
@@ -289,7 +297,10 @@ impl SandboxLifecycleState {
             }
             None => {}
         }
-        if sandbox.status == SandboxStatus::Paused && self.checkpoints.latest.is_none() {
+        if sandbox.status == SandboxStatus::Paused
+            && self.checkpoints.latest.is_none()
+            && self.home_recovery.is_none()
+        {
             return Err(invalid_lifecycle());
         }
         Ok(())
@@ -305,7 +316,9 @@ impl SandboxLifecycleState {
             return Err(invalid_lifecycle());
         }
         let authority = self.allocate_authority(sandbox_id, requested_at, true)?;
-        self.home_recovery = None;
+        // A durable home is the pause/revive source. Native suspension retains
+        // its CRD and PVC; legacy replacement retains the same home authority.
+        self.home_recovery = self.select_home_recovery()?;
         self.operation = Some(SandboxLifecycleOperation::Pause {
             authority,
             phase: SandboxPausePhase::first(),

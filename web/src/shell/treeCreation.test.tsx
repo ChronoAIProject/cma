@@ -176,6 +176,7 @@ it('shows distinct sibling badges and preserves whole-parent summaries without t
     removeWorkspace: false,
     stopAgent: false,
     deleteAgent: false,
+    exportHistory: false,
   };
   render(
     <CmaClientProvider client={client}>

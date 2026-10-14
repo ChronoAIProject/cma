@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use layer2_core::trigger_domain::{ServiceConnectionMetadata, ServiceConnectionMode};
 
 use super::{
-    decode, malformed, matching_services, Deserialize, NyxidServiceConnectionBroker,
+    decode, malformed, selected_service, Deserialize, NyxidServiceConnectionBroker,
     ServiceConnectionError, ServiceId, SubjectId,
 };
 
@@ -67,11 +67,7 @@ impl NyxidServiceConnectionBroker {
         Ok(services
             .iter()
             .map(|service| {
-                let matches = matching_services(service, &connections);
-                let existing = match matches.as_slice() {
-                    [connection] => Some(*connection),
-                    _ => None,
-                };
+                let existing = selected_service(service, &connections);
                 let slug = existing.map_or(service.as_str(), |connection| connection.slug.as_str());
                 let row = by_slug.get(slug);
                 if let Some(connection) = existing {

@@ -1,7 +1,7 @@
 //! Channels wire types for the independent CMAEG v1 protocol.
 use super::{
     BindingId, ChannelId, ConformanceLevel, EventWorkerProfile, GroupAdmission, NyxIdIdentity,
-    PartitionKey, Platform, ProviderSlug, RecordId, Secret,
+    PartitionKey, ProviderSlug, RecordId, RoutingPolicy, Secret, Source, SourceRequest,
 };
 use serde::{Deserialize, Serialize};
 
@@ -86,6 +86,34 @@ pub struct ChannelResponse {
     pub record_id: String,
     /// Wire field `version`.
     pub version: u64,
+}
+
+/// Owned channel metadata, including legacy records without a recoverable original ID.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct ChannelListItem {
+    /// Original retained channel ID; never regenerated for a legacy record.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel_id: Option<String>,
+    /// Public owner-scoped channel definition.
+    pub definition: PublicChannelDefinition,
+    /// Endpoints derived only from the original retained channel ID.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub endpoints: Option<EndpointResponse>,
+    /// Provider binding metadata.
+    pub provider: ProviderResponse,
+    /// Stable record identity, including legacy channels.
+    pub record_id: String,
+    /// Current record revision.
+    pub version: u64,
+}
+
+/// CMAEG owner-scoped channel listing with an opaque continuation cursor.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct ChannelPage {
+    /// Channels visible to the authenticated creator.
+    pub items: Vec<ChannelListItem>,
+    /// Cursor for the next page, when more channels remain.
+    pub next_cursor: Option<String>,
 }
 
 /// CMAEG `ChannelUpdateRequest` wire shape.
@@ -228,6 +256,9 @@ pub enum IdentityAdmission {
 pub struct PartitionRule {
     /// Wire field `key`.
     pub key: PartitionKey,
+    /// The key for custom events on a chat-keyed channel; absent means `key`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_key: Option<PartitionKey>,
     /// Wire field `version`.
     pub version: u64,
 }
@@ -312,6 +343,9 @@ pub struct PublicChannelDefinition {
     pub record_id: RecordId,
     /// Wire field `reply`.
     pub reply: ReplyPolicy,
+    /// Multi-consumer routing, read-only; absent on channels without it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub routing: Option<RoutingPolicy>,
     /// Wire field `schema_version`.
     pub schema_version: u64,
     /// Wire field `secrets`.
@@ -366,112 +400,6 @@ pub enum Sink {
     /// Wire variant `sync`.
     #[serde(rename = "sync")]
     Sync {},
-}
-
-/// CMAEG `Source` wire shape.
-#[derive(Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type")]
-pub enum Source {
-    /// Native Telegram ingress owned by the gateway.
-    #[serde(rename = "telegram")]
-    Telegram {
-        /// Telegram bot identifier.
-        bot_id: String,
-        /// Telegram bot username when available.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        bot_username: Option<String>,
-        /// Event admission policy.
-        admission: AdmissionPolicy,
-    },
-    /// Wire variant `nyxid_relay`.
-    #[serde(rename = "nyxid_relay")]
-    NyxidRelay {
-        /// Wire field `admission`.
-        admission: AdmissionPolicy,
-        /// Wire field `bot_id`.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        bot_id: Option<String>,
-        /// Wire field `bot_username`.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        bot_username: Option<String>,
-        /// Wire field `issuer`.
-        issuer: String,
-        /// Wire field `jwks_url`.
-        jwks_url: String,
-        /// Wire field `key_id`.
-        key_id: String,
-        /// Wire field `platform`.
-        platform: Platform,
-        /// Wire field `route_ids`.
-        route_ids: Vec<String>,
-        /// Wire field `trust_normalized`.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        trust_normalized: Option<bool>,
-    },
-    /// Wire variant `custom`.
-    #[serde(rename = "custom")]
-    Custom {
-        /// Wire field `auth`.
-        auth: CustomAuth,
-        /// Wire field `prompt_template`.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        prompt_template: Option<String>,
-        /// Wire field `schema`.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        schema: Option<serde_json::Value>,
-    },
-}
-
-/// CMAEG `SourceRequest` wire shape.
-#[derive(Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type")]
-pub enum SourceRequest {
-    /// Native Telegram ingress owned by the gateway.
-    #[serde(rename = "telegram")]
-    Telegram {
-        /// Telegram bot identifier.
-        bot_id: String,
-        /// Telegram bot username when available.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        bot_username: Option<String>,
-        /// Event admission policy.
-        admission: AdmissionPolicy,
-    },
-    /// Wire variant `nyxid_relay`.
-    #[serde(rename = "nyxid_relay")]
-    NyxidRelay {
-        /// Wire field `admission`.
-        admission: AdmissionPolicy,
-        /// Wire field `bot_id`.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        bot_id: Option<String>,
-        /// Wire field `bot_username`.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        bot_username: Option<String>,
-        /// Wire field `issuer`.
-        issuer: String,
-        /// Wire field `key_id`.
-        key_id: String,
-        /// Wire field `platform`.
-        platform: Platform,
-        /// Wire field `route_ids`.
-        route_ids: Vec<String>,
-        /// Wire field `trust_normalized`.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        trust_normalized: Option<bool>,
-    },
-    /// Wire variant `custom`.
-    #[serde(rename = "custom")]
-    Custom {
-        /// Wire field `auth`.
-        auth: CustomAuth,
-        /// Wire field `prompt_template`.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        prompt_template: Option<String>,
-        /// Wire field `schema`.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        schema: Option<serde_json::Value>,
-    },
 }
 
 /// CMAEG `TestChannelResponse` wire shape.

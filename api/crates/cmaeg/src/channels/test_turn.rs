@@ -2,13 +2,17 @@
 use super::management::{load, ManagementError, ManagementState};
 use crate::{
     auth::Creator,
-    providers::{ProviderError, ResponsesEvent, TurnRequest},
+    providers::{ProviderError, ResponsesEvent, TurnRequest, TurnStream},
 };
 use cmaeg_core::{
     channel::ConformanceLevel,
     ids::{ChannelId, ConversationId, IdempotencyKey},
 };
 use std::{collections::BTreeMap, time::Duration};
+
+const MIN_BUSY_RETRY_DELAY: Duration = Duration::from_millis(500);
+const STARTUP_TIMEOUT: Duration = Duration::from_secs(90);
+const TURN_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, serde::Serialize)]
 pub struct TestResult {
@@ -22,22 +26,31 @@ pub async fn test_turn(
     creator: &Creator,
     channel_id: &ChannelId,
 ) -> Result<TestResult, ManagementError> {
-    tokio::time::timeout(Duration::from_secs(30), run(state, creator, channel_id))
+    // A new profile binding may still be creating its Agent. Readiness has one
+    // bounded allowance; it must not consume the admitted turn's output budget.
+    let (stream, level) = tokio::time::timeout(STARTUP_TIMEOUT, start(state, creator, channel_id))
+        .await
+        .map_err(|_| unavailable("test provider startup timed out"))??;
+    tokio::time::timeout(TURN_TIMEOUT, complete(stream, level))
         .await
         .map_err(|_| unavailable("test turn timed out"))?
 }
 
-async fn run(
+async fn start(
     state: &ManagementState,
     creator: &Creator,
     channel_id: &ChannelId,
-) -> Result<TestResult, ManagementError> {
+) -> Result<(TurnStream, ConformanceLevel), ManagementError> {
     let current = load(state, creator, channel_id).await?;
     let definition = current.definition;
-    let credential = definition
-        .secrets
-        .provider_credential
-        .as_ref()
+    // The test turn verifies the binding management created: the default
+    // consumer's.
+    let consumer = definition
+        .consumer(None)
+        .ok_or_else(|| unavailable("channel consumer is not configured"))?;
+    let provider = consumer.provider;
+    let credential = consumer
+        .credential
         .ok_or_else(|| unavailable("channel provider credential is unavailable"))?;
     let conversation_id = ConversationId::derive(
         &state.master_keys,
@@ -48,21 +61,52 @@ async fn run(
     state
         .providers
         .ensure_conversation(
-            &definition.provider.slug,
-            &definition.provider.binding_id,
+            &provider.slug,
+            &provider.binding_id,
             &conversation_id,
             credential,
         )
         .await
         .map_err(ManagementError::Provider)?;
-    let mut stream = state.providers.start_turn(&definition.provider.slug, TurnRequest {
-                timing: None,
+    let request = TurnRequest {
+        timing: None,
         conversation_id,
-        input: vec![serde_json::json!({"role":"user","content":[{"type":"input_text","text":"CMAEG channel test"}]})],
+        input: vec![
+            serde_json::json!({"role":"user","content":[{"type":"input_text","text":"CMAEG channel test"}]}),
+        ],
         idempotency_key: IdempotencyKey::new(format!("test_{}", uuid::Uuid::new_v4().simple()))
             .map_err(ManagementError::Invalid)?,
-        metadata: BTreeMap::new(), agent_key: credential.clone(), event_context: None,
-    }).await.map_err(ManagementError::Provider)?;
+        metadata: BTreeMap::new(),
+        agent_key: credential.clone(),
+        event_context: None,
+    };
+    let stream = loop {
+        match state
+            .providers
+            .start_turn(&provider.slug, request.clone())
+            .await
+        {
+            Ok(stream) => break stream,
+            Err(ProviderError::Busy { retry_after }) => {
+                // Only an explicit refusal permits replay. Keep the same key and
+                // body while one startup deadline bounds every readiness wait.
+                tokio::time::sleep(
+                    retry_after
+                        .unwrap_or(MIN_BUSY_RETRY_DELAY)
+                        .max(MIN_BUSY_RETRY_DELAY),
+                )
+                .await;
+            }
+            Err(error) => return Err(ManagementError::Provider(error)),
+        }
+    };
+    Ok((stream, provider.level))
+}
+
+async fn complete(
+    mut stream: TurnStream,
+    level: ConformanceLevel,
+) -> Result<TestResult, ManagementError> {
     let accepted = stream
         .accepted
         .await
@@ -96,7 +140,7 @@ async fn run(
             .duration_since(stream.request_started)
             .as_millis() as u64,
         first_text,
-        level: definition.provider.level,
+        level,
     })
 }
 

@@ -93,9 +93,9 @@ impl SandboxStore for InMemorySandboxStore {
                 "service access requires an existing sandbox and an atomic grant",
             ));
         }
-        if matches!(&sandbox.origin, SandboxOrigin::Trigger { .. }) {
+        if sandbox.origin.replay_key().is_some() {
             return Err(SandboxStoreError::InvalidTransaction(
-                "trigger sandboxes require atomic admission",
+                "origin-bound sandboxes require atomic admission",
             ));
         }
         let mut state = self.lock();
@@ -277,7 +277,7 @@ impl AgentStore for InMemorySandboxStore {
     }
 
     async fn create_agent(&self, agent: Agent) -> Result<(), SandboxStoreError> {
-        if agent.work.resolved_skills.is_some() {
+        if agent.work.resolved_skills.is_some() || !agent.work.live_skills.is_empty() {
             return Err(SandboxStoreError::Conflict);
         }
         let mut state = self.lock();
@@ -305,7 +305,9 @@ impl AgentStore for InMemorySandboxStore {
         let current = state.agents.get(&id).ok_or(SandboxStoreError::NotFound)?;
         if current.owner != agent.owner
             || current.profile != agent.profile
+            || current.conversation.settings != agent.conversation.settings
             || current.work.resolved_skills != agent.work.resolved_skills
+            || current.work.live_skills != agent.work.live_skills
         {
             return Err(SandboxStoreError::Conflict);
         }

@@ -118,7 +118,7 @@ fn profile_agents_pending(workspace: &Workspace, agents: &[Agent]) -> bool {
                                 .iter()
                                 .all(|prior| prior != reference)
                     }
-                    AgentOrigin::Manual => false,
+                    AgentOrigin::Manual | AgentOrigin::Lifecycle { .. } => false,
                 }
             })
         })

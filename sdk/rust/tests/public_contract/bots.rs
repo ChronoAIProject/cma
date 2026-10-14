@@ -9,6 +9,7 @@ fn check<T: Serialize>(c: &Context<'_>, result: Result<T>) -> Result<()> {
 pub async fn dispatch(c: &Context<'_>) -> Result<()> {
     let bots = c.client.bots();
     match c.case.operation.as_str() {
+        "GET /api/v1/bots/connections" => check(c, bots.connections().await),
         "POST /api/v1/agent-delegations/identity" => {
             check(c, c.client.agent_delegations().identity(&c.body()?).await)
         }

@@ -22,6 +22,13 @@ impl Supervisor {
                     Operation::remove_worktree(&request.request),
                 ))
             }
+            RequestFrame::InstallAgentSkill(request) => {
+                crate::agent_skill_install::validate(&request.request)?;
+                Some((
+                    request.authority_fence,
+                    Operation::install_agent_skill(&request.request),
+                ))
+            }
             RequestFrame::MaterializeAgentHome(request) => {
                 agent_validation::materialize_home(&request.request)?;
                 Some((
@@ -240,6 +247,12 @@ impl Supervisor {
                     };
                     absorb_recovery(
                         self.execute_remove_worktree(authority_fence, request, pending.ticket)
+                            .await,
+                    )?;
+                }
+                Subject::InstallAgentSkill { request } => {
+                    absorb_recovery(
+                        self.execute_install_agent_skill(authority_fence, request, pending.ticket)
                             .await,
                     )?;
                 }

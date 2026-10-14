@@ -19,6 +19,9 @@ export interface OperatorClient {
     | 'readSettings'
     | 'replaceSettings'
     | 'listActivity'
+    | 'listWarmPools'
+    | 'configureWarmPool'
+    | 'resizeWarmPool'
   >;
   listPublicProfiles(
     kind: ProfileKind,

@@ -15,6 +15,7 @@ const permissions: TreePermissions = {
   removeWorkspace: true,
   stopAgent: true,
   deleteAgent: true,
+  exportHistory: true,
 };
 
 afterEach(() => {
@@ -45,7 +46,7 @@ const savingSandbox = (phase: 'capture' | 'resume_writers'): SandboxDetail => ({
   },
 });
 
-it('shows background save progress while workspace, pause and delete actions remain usable', async () => {
+it('explains provider persistence while workspace, pause and delete actions remain usable', async () => {
   lifecyclePage(async () => ({
     ...sandboxFixture(),
     lifecycle: {
@@ -59,14 +60,16 @@ it('shows background save progress while workspace, pause and delete actions rem
       },
     },
   }));
-  expect(await screen.findByText('Saving progress in the background')).toBeInTheDocument();
   expect(
-    screen.getByText('You can keep working and sending messages while progress is saved.'),
+    await screen.findByText(/Agent Sandbox persists this Sandbox on its attached PV/),
   ).toBeInTheDocument();
-  expect(screen.getByText(/Later changes will be included in the next save/)).toBeInTheDocument();
+  expect(screen.queryByText(/S3 transfers/)).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'New workspace' })).toBeEnabled();
   expect(screen.getByRole('button', { name: 'Pause' })).toBeEnabled();
   expect(screen.getByRole('button', { name: 'Delete' })).toBeEnabled();
+  expect(screen.queryByText('Profile')).not.toBeInTheDocument();
+  expect(screen.queryByText('Profile:')).not.toBeInTheDocument();
+  expect(document.querySelector('a[href^="/profiles/"]')).toBeNull();
 });
 
 it.each(['active', 'paused'] as const)(
@@ -125,34 +128,23 @@ it('shows granted service names for a paused Sandbox without relying on Agent re
   expect(screen.queryByText('Requested services')).not.toBeInTheDocument();
 });
 
-it('keeps the latest completed snapshot timestamp and real download link in Advanced during a save', async () => {
+it('explains persistent PV storage in Advanced and exposes no snapshot controls', async () => {
   const sandbox = savingSandbox('capture');
   lifecyclePage(async () => ({
     ...sandbox,
-    lifecycle: {
-      ...sandbox.lifecycle!,
-      latestSnapshot: {
-        epoch: 6,
-        savedAt: '2026-09-07T23:30:00Z',
-        downloadUrl: '/api/v1/sandboxes/sbx_1/snapshots/6/download',
-      },
-    },
+    lifecycle: sandbox.lifecycle,
   }));
   await act(async () => {});
   expect(screen.queryByText('Latest snapshot')).not.toBeInTheDocument();
   await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Advanced' })));
-  const label = screen.getByText('Latest snapshot');
-  expect(label.parentElement?.querySelector('time')).toHaveAttribute(
-    'dateTime',
-    '2026-09-07T23:30:00Z',
-  );
-  expect(screen.getByRole('link', { name: 'Download snapshot' })).toHaveAttribute(
-    'href',
-    '/api/v1/sandboxes/sbx_1/snapshots/6/download',
-  );
+  expect(screen.getByText('Persistent storage')).toBeInTheDocument();
+  expect(
+    screen.getByText(/CMA does not create, schedule, download or delete S3 snapshots/),
+  ).toBeInTheDocument();
+  expect(screen.queryByRole('link', { name: 'Download snapshot' })).not.toBeInTheDocument();
 });
 
-it('refreshes Active saving phases and restores Pause only after authoritative eligibility clears', async () => {
+it('refreshes lifecycle phases and restores Pause only after authoritative eligibility clears', async () => {
   vi.useFakeTimers();
   const readSandbox = vi
     .fn()
@@ -171,10 +163,9 @@ it('refreshes Active saving phases and restores Pause only after authoritative e
   );
   expect(screen.queryByText(/Saving started/)).not.toBeInTheDocument();
   await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Advanced' })));
-  expect(screen.getByText(/Saving started/).querySelector('time')).toHaveAttribute(
-    'dateTime',
-    '2026-09-08T00:00:00Z',
-  );
+  expect(
+    screen.getByText(/CMA does not create, schedule, download or delete S3 snapshots/),
+  ).toBeInTheDocument();
   await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Close' })));
   expect(screen.getByRole('button', { name: 'New workspace' })).toBeEnabled();
   expect(screen.getByRole('button', { name: 'New agent' })).toBeEnabled();
@@ -271,7 +262,7 @@ it.each(['active'] as const)(
     agent.click();
     expect(onAction.mock.calls).toEqual([
       [{ kind: 'new_workspace', sandboxId: 'sbx_1' }],
-      [{ kind: 'new_agent', workspaceId: 'wsp_1' }],
+      [{ kind: 'new_agent', sandboxId: 'sbx_1' }],
     ]);
   },
 );

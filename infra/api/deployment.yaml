@@ -1,10 +1,10 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: cma-api
+  name: cma-agent-manager
   namespace: chrono-bot
   labels:
-    app.kubernetes.io/name: cma-api
+    app.kubernetes.io/name: cma-agent-manager
     app.kubernetes.io/part-of: cma
 spec:
   replicas: 1
@@ -15,14 +15,19 @@ spec:
     type: Recreate
   selector:
     matchLabels:
-      app.kubernetes.io/name: cma-api
+      app.kubernetes.io/name: cma-agent-manager
   template:
     metadata:
       annotations:
         # Reload the environment-bound runtime pin when its ConfigMap changes.
-        cma.chronoai.dev/runtime-image: "sha256:532a64cf193957991248d98d82b7a61f6d333a2b87f5e1db0a19ae55f598ed49"
+        cma.chronoai.dev/runtime-image: "sha256:1c44be8aaa7b88c0190d17ca44f4f6e0f9a8aec880038c5d4da9cb2bc8c68e8b"
+        cma.chronoai.dev/candidate: "fb3a652fdc93658f138096a704f0d162b6c6c483"
+        cma.chronoai.dev/api-image-digest: "sha256:2059395d539a916d45c178774d4e85cb04a5699724fe9854019388a63423c44c"
+        cma.chronoai.dev/allocation-provider: "agent-sandbox"
+        cma.chronoai.dev/image-source: "4fee2eb2562c26c58d1d61361ac1c43469673ba6"
+        cma.chronoai.dev/ci-run: "38513020577"
       labels:
-        app.kubernetes.io/name: cma-api
+        app.kubernetes.io/name: cma-agent-manager
         app.kubernetes.io/part-of: cma
     spec:
       # Shutdown drains HTTP for up to 30s, then background workers for up to
@@ -43,7 +48,7 @@ spec:
                 topologyKey: kubernetes.io/hostname
                 labelSelector:
                   matchLabels:
-                    app.kubernetes.io/name: cma-api
+                    app.kubernetes.io/name: cma-agent-manager
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001
@@ -55,7 +60,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: api
-          image: us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-api@sha256:812fd91f16b6ed49f0f1221b6e237cc366c75124854f51d0cbf177d88190d250
+          image: us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-api@sha256:2059395d539a916d45c178774d4e85cb04a5699724fe9854019388a63423c44c
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
@@ -63,9 +68,28 @@ spec:
               protocol: TCP
           envFrom:
             - configMapRef:
-                name: cma-api
+                name: cma-agent-manager
             - secretRef:
-                name: cma-api
+                name: cma-agent-manager
+          env:
+            - name: CHRONO_AGENT_SANDBOX_API_SERVER
+              valueFrom:
+                configMapKeyRef:
+                  name: example-namespace-02
+                  key: CHRONO_POD_API_SERVER
+                  optional: true
+            - name: CHRONO_AGENT_SANDBOX_NAMESPACE
+              valueFrom:
+                configMapKeyRef:
+                  name: example-namespace-02
+                  key: CHRONO_POD_NAMESPACE
+                  optional: true
+            - name: CHRONO_AGENT_SANDBOX_CA_FILE
+              valueFrom:
+                configMapKeyRef:
+                  name: example-namespace-02
+                  key: CHRONO_POD_CA_FILE
+                  optional: true
           securityContext:
             allowPrivilegeEscalation: false
             privileged: false
@@ -107,6 +131,12 @@ spec:
             # Longer than the API's two-second store-ping deadline.
             timeoutSeconds: 3
           volumeMounts:
+            - name: example-namespace-02
+              mountPath: /etc/example-registry-01
+              readOnly: true
+            - name: agent-sandbox-control
+              mountPath: /var/run/cma-agent-sandbox
+              readOnly: true
             - name: tmp
               mountPath: /tmp
             # Read-only so a compromised process cannot rewrite the credential
@@ -115,6 +145,18 @@ spec:
               mountPath: /var/secrets
               readOnly: true
       volumes:
+        - name: example-namespace-02
+          configMap:
+            name: example-namespace-02
+            optional: true
+            items:
+              - key: ca.crt
+                path: ca.crt
+        - name: agent-sandbox-control
+          secret:
+            secretName: cma-agent-sandbox-control
+            optional: true
+            defaultMode: 0440
         - name: tmp
           emptyDir: {}
         # The OpenSandbox API key arrives as a file rather than an environment

@@ -8,6 +8,7 @@ use cmaeg::{
         engine::DeliveryEngine,
         intents::{DeliveryCommand, IntentReceipt, ReplySource},
         relay_client::RelayClient,
+        router::ShardedScheduler,
     },
     http,
     ingress::{launch::LaunchRequest, IngressState},
@@ -15,7 +16,11 @@ use cmaeg::{
     providers::{ProviderClient, ProviderRegistry},
     records::RecordClient,
     tools::ToolsState,
-    turns::{outcomes::TurnOutcome, TurnRunner, TurnTracker},
+    turns::{
+        observer::{ActivityObserver, NoopObserver},
+        outcomes::TurnOutcome,
+        TurnRunner, TurnTracker,
+    },
     DeliveryConfig, TurnConfig,
 };
 use cmaeg_core::{message::OutboundMessage, seal::EventRefPayload};
@@ -54,7 +59,29 @@ impl App {
         config: DeliveryConfig,
         provider_config: FakeProviderConfig,
     ) -> Self {
-        Self::build("telegram", false, replies, ack_ms, config, provider_config).await
+        Self::build(
+            "telegram",
+            false,
+            replies,
+            ack_ms,
+            config,
+            provider_config,
+            Arc::new(NoopObserver),
+        )
+        .await
+    }
+    /// [`App::standard`] whose delivery engine reports to `observer`.
+    pub async fn observed(ack_ms: u32, observer: Arc<dyn ActivityObserver>) -> Self {
+        Self::build(
+            "telegram",
+            false,
+            vec![],
+            ack_ms,
+            DeliveryConfig::default(),
+            FakeProviderConfig::default(),
+            observer,
+        )
+        .await
     }
     /// A relay channel on `platform`. With `interactive`, the relay client holds an
     /// interaction store whose record service is unreachable, so any attempt to
@@ -67,6 +94,7 @@ impl App {
             0,
             DeliveryConfig::default(),
             FakeProviderConfig::default(),
+            Arc::new(NoopObserver),
         )
         .await
     }
@@ -77,6 +105,7 @@ impl App {
         ack_ms: u32,
         config: DeliveryConfig,
         provider_config: FakeProviderConfig,
+        observer: Arc<dyn ActivityObserver>,
     ) -> Self {
         let fake = FakeReply::start(replies).await;
         let key = format!("nyx_{}", uuid::Uuid::new_v4().simple());
@@ -116,7 +145,7 @@ impl App {
                 providers.clone(),
             )));
         }
-        let engine = DeliveryEngine::start(
+        let engine = DeliveryEngine::start_observed(
             receiver,
             fixture.state.master_keys.clone(),
             relay,
@@ -126,11 +155,12 @@ impl App {
                 "https://gateway.example".into(),
                 Arc::default(),
             ),
+            observer,
         );
         let runner = Arc::new(TurnRunner::new(
             providers.clone(),
             tracker.clone(),
-            commands.clone(),
+            Arc::new(ShardedScheduler::new(commands.clone())),
             TurnConfig::default(),
         ));
         let ingress = IngressState::new(
@@ -144,9 +174,11 @@ impl App {
             resolver: fixture.state.resolver.clone(),
             keys: fixture.state.master_keys.clone(),
             providers,
-            delivery: commands.clone(),
+            delivery: Arc::new(ShardedScheduler::new(commands.clone())),
             tracker: tracker.clone(),
             public_origin: "https://gateway.example".into(),
+            media: None,
+            downloads: Default::default(),
         };
         let router = http::callbacks::router(ingress).merge(http::tools::router(tools));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

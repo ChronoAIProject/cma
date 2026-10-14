@@ -8,6 +8,7 @@ const { setTimeout: delay } = require("node:timers/promises");
 const { test } = require("node:test");
 const { bridgePath, persistConversations } = require("./persist_conversations.cjs");
 const { subscriptionAuth } = require("./subscription_auth.cjs");
+const { managedModelCatalog } = require("./managed_model_catalog.cjs");
 const { names, processRpc, stop, fixture } = require("./native_tools_fixture.cjs");
 
 test("pinned Codex keeps exact native tool names through live key rotation and conversation reload", { timeout: 120000 }, async () => {
@@ -32,7 +33,7 @@ test("pinned Codex keeps exact native tool names through live key rotation and c
   let program = bridgePath;
   if (process.env.CMA_ACP_UPSTREAM_SOURCE) {
     program = join(directory, "bridge.mjs");
-    writeFileSync(program, subscriptionAuth(persistConversations(readFileSync(process.env.CMA_ACP_UPSTREAM_SOURCE, "utf8"))));
+    writeFileSync(program, managedModelCatalog(subscriptionAuth(persistConversations(readFileSync(process.env.CMA_ACP_UPSTREAM_SOURCE, "utf8")))));
   }
   const connect = async () => {
     bridge = processRpc(process.execPath, [program], {
@@ -51,7 +52,7 @@ test("pinned Codex keeps exact native tool names through live key rotation and c
     ].join("\n"));
     runtime = spawn(process.env.CMA_RUNTIME_TEST_BINARY ?? "/usr/local/bin/layer4-runtime", [], {
       cwd: directory, detached: true, stdio: ["ignore", "ignore", "ignore"],
-      env: { PATH: process.env.PATH, CHRONO_RUNTIME_HOME: runtimeHome,
+      env: { PATH: process.env.PATH, TMPDIR: directory, CHRONO_RUNTIME_HOME: runtimeHome,
         CHRONO_RUNTIME_STATE_ROOT: join(directory, "state"), CHRONO_SANDBOX_ID: "native-tools-fixture",
         CHRONO_RUNTIME_GENERATION: "1", CHRONO_RUNTIME_BIND: "127.0.0.1:19090",
         CHRONO_TOOL_PROXY_URL: server.origin + "/mcp" },
@@ -65,6 +66,11 @@ test("pinned Codex keeps exact native tool names through live key rotation and c
     for (const value of [4096, 0]) { const bytes = Buffer.alloc(4); bytes.writeUInt32BE(value); parts.push(bytes); }
     const digest = createHash("sha256").update(Buffer.concat(parts)).digest("hex");
     assert.equal((await control({ t: "install", operation_id: "native-tools-install", request_sha256: digest, commands: [], timeout_s: 30, total_timeout_s: 60, output_limit: 4096 })).t, "install");
+    // Legacy runtime scratch belongs to this fixture and must leave the image
+    // with its cleanup, including the durable installation receipt.
+    const installed = JSON.parse(readFileSync(join(directory, "cma-checkpoints/runtime-state/install-v2.json"), "utf8"));
+    assert.equal(installed.sandbox_id, "native-tools-fixture");
+    assert.equal(installed.state, "completed");
     const deliver = async (generation) => {
       server.state.expectedCredential = credential();
       assert.equal((await control({ t: "credential", operation_id: "native-tools-key-" + generation,

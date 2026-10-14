@@ -4,7 +4,6 @@ import type { CmaWebClient } from '../api/client';
 import type { SandboxDetail, SandboxEvent, WorkspaceDetail } from '../api/types';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
-import { ReferenceLink } from '../profiles/ReferenceLink';
 import { readSandboxHistory } from './eventHistory';
 import { eventLabel } from '../vocabulary/status';
 import { ProvisioningProgress } from './ProvisioningProgress';
@@ -50,14 +49,6 @@ export function SandboxAdvanced({
       .catch(() => {});
     return () => abort.abort();
   }, [client, sandbox, retry]);
-  const save = sandbox.lifecycle?.backgroundSave ?? sandbox.lifecycle?.checkpoint;
-  const latest = sandbox.lifecycle?.latestSnapshot;
-  const downloadUrl =
-    latest !== undefined &&
-    latest.downloadUrl ===
-      `/api/v1/sandboxes/${encodeURIComponent(sandbox.id)}/snapshots/${latest.epoch}/download`
-      ? latest.downloadUrl
-      : undefined;
   const operation = sandbox.lifecycle?.operation;
   return (
     <Modal open title="Advanced sandbox details" onClose={onClose} placement="modal--wide">
@@ -67,13 +58,6 @@ export function SandboxAdvanced({
             <dt>Sandbox ID</dt>
             <dd>
               <code>{sandbox.id}</code>
-            </dd>
-          </div>
-          <div>
-            <dt>Profile</dt>
-            <dd>
-              <ReferenceLink kind="sandbox" id={sandbox.profile.id} /> · Revision{' '}
-              {sandbox.profile.revision}
             </dd>
           </div>
           <div>
@@ -91,25 +75,12 @@ export function SandboxAdvanced({
             </dd>
           </div>
           <div>
-            <dt>Latest snapshot</dt>
+            <dt>Persistent storage</dt>
             <dd>
-              {latest === undefined ? (
-                'No completed snapshot reported'
-              ) : (
-                <time dateTime={latest.savedAt}>{new Date(latest.savedAt).toLocaleString()}</time>
-              )}
+              Agent Sandbox persists this Sandbox on its attached PV. CMA does not create, schedule,
+              download or delete S3 snapshots.
             </dd>
           </div>
-          {downloadUrl === undefined ? null : (
-            <div>
-              <dt>Snapshot file</dt>
-              <dd>
-                <a href={downloadUrl} target="_blank" rel="noopener noreferrer">
-                  Download snapshot
-                </a>
-              </dd>
-            </div>
-          )}
         </dl>
         {operation === undefined ? null : (
           <p>
@@ -118,12 +89,6 @@ export function SandboxAdvanced({
               {new Date(operation.startedAt).toLocaleString()}
             </time>
             .
-          </p>
-        )}
-        {save === undefined ? null : (
-          <p>
-            Saving started{' '}
-            <time dateTime={save.startedAt}>{new Date(save.startedAt).toLocaleString()}</time>.
           </p>
         )}
         {events !== undefined &&

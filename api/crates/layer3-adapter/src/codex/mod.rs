@@ -3,6 +3,8 @@
 mod config;
 mod connections;
 mod home;
+mod hosted_runtime;
+use hosted_runtime::CodexRuntime;
 
 use std::sync::Arc;
 
@@ -37,34 +39,6 @@ use crate::{
 pub struct CodexSandboxSpec {
     pub deployment: HostedDeployment,
     pub config: CodexConfig,
-}
-
-struct CodexRuntime {
-    config: CodexConfig,
-}
-
-impl HostedAgentRuntime for CodexRuntime {
-    fn home_plan(&self, request: &AgentHomeRequest) -> crate::Result<AgentHomePlan> {
-        render_agent_home(request, &self.config)
-    }
-
-    fn launch(&self, request: &AgentOpenRequest) -> crate::Result<AgentLaunch> {
-        render_launch(request)
-    }
-
-    fn open_settings(&self, request: &AgentOpenRequest) -> crate::Result<HostedAgentOpenSettings> {
-        let permission_mode = match request.options.permission {
-            crate::PermissionLevel::Guarded => "read-only",
-            crate::PermissionLevel::Autonomous => "agent-full-access",
-        };
-        Ok(HostedAgentOpenSettings {
-            permission_mode: Some(permission_mode.into()),
-            own_credential: request.options.own_credential,
-            channel_tool: None,
-            provider_tool: None,
-            recovered_prompt: None,
-        })
-    }
 }
 
 /// Complete Codex sandbox adapter.
@@ -112,6 +86,14 @@ impl CodexAdapter {
         self
     }
 
+    pub fn with_access_tools(
+        mut self,
+        source: Arc<dyn crate::hosted::HostedAccessToolSource>,
+    ) -> Self {
+        self.hosted = self.hosted.with_access_tools(source);
+        self
+    }
+
     pub fn with_channel_tools(
         mut self,
         source: Arc<dyn crate::hosted::HostedChannelToolSource>,
@@ -123,6 +105,36 @@ impl CodexAdapter {
 
 #[async_trait::async_trait]
 impl SandboxAdapter for CodexAdapter {
+    async fn reserve_home_request(
+        &self,
+        runtime: &RuntimeProvisionRequest,
+        home: &crate::HomeVolumeRequest,
+    ) -> crate::Result<crate::HomeVolumeRequest> {
+        self.hosted.reserve_home_request(runtime, home).await
+    }
+    fn verify_retained_home_route(
+        &self,
+        handle: &RuntimeHandle,
+        home: &crate::HomeVolumeRequest,
+    ) -> crate::Result<()> {
+        self.hosted.verify_retained_home_route(handle, home)
+    }
+    fn native_pools(&self) -> Option<&dyn crate::agent_sandbox::NativePoolControl> {
+        self.hosted.native_pools()
+    }
+    fn native_pools_for_home(
+        &self,
+        home: &crate::HomeVolumeRequest,
+    ) -> crate::Result<Option<&dyn crate::agent_sandbox::NativePoolControl>> {
+        self.hosted.native_pools_for_home(home)
+    }
+    async fn select_native_pool(
+        &self,
+        request: &RuntimeProvisionRequest,
+        home: &crate::HomeVolumeRequest,
+    ) -> crate::Result<Option<crate::agent_sandbox::NativePoolBinding>> {
+        self.hosted.select_native_pool(request, home).await
+    }
     fn capabilities(&self) -> AdapterCapabilities {
         self.hosted.capabilities()
     }
@@ -133,6 +145,26 @@ impl SandboxAdapter for CodexAdapter {
 
     async fn provision(&self, spec: &SandboxSpec) -> crate::Result<RuntimeHandle> {
         self.hosted.provision(spec).await
+    }
+
+    async fn teardown_retained_runtime(&self, handle: &RuntimeHandle) -> crate::Result<()> {
+        self.hosted.teardown_retained_runtime(handle).await
+    }
+    async fn suspend_runtime(&self, request: &RuntimeAdoptionRequest) -> crate::Result<()> {
+        self.hosted.suspend_runtime(request).await
+    }
+    async fn verify_suspended_runtime(
+        &self,
+        request: &RuntimeAdoptionRequest,
+    ) -> crate::Result<()> {
+        self.hosted.verify_suspended_runtime(request).await
+    }
+    async fn resume_runtime(
+        &self,
+        request: &RuntimeAdoptionRequest,
+        next: &RuntimeProvisionRequest,
+    ) -> crate::Result<RuntimeHandle> {
+        self.hosted.resume_runtime(request, next).await
     }
 
     async fn runtime_status(&self, handle: &RuntimeHandle) -> crate::Result<crate::RuntimeStatus> {
@@ -166,6 +198,13 @@ impl SandboxAdapter for CodexAdapter {
 
     async fn runtime_inventory(&self) -> crate::Result<Vec<RuntimeObservation>> {
         self.hosted.runtime_inventory().await
+    }
+
+    async fn inspect_runtime(
+        &self,
+        request: &RuntimeAdoptionRequest,
+    ) -> crate::Result<Option<crate::RuntimeInspection>> {
+        self.hosted.inspect_runtime(request).await
     }
 
     async fn adopt_runtime(
@@ -286,6 +325,17 @@ impl SandboxAdapter for CodexAdapter {
         self.hosted.cache_skill_archive(handle, archive).await
     }
 
+    async fn install_agent_skill(
+        &self,
+        handle: &RuntimeHandle,
+        authority_fence: u64,
+        request: &crate::AgentSkillInstallRequest,
+    ) -> crate::Result<()> {
+        self.hosted
+            .install_agent_skill(handle, authority_fence, request)
+            .await
+    }
+
     async fn remove_agent_home(
         &self,
         handle: &RuntimeHandle,
@@ -360,6 +410,14 @@ impl SandboxAdapter for CodexAdapter {
         agent: &AgentSlot,
     ) -> crate::Result<ConversationSnapshot> {
         self.hosted.capture_agent(handle, agent).await
+    }
+
+    async fn export_agent_history(
+        &self,
+        handle: &RuntimeHandle,
+        agent: &AgentSlot,
+    ) -> crate::Result<Vec<u8>> {
+        self.hosted.export_agent_history(handle, agent).await
     }
 
     fn checkpoint_exclusions(&self, agents: &[AgentSlot]) -> crate::Result<Vec<String>> {

@@ -20,30 +20,26 @@
           "settings": {
             "defaults": {
               "sandbox_profile": {
-                "id": "sbp_default",
+                "id": "sbp_default_v2",
                 "revision": 1
               },
               "workspace_profile": {
-                "id": "wkp_default",
+                "id": "wkp_default_v2",
                 "revision": 1
               },
               "agent_profile": {
-                "id": "agp_default",
+                "id": "agp_default_v2",
                 "revision": 1
               }
             },
             "inactivity": {
               "pause_after_seconds": 900
             },
-            "checkpoints": {
-              "interval_seconds": 1800
-            },
             "retention": {
-              "checkpoint_grace_days": 7,
               "agent_log_days": 90
             },
             "limits": {
-              "max_sandboxes_per_user": 3,
+              "max_sandboxes_per_user": 10,
               "visitor_max_sandboxes": 1,
               "visitor_max_launches_per_day": 5
             },
@@ -87,30 +83,26 @@
           "settings": {
             "defaults": {
               "sandbox_profile": {
-                "id": "sbp_default",
+                "id": "sbp_default_v2",
                 "revision": 1
               },
               "workspace_profile": {
-                "id": "wkp_default",
+                "id": "wkp_default_v2",
                 "revision": 1
               },
               "agent_profile": {
-                "id": "agp_default",
+                "id": "agp_default_v2",
                 "revision": 1
               }
             },
             "inactivity": {
               "pause_after_seconds": 900
             },
-            "checkpoints": {
-              "interval_seconds": 1800
-            },
             "retention": {
-              "checkpoint_grace_days": 7,
               "agent_log_days": 90
             },
             "limits": {
-              "max_sandboxes_per_user": 3,
+              "max_sandboxes_per_user": 10,
               "visitor_max_sandboxes": 1,
               "visitor_max_launches_per_day": 5
             },
@@ -175,15 +167,15 @@
           "settings": {
             "defaults": {
               "sandbox_profile": {
-                "id": "sbp_default",
+                "id": "sbp_default_v2",
                 "revision": 1
               },
               "workspace_profile": {
-                "id": "wkp_default",
+                "id": "wkp_default_v2",
                 "revision": 1
               },
               "agent_profile": {
-                "id": "agp_default",
+                "id": "agp_default_v2",
                 "revision": 1
               }
             },
@@ -191,7 +183,6 @@
               "pause_after_seconds": 900
             },
             "retention": {
-              "checkpoint_grace_days": 7,
               "agent_log_days": 90
             },
             "limits": {
@@ -219,26 +210,22 @@
           "settings": {
             "defaults": {
               "sandbox_profile": {
-                "id": "sbp_default",
+                "id": "sbp_default_v2",
                 "revision": 1
               },
               "workspace_profile": {
-                "id": "wkp_default",
+                "id": "wkp_default_v2",
                 "revision": 1
               },
               "agent_profile": {
-                "id": "agp_default",
+                "id": "agp_default_v2",
                 "revision": 1
               }
             },
             "inactivity": {
               "pause_after_seconds": 900
             },
-            "checkpoints": {
-              "interval_seconds": 1800
-            },
             "retention": {
-              "checkpoint_grace_days": 7,
               "agent_log_days": 90
             },
             "limits": {
@@ -283,30 +270,26 @@
           "settings": {
             "defaults": {
               "sandbox_profile": {
-                "id": "sbp_default",
+                "id": "sbp_default_v2",
                 "revision": 1
               },
               "workspace_profile": {
-                "id": "wkp_default",
+                "id": "wkp_default_v2",
                 "revision": 1
               },
               "agent_profile": {
-                "id": "agp_default",
+                "id": "agp_default_v2",
                 "revision": 1
               }
             },
             "inactivity": {
               "pause_after_seconds": 900
             },
-            "checkpoints": {
-              "interval_seconds": 1800
-            },
             "retention": {
-              "checkpoint_grace_days": 7,
               "agent_log_days": 90
             },
             "limits": {
-              "max_sandboxes_per_user": 3,
+              "max_sandboxes_per_user": 10,
               "visitor_max_sandboxes": 1,
               "visitor_max_launches_per_day": 5
             },
@@ -411,30 +394,26 @@
           "settings": {
             "defaults": {
               "sandbox_profile": {
-                "id": "sbp_default",
+                "id": "sbp_default_v2",
                 "revision": 1
               },
               "workspace_profile": {
-                "id": "wkp_default",
+                "id": "wkp_default_v2",
                 "revision": 1
               },
               "agent_profile": {
-                "id": "agp_default",
+                "id": "agp_default_v2",
                 "revision": 1
               }
             },
             "inactivity": {
               "pause_after_seconds": 900
             },
-            "checkpoints": {
-              "interval_seconds": 1800
-            },
             "retention": {
-              "checkpoint_grace_days": 7,
               "agent_log_days": 90
             },
             "limits": {
-              "max_sandboxes_per_user": 3,
+              "max_sandboxes_per_user": 10,
               "visitor_max_sandboxes": 1,
               "visitor_max_launches_per_day": 5
             },
@@ -470,30 +449,26 @@
           "settings": {
             "defaults": {
               "sandbox_profile": {
-                "id": "sbp_default",
+                "id": "sbp_default_v2",
                 "revision": 1
               },
               "workspace_profile": {
-                "id": "wkp_default",
+                "id": "wkp_default_v2",
                 "revision": 1
               },
               "agent_profile": {
-                "id": "agp_default",
+                "id": "agp_default_v2",
                 "revision": 1
               }
             },
             "inactivity": {
               "pause_after_seconds": 900
             },
-            "checkpoints": {
-              "interval_seconds": 1800
-            },
             "retention": {
-              "checkpoint_grace_days": 7,
               "agent_log_days": 90
             },
             "limits": {
-              "max_sandboxes_per_user": 3,
+              "max_sandboxes_per_user": 10,
               "visitor_max_sandboxes": 1,
               "visitor_max_launches_per_day": 5
             },
@@ -705,10 +680,10 @@
             },
             {
               "kind": "agent",
-              "id": "agp_default",
+              "id": "agp_default_v2",
               "owner": "owner-a",
               "owner_name": "Alex Chen",
-              "name": "Agent agp_default",
+              "name": "Agent agp_default_v2",
               "visibility": "public",
               "updated_at": "2026-09-05T00:00:00Z",
               "retired_at": null
@@ -757,7 +732,7 @@
       "scenario": "admin_operator",
       "request": {
         "method": "POST",
-        "path": "/api/v1/admin/profiles/agent/agp_default/retire",
+        "path": "/api/v1/admin/profiles/agent/agp_default_v2/retire",
         "headers": {}
       },
       "response": {

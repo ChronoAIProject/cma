@@ -1,10 +1,10 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: cmaeg
+  name: cma-event-gateway
   namespace: chrono-bot
   labels:
-    app.kubernetes.io/name: cmaeg
+    app.kubernetes.io/name: cma-event-gateway
     app.kubernetes.io/part-of: cma
 spec:
   replicas: 1
@@ -15,11 +15,16 @@ spec:
       maxUnavailable: 0
   selector:
     matchLabels:
-      app.kubernetes.io/name: cmaeg
+      app.kubernetes.io/name: cma-event-gateway
   template:
     metadata:
+      annotations:
+        cma.chronoai.dev/candidate: "cabfe5c39240b8907e163fda314d029b0461fed5"
+        cma.chronoai.dev/image-source: "21f3401204becb767e462bf5fb4258d996dc923d"
+        cma.chronoai.dev/ci-run: "38496119196"
+        cma.chronoai.dev/provider-config-sha256: "341b06b8260510c975fd3a9feeaf7a5c2042e403ab802847fdbb76021d954d11"
       labels:
-        app.kubernetes.io/name: cmaeg
+        app.kubernetes.io/name: cma-event-gateway
         app.kubernetes.io/part-of: cma
     spec:
       serviceAccountName: cmaeg-ksa
@@ -35,7 +40,7 @@ spec:
                 topologyKey: kubernetes.io/hostname
                 labelSelector:
                   matchLabels:
-                    app.kubernetes.io/name: cmaeg
+                    app.kubernetes.io/name: cma-event-gateway
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001
@@ -44,7 +49,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: cmaeg
-          image: us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-cmaeg@sha256:2665ab9fd1b7ab1c8d6607c8454c67cb4fa3acad8071bd165892891b5290cf4d
+          image: us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-cmaeg@sha256:0c3068130eaf618ce88dbe47bd7d111d365a5bba816c49f78b4000e8550ef1e7
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
@@ -55,28 +60,61 @@ spec:
               protocol: TCP
           envFrom:
             - configMapRef:
-                name: cmaeg
+                name: cma-event-gateway
+          volumeMounts:
+            - name: media-jobs
+              mountPath: /var/cmaeg/media
+            - name: cookie-key
+              mountPath: /var/run/cma-event-gateway-auth
+              readOnly: true
           env:
+            - name: CMAEG_MONGODB_URI
+              valueFrom:
+                secretKeyRef:
+                  name: cma-event-gateway-auth
+                  key: CMAEG_MONGODB_URI
+            - name: CMAEG_NYXID_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: cma-event-gateway-auth
+                  key: CMAEG_NYXID_CLIENT_ID
+            - name: CMAEG_NYXID_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: cma-event-gateway-auth
+                  key: CMAEG_NYXID_CLIENT_SECRET
             - name: CMAEG_MASTER_KEYS
               valueFrom:
                 secretKeyRef:
-                  name: cmaeg-master-keys
+                  name: cma-event-gateway-master-keys
                   key: CMAEG_MASTER_KEYS
             - name: CMAEG_CMA_SERVICE_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: cmaeg-cma-service-token
+                  name: cma-event-gateway-cma-service-token
                   key: CMAEG_CMA_SERVICE_TOKEN
             - name: CMAEG_CMA_CLIENT_ID
               valueFrom:
                 secretKeyRef:
-                  name: cmaeg-cma-service-token
+                  name: cma-event-gateway-cma-service-token
                   key: CMAEG_CMA_CLIENT_ID
             - name: CMAEG_CMA_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:
-                  name: cmaeg-cma-service-token
+                  name: cma-event-gateway-cma-service-token
                   key: CMAEG_CMA_CLIENT_SECRET
+            - name: CMAEG_STT_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: cmaeg-stt
+                  key: CMAEG_STT_API_KEY
+                  optional: true
+            - name: CMAEG_CONSOLE_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: cmaeg-console-oauth
+                  key: CMAEG_CONSOLE_CLIENT_SECRET
+                  optional: true
           securityContext:
             allowPrivilegeEscalation: false
             privileged: false
@@ -87,10 +125,10 @@ spec:
           resources:
             requests:
               cpu: 250m
-              memory: 256Mi
+              memory: 2Gi
             limits:
               cpu: 2000m
-              memory: 1Gi
+              memory: 2Gi
           readinessProbe:
             httpGet:
               path: /readyz
@@ -109,3 +147,14 @@ spec:
             preStop:
               exec:
                 command: ["/bin/sleep", "5"]
+      volumes:
+        - name: cookie-key
+          secret:
+            secretName: cma-event-gateway-auth
+            items:
+              - key: cookie-key
+                path: cookie-key
+        - name: media-jobs
+          emptyDir:
+            medium: Memory
+            sizeLimit: 32Mi

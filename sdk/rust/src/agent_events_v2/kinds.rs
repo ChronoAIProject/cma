@@ -1,6 +1,7 @@
 //! Safe common event vocabulary, separate from the v1 raw-log projection.
 use crate::agents::{
-    AgentOperationDelivery, AgentOperationKind, AgentWorkStep, FirstMessageDelivery,
+    AgentOperationDelivery, AgentOperationKind, AgentSkillInstallStatus, AgentWorkStep,
+    FirstMessageDelivery,
 };
 use crate::instances::AgentStatus;
 use serde::Deserialize;
@@ -72,6 +73,13 @@ pub enum AgentEventKind {
         step: AgentWorkStep,
         /// The public `failure` observation from this record.
         failure: TypedFailure,
+    },
+    /// Runtime-confirmed state of an additive Agent skill.
+    SkillInstallationChanged {
+        /// Owner-visible skill identity.
+        skill_id: String,
+        /// Pending, confirmed installed, or failed installation.
+        status: AgentSkillInstallStatus,
     },
     /// Safe durable turn started record.
     TurnStarted {

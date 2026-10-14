@@ -1,3 +1,20 @@
+import {
+  readAgentSettings,
+  changeAgentSettings,
+  type UpdateAgentSettingsRequest,
+} from './agents/settings.js';
+import { listAgentModels } from './agents/models.js';
+import {
+  readAgentSkills,
+  installAgentSkill,
+  type InstallAgentSkillRequest,
+} from './agents/skills.js';
+import {
+  listAgentAccessRequests,
+  approveAgentAccess,
+  denyAgentAccess,
+  type ApproveAgentAccessRequest,
+} from './agents/access-requests.js';
 import type { ResolvedConfig } from './config.js';
 import { requestVoid, type OperationOptions } from './http.js';
 import { ProtocolError } from './errors.js';
@@ -37,6 +54,12 @@ import {
   type AgentCreationCategory,
 } from './agents/provenance.js';
 import { agentEvent } from './agents/events.js';
+import {
+  agentLifecycleCreateReceipt,
+  agentLifecycleCreateRequest,
+  agentLifecycleOperation,
+  type AgentLifecycleCreateRequest,
+} from './agents/lifecycle.js';
 import { accessibleAgent, accessibleAgentSource, accessibleAgentSummary } from './agents/shared.js';
 import { requireRefusal } from './unsupported.js';
 import { readAgentChannelUsage, listAgentChannelUsageHistory } from './agents/channel-usage.js';
@@ -73,6 +96,66 @@ export interface AgentProvenanceInventoryOptions extends AccessibleAgentListOpti
 /** Public Agent REST commands and durable read projections. */
 export class Agents {
   constructor(private readonly config: ResolvedConfig) {}
+
+  /** Discover admitted models and their current runtime availability. */
+  models(id: string, options: OperationOptions = {}) {
+    return listAgentModels(this.config, id, options);
+  }
+  /** Read skill installation status and current runtime installation support. */
+  skills(id: string, options: OperationOptions = {}) {
+    return readAgentSkills(this.config, id, options);
+  }
+  /** Add an exact skill version; reuse the unchanged body and key after uncertain replies. */
+  installSkill(id: string, body: InstallAgentSkillRequest, options: CommandOptions) {
+    return installAgentSkill(this.config, id, body, options);
+  }
+
+  /** Read desired runtime settings and their confirmation state. */
+  settings(id: string, options: OperationOptions = {}) {
+    return readAgentSettings(this.config, id, options);
+  }
+  /** Update an idle Agent; preserve body and key when retrying uncertain replies. */
+  updateSettings(id: string, body: UpdateAgentSettingsRequest, options: CommandOptions) {
+    return changeAgentSettings(this.config, id, body, options);
+  }
+
+  /** Read durable owner-visible service requests without granting access. */
+  accessRequests(id: string, options: OperationOptions = {}) {
+    return listAgentAccessRequests(this.config, id, options);
+  }
+  /** Approve an exact selection; retry uncertain replies with the original body and key. */
+  approveAccessRequest(
+    id: string,
+    requestId: string,
+    body: ApproveAgentAccessRequest,
+    options: CommandOptions,
+  ) {
+    return approveAgentAccess(this.config, id, requestId, body, options);
+  }
+  /** Explicitly deny this request using a stable command key. */
+  denyAccessRequest(id: string, requestId: string, options: CommandOptions) {
+    return denyAgentAccess(this.config, id, requestId, options);
+  }
+
+  /** Admit or resume the exact same inline request with its original idempotency key. */
+  createLifecycle(body: AgentLifecycleCreateRequest, options: CommandOptions) {
+    return read(this.config, '/api/v1/agents', agentLifecycleCreateReceipt, {
+      ...command(options),
+      method: 'POST',
+      body: input(agentLifecycleCreateRequest, body),
+      expectedStatus: 202,
+    });
+  }
+
+  /** Read owner-visible provisioning progress; succeeded means the Agent is ready. */
+  readLifecycle(id: string, options: OperationOptions = {}) {
+    return read(
+      this.config,
+      `/api/v1/agent-lifecycle/${segment(id)}`,
+      identity(agentLifecycleOperation, id),
+      options,
+    );
+  }
 
   /** Explicit active/historical channel facts under current resource visibility. */
   channelUsage(id: string, options: OperationOptions = {}) {

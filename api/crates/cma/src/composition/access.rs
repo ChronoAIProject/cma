@@ -1,0 +1,51 @@
+//! Both consent interfaces share the durable owner workflow and command ledger.
+use std::sync::Arc;
+
+use axum::Router;
+use layer2_core::{
+    resource_access::ResourceAccessService,
+    sandbox::{agent_io::AgentCommandService, SandboxPolicySource},
+    trigger_domain::ServiceConnectionBroker,
+};
+
+use crate::{
+    agent_access::AgentAccessService,
+    agent_access_worker::AgentAccessWorker,
+    auth::AuthState,
+    store::{MongoAgentAccessToolSource, MongoStores},
+};
+
+pub(super) struct AccessComposition {
+    pub commands: Arc<AgentCommandService>,
+    pub worker: AgentAccessWorker,
+    pub owner_routes: Router,
+    pub tool_routes: Router,
+}
+
+pub(super) fn compose(
+    stores: &MongoStores,
+    auth: Arc<AuthState>,
+    policy: Arc<dyn SandboxPolicySource>,
+    broker: Arc<dyn ServiceConnectionBroker>,
+    resource_access: Arc<ResourceAccessService>,
+    holder: String,
+    tools: Arc<MongoAgentAccessToolSource>,
+) -> AccessComposition {
+    let commands =
+        AgentCommandService::new(stores.sandbox_model.clone(), resource_access, auth.clone());
+    let service = AgentAccessService::new(stores.sandbox_model.clone(), auth.clone(), policy);
+    let worker = AgentAccessWorker::new(
+        stores.sandbox_model.clone(),
+        auth,
+        broker,
+        commands.clone(),
+        holder,
+    );
+    AccessComposition {
+        commands,
+        worker,
+        owner_routes: layer1_public::rest::agent_access_requests_router(service.clone()),
+        // Tool capabilities authenticate independently from human browser auth.
+        tool_routes: layer1_public::mcp::agent_access_router(tools, service),
+    }
+}

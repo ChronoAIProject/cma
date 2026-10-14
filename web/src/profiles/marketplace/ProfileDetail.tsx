@@ -182,16 +182,18 @@ function Detail({
         )}
       </Presence>
       <footer className="profile-editor__actions">
-        <Button
-          variant="primary"
-          icon={<IconPlayOutline16 />}
-          disabled={onUse === undefined || pending || failure?.uncertain}
-          onClick={() =>
-            onUse?.({ kind, profile: { id: profileId, revision: entry.revision.revision }, entry })
-          }
-        >
-          Use
-        </Button>
+        {onUse === undefined ? null : (
+          <Button
+            variant="primary"
+            icon={<IconPlayOutline16 />}
+            disabled={pending || failure?.uncertain}
+            onClick={() =>
+              onUse({ kind, profile: { id: profileId, revision: entry.revision.revision }, entry })
+            }
+          >
+            Use
+          </Button>
+        )}
         {canManage ? (
           <Button
             icon={<IconCopyOutline16 />}
@@ -211,7 +213,10 @@ function Detail({
         </p>
       ) : null}
       {onUse === undefined ? (
-        <p className="profile-field__help">Profile creation is unavailable from this view.</p>
+        <p className="profile-field__help">
+          Profile based creation is retired. Open New agent in Agent Manager to configure an image
+          and inline Agent setup.
+        </p>
       ) : null}
     </section>
   );

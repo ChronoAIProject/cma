@@ -25,6 +25,7 @@ pub(super) fn sandbox() -> Sandbox {
             revision: 3,
             digest: "a".repeat(64),
             content: SandboxProfileContent {
+                runtime_image: None,
                 cpu_millis: 1_000,
                 memory_mib: 2_048,
                 nyxid_services: vec![],
@@ -104,6 +105,7 @@ pub(super) fn agent(id: &str, conversation_id: &str, seq: u64) -> Agent {
         capabilities: crate::RuntimeCapabilities::new([crate::RuntimeCapability::Conversation]),
         status: AgentStatus::Ready,
         conversation: ConversationState {
+            settings: None,
             conversation_id: Some(conversation_id.into()),
             runtime_generation: Some(4),
             last_seq: seq,

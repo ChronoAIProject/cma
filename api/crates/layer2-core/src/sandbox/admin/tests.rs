@@ -124,6 +124,7 @@ fn sandbox(id: &str, owner: &str, status: SandboxStatus, runtime_version: &str) 
 
 fn sandbox_profile_content() -> SandboxProfileContent {
     SandboxProfileContent {
+        runtime_image: None,
         cpu_millis: 1_000,
         memory_mib: 2_048,
         nyxid_services: vec![],
@@ -192,6 +193,7 @@ fn agent(sandbox: &Sandbox, workspace: &Workspace, id: &str, status: AgentStatus
         capabilities: crate::RuntimeCapabilities::new([crate::RuntimeCapability::Conversation]),
         status,
         conversation: super::super::ConversationState {
+            settings: None,
             conversation_id: Some("conversation-a".into()),
             runtime_generation: Some(1),
             last_seq: 0,
@@ -228,6 +230,7 @@ fn agent_profile_content() -> AgentProfileContent {
 
 fn agent_profile(id: &str, owner: &str, visibility: ProfileVisibility) -> AgentProfile {
     AgentProfile {
+        internal: false,
         id: crate::AgentProfileId(id.into()),
         owner: SubjectId::new(owner),
         name: format!("profile-{id}"),

@@ -4,23 +4,23 @@
 
 `createClient(config)` returns a `Cma` with the following public resources:
 
-| Resource                                                | Methods                                                                                                                                                                                                                                           |
-| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `agentProfiles`, `workspaceProfiles`, `sandboxProfiles` | `list`, `read`, `create`, `save`, `publish`, `listRevisions`, `readRevision`, `setVisibility`, `retire`                                                                                                                                           |
-| `profileAuthoring`                                      | `bounds`, `services`, `searchSkills`, read-only `resolveRepository`                                                                                                                                                                               |
-| `marketplace.agent`, `.workspace`, `.sandbox`           | `list`, `read`, `fork`                                                                                                                                                                                                                            |
-| `sandboxes`                                             | `list`, `read`, `create`, `pause`, `revive`, `delete`, `events`                                                                                                                                                                                   |
-| `workspaces`                                            | `list(sandboxId)`, `read`, `create(sandboxId, body, options)`, `delete`                                                                                                                                                                           |
-| `worktrees`                                             | `list(workspaceId)`, `read`                                                                                                                                                                                                                       |
-| `agents`                                                | `list`, `read`, `create(workspaceId, body, options)`, `input`, `steer`, `interrupt`, `answerApproval`, `stop`, `delete`, `events`, `transcript`, `usage`, `resources`                                                                             |
-| `triggerAuthoring`                                      | `list`, `read`, `create`, `save`, `delete`, `publish`, `retire`, `listRevisions`, `listPlacements`, `createPlacement`, `retirePlacement`, `embed`, `stats`                                                                                        |
-| `launches`                                              | `preview`, `createOrResume`, `read`, `list`, `start`, `cancel`, `requirements`, `events`, `stream`, `createConnection`, `readConnection`                                                                                                          |
-| `agui`                                                  | `run`, `replay`, `readCapabilities`, `readSandboxSnapshot`, `streamLaunchEvents`                                                                                                                                                                  |
-| `responsesV2`                                           | `readCapabilities`, `create`, `createForAgent`, `read`, `readEventContext`, `readConversation`, `listConversationItems`, `replay`, `observeControls`, `submitControl`, `readCommand`, `observeQueuedCancellation`, `cancelQueuedResponse`         |
-| `agentEventsV2`                                         | `readTransportEligibility`, `snapshot`, `events` with acknowledgement after consumer success                                                                                                                                                      |
-| `responses`                                             | `createConversation`, `readConversation`, `listConversationItems`, `create`, `read`, `delete`, `cancel`                                                                                                                                           |
-| `auth`                                                  | `readSession`, `readSignupOptions`, `loginUrl`, `logoutUrl`                                                                                                                                                                                       |
-| `admin`                                                 | `listSandboxes`, `readSandbox`, `sandboxEvents`, `retireSandbox`, `listProfiles`, `retireProfile`, `readSettings`, `replaceSettings`, `patchSettings`, `resetSettings`, `pauseTriggers`, `resumeTriggers`, `readRuntimeInventory`, `listActivity` |
+| Resource                                                | Methods                                                                                                                                                                                                                                                                                                   |
+| ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `agentProfiles`, `workspaceProfiles`, `sandboxProfiles` | `list`, `read`, `create`, `save`, `publish`, `listRevisions`, `readRevision`, `setVisibility`, `retire`                                                                                                                                                                                                   |
+| `profileAuthoring`                                      | `bounds`, `services`, `searchSkills`, read-only `resolveRepository`                                                                                                                                                                                                                                       |
+| `marketplace.agent`, `.workspace`, `.sandbox`           | `list`, `read`, `fork`                                                                                                                                                                                                                                                                                    |
+| `sandboxes`                                             | `list`, `read`, `create`, `pause`, `revive`, `delete`, `events`                                                                                                                                                                                                                                           |
+| `workspaces`                                            | `list(sandboxId)`, `read`, `create(sandboxId, body, options)`, `delete`                                                                                                                                                                                                                                   |
+| `worktrees`                                             | `list(workspaceId)`, `read`                                                                                                                                                                                                                                                                               |
+| `agents`                                                | `list`, `read`, `create(workspaceId, body, options)`, `input`, `steer`, `interrupt`, `answerApproval`, `stop`, `delete`, `events`, `transcript`, `usage`, `resources`, `models`, `settings`, `updateSettings`, `skills`, `installSkill`, `accessRequests`, `approveAccessRequest`, `denyAccessRequest`    |
+| `triggerAuthoring`                                      | `list`, `read`, `create`, `save`, `delete`, `publish`, `retire`, `listRevisions`, `listPlacements`, `createPlacement`, `retirePlacement`, `embed`, `stats`                                                                                                                                                |
+| `launches`                                              | `preview`, `createOrResume`, `read`, `list`, `start`, `cancel`, `requirements`, `events`, `stream`, `createConnection`, `readConnection`                                                                                                                                                                  |
+| `agui`                                                  | `run`, `replay`, `readCapabilities`, `readSandboxSnapshot`, `streamLaunchEvents`                                                                                                                                                                                                                          |
+| `responsesV2`                                           | `readCapabilities`, `create`, `createForAgent`, `read`, `readEventContext`, `readConversation`, `listConversationItems`, `replay`, `observeControls`, `submitControl`, `readCommand`, `observeQueuedCancellation`, `cancelQueuedResponse`                                                                 |
+| `agentEventsV2`                                         | `readTransportEligibility`, `snapshot`, `events` with acknowledgement after consumer success                                                                                                                                                                                                              |
+| `responses`                                             | `createConversation`, `readConversation`, `listConversationItems`, `create`, `read`, `delete`, `cancel`                                                                                                                                                                                                   |
+| `auth`                                                  | `readSession`, `readSignupOptions`, `loginUrl`, `logoutUrl`                                                                                                                                                                                                                                               |
+| `admin`                                                 | `listSandboxes`, `readSandbox`, `sandboxEvents`, `retireSandbox`, `listProfiles`, `retireProfile`, `readSettings`, `replaceSettings`, `patchSettings`, `resetSettings`, `pauseTriggers`, `resumeTriggers`, `readRuntimeInventory`, `listWarmPools`, `configureWarmPool`, `resizeWarmPool`, `listActivity` |
 
 `readConformance(options?)` performs `GET /api/v1/conformance` anonymously.
 `readOpenApi(options?)` reads the generated `/openapi.json` anonymously, preserving
@@ -409,7 +409,7 @@ explicit `delete` and `cancel` helpers preserve the server's
 `responses_field_unsupported` problem as `ApiError`; neither operation is
 advertised as a supported Agent action.
 
-Encrypted gateway records are available through `client.gatewayRecords.put/get/list/delete`. These operations require gateway management authority. `blob` is base64 ciphertext; creation uses `expected_version: null`, and replacement supplies the retained version. They use version preconditions without an Idempotency-Key header.
+Legacy encrypted Gateway storage methods remain for older installations and migration tooling. Current Agent Manager deployments retire channel/connection/interaction record endpoints; Event Gateway owns its own storage. The compatibility client exposes channel records through `client.gatewayRecords.put/get/list/delete`. These operations require gateway management authority. `blob` is base64 ciphertext; creation uses `expected_version: null`, and replacement supplies the retained version. They use version preconditions without an Idempotency-Key header.
 
 Provider binding management uses `client.providerBindings.put/get/delete/ensureConversation/deleteConversation`. Supply the complete profile snapshot and digest for PUT. These gateway-only operations require both management capabilities; use the scoped binding credential for Responses and immutable event-context reads. Binding responses never contain the supplied credential.
 
@@ -430,6 +430,19 @@ is per operation; omit `owner` for personal resources. Listing accepts `after`
 and returns one page; follow `next_after` even when `items` is empty. Channel
 creation/update accepts `connection_ref` and `connection_admission`. Native
 Telegram source, credential and webhook endpoint fields are typed as well.
+A channel read with several consumers carries the read-only
+`definition.routing` (`cmaeg.RoutingPolicy`), with each consumer's public key
+hash and never a key; it is absent on every other channel, and no request type
+sets it. A routed event's `cmaeg.Activity`, and the `cmaeg.PublicActivity` that
+`readEventContext` returns, carry `routing` (`cmaeg.ActivityRouting`): the source
+slot, how the targets were resolved, the targets with the primary consumer first
+and, on a hand-off, its `cmaeg.Causation`. It is absent on every unrouted event.
+Keep an activity you persist as the JSON you received, so fields this SDK does
+not know survive. On a routed channel `cmaeg.ContextResponse` carries `consumer`
+(`cmaeg.ConsumerSummary`), the consumer whose agent key made the call, and its
+`provider_binding_id` is that consumer's binding; `consumer` is absent on every
+other channel. A hand-off event reports `capabilities.buttons` and
+`capabilities.cards` as `"none"`.
 
 ```ts
 import { Cmaeg, type cmaeg } from '@chronoai/cma-sdk';
@@ -477,16 +490,19 @@ CloudEvents extension attributes are retained.
 
 ## Owner Bots
 
-`client.bots` exposes `create`, `list`, `get`, `available`, `test`, `disable`,
+`client.bots` exposes `create`, `list`, `get`, `connections`, `available`, `test`, `disable`,
 `enable`, `rotateKeys` and `delete`. Use the current renewable CMA sign-in with
 `cma:bot:manage`; independent agent keys cannot borrow the owner's stored login.
-The owner must already have registered a personal Telegram bot in NyxID and
-connected the profile's explicit services and managed model service. CMA attaches
+Use `connections()` to list ready Event Gateway connections as
+`{connection_ref,label}`. Complete channel setup in Event Gateway and connect
+the selected Agent configuration’s services and managed model service. CMA attaches
 CMAEG tools natively with the Bot's own agent key; no separate tools catalogue
 connection is required.
 
-Creation takes a name, `nyxid_bot_id`, a published Agent profile reference, an
-admission policy and a reply policy. Optional `sandbox_profile` and
+Creation takes a name, `connection_ref`, a published Agent profile reference, an
+admission policy and a reply policy. The legacy `nyxid_bot_id` remains accepted
+for existing integrations; provide exactly one connection identifier. A Gateway
+connection keeps platform credentials and webhook management within the Gateway. Optional `sandbox_profile` and
 `workspace_profile` references select personally owned published environments;
 each omitted reference pins its platform default. Bot responses include the
 pinned environment references (older servers may omit them). Custom profiles
@@ -496,7 +512,7 @@ uncertain outcomes. HTTP 201 returns the durable Bot in `creating`; poll `get`
 for `active` or `failed` and inspect `operation.step` for cleanup progress.
 Other mutations return 202 with progress. A deleted Bot becomes 404 only after
 its provider binding, channel, routes and owned credentials have been removed.
-The `test` method runs a synthetic provider turn and sends no Telegram message.
+The `test` method runs a synthetic provider turn and sends no external message.
 
 Bot responses contain no credential bytes. Preserve channel IDs and callback
 URLs exactly; never decode, reconstruct or log opaque gateway references.
