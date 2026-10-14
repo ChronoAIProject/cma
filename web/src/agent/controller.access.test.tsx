@@ -1,9 +1,53 @@
-import { act, renderHook } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { agentClient } from '../test/agent';
 import { useAgentController } from './controller';
 
 afterEach(() => vi.useRealTimers());
+
+it('reattaches an accepted AG-UI turn after access recovery without sending it again', async () => {
+  let runSignal: AbortSignal | undefined;
+  const client = agentClient({
+    runAgent: vi.fn(
+      async (_request, options) =>
+        new Promise<void>((resolve) => {
+          runSignal = options.signal;
+          options.onEvent({ type: 'RUN_STARTED', threadId: 'agt_1', runId: '5', cursor: 5 });
+          options.signal!.addEventListener('abort', () => resolve(), { once: true });
+        }),
+    ),
+  });
+  const replay = vi.spyOn(client, 'replayAgent');
+  const { result, rerender, unmount } = renderHook(
+    ({ suspended }) => useAgentController(client, 'agt_1', { suspended }),
+    { initialProps: { suspended: false } },
+  );
+  await waitFor(() => expect(result.current.inputAvailability.allowed).toBe(true));
+  const accepted = vi.fn();
+  let sent!: Promise<void>;
+  act(() => {
+    sent = result.current.send('Continue this accepted turn', accepted);
+  });
+  await waitFor(() => expect(accepted).toHaveBeenCalledOnce());
+  const retained = result.current.state;
+  rerender({ suspended: true });
+  await act(() => sent);
+  expect(runSignal?.aborted).toBe(true);
+  expect(result.current.state).toBe(retained);
+  expect(result.current.inputAvailability.allowed).toBe(false);
+
+  rerender({ suspended: false });
+  await waitFor(() =>
+    expect(replay).toHaveBeenLastCalledWith('agt_1', expect.objectContaining({ after: 5 })),
+  );
+  expect(result.current.state).toMatchObject({
+    status: 'ready',
+    conversation: { activeRunId: '5', cursor: 5 },
+  });
+  expect(client.runAgent).toHaveBeenCalledOnce();
+  expect(accepted).toHaveBeenCalledOnce();
+  unmount();
+});
 
 it('retains the rendered snapshot while suspending runtime reads and both current and captured actions', async () => {
   vi.useFakeTimers();
