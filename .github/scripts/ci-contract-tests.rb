@@ -63,6 +63,33 @@ guarded.each do |workflow, id, name|
 end
 
 if mode == "release"
+  cache_changes = {
+    "fork cache access" => ["Prepare API Cargo cache identity", "if", "matrix.component == 'api'"],
+    "unbounded cache transfer" => ["Inject API Cargo cache mounts", "timeout-minutes", 60],
+    "mutable cache action" => ["Restore API Cargo cache archive", "uses", "actions/cache/restore@v4"],
+    "cache other paths" => ["Restore API Cargo cache archive", "with", { "path" => "~/.cargo" }],
+    "save failed image cache" => ["Save accepted API Cargo cache archive", "if", "always()"],
+    "skip build on cache hit" => ["Build image for all target platforms", "if", "steps.api-cargo-cache-restore.outputs.cache-hit != 'true'"],
+    "skip scan on cache hit" => ["Vulnerability scan", "if", "steps.api-cargo-cache-restore.outputs.cache-hit != 'true'"],
+    "omit prune" => ["Release build cache before image checks", "run", "true"],
+  }
+  cache_changes.each do |label, (name, field, changed)|
+    reject.call(label) do |value|
+      value["ci"]["jobs"]["images"]["steps"].find { |row| row["name"] == name }[field] = changed
+    end
+  end
+  reject.call("extract after prune") do |value|
+    rows = value["ci"]["jobs"]["images"]["steps"]
+    extraction = rows.find { |row| row["name"] == "Extract API Cargo cache before pruning" }
+    rows.delete(extraction)
+    rows << extraction
+  end
+  reject.call("cache fallback crosses compatibility boundary") do |value|
+    value["ci"]["jobs"]["images"]["steps"].find { |row| row["name"] == "Restore API Cargo cache archive" }["with"]["restore-keys"] = "cma-api-"
+  end
+  reject.call("cache regressions no longer execute") do |value|
+    value["ci"]["jobs"]["trigger-release-contract"]["steps"].delete_if { |row| row["name"] == "API Cargo cache bridge regressions" }
+  end
   %w[api web runtime cmaeg image-manager].each do |component|
     reject.call("CI omits #{component} image") do |value|
       value["ci"]["jobs"]["images"]["strategy"]["matrix"]["component"].delete(component)
