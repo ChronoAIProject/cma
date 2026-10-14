@@ -2,7 +2,7 @@ use std::time::SystemTime;
 
 use layer2_core::rfc3339_at;
 use layer2_core::sandbox::{Sandbox, SandboxStoreError};
-use layer3_adapter::{RuntimeHandle, RuntimeStatusRequest};
+use layer3_adapter::{RuntimeHandle, RuntimeStatus, RuntimeStatusRequest};
 
 use super::super::support::{adapter_failure, WorkerFailure};
 use super::super::SandboxWorker;
@@ -123,7 +123,7 @@ impl SandboxWorker {
         runtime: &RuntimeHandle,
         generation: u64,
         credentialed: bool,
-    ) -> Result<(), WorkerFailure> {
+    ) -> Result<RuntimeStatus, WorkerFailure> {
         let source = sandbox
             .retained_home_recovery()
             .ok_or_else(missing_source)?;
@@ -155,7 +155,7 @@ impl SandboxWorker {
                 "retained runtime does not prove completed home recovery",
             ));
         }
-        Ok(())
+        Ok(status)
     }
 
     pub(super) async fn accept_lifecycle_home(
