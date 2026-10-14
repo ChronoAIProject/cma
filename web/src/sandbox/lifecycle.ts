@@ -31,7 +31,7 @@ export function sandboxUnavailableNotice(sandbox: SandboxSummary): string | unde
     sandboxChildrenReadable(sandbox) &&
     (sandbox.lifecycle?.operation !== undefined || ['pausing', 'reviving'].includes(sandbox.status))
   )
-    return `${sandboxLifecycleLabel(sandbox)}. Agent conversations and history remain available. Messages can be sent when this operation finishes.`;
+    return `${sandboxLifecycleLabel(sandbox)}. Agent conversations and history remain available.`;
   if (sandbox.status === 'paused')
     return 'This Sandbox is paused. Your work is preserved. Open an Agent to read its conversation, or resume the Sandbox to continue working.';
   if (sandbox.status === 'retired')
