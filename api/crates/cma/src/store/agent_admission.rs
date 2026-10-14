@@ -322,9 +322,17 @@ async fn apply_admission(
     }
 
     let mut creation =
-        super::warm_sandboxes::adopt_agent(store, &sandbox, &workspace, admission, session)
+        match super::native_prepared::adopt_agent(store, &sandbox, &workspace, admission, session)
             .await
-            .map_err(ApplyError::Domain)?;
+            .map_err(ApplyError::Domain)?
+        {
+            Some(creation) => creation,
+            None => {
+                super::warm_sandboxes::adopt_agent(store, &sandbox, &workspace, admission, session)
+                    .await
+                    .map_err(ApplyError::Domain)?
+            }
+        };
     let provenance = super::agent_provenance::record_creation(
         store,
         admission,
