@@ -1,4 +1,104 @@
 use super::*;
+use crate::agent_sandbox::pool::{
+    fixture::prefix,
+    read_fixture::{failure, Gate, Reads},
+};
+use std::{collections::BTreeMap, time::Duration};
+
+#[tokio::test]
+async fn native_bootstrap_policy_and_graph_overlap_without_dispatch_on_either_failure() {
+    let bound = bound(true).await;
+    let pod = client(&bound.fixture, false)
+        .pod_binding(&bound.runtime)
+        .await
+        .unwrap();
+    let template = format!(
+        "{}/sandboxtemplates/{}",
+        prefix(),
+        bound.claim.request.pool.template_name
+    );
+    let pool = format!(
+        "{}/sandboxwarmpools/{}",
+        prefix(),
+        bound.claim.request.pool.name
+    );
+    let claim = format!("{}/sandboxclaims/{}", prefix(), bound.claim.name);
+    let pods = "/api/v1/namespaces/cma-test/pods";
+    let paths = [
+        template.clone(),
+        pool,
+        claim.clone(),
+        VOLUME.into(),
+        pods.into(),
+    ];
+    let pod_list = json!({"apiVersion":"v1","kind":"PodList","metadata":{"resourceVersion":"1"},
+        "items":[bound.fixture.state.lock().unwrap().rows[POD].clone()]});
+    // Both completion orders and either failed branch must retain policy-first
+    // errors. A valid graph cannot dispatch while policy remains pending.
+    for (policy_first, policy_fails, graph_fails) in [
+        (false, true, false),
+        (true, false, true),
+        (false, true, true),
+        (true, true, true),
+    ] {
+        let gates: BTreeMap<_, _> = paths.iter().map(|p| (p.clone(), Gate::new())).collect();
+        let mut overrides = BTreeMap::from([(pods.into(), (200, pod_list.clone()))]);
+        if policy_fails {
+            overrides.insert(template.clone(), failure(429));
+        }
+        if graph_fails {
+            overrides.insert(claim.clone(), failure(403));
+        }
+        let reads = Reads::new(&bound.fixture, overrides, gates.clone());
+        let client = crate::agent_sandbox::AgentSandboxClient::new(
+            reads.client.clone(),
+            bound.fixture.client.config.clone(),
+            "fixture",
+        )
+        .unwrap();
+        let runtime = bound.runtime.clone();
+        let expected = pod.clone();
+        let request = bound.request.clone();
+        let mut task = tokio::spawn(async move {
+            client
+                .assign_pool_runtime(&runtime, &expected, &request)
+                .await
+        });
+        for gate in gates.values() {
+            gate.wait().await;
+        }
+        for (i, path) in paths.iter().enumerate() {
+            if (i < 2) == policy_first {
+                gates[path].respond();
+            }
+        }
+        assert!(tokio::time::timeout(Duration::from_millis(25), &mut task)
+            .await
+            .is_err());
+        assert_eq!(bound.fixture.state.lock().unwrap().assignments.len(), 1);
+        for (i, path) in paths.iter().enumerate() {
+            if (i < 2) != policy_first {
+                gates[path].respond();
+            }
+        }
+        let error = tokio::time::timeout(Duration::from_secs(2), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(
+            matches!(error, AdapterError::AtCapacity(_)),
+            policy_fails,
+            "{error:?}"
+        );
+        assert_eq!(
+            reads.calls.lock().unwrap().len(),
+            7,
+            "initial member plus two policy and four graph reads, no bootstrap"
+        );
+        assert_eq!(bound.fixture.state.lock().unwrap().assignments.len(), 1);
+    }
+}
 
 #[tokio::test]
 async fn native_bootstrap_uses_one_authority_proof_before_and_after_dispatch() {

@@ -85,3 +85,25 @@ The fixed timing label `admission_policy_and_home_proof` reports the combined
 overlapping read stage once. This removes one serial read wave, not a read or
 a validation boundary. Gated fixtures prove concurrency without timing estimates
 and refuse publication on either proof's failure.
+
+Three more native startup boundaries overlap only independent reads. Claim
+admission reads its deterministic existing Claim and current Pool/Template
+binding together. A replay still validates and returns the original Claim even
+if speculative policy reads fail; only a missing Claim consumes that proof
+before creation. Legacy claims keep sequential seed and binding validation.
+
+Home adoption overlaps current explicit policy with the initial Claim, member
+and PVC read/validation phase. The Claim still supplies validated dependent
+names. Both branches finish before the original ordered Claim then Sandbox
+annotation writes, using the same UID/resourceVersion preconditions; the final
+fresh graph observation remains separate. Initial native bootstrap likewise
+overlaps explicit policy with its pre-dispatch graph proof. Policy errors retain
+precedence, and assignment is sent only after both pass. The independent proof
+after assignment remains unchanged. `assignment_before_proof` includes the
+overlapping policy wait as well as graph validation.
+
+These changes remove up to three serial read waves without reusing authority
+across operations or mutation boundaries. Gated tests cover both response
+orders, failures in either branch, replay after policy failure, ordered writes
+and resource-version conflicts. They establish ordering and freshness, not a
+production latency reduction; any millisecond estimate requires live timing.
