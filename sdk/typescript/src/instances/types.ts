@@ -1,4 +1,4 @@
-import { profileReference } from '../profiles/types.js';
+import { modelAccess, profileReference } from '../profiles/types.js';
 import { sandboxLifecycle } from './lifecycle.js';
 export type * from './lifecycle.js';
 import {
@@ -85,6 +85,8 @@ export type WorkspaceSummary = Output<typeof workspaceSummary>;
 export const sandboxDetail = object({
   ...sandboxFields,
   ...counts,
+  agent_provider: optional(enumeration('codex')),
+  model_access: optional(modelAccess),
   workspaces: array(workspaceSummary),
 });
 export type SandboxDetail = Output<typeof sandboxDetail>;
