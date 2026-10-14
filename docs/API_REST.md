@@ -924,6 +924,28 @@ before runtime dispatch and reapplied after reconnect; `pending: true` means
 runtime confirmation is outstanding and further input remains fenced. Retry
 network failures or ambiguous 503 replies with the original body and key.
 
+`GET /api/v1/agents/{id}/models` returns `{ models: [{ id, label, available }] }`
+from the Chrono LLM catalog using the owned Sandbox's existing scoped credential.
+It includes eligible text models and never expands service access. `available`
+requires the exact current runtime to advertise catalog-model support and the
+Agent and Sandbox to be in supported active states. Retained runtimes without
+that capability keep their existing settings and return disabled choices.
+Catalog failures return a sanitized `503`; responses use `Cache-Control: no-store`.
+See [Managed models](CMA_Managed_Models.md) for runtime selection validation.
+
+`GET /api/v1/agents/{id}/skills` returns `{ items, pending, can_install,
+unavailable_reason? }`. Each item includes its exact `id`, `version`, `source`,
+and `status` (`pending`, `installed`, or `failed`), with optional `name` and
+`error`. `POST` to the same path requires an `Idempotency-Key` and
+`{ "id": "<Ornn skill ID>", "version": "<exact version>" }`. It admits an
+additive installation only for an owned, idle Ready Agent on a supported
+runtime and returns `202 AgentSkillsView`. Poll the read route for runtime
+confirmation. Replaying the same request and key does not install twice;
+failed installations remain recorded and cannot be retried as a new install.
+Available choices come from the owner's existing profile-authoring skills
+catalog. See [Agent skills](CMA_Agent_Skills_Runtime.md) for installation and
+recovery semantics.
+
 `GET /api/v1/agents/{id}/access-requests` returns `{ items }` for the Agent owner.
 Each item retains its exact request and Agent IDs, `services`, `reason`, durable
 `status`, and optional safe `error`. Owner approval uses
@@ -1192,6 +1214,9 @@ returns 409, including changing an omitted default into an explicit reference.
 | `POST /api/v1/agents/{id}/access-requests/{request_id}/deny` | DenyAgentAccessRequest; key | - | 200 AgentAccessRequestView |
 | `GET /api/v1/agents/{id}/settings` | - | - | 200 AgentSettingsView |
 | `PATCH /api/v1/agents/{id}/settings` | UpdateAgentSettingsRequest; key | - | 200 AgentSettingsView |
+| `GET /api/v1/agents/{id}/models` | - | - | 200 AgentModelsView |
+| `GET /api/v1/agents/{id}/skills` | - | - | 200 AgentSkillsView |
+| `POST /api/v1/agents/{id}/skills` | InstallAgentSkillRequest; key | - | 202 AgentSkillsView |
 | `GET /api/v1/agents/{id}/source` | - | - | 200 AccessibleAgentSourceView |
 | `POST /api/v1/agents/{id}/stop` | StopAgentRequest; key | - | 202 empty |
 | `GET /api/v1/agents/{id}/terminal` | - | - | 404 ProblemDocument; 501 ProblemDocument |
