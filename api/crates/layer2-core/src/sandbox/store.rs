@@ -63,7 +63,14 @@ pub use agent_lifecycle::{
 };
 pub use agent_sign_in::apply_agent_sign_in;
 mod agent_work_evidence_validation;
+<<<<<<< HEAD
 mod agent_work_prepared_pair;
+=======
+mod agent_work_prepared_open_ready;
+pub use agent_work_prepared_open_ready::{
+    validate_prepared_agent_open_ready, PreparedAgentOpenContext,
+};
+>>>>>>> 92c2e24f (Atomically publish prepared agent open and ready)
 mod agent_work_transition_validation;
 mod agent_work_validation;
 mod agent_worktree_validation;
