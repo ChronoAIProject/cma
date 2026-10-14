@@ -9,11 +9,11 @@ const { test } = require("node:test");
 const { runInNewContext } = require("node:vm");
 const { bridgePath } = require("./persist_conversations.cjs");
 const { processRpc } = require("./native_tools_fixture.cjs");
-const { managedModelCatalog, sourceSha256, before, after } = require("./managed_model_catalog.cjs");
+const { managedModelCatalog, sourceSha256, before, after, beforeSelection, afterSelection } = require("./managed_model_catalog.cjs");
 
 function sources() {
   const installed = readFileSync(process.env.CMA_ACP_MANAGED_BASE_SOURCE ?? bridgePath, "utf8");
-  const base = installed.includes(after) ? installed.replace(after, before) : installed;
+  const base = installed.includes(after) ? installed.replace(after, before).replace(afterSelection, beforeSelection) : installed;
   assert.equal(createHash("sha256").update(base).digest("hex"), sourceSha256);
   return { base, patched: managedModelCatalog(base) };
 }
@@ -53,11 +53,62 @@ test("native subscription, gateway overrides and other configured models keep th
   }
 });
 
+test("managed aliases require bounded current catalogue evidence from the loopback provider", async () => {
+  const { patched } = sources();
+  const start = patched.indexOf("  async fetchAvailableModels() {");
+  const end = patched.indexOf("  async runSessionListDiagnostics() {", start);
+  let requests = 0;
+  let payload = JSON.stringify({ data: [{ id: "gpt-6-astra" }] });
+  let status = 200;
+  const Client = runInNewContext("(class {" + patched.slice(start, end) + "})", {
+    URL, AbortSignal, Buffer,
+    fetch: async (url, options) => {
+      requests += 1;
+      assert.equal(url.href, "http://127.0.0.1:9091/models");
+      assert.equal(options.redirect, "error");
+      return new Response(payload, { status });
+    },
+  });
+  const configured = { model_provider: "cma", model_providers: { cma: { base_url: "http://127.0.0.1:9091" } } };
+  const client = new Client();
+  Object.assign(client, { config: {}, codexClient: {
+    async configRead() { return { config: configured }; },
+  } });
+  assert.equal((await client.fetchManagedModel("gpt-6-astra")).id, "gpt-6-astra");
+  for (const name of ["gpt-image-2", "bad\nmodel", "gpt-6/redirect"]) {
+    assert.equal(await client.fetchManagedModel(name), null);
+  }
+  assert.equal(requests, 1);
+  for (const url of ["https://example.invalid", "http://metadata.google.internal", "http://127.0.0.1:9091?override=1"]) {
+    configured.model_providers.cma.base_url = url;
+    assert.equal(await client.fetchManagedModel("gpt-6-astra"), null);
+  }
+  assert.equal(requests, 1);
+  configured.model_providers.cma.base_url = "http://127.0.0.1:9091";
+  for (const body of ["invalid", " ".repeat(1024 * 1024 + 1), JSON.stringify({ data: Array(1001).fill({ id: "gpt-6-astra" }) })]) {
+    payload = body;
+    assert.equal(await client.fetchManagedModel("gpt-6-astra"), null);
+  }
+  payload = JSON.stringify({ data: [{ id: "gpt-6-astra" }] });
+  status = 403;
+  assert.equal(await client.fetchManagedModel("gpt-6-astra"), null);
+});
+
 async function modelFixture() {
   const calls = [];
+  const catalogue = { status: 200, calls: 0 };
   let error;
   const server = createServer(async (request, response) => {
     try {
+      if (request.method === "GET" && request.url === "/v1/models") {
+        catalogue.calls += 1;
+        assert.equal(request.headers["user-agent"], "chrono-bot/1.0");
+        assert.equal(request.headers.accept, "application/json");
+        assert.equal(request.headers.authorization, undefined);
+        response.writeHead(catalogue.status, { "content-type": "application/json" });
+        response.end(JSON.stringify({ data: ["gpt-6-astra", "gpt-6.1-sol", "gpt-image-2"].map((id) => ({ id })) }));
+        return;
+      }
       assert.equal(request.method, "POST");
       assert.equal(request.url, "/v1/responses");
       let body = "";
@@ -84,7 +135,7 @@ async function modelFixture() {
     }
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  return { calls, origin: "http://127.0.0.1:" + server.address().port,
+  return { calls, catalogue, origin: "http://127.0.0.1:" + server.address().port,
     check() { if (error) throw error; },
     async close() { server.closeAllConnections(); await new Promise((resolve) => server.close(resolve)); } };
 }
@@ -153,6 +204,7 @@ test("pinned ACP preserves native fallback and supports managed settings across 
     assert.deepEqual(session.models.availableModels.filter((model) => !model.modelId.startsWith("gpt-6[")), original.models.availableModels);
     assert.deepEqual(session.models.availableModels.filter((model) => model.modelId.startsWith("gpt-6[")).map((model) => model.modelId),
       ["gpt-6[low]", "gpt-6[medium]", "gpt-6[high]", "gpt-6[xhigh]"]);
+    assert.equal(fixture.catalogue.calls, 0, "default startup must not wait on catalogue HTTP");
     await apply(session.sessionId, "gpt-6", "medium", "read-only");
     await assert.rejects(bridge.call("session/set_model", { sessionId: session.sessionId, modelId: "unconfigured-model[medium]" }));
     await assert.rejects(bridge.call("session/set_model", { sessionId: session.sessionId, modelId: "gpt-6[minimal]" }));
@@ -163,6 +215,24 @@ test("pinned ACP preserves native fallback and supports managed settings across 
     assert.deepEqual(managed.tools.map((tool) => tool.name ?? tool.type),
       native.tools.map((tool) => tool.name ?? tool.type), "native fallback tools must stay unchanged");
 
+    for (const model of ["gpt-6-astra", "gpt-6.1-sol"]) {
+      await apply(session.sessionId, model, "high", "agent-full-access");
+      const selected = await prompt(session.sessionId);
+      assert.equal(selected.model, model);
+      assert.equal(selected.reasoning.effort, "high");
+      assert.equal(selected.instructions, native.instructions);
+      assert.deepEqual(selected.tools.map((tool) => tool.name ?? tool.type),
+        native.tools.map((tool) => tool.name ?? tool.type));
+    }
+    assert.equal(fixture.catalogue.calls, 2);
+    await assert.rejects(bridge.call("session/set_model", { sessionId: session.sessionId, modelId: "gpt-image-2[high]" }));
+    assert.equal(fixture.catalogue.calls, 2, "image models are not Agent text models");
+    await assert.rejects(bridge.call("session/set_model", { sessionId: session.sessionId, modelId: "gpt-9-absent[high]" }));
+    fixture.catalogue.status = 403;
+    await assert.rejects(bridge.call("session/set_model", { sessionId: session.sessionId, modelId: "gpt-6-astra[high]" }));
+    fixture.catalogue.status = 200;
+    assert.equal((await prompt(session.sessionId)).model, "gpt-6.1-sol", "refused settings keep the previous model");
+
     const alternate = original.models.availableModels.find((model) => model.modelId === "gpt-5.6-sol[high]");
     assert(alternate, "test alternative must be advertised by the actual pinned runtime");
     await apply(session.sessionId, "gpt-5.6-sol", "high", "agent-full-access");
@@ -170,6 +240,8 @@ test("pinned ACP preserves native fallback and supports managed settings across 
     await bridge.close();
     await connect("patched");
     await bridge.call("session/load", { sessionId: session.sessionId, cwd: directory, mcpServers: [] });
+    await apply(session.sessionId, "gpt-6-astra", "high", "agent-full-access");
+    assert.equal((await prompt(session.sessionId)).model, "gpt-6-astra");
     await apply(session.sessionId, "gpt-6", "high", "agent-full-access");
     const restored = await prompt(session.sessionId);
     assert.equal(restored.model, "gpt-6");

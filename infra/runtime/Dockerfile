@@ -137,7 +137,7 @@ ARG CODEX_NATIVE_SHA256_ARM64=e23d0be344d2496986c985cd3db61e6f649b1ddd900e6afc1b
 ARG CODEX_LAUNCHER_SHA256=134063e133f0b4244fa3b251acf973d4fe4b4aeeacbdc135211bf480f59f1477
 ARG CODEX_ACP_VERSION=1.4.0
 ARG CODEX_ACP_UPSTREAM_SHA256=ba74f54f7c89ba61858e544eb3afefbb0c1b90f2b23a136664828816a8430dbf
-ARG CODEX_ACP_SHA256=fa7948e7e07b5588f9dfaed60871225c33ceb2af5efbcb5746989e5391f46381
+ARG CODEX_ACP_SHA256=c5cf1c6524f1f3e8b9db90b9b217435c09ab3ab44d571cd47f1af76e697c8575
 
 # Node is downloaded from upstream and verified against digests recorded here.
 # Both Codex packages are JavaScript launchers for pinned native/runtime code.

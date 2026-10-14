@@ -61,6 +61,7 @@ impl Supervisor {
         }
         let status = RuntimeStatus {
             agent_skill_install: true,
+            agent_model_catalog: true,
             sandbox_id: request.sandbox_id.clone(),
             generation: request.generation,
             home_identity: request.home_identity.clone(),
