@@ -1,10 +1,67 @@
 # CMA native Sandbox production verification — 2026-10-14
 
-CMA Agent Manager, Event Gateway and Web are deployed, and the final cold
-Gateway user flow passed. Results below identify their tested version. Evidence
-paths are operator-local artifacts, not repository files.
+## Current Agent follow-up — 16:26:14 SGT
 
-## Final deployed set
+Agent Manager and the shared Web image from candidate `03cbd332` are deployed.
+At **2026-10-14 16:26:14 SGT**, Agent Manager generation **15**, Web generation
+**91**, and retained Event Gateway generation **6** each had one updated Ready
+replica, matching observed generation, the exact published imageID, and zero
+restarts. The system default runtime now selects the same candidate for new
+allocations. One Web image implements Agent Manager, Image Manager, and Event
+Gateway portals; Image Manager backend activation remains deferred.
+
+| Component | Candidate | Registry manifest digest |
+| --- | --- | --- |
+| Agent Manager | `03cbd332` | `sha256:228d8d3514cba69cc899d035748508fc4f3c177a294836353032475206b50ea0` |
+| Default runtime | `03cbd332` | `sha256:a955564d1f2507daec5ddb899a99daab513edd1d84c83bd54d98daf521320860` |
+| Web | `03cbd332` | `sha256:840658ad0e32dcbb6efd71656cd52324200f7a80058b6e56d4b7563572bd17bf` |
+| Event Gateway, retained | `cabfe5c3` | `sha256:0c3068130eaf618ce88dbe47bd7d111d365a5bba816c49f78b4000e8550ef1e7` |
+
+API and Web use the `us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/`
+repositories `cma-api` and `cma-web`. The default runtime uses
+`asia-southeast1-docker.pkg.dev/chronoai-501608/chrono-pod/cma-runtime`.
+
+| Source and verification | Exact identity |
+| --- | --- |
+| Reviewed candidate | `03cbd332f0593696d092d0dfe02fb3d621417158` |
+| PR #1007 merge into `develop` | `ab789bde158b864d5db467fb2677ef72c3545cfc` |
+| Actual CI image checkout, all three new images | `89fc1aaef7d71b80200f8e6af9670738c843e029` |
+| Candidate, merged `develop`, and image source tree | `7312f2b7bad364092fbb8a05d80d9dbffb1c9685` |
+| CI | [38528498008](https://github.com/ChronoAIProject/cma/actions/runs/38528498008), attempt 1; full 15/15 jobs passed |
+
+Publication reused the exact verified CI artifact bytes after the PR merged.
+Its postmerge authority check proved the same reviewed head, repository,
+`develop` base, merge commit and tree, plus `develop` ancestry. Image metadata,
+archive/config identities and runtime execution evidence retained their existing
+checks. The deployed image-source annotations identify the actual CI checkout.
+
+The rollout changed only the default-runtime ConfigMap entry, Agent Manager
+image/provenance annotations, and Web image/provenance annotations. Gateway
+specification/configuration and existing owner Sandboxes were preserved. Agent
+Manager remains singleton/Recreate. A default-runtime update applies to new
+allocations; it does not migrate retained Sandboxes or the home initializer.
+
+| Local release evidence | Receipt SHA-256 |
+| --- | --- |
+| `/tmp/cma-agent-followup-publish-04/publication-report.json` | `45cb6e81fb1ce3ae48bc6600b289944fe03fc3706d519a4abc5b228bf33d88c9` |
+| `/tmp/cma-agent-followup-rollout-01/readiness.json` | `73b5bbafa878d20c8e2d2af8d669779c1d7d301ac49d0959aa80b673eaac5a62` |
+| `/tmp/cma-agent-followup-pool-01/ready.json` | `f652d6733a06a1a468512901ca98df60a4985ea8004f3999f0a876c69f8860fa` |
+
+The matching rollout plan is `/tmp/cma-agent-followup-rollout-01/plan.json`.
+`/tmp/cma-agent-followup-release-receipt.json` summarizes those source, image,
+and workload identities. Evidence paths are operator-local artifacts.
+
+At **16:26:50 SGT**, the operator pool receipt confirmed two observed Ready
+replicas for the new runtime at 1,000 millicores and 1,024 MiB each. Existing owner
+runtimes and the protected infra pool were unchanged; no old pool was resized.
+
+Fresh Agent acceptance remains pending: a subsequent owner attempt reported
+**Needs attention** during Sandbox preparation and is under investigation.
+No successful startup duration, model/settings flow, or live skill installation
+is established by these readiness receipts. Earlier flow and cleanup evidence
+below remains associated with its original tested versions.
+
+## Earlier verified baseline — 11:31:31 SGT
 
 At **11:31:31 SGT**, Agent Manager, Web and Event Gateway each had one updated
 Ready replica, current observed generation, the exact published imageID and

@@ -113,7 +113,7 @@ data:
   # Default for new allocations. Existing live Sandboxes retain their recorded
   # image across API upgrades and rollback; drift never admits rotation work.
   # Prove retained-runtime compatibility before deploying any new API image.
-  CHRONO_SANDBOX_IMAGE: "asia-southeast1-docker.pkg.dev/chronoai-501608/chrono-pod/cma-runtime@sha256:1c44be8aaa7b88c0190d17ca44f4f6e0f9a8aec880038c5d4da9cb2bc8c68e8b"
+  CHRONO_SANDBOX_IMAGE: "asia-southeast1-docker.pkg.dev/chronoai-501608/chrono-pod/cma-runtime@sha256:a955564d1f2507daec5ddb899a99daab513edd1d84c83bd54d98daf521320860"
   # Native warm pools are managed by immutable image/resources/home policy.
   # The installed APIs and cold allocation path passed deployment acceptance.
   # Verify new pool templates independently before adding operator capacity.

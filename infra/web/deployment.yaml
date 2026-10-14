@@ -14,9 +14,9 @@ spec:
   template:
     metadata:
       annotations:
-        cma.chronoai.dev/candidate: "fb3a652fdc93658f138096a704f0d162b6c6c483"
-        cma.chronoai.dev/image-source: "4fee2eb2562c26c58d1d61361ac1c43469673ba6"
-        cma.chronoai.dev/ci-run: "38513020577"
+        cma.chronoai.dev/candidate: "03cbd332f0593696d092d0dfe02fb3d621417158"
+        cma.chronoai.dev/image-source: "89fc1aaef7d71b80200f8e6af9670738c843e029"
+        cma.chronoai.dev/ci-run: "38528498008"
       labels:
         app.kubernetes.io/name: cma-web
         app.kubernetes.io/part-of: cma
@@ -39,7 +39,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: web
-          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-web@sha256:ff9a6f1124f47a5d03de8f637ee2ac6318bc13ba6ed9760eff94e1278139f723
+          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-web@sha256:840658ad0e32dcbb6efd71656cd52324200f7a80058b6e56d4b7563572bd17bf
           imagePullPolicy: IfNotPresent
           ports:
             - name: http

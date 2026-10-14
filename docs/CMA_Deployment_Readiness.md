@@ -5,17 +5,27 @@ failures and receipt paths, see
 [CMA native Sandbox production verification](CMA_Native_Production_Verification.md).
 This document keeps operational instructions and dated infra diagnostics.
 
-The final AM cd37968d, Web ac837 and Gateway cabfe set was Ready at 11:31:31 SGT,
-with exact imageIDs and zero restarts; default runtime remains 37d. Seven public/
-authenticated checks passed at 11:31:59 SGT, including the original protected
-Sandbox and Agent, both paused. Final Web desktop/mobile visual acceptance passed.
-AM and Gateway passed full CI 15/15; Web passed its four required scoped jobs.
-Image Manager activation is deferred.
+The current Agent follow-up candidate `03cbd332` was Ready at **16:26:14 SGT on
+2026-10-14**: Agent Manager generation 15, Web generation 91, and retained Gateway
+generation 6 each had one updated Ready replica, exact published imageIDs, and
+zero restarts. The default runtime now uses the verified `a955564d` digest for
+new allocations. PR #1007 merged into `develop` as `ab789bde`; CI run
+[38528498008](https://github.com/ChronoAIProject/cma/actions/runs/38528498008),
+attempt 1, passed all 15 jobs. Image Manager activation remains deferred.
 
-Final cold Gateway acceptance passed with one actual UI request, one completed
-turn and visible exact acknowledgment in 42.624 seconds. Normal fixture cleanup
-completed at 11:45:14 SGT. Sanitized receipt:
-`/tmp/cma-gateway-cold-live-czmxw4jd/acceptance-receipt.json`.
+Exact digests, actual image source revision/tree, and receipt hashes are in the
+[current follow-up report](CMA_Native_Production_Verification.md#current-agent-follow-up--162614-sgt).
+Publication: `/tmp/cma-agent-followup-publish-04/publication-report.json`.
+Readiness: `/tmp/cma-agent-followup-rollout-01/readiness.json`.
+The separate `/tmp/cma-agent-followup-pool-01/ready.json` receipt confirmed two
+Ready pool replicas at 16:26:50 SGT. Fresh Agent acceptance and timing remain
+pending: a subsequent owner attempt reported **Needs attention** during Sandbox
+preparation and is under investigation.
+
+The earlier cd37968d/ac837/cabfe baseline passed cold Gateway acceptance with
+one actual UI request, one completed turn, and visible exact acknowledgment in
+42.624 seconds; cleanup completed at 11:45:14 SGT. That earlier result is retained
+under its tested versions and does not measure the current follow-up.
 
 The three portals ship from one web image: Agent Manager (`/agent-manager`),
 Image Manager (`/image-manager`) and Event Gateway (`/event-gateway`). Their
@@ -24,9 +34,9 @@ defines application deployment against the infra-owned native runtime cluster.
 Infra continues to own its controllers, CRDs, RBAC, storage and network policy;
 CMA's completed application rollout did not change those resources.
 
-The current rollout scope is Agent Manager, Event Gateway and their shared web
-image, with the tested CMA runtime as the system default. Image Manager is
-deferred: its Deployment is absent; keep it absent or at zero replicas and do
+The current follow-up updates Agent Manager, the shared web image, and the
+system default CMA runtime while retaining the verified Event Gateway. Image
+Manager is deferred: its Deployment is absent; keep it absent or at zero replicas and do
 not require its Cloud Build identity, OAuth client, migrations or builder digest to activate Agent
 Manager. Default-image Agent, Trigger and consumer creation does not call Image
 Manager. Its catalog may be unavailable while the system default remains
@@ -556,8 +566,10 @@ runtime control tokens continue to match. The control-plane Secret volume is
 optional only while the native backend is disabled.
 
 When a verified runtime is intentionally replaced, set its digest in
-`CHRONO_SANDBOX_IMAGE` and the matching rollout annotation. This release preserves the deployed 37d runtime default. `CHRONO_AGENT_SANDBOX_RUNTIME_CLASS`, runtime ServiceAccount,
-pull secrets, home policy and deployment ID must match the reviewed production
+`CHRONO_SANDBOX_IMAGE` and the matching rollout annotation. The current follow-up
+selects the verified `a955564d` runtime digest for new allocations; retained
+Sandboxes keep their recorded images. `CHRONO_AGENT_SANDBOX_RUNTIME_CLASS`, runtime
+ServiceAccount, pull secrets, home policy and deployment ID must match the reviewed production
 configuration. Existing pool bindings retain their original Pod policy when a
 later release changes those defaults.
 
