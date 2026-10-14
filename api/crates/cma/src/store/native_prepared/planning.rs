@@ -8,7 +8,7 @@ use layer2_core::sandbox::{SandboxStoreError, WarmSandbox, WarmSandboxState};
 use mongodb::bson::{doc, Bson};
 
 const MAX_TARGET: u8 = 2;
-const MAX_AGE_SECONDS: u64 = 1800;
+pub(super) const MAX_AGE_SECONDS: u64 = 1800;
 
 impl MongoSandboxStore {
     pub(crate) async fn reconcile_native_prepared_target(

@@ -7,6 +7,8 @@ use layer2_core::{ServiceId, SubjectId, WorkspaceProfileId};
 use layer3_adapter::agent_sandbox::*;
 use layer3_adapter::{HomeVolumeMode, HomeVolumePolicy, HomeVolumeReceipt, RuntimeImage};
 
+mod claim_race_tests;
+
 const NOW: &str = "2026-09-05T00:00:00Z";
 const LATER: &str = "2026-09-05T00:01:00Z";
 const EXPIRED: &str = "2026-09-05T00:30:01Z";
@@ -415,6 +417,16 @@ async fn admission(
     .unwrap()
 }
 
+async fn admit_at(
+    store: &MongoSandboxStore,
+    admission: SandboxAdmission,
+    observed_at: &str,
+) -> Result<SandboxAdmissionResult, SandboxStoreError> {
+    store
+        .commit_sandbox_admission_observing(admission, || observed_at.to_owned())
+        .await
+}
+
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at disposable replica set"]
 async fn native_prepared_atomic_lifecycle_claim_is_exclusive_replayable_and_preserves_authority() {
@@ -442,8 +454,8 @@ async fn native_prepared_atomic_lifecycle_claim_is_exclusive_replayable_and_pres
     let a = admission(&store, &plan, "owner-a", "a").await;
     let b = admission(&store, &plan, "owner-b", "b").await;
     let (ra, rb) = tokio::join!(
-        store.admit_sandbox(a.clone()),
-        store.admit_sandbox(b.clone())
+        admit_at(&store, a.clone(), NOW),
+        admit_at(&store, b.clone(), NOW)
     );
     let (created_a, created_b) = match (ra.unwrap(), rb.unwrap()) {
         (SandboxAdmissionResult::Created(a), SandboxAdmissionResult::Created(b)) => (a, b),
@@ -481,7 +493,7 @@ async fn native_prepared_atomic_lifecycle_claim_is_exclusive_replayable_and_pres
         warm,
         "fresh owned authority follows Claimed read"
     );
-    let SandboxAdmissionResult::Existing(replay) = store.admit_sandbox(request).await.unwrap()
+    let SandboxAdmissionResult::Existing(replay) = admit_at(&store, request, NOW).await.unwrap()
     else {
         panic!("same operation replays")
     };
@@ -518,7 +530,7 @@ async fn native_prepared_adoption_waits_for_parent_and_tool_marker_requires_exac
     let SandboxOrigin::Lifecycle { operation_id } = request.sandbox.origin.clone() else {
         unreachable!()
     };
-    let SandboxAdmissionResult::Created(mut parent) = store.admit_sandbox(request).await.unwrap()
+    let SandboxAdmissionResult::Created(mut parent) = admit_at(&store, request, NOW).await.unwrap()
     else {
         panic!("fresh")
     };
