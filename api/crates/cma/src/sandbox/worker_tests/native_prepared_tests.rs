@@ -7,6 +7,8 @@ use layer2_core::sandbox::{
 
 #[path = "installation_transfer_tests.rs"]
 mod installation_transfer_tests;
+#[path = "workspace_transfer_tests.rs"]
+mod workspace_transfer_tests;
 
 async fn reservation(harness: &Harness) -> WarmSandbox {
     let mut parent = harness.create().await;
@@ -152,6 +154,75 @@ async fn native_prepared_restarts_keep_exact_hierarchy_without_key_or_prompt() {
     let calls = pools.calls.lock().unwrap().clone();
     assert_eq!(calls.iter().filter(|call| **call == "claim").count(), 1);
     assert_eq!(calls.iter().filter(|call| **call == "adopt").count(), 1);
+}
+
+#[tokio::test]
+async fn native_workspace_proof_captures_real_receipts_across_preparation_restarts() {
+    use crate::sandbox::native_prepared::prepare_step_with_proof;
+    use crate::store::native_prepared::NativePreparedWorkspaceProof;
+    let harness = Harness::new(vec![], 0, Duration::from_secs(60)).await;
+    let pools = pools(&harness, &[]);
+    let mut record = reservation(&harness).await;
+    let mut proof: Option<NativePreparedWorkspaceProof> = None;
+    for _ in 0..20 {
+        (record, proof) = prepare_step_with_proof(
+            adapter(&harness, pools.clone()).as_ref(),
+            "test",
+            &record,
+            &home_tests::home_policy(),
+            proof,
+        )
+        .await
+        .unwrap();
+        record = persist(&harness, record).await;
+        proof = serde_json::from_slice(&serde_json::to_vec(&proof).unwrap()).unwrap();
+        if let Some(proof) = &proof {
+            proof.validate(&record).unwrap();
+        }
+        if record.state == WarmSandboxState::Ready {
+            break;
+        }
+    }
+    assert_eq!(record.state, WarmSandboxState::Ready);
+    let proof = proof.unwrap();
+    assert!(proof.setup.is_some());
+    let requests = harness.backend.requests().await;
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|(_, frame)| matches!(frame, RequestFrame::PrepareWorkspace(_)))
+            .count(),
+        1
+    );
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|(_, frame)| matches!(frame, RequestFrame::WorkspaceSetup(_)))
+            .count(),
+        1
+    );
+    let (retained, retained_proof) = prepare_step_with_proof(
+        adapter(&harness, pools.clone()).as_ref(),
+        "test",
+        &record,
+        &home_tests::home_policy(),
+        Some(proof.clone()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(retained, record);
+    assert_eq!(retained_proof, Some(proof));
+    // A retained legacy Ready row cannot gain fabricated evidence during a health read.
+    let (_, absent) = prepare_step_with_proof(
+        adapter(&harness, pools).as_ref(),
+        "test",
+        &record,
+        &home_tests::home_policy(),
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(absent.is_none());
 }
 
 #[tokio::test]

@@ -16,6 +16,8 @@ pub use service_traits::*;
 
 mod agent;
 pub use agent::AgentStore;
+mod workspace_worker;
+pub use workspace_worker::{WorkspacePreparationCompletion, WorkspaceWorkerStore};
 
 mod agent_control;
 mod background_checkpoint;
@@ -256,23 +258,6 @@ pub trait WorkspaceAdmissionStore: Send + Sync {
         owner: &SubjectId,
         now: String,
     ) -> Result<Workspace, SandboxStoreError>;
-}
-
-/// Durable workspace lifecycle discovery and lease fencing.
-#[async_trait]
-pub trait WorkspaceWorkerStore: Send + Sync {
-    async fn due_workspace_work(
-        &self,
-        now: &str,
-        limit: u16,
-    ) -> Result<Vec<WorkspaceId>, SandboxStoreError>;
-    async fn claim_workspace_work(
-        &self,
-        id: &WorkspaceId,
-        holder: &str,
-        now: String,
-        lease_expires_at: String,
-    ) -> Result<Option<Workspace>, SandboxStoreError>;
 }
 
 #[async_trait]

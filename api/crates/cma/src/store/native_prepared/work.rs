@@ -1,4 +1,4 @@
-use super::{document, model::Record, read, unavailable, NativePreparedPlan};
+use super::{model::Record, read, unavailable, NativePreparedPlan};
 use crate::store::sandbox_mongo::{signed, MongoSandboxStore};
 use layer2_core::sandbox::{SandboxStoreError, WarmSandbox, WarmSandboxState};
 use mongodb::bson::{doc, Bson};
@@ -7,6 +7,7 @@ use mongodb::options::ReturnDocument;
 pub(crate) struct NativePreparedClaim {
     pub record: WarmSandbox,
     pub plan: NativePreparedPlan,
+    pub workspace_proof: Option<super::NativePreparedWorkspaceProof>,
     token: String,
 }
 
@@ -27,7 +28,7 @@ impl MongoSandboxStore {
             doc!{"kind":"reservation","state":{"$in":["preparing","installing","ready","retiring"]},"lease_until":{"$lte":at},"check_after":{"$lte":at}},
             doc!{"$set":{"lease_token":&token,"lease_until":until}},
         ).sort(doc!{"check_after":1,"_id":1}).return_document(ReturnDocument::After).await.map_err(unavailable)?
-            .as_ref().map(|value|{let record=read(value)?;Ok(NativePreparedClaim{record:record.payload,plan:record.plan,token})}).transpose()
+            .as_ref().map(|value|{let record=read(value)?;let workspace_proof=super::workspace_proof::read(value,&record.payload)?;Ok(NativePreparedClaim{record:record.payload,plan:record.plan,workspace_proof,token})}).transpose()
     }
 
     pub(crate) async fn renew_native_prepared_work(
@@ -46,10 +47,27 @@ impl MongoSandboxStore {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(crate) async fn finish_native_prepared_work(
         &self,
         claim: &NativePreparedClaim,
+        next: WarmSandbox,
+        at: &str,
+        check_after: &str,
+    ) -> Result<(), SandboxStoreError> {
+        let proof = claim
+            .workspace_proof
+            .clone()
+            .filter(|proof| proof.validate(&next).is_ok());
+        self.finish_native_prepared_work_with_proof(claim, next, proof, at, check_after)
+            .await
+    }
+
+    pub(crate) async fn finish_native_prepared_work_with_proof(
+        &self,
+        claim: &NativePreparedClaim,
         mut next: WarmSandbox,
+        workspace_proof: Option<super::NativePreparedWorkspaceProof>,
         at: &str,
         check_after: &str,
     ) -> Result<(), SandboxStoreError> {
@@ -69,11 +87,14 @@ impl MongoSandboxStore {
             .checked_add(1)
             .ok_or(SandboxStoreError::Conflict)?;
         next.updated_at = at.into();
-        let mut value = document(&Record {
-            plan: claim.plan.clone(),
-            payload: next,
-            ownership: None,
-        })?;
+        let mut value = super::workspace_proof::document(
+            &Record {
+                plan: claim.plan.clone(),
+                payload: next,
+                ownership: None,
+            },
+            workspace_proof.as_ref(),
+        )?;
         value.insert("lease_token", Bson::Null);
         value.insert("lease_until", at);
         value.insert("check_after", check_after);

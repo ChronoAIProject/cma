@@ -9,15 +9,60 @@ use layer3_adapter::{
 
 mod hierarchy;
 mod worker;
+use crate::store::native_prepared::NativePreparedWorkspaceProof;
 pub(crate) use worker::NativePreparedWorker;
 
 /// The durable caller owns target bounds, leases, retries, and publication.
 /// This engine never allocates an owner credential or dispatches a prompt.
+#[cfg(test)]
 pub(crate) async fn prepare_step(
     adapter: &dyn SandboxAdapter,
     deployment_id: &str,
     record: &WarmSandbox,
     home_policy: &HomeVolumePolicy,
+) -> layer3_adapter::Result<WarmSandbox> {
+    prepare_step_with_proof(adapter, deployment_id, record, home_policy, None)
+        .await
+        .map(|(next, _)| next)
+}
+
+pub(crate) async fn prepare_step_with_proof(
+    adapter: &dyn SandboxAdapter,
+    deployment_id: &str,
+    record: &WarmSandbox,
+    home_policy: &HomeVolumePolicy,
+    mut workspace_proof: Option<NativePreparedWorkspaceProof>,
+) -> layer3_adapter::Result<(WarmSandbox, Option<NativePreparedWorkspaceProof>)> {
+    if let Some(proof) = &workspace_proof {
+        proof
+            .validate(record)
+            .map_err(|e| rejected(&e.to_string()))?;
+    }
+    let next = prepare_step_inner(
+        adapter,
+        deployment_id,
+        record,
+        home_policy,
+        &mut workspace_proof,
+    )
+    .await?;
+    if next.state == WarmSandboxState::Retiring {
+        workspace_proof = None;
+    }
+    if let Some(proof) = &workspace_proof {
+        proof
+            .validate(&next)
+            .map_err(|e| rejected(&e.to_string()))?;
+    }
+    Ok((next, workspace_proof))
+}
+
+async fn prepare_step_inner(
+    adapter: &dyn SandboxAdapter,
+    deployment_id: &str,
+    record: &WarmSandbox,
+    home_policy: &HomeVolumePolicy,
+    workspace_proof: &mut Option<NativePreparedWorkspaceProof>,
 ) -> layer3_adapter::Result<WarmSandbox> {
     validate_plan(record)?;
     if !matches!(
@@ -123,7 +168,7 @@ pub(crate) async fn prepare_step(
         next.installed_request_sha256 = Some(receipt.request_sha256);
         return Ok(next);
     }
-    hierarchy::prepare_step(adapter, &mut next, &handle).await?;
+    hierarchy::prepare_step(adapter, &mut next, &handle, workspace_proof).await?;
     Ok(next)
 }
 

@@ -17,12 +17,16 @@ mod planning;
 mod tests;
 mod tools;
 mod work;
+mod workspace_proof;
 pub(super) use admission::{claim_ready, ClaimOutcome};
-pub(super) use adoption::{adopt_agent, adopt_workspace, completed_installation_digest};
+pub(super) use adoption::{
+    adopt_agent, adopt_workspace, completed_installation_digest, completed_workspace,
+};
 pub(crate) use model::NativePreparedPlan;
 use model::Record;
 pub(super) use tools::prepared_conversation;
 pub(crate) use work::NativePreparedClaim;
+pub(crate) use workspace_proof::NativePreparedWorkspaceProof;
 
 pub(super) const COLLECTION: &str = "native_prepared_sandboxes";
 
@@ -58,6 +62,7 @@ fn read(document: &Document) -> Result<Record, SandboxStoreError> {
     {
         return Err(model::corrupt("query fields disagree with record"));
     }
+    workspace_proof::read(document, &record.payload)?;
     Ok(record)
 }
 
