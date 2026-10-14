@@ -273,6 +273,50 @@ fn intent_retry_and_startup_advance_have_exact_work_deltas() {
 }
 
 #[test]
+fn only_effect_free_parent_wait_can_remain_due_at_publication() {
+    let (mut current, mut worktree) = claimed(
+        AgentWorkStep::WaitForWorkspace,
+        AgentStatus::Starting,
+        WorktreeStatus::Creating,
+    );
+    current.origin = AgentOrigin::Lifecycle {
+        operation_id: "parent-wait".into(),
+    };
+    worktree.base_commit.clear();
+    let mut waiting = current.clone();
+    waiting
+        .work
+        .retry("worker", fence(&current), AT.into())
+        .unwrap();
+    let due = publication(&current, waiting.clone(), vec![], None, None);
+    assert_valid(&current, &worktree, &due);
+
+    let mut earlier = due.clone();
+    earlier.agent.work.ready_at = NOW.into();
+    assert_conflict(&current, &worktree, &earlier);
+
+    let mut failure = publication(
+        &current,
+        waiting,
+        vec![failed(AgentWorkStep::WaitForWorkspace, "store_unavailable")],
+        None,
+        None,
+    );
+    assert_conflict(&current, &worktree, &failure);
+    failure.agent.work.ready_at = RETRY_AT.into();
+    assert_valid(&current, &worktree, &failure);
+
+    let mut effected = current.clone();
+    effected
+        .work
+        .cleanup_debt
+        .push(debt(&current, AgentWorkStep::AddWorktree));
+    let mut forged = due;
+    forged.agent.work.cleanup_debt = effected.work.cleanup_debt.clone();
+    assert_conflict(&effected, &worktree, &forged);
+}
+
+#[test]
 fn ready_publication_couples_identity_status_worktree_logs_and_event() {
     let (mut current, worktree) = claimed(
         AgentWorkStep::PublishReady,
