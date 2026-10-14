@@ -181,7 +181,12 @@ impl AgentCommandWorker {
             {
                 Duration::from_millis(250)
             } else {
-                UNCLAIMED_RECHECK_DELAY
+                api_message_recheck_delay(
+                    &current.receipt.envelope,
+                    &current.receipt.admitted_at,
+                    &current.queue_deadline,
+                    &now_rfc3339(),
+                )
             };
             pace_unclaimed(&current, delay).await;
             return Ok(());
@@ -313,6 +318,41 @@ fn unclaimed_recheck_delay(command: &AdmittedAgentCommand) -> Duration {
         _ => UNCLAIMED_RECHECK_DELAY,
     }
 }
+
+/// An already authorized API message may be waiting only for startup or the
+/// first prompt. Recheck promptly for a bounded age without changing its lane,
+/// receipt, queue deadline, or authorization requirements on the next attempt.
+fn api_message_recheck_delay(
+    envelope: &AgentCommandEnvelope,
+    admitted_at: &str,
+    deadline: &str,
+    now: &str,
+) -> Duration {
+    if envelope.source.kind != AgentSourceKind::Api
+        || !matches!(
+            envelope.actor,
+            AgentActor::Human { .. } | AgentActor::Api { .. }
+        )
+        || !matches!(envelope.command, AgentCommand::Message { .. })
+    {
+        return UNCLAIMED_RECHECK_DELAY;
+    }
+    let observed = crate::seconds_from_rfc3339(now);
+    let age = observed
+        .zip(crate::seconds_from_rfc3339(deadline))
+        .filter(|(now, deadline)| now < deadline)
+        .zip(crate::seconds_from_rfc3339(admitted_at))
+        .and_then(|((now, _), admitted)| now.checked_sub(admitted));
+    match age {
+        Some(0..30) => Duration::from_secs(1),
+        Some(30..120) => Duration::from_secs(5),
+        _ => UNCLAIMED_RECHECK_DELAY,
+    }
+}
+
+#[cfg(test)]
+#[path = "worker_pacing_tests.rs"]
+mod pacing_tests;
 
 /// The durable queued record and its deadline remain unchanged. The scheduler
 /// retains this task in its per-process in-flight set while waiting, without
