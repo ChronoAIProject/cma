@@ -36,6 +36,7 @@ export function useSandboxInput(
   client: CmaWebClient,
   agentId: string | undefined,
   sandboxId: string | undefined,
+  queueWhileStarting = false,
 ): SandboxAvailability {
   const [observation, setObservation] = useState<Observation>();
   useEffect(() => {
@@ -134,7 +135,7 @@ export function useSandboxInput(
       ? observation
       : undefined;
   return {
-    inputAvailability: inputAvailability(current),
+    inputAvailability: inputAvailability(current, queueWhileStarting),
     resourceAvailability: resourceAvailability(current),
     progressObservation:
       current?.sandbox === undefined
@@ -162,7 +163,10 @@ function resourceAvailability(observation: Observation | undefined): SandboxReso
   return { state: 'live', runtimeVersion: sandbox.runtimeVersion };
 }
 
-function inputAvailability(observation: Observation | undefined): SandboxInputAvailability {
+function inputAvailability(
+  observation: Observation | undefined,
+  queueWhileStarting: boolean,
+): SandboxInputAvailability {
   if (observation === undefined) return { allowed: false, notice: 'Checking Sandbox status.' };
   const { sandbox, stale } = observation;
   const savingStartedAt = sandbox?.lifecycle?.checkpoint?.startedAt;
@@ -184,7 +188,7 @@ function inputAvailability(observation: Observation | undefined): SandboxInputAv
     return { allowed: false, notice: 'This Sandbox is unavailable. Messages cannot be sent.' };
   if (
     sandbox.lifecycle.operation !== undefined ||
-    (sandbox.status !== 'active' && sandbox.status !== 'paused')
+    (sandbox.status !== 'active' && (queueWhileStarting || sandbox.status !== 'paused'))
   )
     return {
       allowed: false,
@@ -199,7 +203,9 @@ function inputAvailability(observation: Observation | undefined): SandboxInputAv
         allowed: false,
         notice: 'Progress is being saved. Messages will be available when saving finishes.',
       };
-    if (eligibility.reason === 'work_in_progress')
+    // Starting v2 messages are durably queued, so preparation work need not finish first.
+    // Fresh Active status and the operation/checkpoint barriers above still apply.
+    if (eligibility.reason === 'work_in_progress' && !queueWhileStarting)
       return {
         allowed: false,
         notice: 'Sandbox work is in progress. Messages will be available when it finishes.',
