@@ -52,6 +52,8 @@ it('loads completed Agent deletion activity even before request acceptance is co
     />,
   );
   expect(await screen.findByRole('dialog', { name: 'Agent deleted' })).toBeInTheDocument();
+  expect(screen.getByRole('region', { name: 'Recorded activity' })).not.toBeVisible();
+  fireEvent.click(screen.getByText('Cleanup progress'));
   expect(readAgentEvents).toHaveBeenCalledTimes(1);
   expect(
     within(screen.getByRole('region', { name: 'Recorded activity' })).getByRole('listitem'),
@@ -184,6 +186,29 @@ it('does not declare success on read failures or a missing resource', async () =
   );
   expect(await screen.findByRole('alert')).toHaveTextContent('could not be verified');
   expect(screen.queryByRole('button', { name: 'Done' })).not.toBeInTheDocument();
+});
+
+it('viewing another completed cleanup does not erase the retained request for a different resource', async () => {
+  localStorage.setItem(deletionStorageKey('owner'), JSON.stringify(initial));
+  render(
+    <DeletionDialog
+      viewerId="owner"
+      client={agentClient({
+        readSandbox: async () => ({ ...sandboxFixture('retired'), id: 'sbx_other' }),
+      })}
+      initial={{
+        action: { kind: 'delete_sandbox', sandboxId: 'sbx_other' },
+        key: 'view-other-cleanup',
+        accepted: true,
+      }}
+      restored
+      onChanged={vi.fn()}
+      onClose={vi.fn()}
+    />,
+  );
+  await screen.findByRole('dialog', { name: 'Sandbox deleted' });
+  fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+  expect(restoreDeletion('owner')).toEqual(initial);
 });
 
 it('requires both Agent deletion and Worktree removal, not just a stopped Agent', async () => {

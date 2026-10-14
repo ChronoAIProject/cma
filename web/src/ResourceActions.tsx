@@ -9,6 +9,8 @@ import { Button } from './ui/Button';
 import { useConnectionGate } from './connections/useConnectionGate';
 import { restoreDeletion, type DeleteAction, type DeletionRequest } from './deletion';
 import { downloadAgentHistory } from './agent/historyExport';
+import type { AppRoute } from './routing/routes';
+import { SandboxActionStatus, type SandboxActionRequest } from './sandbox/SandboxActionStatus';
 
 export type CreateAction =
   | Extract<TreeAction, { kind: 'new_agent' | 'new_workspace' }>
@@ -21,6 +23,7 @@ export function useResourceActions(
   onChanged: () => void,
   onCreate?: (action: CreateAction) => void,
   viewerId = 'current',
+  onNavigate?: (route: AppRoute) => void,
 ) {
   const [deletion, setDeletion] = useState<
     { request: DeletionRequest; restored: boolean } | undefined
@@ -29,6 +32,15 @@ export function useResourceActions(
     return request === undefined ? undefined : { request, restored: true };
   });
   const [stopping, setStopping] = useState<{ agentId: string; key: string }>();
+  const [sandboxRequest, setSandboxRequest] = useState<SandboxActionRequest>();
+  const [deletingSandboxIds, setDeletingSandboxIds] = useState<ReadonlySet<string>>(() => {
+    const request = restoreDeletion(viewerId);
+    return new Set(
+      request?.accepted && request.action.kind === 'delete_sandbox'
+        ? [request.action.sandboxId]
+        : [],
+    );
+  });
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
   const keys = useRef(new CommandKeys());
@@ -41,6 +53,14 @@ export function useResourceActions(
     setError(undefined);
     const scope = JSON.stringify(action);
     const options = { idempotencyKey: keys.current.for(scope) };
+    const sandboxAction =
+      action.kind === 'pause_sandbox' || action.kind === 'revive_sandbox' ? action : undefined;
+    if (sandboxAction)
+      setSandboxRequest({
+        action: sandboxAction,
+        key: options.idempotencyKey,
+        phase: 'submitting',
+      });
     try {
       switch (action.kind) {
         case 'pause_sandbox':
@@ -68,13 +88,40 @@ export function useResourceActions(
         }
       }
       keys.current.settle(scope);
+      if (sandboxAction)
+        setSandboxRequest({
+          action: sandboxAction,
+          key: options.idempotencyKey,
+          phase: 'accepted',
+        });
       onChanged();
     } catch (failure: unknown) {
+      if (sandboxAction)
+        setSandboxRequest({
+          action: sandboxAction,
+          key: options.idempotencyKey,
+          phase: 'uncertain',
+        });
       setError(failure instanceof Error ? failure.message : 'The operation did not complete.');
     } finally {
       inFlight.current = false;
       setPending(false);
     }
+  };
+  const viewDeletion = (sandboxId: string) => {
+    if (pending || stopping || deletion) return;
+    const retained = restoreDeletion(viewerId);
+    setDeletion({
+      request:
+        retained?.action.kind === 'delete_sandbox' && retained.action.sandboxId === sandboxId
+          ? retained
+          : {
+              action: { kind: 'delete_sandbox', sandboxId },
+              key: keys.current.for(JSON.stringify({ kind: 'delete_sandbox', sandboxId })),
+              accepted: true,
+            },
+      restored: true,
+    });
   };
   const select = (action: TreeAction) => {
     if (action.kind === 'new_agent' || action.kind === 'new_workspace') {
@@ -109,14 +156,41 @@ export function useResourceActions(
   const retained = restoreDeletion(viewerId);
   return {
     select,
-    pending: pending || deletion !== undefined || stopping !== undefined || connections.pending,
+    viewDeletion,
+    deletingSandboxIds,
+    pending:
+      pending ||
+      sandboxRequest?.phase === 'accepted' ||
+      deletion !== undefined ||
+      stopping !== undefined ||
+      connections.pending,
     error,
-    notice:
-      deletion === undefined && retained !== undefined ? (
-        <Button onClick={() => setDeletion({ request: retained, restored: true })}>
-          View deletion status
-        </Button>
-      ) : null,
+    notice: (
+      <>
+        {sandboxRequest === undefined ? null : (
+          <SandboxActionStatus
+            key={sandboxRequest.key}
+            client={client}
+            request={sandboxRequest}
+            onSettled={(complete) => {
+              setSandboxRequest((current) =>
+                current?.key === sandboxRequest.key
+                  ? { ...current, phase: complete ? 'complete' : 'failed' }
+                  : current,
+              );
+              onChanged();
+            }}
+            onClose={() => setSandboxRequest(undefined)}
+            onNavigate={onNavigate}
+          />
+        )}
+        {deletion === undefined && retained !== undefined ? (
+          <Button onClick={() => setDeletion({ request: retained, restored: true })}>
+            View deletion status
+          </Button>
+        ) : null}
+      </>
+    ),
     overlay: (
       <>
         {connections.dialog}
@@ -141,6 +215,12 @@ export function useResourceActions(
               initial={deletion.request}
               restored={deletion.restored}
               onChanged={onChanged}
+              onAccepted={(request) => {
+                if (request.action.kind === 'delete_sandbox') {
+                  const sandboxId = request.action.sandboxId;
+                  setDeletingSandboxIds((current) => new Set([...current, sandboxId]));
+                }
+              }}
               onClose={() => setDeletion(undefined)}
             />
           )}
