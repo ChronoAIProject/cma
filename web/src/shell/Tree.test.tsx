@@ -123,7 +123,7 @@ describe('Sandbox navigation tree', () => {
     },
   );
 
-  it('moves a resuming Paused record into Live without making children accessible', () => {
+  it('moves a resuming Paused record into Live while keeping retained conversations accessible', () => {
     const items = navigationFixture('paused').map((item) => ({
       ...item,
       sandbox: {
@@ -142,9 +142,8 @@ describe('Sandbox navigation tree', () => {
     expect(screen.getByRole('tree', { name: 'Live sandboxes' })).toHaveTextContent('Atlas');
     expect(screen.getByRole('tree', { name: 'Paused sandboxes' })).not.toHaveTextContent('Atlas');
     expect(screen.getByRole('link', { name: /Atlas/ })).toHaveTextContent('Resuming');
-    expect(
-      screen.queryByRole('button', { name: /Expand Atlas|Collapse Atlas/ }),
-    ).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Collapse Atlas' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Agent one/ })).toHaveTextContent('Resuming');
   });
 
   it.each(['capture', 'resume_writers'] as const)(
@@ -192,8 +191,7 @@ describe('Sandbox navigation tree', () => {
         refreshError: 'Sandbox status could not be refreshed. Reconnecting.',
       });
       expect(screen.getByRole('alert')).toHaveTextContent('Reconnecting');
-      if (status === 'active') expect(screen.getByText('Agent one')).toBeInTheDocument();
-      else expect(screen.queryByText('Agent one')).not.toBeInTheDocument();
+      expect(screen.getByText('Agent one')).toBeInTheDocument();
       await userEvent.setup().click(screen.getByRole('button', { name: 'Options for Atlas' }));
       expect(
         screen.getByRole('menuitem', { name: status === 'paused' ? /^Resume/ : /^Pause/ }),
@@ -243,7 +241,7 @@ describe('Sandbox navigation tree', () => {
     expect(screen.queryByText('agent/one')).not.toBeInTheDocument();
   });
 
-  it.each(['paused', 'reviving', 'pausing', 'rotating', 'provisioning'] as const)(
+  it.each(['rotating', 'provisioning'] as const)(
     'hides child navigation for a %s Sandbox but keeps its status page accessible',
     async (status) => {
       const onNavigate = vi.fn();
@@ -278,7 +276,7 @@ describe('Sandbox navigation tree', () => {
     },
   );
 
-  it('does not bring children back while an Active Sandbox is still finishing revival', () => {
+  it('keeps history navigation without showing Ready while an Active Sandbox finishes revival', () => {
     const items = navigationFixture().map((item) => ({
       ...item,
       sandbox: {
@@ -294,8 +292,40 @@ describe('Sandbox navigation tree', () => {
       },
     }));
     renderTree({ items });
-    expect(screen.getAllByRole('treeitem')).toHaveLength(1);
+    expect(screen.getAllByRole('treeitem')).toHaveLength(3);
+    expect(screen.getByRole('link', { name: /Agent one/ })).toHaveTextContent('Resuming');
+    expect(screen.queryByText('Ready')).not.toBeInTheDocument();
   });
+
+  it.each(['paused', 'pausing', 'reviving'] as const)(
+    'keeps %s Agent history reachable while holding child mutations',
+    async (status) => {
+      const onNavigate = vi.fn();
+      const onAction = vi.fn();
+      renderTree({ items: navigationFixture(status), onNavigate, onAction });
+      const actor = userEvent.setup();
+      await actor.click(screen.getByRole('link', { name: /Agent one/ }));
+      expect(onNavigate).toHaveBeenCalledExactlyOnceWith({ kind: 'agent', agentId: 'agt_1' });
+      await actor.click(screen.getByRole('button', { name: 'Options for chrono-bot' }));
+      for (const name of [/^New agent/, /^Remove/]) {
+        const action = screen.getByRole('menuitem', { name });
+        expect(action).toHaveAttribute('aria-disabled', 'true');
+        await actor.click(action);
+      }
+      await actor.keyboard('{Escape}');
+      await actor.click(screen.getByRole('button', { name: 'Options for Agent one' }));
+      for (const name of [/^Stop/, /^Delete/]) {
+        const action = screen.getByRole('menuitem', { name });
+        expect(action).toHaveAttribute('aria-disabled', 'true');
+        await actor.click(action);
+      }
+      expect(screen.getByRole('menuitem', { name: 'Export history' })).toHaveAttribute(
+        'aria-disabled',
+        'false',
+      );
+      expect(onAction).not.toHaveBeenCalled();
+    },
+  );
 
   it('removes terminal Sandboxes, Workspaces and Agents from working navigation', () => {
     const retired = renderTree({ items: navigationFixture('retired') });
