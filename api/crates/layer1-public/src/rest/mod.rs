@@ -26,6 +26,7 @@ pub use agent_artifacts::agent_artifacts_router;
 mod agent_artifacts_tests;
 mod agent_channel_usage;
 mod agent_command_admission;
+mod agent_models;
 mod agent_operate;
 mod agent_settings;
 pub use agent_channel_usage::agent_channel_usage_router;
@@ -420,3 +421,7 @@ mod tests {
 }
 
 pub mod event_workers;
+
+pub use agent_models::{
+    agent_models_router, AgentModelCatalog, AgentModelCatalogError, AgentModelView, AgentModelsView,
+};

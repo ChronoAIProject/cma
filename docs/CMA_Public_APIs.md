@@ -414,3 +414,18 @@ and the public Trigger embed routes are already included in the OpenAPI table.
 
 CMAEG's supported native `POST /mcp` belongs to the gateway origin and is a
 separate interface from CMA's unsupported `/api/v1/mcp` route.
+
+## Agent model catalog
+
+`GET /api/v1/agents/{id}/models` (`list_agent_models`) returns
+`{"models":[{"id":"gpt-6","label":"gpt-6"}]}` using the owned Agent’s
+current Sandbox key to query the Chrono LLM `/models` API. The portal uses the
+Agent Manager prefix `/api/agent-manager/v1/agents/{id}/models`. The response is
+`Cache-Control: no-store`; the list contains provider results without adding
+hardcoded choices. The existing settings PATCH applies the selected model.
+
+The caller must own the Agent. Foreign or missing Agents return 404 before any
+upstream request. Missing, expired, or mismatched Sandbox credential custody,
+invalid provider responses, and upstream failures return 503 without exposing
+credentials or the upstream response body. Public Chrono LLM scope is preferred;
+retained Sandboxes with the legacy Chrono LLM scope use their original service.
