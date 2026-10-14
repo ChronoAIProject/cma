@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useCmaClient } from '../api/context';
-import type { AgentSettingsView } from '../api/client';
+import type { AgentModelOption, AgentSettingsView } from '../api/client';
 import { Button } from '../ui/Button';
 import { SettingsFields } from './SettingsFields';
 import { AgentSettingsError } from '../api/rest/agentSettings';
@@ -21,6 +21,34 @@ export function SessionSettings({
   const [pending, setPending] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
   const [reload, setReload] = useState(0);
+  const [modelsReload, setModelsReload] = useState(0);
+  const [models, setModels] = useState<readonly AgentModelOption[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(true);
+  const [modelsError, setModelsError] = useState<string>();
+  useEffect(() => {
+    if (!active) return;
+    const request = new AbortController();
+    void (async () => {
+      setModelsLoading(true);
+      setModelsError(undefined);
+      try {
+        if (!client.readAgentModels)
+          throw new Error('The model catalog is unavailable from this connection.');
+        const result = await client.readAgentModels(agentId, { signal: request.signal });
+        if (!request.signal.aborted) setModels(result);
+      } catch (cause) {
+        if (!request.signal.aborted) {
+          setModels([]);
+          setModelsError(
+            cause instanceof Error ? cause.message : 'Available models could not be loaded.',
+          );
+        }
+      } finally {
+        if (!request.signal.aborted) setModelsLoading(false);
+      }
+    })();
+    return () => request.abort();
+  }, [active, agentId, client, modelsReload]);
   const [intent, setIntent] = useState<{ key: string; body: AgentSettingsView } | undefined>(
     undefined,
   );
@@ -108,6 +136,8 @@ export function SessionSettings({
       {value ? (
         <SettingsFields
           value={value}
+          models={models}
+          modelsLoading={modelsLoading}
           disabled={pending || intent !== undefined || value.pending === true}
           onChange={(next) => {
             setValue(next);
@@ -117,6 +147,16 @@ export function SessionSettings({
       ) : (
         <p role="status">Loading Agent settings…</p>
       )}
+      {modelsLoading ? (
+        <p role="status">Loading available models…</p>
+      ) : modelsError ? (
+        <div role="alert">
+          <p>{modelsError}</p>
+          <Button onClick={() => setModelsReload((count) => count + 1)}>Retry models</Button>
+        </div>
+      ) : models.length === 0 ? (
+        <p role="status">No models are available for this Agent.</p>
+      ) : null}
       {value?.pending ? (
         <p role="status">Waiting for the runtime to confirm these settings.</p>
       ) : null}

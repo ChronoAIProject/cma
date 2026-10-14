@@ -1,3 +1,4 @@
+import { Picker } from '../ui/Picker';
 import { Presence } from '../ui/Presence';
 import { useEffect, useRef, useState } from 'react';
 import type { TriggerDocument } from '@chronoai/cma-sdk';
@@ -147,19 +148,19 @@ export function TriggerPublisherPage({
         <nav className="trigger-rail" aria-label="Your Triggers">
           <label className="trigger-rail__mobile">
             <span>Your Triggers</span>
-            <select
-              aria-label="Your Triggers"
+            <Picker
+              label="Your Triggers"
               value={selectedId}
               disabled={locked}
-              onChange={(event) => navigate(event.target.value)}
-            >
-              <option value="">New Trigger</option>
-              {items.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.draft.presentation.title} / {item.availability}
-                </option>
-              ))}
-            </select>
+              onChange={(choice) => navigate(choice)}
+              options={[
+                { value: '', label: 'New Trigger' },
+                ...items.map((item) => ({
+                  value: item.id,
+                  label: `${item.draft.presentation.title} / ${item.availability}`,
+                })),
+              ]}
+            />
           </label>
           <ul>
             {items.map((item) => (

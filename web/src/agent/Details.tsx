@@ -6,6 +6,7 @@ import type { AgentCommand } from './controller';
 import './Details.css';
 import { SessionSettings } from './SessionSettings';
 import { ScopeSettings } from './ScopeSettings';
+import { SkillsSettings } from './SkillsSettings';
 
 interface AgentDetailsProps {
   readonly detail?: AgentDetail;
@@ -60,6 +61,12 @@ export function AgentDetails({
             busy={detail.status !== 'ready' || pending !== undefined || historyLoading}
           />
           <ScopeSettings key={`scope:${detail.id}`} detail={detail} />
+          <SkillsSettings
+            key={`skills:${detail.id}`}
+            agentId={detail.id}
+            active={open}
+            busy={detail.status !== 'ready' || pending !== undefined || historyLoading}
+          />
         </div>
       </div>
     </aside>

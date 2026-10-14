@@ -40,8 +40,10 @@ test('LOCAL consumer dashboard uses real CMA, Gateway and Mongo for creation, te
   await expect(page.getByRole('heading', { name: 'Configure the Agent inline' })).toBeVisible();
   await expect(page.getByRole('radio', { name: /System default image/ })).toBeChecked();
   await page.getByLabel('Model', { exact: true }).fill('gpt-5');
-  await page.getByRole('combobox', { name: /^Reasoning effort/ }).selectOption('high');
-  await page.getByRole('combobox', { name: /^Permission level/ }).selectOption('guarded');
+  await page.getByRole('button', { name: 'Reasoning effort', exact: true }).click();
+  await page.getByRole('menuitemradio', { name: 'high', exact: true }).click();
+  await page.getByRole('button', { name: 'Permission level', exact: true }).click();
+  await page.getByRole('menuitemradio', { name: 'Guarded', exact: true }).click();
   await page.getByLabel('System prompt', { exact: true }).fill('Respond with concise updates.');
   await page.getByRole('button', { name: 'Continue' }).click();
   await page.getByRole('button', { name: 'Admission policy' }).click();

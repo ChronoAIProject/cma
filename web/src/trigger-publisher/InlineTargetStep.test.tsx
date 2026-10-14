@@ -1,3 +1,4 @@
+import { chooseOptionValue } from '../test/select';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, expect, it, vi } from 'vitest';
@@ -44,11 +45,11 @@ it('waits for the selected image and preserves edits made while its immutable ve
   );
   const fixture = show();
   const user = userEvent.setup();
-  await screen.findByRole('option', { name: 'Custom runtime (Private)' });
-  const image = screen.getByRole('combobox', { name: 'Image' });
+  await waitFor(() => expect(vi.mocked(listAgentImages)).toHaveBeenCalled());
+  const image = screen.getByRole('button', { name: 'Image' });
   await waitFor(() => expect(image).toBeEnabled());
-  await user.selectOptions(image, 'img_custom');
-  expect(image).toHaveValue('img_custom');
+  await chooseOptionValue(user, image, 'img_custom');
+  expect(image).toHaveTextContent('Custom runtime (Private)');
   expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled();
   expect(screen.getByRole('button', { name: 'Save draft' })).toBeDisabled();
   const model = screen.getByRole('textbox', { name: 'Model' });
@@ -90,10 +91,10 @@ it('requires an explicit new image choice after resolution fails', async () => {
   vi.mocked(resolveAgentImage).mockRejectedValue(new Error('Version unavailable'));
   const fixture = show();
   const user = userEvent.setup();
-  await screen.findByRole('option', { name: 'Custom runtime (Private)' });
-  const image = screen.getByRole('combobox', { name: 'Image' });
+  await waitFor(() => expect(vi.mocked(listAgentImages)).toHaveBeenCalled());
+  const image = screen.getByRole('button', { name: 'Image' });
   await waitFor(() => expect(image).toBeEnabled());
-  await user.selectOptions(image, 'img_custom');
+  await chooseOptionValue(user, image, 'img_custom');
   await screen.findByText('The selected image has no successful immutable version.');
   await waitFor(() => expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled());
   await user.click(screen.getByRole('button', { name: 'Next' }));
@@ -101,7 +102,7 @@ it('requires an explicit new image choice after resolution fails', async () => {
   expect(screen.getByRole('alert')).toHaveTextContent('no immutable successful version');
   await user.click(screen.getByRole('button', { name: 'Save draft' }));
   expect(fixture.triggers.save).not.toHaveBeenCalled();
-  await user.selectOptions(image, '');
+  await chooseOptionValue(user, image, '');
   await waitFor(() => expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled());
   await user.click(screen.getByRole('button', { name: 'Next' }));
   expect(screen.getByRole('heading', { name: 'When someone clicks again' })).toBeInTheDocument();

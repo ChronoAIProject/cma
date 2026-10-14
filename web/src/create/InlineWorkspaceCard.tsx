@@ -1,3 +1,4 @@
+import { Picker } from '../ui/Picker';
 import { useState } from 'react';
 import type { CreateInlineWorkspaceRequest } from '@chronoai/cma-sdk';
 import type { CmaWebClient } from '../api/client';
@@ -93,15 +94,17 @@ export function InlineWorkspaceCard({
             Agent Manager sends this source directly to agent-sandbox. No Workspace Profile is
             required.
           </p>
-          <select
+          <Picker
             id="inline-workspace-source"
             value={sourceType}
             disabled={command.locked}
-            onChange={(event) => setSourceType(event.target.value as InlineSourceType)}
-          >
-            <option value={EMPTY_SOURCE}>Empty workspace</option>
-            <option value={GIT_SOURCE}>Clone a GitHub repository</option>
-          </select>
+            onChange={(choice) => setSourceType(choice as InlineSourceType)}
+            label="Workspace source"
+            options={[
+              { value: EMPTY_SOURCE, label: 'Empty workspace' },
+              { value: GIT_SOURCE, label: 'Clone a GitHub repository' },
+            ]}
+          />
         </div>
         <div className="create-form__field">
           <label htmlFor="inline-workspace-name">Workspace name</label>

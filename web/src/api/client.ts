@@ -57,6 +57,26 @@ export interface AgentLifecycleCreateInput {
   };
 }
 
+export interface AgentSkillState {
+  readonly id: string;
+  readonly name?: string;
+  readonly version: string;
+  readonly source: 'ornn';
+  readonly status: 'installed' | 'pending' | 'failed';
+  readonly error?: string;
+}
+export interface AgentSkillsView {
+  readonly can_install: boolean;
+  readonly unavailable_reason?: string;
+  readonly items: readonly AgentSkillState[];
+  readonly pending: boolean;
+}
+
+export interface AgentModelOption {
+  readonly id: string;
+  readonly label: string;
+}
+
 export interface AgentSettingsView {
   readonly pending?: boolean;
   readonly model: string;
@@ -125,6 +145,16 @@ export interface CmaWebClient {
     operationId: string,
     options?: ReadOptions,
   ) => Promise<AgentLifecycleOperationView>;
+  readonly readAgentSkills?: (id: string, options?: ReadOptions) => Promise<AgentSkillsView>;
+  readonly installAgentSkill?: (
+    id: string,
+    skill: { readonly id: string; readonly version: string },
+    options: CommandOptions,
+  ) => Promise<AgentSkillsView>;
+  readonly readAgentModels?: (
+    id: string,
+    options?: ReadOptions,
+  ) => Promise<readonly AgentModelOption[]>;
   readonly readAgentSettings?: (id: string, options?: ReadOptions) => Promise<AgentSettingsView>;
   readonly updateAgentSettings?: (
     id: string,

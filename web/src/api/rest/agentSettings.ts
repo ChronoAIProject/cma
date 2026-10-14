@@ -42,9 +42,38 @@ async function settingsRequest(id: string, init: RequestInit): Promise<AgentSett
 
 export function agentSettingsClient(): Pick<
   CmaWebClient,
-  'readAgentSettings' | 'updateAgentSettings'
+  'readAgentSettings' | 'updateAgentSettings' | 'readAgentModels'
 > {
   return {
+    readAgentModels: async (id, options) => {
+      const response = await fetch(`/api/v1/agents/${encodeURIComponent(id)}/models`, {
+        credentials: 'same-origin',
+        cache: 'no-store',
+        signal: options?.signal,
+      });
+      if (!response.ok)
+        throw new AgentSettingsError('Available models could not be loaded.', response.status);
+      const value = (await response.json()) as { models?: unknown };
+      if (
+        !Array.isArray(value?.models) ||
+        value.models.length > 2000 ||
+        value.models.some(
+          (model: unknown) =>
+            !model ||
+            typeof model !== 'object' ||
+            !('id' in model) ||
+            typeof model.id !== 'string' ||
+            !model.id.trim() ||
+            model.id.length > 128 ||
+            !('label' in model) ||
+            typeof model.label !== 'string' ||
+            !model.label.trim(),
+        ) ||
+        new Set(value.models.map((model: { id: string }) => model.id)).size !== value.models.length
+      )
+        throw new ProtocolError('Agent Manager returned an invalid model catalog.');
+      return value.models as { id: string; label: string }[];
+    },
     readAgentSettings: (id, options) => settingsRequest(id, { signal: options?.signal }),
     updateAgentSettings: (id, settings, options) =>
       settingsRequest(id, {

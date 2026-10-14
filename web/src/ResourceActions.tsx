@@ -3,6 +3,7 @@ import { Presence } from './ui/Presence';
 import type { CmaWebClient } from './api/client';
 import { CommandKeys } from './api/client';
 import type { TreeAction } from './shell/Tree';
+import { StopAgentDialog } from './agent/StopAgentDialog';
 import { DeletionDialog } from './DeletionDialog';
 import { Button } from './ui/Button';
 import { useConnectionGate } from './connections/useConnectionGate';
@@ -27,6 +28,7 @@ export function useResourceActions(
     const request = restoreDeletion(viewerId);
     return request === undefined ? undefined : { request, restored: true };
   });
+  const [stopping, setStopping] = useState<{ agentId: string; key: string }>();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
   const keys = useRef(new CommandKeys());
@@ -77,6 +79,9 @@ export function useResourceActions(
   const select = (action: TreeAction) => {
     if (action.kind === 'new_agent' || action.kind === 'new_workspace') {
       onCreate?.(action);
+    } else if (action.kind === 'stop_agent') {
+      if (pending || stopping || deletion) return;
+      setStopping({ agentId: action.agentId, key: keys.current.for(JSON.stringify(action)) });
     } else if (action.kind === 'export_history') {
       void execute(action);
     } else if (['delete_sandbox', 'remove_workspace', 'delete_agent'].includes(action.kind)) {
@@ -104,7 +109,7 @@ export function useResourceActions(
   const retained = restoreDeletion(viewerId);
   return {
     select,
-    pending: pending || deletion !== undefined || connections.pending,
+    pending: pending || deletion !== undefined || stopping !== undefined || connections.pending,
     error,
     notice:
       deletion === undefined && retained !== undefined ? (
@@ -115,6 +120,18 @@ export function useResourceActions(
     overlay: (
       <>
         {connections.dialog}
+        {stopping ? (
+          <StopAgentDialog
+            client={client}
+            agentId={stopping.agentId}
+            requestKey={stopping.key}
+            onChanged={onChanged}
+            onStopped={() =>
+              keys.current.settle(JSON.stringify({ kind: 'stop_agent', agentId: stopping.agentId }))
+            }
+            onClose={() => setStopping(undefined)}
+          />
+        ) : null}
         <Presence>
           {deletion === undefined ? null : (
             <DeletionDialog
