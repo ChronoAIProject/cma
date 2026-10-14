@@ -187,6 +187,7 @@ function ConsoleContent({
       viewerId={user.id}
       controller={agent}
       accessUncertain={accessUncertain}
+      accessAuthorized={agentAccess.personalReady && !accessUncertain}
       detailsOpen={detailsOpen}
       onDetailsOpenChange={setDetailsOpen}
       onNavigate={onNavigate}

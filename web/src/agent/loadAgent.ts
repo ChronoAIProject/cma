@@ -39,7 +39,7 @@ export async function loadAgent(
   allowIncompleteHistory = false,
   onHistoryProgress?: (ready: ReadyAgent) => void,
 ): Promise<ReadyAgent & { readonly durableEvents: readonly AgentEvent[] }> {
-  const v2 = await client.agentTransport?.open(agentId, { signal });
+  const v2 = await client.agentTransport?.openForLoad(agentId, { signal });
   if (v2 !== undefined)
     return loadV2Agent(client, agentId, signal, v2, allowIncompleteHistory, onHistoryProgress);
   const [detail, transcript, usage] = await Promise.all([
