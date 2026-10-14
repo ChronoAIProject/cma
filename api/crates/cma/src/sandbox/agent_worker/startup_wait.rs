@@ -34,7 +34,14 @@ impl AgentWorker {
         // a bounded interval without publishing failure logs or runtime effects.
         let started = tokio::time::Instant::now();
         let budget = Duration::from_secs(10).min(self.config.lease_duration / 3);
+        let fallback = tokio::sync::Notify::new();
+        let readiness = self.config.parent_readiness.as_deref().unwrap_or(&fallback);
         loop {
+            // Register before reading so a commit during those reads cannot be
+            // lost. This hint only wakes the same fresh lease/lineage checks.
+            let changed = readiness.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
             let current = self.dependencies.store.get_agent(&agent.id).await?;
             if current.as_ref().is_none_or(|current| {
                 current.revision != agent.revision
@@ -77,7 +84,11 @@ impl AgentWorker {
             if remaining.is_zero() {
                 return self.defer_workspace(agent, at).await;
             }
-            tokio::time::sleep(Duration::from_millis(250).min(remaining)).await;
+            tokio::select! {
+                _ = &mut changed => {},
+                // Other API replicas have no local notification; keep recovery bounded.
+                _ = tokio::time::sleep(Duration::from_millis(250).min(remaining)) => {},
+            }
         }
     }
 
