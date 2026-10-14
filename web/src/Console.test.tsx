@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
 import type { User } from './auth/types';
@@ -17,11 +17,20 @@ const OWNER: User = {
   capabilities: ['create_sandbox', 'use_own_sandboxes', 'delete_own_sandbox'],
 };
 
-it('opens an Agent from the tree and keeps the public conversation and Workspace details connected', async () => {
+it('opens only Agent settings in Details while keeping conversation and tree navigation available', async () => {
   const onNavigate = vi.fn();
   const actor = userEvent.setup();
   render(
-    <CmaClientProvider client={agentClient()}>
+    <CmaClientProvider
+      client={agentClient({
+        readAgentSettings: async () => ({
+          model: 'gpt-6',
+          reasoning_effort: 'high',
+          permission_mode: 'autonomous',
+        }),
+        updateAgentSettings: vi.fn(),
+      })}
+    >
       <Console
         user={OWNER}
         route={{ kind: 'agent', agentId: 'agt_1' }}
@@ -34,7 +43,22 @@ it('opens an Agent from the tree and keeps the public conversation and Workspace
   await waitFor(() => expect(screen.getByRole('textbox', { name: 'Message' })).toHaveFocus());
   expect(screen.getByText('The repository is ready.')).toBeInTheDocument();
   await actor.click(screen.getByRole('button', { name: 'Show Agent details' }));
-  expect(screen.getByText('https://example.test/chrono-bot.git')).toBeInTheDocument();
+  const panel = within(screen.getByRole('complementary', { name: 'Agent details' }));
+  expect(await panel.findByLabelText('Model')).toHaveValue('gpt-6');
+  expect(panel.getByLabelText('Reasoning effort')).toHaveValue('high');
+  expect(panel.getByLabelText('Permission mode')).toHaveValue('autonomous');
+  expect(panel.getByRole('group', { name: 'Agent key scope' })).toBeVisible();
+  expect(panel.queryByText('https://example.test/chrono-bot.git')).not.toBeInTheDocument();
+  expect(panel.queryByRole('heading', { name: 'Creation' })).not.toBeInTheDocument();
+  await actor.click(screen.getByRole('button', { name: 'Close Agent details' }));
+  await actor.click(screen.getByRole('button', { name: 'Options for Agent one' }));
+  expect(screen.getByRole('menuitem', { name: 'Stop' })).toBeEnabled();
+  expect(screen.getByRole('menuitem', { name: /^Delete / })).toHaveAttribute(
+    'aria-disabled',
+    'true',
+  );
+  expect(screen.getByRole('menuitem', { name: 'Export history' })).toBeEnabled();
+  await actor.keyboard('{Escape}');
   const sandbox = screen.getByRole('treeitem', { name: /Atlas/ });
   sandbox.focus();
   await actor.keyboard('{Enter}');
