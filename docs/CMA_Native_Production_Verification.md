@@ -119,6 +119,39 @@ running `--initialize-home-tree`. Existing `native_vct_empty_v1` allocations kee
 their recorded image, original `/home/cma` mount, initializer and home authority.
 The new default does not migrate existing volumes.
 
+## Follow-up performance work awaiting production measurements
+
+The adapter overlaps independent fresh native authority reads while preserving
+Claim, Sandbox, Pod and PVC identity checks, policy validation, the final
+resourceVersion compare-and-swap, and post-resume home checks. Contextual resume
+uses the recorded home to render both generations after one graph proof. The
+focused no-explicit-policy transition now performs seven GETs and one PATCH,
+compared with twelve GETs and one PATCH before this change. These are request
+counts established by controlled tests, not measured production latency.
+
+Initial Agent connection publication reuses its exact locally staged conversation
+when the durable open receipt matches and no settings need replay. Missing local
+state still reconnects the recorded conversation. Update activation carries the
+current publication authority; a stream lost during publication retains durable
+recovery work. This removes the redundant second conversation open from normal
+startup without creating another conversation or weakening restart recovery.
+
+Paused, pausing and resuming Sandboxes retain navigation to their existing
+Workspaces and Agents. History and drafts remain visible. Runtime actions and
+message input follow the actual lifecycle state; an accepted resume does not
+advertise a ready runtime. Detailed underlying progress remains optional.
+
+The retained production resume sample spent approximately ten of its eleven
+Pod-startup seconds before containers started. Its initializer completed in the
+same recorded second, and the runtime became Ready in the second it started.
+The readiness probe has zero initial delay and a two-second period. There is no
+evidence from that sample that reducing probe delays would remove the dominant
+wait. The new default OnRootMismatch policy avoids recursive fsGroup remount
+processing when the volume root already has the expected ownership and mode;
+its permission preservation and timing must be measured on a fresh allocation.
+The original sample has no retained events sufficient to separate volume,
+network and sandbox setup time, so that wait is not attributed solely to fsGroup.
+
 ## Prior Agent follow-up — 16:26:14 SGT
 
 Before this combined release, candidate `03cbd332` was Ready at **16:26:14 SGT on
