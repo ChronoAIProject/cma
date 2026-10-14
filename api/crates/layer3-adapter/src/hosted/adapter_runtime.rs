@@ -162,7 +162,10 @@ impl HostedAdapter {
                 .await?;
         }
         let identity = provider_request_identity(&request)?;
-        let handle = self.backend.provision(request).await?;
+        let handle = match spec.home_volume.as_deref() {
+            Some(home) => self.backend.provision_with_home(request, home).await?,
+            None => self.backend.provision(request).await?,
+        };
         self.verify_spec_home(spec).await?;
         self.attach_state(handle, spec, identity).await
     }

@@ -3,6 +3,9 @@ use crate::agent_sandbox::NativePoolClaim;
 use crate::provider::ProviderSandboxRequest;
 use serde_json::json;
 
+#[path = "backend_provision_home_tests.rs"]
+mod provision_home_tests;
+
 const POD: &str = "/api/v1/namespaces/cma-test/pods/warm-member";
 
 struct Bound {
@@ -30,8 +33,10 @@ async fn bound_with_mode(explicit_policy: bool, mode: HomeVolumeMode) -> Bound {
         crate::runtime_bootstrap::RUNTIME_HOME_LAYOUT_LABEL.into(),
         "2".into(),
     );
-    spec.home.template_name.clear();
-    spec.home.template_generation.clear();
+    if spec.home.is_native_vct() {
+        spec.home.template_name.clear();
+        spec.home.template_generation.clear();
+    }
     let claim = super::super::home_tests::assigned_spec(&fixture, &spec).await;
     let home = adopted(&fixture, &claim).await;
     let request = request(&home, 1);

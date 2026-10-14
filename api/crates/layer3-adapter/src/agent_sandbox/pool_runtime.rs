@@ -17,6 +17,37 @@ use crate::{
 };
 
 impl AgentSandboxClient {
+    /// Persisted native VCT identity replaces only PVC/member origin discovery.
+    /// Admission still reads the complete live graph and fences its publication.
+    pub(crate) async fn provision_pool_runtime_with_home(
+        &self,
+        request: &ProviderSandboxRequest,
+        home: &HomeVolumeAttachment,
+    ) -> Result<RuntimeHandle> {
+        request.validate_volumes()?;
+        let identity = crate::hosted::provider_request_identity(request)?;
+        home.validate_for(&identity.sandbox_id)?;
+        if !home.request.policy.is_native_vct()
+            || home.request.scope.as_ref() != Some(&self.native_home_scope)
+            || request.metadata.get("cma/home-identity") != Some(&home.identity()?)
+        {
+            return Err(rejected(
+                "native runtime requires its persisted home authority",
+            ));
+        }
+        let origin = home
+            .receipt
+            .native_authority
+            .as_deref()
+            .ok_or_else(|| rejected("native home authority missing"))?;
+        origin.validate_for(
+            &self.config.namespace,
+            &self.config.deployment,
+            &home.request,
+        )?;
+        self.admit_pool_runtime(&origin.claim, home, request).await
+    }
+
     /// Resolve the pool already recorded on a persisted home attachment. No pool
     /// selection, claim creation or replacement home allocation happens here.
     pub async fn provision_pool_runtime(
