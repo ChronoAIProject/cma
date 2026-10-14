@@ -100,6 +100,10 @@ function AgentLifecycleForm({
   useEffect(() => {
     if (createdReceipt === undefined || operation === undefined || openTarget === undefined) return;
     if (openedOperation.current === operation.id) return;
+    // Handoff as soon as the admitted Agent is real (including `starting`) so
+    // the Agent surface can show the server-owned lifecycle stages. A
+    // succeeded operation has no separate admission read, so its receipt is
+    // opened directly after the server reports the final Agent identity.
     openedOperation.current = operation.id;
     if (operation.status === 'succeeded' ? clearIntent() : bindAgent(openTarget.id)) {
       handoffTransport();

@@ -3,6 +3,9 @@ import type { CmaWebClient } from '../api/client';
 import { useConnectionGate } from '../connections/useConnectionGate';
 import { Button } from '../ui/Button';
 import { lifecycleScopeForAgent, useLifecycleIntent } from './lifecycleIntent';
+import { AgentProvisioningProgress } from './AgentProvisioningProgress';
+import './AgentLifecycleCard.css';
+import './AgentLifecycleFollowup.css';
 
 interface Props {
   readonly client: CmaWebClient;
@@ -55,6 +58,11 @@ function RetainedSetup({
   const error = lifecycle.failure ?? connections.error;
   return (
     <>
+      {matches && intent.receipt ? (
+        <div className="agent-lifecycle-followup__progress">
+          <AgentProvisioningProgress receipt={intent.receipt} operation={operation} />
+        </div>
+      ) : null}
       {connections.dialog}
       {waiting ? (
         <div className="agent-action-error" role="status">
