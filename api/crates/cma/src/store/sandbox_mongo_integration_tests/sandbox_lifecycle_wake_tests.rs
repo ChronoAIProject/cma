@@ -1,0 +1,104 @@
+use super::*;
+use crate::store::admission_wake_test_support::CommitGate;
+use futures_util::FutureExt;
+use std::time::Duration;
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn lifecycle_admission_wake_follows_committed_pause_resume_and_delete_only() {
+    for action in ["pause", "revive", "delete"] {
+        let gate = Arc::new(CommitGate::default());
+        let client = gate.client().await;
+        let database = format!("cma_lifecycle_wake_{}", uuid::Uuid::new_v4().simple());
+        let store = MongoSandboxStore::open(&client, &database).await.unwrap();
+        let wake = store.sandbox_admitted.clone();
+        let mut original = sandbox(&format!("sbx_wake_{action}"));
+        if action == "revive" {
+            original.status = SandboxStatus::Paused;
+            original.runtime = None;
+            original.work = SandboxWorkState::new(SandboxWorkStep::None, NOW.into());
+            original.lifecycle.checkpoints.latest = Some(checkpoint(7));
+        }
+        store.create_sandbox(original.clone()).await.unwrap();
+        assert!(wake.notified().now_or_never().is_none());
+        let mut invalid = original.clone();
+        invalid.begin_retirement(MINUTE.into()).unwrap();
+        assert!(store
+            .commit(SandboxTransaction::SaveSandboxAndAppend {
+                command_revival: None,
+                expected_revision: 999,
+                sandbox: Box::new(invalid),
+                event_at: MINUTE.into(),
+                event: SandboxEventKind::StatusChanged {
+                    from: original.status,
+                    to: SandboxStatus::Retiring,
+                },
+            })
+            .await
+            .is_err());
+        assert!(wake.notified().now_or_never().is_none());
+        let writer = store.clone();
+        let input = original.clone();
+        gate.arm();
+        let task = tokio::spawn(async move {
+            if action == "delete" {
+                let mut next = input.clone();
+                next.begin_retirement(MINUTE.into()).unwrap();
+                writer
+                    .commit(SandboxTransaction::SaveSandboxAndAppend {
+                        command_revival: None,
+                        expected_revision: input.revision,
+                        sandbox: Box::new(next),
+                        event_at: MINUTE.into(),
+                        event: SandboxEventKind::StatusChanged {
+                            from: input.status,
+                            to: SandboxStatus::Retiring,
+                        },
+                    })
+                    .await
+                    .unwrap();
+            } else {
+                let command = if action == "pause" {
+                    SandboxLifecycleCommand::pause(input.id, input.owner, MINUTE.into(), None)
+                } else {
+                    SandboxLifecycleCommand::revive(
+                        input.id,
+                        input.owner,
+                        MINUTE.into(),
+                        SandboxReviveCause::ExplicitRequest,
+                    )
+                };
+                assert!(matches!(
+                    writer.schedule_sandbox_lifecycle(command).await.unwrap(),
+                    SandboxLifecycleCommandResult::Accepted(_)
+                ));
+            }
+        });
+        tokio::time::timeout(Duration::from_secs(5), gate.entered.notified())
+            .await
+            .unwrap();
+        let premature = wake.notified().now_or_never().is_some();
+        let before = store.get_sandbox(&original.id).await.unwrap().unwrap();
+        gate.release();
+        task.await.unwrap();
+        assert!(!premature, "{action} cannot wake before durable commit");
+        assert_eq!(before, original);
+        assert!(wake.notified().now_or_never().is_some(), "{action}");
+        assert!(wake.notified().now_or_never().is_none());
+        let next = store.get_sandbox(&original.id).await.unwrap().unwrap();
+        assert_ne!(next.status, original.status);
+        assert!(next.work.is_due(MINUTE));
+        assert!(store
+            .schedule_sandbox_lifecycle(SandboxLifecycleCommand::pause(
+                original.id,
+                SubjectId::new("wrong-owner"),
+                MINUTE.into(),
+                None,
+            ))
+            .await
+            .is_err());
+        assert!(wake.notified().now_or_never().is_none());
+        client.database(&database).drop().await.unwrap();
+        client.shutdown().await;
+    }
+}
