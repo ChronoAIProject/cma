@@ -31,6 +31,16 @@ function readIdentity(storage: BrowserStorage): { user: string; epoch: string } 
   return { user: row.user, epoch: row.epoch };
 }
 
+/** A speculative account read cannot replace an identity established while it waited. */
+export function guardAgentTransportIdentity(storage: BrowserStorage): () => void {
+  const identity = readIdentity(storage);
+  return () => {
+    const current = readIdentity(storage);
+    if (current?.user !== identity?.user || current?.epoch !== identity?.epoch)
+      throw new IdentityChangedError();
+  };
+}
+
 /** Clear only this tab's Agent transport state after logout or an account change. */
 export function clearAgentTransport(storage: BrowserStorage): void {
   const keys: string[] = [];
