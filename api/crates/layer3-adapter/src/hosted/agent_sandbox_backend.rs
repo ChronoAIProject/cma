@@ -20,6 +20,7 @@ mod binding;
 #[path = "agent_sandbox_context.rs"]
 mod context;
 use context::observation;
+pub use context::NativeStatusInspection;
 
 impl AgentSandboxBackend {
     pub fn new(client: AgentSandboxClient, transport: Arc<dyn HostedControlTransport>) -> Self {

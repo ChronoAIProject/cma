@@ -66,26 +66,80 @@ impl AgentSandboxBackend {
         if !home.request.policy.is_native_vct() {
             return Ok(None);
         }
+        let inspection = NativeStatusInspection {
+            backend: self,
+            handle,
+            request,
+            home,
+        };
+        if let Some(inspected) = self.transport.inspect_native_status(&inspection).await? {
+            return Ok(Some(inspected));
+        }
+        let Some(proof) = inspection.prove().await? else {
+            return Ok(None);
+        };
+        let response = self
+            .transport
+            .exchange(handle, RequestFrame::RuntimeStatus(proof.request().clone()))
+            .await?;
+        proof.complete(response).map(Some)
+    }
+}
+
+/// Opaque call-local operation. Only this backend can construct its fresh proof;
+/// transports may opt in after taking exclusive ownership of a reusable stream.
+pub struct NativeStatusInspection<'a> {
+    backend: &'a AgentSandboxBackend,
+    handle: &'a RuntimeHandle,
+    request: &'a ProviderSandboxRequest,
+    home: &'a HomeVolumeAttachment,
+}
+
+/// Not cloneable and never retained in transport state. Consumed by one reply.
+pub(crate) struct NativeStatusProof {
+    observation: RuntimeObservation,
+    pod: crate::agent_sandbox::PodBinding,
+    request: RuntimeStatusRequest,
+}
+
+impl NativeStatusInspection<'_> {
+    pub(crate) fn shares_client(&self, client: &AgentSandboxClient) -> bool {
+        self.backend.client.shares_runtime_authority(client)
+    }
+
+    pub(crate) fn handle(&self) -> &RuntimeHandle {
+        self.handle
+    }
+
+    pub(crate) fn identity(&self) -> Result<(String, String)> {
+        Ok((
+            crate::hosted::deployment::provider_request_identity(self.request)?.sandbox_id,
+            crate::provider_request_digest(self.request)?,
+        ))
+    }
+
+    pub(crate) async fn prove(&self) -> Result<Option<NativeStatusProof>> {
+        let (backend, handle, request, home) = (self.backend, self.handle, self.request, self.home);
         let (proof, policy) = tokio::join!(
-            self.client.native_runtime_proof(handle, request, home),
-            self.client.verify_native_runtime_policy(handle, home),
+            backend.client.native_runtime_proof(handle, request, home),
+            backend.client.verify_native_runtime_policy(handle, home),
         );
         // Consume graph errors and the bootstrap fallback before policy errors,
         // preserving the original authority/error precedence of this operation.
         let proof = proof?;
         if !proof.matches(request, home)?
-            || !self.acknowledged_assignment(handle, proof.pod(), request)?
+            || !backend.acknowledged_assignment(handle, proof.pod(), request)?
         {
             // An initial/replaced process must run the original bootstrap protocol.
             return Ok(None);
         }
         policy?;
-        if !self.acknowledged_assignment(handle, proof.pod(), request)? {
+        if !backend.acknowledged_assignment(handle, proof.pod(), request)? {
             return Err(AdapterError::Unavailable(
                 "runtime assignment retired during inspection".into(),
             ));
         }
-        self.bind_transport(handle, request).await?;
+        backend.bind_transport(handle, request).await?;
         let observed = observation(proof.member())?;
         let identity = crate::hosted::deployment::provider_request_identity(request)?;
         let status_request = RuntimeStatusRequest {
@@ -93,18 +147,31 @@ impl AgentSandboxBackend {
             generation: identity.generation,
             home_identity: home.identity()?,
         };
-        // Transport still obtains fresh Pod authority immediately before dispatch.
-        let response = self
-            .transport
-            .exchange(handle, RequestFrame::RuntimeStatus(status_request.clone()))
-            .await?;
+        Ok(Some(NativeStatusProof {
+            observation: observed,
+            pod: proof.pod().clone(),
+            request: status_request,
+        }))
+    }
+}
+
+impl NativeStatusProof {
+    pub(crate) fn pod(&self) -> &crate::agent_sandbox::PodBinding {
+        &self.pod
+    }
+
+    pub(crate) fn request(&self) -> &RuntimeStatusRequest {
+        &self.request
+    }
+
+    pub(crate) fn complete(self, response: ResponseFrame) -> Result<RuntimeInspection> {
         let ResponseFrame::RuntimeStatus(status) = response else {
             return Err(AdapterError::unexpected_reply("runtime status"));
         };
-        status.validate_for(&status_request)?;
-        Ok(Some(RuntimeInspection {
-            observation: observed,
+        status.validate_for(&self.request)?;
+        Ok(RuntimeInspection {
+            observation: self.observation,
             status: Some(status),
-        }))
+        })
     }
 }

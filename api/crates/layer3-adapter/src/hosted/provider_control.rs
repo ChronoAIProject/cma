@@ -22,17 +22,7 @@ impl ProviderHostedControlTransport {
                         super::super::provider_http::CONTROL_RESPONSE_BYTES,
                     )
                     .await?;
-                let mut response =
-                    super::super::provider_http::decode_control_bytes(reply.status, &reply.bytes)?;
-                if let ResponseFrame::Failure(failure) = &mut response {
-                    if !auth.1.is_empty() {
-                        failure.code = failure.code.replace(auth.1, "[redacted]");
-                        failure.detail = failure.detail.replace(auth.1, "[redacted]");
-                    }
-                }
-                control_correlation::validate(request, &response)?;
-                reply.recycle().await?;
-                return Ok(response);
+                return self.complete_native_control(endpoint, request, reply).await;
             }
             let response = self
                 .http
@@ -50,6 +40,49 @@ impl ProviderHostedControlTransport {
             .await
             .map_err(|_| AdapterError::Unavailable("runtime control request timed out".into()))??;
         control_correlation::validate(request, &response)?;
+        Ok(response)
+    }
+
+    pub(super) async fn status_on_native_lease(
+        &self,
+        endpoint: &RuntimeEndpoint,
+        status: &crate::RuntimeStatusRequest,
+        lease: native_pool::NativeLease,
+    ) -> crate::Result<ResponseFrame> {
+        let request = RequestFrame::RuntimeStatus(status.clone());
+        let body = serde_json::to_vec(&request)
+            .map_err(|_| AdapterError::Rejected("runtime request could not be encoded".into()))?;
+        let reply = self
+            .native_http_once(
+                endpoint,
+                http::Method::POST,
+                endpoint.control()?,
+                body,
+                super::super::provider_http::CONTROL_RESPONSE_BYTES,
+                lease,
+            )
+            .await?;
+        self.complete_native_control(endpoint, &request, reply)
+            .await
+    }
+
+    async fn complete_native_control(
+        &self,
+        endpoint: &RuntimeEndpoint,
+        request: &RequestFrame,
+        reply: native_transport::NativeHttpResponse,
+    ) -> crate::Result<ResponseFrame> {
+        let mut response =
+            super::super::provider_http::decode_control_bytes(reply.status, &reply.bytes)?;
+        let (_, token) = self.auth_header(endpoint);
+        if let ResponseFrame::Failure(failure) = &mut response {
+            if !token.is_empty() {
+                failure.code = failure.code.replace(token, "[redacted]");
+                failure.detail = failure.detail.replace(token, "[redacted]");
+            }
+        }
+        control_correlation::validate(request, &response)?;
+        reply.recycle().await?;
         Ok(response)
     }
 }
