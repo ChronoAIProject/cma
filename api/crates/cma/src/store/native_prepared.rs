@@ -17,7 +17,7 @@ mod planning;
 mod tests;
 mod tools;
 mod work;
-pub(super) use admission::claim_ready;
+pub(super) use admission::{claim_ready, ClaimOutcome};
 pub(super) use adoption::{adopt_agent, adopt_workspace};
 pub(crate) use model::NativePreparedPlan;
 use model::Record;
