@@ -1,6 +1,10 @@
 //! Native home transitions are returned one at a time for the worker to commit.
+use std::time::Duration;
+
 use layer2_core::sandbox::{SandboxHome, SandboxNativePool};
-use layer3_adapter::agent_sandbox::{NativePoolClaimRequest, NativePoolCleanup};
+use layer3_adapter::agent_sandbox::{
+    NativePoolClaim, NativePoolClaimRequest, NativePoolCleanup, NativePoolControl,
+};
 use layer3_adapter::{AdapterError, RuntimeProvisionRequest, SandboxAdapter};
 
 pub(super) async fn reserve(
@@ -47,13 +51,7 @@ pub(super) async fn next(
     match &native.claim {
         None => reservation.claim = Some(pools.claim(&native.request).await?),
         Some(original) if original.sandbox_name.is_none() => {
-            let assigned = pools.observe_claim(original).await?;
-            if assigned.sandbox_name.is_none() {
-                return Err(AdapterError::Unavailable(
-                    "native claim assignment remains pending".into(),
-                ));
-            }
-            reservation.claim = Some(assigned);
+            reservation.claim = Some(observe_assignment(pools, original).await?);
         }
         Some(original) => {
             let attachment = pools.adopt_home(original).await?;
@@ -67,6 +65,26 @@ pub(super) async fn next(
     next.validate(&layer2_core::SandboxId(current.request.sandbox_id.clone()))
         .map_err(|error| rejected(&error.to_string()))?;
     Ok(Some(next))
+}
+
+async fn observe_assignment(
+    pools: &dyn NativePoolControl,
+    original: &NativePoolClaim,
+) -> Result<NativePoolClaim, AdapterError> {
+    // The controller can assign warm capacity just after Claim creation. Observe
+    // only this persisted receipt briefly before yielding to durable retry;
+    // dependency and identity errors still leave immediately through `?`.
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let assigned = pools.observe_claim(original).await?;
+            if assigned.sandbox_name.is_some() {
+                return Ok(assigned);
+            }
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+    })
+    .await
+    .map_err(|_| AdapterError::Unavailable("native claim assignment remains pending".into()))?
 }
 
 pub(super) async fn next_cleanup(
