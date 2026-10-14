@@ -4,16 +4,16 @@
   margin: 0 auto;
 }
 
-.agent-lifecycle-followup__progress .agent-lifecycle-provisioning {
+.agent-lifecycle-followup__progress > section {
   gap: 10px;
 }
 
-.agent-lifecycle-followup__progress .agent-lifecycle-provisioning h3 {
+.agent-lifecycle-followup__progress > section h3 {
   margin: 0;
   font-size: 14px;
 }
 
-.agent-lifecycle-followup__progress .agent-lifecycle-provisioning > p {
+.agent-lifecycle-followup__progress > section > p {
   margin: 0;
   font-size: 12px;
 }
