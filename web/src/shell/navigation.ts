@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState } from 'react';
 import { ApiError } from '@chronoai/cma-sdk';
 import type { CmaWebClient } from '../api/client';
 import type { SandboxDetail, SandboxSummary, WorkspaceDetail } from '../api/types';
-import { sandboxRefreshDelay } from '../sandbox/lifecycle';
 
 export interface NavigationSandbox {
   readonly sandbox: SandboxDetail;
@@ -84,10 +83,8 @@ export function useNavigation(client: CmaWebClient): NavigationState & { refresh
         .then((items) => {
           if (controller.signal.aborted) return;
           setState({ status: 'ready', items });
-          timer = setTimeout(
-            poll,
-            Math.min(5000, ...items.map(({ sandbox }) => sandboxRefreshDelay(sandbox))),
-          );
+          // A transition in one Sandbox must not accelerate reads of the entire tree.
+          timer = setTimeout(poll, 5000);
         })
         .catch((error: unknown) => {
           if (controller.signal.aborted) return;

@@ -39,7 +39,7 @@ describe('navigation hierarchy loading', () => {
       status: 'ready',
       items: [{ sandbox: { lifecycle: { checkpoint: { phase: 'capture' } } } }],
     });
-    await act(() => vi.advanceTimersByTimeAsync(1500));
+    await act(() => vi.advanceTimersByTimeAsync(5000));
     expect(result.current).toMatchObject({
       status: 'ready',
       items: [{ sandbox: { lifecycle: { pause: { allowed: true } } } }],
