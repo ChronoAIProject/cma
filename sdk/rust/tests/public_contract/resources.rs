@@ -31,6 +31,14 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
         };
     }
     match op {
+        "GET /api/v1/agents/{id}/models" => c.check(client.agents().models(c.param("id")).await),
+        "GET /api/v1/agents/{id}/skills" => c.check(client.agents().skills(c.param("id")).await),
+        "POST /api/v1/agents/{id}/skills" => c.check(
+            client
+                .agents()
+                .install_skill(c.param("id"), &c.body()?, &c.key()?)
+                .await,
+        ),
         "GET /api/v1/agents/{id}/access-requests" => {
             c.check(client.agents().access_requests(c.param("id")).await)
         }
