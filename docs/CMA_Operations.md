@@ -306,7 +306,7 @@ channel definition must fit CMA's 65,536-byte record limit.
 | `GET /v1/channels/{channel_id}` | Owning creator | Return the public definition, current record version and endpoints. |
 | `PUT /v1/channels/{channel_id}` | Owning creator | Replace channel policy with the required `expected_version`; return 200 or 409 on a stale version. |
 | `DELETE /v1/channels/{channel_id}?expected_version=N` | Owning creator | Unbind the provider, delete the matching record and return 204. |
-| `POST /v1/channels/{channel_id}/test` | Owning creator | Run one synthetic provider turn under a 30-second total deadline; return acceptance latency, up to 200 Unicode characters and the provider level. |
+| `POST /v1/channels/{channel_id}/test` | Owning creator | Run one synthetic provider turn with up to 90 seconds for initialization and explicit Busy refusals, then 30 seconds for acceptance/completion; return acceptance latency, up to 200 Unicode characters and the provider level. Clients should allow 125 seconds. Only explicit Busy refusals retry, using the same input and idempotency key; transport or stream failures are not retried. |
 | `POST /v1/channels/{channel_id}/rekey` | CMA service bearer | Reseal the stored definition under the current master key with a version check and return its `kid`. |
 
 Create requires schema version 1, a name of 1–80 bytes, an Agent Profile snapshot,

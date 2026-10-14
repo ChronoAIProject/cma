@@ -22,6 +22,7 @@ pub(crate) struct Request<'a> {
     pub(crate) anonymous: bool,
     pub(crate) root: bool,
     pub(crate) headers: header::HeaderMap,
+    pub(crate) timeout: Option<Duration>,
 }
 
 impl<'a> Request<'a> {
@@ -36,6 +37,7 @@ impl<'a> Request<'a> {
             anonymous: false,
             root: false,
             headers: header::HeaderMap::new(),
+            timeout: None,
         }
     }
 
@@ -82,6 +84,7 @@ impl<'a> Request<'a> {
             anonymous: false,
             root: false,
             headers: header::HeaderMap::new(),
+            timeout: None,
             body: body
                 .map(serde_json::to_vec)
                 .transpose()
@@ -195,7 +198,7 @@ pub(crate) fn outgoing(
         .http
         .request(request.method, url)
         .header(header::ACCEPT, "application/json")
-        .timeout(client.request_timeout);
+        .timeout(request.timeout.unwrap_or(client.request_timeout));
     let has_content_type = request.headers.contains_key(header::CONTENT_TYPE);
     outgoing = outgoing.headers(request.headers);
     if !request.anonymous
