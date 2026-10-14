@@ -21,7 +21,12 @@ impl AgentSandboxPools {
         self.verify_explicit_network_policy(&original.request.pool)
             .await?;
         if original.request.home.policy.is_native_vct() {
-            return self.adopt_native_vct(original).await;
+            return match self.adopt_native_vct(original).await? {
+                super::native_home::NativeHomeAdoption::Ready(home) => Ok(*home),
+                super::native_home::NativeHomeAdoption::Pending(origin) => {
+                    self.wait_native_home(*origin).await
+                }
+            };
         }
         let desired_claim = model::claim(&self.config, &original.request)?;
         if original.name != desired_claim.name_any() {

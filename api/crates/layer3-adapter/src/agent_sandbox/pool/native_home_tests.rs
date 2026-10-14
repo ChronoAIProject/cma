@@ -6,6 +6,8 @@ use serde_json::json;
 
 #[path = "native_home_read_tests.rs"]
 mod read_tests;
+#[path = "native_home_ready_tests.rs"]
+mod ready_tests;
 
 fn spec() -> NativePoolSpec {
     let mut spec = super::tests::spec();
@@ -110,10 +112,17 @@ async fn native_home_requires_initializer_ready_before_returning_attachment() {
     let claim = assigned_spec(&fixture, &spec()).await;
     fixture.state.lock().unwrap().rows.get_mut(MEMBER).unwrap()["status"]["conditions"][0]
         ["status"] = json!("False");
+    let started = tokio::time::Instant::now();
     assert!(matches!(
-        fixture.client.adopt_home(&claim).await,
+        tokio::time::timeout(
+            std::time::Duration::from_secs(6),
+            fixture.client.adopt_home(&claim)
+        )
+        .await
+        .unwrap(),
         Err(crate::AdapterError::Unavailable(_))
     ));
+    assert!(started.elapsed() >= std::time::Duration::from_secs(5));
     fixture.state.lock().unwrap().rows.get_mut(MEMBER).unwrap()["status"]["conditions"][0]
         ["status"] = json!("True");
     let home = fixture.client.adopt_home(&claim).await.unwrap();
