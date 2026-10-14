@@ -800,7 +800,9 @@ and must preserve claimed members when replenishment changes.
 ### Prepared default Agent hierarchy
 
 The native pool can additionally prepare one or two complete default hierarchies
-using `CHRONO_NATIVE_PREPARED_TARGET=1` or `2`. The checked-in value is `0`.
+using `CHRONO_NATIVE_PREPARED_TARGET=1` or `2`. The checked-in ConfigMap keeps a
+safe default of `0`; the production API Deployment explicitly overrides it to
+`1`, while environments without that Deployment override remain disabled.
 Enable this after a matching native pool is ready, with the same pinned runtime
 image, CPU/memory and `native_vct_full_home_v2` home policy. Preparation acquires a
 real native Claim and home, initializes the empty workspace and worktree, and
@@ -839,11 +841,13 @@ creation. Reservations refresh their session health every five seconds, expire
 after thirty minutes, and retain cleanup authority on failures. Retiring rows
 count against the two-reservation cap until cleanup completes.
 
-To disable preparation, set `CHRONO_NATIVE_PREPARED_TARGET=0` and restart Agent
-Manager. This retires only unclaimed reservations; claimed owned Sandboxes keep
-their existing lifecycle. Run the compatible cleanup worker until unclaimed
-retirement debt is cleared before rolling back to a binary that does not know
-the separate collection.
+To disable preparation in production, set the explicit Deployment
+`CHRONO_NATIVE_PREPARED_TARGET=0` override (or remove it to inherit the ConfigMap
+default) and restart Agent Manager. The ConfigMap default remains `0`. This
+retires only unclaimed reservations; claimed owned Sandboxes keep their existing
+lifecycle. Run the compatible cleanup worker until unclaimed retirement debt is
+cleared before rolling back to a binary that does not know the separate
+collection.
 
 ## Deployment acceptance and coverage
 
