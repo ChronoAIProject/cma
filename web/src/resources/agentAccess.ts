@@ -11,10 +11,14 @@ export interface AgentAccessValue {
 export function useAgentAccess(
   client: ResourceViewsClient | undefined,
   agentId: string | undefined,
+  viewerId?: string,
+  context?: object,
 ) {
   const [personal, setPersonal] = useState<{
     readonly client: ResourceViewsClient;
     readonly agentId: string;
+    readonly viewerId?: string;
+    readonly context?: object;
   }>();
   const read = useMemo(
     () =>
@@ -23,8 +27,9 @@ export function useAgentAccess(
         : async (signal: AbortSignal): Promise<AuthorizedValue<AgentAccessValue>> => {
             const detail = await client.agents.readAccessible(agentId, { signal });
             signal.throwIfAborted();
+            if (detail.id !== agentId) throw new Error('Agent access identity changed.');
             if (detail.access !== 'shared') {
-              setPersonal({ client, agentId });
+              setPersonal({ client, agentId, viewerId, context });
               return { value: { detail } };
             }
             setPersonal(undefined);
@@ -33,18 +38,24 @@ export function useAgentAccess(
               throw new Error('Agent access is unavailable.');
             return { value: { detail, access }, revalidateAt: access.revalidate_at };
           },
-    [client, agentId],
+    [client, agentId, viewerId, context],
   );
   const result = useAuthorizedRead(read);
-  // A refusal (including timeout) permanently discards the old classification.
-  // A later refresh must not resurrect the personal controller before its read.
-  if (personal !== undefined && result.state.status === 'error') setPersonal(undefined);
-  // Keep the personal controller during classification refreshes. Its own
-  // reads and stream retain server authorization; refusal removes the controls.
+  // Only transient uncertainty can retain an already authorized personal view.
+  // Refusal discards the classification permanently, including during later retries.
+  if (personal !== undefined && result.state.status === 'error' && !result.state.transient)
+    setPersonal(undefined);
   const personalReady =
+    personal !== undefined &&
     personal?.client === client &&
     personal?.agentId === agentId &&
-    result.state.status !== 'error' &&
+    personal?.viewerId === viewerId &&
+    personal?.context === context &&
+    (result.state.status !== 'error' || result.state.transient === true) &&
     (result.state.status !== 'ready' || result.state.value.detail.access !== 'shared');
-  return { ...result, personalReady };
+  return {
+    ...result,
+    personalReady,
+    personalReadOnly: personalReady && result.state.status !== 'ready',
+  };
 }
