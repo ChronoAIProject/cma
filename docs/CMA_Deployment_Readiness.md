@@ -818,6 +818,17 @@ creation. The authenticated owner's quota, name and idempotency checks remain
 in the admission transaction. Claimed rows retain the exact Sandbox, Workspace,
 Agent, worktree, home and session identity for reconciliation.
 
+For an exactly matched consumed preparation, owned Agent startup replays the
+worktree and Agent-home requests in one attempt after a fresh runtime inspection.
+It records both ordered cleanup debts before either request, executes each
+resource's writer fence, then atomically publishes both matching receipts and
+completion logs. Publication writes revision-conditioned auxiliary fences on
+the live Sandbox, Workspace, Worktree and claimed preparation. A changed parent,
+worker lease or preparation cannot publish success. An interrupted attempt keeps
+both debts; recovery can replay the pair or use the ordinary individual steps
+when preparation evidence is unavailable. No runtime request is omitted, and
+metadata conflict retries contain publication only.
+
 For acceptance, record a ready reservation's IDs and native Claim/member/PVC
 identity; submit one explicit create; verify that the resulting owned hierarchy
 retains those identities and starts its first message only after credential and

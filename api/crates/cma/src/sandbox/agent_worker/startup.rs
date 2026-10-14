@@ -36,6 +36,21 @@ impl AgentWorker {
             Ok(context) => context,
             Err(failure) => return self.handle_failure(agent, failure, now).await,
         };
+        if self
+            .dependencies
+            .store
+            .prepared_agent_replay_matches(
+                &agent,
+                &context.sandbox,
+                &context.workspace,
+                &context.worktree,
+            )
+            .await?
+        {
+            return self
+                .replay_prepared_resources(agent, context, now + started.elapsed())
+                .await;
+        }
         let request = WorktreeRequest::new(
             format!(
                 "worktree:{}:{}:add:v1",

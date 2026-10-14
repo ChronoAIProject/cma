@@ -15,6 +15,33 @@ use super::sandbox_mongo::{MongoSandboxStore, DOCUMENT_SCHEMA_VERSION, TRANSACTI
 
 #[async_trait::async_trait]
 impl AgentWorkerStore for MongoSandboxStore {
+    async fn prepared_agent_replay_matches(
+        &self,
+        agent: &layer2_core::sandbox::Agent,
+        sandbox: &layer2_core::sandbox::Sandbox,
+        workspace: &layer2_core::sandbox::Workspace,
+        worktree: &layer2_core::sandbox::Worktree,
+    ) -> Result<bool, SandboxStoreError> {
+        if agent.work.warm_conversation_id.is_none() {
+            return Ok(false);
+        }
+        let mut session = self
+            .client
+            .start_session()
+            .await
+            .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
+        Ok(super::native_prepared::replay_proof_revision(
+            self,
+            agent,
+            sandbox,
+            workspace,
+            worktree,
+            &mut session,
+        )
+        .await?
+        .is_some())
+    }
+
     async fn live_agent_connections(
         &self,
         page: &PageRequest,

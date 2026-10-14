@@ -10,11 +10,12 @@ use mongodb::{Collection, IndexModel};
 
 mod admission;
 mod adoption;
+mod agent_replay;
 mod authority;
 mod model;
 mod planning;
 #[cfg(test)]
-mod tests;
+pub(in crate::store) mod tests;
 mod tools;
 mod work;
 mod workspace_proof;
@@ -22,6 +23,7 @@ pub(super) use admission::{claim_ready, ClaimOutcome};
 pub(super) use adoption::{
     adopt_agent, adopt_workspace, completed_installation_digest, completed_workspace,
 };
+pub(super) use agent_replay::replay_proof_revision;
 pub(crate) use model::NativePreparedPlan;
 use model::Record;
 pub(super) use tools::prepared_conversation;

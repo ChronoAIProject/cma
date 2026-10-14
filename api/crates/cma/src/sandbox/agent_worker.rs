@@ -13,6 +13,7 @@ mod cleanup;
 mod connection;
 mod first_message;
 mod live_skills;
+mod prepared_replay;
 mod reconcile;
 mod startup;
 mod startup_open;
