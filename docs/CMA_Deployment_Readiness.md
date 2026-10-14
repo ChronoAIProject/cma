@@ -831,6 +831,13 @@ both debts; recovery can replay the pair or use the ordinary individual steps
 when preparation evidence is unavailable. No runtime request is omitted, and
 metadata conflict retries contain publication only.
 
+First-message admission backs off bounded transaction conflicts. When all attempts
+are known to have aborted, the worker rereads the exact first-message record and
+its current unexpired writer lease before releasing that lease for a one-second
+retry. An admitted or uncertain dispatch is never reset to queued; ambiguous
+commits keep their existing reconciliation path. This prevents an unadmitted
+first message from waiting for the full worker lease after database contention.
+
 For acceptance, record a ready reservation's IDs and native Claim/member/PVC
 identity; submit one explicit create; verify that the resulting owned hierarchy
 retains those identities and starts its first message only after credential and
