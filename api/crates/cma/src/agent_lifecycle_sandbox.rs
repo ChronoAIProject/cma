@@ -108,6 +108,7 @@ impl InlineAgentLifecycle {
             .await
             .map_err(|error| sandbox_context_error(error, sandbox.id.as_str()))?;
         tokio::time::timeout(Duration::from_secs(180), async {
+            let started = tokio::time::Instant::now();
             loop {
                 let current = self
                     .workspaces
@@ -117,7 +118,7 @@ impl InlineAgentLifecycle {
                 match current.status {
                     WorkspaceStatus::Ready => return Ok(()),
                     WorkspaceStatus::Preparing => {
-                        tokio::time::sleep(Duration::from_millis(500)).await
+                        tokio::time::sleep(worker::readiness_delay(started)).await
                     }
                     _ => {
                         return Err(AgentLifecycleProvisioningError::Conflict(
