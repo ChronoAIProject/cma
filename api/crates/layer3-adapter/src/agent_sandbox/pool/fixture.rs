@@ -17,6 +17,7 @@ pub(super) struct State {
     pub list_queries: Vec<String>,
     pub assignments: Vec<crate::runtime_bootstrap::RuntimeBootstrapRequest>,
     pub fail_exec: bool,
+    pub native_annotation_generation: bool,
     version: u64,
 }
 
@@ -322,7 +323,13 @@ fn respond(state: &Mutex<State>, method: &str, path: &str, body: Value) -> (u16,
             merge(&mut next, &body);
             state.version += 1;
             next["metadata"]["resourceVersion"] = json!(state.version.to_string());
-            if body.get("spec").is_some() {
+            if body.get("spec").is_some()
+                || (state.native_annotation_generation
+                    && path.ends_with("/sandboxes/warm-member")
+                    && body["metadata"]["annotations"]
+                        .get(NATIVE_HOME_ANNOTATION)
+                        .is_some())
+            {
                 next["metadata"]["generation"] =
                     json!(next["metadata"]["generation"].as_u64().unwrap() + 1);
             }
