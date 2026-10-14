@@ -107,10 +107,11 @@ pub(crate) async fn adopt_bound_runtime(
         sandbox_spec(sandbox, deployment_id),
     )
     .with_expected_image(&binding.runtime_version);
-    let observed = adapter
-        .adopt_runtime(&request)
+    let inspected = adapter
+        .inspect_runtime(&request)
         .await?
         .ok_or_else(runtime_absent)?;
+    let observed = inspected.observation;
     if observed.handle != handle
         || observed.sandbox_id != sandbox.id.as_str()
         || observed.generation != generation
@@ -121,7 +122,9 @@ pub(crate) async fn adopt_bound_runtime(
         ));
     }
     if sandbox.lifecycle.home.is_some() {
-        let status = adapter.runtime_status(&handle).await?;
+        let status = inspected
+            .status
+            .ok_or_else(|| AdapterError::Rejected("runtime process status missing".into()))?;
         if !sandbox
             .runtime_process_matches(&status)
             .map_err(|_| AdapterError::Rejected("runtime process identity is invalid".into()))?

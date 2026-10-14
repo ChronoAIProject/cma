@@ -222,7 +222,7 @@ impl HostedAdapter {
         Ok(())
     }
 
-    async fn attach_state(
+    pub(super) async fn attach_state(
         &self,
         handle: RuntimeHandle,
         spec: &SandboxSpec,
@@ -253,7 +253,10 @@ impl HostedAdapter {
         Ok(handle)
     }
 
-    fn verify_adoption_home_route(&self, request: &RuntimeAdoptionRequest) -> crate::Result<()> {
+    pub(super) fn verify_adoption_home_route(
+        &self,
+        request: &RuntimeAdoptionRequest,
+    ) -> crate::Result<()> {
         if let Some(home) = &request.spec.home_volume {
             self.backend
                 .verify_retained_home_route(&request.handle, &home.request)?;
@@ -277,7 +280,10 @@ impl HostedAdapter {
         Ok(())
     }
 
-    async fn verify_home(&self, home: &crate::HomeVolumeAttachment) -> crate::Result<()> {
+    pub(super) async fn verify_home(
+        &self,
+        home: &crate::HomeVolumeAttachment,
+    ) -> crate::Result<()> {
         self.home_volumes
             .as_ref()
             .ok_or_else(|| {
@@ -288,7 +294,7 @@ impl HostedAdapter {
     }
 }
 
-fn validate_inventory(inventory: &[RuntimeObservation]) -> crate::Result<()> {
+pub(super) fn validate_inventory(inventory: &[RuntimeObservation]) -> crate::Result<()> {
     let mut handles = BTreeSet::new();
     let mut generations = BTreeSet::new();
     for observation in inventory {

@@ -28,6 +28,19 @@ impl Assignment {
 }
 
 impl AgentSandboxBackend {
+    pub(super) fn acknowledged_assignment(
+        &self,
+        handle: &RuntimeHandle,
+        pod: &PodBinding,
+        request: &ProviderSandboxRequest,
+    ) -> Result<bool> {
+        Ok(Assignment::for_request(pod, request)?
+            .as_ref()
+            .is_some_and(|candidate| {
+                self.assignments.lock().unwrap().get(handle) == Some(candidate)
+            }))
+    }
+
     pub(super) fn forget_assignment(&self, handle: &RuntimeHandle) {
         self.assignments.lock().unwrap().remove(handle);
     }
@@ -80,7 +93,7 @@ impl AgentSandboxBackend {
         self.bind_transport(handle, request).await
     }
 
-    async fn bind_transport(
+    pub(super) async fn bind_transport(
         &self,
         handle: &RuntimeHandle,
         request: &ProviderSandboxRequest,

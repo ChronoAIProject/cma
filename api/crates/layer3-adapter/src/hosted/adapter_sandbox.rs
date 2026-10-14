@@ -101,6 +101,13 @@ impl SandboxAdapter for HostedAdapter {
         self.resume_exact(request, next).await
     }
 
+    async fn inspect_runtime(
+        &self,
+        request: &RuntimeAdoptionRequest,
+    ) -> crate::Result<Option<crate::RuntimeInspection>> {
+        self.inspect_exact(request).await
+    }
+
     async fn runtime_status(&self, handle: &RuntimeHandle) -> crate::Result<crate::RuntimeStatus> {
         self.inspect_runtime_status(handle).await
     }

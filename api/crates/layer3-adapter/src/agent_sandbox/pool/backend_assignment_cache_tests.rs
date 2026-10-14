@@ -227,3 +227,6 @@ async fn failed_assignment_and_missing_container_incarnation_never_enter_cache()
         .unwrap();
     assert_eq!(bound.fixture.state.lock().unwrap().assignments.len(), 5);
 }
+
+#[path = "backend_native_proof_tests.rs"]
+mod native_proof_tests;

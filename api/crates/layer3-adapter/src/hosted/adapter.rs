@@ -26,6 +26,8 @@ use crate::{
 mod agent;
 #[path = "adapter_checkpoint.rs"]
 mod checkpoint;
+#[path = "adapter_context.rs"]
+mod context;
 #[path = "adapter_exchange.rs"]
 mod exchange;
 #[path = "adapter_install.rs"]

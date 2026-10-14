@@ -5,6 +5,7 @@ mod assignment;
 mod connection;
 mod lifecycle;
 mod model;
+mod native_runtime_proof;
 mod network_policy;
 mod pods;
 mod pool;
@@ -48,6 +49,7 @@ pub struct AgentSandboxClient {
     claims: Api<PersistentVolumeClaim>,
     config: AgentSandboxConfig,
     scope: HomeVolumeScope,
+    native_home_scope: HomeVolumeScope,
     runtime_streams: std::sync::Arc<tokio::sync::Semaphore>,
     runtime_requests: std::sync::Arc<tokio::sync::Semaphore>,
 }
@@ -73,8 +75,12 @@ impl AgentSandboxClient {
             sandboxes: Api::namespaced_with(client.clone(), &config.namespace, &resource),
             pods: Api::namespaced(client.clone(), &config.namespace),
             claims: Api::namespaced(client, &config.namespace),
-            config,
+            native_home_scope: HomeVolumeScope::from_authority(
+                "native-vct-empty-v1",
+                &[authority, &config.namespace, &config.deployment],
+            )?,
             scope,
+            config,
             runtime_streams: std::sync::Arc::new(tokio::sync::Semaphore::new(64)),
             runtime_requests: std::sync::Arc::new(tokio::sync::Semaphore::new(32)),
         })
@@ -151,7 +157,6 @@ impl AgentSandboxClient {
             return Err(unavailable("Sandbox is not ready"));
         }
         let name = object.name_any();
-        let uid = object.uid().ok_or_else(|| rejected("Sandbox has no UID"))?;
         let page = self
             .pods
             .list(
@@ -161,6 +166,19 @@ impl AgentSandboxClient {
             )
             .await
             .map_err(api_error)?;
+        self.pod_binding_from_page(&object, page)
+    }
+
+    fn pod_binding_from_page(
+        &self,
+        object: &DynamicObject,
+        page: kube::api::ObjectList<Pod>,
+    ) -> Result<PodBinding> {
+        if object.metadata.deletion_timestamp.is_some() || !model::ready(object) {
+            return Err(unavailable("Sandbox is not ready"));
+        }
+        let name = object.name_any();
+        let uid = object.uid().ok_or_else(|| rejected("Sandbox has no UID"))?;
         if page.metadata.continue_.is_some_and(|s| !s.is_empty()) {
             return Err(unavailable("Sandbox Pod inventory is incomplete"));
         }
@@ -174,7 +192,7 @@ impl AgentSandboxClient {
         if owned.next().is_some() {
             return Err(unavailable("Sandbox has multiple owned Pods"));
         }
-        model::pod_binding(&object, &pod)
+        model::pod_binding(object, &pod)
     }
 
     pub(crate) fn control_token(&self, runtime_name: &str) -> String {
