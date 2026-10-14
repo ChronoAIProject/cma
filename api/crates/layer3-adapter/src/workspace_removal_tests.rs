@@ -4,6 +4,7 @@ fn request() -> WorkspaceRemovalRequest {
     WorkspaceRemovalRequest {
         runtime: RuntimeStatus {
             agent_skill_install: false,
+            agent_model_catalog: false,
             sandbox_id: "sandbox".into(),
             generation: 2,
             home_identity: "a".repeat(43),
