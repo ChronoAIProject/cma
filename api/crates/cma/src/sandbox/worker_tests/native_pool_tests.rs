@@ -66,6 +66,7 @@ impl Pools {
                 service_account: "runtime".into(),
                 image_pull_secrets: vec![],
                 template_network_policy: None,
+                fs_group_change_policy: None,
             },
             name: "pool".into(),
             uid: "pool-uid".into(),

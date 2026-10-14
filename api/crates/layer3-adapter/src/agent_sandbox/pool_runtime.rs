@@ -125,7 +125,7 @@ impl AgentSandboxClient {
     ) -> Result<RuntimeHandle> {
         home.receipt.validate_for(&home.request)?;
         self.pools
-            .verify_explicit_network_policy(&original.request.pool)
+            .verify_explicit_template_policy(&original.request.pool)
             .await?;
         if request.metadata.get("cma/runtime-generation")
             != Some(&original.request.runtime_generation.to_string())
@@ -252,7 +252,7 @@ impl AgentSandboxClient {
                 &origin.claim.request.home,
             )?;
             self.pools
-                .verify_explicit_network_policy(&origin.claim.request.pool)
+                .verify_explicit_template_policy(&origin.claim.request.pool)
                 .await?;
         }
         Ok(())

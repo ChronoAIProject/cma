@@ -61,6 +61,7 @@ impl AgentSandboxPools {
         original.config.service_account = plan.pod_policy.service_account.clone();
         original.config.image_pull_secrets = plan.pod_policy.image_pull_secrets.clone();
         original.config.template_network_policy = plan.pod_policy.template_network_policy.clone();
+        original.config.template_fs_group_change_policy = plan.pod_policy.fs_group_change_policy;
         if plan.namespace != self.config.namespace
             || plan.deployment != self.config.deployment
             || original.plan(&plan.spec)? != *plan
@@ -289,6 +290,7 @@ impl AgentSandboxPools {
             service_account: definition.pod_policy.service_account,
             image_pull_secrets: definition.pod_policy.image_pull_secrets,
             template_network_policy: definition.pod_policy.template_network_policy,
+            template_fs_group_change_policy: definition.pod_policy.fs_group_change_policy,
             ..self.config.clone()
         };
         let desired = model::template(&config, &definition.spec)?;

@@ -20,6 +20,8 @@ pub struct WarmPoolView {
     pub revision: u64,
     /// Immutable runtime image selected when this target was created.
     pub image: String,
+    /// Immutable image, resources, home and Pod policy identity.
+    pub config_sha256: String,
     /// CPU reservation for each member, in millicores.
     pub cpu_millis: u32,
     /// Memory reservation for each member, in MiB.
@@ -49,6 +51,8 @@ pub struct WarmPoolList {
     pub default_cpu_millis: u32,
     /// Default member memory reservation, in MiB.
     pub default_memory_mib: u32,
+    /// Exact default configuration; `None` when the server cannot plan it.
+    pub default_config_sha256: Option<String>,
     /// Whether provider inventory could be observed.
     pub available: bool,
 }

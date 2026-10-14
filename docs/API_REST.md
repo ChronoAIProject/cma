@@ -1183,6 +1183,14 @@ returns 409, including changing an omitted default into an explicit reference.
 | `POST /api/v1/admin/warm-pools` | ConfigureWarmPoolBody; key | - | 202 WarmPoolView |
 | `PUT /api/v1/admin/warm-pools/{id}` | ResizeWarmPoolBody | - | 202 WarmPoolView |
 
+Warm pool views include `config_sha256`, the immutable image/resources/home/Pod
+policy digest. Inventory includes `default_config_sha256` for the current default
+configuration (`null` when planning is unavailable). Select the deployment default
+by exact digest equality: old and new policies can share image and CPU/memory.
+A new policy requires a new creation key; replay and resize retain the original
+policy. New native pools use `fsGroupChangePolicy: OnRootMismatch`; historical
+pools and retained homes keep their admitted templates.
+
 ### Agent profiles
 
 | Operation | Body / Key | Query | Response |
