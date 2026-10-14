@@ -107,6 +107,10 @@ export function useAgentController(
     client,
     suspended ? undefined : agentId,
     state.status === 'ready' && state.detail.id === agentId ? state.detail.sandbox.id : undefined,
+    state.status === 'ready' &&
+      state.detail.id === agentId &&
+      state.detail.status === 'starting' &&
+      state.v2 !== undefined,
   );
   const activeTurn =
     state.status === 'ready' &&
