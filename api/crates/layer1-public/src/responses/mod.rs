@@ -14,6 +14,7 @@ pub mod v2;
 mod conversations;
 mod create;
 mod items;
+mod model;
 mod parse;
 mod retrieve;
 mod stream;

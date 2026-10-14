@@ -162,6 +162,7 @@ async fn completed() -> (crate::AgentConversationState, layer2_core::sandbox::Ag
         agent.clone(),
         vec![
             AgentLogKind::TurnStarted {
+                model: None,
                 turn_sequence: 3,
                 origin_key: None,
             },

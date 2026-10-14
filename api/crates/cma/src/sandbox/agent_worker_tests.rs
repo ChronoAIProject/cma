@@ -881,6 +881,7 @@ async fn worker_does_not_resend_a_first_message_fenced_by_the_same_lease() {
             recovery_generation: 1,
         },
         AgentLogKind::TurnStarted {
+            model: None,
             turn_sequence,
             origin_key: Some("in-progress-first".into()),
         },

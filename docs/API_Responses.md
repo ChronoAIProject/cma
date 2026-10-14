@@ -12,6 +12,18 @@ v2 rules in this section.
 
 ## Responses v2
 
+An optional request `model` must match the Agent's current conversation settings;
+it does not override those settings. Once a command starts a turn, its response
+retains the model selected at that durable dispatch boundary. Later settings
+changes do not relabel earlier responses. Before dispatch, the retrieved response
+and `response.created` retain the immutable creation model as a hint, preserving
+their existing equivalence and replay cursors. That opening hint does not
+establish which model executed the turn. `response.in_progress`
+and the terminal response carry the selected model. `deployment-default` means
+the recorded turn delegated model selection to
+the runtime. Legacy turns without a retained model use the immutable creation
+model only when no settings edit preceded them; otherwise they report `unknown`.
+
 All v2 endpoints belong to the control plane. No Responses server runs inside
 an Agent Sandbox. Creation requires a current authenticated credential in CMA's
 durable custody. Browser requests retain their existing sign-in incarnation.
@@ -435,7 +447,7 @@ message with text content.
 | `stream` | Required as literal `true` |
 | `metadata` | Honored; at most 16 string pairs, with bounded keys and values |
 | `previous_response_id` | Honored as the linear-thread predecessor fence |
-| `model` | Optional string, accepted but ignored; response uses the Agent Profile's pinned model |
+| `model` | Optional string, accepted but ignored; response retains the Agent conversation model selected when its turn started |
 | `store` | Omitted or `true`; `false` is refused because chat history is durable |
 | `instructions` | Refused by name |
 | `reasoning` | Refused by name |

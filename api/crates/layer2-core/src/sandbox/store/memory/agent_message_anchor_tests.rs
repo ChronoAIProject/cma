@@ -405,6 +405,7 @@ async fn recovery_rejects_semantic_foreign_gapped_or_excessive_log_suffix_withou
                 }
                 1 => {
                     entry.kind = AgentLogKind::TurnStarted {
+                        model: None,
                         turn_sequence: entry.seq,
                         origin_key: None,
                     }

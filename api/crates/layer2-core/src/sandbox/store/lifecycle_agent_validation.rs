@@ -285,6 +285,7 @@ fn validate_queue_progress(
             state: AgentOperationDelivery::DispatchFenced,
         },
         AgentLogKind::TurnStarted {
+            model: Some(current.settings().model),
             turn_sequence,
             origin_key: Some(queued_message_origin(queued_sequence)),
         },
