@@ -180,28 +180,12 @@ impl NativeWarmPools {
         {
             return Ok(());
         }
-        let key = format!("system-default-v1-{}", plan.config_sha256);
-        let id = target_id(SYSTEM_ACTOR, &key);
-        if self.store.find(&id).await?.is_some() {
+        let target = default_target(plan, body);
+        if self.store.find(&target.id).await?.is_some() {
             return Ok(());
         }
         // A prior image/policy remains independently owned and may still back
         // retained Sandboxes. It is deliberately not resized or deleted here.
-        let target = PoolTarget {
-            id,
-            document_schema_version: 1,
-            revision: 1,
-            actor: SYSTEM_ACTOR.into(),
-            requested: body,
-            plan,
-            binding: None,
-            target_replicas: self.default_target,
-            applied_revision: 0,
-            error: None,
-            lease: None,
-            lease_until: mongodb::bson::DateTime::from_millis(0),
-            reconcile_after: mongodb::bson::DateTime::from_millis(0),
-        };
         // Lost insert acknowledgements are resolved by the store's idempotent
         // identity lookup. A duplicate exact plan is safe to leave untouched.
         self.store.insert(target).await.map(|_| ())
@@ -373,6 +357,25 @@ fn authorize(caller: &Caller) -> Result<(), WarmPoolError> {
     caller
         .require(Capability::ConfigurePlatform)
         .map_err(|_| WarmPoolError::Forbidden)
+}
+
+fn default_target(plan: NativePoolConfiguration, requested: ConfigureWarmPoolBody) -> PoolTarget {
+    let key = format!("system-default-v1-{}", plan.config_sha256);
+    PoolTarget {
+        id: target_id(SYSTEM_ACTOR, &key),
+        document_schema_version: 1,
+        revision: 1,
+        actor: SYSTEM_ACTOR.into(),
+        target_replicas: requested.target_replicas,
+        requested,
+        plan,
+        binding: None,
+        applied_revision: 0,
+        error: None,
+        lease: None,
+        lease_until: mongodb::bson::DateTime::from_millis(0),
+        reconcile_after: mongodb::bson::DateTime::from_millis(0),
+    }
 }
 
 fn target_id(actor: &str, key: &str) -> String {
