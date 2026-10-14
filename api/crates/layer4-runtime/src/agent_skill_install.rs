@@ -152,7 +152,10 @@ fn rename_new(source: &Path, destination: &Path) -> std::io::Result<()> {
     let destination = CString::new(destination.as_os_str().as_bytes())?;
     #[cfg(target_os = "linux")]
     let result = unsafe {
-        libc::renameat2(
+        // musl does not export renameat2 on every supported version. Invoke the
+        // same atomic no-replace syscall using libc's architecture-specific ID.
+        libc::syscall(
+            libc::SYS_renameat2,
             libc::AT_FDCWD,
             source.as_ptr(),
             libc::AT_FDCWD,
