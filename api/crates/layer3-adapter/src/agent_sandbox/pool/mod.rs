@@ -6,6 +6,7 @@ mod control;
 mod home;
 mod home_origin;
 mod native_home;
+mod native_home_recovery;
 mod native_home_store;
 mod native_proof;
 pub use native_home_store::NativeHomeVolumes;
