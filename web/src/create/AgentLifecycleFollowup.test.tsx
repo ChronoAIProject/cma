@@ -41,6 +41,13 @@ it('continues observation after reload without resubmitting, and clears only con
   const client = agentClient({ readAgentLifecycle: read, createAgentLifecycle: create });
   const first = render(<AgentLifecycleFollowup client={client} viewerId="owner" agentId="agt_1" />);
   await waitFor(() => expect(read).toHaveBeenCalledOnce());
+  expect(
+    await screen.findByRole('region', { name: 'Agent provisioning progress' }),
+  ).toBeInTheDocument();
+  expect(screen.getByText('Sandbox')).toBeInTheDocument();
+  expect(screen.getByText('Workspace provisioning')).toBeInTheDocument();
+  expect(screen.getByText('Key permissions')).toBeInTheDocument();
+  expect(screen.getByText('Agent startup')).toBeInTheDocument();
   expect(sessionStorage.getItem(key)).toContain('original-key');
   first.unmount();
   operation = { ...running, status: 'succeeded' };
