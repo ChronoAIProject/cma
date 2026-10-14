@@ -178,3 +178,99 @@ async fn scope_resume_refuses_unreserved_generation_and_unrelated_spec_changes_b
     }
     assert!(backend.0.lock().unwrap().is_empty());
 }
+
+struct HomeResumeBackend {
+    storage: Arc<Storage>,
+    replace_after_resume: bool,
+    homes: Mutex<Vec<HomeVolumeAttachment>>,
+}
+
+#[async_trait::async_trait]
+impl HostedBackend for HomeResumeBackend {
+    async fn resume_with_home(
+        &self,
+        handle: &RuntimeHandle,
+        previous: &ProviderSandboxRequest,
+        next: &ProviderSandboxRequest,
+        home: &HomeVolumeAttachment,
+    ) -> crate::Result<()> {
+        assert_eq!(handle.as_str(), "agent-sandbox:retained:original");
+        assert_eq!(
+            previous.metadata["cma/home-identity"],
+            home.identity().unwrap()
+        );
+        assert_eq!(next.metadata["cma/home-identity"], home.identity().unwrap());
+        self.homes.lock().unwrap().push(home.clone());
+        if self.replace_after_resume {
+            self.storage.missing.store(true, Ordering::SeqCst);
+        }
+        Ok(())
+    }
+    async fn provision(&self, _: ProviderSandboxRequest) -> crate::Result<RuntimeHandle> {
+        panic!("resume only")
+    }
+    async fn exchange(&self, _: &RuntimeHandle, _: RequestFrame) -> crate::Result<ResponseFrame> {
+        panic!("resume only")
+    }
+    async fn open_agent(
+        &self,
+        _: &RuntimeHandle,
+        _: FencedRequest<AgentLaunch>,
+        _: Option<String>,
+        _: HostedAgentOpenSettings,
+        _: mpsc::Sender<ConversationUpdate>,
+    ) -> crate::Result<(ConversationChannel, FencedReceipt<AgentOpenReceipt>)> {
+        panic!("resume only")
+    }
+    async fn teardown(&self, _: &RuntimeHandle) -> crate::Result<()> {
+        panic!("resume only")
+    }
+}
+
+struct NoNewRoute;
+#[async_trait::async_trait]
+impl crate::hosted::RuntimeRoutingStore for NoNewRoute {
+    async fn select(&self, _: &str, _: u64, _: bool) -> crate::Result<bool> {
+        panic!("resume must keep its recorded provider")
+    }
+}
+
+#[tokio::test]
+async fn contextual_resume_routes_exact_home_and_keeps_pre_and_post_home_checks() {
+    for phase in ["valid", "before", "after"] {
+        let storage = Arc::new(Storage::default());
+        storage.missing.store(phase == "before", Ordering::SeqCst);
+        let backend = Arc::new(HomeResumeBackend {
+            storage: storage.clone(),
+            replace_after_resume: phase == "after",
+            homes: Mutex::new(vec![]),
+        });
+        let routes = crate::hosted::RuntimeBackends {
+            agent_sandbox: Some(backend.clone()),
+            opensandbox: None,
+            allocate_agent_sandbox: false,
+            routing: Arc::new(NoNewRoute),
+            home_routes: None,
+        };
+        let adapter = CodexAdapter::new(Arc::new(routes), CodexSandboxSpec::default())
+            .with_home_volumes(storage);
+        let retained = RuntimeAdoptionRequest::new(
+            1,
+            RuntimeHandle::new("agent-sandbox:retained:original"),
+            spec(),
+        );
+        let successor = RuntimeProvisionRequest::new(2, retained.spec.clone());
+        let result = adapter.resume_runtime(&retained, &successor).await;
+        if phase == "valid" {
+            assert_eq!(result.unwrap(), retained.handle);
+        } else {
+            assert!(matches!(result, Err(AdapterError::Rejected(_))), "{phase}");
+        }
+        let homes = backend.homes.lock().unwrap();
+        if phase == "before" {
+            assert!(homes.is_empty());
+        } else {
+            assert_eq!(homes.as_slice(), std::slice::from_ref(&attachment()));
+        }
+    }
+}
