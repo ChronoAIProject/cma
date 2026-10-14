@@ -12,7 +12,7 @@ import type { TreeAction, TreePermissions } from '../shell/Tree';
 import { Button } from '../ui/Button';
 import { IconPlusOutline16 } from '../ui/icons';
 import { ReferenceLink } from '../profiles/ReferenceLink';
-import { sandboxChildrenAvailable } from './lifecycle';
+import { sandboxChildrenAvailable, sandboxChildrenReadable, sandboxChildStatus } from './lifecycle';
 import { statusLabel } from '../vocabulary/status';
 import { codexProviderName, isCodexConnection } from '../profiles/modelProvider';
 
@@ -193,7 +193,7 @@ export function SandboxOverview({
           </p>
         ) : null}
       </section>
-      {available ? (
+      {sandboxChildrenReadable(sandbox) ? (
         <section className="sandbox-page__band">
           <h2>Workspaces</h2>
           {contents === undefined ? (
@@ -214,12 +214,12 @@ export function SandboxOverview({
                   <header className="sandbox-page__header">
                     <div>
                       <h3>{workspace.name}</h3>
-                      <p>{statusLabel(workspace.status)}</p>
+                      <p>{statusLabel(sandboxChildStatus(sandbox, workspace.status))}</p>
                     </div>
                     {permissions.createAgent ? (
                       <Button
                         icon={<IconPlusOutline16 />}
-                        disabled={busy || workspace.status !== 'ready'}
+                        disabled={busy || !available || workspace.status !== 'ready'}
                         onClick={() => onAction({ kind: 'new_agent', sandboxId: sandbox.id })}
                       >
                         New agent
@@ -253,7 +253,9 @@ export function SandboxOverview({
                                 >
                                   {agent.title?.trim() || 'Untitled agent'}
                                 </a>
-                                <span>{statusLabel(agent.status)}</span>
+                                <span>
+                                  {statusLabel(sandboxChildStatus(sandbox, agent.status))}
+                                </span>
                               </div>
                               {detail === undefined ? (
                                 <p>Agent settings unavailable</p>
