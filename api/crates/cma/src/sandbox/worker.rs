@@ -18,6 +18,7 @@ use layer2_core::sandbox::SandboxPolicy;
 mod execute;
 mod home;
 mod lifecycle;
+mod provision_timing;
 mod provisioning;
 mod retained_retirement;
 mod retirement;

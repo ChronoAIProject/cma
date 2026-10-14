@@ -18,14 +18,17 @@ use super::SandboxWorker;
 use crate::sandbox::runtime_mapping::sandbox_spec;
 
 impl SandboxWorker {
+    #[tracing::instrument(skip_all, fields(sandbox_id = %sandbox.id))]
     pub(super) async fn provision(
         &self,
         mut sandbox: Sandbox,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        let mut timing = super::provision_timing::ProvisionTiming::new();
         if let Some(failure) = self.prepare_sandbox_home(&mut sandbox, now).await? {
             return self.handle_failure(sandbox, failure, now).await;
         }
+        timing.completed("home_preparation");
         let spec = sandbox_spec(&sandbox, &self.config.deployment_id);
         if sandbox.work.execution.is_none() {
             let expected = sandbox.revision;
@@ -36,6 +39,7 @@ impl SandboxWorker {
                 .save_sandbox(expected, sandbox.clone())
                 .await?;
         }
+        timing.completed("execution_policy");
         // A warm admission already owns an installed runtime. Prove that exact
         // binding before replaying its installation receipt and minting a key.
         if let Some(binding) = sandbox.runtime.clone() {
@@ -93,6 +97,7 @@ impl SandboxWorker {
             .await
         {
             Ok(handle) => {
+                timing.completed("runtime_provision");
                 let boot_id = match crate::sandbox::runtime_attachment::provisioned_runtime_status(
                     self.dependencies.adapter.as_ref(),
                     &sandbox_spec(&sandbox, &self.config.deployment_id),
@@ -108,6 +113,7 @@ impl SandboxWorker {
                             .await;
                     }
                 };
+                timing.completed("process_status");
                 let mut next = sandbox;
                 next.runtime = Some(RuntimeBinding {
                     boot_id,
@@ -117,13 +123,16 @@ impl SandboxWorker {
                     bound_at: rfc3339_at(now),
                 });
                 next.lifecycle.runtime_generation_high_water = generation;
-                self.advance_status(
-                    next,
-                    SandboxStatus::Installing,
-                    SandboxWorkStep::RunInstall,
-                    now,
-                )
-                .await
+                let result = self
+                    .advance_status(
+                        next,
+                        SandboxStatus::Installing,
+                        SandboxWorkStep::RunInstall,
+                        now,
+                    )
+                    .await;
+                timing.completed("publish_installing");
+                result
             }
             Err(error) => {
                 self.handle_failure(sandbox, adapter_failure(error), now)
