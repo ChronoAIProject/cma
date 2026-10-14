@@ -2,6 +2,13 @@ use url::Url;
 
 use crate::AdapterError;
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct NativeRuntimeIdentity {
+    pub epoch: u64,
+    pub sandbox_id: Option<String>,
+    pub request_sha256: Option<String>,
+}
+
 const MAX_ENDPOINT_BYTES: usize = 2_048;
 
 /// A provider proxy prefix resolved to the schemes trusted by configuration.
@@ -10,6 +17,7 @@ pub(super) struct RuntimeEndpoint {
     base: Url,
     secure: bool,
     control_token: Option<String>,
+    native_identity: Option<NativeRuntimeIdentity>,
     native_binding: Option<(crate::RuntimeHandle, crate::agent_sandbox::PodBinding)>,
 }
 
@@ -78,6 +86,7 @@ impl RuntimeEndpoint {
             secure,
             control_token: None,
             native_binding: None,
+            native_identity: None,
         })
     }
 
@@ -103,6 +112,15 @@ impl RuntimeEndpoint {
         &self,
     ) -> Option<&(crate::RuntimeHandle, crate::agent_sandbox::PodBinding)> {
         self.native_binding.as_ref()
+    }
+
+    pub(super) fn with_native_identity(mut self, identity: NativeRuntimeIdentity) -> Self {
+        self.native_identity = Some(identity);
+        self
+    }
+
+    pub(super) fn native_identity(&self) -> Option<&NativeRuntimeIdentity> {
+        self.native_identity.as_ref()
     }
 
     pub(super) fn control(&self) -> crate::Result<Url> {

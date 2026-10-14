@@ -25,7 +25,7 @@ impl ProviderHostedControlTransport {
         let endpoint = self.endpoint(handle).await?;
         let url = endpoint.history(agent.as_str())?;
         if endpoint.native_binding().is_some() {
-            let (status, body) = tokio::time::timeout(
+            let reply = tokio::time::timeout(
                 HISTORY_TIMEOUT,
                 self.native_http(
                     &endpoint,
@@ -37,13 +37,13 @@ impl ProviderHostedControlTransport {
             )
             .await
             .map_err(|_| AdapterError::Unavailable("runtime history request timed out".into()))??;
-            return if status.is_success() {
-                Ok(body)
-            } else {
-                Err(AdapterError::Unavailable(format!(
-                    "runtime history response failed ({status})"
-                )))
-            };
+            if !reply.status.is_success() {
+                return Err(AdapterError::Unavailable(format!(
+                    "runtime history response failed ({})",
+                    reply.status
+                )));
+            }
+            return reply.recycle().await;
         }
         let auth = self.auth_header(&endpoint);
         let response = self
