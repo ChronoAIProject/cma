@@ -34,6 +34,9 @@ pub struct RuntimeStatus {
     /// Absent on retained supervisors that predate the additive operation.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub agent_skill_install: bool,
+    /// Managed model selection can resolve current catalogue aliases.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub agent_model_catalog: bool,
     pub sandbox_id: String,
     pub generation: u64,
     pub home_identity: String,
@@ -74,4 +77,23 @@ pub fn valid_home_identity(value: &str) -> bool {
         && value
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+}
+
+#[cfg(test)]
+mod compatibility_tests {
+    use super::*;
+
+    #[test]
+    fn retained_runtime_without_catalogue_capability_stays_readable() {
+        let original = serde_json::json!({
+            "sandbox_id": "sandbox", "generation": 1,
+            "home_identity": "a".repeat(43), "boot_id": "a".repeat(32),
+            "installation_ready": true, "credential_ready": true,
+            "restore_pending": false, "agent_processes": 0
+        });
+        let status: RuntimeStatus = serde_json::from_value(original.clone()).unwrap();
+        assert!(!status.agent_model_catalog);
+        assert!(!status.agent_skill_install);
+        assert_eq!(serde_json::to_value(status).unwrap(), original);
+    }
 }
