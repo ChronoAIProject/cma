@@ -331,7 +331,10 @@ async fn bootstrap_v2_queue_survives_wait_and_first_prompt_barrier_then_dispatch
     let (original, worker) = queue(h, &agent, probe.clone()).await;
     let id = &original.receipt.envelope.command_id;
     let before = h.backend.requests().await.len();
-    worker.run_one(id).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(2), worker.run_one(id))
+        .await
+        .expect("fresh queued bootstrap input releases the worker for a prompt recheck")
+        .unwrap();
     let waiting = h.store.get_command(id).await.unwrap().unwrap();
     assert_eq!(waiting.receipt, original.receipt);
     assert_eq!(waiting.status, AgentResponseStatus::Queued);
