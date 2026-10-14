@@ -122,8 +122,9 @@ data:
   # SandboxTemplate/SandboxWarmPool/SandboxClaim CRDs only.
   CHRONO_NATIVE_WARM_POOL_TARGET: "1"
   # Native warm pools are managed by immutable image/resources/home policy.
-  # The installed APIs and cold allocation path passed deployment acceptance.
-  # Verify new pool templates independently before adding operator capacity.
+  # Agent Manager persists the default target before serving and reconciles it
+  # through SandboxTemplate/SandboxWarmPool/SandboxClaim CRDs. Retained pools
+  # and claimed Sandboxes keep their original policy across image rollouts.
   # Seed system Profiles only while an operator-selected default still names one.
   # Custom published defaults prevent removed system catalogue entries returning.
   CHRONO_SANDBOX_CPU: "1"
