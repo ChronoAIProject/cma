@@ -20,6 +20,16 @@ impl NativePoolSpec {
     pub fn validate(&self) -> Result<()> {
         crate::runtime_bootstrap::admit_pool_image(&self.image)?;
         self.home.validate()?;
+        if self.home.mounts_full_home()
+            && self
+                .image
+                .labels
+                .get(crate::runtime_bootstrap::RUNTIME_HOME_LAYOUT_LABEL)
+                .map(String::as_str)
+                != Some("2")
+        {
+            return Err(rejected("image does not support full /home initialization"));
+        }
         if serde_json::to_vec(self)
             .map_err(|_| rejected("invalid native pool configuration"))?
             .len()
@@ -188,7 +198,7 @@ pub(super) fn template(
     let name = format!("cma-template-{}", &hash[..48]);
     let labels = json!({OWNER_LABEL:config.deployment,"cma/pool-config":&hash[..52]});
     let mounts: Vec<_> = [
-        ("/home/cma", "home"),
+        (spec.home.mount_path("/home/cma"), "home"),
         ("/var/lib/cma-runtime", "state"),
         ("/var/lib/cma-transfer", "transfer"),
     ]
@@ -241,10 +251,15 @@ pub(super) fn template(
             .unwrap()
             .remove("dataSource");
         template["spec"]["volumeClaimTemplates"][0]["metadata"]["annotations"] =
-            json!({"cma/home-layout":"native-vct-empty-v1"});
+            json!({"cma/home-layout":spec.home.native_layout()});
+        let initialize = if spec.home.mounts_full_home() {
+            "--initialize-home-tree"
+        } else {
+            "--initialize-home"
+        };
         template["spec"]["podTemplate"]["spec"]["initContainers"] = json!([{
             "name":"initialize-home","image":spec.image.uri,
-            "command":["/usr/local/bin/layer4-runtime","--initialize-home","/mnt/cma-home"],
+            "command":["/usr/local/bin/layer4-runtime",initialize,"/mnt/cma-home"],
             "args":[],"env":[],"envFrom":[],
             "securityContext":{"allowPrivilegeEscalation":false,"privileged":false,
                 "runAsNonRoot":true,"runAsUser":10001,"runAsGroup":10001,
