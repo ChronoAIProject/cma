@@ -52,19 +52,20 @@ impl AgentSandboxBackend {
         if !home.request.policy.is_native_vct() {
             return Ok(None);
         }
-        let proof = self
-            .client
-            .native_runtime_proof(handle, request, home)
-            .await?;
+        let (proof, policy) = tokio::join!(
+            self.client.native_runtime_proof(handle, request, home),
+            self.client.verify_native_runtime_policy(handle, home),
+        );
+        // Consume graph errors and the bootstrap fallback before policy errors,
+        // preserving the original authority/error precedence of this operation.
+        let proof = proof?;
         if !proof.matches(request, home)?
             || !self.acknowledged_assignment(handle, proof.pod(), request)?
         {
             // An initial/replaced process must run the original bootstrap protocol.
             return Ok(None);
         }
-        self.client
-            .verify_explicit_runtime_policy(proof.member())
-            .await?;
+        policy?;
         if !self.acknowledged_assignment(handle, proof.pod(), request)? {
             return Err(AdapterError::Unavailable(
                 "runtime assignment retired during inspection".into(),
