@@ -75,7 +75,7 @@ test("managed aliases require bounded current catalogue evidence from the loopba
     async configRead() { return { config: configured }; },
   } });
   assert.equal((await client.fetchManagedModel("gpt-6-astra")).id, "gpt-6-astra");
-  for (const name of ["gpt-image-2", "bad\nmodel", "gpt-6/redirect"]) {
+  for (const name of ["gpt-image-2", "bad\nmodel", "gpt-6/redirect", "gpt-" + "6".repeat(253)]) {
     assert.equal(await client.fetchManagedModel(name), null);
   }
   assert.equal(requests, 1);
