@@ -232,6 +232,22 @@ impl App {
         }
     }
     pub async fn callback(&self, id: &str, lane: usize) -> reqwest::Response {
+        self.callback_request(id, lane).send().await.unwrap()
+    }
+    pub fn cold_callbacks(
+        &self,
+        events: impl IntoIterator<Item = (String, usize)>,
+    ) -> Vec<reqwest::RequestBuilder> {
+        // Signing is synchronous. Finish every envelope before invalidating so
+        // later callers do not sign while the first caller's restore completes.
+        let requests = events
+            .into_iter()
+            .map(|(id, lane)| self.callback_request(&id, lane))
+            .collect();
+        self.state.resolver.invalidate(&self.channel);
+        requests
+    }
+    pub fn callback_request(&self, id: &str, lane: usize) -> reqwest::RequestBuilder {
         let mut envelope = Envelope::new();
         envelope.callback["message_id"] = id.into();
         envelope.reply["inbound_message_id"] = id.into();
@@ -247,9 +263,6 @@ impl App {
             .header("x-nyxid-message-id", id)
             .header("x-nyxid-timestamp", now_rfc3339())
             .body(body)
-            .send()
-            .await
-            .unwrap()
     }
     pub async fn quiet(&self) {
         tokio::time::timeout(Duration::from_secs(5), async {
