@@ -65,8 +65,37 @@ terminal state was observed at **19.818 seconds** and the admission response too
 creation target **was not met**. The matching Agent/Sandbox/Workspace identities
 and browser timing samples are retained in the creation receipt.
 
-Model/settings, skill and permission acceptance, plus same-PVC whole-home/history
-persistence across pause/resume, remain pending separate completed evidence.
+The same fresh fixture subsequently passed real inference with `gpt-6`,
+`gpt-6-astra`, then `gpt-6`; all 15 eligible model options were enabled. Ornn
+skill installation, exact request replay, and the next real turn reading the
+installed skill passed. The scope-revision flow passed through a real Codex MCP
+request, owner popup approval, delivered key generation, and exactly one
+automatic notification in the original conversation; reload did not duplicate
+the notification. Stop showed Accepted/Waiting followed by Confirmed.
+
+Pause UI feedback took **1.8 ms**, accepted feedback **175.9 ms**, and Agent
+paused observation **1.547 seconds**; Sandbox completion took **8.797 seconds**.
+Resume UI feedback took **0.2 ms**, accepted feedback **1.781 seconds**, Agent
+ready observation **28.118 seconds**, and Sandbox completion **29.273 seconds**.
+Default underlying progress stayed hidden. Neither actual Sandbox completion
+met five seconds. The paused capture proved zero owned Pods and the retained
+PVC; resume created a new Pod on the same PVC UID
+`34a4b736-c503-402f-95ea-13a24def6a5c`.
+
+Whole-home content and conversation checks passed across that Pod replacement:
+15 entries covered `/home/cma`, `/home/.codex`, and a sibling directory,
+including symlinks and staged, dirty and untracked Git state. Native conversation,
+transcript and event prefixes survived, and a real recall turn returned the
+earlier marker. **Strict filesystem persistence failed:** kubelet's default
+fsGroup remount handling changed POSIX modes, including `0600` to `0660` and
+`0750` to `0770`. No data was reseeded or permissions repaired to claim a pass.
+New-policy mode preservation requires a new fixture after the follow-up rollout.
+
+Evidence is retained under `/tmp/cma-agent-followup-live-FINAL_04cc_01/`:
+`acceptance/models-durable-continuation-report.json`, `acceptance/skill-report.json`,
+`scope-acceptance-02/report.json`, `acceptance/stop-report.json`, and
+`lifecycle-acceptance/{pause,resume}-report.json`. Whole-home evidence and the
+explicit failure report are under `/tmp/cma-whole-home-FINAL_04cc_01/`.
 
 The release selects API, shared Web and runtime images while retaining Event
 Gateway. One Web image implements all three portals; Image Manager backend
