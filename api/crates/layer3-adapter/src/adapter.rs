@@ -260,6 +260,17 @@ pub trait SandboxAdapter: Send + Sync {
         ))
     }
 
+    async fn install_agent_skill(
+        &self,
+        _handle: &RuntimeHandle,
+        _authority_fence: u64,
+        _request: &crate::AgentSkillInstallRequest,
+    ) -> crate::Result<()> {
+        Err(crate::AdapterError::Unsupported(
+            "live skill installation is unavailable".into(),
+        ))
+    }
+
     async fn remove_agent_home(
         &self,
         handle: &RuntimeHandle,

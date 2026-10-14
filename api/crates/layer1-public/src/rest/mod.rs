@@ -29,7 +29,9 @@ mod agent_command_admission;
 mod agent_models;
 mod agent_operate;
 mod agent_settings;
+mod agent_skills;
 pub use agent_channel_usage::agent_channel_usage_router;
+pub use agent_skills::AgentSkillRuntimeSupport;
 #[cfg(test)]
 mod agent_channel_usage_tests;
 mod agent_provenance;

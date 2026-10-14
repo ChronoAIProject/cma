@@ -10,6 +10,7 @@ string_enum! { /// Durable Agent worker step.
         AddWorktree => "add_worktree", MaterializeHome => "materialize_home",
         OpenConversation => "open_conversation", PublishReady => "publish_ready",
         PublishConnection => "publish_connection", DispatchFirstMessage => "dispatch_first_message",
+        InstallSkill => "install_skill",
         FenceInteraction => "fence_interaction", CloseProcess => "close_process",
         PublishStopped => "publish_stopped", EnsureProcessClosed => "ensure_process_closed",
         RemoveHome => "remove_home", RemoveWorktree => "remove_worktree", PublishDeleted => "publish_deleted", None => "none"
@@ -23,6 +24,10 @@ string_enum! { /// Durable command-delivery state; write confirmation is not exe
         DispatchFenced => "dispatch_fenced", WriteConfirmed => "write_confirmed", ExecutionObserved => "execution_observed",
         PreWriteFailed => "pre_write_failed", RecoveryRequired => "recovery_required", RuntimeLost => "runtime_lost"
     }
+}
+
+string_enum! { /// Runtime-confirmed state of an additive Agent skill.
+    pub enum AgentSkillInstallStatus { Pending => "pending", Installed => "installed", Failed => "failed" }
 }
 
 /// One plan entry emitted by an Agent.
@@ -63,6 +68,7 @@ event_enum! { "type";
         RuntimeGenerationRetired => "runtime_generation_retired" { previous_generation: u64, runtime_generation: u64 },
         WorkStepCompleted => "work_step_completed" { step: AgentWorkStep },
         WorkStepFailed => "work_step_failed" { step: AgentWorkStep, failure: Failure },
+        SkillInstallationChanged => "skill_installation_changed" { skill_id: String, status: AgentSkillInstallStatus },
         TurnStarted => "turn_started" { turn_sequence: u64 },
         TurnMetadataSet => "turn_metadata_set" { turn_sequence: u64, metadata: BTreeMap<String, String> },
         OwnerMessage => "owner_message" { content: String },

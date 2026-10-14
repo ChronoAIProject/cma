@@ -389,3 +389,10 @@ native conversation 原地保留，旧 URL 通过兼容层映射，不依赖重�
 新 SSE 契约及私有仓库绑定。API 定稿后应由实现生成 OpenAPI 与 SDK，再通过实际
 provider/runtime 的创建、恢复、steer、权限变更及重连测试验证；不能把本文当作
 当前服务的能力声明。
+
+## Live Agent skills
+
+Owner-scoped `GET` and idempotent `POST /api/v1/agents/{id}/skills` list confirmed
+installations and install one exact Ornn skill version into an idle Agent.
+See [Live Agent skill installation](CMA_Agent_Skills_Runtime.md) for request/response
+shapes, runtime support gating, durable confirmation, and rollout order.

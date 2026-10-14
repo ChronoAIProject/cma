@@ -213,7 +213,7 @@ test('restart status requires installed state, changed boot and exact clean runt
   const request = assignment();
   request.environment.CHRONO_RUNTIME_GENERATION = '2';
   const status = { ...statusRequest(request), boot_id: '2'.repeat(32), installation_ready: true,
-    credential_ready: false, restore_pending: false, agent_processes: 0 };
+    credential_ready: false, restore_pending: false, agent_processes: 0, agent_skill_install: true };
   assert.equal(assertRuntimeStatus(status, request, true, '1'.repeat(32)), status.boot_id);
   for (const mutate of [
     (v) => { v.installation_ready = false; }, (v) => { v.boot_id = '1'.repeat(32); },
@@ -221,6 +221,7 @@ test('restart status requires installed state, changed boot and exact clean runt
     (v) => { v.generation = 1; }, (v) => { v.home_identity = 'b'.repeat(43); },
     (v) => { v.credential_ready = true; }, (v) => { v.restore_pending = true; },
     (v) => { v.agent_processes = 1; }, (v) => { v.extra = true; },
+    (v) => { v.agent_skill_install = false; }, (v) => { delete v.agent_skill_install; },
   ]) {
     const changed = structuredClone(status);
     mutate(changed);

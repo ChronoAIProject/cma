@@ -940,3 +940,29 @@ async fn organization_inventory_parses_shared_summaries_and_rejects_unknown_role
 
 #[path = "rest/sandbox_commands.rs"]
 mod sandbox_commands;
+
+#[test]
+fn live_skill_event_and_worker_step_parse_in_both_event_apis() {
+    for status in ["pending", "installed", "failed"] {
+        let event =
+            json!({"type":"skill_installation_changed","skill_id":"research","status":status});
+        assert!(serde_json::from_value::<AgentEventKind>(event.clone()).is_ok());
+        assert!(serde_json::from_value::<cma_sdk::agent_events_v2::AgentEventKind>(event).is_ok());
+    }
+    assert!(
+        serde_json::from_value::<AgentEventKind>(
+            json!({"type":"work_step_completed","step":"install_skill"})
+        )
+        .is_ok()
+    );
+    assert!(
+        serde_json::from_value::<cma_sdk::agent_events_v2::AgentEventKind>(
+            json!({"type":"work_completed","step":"install_skill"})
+        )
+        .is_ok()
+    );
+    let invalid =
+        json!({"type":"skill_installation_changed","skill_id":"research","status":"loaded"});
+    assert!(serde_json::from_value::<AgentEventKind>(invalid.clone()).is_err());
+    assert!(serde_json::from_value::<cma_sdk::agent_events_v2::AgentEventKind>(invalid).is_err());
+}

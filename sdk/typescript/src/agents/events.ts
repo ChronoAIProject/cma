@@ -20,6 +20,7 @@ export const agentWorkStep = enumeration(
   'publish_ready',
   'publish_connection',
   'dispatch_first_message',
+  'install_skill',
   'fence_interaction',
   'close_process',
   'publish_stopped',
@@ -60,6 +61,10 @@ export const agentEventKind = tagged({
   }),
   work_step_completed: variant('work_step_completed', { step: agentWorkStep }),
   work_step_failed: variant('work_step_failed', { step: agentWorkStep, failure }),
+  skill_installation_changed: variant('skill_installation_changed', {
+    skill_id: text,
+    status: enumeration('pending', 'installed', 'failed'),
+  }),
   turn_started: variant('turn_started', { turn_sequence: integer }),
   turn_metadata_set: variant('turn_metadata_set', {
     turn_sequence: integer,

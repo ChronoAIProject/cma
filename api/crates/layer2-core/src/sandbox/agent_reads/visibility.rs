@@ -29,6 +29,7 @@ fn shared_kind(kind: AgentLogKind) -> Option<AgentLogKind> {
         Created { .. }
         | ConversationOpened { .. }
         | RuntimeGenerationRetired { .. }
+        | SkillInstallationChanged { .. }
         | WorkStepCompleted { .. }
         | WorkStepFailed { .. }
         | TurnMetadataSet { .. }

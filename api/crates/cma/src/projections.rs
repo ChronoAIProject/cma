@@ -21,6 +21,7 @@ use layer3_adapter::{AdapterError, RuntimeHandle, SandboxAdapter};
 mod agent_v2;
 
 pub(crate) struct AgentProjectionServices {
+    skill_support: Option<Arc<dyn layer1_public::rest::AgentSkillRuntimeSupport>>,
     commands: Option<Arc<layer2_core::sandbox::agent_io::AgentCommandService>>,
     agents: Arc<AgentService>,
     operations: Arc<AgentOperationService>,
@@ -31,6 +32,14 @@ pub(crate) struct AgentProjectionServices {
 }
 
 impl AgentProjectionServices {
+    pub(crate) fn with_skill_support(
+        mut self,
+        support: Arc<dyn layer1_public::rest::AgentSkillRuntimeSupport>,
+    ) -> Self {
+        self.skill_support = Some(support);
+        self
+    }
+
     pub(crate) fn with_commands(
         mut self,
         commands: Arc<layer2_core::sandbox::agent_io::AgentCommandService>,
@@ -96,6 +105,7 @@ impl AgentProjectionServices {
         let reads = AgentReadService::new(store.clone(), resources);
         let operations = AgentOperationService::new(store, runtimes);
         Self {
+            skill_support: None,
             commands: None,
             agents,
             operations,
@@ -125,6 +135,10 @@ impl AgentProjectionServices {
             Arc::clone(&self.operations),
             operation_records,
         );
+        let agent_routes = match &self.skill_support {
+            Some(support) => agent_routes.with_skill_support(support.clone()),
+            None => agent_routes,
+        };
         let agent_routes = match &self.lifecycle {
             Some(lifecycle) => agent_routes.with_lifecycle(lifecycle.clone()),
             None => agent_routes,
@@ -284,6 +298,31 @@ fn resource_failure(sandbox_id: &str, error: AdapterError) -> SandboxResourceRea
             SandboxResourceReadError::Unavailable(
                 "the runtime resource transport is unavailable".into(),
             )
+        }
+    }
+}
+
+pub(crate) struct AdapterAgentSkillSupport(pub Arc<dyn SandboxAdapter>);
+#[async_trait::async_trait]
+impl layer1_public::rest::AgentSkillRuntimeSupport for AdapterAgentSkillSupport {
+    async fn supported(&self, sandbox: &Sandbox) -> bool {
+        let Some(binding) = &sandbox.runtime else {
+            return false;
+        };
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            self.0
+                .runtime_status(&RuntimeHandle::new(&binding.runtime_id)),
+        )
+        .await;
+        match result {
+            Ok(Ok(status)) => {
+                status.agent_skill_install
+                    && status.installation_ready
+                    && status.credential_ready
+                    && sandbox.runtime_process_matches(&status).unwrap_or(false)
+            }
+            _ => false,
         }
     }
 }

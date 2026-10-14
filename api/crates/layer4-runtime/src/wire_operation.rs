@@ -15,6 +15,7 @@ pub(crate) fn for_tag(tag: &str) -> Option<WireOperation> {
         "add_worktree" => WireOperation::AddWorktree,
         "remove_worktree" => WireOperation::RemoveWorktree,
         "materialize_agent_home" => WireOperation::MaterializeAgentHome,
+        "install_agent_skill" => WireOperation::InstallAgentSkill,
         "remove_agent_home" => WireOperation::RemoveAgentHome,
         "open_agent" => WireOperation::OpenAgent,
         "close_agent" => WireOperation::CloseAgent,

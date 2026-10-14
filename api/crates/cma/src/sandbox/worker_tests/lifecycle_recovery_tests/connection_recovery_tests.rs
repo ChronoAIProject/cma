@@ -1,26 +1,89 @@
 use super::*;
 
-use crate::sandbox::agent_skills::EmptyAgentSkillResolver;
+use crate::sandbox::agent_skills::{AgentSkillResolutionError, AgentSkillResolver};
+
 use crate::sandbox::agent_worker::{AgentWorker, AgentWorkerConfig, AgentWorkerDependencies};
 use layer2_core::sandbox::store::WorkspaceStore;
 use layer2_core::sandbox::{AgentWorkReceipt, SandboxLifecycleOperation, SandboxRevivePhase};
 
-#[tokio::test]
-async fn archived_revival_reconnects_on_another_replica_before_publishing_active() {
-    Box::pin(recovery_scenario(false, false)).await;
+struct RecoverySkills;
+#[async_trait::async_trait]
+impl AgentSkillResolver for RecoverySkills {
+    async fn resolve(
+        &self,
+        _: &Sandbox,
+        refs: &[layer2_core::profiles::SkillRef],
+    ) -> Result<Vec<layer2_core::sandbox::ResolvedAgentSkill>, AgentSkillResolutionError> {
+        Ok(refs
+            .iter()
+            .map(|reference| layer2_core::sandbox::ResolvedAgentSkill {
+                source: reference.source,
+                id: reference.id.clone(),
+                name: None,
+                version: reference.version.clone().unwrap(),
+                archive_sha256: "a".repeat(64),
+            })
+            .collect())
+    }
+    fn runtime_skills(
+        &self,
+        material: &[layer2_core::sandbox::ResolvedAgentSkill],
+    ) -> Result<Vec<layer3_adapter::AgentSkill>, AgentSkillResolutionError> {
+        Ok(material
+            .iter()
+            .map(|skill| layer3_adapter::AgentSkill {
+                id: skill.id.to_string(),
+                name: skill.name.clone(),
+                version: Some(skill.version.clone()),
+                archive_sha256: skill.archive_sha256.clone(),
+                source_url: "https://platform.example/skill.zip".into(),
+            })
+            .collect())
+    }
 }
 
-#[tokio::test]
-async fn retained_home_recovery_reconnects_without_an_archived_checkpoint() {
-    Box::pin(recovery_scenario(true, false)).await;
+#[test]
+fn archived_revival_reconnects_on_another_replica_before_publishing_active() {
+    run_recovery_scenario(false, false, false);
 }
 
-#[tokio::test]
-async fn runtime_loss_during_revival_retries_then_recovers_the_retained_conversation() {
-    Box::pin(recovery_scenario(true, true)).await;
+#[test]
+fn retained_home_recovery_reconnects_without_an_archived_checkpoint() {
+    run_recovery_scenario(true, false, false);
 }
 
-async fn recovery_scenario(retained: bool, interrupt_revival: bool) {
+#[test]
+fn runtime_loss_during_revival_retries_then_recovers_the_retained_conversation() {
+    run_recovery_scenario(true, true, false);
+}
+
+#[test]
+fn live_skill_pending_install_resumes_before_retained_revival_publishes_active() {
+    run_recovery_scenario(true, false, true);
+}
+
+// This fixture drives both independent workers through recovery. Keep the large
+// debug-only combined future off Rust's small default test-thread stack.
+fn run_recovery_scenario(retained: bool, interrupt_revival: bool, pending_skill: bool) {
+    std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(recovery_scenario(
+                    retained,
+                    interrupt_revival,
+                    pending_skill,
+                ));
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+async fn recovery_scenario(retained: bool, interrupt_revival: bool, pending_skill: bool) {
     let mut harness = Harness::new(Vec::new(), 0, Duration::from_secs(60)).await;
     let created = harness.create().await;
     let now = start_time(&created);
@@ -38,7 +101,7 @@ async fn recovery_scenario(retained: bool, interrupt_revival: bool) {
         if harness.stored(&created.id).await.status == SandboxStatus::Active {
             break;
         }
-        worker.run_one(&created.id, now).await.unwrap();
+        Box::pin(worker.run_one(&created.id, now)).await.unwrap();
     }
     let active = harness.stored(&created.id).await;
     assert_eq!(active.status, SandboxStatus::Active);
@@ -75,6 +138,20 @@ async fn recovery_scenario(retained: bool, interrupt_revival: bool) {
         .save_agent(revision, agent.clone())
         .await
         .unwrap();
+    if pending_skill {
+        agent = AgentOperationService::new(harness.store.clone(), harness.registry.clone())
+            .install_skill(
+                &caller("owner", [Capability::UseOwnSandboxes]),
+                &agent.id,
+                layer2_core::profiles::SkillRef {
+                    source: layer2_core::profiles::SkillSource::Ornn,
+                    id: layer2_core::SkillId::new("research"),
+                    version: Some("1.0".into()),
+                },
+            )
+            .await
+            .unwrap();
+    }
     let recovery_at = now + Duration::from_secs(1);
     let reconciler = SandboxReconciler::new(
         harness.store.clone(),
@@ -110,7 +187,9 @@ async fn recovery_scenario(retained: bool, interrupt_revival: bool) {
             .await
             .unwrap();
         for _ in 0..4 {
-            worker.run_one(&active.id, recovery_at).await.unwrap();
+            Box::pin(worker.run_one(&active.id, recovery_at))
+                .await
+                .unwrap();
         }
         assert_eq!(
             harness.stored(&active.id).await.status,
@@ -141,7 +220,9 @@ async fn recovery_scenario(retained: bool, interrupt_revival: bool) {
         .await
         .unwrap();
         adapter.teardown(&handle).await.unwrap();
-        worker.run_one(&active.id, recovery_at).await.unwrap();
+        Box::pin(worker.run_one(&active.id, recovery_at))
+            .await
+            .unwrap();
         let waiting = harness.stored(&active.id).await;
         assert_eq!(waiting.status, SandboxStatus::Reviving);
         assert!(waiting.failure.is_none());
@@ -156,18 +237,29 @@ async fn recovery_scenario(retained: bool, interrupt_revival: bool) {
         AgentWorkerDependencies {
             store: harness.store.clone(),
             adapter,
-            skills: Arc::new(EmptyAgentSkillResolver),
+            skills: Arc::new(RecoverySkills),
             updates: DurableAgentUpdateRecorder::new(harness.store.clone()),
             operations: AgentOperationService::new(harness.store.clone(), registry.clone()),
             registry,
         },
         AgentWorkerConfig::new("reconnected-agent-worker", "test"),
     );
-    assert_eq!(
-        agent_worker.reconcile_connections(settle_at).await.unwrap(),
-        1
-    );
-    assert!(agent_worker.run_one(&agent.id, settle_at).await.unwrap());
+    if pending_skill {
+        let reopened = harness.store.get_agent(&agent.id).await.unwrap().unwrap();
+        assert_eq!(reopened.work.step, AgentWorkStep::InstallSkill);
+        assert_eq!(
+            reopened.work.live_skills[0].status,
+            layer2_core::sandbox::AgentSkillInstallStatus::Pending
+        );
+    } else {
+        assert_eq!(
+            agent_worker.reconcile_connections(settle_at).await.unwrap(),
+            1
+        );
+    }
+    assert!(Box::pin(agent_worker.run_one(&agent.id, settle_at))
+        .await
+        .unwrap());
     let reconnected = harness.store.get_agent(&agent.id).await.unwrap().unwrap();
     assert_eq!(
         reconnected.work.step,
@@ -175,6 +267,13 @@ async fn recovery_scenario(retained: bool, interrupt_revival: bool) {
         "{:?}",
         harness.store.agent_log(&agent.id, 0, 100).await.unwrap()
     );
+    if pending_skill {
+        assert_eq!(
+            reconnected.work.live_skills[0].status,
+            layer2_core::sandbox::AgentSkillInstallStatus::Installed
+        );
+        assert!(reconnected.work.live_skills[0].error.is_none());
+    }
     assert_eq!(
         reconnected.conversation.conversation_id,
         agent.conversation.conversation_id
@@ -203,7 +302,9 @@ async fn recovery_scenario(retained: bool, interrupt_revival: bool) {
         })
     );
     for _ in 0..2 {
-        worker.run_one(&active.id, settle_at).await.unwrap();
+        Box::pin(worker.run_one(&active.id, settle_at))
+            .await
+            .unwrap();
     }
     let restored = harness.stored(&active.id).await;
     assert_eq!(restored.status, SandboxStatus::Active);
@@ -228,7 +329,10 @@ async fn drive_to_reopened(
         ) {
             return;
         }
-        assert!(worker.run_one(id, now).await.unwrap(), "{current:?}");
+        assert!(
+            Box::pin(worker.run_one(id, now)).await.unwrap(),
+            "{current:?}"
+        );
     }
     panic!(
         "recovery did not reopen conversations: {:?}",
