@@ -148,6 +148,17 @@ pub trait HostedBackend: Send + Sync {
         ))
     }
 
+    /// Optional native optimization. None selects the unchanged full adoption path.
+    /// The returned observation must include status; caller rechecks home afterward.
+    async fn inspect_native_runtime(
+        &self,
+        _handle: &RuntimeHandle,
+        _request: &ProviderSandboxRequest,
+        _home: &crate::HomeVolumeAttachment,
+    ) -> Result<Option<crate::RuntimeInspection>> {
+        Ok(None)
+    }
+
     async fn reclaim(&self, _observation: &RuntimeObservation) -> Result<()> {
         Err(crate::AdapterError::Unsupported(
             "hosted runtime reclamation is not supported".into(),

@@ -168,6 +168,14 @@ pub struct RuntimeObservation {
     pub lifecycle: RuntimeLifecycle,
 }
 
+/// Provider and process observations collected within one adoption operation.
+/// This contains observations, never reusable dispatch authority.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeInspection {
+    pub observation: RuntimeObservation,
+    pub status: Option<crate::RuntimeStatus>,
+}
+
 /// One bounded sandbox-wide installation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

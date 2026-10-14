@@ -3,6 +3,8 @@
 mod config;
 mod connections;
 mod home;
+mod hosted_runtime;
+use hosted_runtime::CodexRuntime;
 
 use std::sync::Arc;
 
@@ -37,35 +39,6 @@ use crate::{
 pub struct CodexSandboxSpec {
     pub deployment: HostedDeployment,
     pub config: CodexConfig,
-}
-
-struct CodexRuntime {
-    config: CodexConfig,
-}
-
-impl HostedAgentRuntime for CodexRuntime {
-    fn home_plan(&self, request: &AgentHomeRequest) -> crate::Result<AgentHomePlan> {
-        render_agent_home(request, &self.config)
-    }
-
-    fn launch(&self, request: &AgentOpenRequest) -> crate::Result<AgentLaunch> {
-        render_launch(request)
-    }
-
-    fn open_settings(&self, request: &AgentOpenRequest) -> crate::Result<HostedAgentOpenSettings> {
-        let permission_mode = match request.options.permission {
-            crate::PermissionLevel::Guarded => "read-only",
-            crate::PermissionLevel::Autonomous => "agent-full-access",
-        };
-        Ok(HostedAgentOpenSettings {
-            permission_mode: Some(permission_mode.into()),
-            own_credential: request.options.own_credential,
-            channel_tool: None,
-            provider_tool: None,
-            access_tool: None,
-            recovered_prompt: None,
-        })
-    }
 }
 
 /// Complete Codex sandbox adapter.
@@ -225,6 +198,13 @@ impl SandboxAdapter for CodexAdapter {
 
     async fn runtime_inventory(&self) -> crate::Result<Vec<RuntimeObservation>> {
         self.hosted.runtime_inventory().await
+    }
+
+    async fn inspect_runtime(
+        &self,
+        request: &RuntimeAdoptionRequest,
+    ) -> crate::Result<Option<crate::RuntimeInspection>> {
+        self.hosted.inspect_runtime(request).await
     }
 
     async fn adopt_runtime(
