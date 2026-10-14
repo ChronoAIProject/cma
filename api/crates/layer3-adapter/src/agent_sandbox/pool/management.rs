@@ -259,16 +259,18 @@ impl AgentSandboxPools {
         {
             return Err(rejected("native pool binding has another configuration"));
         }
-        let template = self
-            .templates
-            .get(&binding.template_name)
-            .await
-            .map_err(api_error)?;
+        // Both names are persisted authority. Start the independent reads
+        // together, then preserve Template-before-Pool validation and errors.
+        let (template, actual) = tokio::join!(
+            self.templates.get(&binding.template_name),
+            self.pools.get(&binding.name),
+        );
+        let template = template.map_err(api_error)?;
         model::verify(&template, &desired)?;
         if template.uid().as_deref() != Some(&binding.template_uid) {
             return Err(rejected("native pool template UID changed"));
         }
-        let actual = self.pools.get(&binding.name).await.map_err(api_error)?;
+        let actual = actual.map_err(api_error)?;
         let desired = model::pool(&config, &binding.spec, &template, target(&actual)?)?;
         model::verify(&actual, &desired)?;
         if actual.uid().as_deref() != Some(&binding.uid) {
