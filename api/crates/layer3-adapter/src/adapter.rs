@@ -158,6 +158,35 @@ pub trait SandboxAdapter: Send + Sync {
         ))
     }
 
+    /// Collect adoption and process status within one call. Implementations may
+    /// share fresh predicates inside this call; effects still obtain fresh fences.
+    async fn inspect_runtime(
+        &self,
+        request: &RuntimeAdoptionRequest,
+    ) -> Result<Option<crate::RuntimeInspection>> {
+        let Some(observation) = self.adopt_runtime(request).await? else {
+            return Ok(None);
+        };
+        if observation.handle != request.handle
+            || observation.sandbox_id != request.spec.sandbox_id
+            || observation.generation != request.generation
+            || !observation.lifecycle.is_running()
+        {
+            return Err(crate::AdapterError::Rejected(
+                "provider did not adopt the exact bound runtime".into(),
+            ));
+        }
+        let status = if request.spec.home_volume.is_some() {
+            Some(self.runtime_status(&request.handle).await?)
+        } else {
+            None
+        };
+        Ok(Some(crate::RuntimeInspection {
+            observation,
+            status,
+        }))
+    }
+
     /// Reclaim one exact provider observation without trusting a reused handle.
     async fn reclaim_runtime(&self, _observation: &RuntimeObservation) -> Result<()> {
         Err(crate::AdapterError::Unsupported(

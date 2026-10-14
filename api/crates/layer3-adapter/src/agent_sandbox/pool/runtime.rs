@@ -52,7 +52,18 @@ impl AgentSandboxPools {
                 )?,
             }
         };
-        validate_request(&self.config.deployment, origin, &home, request)?;
+        self.runtime_desired_for_home(origin, &home, request, name)
+    }
+
+    /// Pure rendering after the caller has verified the exact current home graph.
+    pub(crate) fn runtime_desired_for_home(
+        &self,
+        origin: &NativePoolHomeOrigin,
+        home: &HomeVolumeAttachment,
+        request: &ProviderSandboxRequest,
+        name: &str,
+    ) -> Result<DynamicObject> {
+        validate_request(&self.config.deployment, origin, home, request)?;
         let config = model::binding_config(&self.config, &origin.claim.request.pool);
         let template = model::template(&config, &origin.claim.request.pool.spec)?;
         let mut spec = model::sandbox_spec(&template, &origin.claim.request.pool);
