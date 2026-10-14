@@ -10,6 +10,9 @@ use crate::{
 };
 use std::sync::{Arc, Mutex};
 
+#[path = "backend_assignment_cache_tests.rs"]
+mod assignment_cache;
+
 struct Transport {
     state: Arc<Mutex<State>>,
     binds: Mutex<Vec<RuntimeHandle>>,
