@@ -177,6 +177,31 @@ async fn bootstrap_expected_wait_defers_without_failure_logs_or_runtime_effects(
     let agent = fixture.admit(None).await;
     let before = h.backend.requests().await.len();
     let logs = h.store.agent_log(&agent.id, 0, 100).await.unwrap();
+    let workspace_worker = crate::sandbox::workspace_worker::WorkspaceWorker::new(
+        crate::sandbox::workspace_worker::WorkspaceWorkerDependencies {
+            store: h.store.clone(),
+            adapter: h.adapter.clone(),
+        },
+        crate::sandbox::workspace_worker::WorkspaceWorkerConfig::new(
+            "early-workspace",
+            DEPLOYMENT_ID,
+        ),
+    );
+    let original_workspace = h
+        .store
+        .get_workspace(&agent.workspace_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(workspace_worker.run_due(h.now).await.unwrap(), 0);
+    assert_eq!(
+        h.store
+            .get_workspace(&agent.workspace_id)
+            .await
+            .unwrap()
+            .unwrap(),
+        original_workspace
+    );
     let started = tokio::time::Instant::now();
     h.run(&agent.id, h.now).await;
     assert_eq!(started.elapsed(), Duration::from_secs(1));

@@ -361,3 +361,56 @@ async fn bootstrap_ready_workspace_still_waits_for_parent_activation_without_bin
         Some("bootstrap-one")
     );
 }
+
+#[tokio::test]
+async fn bootstrap_workspace_claim_waits_without_mutation_until_installation_can_prepare_it() {
+    use crate::sandbox::store::WorkspaceWorkerStore;
+    let (store, _) = pending().await;
+    let id = workspace().id;
+    let original = store.get_workspace(&id).await.unwrap().unwrap();
+    for status in [SandboxStatus::Provisioning, SandboxStatus::Installing] {
+        store
+            .lock()
+            .sandboxes
+            .get_mut(&sandbox(2).id)
+            .unwrap()
+            .status = status;
+        assert!(store
+            .claim_workspace_work(
+                &id,
+                "workspace-worker",
+                NOW.into(),
+                "2026-09-05T00:01:00Z".into()
+            )
+            .await
+            .unwrap()
+            .is_none());
+        assert_eq!(store.get_workspace(&id).await.unwrap().unwrap(), original);
+    }
+    {
+        let mut state = store.lock();
+        let parent = state.sandboxes.get_mut(&sandbox(2).id).unwrap();
+        parent.credential.delivered = true;
+        parent.runtime = Some(crate::sandbox::RuntimeBinding {
+            boot_id: None,
+            provision_generation: Some(1),
+            runtime_id: "actual-runtime".into(),
+            runtime_version: "test".into(),
+            bound_at: NOW.into(),
+        });
+    }
+    let claimed = store
+        .claim_workspace_work(
+            &id,
+            "workspace-worker",
+            NOW.into(),
+            "2026-09-05T00:01:00Z".into(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(claimed.work.step, WorkspaceWorkStep::Prepare);
+    assert_eq!(claimed.work.attempts, 0);
+    assert_eq!(claimed.revision, original.revision + 1);
+    assert!(claimed.failed.is_none());
+}
