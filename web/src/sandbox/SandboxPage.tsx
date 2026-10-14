@@ -55,6 +55,7 @@ export function SandboxPage({
   const [retry, setRetry] = useState(0);
   const [pollError, setPollError] = useState(false);
   const [advanced, setAdvanced] = useState(false);
+  const [progressOpen, setProgressOpen] = useState(false);
   const [connectionsReady, setConnectionsReady] = useState(false);
   const lifecycleReasonId = useId();
   const heading = useRef<HTMLHeadingElement>(null);
@@ -141,6 +142,25 @@ export function SandboxPage({
   const lifecycleAction = sandboxLifecycleAction(sandbox, pollError);
   const childrenAvailable = sandboxChildrenAvailable(sandbox);
   const notice = sandboxUnavailableNotice(sandbox);
+  const optionalProgress =
+    sandbox.lifecycle?.operation !== undefined ||
+    [
+      'paused',
+      'pausing',
+      'reviving',
+      'rotating',
+      'credential_rotating',
+      'retiring',
+      'retired',
+    ].includes(sandbox.status);
+  const progress = (
+    <LifecycleProgress
+      client={client}
+      sandbox={sandbox}
+      observedAt={state.observedAt}
+      stale={pollError}
+    />
+  );
   return (
     <section className="sandbox-page">
       <header className="sandbox-page__header">
@@ -235,12 +255,14 @@ export function SandboxPage({
       <Presence>
         {pollError ? <p role="alert">Progress could not be refreshed. Reconnecting.</p> : null}
       </Presence>
-      <LifecycleProgress
-        client={client}
-        sandbox={sandbox}
-        observedAt={state.observedAt}
-        stale={pollError}
-      />
+      {optionalProgress ? (
+        <details onToggle={(event) => setProgressOpen(event.currentTarget.open)}>
+          <summary>Sandbox operation progress</summary>
+          {progressOpen ? progress : null}
+        </details>
+      ) : (
+        progress
+      )}
       <Presence>
         {sandbox.status === 'failed' ? (
           <p role="alert">
