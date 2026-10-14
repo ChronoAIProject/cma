@@ -18,6 +18,38 @@ import { profileFailure } from '../profiles/failure';
 const options = { idempotencyKey: 'command-819' };
 
 describe('public REST web binding', () => {
+  it('preserves exact public bootstrap lineage and unresolved worktree state without fabricating readiness', async () => {
+    const test = restTransport();
+    const client = createRestWebClient(test.sdk);
+    test.reply({
+      ...WIRE_AGENT,
+      status: 'starting',
+      ready_at: undefined,
+      worktree: { ...WIRE_AGENT.worktree, status: 'creating', base_commit: '' },
+      workspace: { ...WIRE_AGENT.workspace, status: 'preparing', resolved_commit: undefined },
+      sandbox: { ...WIRE_AGENT.sandbox, status: 'provisioning' },
+      bootstrap: {
+        operation_id: 'operation-one',
+        sandbox_id: 'sandbox-1',
+        workspace_id: 'workspace-1',
+      },
+    });
+    expect(await client.readAgent('agent-1')).toMatchObject({
+      id: 'agent-1',
+      status: 'starting',
+      readyAt: undefined,
+      bootstrap: {
+        operationId: 'operation-one',
+        sandboxId: 'sandbox-1',
+        workspaceId: 'workspace-1',
+      },
+      worktree: { status: 'creating', baseCommit: '' },
+      workspace: { status: 'preparing', resolvedCommit: undefined },
+      sandbox: { status: 'provisioning' },
+    });
+    test.reply(WIRE_AGENT);
+    expect((await client.readAgent('agent-1')).bootstrap).toBeUndefined();
+  });
   it('projects only safe access settings from the exact pinned Sandbox profile', async () => {
     const test = restTransport();
     test.reply(wireRevision('sandbox'));

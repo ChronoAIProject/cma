@@ -97,6 +97,7 @@ function ConsoleContent({
     setRevision((value) => value + 1);
   }, [refreshNavigation]);
   const agent = useAgentController(client, personalAgentId, {
+    viewerId: user.id,
     suspended: accessUncertain,
     summary:
       route.kind === 'agent' && navigation.status === 'ready'
