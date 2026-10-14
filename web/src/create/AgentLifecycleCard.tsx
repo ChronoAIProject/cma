@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import type { SandboxSummary } from '../api/types';
 import type {
   AgentLifecycleCreateInput,
   AgentLifecycleCreateReceipt,
@@ -20,75 +19,8 @@ interface AgentLifecycleCardProps {
   readonly workspaceId?: string;
   readonly sandboxId?: string;
   readonly canCreateSandbox?: boolean;
-  readonly targetPicker?: React.ReactNode;
   readonly onClose: () => void;
   readonly onCreated: (receipt: AgentLifecycleCreateReceipt) => void;
-}
-
-export function AgentLifecycleCard(props: AgentLifecycleCardProps) {
-  const contextual = props.workspaceId !== undefined || props.sandboxId !== undefined;
-  const [target, setTarget] = useState(props.canCreateSandbox === false ? '' : 'new');
-  const [sandboxes, setSandboxes] = useState<readonly SandboxSummary[]>([]);
-  const [locationsError, setLocationsError] = useState<string>();
-  useEffect(() => {
-    if (contextual) return;
-    const request = new AbortController();
-    void (async () => {
-      const items: SandboxSummary[] = [];
-      const seen = new Set<string>();
-      let cursor: string | undefined;
-      do {
-        const page = await props.client.listSandboxes({ cursor, signal: request.signal });
-        items.push(...page.items);
-        cursor = page.next;
-        if (cursor !== undefined && seen.has(cursor)) throw new Error();
-        if (cursor !== undefined) seen.add(cursor);
-      } while (cursor !== undefined && !request.signal.aborted);
-      if (!request.signal.aborted)
-        setSandboxes(items.filter((sandbox) => sandbox.status === 'active'));
-    })().catch(() => {
-      if (!request.signal.aborted) setLocationsError('Existing Sandboxes could not be loaded.');
-    });
-    return () => request.abort();
-  }, [contextual, props.client]);
-  if (contextual) return <AgentLifecycleForm {...props} />;
-  const picker = (
-    <div className="agent-lifecycle-location">
-      <label htmlFor="agent-sandbox">Agent location</label>
-      <select id="agent-sandbox" value={target} onChange={(event) => setTarget(event.target.value)}>
-        {props.canCreateSandbox === false ? (
-          <option value="">Choose an existing Sandbox</option>
-        ) : (
-          <option value="new">New Sandbox + new Agent</option>
-        )}
-        {sandboxes.map((sandbox) => (
-          <option key={sandbox.id} value={sandbox.id}>
-            Existing Sandbox: {sandbox.name}
-          </option>
-        ))}
-      </select>
-      {locationsError ? <p role="status">{locationsError}</p> : null}
-    </div>
-  );
-  if (target === '')
-    return (
-      <Modal
-        open
-        title="New agent"
-        onClose={props.onClose}
-        footer={<Button onClick={props.onClose}>Cancel</Button>}
-      >
-        {picker}
-      </Modal>
-    );
-  return (
-    <AgentLifecycleForm
-      key={target}
-      {...props}
-      sandboxId={target === 'new' ? undefined : target}
-      targetPicker={picker}
-    />
-  );
 }
 
 function validRepository(value: string): boolean {
@@ -114,12 +46,12 @@ function validRepository(value: string): boolean {
   }
 }
 
-function AgentLifecycleForm({
+export function AgentLifecycleCard({
   client,
   viewerId,
   workspaceId,
   sandboxId,
-  targetPicker,
+  canCreateSandbox = true,
   onClose,
   onCreated,
 }: AgentLifecycleCardProps) {
@@ -142,7 +74,8 @@ function AgentLifecycleForm({
   }, [client, workspaceId]);
   const repositoryUrl = repository.trim();
   const repositoryValid = validRepository(repositoryUrl);
-  const valid = repositoryValid;
+  const canCreate = workspaceId !== undefined || sandboxId !== undefined || canCreateSandbox;
+  const valid = repositoryValid && canCreate;
   const submit = () => {
     if (!valid) return;
     const input: AgentLifecycleCreateInput = {
@@ -168,8 +101,10 @@ function AgentLifecycleForm({
         title="New agent"
         description={
           workspaceId === undefined && sandboxId === undefined
-            ? 'Start an Agent in a new Sandbox with the CMA runtime and an empty workspace.'
-            : 'Start an Agent in this Sandbox with the CMA runtime.'
+            ? 'Start an Agent in a new Sandbox with an empty workspace.'
+            : workspaceId !== undefined
+              ? 'Start an Agent in the selected workspace.'
+              : 'Start an Agent with a new workspace in this Sandbox.'
         }
         onClose={() => {
           if (operation?.status === 'succeeded' || operation?.status === 'failed')
@@ -226,9 +161,14 @@ function AgentLifecycleForm({
         ) : null}
         {createdReceipt === undefined && lifecycle.intent === undefined ? (
           <div className="agent-lifecycle-step">
-            {targetPicker}
             {workspaceId === undefined ? null : (
               <p role="status">Existing Sandbox · {workspaceName ?? 'Selected workspace'}</p>
+            )}
+            {canCreate ? null : (
+              <p role="status">
+                You don’t have permission to create a Sandbox. Use New agent from an existing
+                Sandbox or workspace.
+              </p>
             )}
             <div className="create-form__field">
               <label htmlFor="agent-repository">GitHub repository (optional)</label>
