@@ -31,11 +31,15 @@ impl AgentSandboxBackend {
     }
 
     async fn bind(&self, handle: &RuntimeHandle, request: &ProviderSandboxRequest) -> Result<()> {
+        let mut timing = crate::agent_sandbox::provision_timing::ProvisionTiming::new();
         let pod = self
             .client
             .wait_ready(handle, Duration::from_secs(180))
             .await?;
-        self.assign_and_bind(handle, &pod, request).await
+        timing.completed("wait_ready");
+        let result = self.assign_and_bind(handle, &pod, request).await;
+        timing.completed("assign_and_bind");
+        result
     }
 }
 
@@ -56,11 +60,14 @@ impl HostedBackend for AgentSandboxBackend {
             .await
     }
     async fn provision(&self, request: ProviderSandboxRequest) -> Result<RuntimeHandle> {
+        let mut timing = crate::agent_sandbox::provision_timing::ProvisionTiming::new();
         let handle = match self.client.provision_pool_runtime(&request).await? {
             Some(handle) => handle,
             None => self.client.create(&request).await?,
         };
+        timing.completed("runtime_admission");
         self.bind(&handle, &request).await?;
+        timing.completed("runtime_binding");
         Ok(handle)
     }
     async fn teardown_retained(&self, handle: &RuntimeHandle) -> Result<()> {

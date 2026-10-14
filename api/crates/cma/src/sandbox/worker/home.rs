@@ -21,6 +21,8 @@ impl SandboxWorker {
             return Ok(None);
         }
         loop {
+            let mut timing = super::provision_timing::ProvisionTiming::new();
+            let phase = home_phase(sandbox.lifecycle.home.as_deref());
             let next = match crate::sandbox::home::next_home(
                 self.dependencies.adapter.as_ref(),
                 &sandbox.id,
@@ -49,10 +51,15 @@ impl SandboxWorker {
                     }
                 }
                 Ok(Some(home)) => home,
-                Ok(None) => return Ok(None),
+                Ok(None) => {
+                    timing.completed(phase);
+                    return Ok(None);
+                }
                 Err(error) => return Ok(Some(adapter_failure(error))),
             };
+            timing.completed(phase);
             self.save_home(sandbox, next, now).await?;
+            timing.completed("home_persist");
         }
     }
 
@@ -94,5 +101,20 @@ impl SandboxWorker {
             .await?;
         *sandbox = updated;
         Ok(())
+    }
+}
+
+fn home_phase(home: Option<&layer2_core::sandbox::SandboxHome>) -> &'static str {
+    let Some(home) = home else {
+        return "home_reserve";
+    };
+    if home.receipt.is_some() {
+        return "home_verify";
+    }
+    match home.native_pool.as_ref().map(|native| &native.claim) {
+        Some(None) => "home_claim_create",
+        Some(Some(claim)) if claim.sandbox_name.is_none() => "home_claim_assignment",
+        Some(Some(_)) => "home_adoption",
+        None => "home_legacy_prepare",
     }
 }
