@@ -200,6 +200,10 @@ fn unavailable(detail: &str) -> AdapterError {
 }
 fn api_error(error: kube::Error) -> AdapterError {
     match error {
+        kube::Error::Api(response) if response.code == 409 && response.reason == "Conflict" => {
+            // Let the durable worker re-read and verify the same UID-bound resources.
+            unavailable("Kubernetes Sandbox resource changed; retry after revalidation")
+        }
         kube::Error::Api(response) if response.code == 429 => {
             AdapterError::AtCapacity("Kubernetes API throttled the request".into())
         }

@@ -5,6 +5,30 @@ use crate::provider::{
 use serde_json::json;
 use std::collections::BTreeMap;
 
+#[test]
+fn kubernetes_resource_version_conflict_is_retryable_but_other_refusals_are_not() {
+    let error = |code, reason: &str| {
+        api_error(kube::Error::Api(
+            serde_json::from_value(json!({
+                "status": "Failure", "message": "fixture refusal", "reason": reason, "code": code
+            }))
+            .unwrap(),
+        ))
+    };
+    assert!(matches!(
+        error(409, "Conflict"),
+        AdapterError::Unavailable(_)
+    ));
+    for (code, reason) in [
+        (409, "AlreadyExists"),
+        (409, ""),
+        (403, "Forbidden"),
+        (422, "Invalid"),
+    ] {
+        assert!(matches!(error(code, reason), AdapterError::Rejected(_)));
+    }
+}
+
 pub(super) fn config() -> AgentSandboxConfig {
     AgentSandboxConfig {
         namespace: "cma-test".into(),
