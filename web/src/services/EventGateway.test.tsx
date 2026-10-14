@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 import { EventGateway } from './EventGateway';
@@ -96,3 +96,84 @@ it('keeps legacy channel metadata visible and uses its existing console while mo
   expect(within(modern).getByRole('button', { name: 'Send test event' })).toBeEnabled();
   expect(fetcher).toHaveBeenCalledOnce();
 });
+
+it.each(['completed', 'timeout'] as const)(
+  'keeps one cold channel test pending through startup and handles %s without retrying',
+  async (outcome) => {
+    let resolveTest: (response: Response) => void = () => {};
+    const fetcher = vi.fn<typeof globalThis.fetch>().mockImplementation(async (url, init) => {
+      if (url === '/api/event-gateway/v1/channels/cold-channel/test') {
+        return new Promise<Response>((resolve, reject) => {
+          resolveTest = resolve;
+          init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), {
+            once: true,
+          });
+        });
+      }
+      return new Response(
+        JSON.stringify({
+          items: [
+            {
+              record_id: 'cold-record',
+              channel_id: 'cold-channel',
+              version: 1,
+              provider: { slug: 'cma', level: 'L3' },
+              definition: { name: 'Cold channel', sources: [] },
+              endpoints: { custom_event_url: '', nyxid_callback_url: '' },
+            },
+          ],
+        }),
+      );
+    });
+    vi.stubGlobal('fetch', fetcher);
+    render(
+      <EventGateway
+        session={{
+          authenticated: true,
+          subject: 'owner',
+          permissions: ['cma-eg:channels:test'],
+          expires_at: 9999999999,
+        }}
+        denied={vi.fn()}
+      />,
+    );
+    const send = await screen.findByRole('button', { name: 'Send test event' });
+    vi.useFakeTimers();
+    const timeout = vi.spyOn(AbortSignal, 'timeout').mockImplementation((ms) => {
+      const controller = new AbortController();
+      setTimeout(
+        () => controller.abort(new DOMException('Test request timed out', 'TimeoutError')),
+        ms,
+      );
+      return controller.signal;
+    });
+    try {
+      fireEvent.click(send);
+      expect(timeout).toHaveBeenCalledWith(125_000);
+      expect(screen.getByRole('button', { name: 'Sending test…' })).toBeDisabled();
+      await act(() => vi.advanceTimersByTimeAsync(120_000));
+      expect(screen.getByRole('button', { name: 'Sending test…' })).toBeDisabled();
+      fireEvent.click(send);
+      expect(fetcher).toHaveBeenCalledTimes(2);
+      if (outcome === 'completed') {
+        await act(async () =>
+          resolveTest(new Response(JSON.stringify({ first_text: 'Cold test completed' }))),
+        );
+        expect(screen.getByText('Cold test completed')).toBeVisible();
+      } else {
+        await act(() => vi.advanceTimersByTimeAsync(5_000));
+        expect(
+          screen.getByText(
+            'Test result is unknown. Check channel activity before sending another test.',
+          ),
+        ).toBeVisible();
+      }
+      expect(screen.getByRole('button', { name: 'Send test event' })).toBeEnabled();
+      expect(fetcher).toHaveBeenCalledTimes(2);
+      expect(fetcher.mock.calls[1]?.[1]?.method).toBe('POST');
+    } finally {
+      timeout.mockRestore();
+      vi.useRealTimers();
+    }
+  },
+);
