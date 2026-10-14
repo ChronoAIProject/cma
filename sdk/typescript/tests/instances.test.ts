@@ -13,6 +13,33 @@ import {
 } from './resource-fixtures.js';
 
 describe('Sandbox hierarchy resources', () => {
+  it('accepts optional pinned providers and rejects malformed provider projections', async () => {
+    const test = transport();
+    const detail = {
+      ...sandbox,
+      workspace_count: 0,
+      worktree_count: 0,
+      agent_count: 0,
+      workspaces: [],
+    };
+    for (const access of ['chronoai_managed', 'own_credentials']) {
+      test.answer({ ...detail, agent_provider: 'codex', model_access: access });
+      expect(await test.client.sandboxes.read(sandbox.id)).toMatchObject({
+        agent_provider: 'codex',
+        model_access: access,
+      });
+    }
+    test.answer(detail);
+    expect((await test.client.sandboxes.read(sandbox.id)).agent_provider).toBeUndefined();
+    for (const invalid of [
+      { agent_provider: 'unknown' },
+      { model_access: 'unknown' },
+      { model_access: null },
+    ]) {
+      test.answer({ ...detail, ...invalid });
+      await expect(test.client.sandboxes.read(sandbox.id)).rejects.toBeInstanceOf(ProtocolError);
+    }
+  });
   it('retains authoritative lifecycle eligibility and recorded phases without status inference', async () => {
     const test = transport();
     const base = {
