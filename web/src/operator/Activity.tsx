@@ -1,3 +1,4 @@
+import { Picker } from '../ui/Picker';
 import { useCallback, useState } from 'react';
 import type { ActivityAction } from '@chronoai/cma-sdk';
 import { Button } from '../ui/Button';
@@ -48,18 +49,15 @@ export function Activity({ client }: { readonly client: OperatorClient }) {
         </label>
         <label className="operator-field">
           <span>Action</span>
-          <select
-            aria-label="Activity action"
+          <Picker
+            label="Activity action"
             value={action}
-            onChange={(event) => setAction(event.target.value as ActivityAction | '')}
-          >
-            <option value="">All actions</option>
-            {actions.map((value) => (
-              <option key={value} value={value}>
-                {stateWord(value)}
-              </option>
-            ))}
-          </select>
+            onChange={(choice) => setAction(choice as ActivityAction | '')}
+            options={[
+              { value: '', label: 'All actions' },
+              ...actions.map((value) => ({ value, label: stateWord(value) })),
+            ]}
+          />
         </label>
         <Button type="submit" icon={<IconSearchOutline16 />}>
           Apply filters

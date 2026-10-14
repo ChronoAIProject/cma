@@ -1,3 +1,4 @@
+import { Picker } from '../ui/Picker';
 import { Presence } from '../ui/Presence';
 import { useCallback, useRef, useState } from 'react';
 import type { AdminSandboxSummary, SandboxStatus } from '@chronoai/cma-sdk';
@@ -63,18 +64,15 @@ export function Sandboxes({
         </label>
         <label className="operator-field">
           <span>Status</span>
-          <select
-            aria-label="Sandbox status"
+          <Picker
+            label="Sandbox status"
             value={status}
-            onChange={(event) => setStatus(event.target.value as SandboxStatus | '')}
-          >
-            <option value="">All statuses</option>
-            {statuses.map((value) => (
-              <option key={value} value={value}>
-                {stateWord(value)}
-              </option>
-            ))}
-          </select>
+            onChange={(choice) => setStatus(choice as SandboxStatus | '')}
+            options={[
+              { value: '', label: 'All statuses' },
+              ...statuses.map((value) => ({ value, label: stateWord(value) })),
+            ]}
+          />
         </label>
         <label className="operator-field">
           <span>Runtime version</span>

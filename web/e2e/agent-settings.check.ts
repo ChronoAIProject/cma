@@ -26,7 +26,7 @@ async function capture(page: Page, info: TestInfo, state: string) {
     });
   }
 }
-for (const target of ['new', 'existing', 'contextual'] as const) {
+for (const target of ['new', 'contextual'] as const) {
   test(`LOCAL ${target} Sandbox creation uses only repository context and recovers the same command after reload`, async ({
     page,
     baseURL,
@@ -71,8 +71,7 @@ for (const target of ['new', 'existing', 'contextual'] as const) {
           .locator('.sidebar')
           .getByRole('button', { name: 'New agent', exact: true })
           .click();
-        if (target === 'existing')
-          await page.getByLabel('Agent location').selectOption('sbx_route');
+        await expect(page.getByLabel('Agent location')).toHaveCount(0);
       }
     };
     await open();
@@ -98,7 +97,6 @@ for (const target of ['new', 'existing', 'contextual'] as const) {
       ...(target === 'new' ? {} : { sandbox_id: 'sbx_route' }),
     });
     ready = true;
-    await dialog.getByRole('button', { name: 'Open agent', exact: true }).click();
     await expect(page).toHaveURL(/\/agents\/agt_contract$/);
     expect(boundary.writes).toEqual([]);
     expect(boundary.unexpected).toEqual([]);
@@ -184,6 +182,12 @@ test('LOCAL Agent detail settings apply only after a confirmed runtime response 
     permission_mode: 'autonomous',
     pending: false,
   };
+  await page.route('**/api/v1/agents/agt_contract/models', (route) =>
+    route.fulfill({ json: { models: [{ id: 'gpt-6', label: 'GPT-6' }] } }),
+  );
+  await page.route('**/api/v1/agents/agt_contract/skills', (route) =>
+    route.fulfill({ json: { items: [], pending: false, can_install: true } }),
+  );
   const writes: { key?: string; body: unknown }[] = [];
   await page.route('**/api/agent-manager/v1/agents/agt_contract/settings', (route) => {
     if (route.request().method() === 'GET') return route.fulfill({ json: settings });
@@ -199,9 +203,11 @@ test('LOCAL Agent detail settings apply only after a confirmed runtime response 
   await page.goto('/agents/agt_contract');
   await page.getByRole('button', { name: 'Show Agent details' }).click();
   const details = page.getByRole('complementary', { name: 'Agent details' });
-  await expect(details.getByLabel('Model', { exact: true })).toHaveValue('gpt-6');
-  await details.getByLabel('Reasoning effort').selectOption('medium');
-  await details.getByLabel('Permission mode').selectOption('guarded');
+  await expect(details.getByLabel('Model', { exact: true })).toHaveText('GPT-6');
+  await details.getByRole('button', { name: 'Reasoning effort', exact: true }).click();
+  await page.getByRole('menuitemradio', { name: 'Medium', exact: true }).click();
+  await details.getByRole('button', { name: 'Permission mode', exact: true }).click();
+  await page.getByRole('menuitemradio', { name: 'Guarded', exact: true }).click();
   await details.getByRole('button', { name: 'Apply settings', exact: true }).click();
   await expect(details.getByRole('button', { name: 'Retry settings update' })).toBeEnabled();
   await expect(details.getByLabel('Model', { exact: true })).toBeDisabled();
@@ -217,6 +223,141 @@ test('LOCAL Agent detail settings apply only after a confirmed runtime response 
   });
   expect(writes[0]?.key).toBeTruthy();
   expect(boundary.writes).toEqual([]);
+  expect(boundary.unexpected).toEqual([]);
+  expect(boundary.errors).toEqual([]);
+});
+
+test('LOCAL Details uses model and skill catalogs in bounded responsive containers and confirms stop progress', async ({
+  page,
+  baseURL,
+}, info) => {
+  const boundary = new LocalStartup();
+  await boundary.route(page, baseURL!);
+  await page.route('**/api/v1/agents/agt_contract/models', (route) =>
+    route.fulfill({
+      json: {
+        models: [
+          { id: 'gpt-6', label: 'GPT-6' },
+          { id: 'fast-model', label: 'Fast model' },
+        ],
+      },
+    }),
+  );
+  await page.route('**/api/v1/profile-authoring/services', (route) =>
+    route.fulfill({
+      json: Array.from({ length: 105 }, (_, i) => ({
+        id: `service-${i}`,
+        name: `Accessible service ${i}`,
+        description: 'A service available to this account.',
+      })),
+    }),
+  );
+  await page.route('**/api/v1/profile-authoring/skills*', (route) =>
+    route.fulfill({
+      json: {
+        items: Array.from({ length: 20 }, (_, i) => ({
+          id: `skill-${i}`,
+          name: `Skill ${i}`,
+          description: 'An Ornn skill available to this account.',
+          versions: ['1.2', '1.1'],
+        })),
+      },
+    }),
+  );
+  let skillStatus: 'pending' | 'installed' | undefined;
+  const installs: { key?: string; body: unknown }[] = [];
+  await page.route('**/api/v1/agents/agt_contract/skills', (route) => {
+    if (route.request().method() === 'POST') {
+      installs.push({
+        key: route.request().headers()['idempotency-key'],
+        body: route.request().postDataJSON(),
+      });
+      skillStatus = 'pending';
+    }
+    return route.fulfill({
+      status: route.request().method() === 'POST' ? 202 : 200,
+      json: {
+        items: skillStatus
+          ? [{ id: 'skill-0', version: '1.2', source: 'ornn', status: skillStatus }]
+          : [],
+        pending: skillStatus === 'pending',
+        can_install: skillStatus !== 'pending',
+      },
+    });
+  });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto('/agents/agt_contract');
+  await page.getByRole('button', { name: 'Show Agent details' }).click();
+  const details = page.getByRole('complementary', { name: 'Agent details' });
+  await expect(details.getByRole('button', { name: 'Model', exact: true })).toHaveText('GPT-6');
+  await details.getByRole('button', { name: 'Model', exact: true }).click();
+  await page.getByRole('menuitemradio', { name: 'Fast model', exact: true }).click();
+  await expect(details.getByRole('button', { name: 'Model', exact: true })).toHaveText(
+    'Fast model',
+  );
+  await expect(details.getByRole('list', { name: 'Services' }).getByRole('listitem')).toHaveCount(
+    108,
+  );
+  await expect(
+    details.getByRole('list', { name: 'Available Ornn skills' }).getByRole('listitem'),
+  ).toHaveCount(20);
+  for (const width of [1440, 390, 320]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await expect(details).toBeVisible();
+    await details.getByRole('button', { name: 'Model', exact: true }).scrollIntoViewIfNeeded();
+    for (const name of ['Services', 'Available Ornn skills']) {
+      const list = details.getByRole('list', { name, exact: true });
+      expect(
+        await list.evaluate(
+          (el) =>
+            el.clientHeight <= 320 &&
+            el.scrollHeight > el.clientHeight &&
+            el.scrollWidth <= el.clientWidth + 1,
+        ),
+      ).toBe(true);
+    }
+    expect(await details.evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+    await page.screenshot({
+      path: info.outputPath(`details-catalogs-${width}.png`),
+      fullPage: true,
+      animations: 'disabled',
+    });
+    await details
+      .getByRole('list', { name: 'Available Ornn skills', exact: true })
+      .scrollIntoViewIfNeeded();
+    await page.screenshot({
+      path: info.outputPath(`details-skills-${width}.png`),
+      fullPage: true,
+      animations: 'disabled',
+    });
+  }
+  await details.getByRole('button', { name: 'Install Skill 0', exact: true }).click();
+  await expect(details.getByText('Waiting for the Agent to confirm installation.')).toBeVisible();
+  await expect(details.getByText('1.2 · Installed', { exact: true })).toHaveCount(0);
+  skillStatus = 'installed';
+  await expect(details.getByText('1.2 · Installed', { exact: true })).toBeVisible();
+  expect(installs).toHaveLength(1);
+  expect(installs[0]?.body).toEqual({ id: 'skill-0', version: '1.2' });
+  expect(installs[0]?.key).toBeTruthy();
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.getByRole('button', { name: 'Close Agent details' }).click();
+  let stops = 0;
+  await page.route('**/api/v1/agents/agt_contract/stop', (route) => {
+    stops++;
+    return route.fulfill({ status: 202, body: '' });
+  });
+  await page
+    .locator('.tree-row[data-node-id="agent:agt_contract"]')
+    .getByRole('button', { name: /Options for/ })
+    .click();
+  await page.getByRole('menuitem', { name: 'Stop', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Stopping Agent' })).toBeVisible();
+  await expect(page.getByText('Accepted', { exact: true })).toBeVisible();
+  expect(stops).toBe(1);
+  await expect(page.getByRole('dialog', { name: 'Agent stopped', exact: true })).toHaveCount(0);
+  boundary.agent = { ...boundary.agent, status: 'stopped' };
+  await expect(page.getByRole('dialog', { name: 'Agent stopped', exact: true })).toBeVisible();
+  await capture(page, info, 'stop-confirmed');
   expect(boundary.unexpected).toEqual([]);
   expect(boundary.errors).toEqual([]);
 });

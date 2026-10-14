@@ -1,3 +1,4 @@
+import { Picker } from '../ui/Picker';
 import { useEffect, useState } from 'react';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
@@ -34,13 +35,18 @@ export function ImageManager({
     <>
       <label className="service-field">
         Image catalog
-        <select value={scope} onChange={(event) => setScope(event.target.value)}>
-          <option value="all">All accessible images</option>
-          <option value="owned">Your images</option>
-          <option value="private">Your private images</option>
-          <option value="public">Public images</option>
-          <option value="shared">Shared with you</option>
-        </select>
+        <Picker
+          value={scope}
+          onChange={(choice) => setScope(choice)}
+          label="Image catalog"
+          options={[
+            { value: 'all', label: 'All accessible images' },
+            { value: 'owned', label: 'Your images' },
+            { value: 'private', label: 'Your private images' },
+            { value: 'public', label: 'Public images' },
+            { value: 'shared', label: 'Shared with you' },
+          ]}
+        />
       </label>
       <ImageCatalog key={scope} scope={scope} session={session} denied={denied} />
     </>

@@ -40,20 +40,15 @@ export function ScopePicker({
       <p className="profile-field__help">
         These services are shared by all Agents in this Sandbox.
       </p>
-      {required.map((scope) => (
-        <label key={scope}>
-          <input type="checkbox" checked disabled />
-          {scope}{' '}
-          <small>
-            {REQUIRED_AGENT_SCOPES.some((baseline) => baseline === scope)
-              ? 'Required'
-              : fixed.includes(scope)
-                ? 'Already granted'
-                : 'Requested'}
-          </small>
-        </label>
-      ))}
       <ServicePicker
+        fixed={required.map((id) => ({
+          id,
+          reason: REQUIRED_AGENT_SCOPES.some((baseline) => baseline === id)
+            ? 'Required'
+            : fixed.includes(id)
+              ? 'Already granted'
+              : 'Requested',
+        }))}
         help="Choose additional services this task needs. Existing Sandbox permissions remain available."
         catalog={catalog}
         value={value.filter((scope) => !required.includes(scope))}

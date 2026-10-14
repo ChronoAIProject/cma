@@ -24,7 +24,7 @@ it('opens settings independently of optional creation provenance', async () => {
   const view = render(draw(false));
   expect(readAgentSettings).not.toHaveBeenCalled();
   view.rerender(draw(true));
-  expect(await screen.findByLabelText('Model')).toHaveValue('gpt-6');
+  expect(await screen.findByLabelText('Model')).toHaveTextContent('gpt-6');
   expect(readAgentProvenance).not.toHaveBeenCalled();
   view.rerender(draw(false));
   expect(readAgentSettings.mock.calls[0]?.[1].signal.aborted).toBe(true);
