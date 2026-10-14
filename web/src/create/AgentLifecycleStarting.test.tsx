@@ -4,6 +4,7 @@ import type { CmaWebClient } from '../api/client';
 import type { AgentDetail, SandboxDetail } from '../api/types';
 import { AGENT_DETAIL, agentClient } from '../test/agent';
 import { sandboxFixture } from '../test/hierarchy';
+import { BOOTSTRAP_AGENT, bootstrapSandbox } from '../test/bootstrap';
 import { AgentLifecycleCard } from './AgentLifecycleCard';
 import { lifecycleStorageKey } from './lifecycleIntent';
 
@@ -56,6 +57,68 @@ function show(client: CmaWebClient, workspaceId?: string, sandboxId?: string) {
   return { ...render(<AgentLifecycleCard {...props} />), props, onCreated };
 }
 const advance = async (ms = 0) => act(async () => vi.advanceTimersByTimeAsync(ms));
+
+it.each(['provisioning', 'installing'] as const)(
+  'opens the admitted bootstrap Agent during parent %s with its actual Starting status',
+  async (status) => {
+    const client = clientFor({
+      readAgent: async () => BOOTSTRAP_AGENT,
+      readSandbox: async () => ({ ...bootstrapSandbox(status), owner: 'owner' }),
+    });
+    const view = show(client, 'wsp_1', 'sbx_1');
+    await advance();
+    expect(view.onCreated).toHaveBeenCalledExactlyOnceWith({ id: 'agt_1', status: 'starting' });
+    expect(client.createAgentLifecycle).not.toHaveBeenCalled();
+  },
+);
+
+it.each([
+  [
+    'missing bootstrap',
+    { ...BOOTSTRAP_AGENT, bootstrap: undefined },
+    { ...bootstrapSandbox(), owner: 'owner' },
+  ],
+  [
+    'wrong creation operation',
+    {
+      ...BOOTSTRAP_AGENT,
+      bootstrap: { ...BOOTSTRAP_AGENT.bootstrap!, operationId: 'another-operation' },
+    },
+    { ...bootstrapSandbox(), owner: 'owner' },
+  ],
+  [
+    'wrong bootstrap parent',
+    {
+      ...BOOTSTRAP_AGENT,
+      bootstrap: { ...BOOTSTRAP_AGENT.bootstrap!, sandboxId: 'another-sandbox' },
+    },
+    { ...bootstrapSandbox(), owner: 'owner' },
+  ],
+  [
+    'wrong bootstrap Workspace',
+    {
+      ...BOOTSTRAP_AGENT,
+      bootstrap: { ...BOOTSTRAP_AGENT.bootstrap!, workspaceId: 'another-workspace' },
+    },
+    { ...bootstrapSandbox(), owner: 'owner' },
+  ],
+  ['missing owner', BOOTSTRAP_AGENT, { ...bootstrapSandbox(), owner: undefined }],
+  ['wrong owner', BOOTSTRAP_AGENT, bootstrapSandbox()],
+  [
+    'other parent transition',
+    BOOTSTRAP_AGENT,
+    { ...bootstrapSandbox(), owner: 'owner', status: 'reviving' },
+  ],
+  [
+    'no lifecycle',
+    BOOTSTRAP_AGENT,
+    { ...bootstrapSandbox(), owner: 'owner', lifecycle: undefined },
+  ],
+] as const)('does not open bootstrap creation with %s', async (_reason, agent, parent) => {
+  const view = show(clientFor({ readAgent: async () => agent, readSandbox: async () => parent }));
+  await advance();
+  expect(view.onCreated).not.toHaveBeenCalled();
+});
 
 it('opens the real Starting Agent once before lifecycle success without recreating or claiming Ready', async () => {
   const client = clientFor();
