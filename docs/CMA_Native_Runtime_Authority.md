@@ -74,3 +74,14 @@ provider paths retain their existing provisioning behavior. Fixtures verify
 the exact two-read reduction, concurrent graph reads, forged identities and
 mounts, live authority changes, publication conflict recovery, and router
 forwarding. End-to-end latency still requires a production measurement.
+
+Native admission validates the persisted origin and complete runtime request
+before starting fresh Template/Pool policy reads alongside the Claim/Sandbox/PVC
+home proof. Both proofs must succeed before publication, and policy errors retain
+precedence over home errors. The member UID and resourceVersion from that same
+home proof still fence the metadata write. Every later admission repeats both
+proofs; legacy home admission keeps its sequential policy and recovery path.
+The fixed timing label `admission_policy_and_home_proof` reports the combined
+overlapping read stage once. This removes one serial read wave, not a read or
+a validation boundary. Gated fixtures prove concurrency without timing estimates
+and refuse publication on either proof's failure.
