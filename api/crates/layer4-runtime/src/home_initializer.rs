@@ -10,32 +10,51 @@ use crate::fs_durability as durable;
 
 const COMPLETE: &str = ".cma-home-layout-v1";
 const STAGING: &str = ".cma-home-initializing-v1";
+const COMPLETE_V2: &str = ".cma-home-layout-v2";
+const STAGING_V2: &str = ".cma-home-initializing-v2";
 const DIRECTORIES: [&str; 3] = ["home", "state", "transfer"];
 
 pub(crate) fn initialize(root: &Path, image_home: &Path) -> io::Result<()> {
+    initialize_layout(root, image_home, false)
+}
+
+/// V2 persists all of /home; the public user seed still belongs at /home/cma.
+pub(crate) fn initialize_home_tree(root: &Path, image_home: &Path) -> io::Result<()> {
+    initialize_layout(root, image_home, true)
+}
+
+fn initialize_layout(root: &Path, image_home: &Path, full_home: bool) -> io::Result<()> {
+    let (complete_name, staging_name) = if full_home {
+        (COMPLETE_V2, STAGING_V2)
+    } else {
+        (COMPLETE, STAGING)
+    };
     validate_root(root)?;
     for entry in fs::read_dir(root)? {
         let entry = entry?;
         let name = entry.file_name();
         if !DIRECTORIES.iter().any(|allowed| name == *allowed)
-            && name != COMPLETE
-            && name != STAGING
+            && name != complete_name
+            && name != staging_name
             && name != "lost+found"
         {
             return Err(invalid("volume contains an unknown layout entry"));
         }
         directory(&entry.path())?;
     }
-    let complete = root.join(COMPLETE);
+    let complete = root.join(complete_name);
     if exists(&complete)? {
         ensure_empty(&complete)?;
-        if exists(&root.join(STAGING))? {
+        if exists(&root.join(staging_name))? {
             return Err(invalid(
                 "completed volume still contains initialization staging",
             ));
         }
         for name in DIRECTORIES {
             owned_directory(&root.join(name))?;
+        }
+        if full_home {
+            owned_directory(&root.join("home/cma"))?;
         }
         // Do not inspect, seed, chmod or replace the owner's retained contents.
         return Ok(());
@@ -50,10 +69,10 @@ pub(crate) fn initialize(root: &Path, image_home: &Path) -> io::Result<()> {
         }
     }
     let home = root.join("home");
-    let staging = root.join(STAGING);
+    let staging = root.join(staging_name);
     if exists(&home)? {
         owned_directory(&home)?;
-        if exists(&staging)? || !same_tree(image_home, &home)? {
+        if exists(&staging)? || !same_seed(image_home, &home, full_home)? {
             return Err(invalid("uninitialized home differs from the public image"));
         }
     } else {
@@ -64,7 +83,13 @@ pub(crate) fn initialize(root: &Path, image_home: &Path) -> io::Result<()> {
             durable::remove_dir_all(&staging)?;
         }
         private_directory(&staging)?;
-        copy_tree(image_home, &staging)?;
+        if full_home {
+            private_directory(&staging.join("cma"))?;
+            private_directory(&staging.join(".codex"))?;
+            copy_tree(image_home, &staging.join("cma"))?;
+        } else {
+            copy_tree(image_home, &staging)?;
+        }
         durable::sync_tree(&staging)?;
         durable::rename(&staging, &home)?;
     }
@@ -77,6 +102,19 @@ pub(crate) fn initialize(root: &Path, image_home: &Path) -> io::Result<()> {
     // mkdir is the atomic commit; every required directory and copied file was
     // synced first. No credentials, network, Kubernetes client or shell needed.
     private_directory(&complete)
+}
+
+fn same_seed(image_home: &Path, home: &Path, full_home: bool) -> io::Result<bool> {
+    if !full_home {
+        return same_tree(image_home, home);
+    }
+    if fs::read_dir(home)?.count() != 2 {
+        return Ok(false);
+    }
+    owned_directory(&home.join("cma"))?;
+    owned_directory(&home.join(".codex"))?;
+    ensure_empty(&home.join(".codex"))?;
+    same_tree(image_home, &home.join("cma"))
 }
 
 fn validate_root(root: &Path) -> io::Result<()> {

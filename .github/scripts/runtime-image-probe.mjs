@@ -87,10 +87,13 @@ export function assertPublicHomeSeed(source) {
   assert.equal(homeSnapshot(join(skill, 'tools')), homeSnapshot(join(skill, 'scripts')));
 }
 
-function initializeEmptyVolume(onStage) {
+function initializeEmptyVolume(onStage, fullHome = false) {
   const volume = mkdtempSync(join(tmpdir(), 'cma-empty-home-'));
   const source = '/usr/share/cma-runtime-home';
-  const initialize = () => execFileSync('/usr/local/bin/layer4-runtime', ['--initialize-home', volume], {
+  const command = fullHome ? '--initialize-home-tree' : '--initialize-home';
+  const marker = fullHome ? '.cma-home-layout-v2' : '.cma-home-layout-v1';
+  const seededHome = join(volume, 'home', ...(fullHome ? ['cma'] : []));
+  const initialize = () => execFileSync('/usr/local/bin/layer4-runtime', [command, volume], {
     encoding: 'utf8', timeout: 30000, stdio: ['ignore', 'pipe', 'pipe'],
   });
   const before = homeSnapshot('/home/cma');
@@ -105,33 +108,39 @@ function initializeEmptyVolume(onStage) {
     onStage('empty-volume-first-initialization');
     initialize();
     onStage('empty-volume-owned-layout');
-    for (const name of ['home', 'state', 'transfer', '.cma-home-layout-v1']) {
+    for (const name of ['home', 'state', 'transfer', marker, ...(fullHome ? ['home/cma', 'home/.codex'] : [])]) {
       const metadata = lstatSync(join(volume, name));
       assert.ok(metadata.isDirectory() && !metadata.isSymbolicLink());
       assert.equal(metadata.uid, 10001);
     }
     onStage('empty-volume-seeded-skills');
-    assertPublicHomeSeed(join(volume, 'home'));
+    assertPublicHomeSeed(seededHome);
     for (const name of ['nyxid', 'ornn-agent-manual-cli']) {
       const relative = join('.codex', 'skills', name, 'SKILL.md');
-      assert.deepEqual(readFileSync(join(volume, 'home', relative)), readFileSync(join(source, relative)));
+      assert.deepEqual(readFileSync(join(seededHome, relative)), readFileSync(join(source, relative)));
     }
     assert.deepEqual(readdirSync(join(volume, 'state')), []);
     assert.deepEqual(readdirSync(join(volume, 'transfer')), []);
-    writeFileSync(join(volume, 'home', 'uncommitted-work'), 'preserve across suspension');
+    writeFileSync(join(seededHome, 'uncommitted-work'), 'preserve across suspension');
     writeFileSync(join(volume, 'state', 'retained-binding'), 'same identity');
-    symlinkSync('uncommitted-work', join(volume, 'home', 'user-link'));
+    symlinkSync('uncommitted-work', join(seededHome, 'user-link'));
+    if (fullHome) writeFileSync(join(volume, 'home', '.codex', 'retained-session'), 'synthetic codex session');
+    writeFileSync(join(volume, 'transfer', 'retained-data'), 'unfinished transfer');
     const retained = homeSnapshot(volume);
+    assert.throws(() => execFileSync('/usr/local/bin/layer4-runtime', [
+      fullHome ? '--initialize-home' : '--initialize-home-tree', volume,
+    ], { timeout: 30000, stdio: ['ignore', 'pipe', 'pipe'] }));
+    assert.equal(homeSnapshot(volume), retained);
     onStage('empty-volume-retained-replay');
     initialize();
     onStage('empty-volume-content-preserved');
     assert.equal(homeSnapshot(volume), retained);
     assert.equal(homeSnapshot('/home/cma'), before);
     assert.equal(homeSnapshot(source), publicHome);
-    rmSync(join(volume, '.cma-home-layout-v1'), { recursive: true });
+    rmSync(join(volume, marker), { recursive: true });
     onStage('empty-volume-uncommitted-layout-refused');
     assert.throws(initialize);
-    assert.equal(readFileSync(join(volume, 'home', 'uncommitted-work'), 'utf8'), 'preserve across suspension');
+    assert.equal(readFileSync(join(seededHome, 'uncommitted-work'), 'utf8'), 'preserve across suspension');
   } finally { rmSync(volume, { recursive: true, force: true }); }
 }
 
@@ -258,6 +267,7 @@ export async function probe(onStage = () => {}) {
   assert.throws(() => writeFileSync('/usr/local/cma-ci-write-refusal', 'refused'));
   complete('non-root-read-only');
   initializeEmptyVolume(onStage);
+  initializeEmptyVolume(onStage, true);
   complete('empty-volume-initialization');
   const credential = { t: 'credential', operation_id: 'ci-credential', value: secret, custody_generation: 1 };
   assert.equal((await control(credential)).code, 'install_not_completed');

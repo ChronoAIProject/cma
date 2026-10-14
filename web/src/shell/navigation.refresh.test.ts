@@ -232,9 +232,13 @@ it.each(['status', 'updatedAt', 'workspaceCount', 'name', 'profile', 'lifecycle'
     inventory[1] = { ...changed, sandbox: { ...changed.sandbox, [field]: changes[field] } };
     const client = hierarchyClient(() => inventory);
     const result = await loadNavigation(client, new AbortController().signal);
-    expect(result).toEqual(field === 'status' ? inventory.slice(0, 2) : inventory.slice(0, 1));
+    expect(result).toEqual(
+      field === 'status'
+        ? [inventory[0], { sandbox: inventory[1]!.sandbox, workspaces: [] }]
+        : inventory.slice(0, 1),
+    );
     expect(client.readSandbox).toHaveBeenCalledTimes(field === 'status' ? 2 : 1);
-    expect(client.readWorkspace).toHaveBeenCalledTimes(field === 'status' ? 2 : 1);
+    expect(client.readWorkspace).toHaveBeenCalledTimes(1);
   },
 );
 

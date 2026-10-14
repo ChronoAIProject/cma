@@ -300,9 +300,10 @@ export function AgentSurface({
           approvalBusy={approvalBusy}
           onApproval={(id, decision) => void controller.approve(id, decision)}
         >
-          {controller.progressObservation === undefined ? null : (
+          {controller.progressObservation !== undefined &&
+          ['provisioning', 'installing'].includes(controller.progressObservation.sandbox.status) ? (
             <LifecycleProgress {...controller.progressObservation} />
-          )}
+          ) : null}
         </MessageStream>
       </div>
       <div className="agent-surface__input">
