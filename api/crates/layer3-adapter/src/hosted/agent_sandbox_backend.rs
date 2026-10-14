@@ -70,6 +70,21 @@ impl HostedBackend for AgentSandboxBackend {
         timing.completed("runtime_binding");
         Ok(handle)
     }
+    async fn provision_with_home(
+        &self,
+        request: ProviderSandboxRequest,
+        home: &HomeVolumeAttachment,
+    ) -> Result<RuntimeHandle> {
+        if !home.request.policy.is_native_vct() {
+            return self.provision(request).await;
+        }
+        let handle = self
+            .client
+            .provision_pool_runtime_with_home(&request, home)
+            .await?;
+        self.bind(&handle, &request).await?;
+        Ok(handle)
+    }
     async fn teardown_retained(&self, handle: &RuntimeHandle) -> Result<()> {
         self.teardown(handle).await
     }
@@ -352,6 +367,16 @@ impl HostedBackend for RuntimeBackends {
     async fn provision(&self, request: ProviderSandboxRequest) -> Result<RuntimeHandle> {
         let selected = self.allocation_provider(&request).await?;
         self.select(selected)?.provision(request).await
+    }
+    async fn provision_with_home(
+        &self,
+        request: ProviderSandboxRequest,
+        home: &HomeVolumeAttachment,
+    ) -> Result<RuntimeHandle> {
+        let selected = self.allocation_provider(&request).await?;
+        self.select(selected)?
+            .provision_with_home(request, home)
+            .await
     }
     async fn teardown_retained(&self, handle: &RuntimeHandle) -> Result<()> {
         self.for_handle(handle)?.teardown_retained(handle).await

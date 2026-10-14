@@ -57,3 +57,20 @@ This is a measured local request reduction, not a production latency guarantee.
 The wider design target of 85 post-provisioning reads also requires sharing
 transport endpoint predicates and combining dispatch home/Pod reads. Those
 additional changes are outside this consolidation.
+
+## Provisioning from persisted home identity
+
+Initial provisioning carries the existing home attachment through the Hosted
+adapter and provider router. Native VCT admission uses that exact origin to
+address fresh Claim, Sandbox and PVC reads. It no longer first reads the PVC
+and then its owning Sandbox solely to rediscover the same origin. This removes
+two sequential discovery GETs; it does not cache live resource authorization.
+
+Both native home layouts retain current graph and explicit policy validation,
+UID/resourceVersion-fenced publication, bootstrap proofs before and after
+assignment, and the adapter's home verification before and after provisioning.
+Malformed or foreign persisted authority is rejected locally. Legacy home and
+provider paths retain their existing provisioning behavior. Fixtures verify
+the exact two-read reduction, concurrent graph reads, forged identities and
+mounts, live authority changes, publication conflict recovery, and router
+forwarding. End-to-end latency still requires a production measurement.
