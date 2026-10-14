@@ -89,7 +89,19 @@ impl HostedBackend for AgentSandboxBackend {
         next: &ProviderSandboxRequest,
     ) -> Result<()> {
         self.client.resume(handle, previous, next).await?;
-        self.bind(handle, next).await
+        self.bind_resumed(handle, next).await
+    }
+    async fn resume_with_home(
+        &self,
+        handle: &RuntimeHandle,
+        previous: &ProviderSandboxRequest,
+        next: &ProviderSandboxRequest,
+        home: &HomeVolumeAttachment,
+    ) -> Result<()> {
+        self.client
+            .resume_with_home(handle, previous, next, home)
+            .await?;
+        self.bind_resumed(handle, next).await
     }
     async fn provision_receipted(
         &self,
@@ -361,6 +373,17 @@ impl HostedBackend for RuntimeBackends {
     ) -> Result<()> {
         self.for_handle(handle)?
             .resume(handle, previous, next)
+            .await
+    }
+    async fn resume_with_home(
+        &self,
+        handle: &RuntimeHandle,
+        previous: &ProviderSandboxRequest,
+        next: &ProviderSandboxRequest,
+        home: &HomeVolumeAttachment,
+    ) -> Result<()> {
+        self.for_handle(handle)?
+            .resume_with_home(handle, previous, next, home)
             .await
     }
     async fn provision_receipted(
