@@ -162,3 +162,32 @@ it('refreshes install capability when the Agent finishes its current turn', asyn
   );
   expect(read).toHaveBeenCalledTimes(2);
 });
+
+it('retains a failed installation and does not offer an unsupported retry or version change', async () => {
+  const install = vi.fn();
+  render(
+    <CmaClientProvider
+      client={agentClient({
+        readAgentSkills: async () => ({
+          ...installed,
+          items: [{ ...installed.items[0]!, status: 'failed', error: 'Installation was refused.' }],
+        }),
+        installAgentSkill: install,
+      })}
+      profiles={profiles()}
+    >
+      <SkillsSettings agentId="agent-one" active busy={false} />
+    </CmaClientProvider>,
+  );
+  expect(await screen.findByText('1.2 · Installation failed')).toBeVisible();
+  const button = await screen.findByRole('button', { name: 'Install TypeScript' });
+  expect(button).toBeDisabled();
+  expect(button).toHaveTextContent('Installation failed');
+  expect(screen.getByRole('button', { name: 'Version for TypeScript' })).toBeDisabled();
+  expect(
+    screen.getByText('This installation failed. This Agent cannot retry or replace this skill.'),
+  ).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Retry installation' })).not.toBeInTheDocument();
+  await userEvent.click(button);
+  expect(install).not.toHaveBeenCalled();
+});
