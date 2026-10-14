@@ -94,12 +94,23 @@ export function foldV2Frame(
   if (frame.data.agent_id !== agent || frame.data.incarnation !== state.agentIncarnation)
     throw new Error('Agent replay changed conversation identity.');
   if (frame.type === 'cma.agent.event') return foldV2Item(state, frame.data);
-  if (frame.type === 'cma.agent.live_gap')
+  if (frame.type === 'cma.agent.live_gap') {
+    // Every following stream starts with a reconnect marker, including idle
+    // Agents. An idle reconnect alone does not establish lost live fragments.
+    if (
+      frame.data.reason === 'reconnected' &&
+      frame.data.turn_sequence === null &&
+      state.activeRunId === undefined &&
+      !state.messages.some((message) => message.liveOnly) &&
+      state.reasoning.length === 0
+    )
+      return state;
     return gap(
       state,
       `live-gap:${state.cursor}`,
       'Live updates were interrupted. Recorded messages and tool activity are retained; missed Thinking is unavailable.',
     );
+  }
   const event = frame.data;
   if (String(event.turn_sequence) !== state.activeRunId || event.after_sequence > state.cursor)
     throw new Error('A live update did not match the observed Agent turn.');
