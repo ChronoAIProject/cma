@@ -15,13 +15,21 @@ struct Bound {
 }
 
 async fn bound(explicit_policy: bool) -> Bound {
+    bound_with_mode(explicit_policy, HomeVolumeMode::NativeVctEmptyV1).await
+}
+
+async fn bound_with_mode(explicit_policy: bool, mode: HomeVolumeMode) -> Bound {
     let mut fixture = Fixture::new().await;
     if explicit_policy {
         fixture.client.config.template_network_policy =
             Some(super::super::network_policy_tests::policy("10.254.0.0/16"));
     }
     let mut spec = super::super::tests::spec();
-    spec.home.mode = HomeVolumeMode::NativeVctEmptyV1;
+    spec.home.mode = mode;
+    spec.image.labels.insert(
+        crate::runtime_bootstrap::RUNTIME_HOME_LAYOUT_LABEL.into(),
+        "2".into(),
+    );
     spec.home.template_name.clear();
     spec.home.template_generation.clear();
     let claim = super::super::home_tests::assigned_spec(&fixture, &spec).await;
@@ -230,3 +238,6 @@ async fn failed_assignment_and_missing_container_incarnation_never_enter_cache()
 
 #[path = "backend_native_proof_tests.rs"]
 mod native_proof_tests;
+
+#[path = "backend_bootstrap_proof_tests.rs"]
+mod bootstrap_proof_tests;
