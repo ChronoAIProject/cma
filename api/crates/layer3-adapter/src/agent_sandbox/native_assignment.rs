@@ -15,7 +15,6 @@ impl AgentSandboxClient {
         bootstrap: &RuntimeBootstrapRequest,
         origin: &NativePoolHomeOrigin,
     ) -> Result<RuntimeBootstrapReceipt> {
-        self.validate_assignment(runtime, expected, bootstrap)?;
         // Reconstruct only the recorded identity. This is not an authority
         // proof: both dispatch boundaries read and validate its live UID graph.
         let home_request = origin.claim.request.home.clone();
@@ -33,7 +32,18 @@ impl AgentSandboxClient {
             let mut timing = super::provision_timing::ProvisionTiming::new();
             // Each proof reads Claim, Sandbox, PVC and Pod inventory concurrently.
             // Nothing is cached across calls or reused across credential delivery.
-            let before = self.native_runtime_proof(runtime, request, &home).await?;
+            let (policy, before) = tokio::join!(
+                self.pools
+                    .verify_explicit_template_policy(&origin.claim.request.pool),
+                async {
+                    self.validate_assignment(runtime, expected, bootstrap)?;
+                    self.native_runtime_proof(runtime, request, &home).await
+                },
+            );
+            // Policy keeps its original precedence. No bootstrap bytes leave
+            // until both fresh, operation-local read branches have succeeded.
+            policy?;
+            let before = before?;
             if before.pod() != expected {
                 return Err(rejected("Sandbox Pod changed before runtime assignment"));
             }
