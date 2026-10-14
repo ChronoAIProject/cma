@@ -18,6 +18,46 @@ const pool = {
 };
 
 describe('native warm pool controls', () => {
+  it('accepts older inventories without additive configuration digests', async () => {
+    const t = transport();
+    const oldPool = Object.fromEntries(
+      Object.entries(pool).filter(([key]) => key !== 'config_sha256'),
+    );
+    for (const items of [[], [oldPool]]) {
+      t.answer({
+        items,
+        default_image: 'next-image',
+        default_cpu_millis: 1000,
+        default_memory_mib: 1024,
+        available: true,
+      });
+      const list = await t.client.admin.listWarmPools();
+      expect(list.default_config_sha256).toBeUndefined();
+      expect(list.items).toEqual(items);
+      expect(list.items[0]?.config_sha256).toBeUndefined();
+    }
+  });
+  it('preserves unavailable default digests and rejects malformed present digest fields', async () => {
+    const t = transport();
+    const inventory = {
+      items: [pool],
+      default_image: 'next-image',
+      default_cpu_millis: 1000,
+      default_memory_mib: 1024,
+      default_config_sha256: null,
+      available: true,
+    };
+    t.answer(inventory);
+    expect((await t.client.admin.listWarmPools()).default_config_sha256).toBeNull();
+    for (const value of [null, 42, false, {}, []]) {
+      t.answer({ ...inventory, items: [{ ...pool, config_sha256: value }] });
+      await expect(t.client.admin.listWarmPools()).rejects.toBeInstanceOf(ProtocolError);
+      if (value !== null) {
+        t.answer({ ...inventory, default_config_sha256: value });
+        await expect(t.client.admin.listWarmPools()).rejects.toBeInstanceOf(ProtocolError);
+      }
+    }
+  });
   it('sends idempotent create and revision guarded disable commands', async () => {
     const t = transport();
     t.answer(pool, 202);
