@@ -58,6 +58,12 @@ pub struct AgentSandboxClient {
 }
 
 impl AgentSandboxClient {
+    pub(crate) fn shares_runtime_authority(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.pools, &other.pools)
+            && self.config == other.config
+            && self.native_home_scope == other.native_home_scope
+    }
+
     pub async fn infer(config: AgentSandboxConfig) -> Result<Self> {
         let connection = resolve_kubernetes_connection(None).await?;
         Self::new(connection.client, config, &connection.authority)
