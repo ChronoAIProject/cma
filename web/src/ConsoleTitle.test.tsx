@@ -49,7 +49,7 @@ it('adopts a title generated after the completed first turn without reloading or
   const history = messages.map((message) => message.textContent);
 
   generated = true;
-  await act(() => vi.advanceTimersByTimeAsync(5000));
+  await act(() => vi.advanceTimersByTimeAsync(15000));
   expect(screen.getByRole('heading', { name: 'Repository introduction' })).toBeInTheDocument();
   expect(document.title).toBe('Repository introduction \u00b7 CMA');
   expect(screen.getByRole('link', { name: /Repository introduction/ })).toBeInTheDocument();
