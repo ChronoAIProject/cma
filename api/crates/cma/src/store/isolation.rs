@@ -243,7 +243,7 @@ pub(crate) async fn verify_with_authority(
 }
 #[cfg(test)]
 #[path = "agent_lifecycle_contract.rs"]
-mod agent_lifecycle_contract;
+pub(super) mod agent_lifecycle_contract;
 #[cfg(test)]
 #[path = "lifecycle_children_contract.rs"]
 mod lifecycle_children_contract;

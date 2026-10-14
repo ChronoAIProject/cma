@@ -54,6 +54,7 @@ impl MongoAgentLifecycleStore {
         self.write(lease, doc! { "$set": { "lease_expires_at": DateTime::from_system_time(deadline), "updated_at": DateTime::now() } }).await
     }
 
+    #[cfg(test)]
     pub(crate) async fn append_event(
         &self,
         lease: &LifecycleLease,
@@ -94,6 +95,22 @@ impl MongoAgentLifecycleStore {
         status: &str,
         message: &str,
     ) -> Result<(), StoreError> {
+        self.record_progress_many(lease, &[(phase, status, message)])
+            .await
+    }
+
+    /// Adjacent observations share one read/write, never a provisioning effect.
+    /// Keep the batch small and retain the same per-phase replay semantics.
+    pub(crate) async fn record_progress_many(
+        &self,
+        lease: &LifecycleLease,
+        observations: &[(&str, &str, &str)],
+    ) -> Result<(), StoreError> {
+        if observations.is_empty() || observations.len() > 2 {
+            return Err(StoreError::Malformed(
+                "lifecycle progress requires one or two adjacent observations".into(),
+            ));
+        }
         let current = self
             .operations
             .find_one(lease.filter())
@@ -103,23 +120,64 @@ impl MongoAgentLifecycleStore {
                 expected: 0,
                 actual: 1,
             })?;
-        if current.events.iter().any(|event| {
-            event.phase == phase && (event.status == status || event.status == "ready")
-        }) {
-            return Ok(());
-        }
-        let sequence = current
+        let mut sequence = current
             .events
             .iter()
             .map(|event| event.sequence)
             .max()
-            .unwrap_or(0)
-            .checked_add(1)
-            .ok_or_else(|| StoreError::Malformed("lifecycle event sequence exhausted".into()))?;
-        // Provisioning effects are sequential under this exact lease. The
-        // append rechecks its expiry, including after the read above.
-        self.append_event(lease, sequence, phase, status, message)
+            .unwrap_or(0);
+        let mut appended: Vec<LifecycleEvent> = Vec::with_capacity(observations.len());
+        for &(phase, status, message) in observations {
+            if current.events.iter().chain(&appended).any(|event| {
+                event.phase == phase && (event.status == status || event.status == "ready")
+            }) {
+                continue;
+            }
+            sequence = sequence
+                .checked_add(1)
+                .filter(|sequence| *sequence <= i64::MAX as u64)
+                .ok_or_else(|| {
+                    StoreError::Malformed("lifecycle event sequence exhausted".into())
+                })?;
+            appended.push(LifecycleEvent {
+                sequence,
+                phase: phase.into(),
+                status: status.into(),
+                message: message.into(),
+                occurred_at: now_rfc3339(),
+            });
+        }
+        let Some(last) = appended.last() else {
+            return Ok(());
+        };
+        // Recheck lease expiry after the read. The event CAS protects all
+        // observations if another writer changes history under the same token.
+        let mut filter = lease.filter();
+        filter.insert(
+            "events",
+            mongodb::bson::serialize_to_bson(&current.events)
+                .map_err(|error| StoreError::Malformed(error.to_string()))?,
+        );
+        let events = mongodb::bson::serialize_to_bson(&appended)
+            .map_err(|error| StoreError::Malformed(error.to_string()))?;
+        let result = self
+            .operations
+            .update_one(
+                filter,
+                doc! {
+                    "$set": { "phase": &last.phase, "updated_at": DateTime::now() },
+                    "$push": { "events": { "$each": events, "$slice": -MAX_EVENTS } },
+                },
+            )
             .await
+            .map_err(driver)?;
+        if result.matched_count != 1 {
+            return Err(StoreError::RevisionConflict {
+                expected: 0,
+                actual: 1,
+            });
+        }
+        Ok(())
     }
 
     pub(crate) async fn mark_sandbox(
