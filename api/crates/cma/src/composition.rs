@@ -216,6 +216,7 @@ impl ControlPlaneComposition {
                 cpu_millis: config.default_profiles.cpu_millis,
                 memory_mib: config.default_profiles.memory_mib,
             },
+            config.runtime.native_warm_pool_target,
         );
         let admin = layer1_public::rest::admin::AdminState::new(
             Arc::clone(&settings),
