@@ -11,11 +11,8 @@ use layer3_adapter::{
 
 pub(in crate::store) mod agent_replay_tests;
 mod claim_race_tests;
-<<<<<<< HEAD
 mod installation_transfer_tests;
-=======
 pub(crate) mod open_ready_fixture;
->>>>>>> 92c2e24f (Atomically publish prepared agent open and ready)
 mod workspace_proof_tests;
 
 const NOW: &str = "2026-09-05T00:00:00Z";

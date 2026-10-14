@@ -23,13 +23,10 @@ use super::sandbox_mongo::{
 };
 use super::worktrees::{read_worktree, worktree_replacement_fields};
 
-<<<<<<< HEAD
 mod prepared_replay;
 #[cfg(test)]
 mod prepared_replay_tests;
-=======
 mod publication_log;
->>>>>>> 92c2e24f (Atomically publish prepared agent open and ready)
 mod sign_in;
 use publication_log::{final_agent_and_logs, insert_logs};
 mod prepared_open_ready;
