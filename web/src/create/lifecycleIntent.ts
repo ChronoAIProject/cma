@@ -88,16 +88,23 @@ export function useLifecycleIntent(
     if (!receipt || !client.readAgentLifecycle) return;
     const abort = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const startedAt = Date.now();
+    let phase: string | undefined;
+    let phaseStartedAt = Date.now();
     const poll = async () => {
       try {
         const value = await client.readAgentLifecycle!(receipt.id, { signal: abort.signal });
         if (abort.signal.aborted) return;
+        if (value.phase !== phase) {
+          phase = value.phase;
+          phaseStartedAt = Date.now();
+        }
         setOperation(value);
         setFailure(undefined);
         if (value.status === 'waiting_for_connection') setConnection(value.connection);
         if (value.status === 'queued' || value.status === 'running')
-          timer = setTimeout(() => void poll(), Date.now() - startedAt < 10000 ? 250 : 1000);
+          // A slow earlier phase must not add a full second to observing Agent readiness.
+          // Keep each new phase responsive, then back off if that phase stalls.
+          timer = setTimeout(() => void poll(), Date.now() - phaseStartedAt < 10000 ? 250 : 1000);
       } catch (error: unknown) {
         if (!abort.signal.aborted)
           setFailure(error instanceof Error ? error.message : 'Status unavailable.');
