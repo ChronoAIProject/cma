@@ -82,10 +82,15 @@ cleanup time is reported separately in `lifecycle-acceptance/delete-report.json`
 
 Pause UI feedback took **1.8 ms**, accepted feedback **175.9 ms**, and Agent
 paused observation **1.547 seconds**; Sandbox completion took **8.797 seconds**.
-Resume UI feedback took **0.2 ms**, accepted feedback **1.781 seconds**, Agent
+Resume submitting feedback took **1.530 seconds**, accepted feedback **1.781 seconds**, Agent
 ready observation **28.118 seconds**, and Sandbox completion **29.273 seconds**.
 Default underlying progress stayed hidden. Neither actual Sandbox completion
-met five seconds. The paused capture proved zero owned Pods and the retained
+met five seconds. The original helper incorrectly counted a stale "Sandbox
+paused." banner as resume feedback and completion at 0.2 ms; the timings here
+use the retained current-action UI events. The actual "Sandbox resumed."
+message appeared at **28.948 seconds**. The replacement helper requires exact
+current-action texts and a newly observed submission before UI completion.
+The paused capture proved zero owned Pods and the retained
 PVC; resume created a new Pod on the same PVC UID
 `34a4b736-c503-402f-95ea-13a24def6a5c`.
 
