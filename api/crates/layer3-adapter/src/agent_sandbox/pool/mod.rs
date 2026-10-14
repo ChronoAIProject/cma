@@ -243,3 +243,8 @@ mod network_policy_tests;
 
 #[cfg(test)]
 mod fs_group_policy_tests;
+
+#[cfg(test)]
+mod policy_read_tests;
+#[cfg(test)]
+mod read_fixture;
