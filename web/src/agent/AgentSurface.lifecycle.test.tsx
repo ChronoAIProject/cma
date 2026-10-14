@@ -148,6 +148,7 @@ it('holds Send and Enter during operator lifecycle changes while retaining edita
     expect(draft).toBeEnabled();
     expect(draft).toHaveValue('Keep this unsubmitted draft');
     expect(draft).toHaveAccessibleDescription(new RegExp(label));
+    expect(screen.queryByRole('region', { name: 'Sandbox progress' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
     fireEvent.keyDown(draft, { key: 'Enter' });
     fireEvent.submit(screen.getByRole('form', { name: 'Message Agent' }));

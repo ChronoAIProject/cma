@@ -1174,8 +1174,11 @@ State comes from public Sandbox and Agent records. Pair each state glyph with a
 visible word. An unavailable action names its reason where the user needs it.
 
 The sidebar has independently collapsible **Live** and **Paused** Sandbox groups,
-with owner-scoped persisted expansion and counts. Starting, resuming, pausing and
-deleting Sandboxes stay in the Live group until a settled Paused observation.
+with owner-scoped persisted expansion and counts. Starting, resuming and pausing
+Sandboxes stay in the Live group until a settled Paused observation. A durably
+accepted Sandbox deletion leaves both active groups immediately. Its separate
+**Deletion progress** disclosure keeps a named, keyboard-accessible progress
+button until cleanup is confirmed; it does not expose child navigation.
 Each group has a 32px disclosure header (44px on narrow screens), 8px internal
 spacing, existing 13px secondary text, and a tabular count aligned to the right.
 Separate groups by 16px. Each expanded group contains its own accessible tree.
@@ -1213,19 +1216,25 @@ Children return only after the Sandbox is active and its lifecycle operation has
 finished. An ordinary checkpoint save on an active Sandbox retains its readable
 children. Resume availability still comes from the public lifecycle record.
 The Sandbox page names the current state and explains why its children are
-unavailable. Plain-language operation progress and elapsed time remain visible;
-raw phase names and other technical facts belong in Advanced.
+unavailable. Pause, Resume and deletion show a brief state by default; their
+plain-language stages, activity and elapsed time are inside a closed
+**Sandbox operation progress** disclosure. Agent Details includes a standard
+Button to reach this Sandbox page. Initial creation progress remains visible.
+Raw phase names and other technical facts belong in Advanced.
 No guessed readiness percentage.
 
 Deletion uses the existing risk confirmation, followed in the same overlay seat
 by the shared Modal and recorded progress treatment. Request acceptance is not
-completion. The dialog stays until dismissed, reports confirmation separately
-from cleanup, survives refresh with owner-scoped resource IDs and the same command
+completion. The dialog stays until dismissed, separates confirmation from cleanup
+inside a closed **Cleanup progress** disclosure, keeps failures visible outside it,
+survives refresh with owner-scoped resource IDs and the same command
 key, and follows accepted cleanup with read-only polling. Closing it does not cancel server work.
 Uncertain writes offer same-key reconciliation; a failed status read never means
 successful deletion. Sandbox retirement, Workspace removal and Agent deletion
-with a removed Worktree are the terminal confirmations. Terminal resources leave
-the working sidebar; retained history stays readable through its canonical URLs.
+with a removed Worktree are the terminal confirmations. Accepted Sandbox deletions
+leave the working sidebar before cleanup completes; the deletion-progress entry
+and retained dialog remain reachable. Terminal resources leave that progress entry;
+retained history stays readable through its canonical URLs.
 Deleting is written as Deleting, not Done. Workspace deletion accepts live child
 Agents and durably stops them, removes their Agents and Worktrees, and then removes
 the Workspace files. Its progress dialog reports those three stages followed by
@@ -1248,6 +1257,13 @@ state, not an Agent run failed notification. Genuine provider failures remain vi
 Visible Sandbox and hierarchy reads refresh every five seconds while settled,
 and every 1.5 seconds while recorded lifecycle work is in progress; reads never
 overlap or admit work. Hidden pages defer refresh until visible again.
+Pause and Resume immediately show a polite submitting status in the existing
+action-status seat, followed by request acceptance and observed completion as
+separate facts. A standard Button opens the Sandbox's canonical progress page.
+After command acceptance, the targeted Sandbox status and open deletion dialog
+may poll every 250ms for ten seconds, then return to 1.5-second progress reads.
+These reads never overlap; failed reads back off to five seconds and report
+uncertainty. Timers never imply completion, and retries retain the original key.
 Every poll refreshes the authorized inventory and mutable Sandbox subtrees.
 Deleted Sandboxes are omitted before fetching their details or descendants,
 including on initial load and explicit refresh. Their retained conversation
@@ -2016,3 +2032,5 @@ draft. Summary readers never receive the management history control.
 | 2026-09-23 | Align the view inventory with the unified Profile library and owner Bots; remove the retired Bridge setup specification while preserving historical changelog entries and Agent provenance vocabulary. |
 
 | 2026-10-14 | Make consumer review fact labels wrap within their existing grid column, matching values and preserving accurate wording without overlap at narrow widths. |
+
+| 2026-10-14 | Acknowledge Pause and Resume immediately, distinguish durable acceptance from observed completion, and briefly accelerate targeted progress reads. Remove accepted Sandbox deletions from Live/Paused navigation while retaining a separate deletion-progress disclosure and same-request recovery. |
