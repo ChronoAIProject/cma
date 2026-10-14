@@ -8,6 +8,7 @@ fn view() -> WarmPoolView {
     WarmPoolView {
         id: "wp_original".into(),
         revision: 1,
+        config_sha256: "c".repeat(64),
         image: "image@sha256:original".into(),
         cpu_millis: 1000,
         memory_mib: 1024,
@@ -28,6 +29,7 @@ impl WarmPoolAdministration for Pools {
             default_image: "default".into(),
             default_cpu_millis: 1000,
             default_memory_mib: 1024,
+            default_config_sha256: Some("d".repeat(64)),
             available: false,
         })
     }

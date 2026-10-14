@@ -11,7 +11,7 @@ use wire::{WireServer, json as response};
 
 fn pool() -> Value {
     json!({"id":"wp_original","revision":1,"image":"registry/runtime@sha256:original",
-        "cpu_millis":1000,"memory_mib":1024,"target_replicas":2,"ready_replicas":null,
+        "config_sha256":"c".repeat(64),"cpu_millis":1000,"memory_mib":1024,"target_replicas":2,"ready_replicas":null,
         "observed":false,"status":"pending","resource_name":null,"error":null})
 }
 
@@ -34,11 +34,14 @@ async fn original_target_creation_and_disable_use_exact_authority_and_preserve_u
         None,
         200,
         json!({"items":[unobserved],"default_image":"registry/runtime@sha256:next",
-            "default_cpu_millis":1000,"default_memory_mib":1024,"available":false}),
+            "default_cpu_millis":1000,"default_memory_mib":1024,
+            "default_config_sha256":"d".repeat(64),"available":false}),
         true,
     ));
     let inventory = server.client.admin().list_warm_pools().await.unwrap();
     assert!(!inventory.available);
+    assert_eq!(inventory.items[0].config_sha256, "c".repeat(64));
+    assert_eq!(inventory.default_config_sha256, Some("d".repeat(64)));
     assert_eq!(inventory.items[0].ready_replicas, None);
     assert_eq!(inventory.items[0].status, WarmPoolStatus::Unavailable);
     assert_ne!(inventory.items[0].image, inventory.default_image);
