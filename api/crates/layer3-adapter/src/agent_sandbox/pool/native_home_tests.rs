@@ -14,6 +14,8 @@ mod full_home_tests;
 mod read_tests;
 #[path = "native_home_ready_tests.rs"]
 mod ready_tests;
+#[path = "native_resume_read_tests.rs"]
+mod resume_read_tests;
 
 fn spec() -> NativePoolSpec {
     let mut spec = super::tests::spec();

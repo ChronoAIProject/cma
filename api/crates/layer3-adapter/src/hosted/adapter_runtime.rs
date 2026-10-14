@@ -135,7 +135,14 @@ impl HostedAdapter {
             states.remove(&request.handle);
         }
         self.backend
-            .resume(&request.handle, &previous, &next)
+            .resume_with_home(
+                &request.handle,
+                &previous,
+                &next,
+                request.spec.home_volume.as_deref().ok_or_else(|| {
+                    AdapterError::Rejected("resume requires its persisted home".into())
+                })?,
+            )
             .await?;
         self.verify_spec_home(&request.spec).await?;
         self.attach_state(request.handle.clone(), &successor.spec, next_identity)

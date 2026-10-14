@@ -112,6 +112,16 @@ pub trait HostedBackend: Send + Sync {
             "provider resumption is unavailable".into(),
         ))
     }
+    /// Pass durable home authority to providers that can prove retained resources together.
+    async fn resume_with_home(
+        &self,
+        handle: &RuntimeHandle,
+        previous: &ProviderSandboxRequest,
+        next: &ProviderSandboxRequest,
+        _home: &crate::HomeVolumeAttachment,
+    ) -> Result<()> {
+        self.resume(handle, previous, next).await
+    }
     async fn provision_receipted(
         &self,
         _request: ProviderSandboxRequest,

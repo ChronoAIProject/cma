@@ -257,7 +257,10 @@ async fn both_home_layouts_resume_with_original_policy_template_and_pvc_after_de
             };
             let restarted = runtime_tests::client(&fixture, true);
             let next = runtime_tests::request(&home, 2);
-            restarted.resume(&runtime, &previous, &next).await.unwrap();
+            restarted
+                .resume_with_home(&runtime, &previous, &next, &home)
+                .await
+                .unwrap();
             restarted
                 .validate_request(&runtime, &next)
                 .await
@@ -327,7 +330,12 @@ async fn missing_or_changed_policy_in_template_or_member_refuses_before_writes()
                 let before = fixture.state.lock().unwrap().calls.len();
                 if let Some((home, previous, client, runtime)) = retained {
                     assert!(client
-                        .resume(&runtime, &previous, &runtime_tests::request(&home, 2))
+                        .resume_with_home(
+                            &runtime,
+                            &previous,
+                            &runtime_tests::request(&home, 2),
+                            &home
+                        )
                         .await
                         .is_err());
                 } else {
