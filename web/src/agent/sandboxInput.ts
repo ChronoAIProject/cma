@@ -106,12 +106,20 @@ export function useSandboxInput(
       }, 10_000);
       deadline = timeout;
       const signal = AbortSignal.any([controller.signal, request.signal]);
+      const parentRead = (async () => client.readSandbox(sandboxId, { signal }))();
       void Promise.all([
-        (async () => client.readSandbox(sandboxId, { signal }))(),
-        (async () =>
-          operationId === undefined && !queueWhileReviving
-            ? undefined
-            : client.readAgent(agentId, { signal }))(),
+        parentRead,
+        operationId !== undefined
+          ? (async () => client.readAgent(agentId, { signal }))()
+          : parentRead.then((sandbox) =>
+              queueWhileReviving &&
+              owner !== undefined &&
+              sandbox.owner === owner &&
+              sandbox.status === 'reviving' &&
+              sandbox.lifecycle?.operation?.purpose === 'revive'
+                ? client.readAgent(agentId, { signal })
+                : undefined,
+            ),
       ])
         .then(([sandbox, agent]) => {
           if (controller.signal.aborted || request.signal.aborted || pending !== request) return;

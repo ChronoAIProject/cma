@@ -98,6 +98,18 @@ it('keeps the existing non-v2 transport held during revival', async () => {
   expect(view.result.current.inputAvailability.allowed).toBe(false);
 });
 
+it('does not add Agent reads to ordinary settled availability polls', async () => {
+  const readAgent = vi.fn(async () => agent);
+  const settled = { ...sandboxFixture(), owner: 'alice' };
+  const client = agentClient({ readAgent, readSandbox: async () => settled });
+  const view = renderHook(() =>
+    useSandboxInput(client, agent.id, settled.id, false, undefined, 'alice', true),
+  );
+  await act(async () => {});
+  expect(view.result.current.inputAvailability.allowed).toBe(true);
+  expect(readAgent).not.toHaveBeenCalled();
+});
+
 it('durably accepts one v2 message while resuming without claiming the runtime is Ready', async () => {
   sessionStorage.clear();
   const h = harness();
