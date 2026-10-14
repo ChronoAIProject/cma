@@ -4,6 +4,7 @@ mod activity;
 mod agent_access;
 mod agent_access_worker;
 mod agent_lifecycle;
+mod agent_models;
 mod auth;
 mod bot_setups;
 mod commands;

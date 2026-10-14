@@ -137,6 +137,7 @@ use super::trigger_openapi_shapes::*;
         super::agent_access_requests::list,
         super::agent_access_requests::approve,
         super::agent_access_requests::deny,
+        super::agent_models::list,
         super::agent_settings::read,
         super::agent_settings::update,
         super::agent_source::read,
