@@ -12,6 +12,7 @@ pub(super) struct State {
     pub rows: BTreeMap<String, Value>,
     pub calls: Vec<(String, Value)>,
     pub lose: Vec<String>,
+    pub conflict: Vec<String>,
     pub list_replies: VecDeque<(u16, Value)>,
     pub list_queries: Vec<String>,
     pub assignments: Vec<crate::runtime_bootstrap::RuntimeBootstrapRequest>,
@@ -304,6 +305,19 @@ fn respond(state: &Mutex<State>, method: &str, path: &str, body: Value) -> (u16,
                 body["metadata"]["resourceVersion"],
                 current["metadata"]["resourceVersion"]
             );
+            if let Some(index) = state.conflict.iter().position(|pending| pending == &call) {
+                let version = current["metadata"]["resourceVersion"]
+                    .as_str()
+                    .unwrap()
+                    .parse::<u64>()
+                    .unwrap();
+                state.conflict.remove(index);
+                state.version = state.version.max(version) + 1;
+                let fresh_version = state.version.to_string();
+                state.rows.get_mut(path).unwrap()["metadata"]["resourceVersion"] =
+                    json!(fresh_version);
+                return (409, conflict, false);
+            }
             let mut next = current.clone();
             merge(&mut next, &body);
             state.version += 1;
