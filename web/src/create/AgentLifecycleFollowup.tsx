@@ -77,7 +77,7 @@ function RetainedSetup({
       ) : null}
       {failed ? (
         <p className="agent-action-error" role="alert">
-          {operation.error ?? 'Agent setup could not finish. Your conversation is retained.'}
+          {operation.error ?? 'Agent setup could not finish. Your conversation is still available.'}
         </p>
       ) : null}
       {error ? (
