@@ -297,14 +297,19 @@ fn deployment_owned_image_admits_native_cold_and_warm_contracts() {
     layer3_adapter::runtime_bootstrap::admit_pool_image(&image).unwrap();
     let mut cold = original.clone();
     cold.image = image.clone();
-    cold.home.mode = layer3_adapter::HomeVolumeMode::NativeVctEmptyV1;
+    cold.home.mode = layer3_adapter::HomeVolumeMode::NativeVctFullHomeV2;
     cold.home.template_name.clear();
     cold.home.template_generation.clear();
     cold.validate().unwrap();
+    assert_eq!(image.uri, original.image.uri);
     assert_eq!(
-        image, original.image,
-        "cold and warm templates share image identity"
+        image.labels[layer3_adapter::runtime_bootstrap::RUNTIME_HOME_LAYOUT_LABEL],
+        "2"
     );
+    // Historical pool metadata remains valid without the v2 capability.
+    cold.home.mode = layer3_adapter::HomeVolumeMode::NativeVctEmptyV1;
+    cold.image = original.image;
+    cold.validate().unwrap();
     let deployment = layer3_adapter::hosted::HostedDeployment {
         image,
         ..Default::default()

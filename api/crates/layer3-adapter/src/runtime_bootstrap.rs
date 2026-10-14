@@ -7,6 +7,7 @@ use crate::{AdapterError, Result};
 
 pub const RUNTIME_BOOTSTRAP_VERSION: u16 = 1;
 pub const RUNTIME_BOOTSTRAP_LABEL: &str = "dev.chrono.cma.runtime-bootstrap";
+pub const RUNTIME_HOME_LAYOUT_LABEL: &str = "dev.chrono.cma.home-layout";
 pub const MAX_RUNTIME_BOOTSTRAP_BYTES: usize = 64 * 1024;
 pub const RUNTIME_BOOTSTRAP_SOCKET: &str = "/var/lib/cma-runtime/assignment.sock";
 

@@ -166,3 +166,126 @@ fn public_seed_symlinks_are_not_followed_or_published() {
     f.run().unwrap();
     assert!(!f.root.join("home/linked-file").exists());
 }
+
+#[test]
+fn full_home_seeds_cma_and_preserves_sibling_codex_and_all_retained_state() {
+    let f = Fixture::new();
+    initialize_home_tree(&f.root, &f.seed).unwrap();
+    assert!(same_tree(&f.seed, &f.root.join("home/cma")).unwrap());
+    ensure_empty(&f.root.join("home/.codex")).unwrap();
+    for name in [
+        "home",
+        "home/cma",
+        "home/.codex",
+        "state",
+        "transfer",
+        COMPLETE_V2,
+    ] {
+        owned_directory(&f.root.join(name)).unwrap();
+    }
+    let retained = [
+        ("home/.codex/session.json", "codex session"),
+        ("home/cma/.profile", "owner profile"),
+        ("home/cma/dirty-work.txt", "uncommitted work"),
+        ("home/other-home.txt", "sibling home contents"),
+        ("state/binding.json", "runtime state"),
+        ("transfer/data", "unfinished transfer"),
+    ];
+    for (path, contents) in retained {
+        fs::write(f.root.join(path), contents).unwrap();
+    }
+    fs::remove_dir_all(&f.seed).unwrap();
+    initialize_home_tree(&f.root, &f.seed).unwrap();
+    for (path, contents) in retained {
+        assert_eq!(fs::read_to_string(f.root.join(path)).unwrap(), contents);
+    }
+    assert!(!f.root.join(COMPLETE).exists());
+}
+
+#[test]
+fn full_home_retries_partial_copy_and_publication_before_completion() {
+    let f = Fixture::new();
+    private_directory(&f.root.join(STAGING_V2)).unwrap();
+    fs::write(f.root.join(STAGING_V2).join("interrupted"), "partial").unwrap();
+    initialize_home_tree(&f.root, &f.seed).unwrap();
+    fs::remove_dir(f.root.join(COMPLETE_V2)).unwrap();
+    fs::remove_dir(f.root.join("transfer")).unwrap();
+    initialize_home_tree(&f.root, &f.seed).unwrap();
+    assert!(same_tree(&f.seed, &f.root.join("home/cma")).unwrap());
+    ensure_empty(&f.root.join("home/.codex")).unwrap();
+    ensure_empty(&f.root.join("transfer")).unwrap();
+    assert!(f.root.join(COMPLETE_V2).is_dir());
+    assert!(!f.root.join(STAGING_V2).exists());
+}
+
+#[test]
+fn full_home_missing_completion_refuses_all_owner_contents_without_reseeding() {
+    for name in [
+        "home/.codex/auth.json",
+        "home/cma/work",
+        "home/other",
+        "state/binding",
+        "transfer/data",
+    ] {
+        let f = Fixture::new();
+        initialize_home_tree(&f.root, &f.seed).unwrap();
+        fs::remove_dir(f.root.join(COMPLETE_V2)).unwrap();
+        fs::write(f.root.join(name), "retained").unwrap();
+        assert!(initialize_home_tree(&f.root, &f.seed).is_err(), "{name}");
+        assert_eq!(fs::read_to_string(f.root.join(name)).unwrap(), "retained");
+        assert!(!f.root.join(COMPLETE_V2).exists());
+    }
+}
+
+#[test]
+fn layout_versions_never_reinterpret_completed_or_staging_volumes() {
+    for full_home in [false, true] {
+        let f = Fixture::new();
+        initialize_layout(&f.root, &f.seed, full_home).unwrap();
+        let user_home = if full_home { "home/cma" } else { "home" };
+        fs::write(f.root.join(user_home).join("retained"), "owner work").unwrap();
+        assert!(initialize_layout(&f.root, &f.seed, !full_home).is_err());
+        assert_eq!(
+            fs::read_to_string(f.root.join(user_home).join("retained")).unwrap(),
+            "owner work"
+        );
+        let (complete, staging) = if full_home {
+            (COMPLETE_V2, STAGING_V2)
+        } else {
+            (COMPLETE, STAGING)
+        };
+        assert!(f.root.join(complete).exists());
+        let partial = Fixture::new();
+        private_directory(&partial.root.join(staging)).unwrap();
+        fs::write(partial.root.join(staging).join("partial"), "copy").unwrap();
+        assert!(initialize_layout(&partial.root, &partial.seed, !full_home).is_err());
+        assert_eq!(
+            fs::read_to_string(partial.root.join(staging).join("partial")).unwrap(),
+            "copy"
+        );
+        assert!(!partial.root.join("home").exists());
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn full_home_rejects_layout_symlinks_and_preserves_retained_user_symlinks() {
+    use std::os::unix::fs::symlink;
+    for path in ["home", "state", "transfer", COMPLETE_V2, STAGING_V2] {
+        let f = Fixture::new();
+        symlink(&f.seed, f.root.join(path)).unwrap();
+        assert!(initialize_home_tree(&f.root, &f.seed).is_err(), "{path}");
+        assert!(f.seed.join(".profile").exists());
+    }
+    let f = Fixture::new();
+    initialize_home_tree(&f.root, &f.seed).unwrap();
+    symlink("session.json", f.root.join("home/.codex/user-link")).unwrap();
+    initialize_home_tree(&f.root, &f.seed).unwrap();
+    assert_eq!(
+        fs::read_link(f.root.join("home/.codex/user-link")).unwrap(),
+        Path::new("session.json")
+    );
+    fs::remove_dir_all(f.root.join("home/cma")).unwrap();
+    symlink(&f.seed, f.root.join("home/cma")).unwrap();
+    assert!(initialize_home_tree(&f.root, &f.seed).is_err());
+}
