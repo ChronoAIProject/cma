@@ -208,9 +208,20 @@ impl AgentWorker {
 
     async fn retry(
         &self,
+        agent: Agent,
+        failure: WorkerFailure,
+        now: SystemTime,
+    ) -> Result<(), SandboxStoreError> {
+        self.retry_at(agent, failure, now, now + self.config.retry_delay)
+            .await
+    }
+
+    pub(super) async fn retry_at(
+        &self,
         mut agent: Agent,
         failure: WorkerFailure,
         now: SystemTime,
+        ready_at: SystemTime,
     ) -> Result<(), SandboxStoreError> {
         let expected = agent.revision;
         let fence = claimed_fence(&agent, &self.config.holder)?;
@@ -218,11 +229,7 @@ impl AgentWorker {
         let stamp = rfc3339_at(now);
         agent
             .work
-            .retry(
-                &self.config.holder,
-                fence,
-                rfc3339_at(now + self.config.retry_delay),
-            )
+            .retry(&self.config.holder, fence, rfc3339_at(ready_at))
             .map_err(|_| SandboxStoreError::Conflict)?;
         agent.updated_at = stamp.clone();
         agent.revision = expected.checked_add(1).ok_or(SandboxStoreError::Conflict)?;
