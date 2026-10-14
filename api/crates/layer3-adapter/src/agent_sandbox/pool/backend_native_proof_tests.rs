@@ -35,6 +35,7 @@ impl HostedControlTransport for StatusTransport {
         }
         Ok(ResponseFrame::RuntimeStatus(RuntimeStatus {
             agent_skill_install: true,
+            agent_model_catalog: true,
             sandbox_id: request.sandbox_id,
             generation: request.generation,
             home_identity: request.home_identity,
