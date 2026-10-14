@@ -310,6 +310,16 @@ pub trait SandboxEventStore: Send + Sync {
 /// Durable lifecycle work discovery, lease fencing and terminal purge.
 #[async_trait]
 pub trait SandboxWorkerStore: Send + Sync {
+    /// Completed installation attached to this exact ownership and runtime.
+    /// The worker must match the current request digest and inspect the live
+    /// process before advancing; this proof never authorizes runtime dispatch.
+    async fn completed_installation_digest(
+        &self,
+        _sandbox: &Sandbox,
+    ) -> Result<Option<String>, SandboxStoreError> {
+        Ok(None)
+    }
+
     async fn due_sandbox_work(
         &self,
         now: &str,

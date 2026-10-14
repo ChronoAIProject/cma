@@ -5,6 +5,9 @@ use layer2_core::sandbox::{
     ProvisioningExecution, WarmSandbox, WarmSandboxPlan, WarmSandboxState, WarmWorkspacePlan,
 };
 
+#[path = "installation_transfer_tests.rs"]
+mod installation_transfer_tests;
+
 async fn reservation(harness: &Harness) -> WarmSandbox {
     let mut parent = harness.create().await;
     let mut agent = lifecycle_queue_tests::ready_agent(&parent, SystemTime::now()).profile;
