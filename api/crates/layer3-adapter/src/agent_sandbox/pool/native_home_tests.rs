@@ -160,6 +160,88 @@ async fn native_home_replays_lost_claim_and_sandbox_authority_writes() {
 }
 
 #[tokio::test]
+async fn native_home_retries_version_conflicts_without_replacing_claim_or_storage() {
+    for phase in ["claim", "sandbox"] {
+        for replaced_claim in [false, true] {
+            let fixture = Fixture::new().await;
+            let claim = assigned_spec(&fixture, &spec()).await;
+            let path = if phase == "claim" {
+                format!("{}/sandboxclaims/{}", super::fixture::prefix(), claim.name)
+            } else {
+                MEMBER.into()
+            };
+            let patch = format!("PATCH {path}");
+            let (before, volume, floor) = {
+                let mut state = fixture.state.lock().unwrap();
+                state.conflict.push(patch.clone());
+                (
+                    state.rows.clone(),
+                    state.rows[VOLUME].clone(),
+                    state.calls.len(),
+                )
+            };
+            assert!(matches!(
+                fixture.client.adopt_home(&claim).await,
+                Err(crate::AdapterError::Unavailable(_))
+            ));
+            assert!(
+                fixture.state.lock().unwrap().rows[&path]["metadata"]["annotations"]
+                    .get(NATIVE_HOME_ANNOTATION)
+                    .is_none()
+            );
+            let fresh_version =
+                fixture.state.lock().unwrap().rows[&path]["metadata"]["resourceVersion"].clone();
+            if replaced_claim {
+                fixture.edit("sandboxclaims", &claim.name, |row| {
+                    row["metadata"]["uid"] = json!("replacement")
+                });
+                let after_conflict = fixture.state.lock().unwrap().calls.len();
+                assert!(matches!(
+                    fixture.client.adopt_home(&claim).await,
+                    Err(crate::AdapterError::Rejected(_))
+                ));
+                assert!(fixture.state.lock().unwrap().calls[after_conflict..]
+                    .iter()
+                    .all(|(call, _)| call.starts_with("GET ")));
+                continue;
+            }
+            let home = fixture.client.adopt_home(&claim).await.unwrap();
+            assert_eq!(fixture.client.adopt_home(&claim).await.unwrap(), home);
+            assert_eq!(
+                fixture.client.recover_home(&claim).await.unwrap(),
+                Some(home)
+            );
+            let state = fixture.state.lock().unwrap();
+            assert_eq!(
+                state.rows.keys().collect::<Vec<_>>(),
+                before.keys().collect::<Vec<_>>()
+            );
+            for (key, row) in &before {
+                assert_eq!(state.rows[key]["metadata"]["uid"], row["metadata"]["uid"]);
+            }
+            assert_eq!(state.rows[VOLUME], volume);
+            let calls = &state.calls[floor..];
+            assert!(calls
+                .iter()
+                .all(|(call, _)| call.starts_with("GET ") || call.starts_with("PATCH ")));
+            let patches: Vec<_> = calls
+                .iter()
+                .enumerate()
+                .filter_map(|(index, (call, body))| (call == &patch).then_some((index, body)))
+                .collect();
+            assert_eq!(patches.len(), 2);
+            assert_ne!(patches[0].1["metadata"]["resourceVersion"], fresh_version);
+            assert_eq!(patches[1].1["metadata"]["resourceVersion"], fresh_version);
+            assert!(calls[patches[0].0 + 1..patches[1].0]
+                .iter()
+                .any(|(call, _)| call == &format!("GET {path}")));
+            drop(state);
+            no_storage_effects(&fixture);
+        }
+    }
+}
+
+#[tokio::test]
 async fn native_home_refuses_replaced_uid_owner_storage_or_snapshot_after_adoption() {
     for change in ["pvc", "sandbox", "claim", "owner", "storage", "snapshot"] {
         let fixture = Fixture::new().await;
