@@ -5,7 +5,19 @@ failures and receipt paths, see
 [CMA native Sandbox production verification](CMA_Native_Production_Verification.md).
 This document keeps operational instructions and dated infra diagnostics.
 
-The latest completed production deployment is PR #1019, candidate `3d6885c6`,
+The latest completed production deployment is PR #1022, candidate `d9a6d440`,
+merged as `4dc1325f`, with all 15 CI jobs passed. Agent Manager/Web were Ready
+at 23:13:31 SGT on 2026-10-14. Warm creation reached the exact Agent surface
+in 10.179 seconds and enabled Send in 11.696 seconds, so the strict five-second
+creation target remains unmet. Actual early input was durably accepted and
+executed once. Pause and resume showed accepted UI state in 0.184 and 1.531
+seconds respectively; actual Sandbox completion took 9.109 and 24.422 seconds.
+Whole-home contents, modes, ownership, links, dirty Git, the original PVC and
+original conversation survived the replacement Pod. Model selection, skill use
+and MCP access revision with one automatic notification passed. Fresh external
+OAuth remains unexercised; these results do not claim coverage of that path.
+
+The earlier production deployment PR #1019, candidate `3d6885c6`,
 merged as `68dbe4b6`, with all 15 CI jobs passed. Agent Manager/Web were Ready
 at approximately 20:26 SGT on 2026-10-14. Strict full-home preservation now
 passes, including modes, ownership, links, dirty Git, the original PVC and
@@ -43,6 +55,18 @@ support for the optional `fs_group_change_policy` field and v3 pool identity.
 Older binaries reject that persisted field through strict deserialization; do
 not roll Agent Manager back to the pre-policy image after activation. Runtime
 `cad2058` and the current full-home layout remain compatible and unchanged.
+
+The next durable bootstrap admission persists `wait_for_workspace` in Agent
+work and immutable Agent event logs. After the first such admission, **do not
+restore the PR #1022 API image**: its strict enum reader rejects both waiting
+Agents and retained events, even after those Agents become Ready. Recovery
+requires a compatible forward repair that disables new early lifecycle
+reservation while retaining the new enum, event readers, workspace binding,
+waiting worker and cleanup support for previously admitted work. Keep all
+message receipts and logs intact; do not rewrite or delete records to make an
+older image parse them. Runtime and full-home storage are unchanged by this
+API/Web-only candidate. Capture retained workload and conversation evidence
+before and after any repair, as for an upgrade.
 
 The preceding `03cbd332` Agent Manager/shared Web release was Ready at
 16:26:14 SGT on 2026-10-14, with two Ready default-pool replicas observed at
