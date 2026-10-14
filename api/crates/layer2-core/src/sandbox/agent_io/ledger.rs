@@ -323,7 +323,7 @@ pub fn validate_command_reservation(
             | AgentStatus::WaitingApproval
             | AgentStatus::Paused
     ) || agent.requested_stop_reason.is_some()
-        || !matches!(
+        || !(matches!(
             parent.status,
             SandboxStatus::Active
                 | SandboxStatus::CredentialRotating
@@ -331,7 +331,11 @@ pub fn validate_command_reservation(
                 | SandboxStatus::Paused
                 | SandboxStatus::Reviving
                 | SandboxStatus::Rotating
-        )
+        ) || (matches!(
+            request.envelope.command,
+            super::AgentCommand::Message { .. }
+        ) && request.binding.is_none()
+            && agent.bootstrap_operation(parent).is_some()))
         || !agent.capabilities.supports(RuntimeCapability::Conversation)
     {
         return Err(CommandLedgerError::NotAdmissible);

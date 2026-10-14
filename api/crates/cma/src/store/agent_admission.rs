@@ -265,7 +265,7 @@ async fn apply_admission(
         .transpose()
         .map_err(ApplyError::Domain)?
         .ok_or(ApplyError::Domain(SandboxStoreError::WorkspaceNotReady))?;
-    if workspace.owner != admission.owner || workspace.status != WorkspaceStatus::Ready {
+    if workspace.owner != admission.owner {
         return Err(ApplyError::Domain(SandboxStoreError::WorkspaceNotReady));
     }
     let sandbox = store
@@ -282,7 +282,11 @@ async fn apply_admission(
     if sandbox.owner != workspace.owner {
         return Err(ApplyError::Domain(SandboxStoreError::WorkspaceNotReady));
     }
-    if !sandbox.accepts_creation_admission() {
+    let bootstrap = admission.admits_bootstrap(&workspace, &sandbox);
+    if !bootstrap && workspace.status != WorkspaceStatus::Ready {
+        return Err(ApplyError::Domain(SandboxStoreError::WorkspaceNotReady));
+    }
+    if !bootstrap && !sandbox.accepts_creation_admission() {
         return Err(ApplyError::Domain(SandboxStoreError::SandboxNotReady));
     }
     if let Some(creation) = reuse_profile_agent(
@@ -356,9 +360,9 @@ async fn apply_admission(
         | AgentOrigin::WorkspaceProfile { .. } => SandboxReviveCause::AgentCreation,
         AgentOrigin::Trigger { .. } => SandboxReviveCause::TriggerLaunch,
     };
-    let revival = next_sandbox
-        .record_creation_admission(cause, admission.event_at.clone())
-        .map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error.to_string())))?;
+    let revival = admission
+        .record_parent_admission(&mut next_sandbox, &workspace, cause)
+        .map_err(ApplyError::Domain)?;
     advance_workspace(store, &workspace, &next_workspace, session).await?;
     advance_sandbox(store, &sandbox, &next_sandbox, session).await?;
 
