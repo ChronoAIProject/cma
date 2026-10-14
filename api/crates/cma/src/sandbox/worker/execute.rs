@@ -40,13 +40,16 @@ impl SandboxWorker {
                 )
                 .await;
         }
-        if matches!(
-            sandbox.work.step,
+        let requires_adoption = match sandbox.work.step {
             SandboxWorkStep::RunInstall
-                | SandboxWorkStep::DeliverInitialCredential
-                | SandboxWorkStep::DeliverRotatedCredential
-                | SandboxWorkStep::CreateProfileWorkspace(_)
-        ) {
+            | SandboxWorkStep::DeliverInitialCredential
+            | SandboxWorkStep::DeliverRotatedCredential => true,
+            SandboxWorkStep::CreateProfileWorkspace(_) => {
+                self.dependencies.workspaces.requires_runtime_adoption()
+            }
+            _ => false,
+        };
+        if requires_adoption {
             if let Err(error) = crate::sandbox::runtime_attachment::adopt_bound_runtime(
                 self.dependencies.adapter.as_ref(),
                 &sandbox,

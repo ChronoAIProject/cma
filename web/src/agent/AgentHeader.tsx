@@ -19,6 +19,7 @@ export function AgentHeader({
   lineage,
   headingRef,
   detailsOpen,
+  detailsUnavailable = false,
   onDetailsOpenChange,
   children,
 }: {
@@ -27,6 +28,7 @@ export function AgentHeader({
   readonly lineage: ReactNode;
   readonly headingRef?: Ref<HTMLHeadingElement>;
   readonly detailsOpen: boolean;
+  readonly detailsUnavailable?: boolean;
   readonly onDetailsOpenChange: (open: boolean) => void;
   readonly children?: ReactNode;
 }) {
@@ -52,6 +54,7 @@ export function AgentHeader({
           aria-label={detailsOpen ? 'Hide Agent details' : 'Show Agent details'}
           title={detailsOpen ? 'Hide Agent details' : 'Show Agent details'}
           aria-pressed={detailsOpen}
+          disabled={detailsUnavailable}
           onClick={() => onDetailsOpenChange(!detailsOpen)}
         />
       </div>

@@ -63,7 +63,7 @@ impl AgentSandboxPools {
         request: &ProviderSandboxRequest,
         name: &str,
     ) -> Result<DynamicObject> {
-        validate_request(&self.config.deployment, origin, home, request)?;
+        self.validate_runtime_home_request(origin, home, request)?;
         let config = model::binding_config(&self.config, &origin.claim.request.pool);
         let template = model::template(&config, &origin.claim.request.pool.spec)?;
         let mut spec = model::sandbox_spec(&template, &origin.claim.request.pool);
@@ -89,6 +89,16 @@ impl AgentSandboxPools {
             "metadata":{"name":name,"namespace":self.config.namespace,
                 "labels":{OWNER_LABEL:self.config.deployment},"annotations":annotations},"spec":spec}))
             .map_err(|_| rejected("invalid native runtime configuration"))
+    }
+
+    /// Validate persisted request correlation without observing live authority.
+    pub(crate) fn validate_runtime_home_request(
+        &self,
+        origin: &NativePoolHomeOrigin,
+        home: &HomeVolumeAttachment,
+        request: &ProviderSandboxRequest,
+    ) -> Result<()> {
+        validate_request(&self.config.deployment, origin, home, request)
     }
 }
 
