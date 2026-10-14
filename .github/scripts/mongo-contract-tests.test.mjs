@@ -11,6 +11,7 @@ const requiredPrefixes = [
   'store::sandbox_admission_mongo_integration_tests::warmup::',
   'store::auth::api_bearer_tests::',
   'store::agent_conversation_store::checkpoint_tests::',
+  'store::agent_conversation_store::admission_tests::',
   'store::sandbox_mongo_integration_tests::warm_hierarchy_tests::',
   'store::agent_admission::mongo_integration_tests::',
   'store::schema_mongo_integration_tests::',
@@ -29,6 +30,7 @@ const requiredPrefixes = [
   'store::sandbox_maintenance::consented::scope_tests::',
   'store::sandbox_reconciliation::mongo_integration_tests::channel_home_retention::',
   'sandbox::agent_worker_tests::sdk_conformance_tests::mongo_tests::',
+  'sandbox::agent_worker_tests::first_message_contention_tests::',
 ];
 
 function fixture(scenario) {
