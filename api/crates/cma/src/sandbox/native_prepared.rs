@@ -1,0 +1,260 @@
+//! Credential-free native preparation. Persist every returned state before its next effect.
+
+use layer2_core::profiles::{AgentProvider, ModelAccess, WorkspaceLocation};
+use layer2_core::sandbox::{RuntimeBinding, SandboxHome, WarmSandbox, WarmSandboxState};
+use layer3_adapter::{
+    AdapterError, HomeVolumePolicy, InstallRequest, RuntimeAdoptionRequest, RuntimeHandle,
+    RuntimeProvisionRequest, SandboxAdapter, SandboxSpec,
+};
+
+mod hierarchy;
+mod worker;
+pub(crate) use worker::NativePreparedWorker;
+
+/// The durable caller owns target bounds, leases, retries, and publication.
+/// This engine never allocates an owner credential or dispatches a prompt.
+pub(crate) async fn prepare_step(
+    adapter: &dyn SandboxAdapter,
+    deployment_id: &str,
+    record: &WarmSandbox,
+    home_policy: &HomeVolumePolicy,
+) -> layer3_adapter::Result<WarmSandbox> {
+    validate_plan(record)?;
+    if !matches!(
+        record.state,
+        WarmSandboxState::Preparing | WarmSandboxState::Installing | WarmSandboxState::Ready
+    ) {
+        return Err(rejected(
+            "native preparation no longer owns this reservation",
+        ));
+    }
+    let mut next = record.clone();
+    let mut spec = spec(record, deployment_id);
+    if record.state == WarmSandboxState::Preparing {
+        let home = match record.home.as_deref() {
+            None => {
+                let home = SandboxHome::reserve(&record.id, home_policy.clone())
+                    .map_err(|e| rejected(&e.to_string()))?;
+                let request = RuntimeProvisionRequest::new(1, spec);
+                let home = super::home_native::reserve(adapter, &request, home).await?;
+                if home.native_pool.is_none() {
+                    return Err(rejected(
+                        "prepared capacity requires a native pool reservation",
+                    ));
+                }
+                next.home = Some(Box::new(home));
+                return Ok(next);
+            }
+            Some(home) => home,
+        };
+        if home.native_pool.is_none() {
+            return Err(rejected("prepared native home authority changed"));
+        }
+        if let Some(home) =
+            super::home::next_home(adapter, &record.id, Some(home), Some(home_policy)).await?
+        {
+            next.home = Some(Box::new(home));
+            return Ok(next);
+        }
+        spec.home_volume = record
+            .home
+            .as_ref()
+            .and_then(|home| home.attachment())
+            .map(Box::new);
+        let handle = adapter
+            .provision_runtime(&RuntimeProvisionRequest::new(1, spec.clone()))
+            .await?;
+        let status =
+            super::runtime_attachment::provisioned_runtime_status(adapter, &spec, &handle, 1)
+                .await?
+                .ok_or_else(|| rejected("prepared native process identity is missing"))?;
+        if status.credential_ready || status.restore_pending || status.agent_processes != 0 {
+            return Err(rejected(
+                "new prepared native runtime already contains owner state",
+            ));
+        }
+        next.runtime = Some(RuntimeBinding {
+            boot_id: Some(status.boot_id),
+            runtime_id: handle.0,
+            runtime_version: record.plan.runtime_version.clone(),
+            provision_generation: Some(1),
+            bound_at: layer2_core::now_rfc3339(),
+        });
+        next.state = WarmSandboxState::Installing;
+        return Ok(next);
+    }
+
+    let Some(handle) = verify_runtime(adapter, record, &spec).await? else {
+        next.state = WarmSandboxState::Retiring;
+        return Ok(next);
+    };
+    if record.state == WarmSandboxState::Ready {
+        hierarchy::verify_session(adapter, record, &handle).await?;
+        return Ok(next);
+    }
+    if record.installed_request_sha256.is_none() {
+        let execution = record.plan.execution;
+        let request = InstallRequest::with_timeouts(
+            format!("sandbox-install-v1:{}", record.id),
+            record
+                .plan
+                .profile
+                .content
+                .software_install_commands
+                .clone(),
+            execution.command_timeout_seconds,
+            execution.total_timeout_seconds,
+            layer3_adapter::DEFAULT_COMMAND_OUTPUT_LIMIT_BYTES,
+        );
+        let receipt = adapter.run_install(&handle, &request).await?;
+        if receipt.operation_id != request.operation_id
+            || receipt.request_sha256 != request.request_sha256
+            || receipt.commands.len() != request.commands.len()
+            || receipt
+                .commands
+                .iter()
+                .enumerate()
+                .any(|(index, command)| command.index as usize != index || command.exit_code != 0)
+        {
+            return Err(rejected(
+                "prepared installation receipt does not prove completion",
+            ));
+        }
+        next.installed_request_sha256 = Some(receipt.request_sha256);
+        return Ok(next);
+    }
+    hierarchy::prepare_step(adapter, &mut next, &handle).await?;
+    Ok(next)
+}
+
+/// Native Claim/member cleanup is persisted before releasing its exact home.
+pub(crate) async fn retire_step(
+    adapter: &dyn SandboxAdapter,
+    record: &WarmSandbox,
+) -> layer3_adapter::Result<WarmSandbox> {
+    record.validate().map_err(|e| rejected(&e.to_string()))?;
+    if record.state == WarmSandboxState::Retired {
+        return Ok(record.clone());
+    }
+    if record.state != WarmSandboxState::Retiring {
+        return Err(rejected(
+            "native prepared cleanup requires durable retirement",
+        ));
+    }
+    let mut next = record.clone();
+    if let Some(home) = record.home.as_deref() {
+        if home.native_pool.is_none() {
+            return Err(rejected(
+                "prepared cleanup requires exact native home authority",
+            ));
+        }
+        if let Some(home) = super::home_native::next_cleanup(adapter, home).await? {
+            next.home = Some(Box::new(home));
+            return Ok(next);
+        }
+        let home = next.home.as_mut().expect("retained exact home");
+        super::home::release_home(adapter, home).await?;
+    }
+    next.state = WarmSandboxState::Retired;
+    Ok(next)
+}
+
+fn spec(record: &WarmSandbox, deployment_id: &str) -> SandboxSpec {
+    let mut spec = super::runtime_mapping::environment_spec(
+        &record.id,
+        &record.plan.profile,
+        &record.plan.reaches,
+        deployment_id,
+    );
+    spec.home_volume = record
+        .home
+        .as_ref()
+        .and_then(|home| home.attachment())
+        .map(Box::new);
+    // Admission retains None in the default profile but pins the selected
+    // native pool image into sandbox_spec. Preparation must render the same image.
+    if spec.runtime_image.is_none() {
+        spec.runtime_image = record
+            .home
+            .as_ref()
+            .and_then(|home| home.native_pool.as_ref())
+            .map(|native| native.request.pool.spec.image.uri.clone());
+    }
+    spec
+}
+
+async fn verify_runtime(
+    adapter: &dyn SandboxAdapter,
+    record: &WarmSandbox,
+    spec: &SandboxSpec,
+) -> layer3_adapter::Result<Option<RuntimeHandle>> {
+    let runtime = record
+        .runtime
+        .as_ref()
+        .ok_or_else(|| rejected("prepared runtime missing"))?;
+    let handle = RuntimeHandle::new(&runtime.runtime_id);
+    let request = RuntimeAdoptionRequest::new(1, handle.clone(), spec.clone())
+        .with_expected_image(&record.plan.runtime_version);
+    if adapter.adopt_runtime(&request).await?.is_none() {
+        return Ok(None);
+    }
+    let status = super::runtime_attachment::provisioned_runtime_status(adapter, spec, &handle, 1)
+        .await?
+        .ok_or_else(|| rejected("prepared runtime process identity missing"))?;
+    let agents = record.workspaces[0]
+        .agents
+        .iter()
+        .filter(|agent| agent.conversation_id.is_some())
+        .count();
+    if runtime.boot_id.as_ref() != Some(&status.boot_id)
+        || status.credential_ready
+        || status.restore_pending
+        || (record.installed_request_sha256.is_some() && !status.installation_ready)
+        || usize::from(status.agent_processes) != agents
+    {
+        return Ok(None);
+    }
+    if record.state == WarmSandboxState::Installing && record.workspaces[0].is_ready() {
+        tracing::info!(
+            sandbox_id = %record.id,
+            boot_id = %status.boot_id,
+            installation_ready = status.installation_ready,
+            credential_ready = status.credential_ready,
+            restore_pending = status.restore_pending,
+            agent_processes = status.agent_processes,
+            conversation_id = record.workspaces[0].agents[0].conversation_id.as_deref(),
+            "native prepared hierarchy verified"
+        );
+    }
+    Ok(Some(handle))
+}
+
+fn validate_plan(record: &WarmSandbox) -> layer3_adapter::Result<()> {
+    record.validate().map_err(|e| rejected(&e.to_string()))?;
+    let sandbox = &record.plan.profile.content;
+    let [workspace] = record.plan.workspaces.as_slice() else {
+        return Err(rejected("native prepared plan requires one workspace"));
+    };
+    let [agent] = workspace.agents.as_slice() else {
+        return Err(rejected("native prepared plan requires one Agent"));
+    };
+    if sandbox.agent_provider != AgentProvider::Codex
+        || sandbox.model_access != ModelAccess::ChronoaiManaged
+        || !sandbox.software_install_commands.is_empty()
+        || !sandbox.environment_variables.is_empty()
+        || !workspace.profile.content.setup_commands.is_empty()
+        || !matches!(&workspace.profile.content.location, WorkspaceLocation::Directory { name } if name == "workspace")
+        || workspace.profile.content.workspace_name().ok().as_deref() != Some("workspace")
+        || !agent.content.skills.is_empty()
+        || !agent.content.system_prompt.is_empty()
+    {
+        return Err(rejected(
+            "native prepared plan is outside managed empty-workspace defaults",
+        ));
+    }
+    Ok(())
+}
+
+fn rejected(message: &str) -> AdapterError {
+    AdapterError::Rejected(message.into())
+}
