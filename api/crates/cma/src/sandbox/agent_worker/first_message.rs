@@ -86,11 +86,11 @@ impl AgentWorker {
         if current.status != AgentStatus::Ready
             || current.conversation.active_turn.is_some()
             || current.conversation.first_message != original.conversation.first_message
-            || !current
+            || current
                 .work
                 .lease
                 .as_ref()
-                .is_some_and(|lease| lease.expires_at > layer2_core::rfc3339_at(now))
+                .is_none_or(|lease| lease.expires_at <= layer2_core::rfc3339_at(now))
             || !current
                 .conversation
                 .first_message
