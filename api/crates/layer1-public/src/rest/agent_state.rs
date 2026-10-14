@@ -7,6 +7,8 @@ use layer2_core::OperationStore;
 
 #[derive(Clone)]
 pub struct AgentRoutesState {
+    pub(in crate::rest) skill_support:
+        Option<Arc<dyn super::super::agent_skills::AgentSkillRuntimeSupport>>,
     pub(in crate::rest) commands: Option<Arc<layer2_core::sandbox::agent_io::AgentCommandService>>,
     pub(in crate::rest) agents: Arc<AgentService>,
     pub(in crate::rest) reads: Arc<AgentReadService>,
@@ -18,6 +20,14 @@ pub struct AgentRoutesState {
 }
 
 impl AgentRoutesState {
+    pub fn with_skill_support(
+        mut self,
+        support: Arc<dyn super::super::agent_skills::AgentSkillRuntimeSupport>,
+    ) -> Self {
+        self.skill_support = Some(support);
+        self
+    }
+
     pub fn new(
         agents: Arc<AgentService>,
         reads: Arc<AgentReadService>,
@@ -25,6 +35,7 @@ impl AgentRoutesState {
         operation_records: Arc<dyn OperationStore>,
     ) -> Self {
         Self {
+            skill_support: None,
             commands: None,
             agents,
             reads,

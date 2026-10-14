@@ -257,7 +257,10 @@ impl AgentStore for MongoSandboxStore {
     }
 
     async fn create_agent(&self, agent: Agent) -> Result<(), SandboxStoreError> {
-        if agent.revision != 1 || agent.work.resolved_skills.is_some() {
+        if agent.revision != 1
+            || agent.work.resolved_skills.is_some()
+            || !agent.work.live_skills.is_empty()
+        {
             return Err(SandboxStoreError::Conflict);
         }
         if agent.conversation.last_seq != 0 {
@@ -319,6 +322,9 @@ impl AgentStore for MongoSandboxStore {
                         .map_err(SandboxStoreError::Corrupt)?,
                     "record.work.resolved_skills": record_bson(&agent.work.resolved_skills)
                         .map_err(SandboxStoreError::Corrupt)?,
+                    "record.work.live_skills": if agent.work.live_skills.is_empty() { Bson::Null } else {
+                        record_bson(&agent.work.live_skills).map_err(SandboxStoreError::Corrupt)?
+                    },
                 },
                 doc! { "$set": agent_replacement_fields(&agent)? },
             )

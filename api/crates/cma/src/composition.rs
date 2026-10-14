@@ -167,6 +167,9 @@ impl ControlPlaneComposition {
             runtime_capabilities(adapter.capabilities()),
         )
         .with_connections(connection_prerequisite.clone())
+        .with_skill_support(Arc::new(crate::projections::AdapterAgentSkillSupport(
+            adapter.clone(),
+        )))
         .with_resource_access(resource_access.clone())
         .with_history_exporter(Arc::new(AdapterAgentHistoryExporter::new(Arc::clone(
             &adapter,

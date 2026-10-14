@@ -122,6 +122,16 @@ fn validate_mutation(
     retired_process_absent: bool,
 ) -> Result<(), SandboxStoreError> {
     validate_common(current, current_worktree, actual_last_seq, mutation)?;
+    if current.work.step == AgentWorkStep::InstallSkill {
+        return crate::sandbox::agent_live_skills::validate_install_work(
+            current,
+            current_worktree,
+            mutation,
+        );
+    }
+    if current.work.live_skills != mutation.agent.work.live_skills {
+        return Err(SandboxStoreError::Conflict);
+    }
     validate_position(current, current_worktree)?;
     validate_histories(current, &mutation.agent, &mutation.appended_at)?;
     let kind = classify_publication(current, &mutation.agent)?;

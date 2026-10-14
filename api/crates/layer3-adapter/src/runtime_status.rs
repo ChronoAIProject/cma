@@ -31,6 +31,9 @@ impl RuntimeStatusRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeStatus {
+    /// Absent on retained supervisors that predate the additive operation.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub agent_skill_install: bool,
     pub sandbox_id: String,
     pub generation: u64,
     pub home_identity: String,

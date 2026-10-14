@@ -8,6 +8,7 @@ mod creation_delegation;
 mod lifecycle;
 mod models;
 mod settings;
+mod skills;
 pub(crate) use conversation_fixtures::{conversation_fixture, conversation_fixture_with_registry};
 
 use async_trait::async_trait;

@@ -82,6 +82,10 @@ pub(super) fn routes() -> Router<AgentRoutesState> {
         )
         .route("/api/v1/agents/{id}", get(read).delete(delete_agent))
         .route(
+            "/api/v1/agents/{id}/skills",
+            get(super::agent_skills::read).post(super::agent_skills::install),
+        )
+        .route(
             "/api/v1/agents/{id}/settings",
             get(super::agent_settings::read).patch(super::agent_settings::update),
         )

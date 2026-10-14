@@ -445,6 +445,11 @@ impl AgentOperationService {
         &self,
         agent: &Agent,
     ) -> Result<(), AgentOperationError> {
+        if agent.work.step == super::AgentWorkStep::InstallSkill {
+            return Err(AgentOperationError::StatusConflict {
+                status: agent.status,
+            });
+        }
         match agent.conversation.operation.as_ref() {
             Some(record) if record.state == AgentOperationDelivery::DispatchFenced => {
                 Err(AgentOperationError::DispatchInProgress {

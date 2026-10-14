@@ -34,7 +34,33 @@ pub fn validate_agent_conversation_admission(
     mutation: &AgentConversationMutation,
 ) -> Result<(), SandboxStoreError> {
     crate::sandbox::agent_settings_validation::validate_settings_mutation(current, mutation)?;
-    let admission = admits_input(current, mutation);
+    let skill_admission =
+        crate::sandbox::agent_live_skills::is_install_admission(current, &mutation.agent);
+    if current.work != mutation.agent.work && !skill_admission {
+        return Err(SandboxStoreError::Conflict);
+    }
+    if skill_admission
+        && (!matches!(
+            parent.map(|p| p.status),
+            Some(SandboxStatus::Active | SandboxStatus::CredentialRotating)
+        ) || mutation.agent_logs
+            != vec![AgentLogKind::SkillInstallationChanged {
+                skill_id: mutation
+                    .agent
+                    .work
+                    .live_skills
+                    .last()
+                    .expect("validated")
+                    .reference
+                    .id
+                    .as_str()
+                    .into(),
+                status: crate::sandbox::AgentSkillInstallStatus::Pending,
+            }])
+    {
+        return Err(SandboxStoreError::Conflict);
+    }
+    let admission = skill_admission || admits_input(current, mutation);
     if [
         mutation.execution_fence.is_some(),
         mutation.trigger_execution_fence.is_some(),

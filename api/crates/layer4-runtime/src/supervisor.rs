@@ -287,6 +287,10 @@ impl Supervisor {
                 self.remove_worktree(request.authority_fence, request.request)
                     .await
             }
+            RequestFrame::InstallAgentSkill(request) => {
+                self.install_agent_skill(request.authority_fence, request.request)
+                    .await
+            }
             RequestFrame::MaterializeAgentHome(request) => {
                 self.materialize_agent_home(request.authority_fence, request.request)
                     .await
