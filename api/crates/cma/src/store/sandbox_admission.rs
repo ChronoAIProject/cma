@@ -202,13 +202,12 @@ async fn apply(
     }
     let mut sandbox = admission.sandbox.clone();
     sandbox.name = choose_name(store, session, owner, &admission.name).await?;
-    if admission.binding.is_none() {
-        if !super::native_prepared::claim_ready(store, &mut sandbox, &admission.event_at, session)
+    if admission.binding.is_none()
+        && !super::native_prepared::claim_ready(store, &mut sandbox, &admission.event_at, session)
             .await?
-        {
-            super::warm_sandboxes::claim_ready(store, &mut sandbox, &admission.event_at, session)
-                .await?;
-        }
+    {
+        super::warm_sandboxes::claim_ready(store, &mut sandbox, &admission.event_at, session)
+            .await?;
     }
     let event = SandboxEvent {
         sandbox_id: sandbox.id.clone(),
