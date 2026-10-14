@@ -125,6 +125,9 @@ pub struct MongoSandboxStore {
     pub(super) warm_runtime_version: Option<String>,
     pub(super) warm_home_policy: Option<layer3_adapter::HomeVolumePolicy>,
     pub(crate) warmup_changed: std::sync::Arc<tokio::sync::Notify>,
+    // Coalesced process-local hints; durable discovery owns recovery and authority.
+    pub(crate) sandbox_admitted: std::sync::Arc<tokio::sync::Notify>,
+    pub(crate) agent_admitted: std::sync::Arc<tokio::sync::Notify>,
 }
 
 impl MongoSandboxStore {
@@ -189,6 +192,8 @@ impl MongoSandboxStore {
             warm_runtime_version: None,
             warm_home_policy: None,
             warmup_changed: std::sync::Arc::new(tokio::sync::Notify::new()),
+            sandbox_admitted: std::sync::Arc::new(tokio::sync::Notify::new()),
+            agent_admitted: std::sync::Arc::new(tokio::sync::Notify::new()),
         };
         super::sandboxes::ensure_indexes(&store.sandboxes).await?;
         super::workspaces::ensure_indexes(&store.workspaces).await?;

@@ -64,6 +64,8 @@ impl SandboxLifecycleComposition {
         dependencies: SandboxLifecycleDependencies,
         config: SandboxLifecycleConfig,
     ) -> Self {
+        let sandbox_admitted = Arc::clone(&dependencies.store.sandbox_admitted);
+        let agent_admitted = Arc::clone(&dependencies.store.agent_admitted);
         let warmup = super::warmup::LegacyWarmSandboxCleanup {
             store: dependencies.store.clone(),
             adapter: dependencies.adapter.clone(),
@@ -144,9 +146,9 @@ impl SandboxLifecycleComposition {
             warmup,
             updates,
             reconciliation,
-            sandbox: SandboxScheduler::new(sandbox_worker),
+            sandbox: SandboxScheduler::new(sandbox_worker).with_admission_wake(sandbox_admitted),
             workspace: SandboxScheduler::for_workspaces(workspace_worker),
-            agent: AgentScheduler::new(agent_worker),
+            agent: AgentScheduler::new(agent_worker, agent_admitted),
             titles,
         }
     }

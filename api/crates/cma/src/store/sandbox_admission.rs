@@ -60,6 +60,19 @@ impl SandboxAdmissionStore for MongoSandboxStore {
         &self,
         admission: SandboxAdmission,
     ) -> Result<SandboxAdmissionResult, SandboxStoreError> {
+        let result = self.commit_sandbox_admission(admission).await?;
+        // Includes durable replays and positively reconciled ambiguous commits.
+        // A failed or cancelled admission leaves periodic discovery to recover.
+        self.sandbox_admitted.notify_one();
+        Ok(result)
+    }
+}
+
+impl MongoSandboxStore {
+    async fn commit_sandbox_admission(
+        &self,
+        admission: SandboxAdmission,
+    ) -> Result<SandboxAdmissionResult, SandboxStoreError> {
         admission.validate()?;
         let mut last_transient = None;
         for attempt in 0..ADMISSION_TRANSACTION_ATTEMPTS {
