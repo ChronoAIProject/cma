@@ -40,7 +40,7 @@ const after = `    // CMA's managed gpt-6 name is a configured provider alias. C
   async fetchManagedModel(requested) {
     // Resolve a new managed alias only when it is selected. Default startup and
     // native model changes do not depend on another network catalogue request.
-    if (this.gatewayConfig || typeof requested !== "string" || requested.length > 128 ||
+    if (this.gatewayConfig || typeof requested !== "string" || requested.length > 256 ||
         !(/^(?:gpt-[0-9][A-Za-z0-9._-]*|codex-auto-review)$/.test(requested))) return null;
     const read = await this.codexClient.configRead({ includeLayers: false });
     const configured = { ...read?.config, ...this.config };
