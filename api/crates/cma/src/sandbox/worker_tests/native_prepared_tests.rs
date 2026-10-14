@@ -10,6 +10,9 @@ mod installation_transfer_tests;
 #[path = "workspace_transfer_tests.rs"]
 mod workspace_transfer_tests;
 
+#[path = "native_prepared_health_tests.rs"]
+mod native_prepared_health_tests;
+
 async fn reservation(harness: &Harness) -> WarmSandbox {
     let mut parent = harness.create().await;
     let mut agent = lifecycle_queue_tests::ready_agent(&parent, SystemTime::now()).profile;
