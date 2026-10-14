@@ -160,11 +160,13 @@ impl BrowserConnections {
         request: CheckRequest,
     ) -> Result<ConnectionReport, ConnectionError> {
         let services = self.targets.services(caller, &request.target).await?;
-        let requirements = self
-            .broker
-            .requirements(&caller.subject, &services)
-            .await
-            .map_err(|_| ConnectionError::Unavailable)?;
+        // Both owner-bound reads use the already-authorized target services.
+        // Complete both, then retain requirements-first validation and errors.
+        let (requirements, metadata) = tokio::join!(
+            self.broker.requirements(&caller.subject, &services),
+            self.broker.describe_services(&caller.subject, &services),
+        );
+        let requirements = requirements.map_err(|_| ConnectionError::Unavailable)?;
         if requirements.len() != services.len()
             || !services
                 .iter()
@@ -172,11 +174,7 @@ impl BrowserConnections {
         {
             return Err(ConnectionError::Unavailable);
         }
-        let metadata = self
-            .broker
-            .describe_services(&caller.subject, &services)
-            .await
-            .map_err(|_| ConnectionError::Unavailable)?;
+        let metadata = metadata.map_err(|_| ConnectionError::Unavailable)?;
         let mut seen = BTreeSet::new();
         if metadata
             .iter()
