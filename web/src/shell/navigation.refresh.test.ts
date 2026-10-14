@@ -66,7 +66,7 @@ function hierarchyClient(read: () => readonly NavigationSandbox[]): CmaWebClient
   });
 }
 
-it('keeps full-tree revival polling at five seconds without loading deleted subtrees, including minute boundaries', async () => {
+it('keeps full-tree revival polling at fifteen seconds without loading deleted subtrees, including minute boundaries', async () => {
   vi.useFakeTimers();
   const inventory = hierarchy();
   const client = hierarchyClient(() => inventory);
@@ -80,26 +80,19 @@ it('keeps full-tree revival polling at five seconds without loading deleted subt
   expect(client.listSandboxes).toHaveBeenCalledTimes(1);
   expect(client.readSandbox).toHaveBeenCalledTimes(1);
   expect(client.readWorkspace).toHaveBeenCalledTimes(1);
-  await act(() => vi.advanceTimersByTimeAsync(3499));
+  await act(() => vi.advanceTimersByTimeAsync(13499));
   expect(client.listSandboxes).toHaveBeenCalledTimes(1);
-  await act(() => vi.advanceTimersByTimeAsync(40001));
-  expect(client.listSandboxes).toHaveBeenCalledTimes(10);
-  expect(client.readSandbox).toHaveBeenCalledTimes(10);
-  expect(client.readWorkspace).toHaveBeenCalledTimes(10);
+  await act(() => vi.advanceTimersByTimeAsync(1));
+  expect(client.listSandboxes).toHaveBeenCalledTimes(2);
+  await act(() => vi.advanceTimersByTimeAsync(45000));
   for (const item of inventory.slice(1)) {
     expect(
       vi.mocked(client.readSandbox).mock.calls.filter(([id]) => id === item.sandbox.id),
     ).toHaveLength(0);
   }
-  await act(() => vi.advanceTimersByTimeAsync(15000));
-  for (const item of inventory.slice(1)) {
-    expect(
-      vi.mocked(client.readSandbox).mock.calls.filter(([id]) => id === item.sandbox.id),
-    ).toHaveLength(0);
-  }
-  expect(client.listSandboxes).toHaveBeenCalledTimes(13);
-  expect(client.readSandbox).toHaveBeenCalledTimes(13);
-  expect(client.readWorkspace).toHaveBeenCalledTimes(13);
+  expect(client.listSandboxes).toHaveBeenCalledTimes(5);
+  expect(client.readSandbox).toHaveBeenCalledTimes(5);
+  expect(client.readWorkspace).toHaveBeenCalledTimes(5);
 });
 
 it('rereads mutable descendants when summary counts stay unchanged and discovers new Workspaces and Agents', async () => {
@@ -119,7 +112,7 @@ it('rereads mutable descendants when summary counts stay unchanged and discovers
     })),
   };
   inventory[0] = { sandbox: first.sandbox, workspaces: [changed] };
-  await act(() => vi.advanceTimersByTimeAsync(5000));
+  await act(() => vi.advanceTimersByTimeAsync(15000));
   expect(result.current).toMatchObject({
     status: 'ready',
     items: [{ workspaces: [{ agents: [{ title: 'Fresh title', status: 'working' }] }] }],
@@ -144,12 +137,12 @@ it('rereads mutable descendants when summary counts stay unchanged and discovers
     },
     workspaces: [changed, added],
   };
-  await act(() => vi.advanceTimersByTimeAsync(5000));
+  await act(() => vi.advanceTimersByTimeAsync(15000));
   expect(result.current).toMatchObject({ status: 'ready', items: inventory.slice(0, 1) });
   expect(client.readWorkspace).toHaveBeenCalledWith('wsp_new', expect.any(Object));
 });
 
-it('refreshes lifecycle eligibility every five seconds while settled or saving without reading deleted resources', async () => {
+it('refreshes lifecycle eligibility every fifteen seconds while settled or saving without reading deleted resources', async () => {
   vi.useFakeTimers();
   const inventory = hierarchy();
   inventory[0] = {
@@ -175,7 +168,7 @@ it('refreshes lifecycle eligibility every five seconds while settled or saving w
       },
     },
   };
-  await act(() => vi.advanceTimersByTimeAsync(5000));
+  await act(() => vi.advanceTimersByTimeAsync(15000));
   expect(result.current).toMatchObject({
     status: 'ready',
     items: [{ sandbox: { lifecycle: { checkpoint: { phase: 'capture' } } } }],
@@ -184,7 +177,7 @@ it('refreshes lifecycle eligibility every five seconds while settled or saving w
     ...inventory[0]!,
     sandbox: { ...inventory[0]!.sandbox, lifecycle: sandboxFixture().lifecycle },
   };
-  await act(() => vi.advanceTimersByTimeAsync(5000));
+  await act(() => vi.advanceTimersByTimeAsync(15000));
   expect(result.current).toMatchObject({
     status: 'ready',
     items: [{ sandbox: { lifecycle: { pause: { allowed: true } } } }],
@@ -202,7 +195,7 @@ it('drops a newly deleted Sandbox and its descendants without another detail rea
     ...item,
     sandbox: { ...item.sandbox, status: 'retired' },
   }));
-  await act(() => vi.advanceTimersByTimeAsync(5000));
+  await act(() => vi.advanceTimersByTimeAsync(15000));
   expect(result.current).toMatchObject({ status: 'ready', items: [] });
   expect(client.readSandbox).toHaveBeenCalledTimes(1);
 });
@@ -257,10 +250,10 @@ it.each([401, 403, 404])(
     const { result } = renderHook(() => useNavigation(client));
     await act(async () => {});
     vi.mocked(client.listSandboxes).mockRejectedValueOnce(new ApiError(status, 'Denied'));
-    await act(() => vi.advanceTimersByTimeAsync(5000));
+    await act(() => vi.advanceTimersByTimeAsync(15000));
     expect(result.current).toMatchObject({ status: 'error', message: 'Denied' });
     expect(result.current).not.toHaveProperty('items');
-    await act(() => vi.advanceTimersByTimeAsync(5000));
+    await act(() => vi.advanceTimersByTimeAsync(15000));
     expect(result.current).toMatchObject({ status: 'ready', items: inventory.slice(0, 1) });
     expect(client.readSandbox).toHaveBeenCalledTimes(2);
     expect(client.readWorkspace).toHaveBeenCalledTimes(2);
@@ -276,7 +269,7 @@ it.each(['readSandbox', 'readWorkspace'] as const)(
     const { result } = renderHook(() => useNavigation(client));
     await act(async () => {});
     vi.mocked(client[method]).mockRejectedValueOnce(new ApiError(403, 'Denied'));
-    await act(() => vi.advanceTimersByTimeAsync(5000));
+    await act(() => vi.advanceTimersByTimeAsync(15000));
     expect(result.current).toMatchObject({ status: 'error', message: 'Denied' });
     expect(result.current).not.toHaveProperty('items');
   },
@@ -291,7 +284,7 @@ it('revalidates the visible hierarchy on explicit refresh and with a replacement
     initialProps: { client },
   });
   await act(async () => {});
-  await act(() => vi.advanceTimersByTimeAsync(5000));
+  await act(() => vi.advanceTimersByTimeAsync(15000));
   act(() => result.current.refresh());
   await act(async () => {});
   expect(client.readSandbox).toHaveBeenCalledTimes(3);
