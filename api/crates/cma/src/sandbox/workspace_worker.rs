@@ -284,13 +284,22 @@ impl WorkspaceWorker {
                     && sandbox.credential.delivered
             })
             .ok_or_else(|| WorkerFailure::retryable("sandbox runtime is not ready"))?;
+        let inspection_started = std::time::Instant::now();
         let attached = super::runtime_attachment::adopt_bound_runtime(
             self.dependencies.adapter.as_ref(),
             &sandbox,
             &self.config.deployment_id,
         )
-        .await
-        .map_err(failure)?;
+        .await;
+        tracing::info!(
+            workspace_id = %workspace.id,
+            sandbox_id = %sandbox.id,
+            step = ?workspace.work.step,
+            elapsed_ms = inspection_started.elapsed().as_millis() as u64,
+            succeeded = attached.is_ok(),
+            "Workspace runtime inspection completed"
+        );
+        let attached = attached.map_err(failure)?;
         Ok((sandbox, attached))
     }
 
