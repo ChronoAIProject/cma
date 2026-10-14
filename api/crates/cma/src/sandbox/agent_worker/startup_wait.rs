@@ -89,13 +89,12 @@ impl AgentWorker {
         let expected = agent.revision;
         let fence = claimed_fence(&agent, &self.config.holder)?;
         let stamp = rfc3339_at(now);
+        // The bounded observation already paced this expected wait. Leave it
+        // due so committed parent readiness can wake it without another delay.
+        // Discovery and claims still check durable due time, lease and lineage.
         agent
             .work
-            .retry(
-                &self.config.holder,
-                fence,
-                rfc3339_at(now + Duration::from_secs(1)),
-            )
+            .retry(&self.config.holder, fence, stamp.clone())
             .map_err(|_| SandboxStoreError::Conflict)?;
         agent.updated_at = stamp.clone();
         agent.revision = expected.checked_add(1).ok_or(SandboxStoreError::Conflict)?;
