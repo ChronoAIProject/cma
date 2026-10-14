@@ -30,15 +30,18 @@ impl AgentSandboxClient {
             request: home_request,
         };
         tokio::time::timeout(assignment::ASSIGN_TIMEOUT, async {
+            let mut timing = super::provision_timing::ProvisionTiming::new();
             // Each proof reads Claim, Sandbox, PVC and Pod inventory concurrently.
             // Nothing is cached across calls or reused across credential delivery.
             let before = self.native_runtime_proof(runtime, request, &home).await?;
             if before.pod() != expected {
                 return Err(rejected("Sandbox Pod changed before runtime assignment"));
             }
+            timing.completed("assignment_before_proof");
             let receipt = self
                 .deliver_assignment(&expected.pod_name, bootstrap)
                 .await?;
+            timing.completed("assignment_delivery");
             let after = self.native_runtime_proof(runtime, request, &home).await?;
             if after.pod() != expected
                 || before.member().annotations() != after.member().annotations()
@@ -46,6 +49,7 @@ impl AgentSandboxClient {
             {
                 return Err(rejected("Sandbox changed during runtime assignment"));
             }
+            timing.completed("assignment_after_proof");
             Ok(receipt)
         })
         .await

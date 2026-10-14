@@ -10,7 +10,7 @@ async fn admission_proves_each_native_resource_once_and_replays_without_writes()
     let before = fixture.state.lock().unwrap().rows[MEMBER]["spec"].clone();
     fixture.state.lock().unwrap().calls.clear();
     let handle = runtime
-        .admit_pool_runtime(&claim, &home, &request)
+        .provision_pool_runtime_with_home(&request, &home)
         .await
         .unwrap();
     {
@@ -34,7 +34,7 @@ async fn admission_proves_each_native_resource_once_and_replays_without_writes()
     fixture.state.lock().unwrap().calls.clear();
     assert_eq!(
         runtime
-            .admit_pool_runtime(&claim, &home, &request)
+            .provision_pool_runtime_with_home(&request, &home)
             .await
             .unwrap(),
         handle
@@ -48,7 +48,7 @@ async fn admission_proves_each_native_resource_once_and_replays_without_writes()
         json!("replaced");
     fixture.state.lock().unwrap().calls.clear();
     assert!(runtime
-        .admit_pool_runtime(&claim, &home, &request)
+        .provision_pool_runtime_with_home(&request, &home)
         .await
         .is_err());
     assert!(fixture
@@ -139,6 +139,15 @@ async fn admission_rejects_changed_native_authority_before_publishing() {
                 .is_err(),
             "{change}"
         );
+        if change != "original" {
+            assert!(
+                runtime
+                    .provision_pool_runtime_with_home(&request, &home)
+                    .await
+                    .is_err(),
+                "persisted home provisioning accepted {change}"
+            );
+        }
         assert!(
             fixture
                 .state
@@ -166,7 +175,9 @@ async fn admission_revalidates_after_member_version_conflict() {
         .conflict
         .push(format!("PATCH {MEMBER}"));
     assert!(matches!(
-        runtime.admit_pool_runtime(&claim, &home, &request).await,
+        runtime
+            .provision_pool_runtime_with_home(&request, &home)
+            .await,
         Err(crate::AdapterError::Unavailable(_))
     ));
     assert!(
@@ -178,7 +189,7 @@ async fn admission_revalidates_after_member_version_conflict() {
         json!("replaced-during-conflict");
     fixture.state.lock().unwrap().calls.clear();
     assert!(runtime
-        .admit_pool_runtime(&claim, &home, &request)
+        .provision_pool_runtime_with_home(&request, &home)
         .await
         .is_err());
     assert!(fixture
@@ -201,12 +212,12 @@ async fn admission_revalidates_after_member_version_conflict() {
         .conflict
         .push(format!("PATCH {MEMBER}"));
     assert!(runtime
-        .admit_pool_runtime(&claim, &home, &request)
+        .provision_pool_runtime_with_home(&request, &home)
         .await
         .is_err());
     fixture.state.lock().unwrap().calls.clear();
     runtime
-        .admit_pool_runtime(&claim, &home, &request)
+        .provision_pool_runtime_with_home(&request, &home)
         .await
         .unwrap();
     assert_eq!(fixture.state.lock().unwrap().calls.len(), 4);

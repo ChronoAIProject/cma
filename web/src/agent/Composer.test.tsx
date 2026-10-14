@@ -3,6 +3,53 @@ import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
 import { Composer } from './Composer';
 
+it('allows a v2 Starting message with the normal composer and retains its draft until acceptance', async () => {
+  let accept: (() => void) | undefined;
+  const onSend = vi.fn((_content: string, onAccepted: () => void) => {
+    accept = onAccepted;
+  });
+  render(
+    <Composer
+      status="starting"
+      queueWhileStarting
+      running={false}
+      busy={false}
+      inputAvailability={{ allowed: true }}
+      onSend={onSend}
+      onStop={vi.fn()}
+    />,
+  );
+  const user = userEvent.setup();
+  const field = screen.getByRole('textbox', { name: 'Message' });
+  expect(field).toBeEnabled();
+  expect(field).toHaveAttribute('placeholder', 'Message Agent');
+  expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  await user.type(field, 'Follow the setup');
+  await user.click(screen.getByRole('button', { name: 'Send message' }));
+  expect(onSend).toHaveBeenCalledExactlyOnceWith('Follow the setup', expect.any(Function));
+  expect(field).toHaveValue('Follow the setup');
+  await act(async () => accept?.());
+  expect(field).toHaveValue('');
+});
+
+it('keeps Starting input disabled unless durable queuing is explicitly enabled', async () => {
+  const onSend = vi.fn();
+  render(
+    <Composer
+      status="starting"
+      running={false}
+      busy={false}
+      inputAvailability={{ allowed: true }}
+      onSend={onSend}
+      onStop={vi.fn()}
+    />,
+  );
+  expect(screen.getByRole('textbox', { name: 'Message' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
+  fireEvent.submit(screen.getByRole('form', { name: 'Message Agent' }));
+  expect(onSend).not.toHaveBeenCalled();
+});
+
 function editableComposer() {
   const onSend = vi.fn();
   render(

@@ -14,6 +14,7 @@ interface ComposerProps {
   readonly pausedNotice?: string;
   readonly running: boolean;
   readonly queueWhileRunning?: boolean;
+  readonly queueWhileStarting?: boolean;
   readonly starting?: boolean;
   readonly controlsUnavailable?: boolean;
   readonly requestPending?: boolean;
@@ -50,6 +51,7 @@ export function Composer({
   pausedNotice,
   running,
   queueWhileRunning = false,
+  queueWhileStarting = false,
   starting = false,
   controlsUnavailable = false,
   requestPending = false,
@@ -70,9 +72,10 @@ export function Composer({
   const composing = useRef(false);
   const noticeId = useId();
   const inputBlocked = !inputAvailability.allowed;
+  const preparing = status === 'starting' && queueWhileStarting;
   const notice = inputAvailability.notice ?? pausedNotice;
   const hasNotice = notice !== undefined || inputAvailability.savingStartedAt !== undefined;
-  const usable = canMessage(status);
+  const usable = canMessage(status) || preparing;
 
   useLayoutEffect(() => {
     if (acceptedMessage === previousAccepted.current) return;
@@ -181,7 +184,7 @@ export function Composer({
             value={content}
             disabled={!usable}
             aria-describedby={hasNotice ? noticeId : undefined}
-            placeholder={placeholder(status)}
+            placeholder={preparing ? 'Message Agent' : placeholder(status)}
             onChange={(event) => {
               setContent(event.target.value);
             }}

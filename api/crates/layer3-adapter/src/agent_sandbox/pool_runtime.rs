@@ -17,12 +17,44 @@ use crate::{
 };
 
 impl AgentSandboxClient {
+    /// Persisted native VCT identity replaces only PVC/member origin discovery.
+    /// Admission still reads the complete live graph and fences its publication.
+    pub(crate) async fn provision_pool_runtime_with_home(
+        &self,
+        request: &ProviderSandboxRequest,
+        home: &HomeVolumeAttachment,
+    ) -> Result<RuntimeHandle> {
+        request.validate_volumes()?;
+        let identity = crate::hosted::provider_request_identity(request)?;
+        home.validate_for(&identity.sandbox_id)?;
+        if !home.request.policy.is_native_vct()
+            || home.request.scope.as_ref() != Some(&self.native_home_scope)
+            || request.metadata.get("cma/home-identity") != Some(&home.identity()?)
+        {
+            return Err(rejected(
+                "native runtime requires its persisted home authority",
+            ));
+        }
+        let origin = home
+            .receipt
+            .native_authority
+            .as_deref()
+            .ok_or_else(|| rejected("native home authority missing"))?;
+        origin.validate_for(
+            &self.config.namespace,
+            &self.config.deployment,
+            &home.request,
+        )?;
+        self.admit_pool_runtime(&origin.claim, home, request).await
+    }
+
     /// Resolve the pool already recorded on a persisted home attachment. No pool
     /// selection, claim creation or replacement home allocation happens here.
     pub async fn provision_pool_runtime(
         &self,
         request: &ProviderSandboxRequest,
     ) -> Result<Option<RuntimeHandle>> {
+        let mut timing = super::provision_timing::ProvisionTiming::new();
         request.validate_volumes()?;
         let Some(first) = request.volumes.first() else {
             return Ok(None);
@@ -53,9 +85,12 @@ impl AgentSandboxClient {
                 "native runtime requires the persisted home attachment",
             ));
         }
-        self.admit_pool_runtime(&origin.claim, &home, request)
-            .await
-            .map(Some)
+        timing.completed("persisted_home_origin");
+        let handle = self
+            .admit_pool_runtime(&origin.claim, &home, request)
+            .await?;
+        timing.completed("admit_pool_runtime");
+        Ok(Some(handle))
     }
 
     pub(super) async fn retirement_pool_origin(
@@ -123,40 +158,60 @@ impl AgentSandboxClient {
         home: &HomeVolumeAttachment,
         request: &ProviderSandboxRequest,
     ) -> Result<RuntimeHandle> {
+        let mut timing = super::provision_timing::ProvisionTiming::new();
         home.receipt.validate_for(&home.request)?;
-        self.pools
-            .verify_explicit_template_policy(&original.request.pool)
-            .await?;
-        if request.metadata.get("cma/runtime-generation")
-            != Some(&original.request.runtime_generation.to_string())
-        {
-            return Err(rejected(
-                "native runtime requires its original persisted claim/home",
-            ));
-        }
         let (current, actual) = if home.request.policy.is_native_vct() {
+            home.validate_for(&home.request.sandbox_id)?;
             let origin = home
                 .receipt
                 .native_authority
                 .as_deref()
                 .ok_or_else(|| rejected("native home authority missing"))?;
-            if original.name != origin.claim.name
+            origin.validate_for(
+                &self.config.namespace,
+                &self.config.deployment,
+                &home.request,
+            )?;
+            if home.request.scope.as_ref() != Some(&self.native_home_scope)
+                || original.name != origin.claim.name
                 || original.uid != origin.claim.uid
                 || original.request != origin.claim.request
                 || original
                     .sandbox_name
                     .as_ref()
                     .is_some_and(|name| Some(name) != origin.claim.sandbox_name.as_ref())
+                || request.metadata.get("cma/runtime-generation")
+                    != Some(&original.request.runtime_generation.to_string())
             {
                 return Err(rejected(
                     "native runtime requires its original persisted claim/home",
                 ));
             }
-            // One fresh proof of the persisted Claim/Sandbox/PVC graph per
-            // admission. Its member resourceVersion still fences publication.
-            let actual = self.pools.prove_native_home(home).await?;
+            self.pools
+                .validate_runtime_home_request(origin, home, request)?;
+            // Both proofs are fresh and read-only at this admission boundary.
+            // Preserve policy error precedence and the member version fence.
+            let (policy, actual) = tokio::join!(
+                self.pools
+                    .verify_explicit_template_policy(&original.request.pool),
+                self.pools.prove_native_home(home),
+            );
+            policy?;
+            let actual = actual?;
+            timing.completed("admission_policy_and_home_proof");
             (origin.claim.clone(), actual)
         } else {
+            self.pools
+                .verify_explicit_template_policy(&original.request.pool)
+                .await?;
+            timing.completed("admission_template_policy");
+            if request.metadata.get("cma/runtime-generation")
+                != Some(&original.request.runtime_generation.to_string())
+            {
+                return Err(rejected(
+                    "native runtime requires its original persisted claim/home",
+                ));
+            }
             if self.pools.recover_home(original).await?.as_ref() != Some(home) {
                 return Err(rejected(
                     "native runtime requires its original persisted claim/home",
@@ -169,6 +224,7 @@ impl AgentSandboxClient {
                 .ok_or_else(|| unavailable("native claim is not assigned"))?;
             let actual = self.sandboxes.get(name).await.map_err(api_error)?;
             self.pools.member_owned(&actual, &current)?;
+            timing.completed("admission_home_proof");
             (current, actual)
         };
         let name = current
@@ -225,11 +281,13 @@ impl AgentSandboxClient {
         }
         let patch = json!({"metadata":{"uid":actual.uid(),"resourceVersion":actual.resource_version(),
             "labels":{OWNER_LABEL:self.config.deployment},"annotations":desired.annotations()}});
+        timing.completed("admission_render_validate");
         let updated = self
             .sandboxes
             .patch(name, &PatchParams::default(), &Patch::Merge(patch))
             .await
             .map_err(api_error)?;
+        timing.completed("admission_publish");
         self.pools.member_owned(&updated, &current)?;
         if updated.uid() != actual.uid() {
             return Err(rejected("native Sandbox UID changed during admission"));

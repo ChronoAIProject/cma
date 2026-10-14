@@ -36,6 +36,7 @@ export function useSandboxInput(
   client: CmaWebClient,
   agentId: string | undefined,
   sandboxId: string | undefined,
+  queueWhileStarting = false,
 ): SandboxAvailability {
   const [observation, setObservation] = useState<Observation>();
   useEffect(() => {
@@ -43,7 +44,8 @@ export function useSandboxInput(
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     let expiry: ReturnType<typeof setTimeout> | undefined;
-    let inFlight = false;
+    let pending: AbortController | undefined;
+    let deadline: ReturnType<typeof setTimeout> | undefined;
     let visibilityEpoch = 0;
     let pollInterval = 5000;
     const markStale = () => {
@@ -63,14 +65,23 @@ export function useSandboxInput(
       }));
     };
     const poll = () => {
-      if (controller.signal.aborted || inFlight || document.hidden) return;
+      if (controller.signal.aborted || pending !== undefined || document.hidden) return;
       clearTimeout(timer);
-      inFlight = true;
+      const request = new AbortController();
+      pending = request;
       const requestEpoch = visibilityEpoch;
+      const timeout = setTimeout(() => {
+        if (controller.signal.aborted || pending !== request) return;
+        request.abort();
+        pending = undefined;
+        markStale();
+        timer = setTimeout(poll, pollInterval);
+      }, 10_000);
+      deadline = timeout;
       void client
-        .readSandbox(sandboxId, { signal: controller.signal })
+        .readSandbox(sandboxId, { signal: AbortSignal.any([controller.signal, request.signal]) })
         .then((sandbox) => {
-          if (controller.signal.aborted) return;
+          if (controller.signal.aborted || request.signal.aborted || pending !== request) return;
           if (sandbox.id !== sandboxId)
             throw new Error('Sandbox identity did not match the Agent.');
           if (requestEpoch !== visibilityEpoch || document.hidden) {
@@ -90,14 +101,15 @@ export function useSandboxInput(
           timer = setTimeout(poll, pollInterval);
         })
         .catch((error: unknown) => {
-          if (controller.signal.aborted) return;
+          if (controller.signal.aborted || request.signal.aborted || pending !== request) return;
           if (error instanceof ApiError && [401, 403, 404].includes(error.status))
             setObservation({ agentId, sandboxId, stale: true });
           else markStale();
           timer = setTimeout(poll, requestEpoch === visibilityEpoch ? pollInterval : 0);
         })
         .finally(() => {
-          inFlight = false;
+          clearTimeout(timeout);
+          if (pending === request) pending = undefined;
         });
     };
     const visibilityChanged = () => {
@@ -110,6 +122,8 @@ export function useSandboxInput(
     poll();
     return () => {
       controller.abort();
+      pending?.abort();
+      clearTimeout(deadline);
       clearTimeout(timer);
       clearTimeout(expiry);
       document.removeEventListener('visibilitychange', visibilityChanged);
@@ -121,7 +135,7 @@ export function useSandboxInput(
       ? observation
       : undefined;
   return {
-    inputAvailability: inputAvailability(current),
+    inputAvailability: inputAvailability(current, queueWhileStarting),
     resourceAvailability: resourceAvailability(current),
     progressObservation:
       current?.sandbox === undefined
@@ -149,7 +163,10 @@ function resourceAvailability(observation: Observation | undefined): SandboxReso
   return { state: 'live', runtimeVersion: sandbox.runtimeVersion };
 }
 
-function inputAvailability(observation: Observation | undefined): SandboxInputAvailability {
+function inputAvailability(
+  observation: Observation | undefined,
+  queueWhileStarting: boolean,
+): SandboxInputAvailability {
   if (observation === undefined) return { allowed: false, notice: 'Checking Sandbox status.' };
   const { sandbox, stale } = observation;
   const savingStartedAt = sandbox?.lifecycle?.checkpoint?.startedAt;
@@ -171,7 +188,7 @@ function inputAvailability(observation: Observation | undefined): SandboxInputAv
     return { allowed: false, notice: 'This Sandbox is unavailable. Messages cannot be sent.' };
   if (
     sandbox.lifecycle.operation !== undefined ||
-    (sandbox.status !== 'active' && sandbox.status !== 'paused')
+    (sandbox.status !== 'active' && (queueWhileStarting || sandbox.status !== 'paused'))
   )
     return {
       allowed: false,
@@ -186,7 +203,9 @@ function inputAvailability(observation: Observation | undefined): SandboxInputAv
         allowed: false,
         notice: 'Progress is being saved. Messages will be available when saving finishes.',
       };
-    if (eligibility.reason === 'work_in_progress')
+    // Starting v2 messages are durably queued, so preparation work need not finish first.
+    // Fresh Active status and the operation/checkpoint barriers above still apply.
+    if (eligibility.reason === 'work_in_progress' && !queueWhileStarting)
       return {
         allowed: false,
         notice: 'Sandbox work is in progress. Messages will be available when it finishes.',

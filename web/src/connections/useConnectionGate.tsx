@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import { ConnectionWizard } from './ConnectionWizard';
 import { connectionClient, type ConnectionTarget } from './client';
 
@@ -12,21 +12,22 @@ interface PendingAction {
 }
 
 /** Keep the original operation in memory; only the verified server result releases it. */
-export function useConnectionGate() {
+export function useConnectionGate(enabled = true) {
   const [pending, setPending] = useState<PendingAction>();
   const [interactive, setInteractive] = useState(false);
   const [error, setError] = useState<string>();
   const active = useRef<PendingAction | undefined>(undefined);
   const serial = useRef(0);
-  useEffect(
+  useLayoutEffect(
     () => () => {
       active.current?.request?.abort();
       active.current = undefined;
+      setPending(undefined);
     },
-    [],
+    [enabled],
   );
   const run = (target: ConnectionTarget, action: () => void, forceSubscription = false) => {
-    if (active.current !== undefined) return;
+    if (!enabled || active.current !== undefined) return;
     const value = { id: ++serial.current, target, action, forceSubscription };
     active.current = value;
     setError(undefined);
@@ -45,7 +46,7 @@ export function useConnectionGate() {
     value.action();
   };
   const checkAndRun = async (target: ConnectionTarget, owner: string, action: () => void) => {
-    if (active.current !== undefined) return;
+    if (!enabled || active.current !== undefined) return;
     const value: PendingAction = {
       id: ++serial.current,
       target,
@@ -78,7 +79,7 @@ export function useConnectionGate() {
     }
   };
   const dialog =
-    pending === undefined || !interactive ? null : (
+    !enabled || pending === undefined || !interactive ? null : (
       <ConnectionWizard
         key={pending.id}
         target={pending.target}
@@ -94,7 +95,7 @@ export function useConnectionGate() {
     run,
     checkAndRun,
     dialog,
-    pending: pending !== undefined,
+    pending: enabled && pending !== undefined,
     error,
     clearError: () => setError(undefined),
   };
