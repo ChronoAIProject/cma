@@ -71,7 +71,9 @@ skill installation, exact request replay, and the next real turn reading the
 installed skill passed. The scope-revision flow passed through a real Codex MCP
 request, owner popup approval, delivered key generation, and exactly one
 automatic notification in the original conversation; reload did not duplicate
-the notification. Stop showed Accepted/Waiting followed by Confirmed.
+the notification. The selected NyxID connection was already satisfied, so that
+live run did not exercise a fresh external OAuth callback. Stop showed
+Accepted/Waiting followed by Confirmed.
 
 Delete then passed on that stopped test fixture. Click-to-submitting feedback
 was **6.9 ms**, accepted feedback **289.8 ms**, and disappearance from active
