@@ -49,6 +49,8 @@ impl ResolvedAgentSkill {
 #[serde(rename_all = "snake_case")]
 pub enum AgentWorkStep {
     InstallSkill,
+    /// The reserved Worktree has no base commit until its exact Workspace is ready.
+    WaitForWorkspace,
     AddWorktree,
     MaterializeHome,
     OpenConversation,
@@ -73,6 +75,7 @@ impl AgentWorkStep {
     pub const fn operation_name(self) -> &'static str {
         match self {
             Self::InstallSkill => "install_skill",
+            Self::WaitForWorkspace => "wait_for_workspace",
             Self::AddWorktree => "add_worktree",
             Self::MaterializeHome => "materialize_home",
             Self::OpenConversation => "open_conversation",
