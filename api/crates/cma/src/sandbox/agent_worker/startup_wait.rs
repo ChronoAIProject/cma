@@ -1,7 +1,7 @@
 //! Wait for real parent readiness before resolving the reserved Worktree base.
-use super::support::{validate_lineage, WorkerFailure};
+use super::support::{claimed_fence, validate_lineage, WorkerFailure};
 use super::*;
-use layer2_core::sandbox::store::VersionedWorktree;
+use layer2_core::sandbox::store::{AgentWorkMutation, VersionedWorktree};
 use layer2_core::sandbox::{Sandbox, SandboxStatus, Workspace, WorkspaceStatus, Worktree};
 
 impl AgentWorker {
@@ -30,6 +30,91 @@ impl AgentWorker {
         agent: Agent,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        // Parent preparation is expected work. Observe it under this claim for
+        // a bounded interval without publishing failure logs or runtime effects.
+        let started = tokio::time::Instant::now();
+        let budget = Duration::from_secs(10).min(self.config.lease_duration / 3);
+        loop {
+            let current = self.dependencies.store.get_agent(&agent.id).await?;
+            if current.as_ref().is_none_or(|current| {
+                current.revision != agent.revision
+                    || current.work.lease != agent.work.lease
+                    || current.work.step != AgentWorkStep::WaitForWorkspace
+                    || current.requested_stop_reason.is_some()
+            }) {
+                // A Stop or a newer claim owns the next action.
+                return Ok(());
+            }
+            let at = now + started.elapsed();
+            let (parent, workspace, _) = self.unstarted_lineage(&agent).await?;
+            if matches!(
+                parent.status,
+                SandboxStatus::Failed | SandboxStatus::Retiring | SandboxStatus::Retired
+            ) || matches!(
+                workspace.status,
+                WorkspaceStatus::Failed | WorkspaceStatus::Removing | WorkspaceStatus::Removed
+            ) {
+                return self
+                    .handle_failure(
+                        agent,
+                        WorkerFailure::terminal(
+                            "agent_parent_failed",
+                            "The Sandbox or Workspace could not finish preparing.",
+                        ),
+                        at,
+                    )
+                    .await;
+            }
+            if parent.status == SandboxStatus::Active
+                && parent.credential.delivered
+                && parent.lifecycle.operation.is_none()
+                && parent.lifecycle.checkpoint_capture.is_none()
+                && workspace.status == WorkspaceStatus::Ready
+            {
+                return self.bind_workspace(agent, at).await;
+            }
+            let remaining = budget.saturating_sub(started.elapsed());
+            if remaining.is_zero() {
+                return self.defer_workspace(agent, at).await;
+            }
+            tokio::time::sleep(Duration::from_millis(250).min(remaining)).await;
+        }
+    }
+
+    async fn defer_workspace(
+        &self,
+        mut agent: Agent,
+        now: SystemTime,
+    ) -> Result<(), SandboxStoreError> {
+        let expected = agent.revision;
+        let fence = claimed_fence(&agent, &self.config.holder)?;
+        let stamp = rfc3339_at(now);
+        agent
+            .work
+            .retry(
+                &self.config.holder,
+                fence,
+                rfc3339_at(now + Duration::from_secs(1)),
+            )
+            .map_err(|_| SandboxStoreError::Conflict)?;
+        agent.updated_at = stamp.clone();
+        agent.revision = expected.checked_add(1).ok_or(SandboxStoreError::Conflict)?;
+        self.dependencies
+            .store
+            .commit_agent_work(AgentWorkMutation {
+                expected_agent_revision: expected,
+                holder: self.config.holder.clone(),
+                fence,
+                agent,
+                worktree: None,
+                appended_at: stamp,
+                sandbox_event: None,
+                agent_logs: Vec::new(),
+            })
+            .await
+    }
+
+    async fn bind_workspace(&self, agent: Agent, now: SystemTime) -> Result<(), SandboxStoreError> {
         let (parent, workspace, mut worktree) = self.unstarted_lineage(&agent).await?;
         if matches!(
             parent.status,
@@ -55,16 +140,7 @@ impl AgentWorker {
             || parent.lifecycle.checkpoint_capture.is_some()
             || workspace.status != WorkspaceStatus::Ready
         {
-            return self
-                .handle_failure(
-                    agent,
-                    WorkerFailure::retryable(
-                        "agent_parent_not_ready",
-                        "The Sandbox and Workspace are still preparing.",
-                    ),
-                    now,
-                )
-                .await;
+            return self.defer_workspace(agent, now).await;
         }
         let Some(commit) = workspace.resolved_commit else {
             return Err(SandboxStoreError::Conflict);
