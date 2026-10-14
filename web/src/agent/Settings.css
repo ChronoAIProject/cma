@@ -22,7 +22,7 @@
   padding: 0;
   border: 0;
 }
-.agent-settings-scopes .profile-field {
+.agent-settings-scopes > div {
   grid-template-columns: minmax(0, 1fr);
 }
 .agent-settings-scopes legend {
