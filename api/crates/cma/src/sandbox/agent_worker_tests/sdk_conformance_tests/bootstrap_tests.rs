@@ -32,6 +32,8 @@ impl BootstrapHarness {
             original.workspace.profile.id.clone(),
             original.workspace.profile.revision,
         )];
+        ready_parent.profile.digest =
+            layer2_core::profiles::content_digest(&ready_parent.profile.content).unwrap();
         let mut ready_workspace = original.workspace.clone();
         ready_workspace.origin = WorkspaceOrigin::SandboxProfile { index: 0 };
         let mut parent = ready_parent.clone();
