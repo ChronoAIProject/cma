@@ -377,6 +377,7 @@ impl super::HostedControlTransport for ProviderHostedControlTransport {
         ProviderHostedControlTransport::export_agent_history(self, handle, agent).await
     }
 
+    #[tracing::instrument(skip_all, fields(agent_id = launch.request.agent_id.as_str()))]
     async fn open_agent(
         &self,
         handle: &RuntimeHandle,
@@ -385,9 +386,11 @@ impl super::HostedControlTransport for ProviderHostedControlTransport {
         mut settings: HostedAgentOpenSettings,
         updates: tokio::sync::mpsc::Sender<ConversationUpdate>,
     ) -> crate::Result<(ConversationChannel, FencedReceipt<AgentOpenReceipt>)> {
+        let mut timing = super::startup_timing::StartupTiming::new();
         let key = (handle.clone(), launch.request.agent_id.clone());
         let epochs = self.open_epochs(&key).await;
         let endpoint = self.endpoint(handle).await?;
+        timing.completed("transport_endpoint");
         let response = self
             .exchange_at(handle, &endpoint, RequestFrame::OpenAgent(launch.clone()))
             .await?;
@@ -398,7 +401,9 @@ impl super::HostedControlTransport for ProviderHostedControlTransport {
             }
             _ => unreachable!("control correlation verifies open response operation"),
         };
+        timing.completed("runtime_open");
         let socket = self.connect(&endpoint, &launch.request.agent_id).await?;
+        timing.completed("conversation_transport");
         let subscription = if settings.own_credential {
             match &self.subscriptions {
                 Some(source) => Some(super::subscriptions::HostedSubscriptionBinding {
@@ -423,6 +428,7 @@ impl super::HostedControlTransport for ProviderHostedControlTransport {
             updates,
         )
         .await?;
+        timing.completed("conversation_handshake");
         let channel = self.register_link(key, epochs, opened).await?;
         receipt.receipt.conversation_id = channel.conversation_id.clone();
         Ok((channel, receipt))

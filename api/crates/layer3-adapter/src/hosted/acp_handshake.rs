@@ -38,6 +38,7 @@ impl Bridge {
         updates: &UpdateRelay,
     ) -> crate::Result<()> {
         validate_settings(&cwd, &settings)?;
+        let mut timing = super::startup_timing::StartupTiming::new();
         let greeting = self
             .greet(serde_json::json!({
                 "protocolVersion": PROTOCOL_VERSION,
@@ -52,6 +53,7 @@ impl Bridge {
                 },
             }),settings.channel_tool.is_some() || settings.provider_tool.is_some() || settings.access_tool.is_some())
             .await?;
+        timing.completed("protocol_initialize");
 
         if let Some(binding) = &settings.channel_tool {
             match &greeting {
@@ -129,6 +131,7 @@ impl Bridge {
             self.authenticate_owner(hello).await?;
         }
 
+        timing.completed("protocol_access_setup");
         let session = match (greeting, resume) {
             (Greeting::Fresh(_), Some(conversation)) => {
                 self.activate_session(conversation.clone(), updates).await?;
@@ -170,6 +173,7 @@ impl Bridge {
                 ));
             }
         };
+        timing.completed("protocol_session");
 
         if let Some(mode) = settings.permission_mode {
             self.call(
@@ -191,6 +195,7 @@ impl Bridge {
             // changing its immutable profile, home or launch request identity.
             self.configure_channel_effort(&session).await;
         }
+        timing.completed("protocol_settings");
         Ok(())
     }
 

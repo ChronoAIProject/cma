@@ -23,6 +23,7 @@ mod provider_http;
 mod provider_tools;
 mod provider_transport;
 mod reply;
+mod startup_timing;
 mod subscriptions;
 mod update_relay;
 
