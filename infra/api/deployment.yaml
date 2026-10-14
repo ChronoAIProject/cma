@@ -21,11 +21,11 @@ spec:
       annotations:
         # Reload the environment-bound runtime pin when its ConfigMap changes.
         cma.chronoai.dev/runtime-image: "sha256:1c44be8aaa7b88c0190d17ca44f4f6e0f9a8aec880038c5d4da9cb2bc8c68e8b"
-        cma.chronoai.dev/candidate: "cd37968d0a80db5ce9683dd8d00e7930ffe0018c"
-        cma.chronoai.dev/api-image-digest: "sha256:b641e4e1795acac4e0586ac4db01ba43d55b3e2c7d3d1bea5b0e54b2b5f99eef"
+        cma.chronoai.dev/candidate: "fb3a652fdc93658f138096a704f0d162b6c6c483"
+        cma.chronoai.dev/api-image-digest: "sha256:2059395d539a916d45c178774d4e85cb04a5699724fe9854019388a63423c44c"
         cma.chronoai.dev/allocation-provider: "agent-sandbox"
-        cma.chronoai.dev/image-source: "b8f6ae10d048cd95593ef9efb88ff88195d82216"
-        cma.chronoai.dev/ci-run: "38502541842"
+        cma.chronoai.dev/image-source: "4fee2eb2562c26c58d1d61361ac1c43469673ba6"
+        cma.chronoai.dev/ci-run: "38513020577"
       labels:
         app.kubernetes.io/name: cma-agent-manager
         app.kubernetes.io/part-of: cma
@@ -60,7 +60,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: api
-          image: us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-api@sha256:b641e4e1795acac4e0586ac4db01ba43d55b3e2c7d3d1bea5b0e54b2b5f99eef
+          image: us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-api@sha256:2059395d539a916d45c178774d4e85cb04a5699724fe9854019388a63423c44c
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
