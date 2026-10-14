@@ -134,6 +134,7 @@ async fn initial_hold_still_publishes_the_complete_archive() {
         handle.clone(),
         BoundRuntime {
             sandbox_id: "sandbox-a".into(),
+            request_sha256: None,
             store: Some(store.clone()),
         },
     );

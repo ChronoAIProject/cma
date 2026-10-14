@@ -26,10 +26,33 @@ impl ProviderHostedControlTransport {
         })
     }
 
+    pub(super) async fn bind_native_identity(
+        &self,
+        handle: &RuntimeHandle,
+        sandbox_id: &str,
+        digest: &str,
+    ) -> crate::Result<()> {
+        if digest.len() != 64 || !digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(AdapterError::Rejected(
+                "native runtime request digest is invalid".into(),
+            ));
+        }
+        self.bind_identity(handle, sandbox_id, Some(digest)).await
+    }
+
     pub(super) async fn bind_sandbox(
         &self,
         handle: &RuntimeHandle,
         sandbox_id: &str,
+    ) -> crate::Result<()> {
+        self.bind_identity(handle, sandbox_id, None).await
+    }
+
+    async fn bind_identity(
+        &self,
+        handle: &RuntimeHandle,
+        sandbox_id: &str,
+        digest: Option<&str>,
     ) -> crate::Result<()> {
         if sandbox_id.is_empty()
             || sandbox_id.len() > 256
@@ -47,20 +70,35 @@ impl ProviderHostedControlTransport {
                     "runtime handle is already bound to another sandbox".into(),
                 ));
             }
-            return Ok(());
+        } else {
+            let store = self
+                .archive_factory
+                .as_ref()
+                .map(|factory| factory.for_sandbox(sandbox_id))
+                .transpose()?;
+            state.bindings.insert(
+                handle.clone(),
+                BoundRuntime {
+                    sandbox_id: sandbox_id.into(),
+                    request_sha256: None,
+                    store,
+                },
+            );
         }
-        let store = self
-            .archive_factory
-            .as_ref()
-            .map(|factory| factory.for_sandbox(sandbox_id))
-            .transpose()?;
-        state.bindings.insert(
-            handle.clone(),
-            BoundRuntime {
-                sandbox_id: sandbox_id.into(),
-                store,
-            },
-        );
+        if let Some(digest) = digest {
+            let binding = state
+                .bindings
+                .get_mut(handle)
+                .expect("binding exists under the same lock");
+            if binding.request_sha256.as_deref() != Some(digest) {
+                binding.request_sha256 = Some(digest.into());
+                let epoch = state.runtime_epochs.entry(handle.clone()).or_default();
+                *epoch = epoch.wrapping_add(1);
+                if let Some(slot) = state.native_http.remove(handle) {
+                    slot.cancel();
+                }
+            }
+        }
         Ok(())
     }
 }
