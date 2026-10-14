@@ -98,6 +98,7 @@ export const agent = object({
   worktree: agentWorktree,
   workspace: agentWorkspace,
   sandbox: agentSandbox,
+  bootstrap: optional(object({ operation_id: text, sandbox_id: text, workspace_id: text })),
   conforms_to: array(text),
   reach: array(text),
   title: optional(text),

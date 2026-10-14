@@ -173,6 +173,17 @@ pub struct AgentSummary {
 
 /// Complete owner-facing Agent resource with its hierarchy.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct AgentBootstrap {
+    /// Exact lifecycle operation that admitted this Agent and its fresh Sandbox.
+    pub operation_id: String,
+    /// Original owned Sandbox identifier.
+    pub sandbox_id: String,
+    /// Exact profile Workspace reserved for this Agent.
+    pub workspace_id: String,
+}
+
+/// Complete owner-facing Agent resource with its hierarchy.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Agent {
     /// Agent identifier.
     pub id: String,
@@ -186,6 +197,8 @@ pub struct Agent {
     pub workspace: AgentWorkspace,
     /// Owning Sandbox.
     pub sandbox: AgentSandbox,
+    /// Fresh lifecycle bootstrap lineage while messages can be queued before runtime readiness.
+    pub bootstrap: Option<AgentBootstrap>,
     /// Public conformance identifiers.
     pub conforms_to: Vec<String>,
     /// Granted capability identifiers.
