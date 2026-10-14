@@ -7,6 +7,7 @@ use mongodb::{
 use std::collections::{BTreeMap, BTreeSet};
 pub(crate) const COLLECTIONS: &[&str] = &[
     super::native_warm_pools::COLLECTION,
+    super::native_prepared::COLLECTION,
     "runtime_backend_routes",
     "activity",
     "agent_artifacts",
@@ -381,11 +382,32 @@ mod tests {
 
     #[test]
     fn warm_pool_target_grants_are_required_without_database_wide_access() {
-        let mut grants = role("cma").get_array("privileges").unwrap().clone();
-        let target = super::super::native_warm_pools::COLLECTION;
-        let grant = grants
-            .iter()
-            .find(|grant| {
+        for target in [
+            super::super::native_warm_pools::COLLECTION,
+            super::super::native_prepared::COLLECTION,
+        ] {
+            let mut grants = role("cma").get_array("privileges").unwrap().clone();
+            let grant = grants
+                .iter()
+                .find(|grant| {
+                    grant
+                        .as_document()
+                        .unwrap()
+                        .get_document("resource")
+                        .unwrap()
+                        .get_str("collection")
+                        .unwrap()
+                        == target
+                })
+                .expect("the generated runtime role includes durable native pool targets");
+            assert!(grant
+                .as_document()
+                .unwrap()
+                .get_array("actions")
+                .unwrap()
+                .iter()
+                .any(|action| action.as_str() == Some("createIndex")));
+            grants.retain(|grant| {
                 grant
                     .as_document()
                     .unwrap()
@@ -393,28 +415,11 @@ mod tests {
                     .unwrap()
                     .get_str("collection")
                     .unwrap()
-                    == target
-            })
-            .expect("the generated runtime role includes durable native pool targets");
-        assert!(grant
-            .as_document()
-            .unwrap()
-            .get_array("actions")
-            .unwrap()
-            .iter()
-            .any(|action| action.as_str() == Some("createIndex")));
-        grants.retain(|grant| {
-            grant
-                .as_document()
-                .unwrap()
-                .get_document("resource")
-                .unwrap()
-                .get_str("collection")
-                .unwrap()
-                != target
-        });
-        let status = doc! {"authInfo":{"authenticatedUsers":[{"user":"agent-manager"}],"authenticatedUserPrivileges":grants}};
-        assert!(validate(&status, "cma").is_err());
+                    != target
+            });
+            let status = doc! {"authInfo":{"authenticatedUsers":[{"user":"agent-manager"}],"authenticatedUserPrivileges":grants}};
+            assert!(validate(&status, "cma").is_err());
+        }
     }
 
     #[test]
