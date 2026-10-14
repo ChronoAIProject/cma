@@ -1,4 +1,4 @@
-import type { SandboxSummary } from '../api/types';
+import type { AgentStatus, SandboxSummary, WorkspaceStatus } from '../api/types';
 import { statusLabel } from '../vocabulary/status';
 
 export function transitionRefreshDelay(startedAt: number): number {
@@ -6,19 +6,42 @@ export function transitionRefreshDelay(startedAt: number): number {
 }
 
 export function sandboxChildrenAvailable(sandbox: SandboxSummary): boolean {
-  return sandbox.status === 'active' && sandbox.lifecycle?.operation === undefined;
+  return (
+    sandbox.status === 'active' &&
+    sandbox.lifecycle !== undefined &&
+    sandbox.lifecycle.operation === undefined
+  );
+}
+
+export function sandboxChildrenReadable(sandbox: SandboxSummary): boolean {
+  return ['active', 'paused', 'pausing', 'reviving'].includes(sandbox.status);
+}
+
+export function sandboxChildStatus(sandbox: SandboxSummary, status: AgentStatus | WorkspaceStatus) {
+  if (['stopped', 'failed', 'deleted', 'removed', 'removing'].includes(status)) return status;
+  const purpose = sandbox.lifecycle?.operation?.purpose;
+  if (purpose === 'pause') return 'pausing';
+  if (purpose === 'revive' || purpose === 'image_rotation') return 'reviving';
+  return sandbox.status === 'active' ? status : sandbox.status;
 }
 
 export function sandboxUnavailableNotice(sandbox: SandboxSummary): string | undefined {
   if (sandboxChildrenAvailable(sandbox)) return undefined;
+  if (
+    sandboxChildrenReadable(sandbox) &&
+    (sandbox.lifecycle?.operation !== undefined || ['pausing', 'reviving'].includes(sandbox.status))
+  )
+    return `${sandboxLifecycleLabel(sandbox)}. Agent conversations and history remain available. Messages can be sent when this operation finishes.`;
   if (sandbox.status === 'paused')
-    return 'This Sandbox is paused. Resume it to access its Workspaces and Agents. Your work is preserved.';
+    return 'This Sandbox is paused. Your work is preserved. Open an Agent to read its conversation, or resume the Sandbox to continue working.';
   if (sandbox.status === 'retired')
     return 'This Sandbox has been deleted. Its runtime is gone; retained history remains read-only.';
   if (sandbox.status === 'retiring')
     return 'This Sandbox is being deleted. Its Workspaces and Agents are unavailable during cleanup.';
   if (sandbox.status === 'failed')
     return 'This Sandbox is unavailable. Review the recorded failure below.';
+  if (sandbox.status === 'active')
+    return 'Sandbox action availability is not reported. Agent conversations and history remain available.';
   return 'Workspaces and Agents will be available when the Sandbox finishes preparation.';
 }
 
