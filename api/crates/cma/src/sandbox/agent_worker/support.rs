@@ -99,25 +99,20 @@ impl AgentWorker {
     }
 
     pub(super) async fn context(&self, agent: &Agent) -> Result<AgentContext, WorkerFailure> {
-        let sandbox = self
-            .dependencies
-            .store
-            .get_sandbox(&agent.sandbox_id)
-            .await
+        // These IDs come from the claimed Agent. Read independently, then retain
+        // the existing error precedence and validate all lineage before adoption.
+        let (sandbox, workspace, worktree) = tokio::join!(
+            self.dependencies.store.get_sandbox(&agent.sandbox_id),
+            self.dependencies.store.get_workspace(&agent.workspace_id),
+            self.dependencies.store.get_worktree(&agent.worktree_id),
+        );
+        let sandbox = sandbox
             .map_err(parent_store_failure)?
             .ok_or_else(missing_parent)?;
-        let workspace = self
-            .dependencies
-            .store
-            .get_workspace(&agent.workspace_id)
-            .await
+        let workspace = workspace
             .map_err(parent_store_failure)?
             .ok_or_else(missing_parent)?;
-        let worktree = self
-            .dependencies
-            .store
-            .get_worktree(&agent.worktree_id)
-            .await
+        let worktree = worktree
             .map_err(parent_store_failure)?
             .ok_or_else(missing_parent)?;
         validate_lineage(agent, &sandbox, &workspace, &worktree)?;
