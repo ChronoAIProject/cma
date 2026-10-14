@@ -6,10 +6,18 @@ use hyper_util::rt::TokioIo;
 use super::*;
 use crate::agent_sandbox::{RuntimeStream, RuntimeStreamKind};
 
-struct AbortOnDrop(tokio::task::JoinHandle<()>);
-impl Drop for AbortOnDrop {
-    fn drop(&mut self) {
-        self.0.abort();
+use super::native_pool::{AbortOnDrop, NativeConnection, NativeLease};
+
+pub(super) struct NativeHttpResponse {
+    pub status: http::StatusCode,
+    pub bytes: Vec<u8>,
+    lease: NativeLease,
+}
+
+impl NativeHttpResponse {
+    pub async fn recycle(self) -> crate::Result<Vec<u8>> {
+        self.lease.recycle().await?;
+        Ok(self.bytes)
     }
 }
 
@@ -38,16 +46,94 @@ impl ProviderHostedControlTransport {
         url: url::Url,
         body: Vec<u8>,
         limit: usize,
-    ) -> crate::Result<(http::StatusCode, Vec<u8>)> {
-        let stream = self
-            .native_stream(endpoint, RuntimeStreamKind::Request)
-            .await?;
-        let (mut sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
-            .await
-            .map_err(|_| unavailable("runtime HTTP handshake over Kubernetes failed"))?;
-        let _driver = AbortOnDrop(tokio::spawn(async move {
-            let _ = connection.await;
-        }));
+    ) -> crate::Result<NativeHttpResponse> {
+        let _request = self
+            .native_http_budget
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| {
+                AdapterError::AtCapacity("native HTTP request capacity is exhausted".into())
+            })?;
+        let slot = self.native_slot(endpoint).await?;
+        let mut cancelled = slot.cancellation();
+        let exchange = async {
+            let mut lease = self.native_checkout(endpoint, slot.clone()).await?;
+            if lease
+                .connection
+                .as_ref()
+                .is_some_and(|connection| connection.sender.is_closed())
+            {
+                lease.connection.take();
+            }
+            if lease.connection.is_some() {
+                let (RuntimeDiscovery::AgentSandbox(client), Some((handle, binding))) =
+                    (&self.client, endpoint.native_binding())
+                else {
+                    return Err(native_pool::retired());
+                };
+                // A queued request must obtain its fresh proof after checkout.
+                let current = match client.pod_binding(handle).await {
+                    Ok(current) => current,
+                    Err(error) => {
+                        self.discard_native_slot(endpoint, &slot).await;
+                        return Err(error);
+                    }
+                };
+                if current != *binding {
+                    self.discard_native_slot(endpoint, &slot).await;
+                    return Err(AdapterError::Rejected(
+                        "Sandbox Pod changed before HTTP reuse".into(),
+                    ));
+                }
+            } else {
+                // Opening a new stream retains the original pre/post-open fences.
+                let stream = match self
+                    .native_stream(endpoint, RuntimeStreamKind::Request)
+                    .await
+                {
+                    Ok(stream) => stream,
+                    Err(error) => {
+                        self.discard_native_slot(endpoint, &slot).await;
+                        return Err(error);
+                    }
+                };
+                let (sender, connection) =
+                    hyper::client::conn::http1::handshake(TokioIo::new(stream))
+                        .await
+                        .map_err(|_| {
+                            unavailable("runtime HTTP handshake over Kubernetes failed")
+                        })?;
+                let mut retired = slot.cancellation();
+                let driver = tokio::spawn(async move {
+                    tokio::select! { biased;
+                        _ = retired.wait_for(|cancelled| *cancelled) => {},
+                        _ = connection => {},
+                    }
+                });
+                lease.connection = Some(NativeConnection {
+                    sender,
+                    _driver: AbortOnDrop(driver),
+                });
+            }
+            lease.current().await?;
+            self.native_http_once(endpoint, method, url, body, limit, lease)
+                .await
+        };
+        tokio::select! { biased;
+            _ = cancelled.wait_for(|cancelled| *cancelled) => Err(native_pool::retired()),
+            result = exchange => result,
+        }
+    }
+
+    async fn native_http_once(
+        &self,
+        endpoint: &RuntimeEndpoint,
+        method: http::Method,
+        url: url::Url,
+        body: Vec<u8>,
+        limit: usize,
+        mut lease: NativeLease,
+    ) -> crate::Result<NativeHttpResponse> {
         let (name, token) = self.auth_header(endpoint);
         let mut token = http::HeaderValue::from_str(token)
             .map_err(|_| AdapterError::Rejected("runtime token is not a valid header".into()))?;
@@ -59,14 +145,17 @@ impl ProviderHostedControlTransport {
                 http::header::HOST,
                 &url[url::Position::BeforeHost..url::Position::AfterPort],
             )
-            .header(http::header::CONNECTION, "close")
             .header(http::header::CONTENT_TYPE, "application/json")
             .header(name, token)
             .body(Full::new(Bytes::from(body)))
             .map_err(|_| AdapterError::Rejected("runtime HTTP request is invalid".into()))?;
         // One attempt to this fenced Pod. An ambiguous response must never cause
         // an implicit second mutation, or rediscovery/replay on a replacement Pod.
-        let response = sender
+        let response = lease
+            .connection
+            .as_mut()
+            .expect("checked-out connection")
+            .sender
             .send_request(request)
             .await
             .map_err(|_| unavailable("runtime HTTP exchange over Kubernetes failed"))?;
@@ -74,7 +163,11 @@ impl ProviderHostedControlTransport {
         if !status.is_success() {
             // A server may echo request credentials in an error body. Only status
             // participates in error classification; never return that body to logs.
-            return Ok((status, Vec::new()));
+            return Ok(NativeHttpResponse {
+                status,
+                bytes: Vec::new(),
+                lease,
+            });
         }
         if response
             .headers()
@@ -101,7 +194,11 @@ impl ProviderHostedControlTransport {
                 bytes.extend_from_slice(data);
             }
         }
-        Ok((status, bytes))
+        Ok(NativeHttpResponse {
+            status,
+            bytes,
+            lease,
+        })
     }
 }
 
