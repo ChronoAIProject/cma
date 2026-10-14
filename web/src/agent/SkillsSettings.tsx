@@ -231,8 +231,8 @@ export function SkillsSettings({
       >
         {entries.map((entry) => {
           const available = entry.versions.filter(isSkillVersion);
-          const version = versions[entry.id] ?? available[0] ?? '';
           const existing = saved?.items.find((item) => item.id === entry.id);
+          const version = existing?.version ?? versions[entry.id] ?? available[0] ?? '';
           return (
             <li key={entry.id}>
               <strong>{entry.name}</strong>
@@ -241,7 +241,18 @@ export function SkillsSettings({
                 <Picker
                   label={`Version for ${entry.name}`}
                   value={version}
-                  options={available.map((value) => ({ value, label: value }))}
+                  options={[
+                    ...(existing && !available.includes(existing.version)
+                      ? [
+                          {
+                            value: existing.version,
+                            label: existing.version,
+                            unavailable: 'Saved version is not in the available catalog.',
+                          },
+                        ]
+                      : []),
+                    ...available.map((value) => ({ value, label: value })),
+                  ]}
                   disabled={disabled || available.length === 0 || existing !== undefined}
                   onChange={(value) =>
                     setVersions((current) => ({ ...current, [entry.id]: value }))
