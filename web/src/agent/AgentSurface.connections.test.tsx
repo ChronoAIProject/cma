@@ -72,10 +72,38 @@ async function setup() {
   const field = screen.getByRole('textbox', { name: 'Message' });
   fireEvent.change(field, { target: { value: '  Keep this message  ' } });
   await waitFor(() => expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled());
-  return { ...view, send, field };
+  return { ...view, send, field, controller };
 }
 
 const submit = () => fireEvent.submit(screen.getByRole('form', { name: 'Message Agent' }));
+
+it('cancels a pending connection check when access becomes uncertain and never releases its captured send', async () => {
+  const test = await setup();
+  let finish!: (report: ConnectionReport) => void;
+  vi.mocked(connectionClient.check).mockImplementationOnce(
+    () => new Promise((resolve) => (finish = resolve)),
+  );
+  submit();
+  const signal = vi.mocked(connectionClient.check).mock.calls.at(-1)?.[2];
+  test.rerender(
+    <AgentSurface
+      agentId="agt_1"
+      viewerId="owner"
+      controller={test.controller}
+      accessUncertain
+      detailsOpen={false}
+      onDetailsOpenChange={vi.fn()}
+      onNavigate={vi.fn()}
+    />,
+  );
+  expect(signal?.aborted).toBe(true);
+  expect(screen.getByRole('textbox', { name: 'Message' })).toBe(test.field);
+  expect(test.field).toHaveValue('  Keep this message  ');
+  expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
+  await act(async () => finish(connected));
+  expect(test.send).not.toHaveBeenCalled();
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+});
 
 it('checks each send in the background, holds duplicate submissions, and sends the captured draft once', async () => {
   const test = await setup();

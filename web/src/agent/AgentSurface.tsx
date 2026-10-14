@@ -29,6 +29,7 @@ import { QueuedMessageNotice } from './QueuedMessageNotice';
 import { AgentAccessRequests } from './AccessRequestDialog';
 
 interface AgentSurfaceProps {
+  readonly accessUncertain?: boolean;
   readonly draft?: AgentDraft;
   readonly viewerId?: string;
   readonly agentId: string;
@@ -71,24 +72,26 @@ export function AgentSurface({
   onDetailsOpenChange,
   onNavigate,
   viewerId,
+  accessUncertain = false,
 }: AgentSurfaceProps) {
   const headingRef = useRef<HTMLHeadingElement>(null);
   const [verified, setVerified] = useState<ConnectionReport>();
   const [connectionNeeded, setConnectionNeeded] = useState(false);
   const [connectionError, setConnectionError] = useState<string>();
   const [connectionRetry, setConnectionRetry] = useState(0);
-  const connections = useConnectionGate();
+  const connections = useConnectionGate(!accessUncertain);
   const state: AgentResourceState =
     controller.state.status === 'ready' && controller.state.detail.id !== agentId
       ? { status: 'loading' }
       : controller.state;
   const documentTitle =
     state.status === 'ready' ? `${state.detail.title ?? 'Untitled agent'} · CMA` : undefined;
-  const source = useAgentSource(agentId, state.status === 'ready');
-  const provenance = useAgentProvenance(agentId, state.status === 'ready');
+  const source = useAgentSource(agentId, state.status === 'ready' && !accessUncertain);
+  const provenance = useAgentProvenance(agentId, state.status === 'ready' && !accessUncertain);
   const sandboxOwner = controller.progressObservation?.sandbox.owner;
   const readOnly =
-    viewerId !== undefined && sandboxOwner !== undefined && viewerId !== sandboxOwner;
+    accessUncertain ||
+    (viewerId !== undefined && sandboxOwner !== undefined && viewerId !== sandboxOwner);
 
   useEffect(() => {
     if (state.status !== 'ready' || readOnly) return;
@@ -201,7 +204,10 @@ export function AgentSurface({
         status={status}
         headingRef={headingRef}
         detailsOpen={detailsOpen}
-        onDetailsOpenChange={onDetailsOpenChange}
+        detailsUnavailable={accessUncertain}
+        onDetailsOpenChange={(open) => {
+          if (!accessUncertain) onDetailsOpenChange(open);
+        }}
         lineage={
           <>
             <SandboxLink
@@ -217,7 +223,8 @@ export function AgentSurface({
         }
       >
         <AgentSourceLabel source={source} provenance={provenance} />
-        {verified?.services.some((service) => service.service === subscriptionService) ? (
+        {!readOnly &&
+        verified?.services.some((service) => service.service === subscriptionService) ? (
           <Button
             onClick={() =>
               connections.run(
@@ -251,7 +258,7 @@ export function AgentSurface({
                 }}
               />
             )}
-            {connectionError ? (
+            {connectionError && !readOnly ? (
               <Button size="sm" onClick={() => setConnectionRetry((value) => value + 1)}>
                 Retry connections
               </Button>
@@ -269,7 +276,7 @@ export function AgentSurface({
           </span>
           <Button
             size="sm"
-            disabled={controller.pending !== undefined || historyIncomplete}
+            disabled={readOnly || controller.pending !== undefined || historyIncomplete}
             onClick={() => void controller.recoverPending?.()}
           >
             Recover pending request
@@ -298,6 +305,7 @@ export function AgentSurface({
         <MessageStream
           conversation={conversation}
           approvalBusy={approvalBusy}
+          approvalReadOnly={readOnly}
           onApproval={(id, decision) => void controller.approve(id, decision)}
         >
           {controller.progressObservation !== undefined &&
@@ -329,7 +337,9 @@ export function AgentSurface({
               ? {
                   ...controller.inputAvailability,
                   allowed: false,
-                  notice: 'Only the owner can send messages to this agent.',
+                  notice: accessUncertain
+                    ? controller.inputAvailability.notice
+                    : 'Only the owner can send messages to this agent.',
                 }
               : verified === undefined
                 ? {
@@ -345,7 +355,7 @@ export function AgentSurface({
             (controller.pending !== undefined && controller.pending !== 'send')
           }
           onSend={async (content, onAccepted) => {
-            if (verified === undefined) return;
+            if (readOnly || verified === undefined) return;
             await connections.checkAndRun(
               { type: 'agent', id: agentId },
               viewerId ?? verified.owner,
