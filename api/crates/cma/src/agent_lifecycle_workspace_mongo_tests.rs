@@ -121,6 +121,29 @@ async fn contextual_facade_restarts_one_agent_without_new_parents_and_rechecks_a
             .await
             .is_err()
     );
+    let progress = operations
+        .read_for_owner(&owner.caller.subject, &receipt.id)
+        .await
+        .unwrap()
+        .unwrap();
+    for phase in ["sandbox_ready", "workspace_runtime", "key_scope_ready"] {
+        assert!(
+            progress
+                .events
+                .iter()
+                .any(|event| event.phase == phase && event.status == "ready"),
+            "{phase} must be visible before Agent startup finishes"
+        );
+    }
+    assert_eq!(progress.phase, "agent_startup");
+    assert!(progress
+        .events
+        .iter()
+        .any(|event| event.phase == "agent_startup" && event.status == "running"));
+    assert!(!progress
+        .events
+        .iter()
+        .any(|event| event.phase == "agent_startup" && event.status == "ready"));
     let mut ready = starting.clone();
     ready.conversation.conversation_id = Some("original-conversation".into());
     ready.conversation.runtime_generation = Some(1);
@@ -133,6 +156,14 @@ async fn contextual_facade_restarts_one_agent_without_new_parents_and_rechecks_a
         .unwrap()
         .unwrap();
     assert_eq!(created_id, starting.id.as_str());
+    let completed = operations
+        .read_for_owner(&owner.caller.subject, &receipt.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(completed.events.len(), 8);
+    assert_eq!(completed.events.last().unwrap().phase, "agent_startup");
+    assert_eq!(completed.events.last().unwrap().status, "ready");
     let reopened_operations = Arc::new(MongoAgentLifecycleStore::open(&db).await.unwrap());
     let reopened_profiles = Arc::new(
         crate::store::MongoProfileStore::open(&client, db.name())
@@ -195,6 +226,14 @@ async fn contextual_facade_restarts_one_agent_without_new_parents_and_rechecks_a
             .unwrap();
     assert_eq!(succeeded.status, "succeeded");
     assert_eq!(succeeded.agent_id.as_deref(), Some(created_id.as_str()));
+    assert_eq!(
+        succeeded.events.len(),
+        completed.events.len(),
+        "recovery must not duplicate progress or reset elapsed times"
+    );
+    for (original, replayed) in completed.events.iter().zip(&succeeded.events) {
+        assert_eq!(original.occurred_at, replayed.occurred_at);
+    }
     assert_eq!(
         store
             .list_sandboxes(&owner.caller.subject, &Default::default())

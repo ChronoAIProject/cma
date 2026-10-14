@@ -198,6 +198,65 @@ pub(super) async fn verify(db: &Database) {
         "completed phase gates are not duplicated"
     );
     assert_eq!(replayed.events[1].status, "ready");
+    // New workers extend a legacy two-event operation without colliding with
+    // fixed sequence numbers or resetting completed gates during recovery.
+    for (phase, status) in [
+        ("sandbox_ready", "running"),
+        ("sandbox_ready", "ready"),
+        ("workspace_runtime", "running"),
+        ("workspace_runtime", "ready"),
+        ("key_scope_ready", "running"),
+        ("key_scope_ready", "ready"),
+        ("agent_startup", "running"),
+        ("agent_startup", "ready"),
+    ] {
+        restarted
+            .record_progress(&second, phase, status, "Observed progress")
+            .await
+            .unwrap();
+    }
+    let progressed = restarted
+        .read_for_owner(&owner, &id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(progressed.events.len(), 8);
+    assert_eq!(progressed.phase, "agent_startup");
+    assert_eq!(
+        progressed.events[0].occurred_at,
+        replayed.events[0].occurred_at
+    );
+    assert_eq!(
+        progressed
+            .events
+            .iter()
+            .map(|event| event.sequence)
+            .collect::<Vec<_>>(),
+        (1..=8).collect::<Vec<_>>()
+    );
+    restarted
+        .record_progress(&second, "workspace_runtime", "running", "Replay")
+        .await
+        .unwrap();
+    restarted
+        .record_progress(&second, "agent_startup", "ready", "Replay")
+        .await
+        .unwrap();
+    let unchanged = restarted
+        .read_for_owner(&owner, &id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(unchanged.events.len(), 8);
+    assert_eq!(unchanged.phase, "agent_startup");
+    assert_eq!(
+        unchanged.events[7].occurred_at,
+        progressed.events[7].occurred_at
+    );
+    assert!(store
+        .record_progress(&first, "agent_startup", "ready", "Stale worker")
+        .await
+        .is_err());
     restarted
         .mark_agent(&second, "original-agent")
         .await
