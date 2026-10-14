@@ -332,10 +332,11 @@ async fn bootstrap_v2_queue_survives_wait_and_first_prompt_barrier_then_dispatch
     assert!(probe.inputs().is_empty());
     assert_eq!(h.backend.requests().await.len(), before);
     fixture.ready().await;
-    h.worker
-        .run_scheduled(&agent.id, SystemTime::now())
-        .await
-        .unwrap();
+    // Stop just before first-message dispatch to exercise its queued barrier.
+    // The scheduled worker intentionally drains this next step immediately.
+    for _ in 0..6 {
+        h.run(&agent.id, SystemTime::now()).await;
+    }
     let ready = h.stored(&agent.id).await;
     assert_eq!(ready.status, AgentStatus::Ready);
     assert_eq!(ready.work.step, AgentWorkStep::DispatchFirstMessage);
