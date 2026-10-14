@@ -32,7 +32,10 @@ function canMessage(status: AgentStatus): boolean {
 
 function placeholder(status: AgentStatus): string {
   if (status === 'paused') return 'Send a message to continue.';
-  if (status === 'starting') return 'Agent is starting.';
+  // Startup is represented by the lifecycle progress surface and the
+  // disabled/queued controls. Keep the composer quiet so it never adds a
+  // second visible "starting" notification to the conversation area.
+  if (status === 'starting') return 'Message Agent';
   if (status === 'waiting_approval') return 'Resolve the approval to continue.';
   if (status === 'stopped') return 'This Agent has stopped.';
   if (status === 'deleted') return 'This Agent was deleted.';
