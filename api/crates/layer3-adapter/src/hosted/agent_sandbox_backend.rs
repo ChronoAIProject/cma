@@ -78,11 +78,14 @@ impl HostedBackend for AgentSandboxBackend {
         if !home.request.policy.is_native_vct() {
             return self.provision(request).await;
         }
+        let mut timing = crate::agent_sandbox::provision_timing::ProvisionTiming::new();
         let handle = self
             .client
             .provision_pool_runtime_with_home(&request, home)
             .await?;
+        timing.completed("runtime_admission");
         self.bind(&handle, &request).await?;
+        timing.completed("runtime_binding");
         Ok(handle)
     }
     async fn teardown_retained(&self, handle: &RuntimeHandle) -> Result<()> {
