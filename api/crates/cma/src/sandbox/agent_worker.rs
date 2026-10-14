@@ -102,7 +102,7 @@ impl AgentWorker {
         Ok(true)
     }
 
-    /// Follow already-prepared startup steps immediately, keeping each durable claim.
+    /// Follow committed startup steps immediately, keeping each durable claim.
     pub(crate) async fn run_scheduled(
         &self,
         id: &AgentId,
@@ -117,17 +117,15 @@ impl AgentWorker {
             let Some(agent) = self.dependencies.store.get_agent(id).await? else {
                 break;
             };
-            if agent.work.warm_conversation_id.is_none()
-                || !matches!(
-                    agent.work.step,
-                    AgentWorkStep::AddWorktree
-                        | AgentWorkStep::MaterializeHome
-                        | AgentWorkStep::OpenConversation
-                        | AgentWorkStep::PublishReady
-                        | AgentWorkStep::PublishConnection
-                        | AgentWorkStep::DispatchFirstMessage
-                )
-                || !agent.work.is_due(&rfc3339_at(now + started.elapsed()))
+            if !matches!(
+                agent.work.step,
+                AgentWorkStep::AddWorktree
+                    | AgentWorkStep::MaterializeHome
+                    | AgentWorkStep::OpenConversation
+                    | AgentWorkStep::PublishReady
+                    | AgentWorkStep::PublishConnection
+                    | AgentWorkStep::DispatchFirstMessage
+            ) || !agent.work.is_due(&rfc3339_at(now + started.elapsed()))
             {
                 break;
             }
