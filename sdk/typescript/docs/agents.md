@@ -344,6 +344,43 @@ accepted desired settings; read again until runtime acknowledgement clears
 `pending` before treating them as applied. The immutable creation profile is
 preserved.
 
+`agents.models(agentId)` returns `{ models }`, where each model has `id`, `label`
+and `available`. Only select rows whose `available` flag is true: this reflects
+both the Agent's admitted model service and current runtime support. The catalog
+does not change settings; use `updateSettings` with the chosen model ID.
+
+## Live skills
+
+`agents.skills(agentId)` reads `{ items, pending, can_install, unavailable_reason? }`.
+Each item contains `id`, exact `version`, `source: 'ornn'`, and a `status` of
+`pending`, `installed`, or `failed`, with optional `name` and `error`.
+Use `can_install` and `unavailable_reason` to present current runtime support and
+readiness; current authorization and readiness are checked again during admission.
+
+```ts
+import { createClient } from '@chronoai/cma-sdk';
+
+export async function addSkill(
+  agentId: string,
+  skillId: string,
+  exactVersion: string,
+  installationKey: string,
+) {
+  const cma = createClient();
+  return cma.agents.installSkill(
+    agentId,
+    { id: skillId, version: exactVersion },
+    { idempotencyKey: installationKey },
+  );
+}
+```
+
+Choose an explicit skill and version from `profileAuthoring.searchSkills`. A `202`
+response records accepted installation work. Reuse the unchanged body and key
+after an uncertain reply, then read `skills` again until the selected item is
+`installed` or `failed`. Only `installed` confirms runtime acknowledgement.
+Installation is additive and preserves the immutable creation profile.
+
 ## Service access decisions
 
 `agents.accessRequests(agentId)` returns `{ items }` for the authenticated owner.

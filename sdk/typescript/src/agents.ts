@@ -3,6 +3,12 @@ import {
   changeAgentSettings,
   type UpdateAgentSettingsRequest,
 } from './agents/settings.js';
+import { listAgentModels } from './agents/models.js';
+import {
+  readAgentSkills,
+  installAgentSkill,
+  type InstallAgentSkillRequest,
+} from './agents/skills.js';
 import {
   listAgentAccessRequests,
   approveAgentAccess,
@@ -90,6 +96,19 @@ export interface AgentProvenanceInventoryOptions extends AccessibleAgentListOpti
 /** Public Agent REST commands and durable read projections. */
 export class Agents {
   constructor(private readonly config: ResolvedConfig) {}
+
+  /** Discover admitted models and their current runtime availability. */
+  models(id: string, options: OperationOptions = {}) {
+    return listAgentModels(this.config, id, options);
+  }
+  /** Read skill installation status and current runtime installation support. */
+  skills(id: string, options: OperationOptions = {}) {
+    return readAgentSkills(this.config, id, options);
+  }
+  /** Add an exact skill version; reuse the unchanged body and key after uncertain replies. */
+  installSkill(id: string, body: InstallAgentSkillRequest, options: CommandOptions) {
+    return installAgentSkill(this.config, id, body, options);
+  }
 
   /** Read desired runtime settings and their confirmation state. */
   settings(id: string, options: OperationOptions = {}) {

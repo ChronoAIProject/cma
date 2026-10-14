@@ -3,6 +3,9 @@ import type { ContractCase } from './context.js';
 import { browserOperations } from './navigation.js';
 
 export const localCodes = new Map([
+  ['agent-skills-install-invalid-id', 'invalid_agent_request'],
+  ['agent-skills-install-invalid-version', 'invalid_agent_request'],
+  ['agent-skills-install-unknown-field', 'invalid_json'],
   ['settings-state-agent-invalid-input', 'invalid_agent_request'],
   ['gateway-connection-list-invalid-query', 'invalid_query'],
   ['gateway-connection-delete-invalid-query', 'invalid_query'],
@@ -139,7 +142,11 @@ export function expectation(
     if (fixture.request.rawBodyRepeat !== undefined && fixture.response.status === 413) {
       assert.equal(
         body.code,
-        ['authoring-resolve-body-too-large', 'sandbox-service-access-oversize'].includes(fixture.id)
+        [
+          'authoring-resolve-body-too-large',
+          'sandbox-service-access-oversize',
+          'agent-skills-install-oversized-body',
+        ].includes(fixture.id)
           ? 'invalid_json'
           : 'request_too_large',
       );
