@@ -99,7 +99,7 @@ pub(super) fn admission(value: CommandAdmissionError) -> Response {
         CommandAdmissionError::ModelMismatch => field(
             "model",
             "model_mismatch",
-            "model must match the pinned Agent Profile model.",
+            "model must match the current Agent conversation settings.",
         ),
         CommandAdmissionError::Input(_) => field(
             "input",

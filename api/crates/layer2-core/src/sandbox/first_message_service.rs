@@ -245,6 +245,7 @@ impl AgentOperationService {
         let mut logs = vec![first_message_log(&fenced)];
         if existing_turn.is_none() {
             logs.push(AgentLogKind::TurnStarted {
+                model: Some(current.settings().model),
                 turn_sequence,
                 origin_key: Some(fenced.origin_key.clone()),
             });

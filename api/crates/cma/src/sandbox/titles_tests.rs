@@ -68,6 +68,7 @@ async fn generate_title(
     store.register_agent(id.clone()).expect("agent registers");
     for kind in [
         AgentLogKind::TurnStarted {
+            model: None,
             turn_sequence: 1,
             origin_key: None,
         },

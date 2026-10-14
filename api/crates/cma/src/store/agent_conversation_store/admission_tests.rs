@@ -31,6 +31,7 @@ fn turn(parent: &Sandbox, current: &Agent) -> AgentConversationMutation {
         appended_at: NOW.into(),
         agent_logs: vec![
             AgentLogKind::TurnStarted {
+                model: None,
                 turn_sequence,
                 origin_key: None,
             },
