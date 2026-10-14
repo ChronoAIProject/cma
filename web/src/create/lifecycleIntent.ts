@@ -163,7 +163,7 @@ export function useLifecycleIntent(
       });
       if (!abort.signal.aborted) {
         if (intent.receipt && result.id !== intent.receipt.id)
-          throw new Error('Agent setup identity changed. The original request is retained.');
+          throw new Error('Agent setup identity changed. Your original request has been saved.');
         setOperation(undefined);
         retain({ ...intent, receipt: result });
       }
