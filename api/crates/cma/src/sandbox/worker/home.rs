@@ -90,17 +90,46 @@ impl SandboxWorker {
         home: layer2_core::sandbox::SandboxHome,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
-        let expected = sandbox.revision;
-        let mut updated = sandbox.clone();
-        updated.lifecycle.home = Some(Box::new(home));
-        updated.revision = expected.checked_add(1).ok_or(SandboxStoreError::Conflict)?;
-        updated.updated_at = rfc3339_at(now);
-        self.dependencies
-            .store
-            .save_sandbox(expected, updated.clone())
-            .await?;
-        *sandbox = updated;
-        Ok(())
+        for _ in 0..4 {
+            let expected = sandbox.revision;
+            let mut updated = sandbox.clone();
+            updated.lifecycle.home = Some(Box::new(home.clone()));
+            updated.revision = expected.checked_add(1).ok_or(SandboxStoreError::Conflict)?;
+            updated.updated_at = updated.updated_at.max(rfc3339_at(now));
+            match self
+                .dependencies
+                .store
+                .save_sandbox(expected, updated.clone())
+                .await
+            {
+                Ok(()) => {
+                    *sandbox = updated;
+                    return Ok(());
+                }
+                Err(SandboxStoreError::Conflict) => {
+                    let current = self
+                        .dependencies
+                        .store
+                        .get_sandbox(&sandbox.id)
+                        .await?
+                        .ok_or(SandboxStoreError::Conflict)?;
+                    // Early Agent admission touches parent activity while this
+                    // exact worker is creating its durable native Claim. Keep
+                    // that metadata, but never rebase over a different lease,
+                    // home, runtime, credential, phase, or deletion intent.
+                    let mut previous = current.clone();
+                    previous.revision = sandbox.revision;
+                    previous.updated_at = sandbox.updated_at.clone();
+                    previous.last_activity_at = sandbox.last_activity_at.clone();
+                    if previous != *sandbox {
+                        return Err(SandboxStoreError::Conflict);
+                    }
+                    *sandbox = current;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        Err(SandboxStoreError::Conflict)
     }
 }
 
