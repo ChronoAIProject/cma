@@ -121,6 +121,82 @@ async fn existing_conversation_requires_exact_retained_access_tool_receipt() {
 }
 
 #[tokio::test]
+async fn exclusively_prepared_conversation_installs_owner_tools_without_new_identity() {
+    let (client, mut server) = socket_pair().await;
+    send_ready(&mut server, "agent-1").await;
+    let serving = tokio::spawn(async move {
+        let initialize = receive_json(&mut server).await;
+        reject(&mut server, &initialize).await;
+        let close = receive_json(&mut server).await;
+        assert_eq!(close["method"], "session/close");
+        assert_eq!(close["params"]["sessionId"], "prepared-conversation");
+        respond(&mut server, &close, serde_json::json!({})).await;
+        let load = receive_json(&mut server).await;
+        assert_eq!(load["method"], "session/load");
+        assert_eq!(load["params"]["sessionId"], "prepared-conversation");
+        assert_eq!(load["params"]["cwd"], "/workspace");
+        assert_eq!(load["params"]["mcpServers"][0]["name"], "cma_access");
+        respond(&mut server, &load, serde_json::json!({})).await;
+        while let Some(Ok(frame)) = server.next().await {
+            assert!(!matches!(frame, Message::Binary(_)));
+        }
+    });
+    let (updates, _receiver) = tokio::sync::mpsc::channel(8);
+    let mut configured = settings(None, false);
+    configured.access_tool = Some(
+        binding(None)
+            .with_prepared_conversation("prepared-conversation")
+            .unwrap(),
+    );
+    let opened = Bridge::open(
+        client,
+        "agent-1",
+        "/workspace".into(),
+        configured,
+        Some("prepared-conversation".into()),
+        updates,
+    )
+    .await
+    .unwrap();
+    stop(opened).await;
+    serving.await.unwrap();
+}
+
+#[tokio::test]
+async fn prepared_receipt_cannot_reconfigure_another_conversation() {
+    let (client, mut server) = socket_pair().await;
+    send_ready(&mut server, "agent-1").await;
+    let serving = tokio::spawn(async move {
+        let initialize = receive_json(&mut server).await;
+        reject(&mut server, &initialize).await;
+        while let Some(Ok(frame)) = server.next().await {
+            assert!(!matches!(frame, Message::Binary(_)));
+        }
+    });
+    let (updates, _receiver) = tokio::sync::mpsc::channel(8);
+    let mut configured = settings(None, false);
+    configured.access_tool = Some(
+        binding(None)
+            .with_prepared_conversation("prepared-conversation")
+            .unwrap(),
+    );
+    let result = Bridge::open(
+        client,
+        "agent-1",
+        "/workspace".into(),
+        configured,
+        Some("different-conversation".into()),
+        updates,
+    )
+    .await;
+    assert!(matches!(result, Err(crate::AdapterError::Unsupported(_))));
+    serving.await.unwrap();
+    assert!(binding(Some("prepared-conversation"))
+        .with_prepared_conversation("prepared-conversation")
+        .is_err());
+}
+
+#[tokio::test]
 async fn missing_http_capability_refuses_access_tool_before_open() {
     let (client, mut server) = socket_pair().await;
     send_ready(&mut server, "agent-1").await;
