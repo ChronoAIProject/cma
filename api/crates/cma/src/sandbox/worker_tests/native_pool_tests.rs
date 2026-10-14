@@ -13,6 +13,9 @@ struct Pools {
     failures: Mutex<VecDeque<&'static str>>,
     calls: Mutex<Vec<&'static str>>,
     delay_claim: AtomicBool,
+    pending_claim: AtomicBool,
+    observe_error: Mutex<Option<AdapterError>>,
+    observed: Notify,
     entered: Notify,
     resume: Notify,
 }
@@ -157,9 +160,15 @@ impl NativePoolControl for Pools {
             Some(original)
         );
         let mut claim = original.clone();
-        claim.sandbox_name = Some("warm-member".into());
+        if !self.pending_claim.load(Ordering::SeqCst) {
+            claim.sandbox_name = Some("warm-member".into());
+        }
         *self.claim.lock().unwrap() = Some(claim.clone());
         self.lose("observe")?;
+        self.observed.notify_one();
+        if let Some(error) = self.observe_error.lock().unwrap().take() {
+            return Err(error);
+        }
         Ok(claim)
     }
     async fn adopt_home(
@@ -406,6 +415,9 @@ fn pools(harness: &Harness, failures: &[&'static str]) -> Arc<Pools> {
         failures: Mutex::new(failures.iter().copied().collect()),
         calls: Mutex::new(vec![]),
         delay_claim: AtomicBool::new(false),
+        pending_claim: AtomicBool::new(false),
+        observe_error: Mutex::new(None),
+        observed: Notify::new(),
         entered: Notify::new(),
         resume: Notify::new(),
     })
@@ -570,3 +582,6 @@ async fn claim_created_after_deletion_loses_database_cas_and_is_reconciled_witho
 
 #[path = "native_home_routing_tests.rs"]
 mod routing;
+
+#[path = "native_claim_assignment_tests.rs"]
+mod assignment;
