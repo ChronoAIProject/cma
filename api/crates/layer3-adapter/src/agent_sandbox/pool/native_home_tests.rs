@@ -4,6 +4,8 @@ use super::*;
 use crate::{HomeVolumeMode, HomeVolumeStore};
 use serde_json::json;
 
+#[path = "native_admission_tests.rs"]
+mod admission_tests;
 #[path = "native_home_read_tests.rs"]
 mod read_tests;
 #[path = "native_home_ready_tests.rs"]
