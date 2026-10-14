@@ -101,15 +101,19 @@ async fn admit_early_agent(harness: &Harness, parent: &Sandbox, at: String) {
 #[tokio::test]
 async fn native_home_receipt_survives_concurrent_early_agent_admission_without_reallocating() {
     let harness = Harness::new(vec![], 1, Duration::from_secs(60)).await;
-    let mut created = harness.create().await;
-    let revision = created.revision;
-    created.origin = SandboxOrigin::Lifecycle {
-        operation_id: "bootstrap-home-race".into(),
-    };
-    created.revision += 1;
-    harness
-        .store
-        .save_sandbox(revision, created.clone())
+    let created = harness
+        .service
+        .create(
+            &caller("owner", [Capability::CreateSandbox]),
+            CreateSandbox {
+                profile: harness.reference.clone(),
+                name: None,
+                confirmed_digest: None,
+                origin: SandboxOrigin::Lifecycle {
+                    operation_id: "bootstrap-home-race".into(),
+                },
+            },
+        )
         .await
         .unwrap();
     let pools = pools(&harness, &[]);
