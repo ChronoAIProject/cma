@@ -12,6 +12,7 @@ pub struct HostedAccessToolBinding {
     request_sha256: String,
     authority_fence: u64,
     retained_conversation: Option<String>,
+    prepared_conversation: Option<String>,
 }
 
 impl std::fmt::Debug for HostedAccessToolBinding {
@@ -69,7 +70,25 @@ impl HostedAccessToolBinding {
             request_sha256: request.request_sha256.clone(),
             authority_fence,
             retained_conversation,
+            prepared_conversation: None,
         })
+    }
+
+    /// Trusted source only: an exclusively claimed, never-prompted prepared
+    /// conversation may install its first owner tool binding. The source must
+    /// prove the durable preparation/adoption receipt, exact runtime boot,
+    /// request and conversation, and absence of any admitted owner turn.
+    /// This is not authority to reconfigure an existing owner's conversation.
+    pub fn with_prepared_conversation(mut self, conversation: &str) -> crate::Result<Self> {
+        if self.retained_conversation.is_some()
+            || conversation.is_empty()
+            || conversation.len() > 512
+            || conversation.chars().any(char::is_control)
+        {
+            return Err(invalid());
+        }
+        self.prepared_conversation = Some(conversation.into());
+        Ok(self)
     }
 
     pub(super) fn require_request(
@@ -90,6 +109,10 @@ impl HostedAccessToolBinding {
 
     pub(super) fn retained_for(&self, conversation: &str) -> bool {
         self.retained_conversation.as_deref() == Some(conversation)
+    }
+
+    pub(super) fn prepared_for(&self, conversation: &str) -> bool {
+        self.prepared_conversation.as_deref() == Some(conversation)
     }
 
     pub(super) fn acp_server(&self) -> serde_json::Value {
