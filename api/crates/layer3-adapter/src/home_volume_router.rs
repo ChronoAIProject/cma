@@ -146,6 +146,15 @@ impl RoutedHomeVolumes {
 
 #[async_trait::async_trait]
 impl HomeVolumeStore for RoutedHomeVolumes {
+    fn accepts_scope(&self, scope: &HomeVolumeScope) -> bool {
+        // Recognize retained authorities as well as each store's current scope.
+        // Allocation still requires an explicit provider through reserve_for.
+        [&self.local, &self.native]
+            .into_iter()
+            .flatten()
+            .any(|route| route.store.accepts_scope(scope))
+    }
+
     async fn inventory(&self) -> Result<Vec<HomeVolumeAttachment>> {
         let mut all = Vec::new();
         let mut volumes = BTreeSet::new();
