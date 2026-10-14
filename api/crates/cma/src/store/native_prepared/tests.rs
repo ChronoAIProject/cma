@@ -8,6 +8,7 @@ use layer3_adapter::agent_sandbox::*;
 use layer3_adapter::{HomeVolumeMode, HomeVolumePolicy, HomeVolumeReceipt, RuntimeImage};
 
 mod claim_race_tests;
+mod installation_transfer_tests;
 
 const NOW: &str = "2026-09-05T00:00:00Z";
 const LATER: &str = "2026-09-05T00:01:00Z";
@@ -131,7 +132,16 @@ fn ready(mut record: Record) -> Record {
         bound_at: NOW.into(),
     });
     warm.state = WarmSandboxState::Ready;
-    warm.installed_request_sha256 = Some("a".repeat(64));
+    warm.installed_request_sha256 = Some(
+        layer3_adapter::InstallRequest::with_timeouts(
+            format!("sandbox-install-v1:{}", warm.id),
+            warm.plan.profile.content.software_install_commands.clone(),
+            warm.plan.execution.command_timeout_seconds,
+            warm.plan.execution.total_timeout_seconds,
+            layer3_adapter::DEFAULT_COMMAND_OUTPUT_LIMIT_BYTES,
+        )
+        .request_sha256,
+    );
     warm.workspaces[0].resolved_commit = Some("a".repeat(40));
     warm.workspaces[0].setup_ready = true;
     warm.workspaces[0].agents[0].skills = Some(vec![]);
@@ -402,7 +412,7 @@ async fn admission(
     parent.owner = SubjectId::new(owner);
     parent.origin = SandboxOrigin::Lifecycle { operation_id };
     parent.profile = profile;
-    parent.credential.reaches = vec![];
+    parent.credential.reaches = plan.warm.reaches.clone();
     parent.credential.sign_in = SandboxSignInState::NotRequired;
     parent.limits = SandboxLimits {
         max_workspaces: 4,
