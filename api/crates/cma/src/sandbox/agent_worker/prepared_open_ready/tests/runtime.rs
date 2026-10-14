@@ -42,7 +42,7 @@ impl HomeVolumeStore for Storage {
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at disposable replica set"]
-async fn prepared_open_ready_uses_one_fresh_inspection_and_real_handshake_then_fresh_connection() {
+async fn prepared_open_ready_uses_one_fresh_inspection_and_real_handshake_through_connection() {
     let mut fixture = Fixture::new().await;
     fixture
         .worker
@@ -222,39 +222,11 @@ async fn prepared_open_ready_uses_one_fresh_inspection_and_real_handshake_then_f
             .count(),
         1
     );
-    assert_eq!(ready.work.step, AgentWorkStep::PublishConnection);
+    assert_eq!(ready.work.step, AgentWorkStep::None);
     assert_eq!(
         ready.conversation.conversation_id.as_deref(),
         Some(conversation.as_str())
     );
-    let before = requests.len();
-    fixture
-        .worker
-        .run_one(&fixture.agent.id, now + std::time::Duration::from_secs(1))
-        .await
-        .unwrap();
-    let requests = backend.requests().await;
-    assert_eq!(
-        requests[before..]
-            .iter()
-            .filter(|(_, r)| matches!(r, layer3_adapter::wire::RequestFrame::RuntimeStatus(_)))
-            .count(),
-        1
-    );
-    assert_eq!(
-        requests[before..]
-            .iter()
-            .filter(|(_, r)| matches!(r, layer3_adapter::wire::RequestFrame::OpenAgent(_)))
-            .count(),
-        0
-    );
-    let ready = fixture
-        .store
-        .get_agent(&fixture.agent.id)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(ready.work.step, AgentWorkStep::None);
     assert!(fixture
         .worker
         .dependencies

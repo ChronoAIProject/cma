@@ -8,6 +8,7 @@ use layer2_core::sandbox::store::{AgentStore, WorkspaceStore};
 use layer2_core::sandbox::{AgentOperationService, DurableAgentUpdateRecorder, FirstMessageRecord};
 use layer3_adapter::{ConversationInputSender, ConversationUpdate, RuntimeHandle};
 use std::sync::Arc;
+mod connection;
 mod runtime;
 
 struct Fixture {
