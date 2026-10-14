@@ -5,6 +5,7 @@ mod assignment;
 mod connection;
 mod lifecycle;
 mod model;
+mod native_assignment;
 mod native_runtime_proof;
 mod network_policy;
 mod pods;
