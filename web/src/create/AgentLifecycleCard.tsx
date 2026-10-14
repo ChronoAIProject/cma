@@ -10,6 +10,7 @@ import { Input } from '../ui/Input';
 import { Modal } from '../ui/Modal';
 import { useLifecycleIntent } from './lifecycleIntent';
 import { useLifecycleAgent } from './lifecycleAgent';
+import { useLifecycleTransport } from './lifecycleTransport';
 import { AgentProvisioningProgress } from './AgentProvisioningProgress';
 import './Create.css';
 import './AgentLifecycleCard.css';
@@ -72,6 +73,7 @@ function AgentLifecycleForm({
   const lifecycle = useLifecycleIntent(client, viewerId, workspaceId, sandboxId);
   const { pending, failure, operation, connection: connectionRequest } = lifecycle;
   const createdReceipt = lifecycle.intent?.receipt;
+  const handoffTransport = useLifecycleTransport(client, operation, createdReceipt?.id, viewerId);
   const admitted = useLifecycleAgent(
     client,
     operation,
@@ -99,9 +101,11 @@ function AgentLifecycleForm({
     if (createdReceipt === undefined || operation === undefined || openTarget === undefined) return;
     if (openedOperation.current === operation.id) return;
     openedOperation.current = operation.id;
-    if (operation.status === 'succeeded' ? clearIntent() : bindAgent(openTarget.id))
+    if (operation.status === 'succeeded' ? clearIntent() : bindAgent(openTarget.id)) {
+      handoffTransport();
       onCreated({ ...createdReceipt, id: openTarget.id, status: openTarget.status });
-  }, [bindAgent, clearIntent, createdReceipt, onCreated, operation, openTarget]);
+    }
+  }, [bindAgent, clearIntent, createdReceipt, handoffTransport, onCreated, operation, openTarget]);
   useEffect(() => {
     if (workspaceId === undefined) return;
     const request = new AbortController();
@@ -180,6 +184,7 @@ function AgentLifecycleForm({
                       : lifecycle.bindAgent(openTarget.id))
                   ) {
                     openedOperation.current = operation.id;
+                    handoffTransport();
                     onCreated({ ...createdReceipt, id: openTarget.id, status: openTarget.status });
                   }
                 }}

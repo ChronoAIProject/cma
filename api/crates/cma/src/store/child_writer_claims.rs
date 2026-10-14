@@ -155,6 +155,11 @@ async fn apply(
     if parent.lifecycle.checkpoint_capture.is_some() {
         return Ok(false);
     }
+    if let ChildWriterClaim::Workspace(workspace) = claim {
+        if parent.defers_lifecycle_workspace(workspace) {
+            return Ok(false);
+        }
+    }
     let parent_revision = signed(parent.revision, "writer claim parent revision")
         .map_err(|_| ClaimError::Domain(SandboxStoreError::Conflict))?;
     let locked = store

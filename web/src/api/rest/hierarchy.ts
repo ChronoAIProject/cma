@@ -135,6 +135,14 @@ export function agentDetail(value: Wire.Agent): AgentDetail {
   return {
     id: value.id,
     status: value.status,
+    bootstrap:
+      value.bootstrap === undefined
+        ? undefined
+        : {
+            operationId: value.bootstrap.operation_id,
+            sandboxId: value.bootstrap.sandbox_id,
+            workspaceId: value.bootstrap.workspace_id,
+          },
     profile: {
       id: value.profile.id,
       revision: value.profile.revision,

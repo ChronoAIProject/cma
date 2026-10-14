@@ -29,6 +29,74 @@ impl Gate {
     pub fn respond(&self) {
         self.release.add_permits(1);
     }
+    async fn block(&self) {
+        self.started.add_permits(1);
+        self.release.acquire().await.unwrap().forget();
+    }
+}
+
+/// The same resource model with gated reads and observable real fixture writes.
+pub(super) struct Effects {
+    pub client: kube::Client,
+    pub calls: Arc<Mutex<Vec<String>>>,
+}
+impl Effects {
+    pub fn new(fixture: &Fixture, gates: BTreeMap<String, Arc<Gate>>) -> Self {
+        use http_body_util::BodyExt;
+        let state = fixture.state.clone();
+        let gates = Arc::new(Mutex::new(gates));
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let recorded = calls.clone();
+        let service = tower::service_fn(move |request: http::Request<kube::client::Body>| {
+            let method = request.method().to_string();
+            let path = request.uri().path_and_query().unwrap().to_string();
+            recorded
+                .lock()
+                .unwrap()
+                .push(format!("{method} {}", request.uri().path()));
+            let gate = if method == "GET" {
+                gates.lock().unwrap().remove(request.uri().path())
+            } else {
+                None
+            };
+            let state = state.clone();
+            async move {
+                if let Some(gate) = gate {
+                    gate.block().await;
+                }
+                let bytes = request.into_body().collect().await.unwrap().to_bytes();
+                let body = if bytes.is_empty() {
+                    Value::Null
+                } else {
+                    serde_json::from_slice(&bytes).unwrap()
+                };
+                let (status, body, lost) = super::fixture::respond(&state, &method, &path, body);
+                assert!(!lost, "lost responses use the TCP fixture");
+                Ok::<_, std::convert::Infallible>(
+                    http::Response::builder()
+                        .status(status)
+                        .header(http::header::CONTENT_TYPE, "application/json")
+                        .body(kube::client::Body::from(serde_json::to_vec(&body).unwrap()))
+                        .unwrap(),
+                )
+            }
+        });
+        Self {
+            client: kube::Client::new(service, "cma-test"),
+            calls,
+        }
+    }
+    pub fn pools(&self, fixture: &Fixture) -> super::AgentSandboxPools {
+        super::AgentSandboxPools::new(self.client.clone(), fixture.client.config.clone())
+    }
+    pub fn assert_read_only(&self) {
+        assert!(self
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|call| call.starts_with("GET ")));
+    }
 }
 
 pub(super) struct Reads {

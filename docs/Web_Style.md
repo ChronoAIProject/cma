@@ -739,9 +739,38 @@ body and original target. Use the existing status band and compact Button for
 Keep the draft editable and clear only the draft matching a retained acceptance.
 A refused intent may be corrected after an authoritative admission refusal.
 
+Responses v2 may load Agent/Workspace details, usage and the first activity page
+concurrently. Expose their combined result only after all required projections
+agree and a fresh account check succeeds after the last read. Continue to hold
+Send until complete history, current Sandbox state and required connections are
+verified; an early activity page alone does not authorize interaction.
+
+Once a retained creation operation names its actual Agent, its modal may prepare
+that exact Agent's transport while lineage is checked. Transfer the same v2
+selection once into navigation, keeping the loader's fresh account check and the
+existing persisted transport choice. Closing or changing the creation scope
+cancels preparation; account and local sign-in epoch changes invalidate it. A
+reload uses the normal freshly authorized opening path.
+
+After current personal access is verified for an exact Agent, check required
+connections while its conversation loads. Keep the result bound to that Agent,
+viewer, client and uninterrupted authorization generation. Refused or uncertain
+access discards the result and cancels pending checks. Send still waits for full
+history and current Sandbox eligibility, and each click freshly checks connections
+before submitting the captured draft. No extra preparation notice is introduced.
+
 A newly admitted Agent may open while its recorded state is **Starting**, after
 verified Agent/Worktree/Workspace/Sandbox lineage and a fresh Active parent without
-an operation or save in progress. Keep the actual Starting label and recorded
+an operation or save in progress. The server may also explicitly prove the exact
+creation operation's bootstrap lineage while its owned parent is Provisioning or
+Installing. That proof permits opening the actual Starting Agent and durably
+queuing v2 input before the runtime is ready. Match the creation receipt when
+opening from its modal; before enabling bootstrap input, freshly read both the
+exact Agent and parent, match the current owner and all lineage identifiers, and
+require no parent operation, checkpoint or checkpoint refusal. A missing,
+withdrawn or mismatched proof holds input. AG-UI does not use this allowance.
+An unresolved Worktree retains its empty commit and actual creation state;
+queued acceptance never claims runtime readiness. Keep the actual Starting label and recorded
 preparation visible. Responses v2 tabs offer the normal editable composer,
 **Message Agent** placeholder and **Send message** without an extra Starting or
 sending notification in the composer. Clear the matching draft only on durable admission; the creation first
@@ -2062,3 +2091,9 @@ draft. Summary readers never receive the management history control.
 | 2026-10-14 | Preserve navigation to retained Agent conversations and history while Sandboxes pause, remain paused or resume. Keep actual lifecycle labels and closed progress disclosures, retain drafts, and hold pending-operation input and child runtime mutations until authoritative readiness. |
 
 | 2026-10-14 | Open actual admitted Agents while Starting after lineage and parent checks; allow durable v2 queued input with receipt-based draft acknowledgement. Retain creation setup through early navigation and offer explicit same-request continuation when a worker rechecks connections. Preserve existing transports and hold input/recovery during uncertain access or parent lifecycle work. |
+
+| 2026-10-14 | Load independent Responses v2 Agent projections and the first activity page concurrently, while retaining the account check after all required reads and every history, Sandbox and connection barrier before Send. |
+
+| 2026-10-14 | Prepare transport for the actual created Agent during lineage reads, hand it to one navigation load with fresh entry authorization, and overlap exact-Agent connection verification with authorized conversation loading. Preserve retained transport choices, cancel stale account/target generations, and keep all history, parent and click-time Send checks. |
+
+| 2026-10-14 | Open actual Starting Agents during their own lifecycle bootstrap only with exact server-proven lineage and current owner/parent checks. Fresh Agent and parent reads permit durable v2 queued input while that parent is Provisioning or Installing; withdrawn proof, lifecycle barriers and AG-UI remain held. Preserve unresolved Worktree state and distinguish queued acceptance from runtime readiness. |

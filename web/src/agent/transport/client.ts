@@ -1,8 +1,13 @@
 import type { Cma, V2ResponseReceipt } from '@chronoai/cma-sdk';
 import type { ReadOptions } from '../../api/client';
-import { agentTransportJournal, type AgentTransportJournal } from './journal';
+import {
+  agentTransportJournal,
+  guardAgentTransportIdentity,
+  type AgentTransportJournal,
+} from './journal';
 import { IdentityChangedError } from './identity';
 import { recoverAgentInput, submitAgentInput } from './submit';
+import { createTransportPreparation } from './preparation';
 
 export interface AgentTransportOptions {
   readonly storage: Storage;
@@ -76,28 +81,36 @@ export class AgentV2Session {
 
 /** The authenticated server flag selects a new tab; retained v2 work keeps its transport. */
 export function createAgentTransport(sdk: Cma, options: AgentTransportOptions) {
-  return {
-    async open(agent: string, read: ReadOptions = {}): Promise<AgentV2Session | undefined> {
-      read.signal?.throwIfAborted();
-      const user = await options.currentUser();
-      read.signal?.throwIfAborted();
-      if (user === undefined) throw new Error('Sign in to open this Agent.');
-      const journal = agentTransportJournal(options.storage, user, agent);
-      const session = new AgentV2Session(sdk, journal, user, options);
-      let selected = journal.selected();
-      let enabled = false;
-      if (selected === undefined) {
-        try {
-          const eligibility = await sdk.agentEventsV2.readTransportEligibility(read);
-          enabled = eligibility.enabled && eligibility.live_fragments;
-        } catch {
-          read.signal?.throwIfAborted();
-          // Older or unavailable servers cannot select a new v2 tab.
-        }
+  const select = async (
+    agent: string,
+    read: ReadOptions = {},
+    expectedOwner?: string,
+  ): Promise<AgentV2Session | undefined> => {
+    read.signal?.throwIfAborted();
+    const checkIdentity =
+      expectedOwner === undefined ? undefined : guardAgentTransportIdentity(options.storage);
+    const user = await options.currentUser();
+    read.signal?.throwIfAborted();
+    checkIdentity?.();
+    if (expectedOwner !== undefined && user !== expectedOwner) throw new IdentityChangedError();
+    if (user === undefined) throw new Error('Sign in to open this Agent.');
+    const journal = agentTransportJournal(options.storage, user, agent);
+    const session = new AgentV2Session(sdk, journal, user, options);
+    let selected = journal.selected();
+    let enabled = false;
+    if (selected === undefined) {
+      try {
+        const eligibility = await sdk.agentEventsV2.readTransportEligibility(read);
+        enabled = eligibility.enabled && eligibility.live_fragments;
+      } catch {
+        read.signal?.throwIfAborted();
+        // Older or unavailable servers cannot select a new v2 tab.
       }
-      await session.authorize(read.signal);
-      selected ??= journal.select(enabled);
-      return selected === 'responses_v2' ? session : undefined;
-    },
+    }
+    await session.authorize(read.signal);
+    selected ??= journal.select(enabled);
+    return selected === 'responses_v2' ? session : undefined;
   };
+  const open = (agent: string, read: ReadOptions = {}) => select(agent, read);
+  return { open, ...createTransportPreparation(select, open) };
 }

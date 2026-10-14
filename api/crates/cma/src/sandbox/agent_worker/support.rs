@@ -417,7 +417,12 @@ pub(super) fn validate_lineage(
         && worktree.agent_id.as_ref() == Some(&agent.id)
         && worktree.path == format!("{}/.worktrees/{}", workspace.path, worktree.name)
         && worktree.branch == format!("cma/{}", worktree.name)
-        && workspace.resolved_commit.as_ref() == Some(&worktree.base_commit);
+        && (workspace.resolved_commit.as_ref() == Some(&worktree.base_commit)
+            || (worktree.base_commit.is_empty()
+                && agent.has_no_runtime_effects()
+                && matches!((&agent.origin, &sandbox.origin),
+                    (layer2_core::sandbox::AgentOrigin::Lifecycle { operation_id: a },
+                    layer2_core::sandbox::SandboxOrigin::Lifecycle { operation_id: s }) if a == s)));
     if valid {
         Ok(())
     } else {

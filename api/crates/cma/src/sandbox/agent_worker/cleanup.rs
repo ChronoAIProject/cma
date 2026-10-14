@@ -52,6 +52,20 @@ impl AgentWorker {
         if !agent.status.is_live() || agent.requested_stop_reason.is_none() {
             return self.invalid_cleanup(agent, now).await;
         }
+        if agent.has_no_runtime_effects() {
+            self.unstarted_lineage(&agent).await?;
+            return self
+                .progress(
+                    agent,
+                    AgentWorkStep::PublishStopped,
+                    now,
+                    None,
+                    Vec::new(),
+                    None,
+                    None,
+                )
+                .await;
+        }
         let sandbox = self
             .dependencies
             .store

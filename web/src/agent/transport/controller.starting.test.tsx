@@ -2,6 +2,7 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { AGENT_DETAIL, agentClient } from '../../test/agent';
 import { sandboxFixture } from '../../test/hierarchy';
+import { BOOTSTRAP_AGENT, bootstrapSandbox } from '../../test/bootstrap';
 import type { SandboxDetail } from '../../api/types';
 import { useAgentController } from '../controller';
 import { agentTransportJournal } from './journal';
@@ -21,6 +22,64 @@ beforeEach(() => sessionStorage.clear());
 afterEach(() => {
   vi.restoreAllMocks();
   vi.useRealTimers();
+});
+
+it.each(['provisioning', 'installing'] as const)(
+  'durably queues bootstrap input while the parent is %s without claiming runtime readiness',
+  async (status) => {
+    const h = harness();
+    const detail = vi.spyOn(h.client, 'readAgent').mockResolvedValue(BOOTSTRAP_AGENT);
+    vi.spyOn(h.client, 'readSandbox').mockResolvedValue(bootstrapSandbox(status));
+    const view = renderHook(() => useAgentController(h.client, 'agt_1', { viewerId: 'alice' }));
+    await waitFor(() => expect(view.result.current.inputAvailability.allowed).toBe(true));
+    expect(detail.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(view.result.current.resourceAvailability.state).toBe('inactive');
+    const accepted = vi.fn();
+    await act(() => view.result.current.send('Queue after the original first message', accepted));
+    expect(h.post).toHaveBeenCalledOnce();
+    expect(accepted).toHaveBeenCalledOnce();
+    expect(view.result.current.state).toMatchObject({
+      detail: { status: 'starting', firstMessage: { state: 'queued' } },
+    });
+    expect(agentTransportJournal(sessionStorage, 'alice', 'agt_1').read()).toMatchObject({
+      state: 'accepted',
+      input: 'Queue after the original first message',
+    });
+    expect(h.client.runAgent).not.toHaveBeenCalled();
+    view.unmount();
+  },
+);
+
+it('invalidates a captured bootstrap send when current lineage proof is withdrawn', async () => {
+  vi.useFakeTimers();
+  const h = harness();
+  const detail = vi.spyOn(h.client, 'readAgent').mockResolvedValue(BOOTSTRAP_AGENT);
+  vi.spyOn(h.client, 'readSandbox').mockResolvedValue(bootstrapSandbox());
+  const view = renderHook(() => useAgentController(h.client, 'agt_1', { viewerId: 'alice' }));
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  expect(view.result.current.inputAvailability.allowed).toBe(true);
+  const oldSend = view.result.current.send;
+  detail.mockResolvedValue({ ...BOOTSTRAP_AGENT, bootstrap: undefined });
+  await act(() => vi.advanceTimersByTimeAsync(1500));
+  expect(view.result.current.inputAvailability.allowed).toBe(false);
+  await act(() => oldSend('Do not send from stale bootstrap proof'));
+  expect(h.post).not.toHaveBeenCalled();
+  view.unmount();
+});
+
+it('holds bootstrap input on AG-UI even with valid server lineage', async () => {
+  const runAgent = vi.fn();
+  const client = agentClient({
+    readAgent: async () => BOOTSTRAP_AGENT,
+    readSandbox: async () => bootstrapSandbox(),
+    runAgent,
+  });
+  const view = renderHook(() => useAgentController(client, 'agt_1', { viewerId: 'alice' }));
+  await waitFor(() => expect(view.result.current.progressObservation).toBeDefined());
+  expect(view.result.current.inputAvailability.allowed).toBe(false);
+  await act(() => view.result.current.send('Do not submit through AG-UI'));
+  expect(runAgent).not.toHaveBeenCalled();
+  view.unmount();
 });
 
 it('accepts a Starting message only through the durable v2 receipt while retaining observation', async () => {

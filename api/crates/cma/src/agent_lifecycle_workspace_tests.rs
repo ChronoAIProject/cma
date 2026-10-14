@@ -1,8 +1,14 @@
 use super::*;
 use serde_json::json;
 
+#[path = "agent_lifecycle_workspace_fixture.rs"]
+mod fixture;
+
 #[path = "agent_lifecycle_workspace_mongo_tests.rs"]
 mod mongo;
+
+#[path = "agent_lifecycle_bootstrap_tests.rs"]
+mod bootstrap;
 
 fn request(value: serde_json::Value) -> AgentLifecycleCreateRequest {
     serde_json::from_value(value).unwrap()

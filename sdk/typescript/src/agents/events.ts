@@ -14,6 +14,7 @@ import {
 import { firstMessageDelivery } from './types.js';
 
 export const agentWorkStep = enumeration(
+  'wait_for_workspace',
   'add_worktree',
   'materialize_home',
   'open_conversation',
