@@ -88,6 +88,7 @@ export function useLifecycleIntent(
     if (!receipt || !client.readAgentLifecycle) return;
     const abort = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
+    const startedAt = Date.now();
     const poll = async () => {
       try {
         const value = await client.readAgentLifecycle!(receipt.id, { signal: abort.signal });
@@ -96,7 +97,7 @@ export function useLifecycleIntent(
         setFailure(undefined);
         if (value.status === 'waiting_for_connection') setConnection(value.connection);
         if (value.status === 'queued' || value.status === 'running')
-          timer = setTimeout(() => void poll(), 1000);
+          timer = setTimeout(() => void poll(), Date.now() - startedAt < 10000 ? 250 : 1000);
       } catch (error: unknown) {
         if (!abort.signal.aborted)
           setFailure(error instanceof Error ? error.message : 'Status unavailable.');

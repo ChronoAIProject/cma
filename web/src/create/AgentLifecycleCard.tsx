@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type {
   AgentLifecycleCreateInput,
   AgentLifecycleCreateReceipt,
@@ -60,6 +60,19 @@ export function AgentLifecycleCard({
   const createdReceipt = lifecycle.intent?.receipt;
   const [repository, setRepository] = useState('');
   const [workspaceName, setWorkspaceName] = useState<string>();
+  const openedOperation = useRef<string | undefined>(undefined);
+  const clearIntent = lifecycle.clear;
+  useEffect(() => {
+    if (
+      createdReceipt === undefined ||
+      operation?.status !== 'succeeded' ||
+      !operation.agent_id ||
+      openedOperation.current === operation.id
+    )
+      return;
+    openedOperation.current = operation.id;
+    if (clearIntent()) onCreated({ ...createdReceipt, id: operation.agent_id, status: 'ready' });
+  }, [clearIntent, createdReceipt, onCreated, operation]);
   useEffect(() => {
     if (workspaceId === undefined) return;
     const request = new AbortController();
