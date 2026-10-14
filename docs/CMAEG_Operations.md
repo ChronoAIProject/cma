@@ -364,10 +364,13 @@ remain active. RSA signing keys are generated at runtime.
 The warm run sends 500 callbacks with 16 concurrent callers. Its p50 must stay
 below 50 ms and p99 at or below 1000 ms. It asserts there are no CMA reads or
 additional JWKS fetches. The cold run sends 200 callbacks in 25 rounds of eight;
-each caller starts after cache invalidation, and the eight callers share one
-restore flight. It asserts 25 additional CMA reads, no additional JWKS fetches,
-launch p99 at most 2000 ms, and restore wait p99 at most 800 ms. The initiating
-caller owns the `cold=true` metric sample; all eight wait on the cold cache.
+each round builds and signs all eight HTTP requests before invalidating the
+cache, then polls their sends concurrently. Synchronous RSA signing during the
+batch's first poll could otherwise let the first restore finish before later
+callers arrive. The eight callers share one restore flight. It asserts 25
+additional CMA reads, no additional JWKS fetches, every restore wait above
+0.5 ms, launch p99 at most 2000 ms, and restore wait p99 at most 800 ms. The
+initiating caller owns the `cold=true` metric sample; all eight wait on the cold cache.
 Provider processing time is outside both launch budgets.
 
 The fake CMA read delay defaults to 50 ms and is configurable through the
