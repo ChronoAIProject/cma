@@ -183,7 +183,7 @@ test('LOCAL Agent detail settings apply only after a confirmed runtime response 
     pending: false,
   };
   await page.route('**/api/v1/agents/agt_contract/models', (route) =>
-    route.fulfill({ json: { models: [{ id: 'gpt-6', label: 'GPT-6' }] } }),
+    route.fulfill({ json: { models: [{ id: 'gpt-6', label: 'GPT-6', available: true }] } }),
   );
   await page.route('**/api/v1/agents/agt_contract/skills', (route) =>
     route.fulfill({ json: { items: [], pending: false, can_install: true } }),
@@ -237,8 +237,8 @@ test('LOCAL Details uses model and skill catalogs in bounded responsive containe
     route.fulfill({
       json: {
         models: [
-          { id: 'gpt-6', label: 'GPT-6' },
-          { id: 'fast-model', label: 'Fast model' },
+          { id: 'gpt-6', label: 'GPT-6', available: true },
+          { id: 'fast-model', label: 'Fast model', available: true },
         ],
       },
     }),

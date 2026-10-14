@@ -418,7 +418,7 @@ separate interface from CMA's unsupported `/api/v1/mcp` route.
 ## Agent model catalog
 
 `GET /api/v1/agents/{id}/models` (`list_agent_models`) returns
-`{"models":[{"id":"gpt-6","label":"gpt-6"}]}` using the owned Agent’s
+`{"models":[{"id":"gpt-6","label":"gpt-6","available":true}]}` using the owned Agent’s
 current Sandbox key to query the Chrono LLM `/models` API. The portal uses the
 Agent Manager prefix `/api/agent-manager/v1/agents/{id}/models`. The response is
 `Cache-Control: no-store`; the list contains provider results without adding
@@ -430,8 +430,15 @@ provide modality or supported-endpoint metadata (`type` is `model` for every
 entry). The Agent catalog therefore admits only provider-returned IDs matching
 `^gpt-[0-9][A-Za-z0-9._-]*$` or exactly `codex-auto-review`, the same ID contract
 used by managed ACP model discovery. This excludes `gpt-image-*` and unknown
-model families. It describes catalog eligibility; an already-running retained
-runtime may still require an upgrade before it can accept a newer model ID.
+model families. Each row's `available` flag additionally requires an active
+Agent and parent, no checkpoint capture, and a fresh status from the exact bound
+runtime reporting `agent_model_catalog: true`, ready installation and credential,
+and matching generation, home identity and boot ID. Missing capability, status
+failure, or a retained older runtime leaves rows visible with `available: false`.
+The portal disables those model choices with an explanation, preserves the saved
+model and still allows reasoning effort and permission changes. A missing flag
+from an older API also means unavailable. Catalog reads never upgrade, revive,
+or replace a running Agent or its conversation.
 
 Requests use an explicit `chrono-cma/<version>` User-Agent and
 `Accept: application/json`. Production verification on 2026-10-14 confirmed

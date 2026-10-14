@@ -75,6 +75,7 @@ export interface AgentSkillsView {
 export interface AgentModelOption {
   readonly id: string;
   readonly label: string;
+  readonly available: boolean;
 }
 
 export interface AgentSettingsView {

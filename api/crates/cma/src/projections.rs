@@ -326,3 +326,28 @@ impl layer1_public::rest::AgentSkillRuntimeSupport for AdapterAgentSkillSupport 
         }
     }
 }
+
+pub(crate) struct AdapterAgentModelSupport(pub Arc<dyn SandboxAdapter>);
+#[async_trait::async_trait]
+impl layer1_public::rest::AgentModelRuntimeSupport for AdapterAgentModelSupport {
+    async fn supported(&self, sandbox: &Sandbox) -> bool {
+        let Some(binding) = &sandbox.runtime else {
+            return false;
+        };
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            self.0
+                .runtime_status(&RuntimeHandle::new(&binding.runtime_id)),
+        )
+        .await;
+        match result {
+            Ok(Ok(status)) => {
+                status.agent_model_catalog
+                    && status.installation_ready
+                    && status.credential_ready
+                    && sandbox.runtime_process_matches(&status).unwrap_or(false)
+            }
+            _ => false,
+        }
+    }
+}
