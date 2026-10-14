@@ -49,6 +49,7 @@ const DEPLOYMENT_ID: &str = "lifecycle-test";
 
 mod fixture_store;
 use fixture_store::FixtureStore;
+mod first_message_contention_tests;
 mod lifecycle_connection_tests;
 mod prepared_pair_tests;
 mod retired_runtime_tests;
