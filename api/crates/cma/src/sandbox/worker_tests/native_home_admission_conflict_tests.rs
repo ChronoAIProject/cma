@@ -103,8 +103,11 @@ async fn native_home_receipt_survives_concurrent_early_agent_admission_without_r
     let harness = Harness::new(vec![], 1, Duration::from_secs(60)).await;
     let created = harness
         .service
-        .create(
-            &caller("owner", [Capability::CreateSandbox]),
+        .create_for_lifecycle(
+            &caller(
+                "owner",
+                [Capability::CreateSandbox, Capability::UseOwnSandboxes],
+            ),
             CreateSandbox {
                 profile: harness.reference.clone(),
                 name: None,
