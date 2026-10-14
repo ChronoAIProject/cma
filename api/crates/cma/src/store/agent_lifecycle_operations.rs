@@ -364,6 +364,10 @@ impl MongoAgentLifecycleStore {
 #[path = "agent_lifecycle_writes.rs"]
 mod writes;
 
+#[cfg(test)]
+#[path = "agent_lifecycle_progress_tests.rs"]
+mod progress_tests;
+
 fn same_request(
     left: &AgentLifecycleCreateRequest,
     right: &AgentLifecycleCreateRequest,
