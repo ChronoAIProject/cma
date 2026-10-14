@@ -180,7 +180,7 @@ export function SandboxPage({
           {permissions.createAgent ? (
             <Button
               icon={<IconPlusOutline16 />}
-              disabled={busy || needsConnections || !childrenAvailable}
+              disabled={busy || pollError || needsConnections || !childrenAvailable}
               onClick={() => onAction({ kind: 'new_agent', sandboxId })}
               aria-label="New agent in this Sandbox"
             >
@@ -190,7 +190,7 @@ export function SandboxPage({
           {permissions.createWorkspace ? (
             <Button
               icon={<IconPlusOutline16 />}
-              disabled={busy || needsConnections || !childrenAvailable}
+              disabled={busy || pollError || needsConnections || !childrenAvailable}
               onClick={() => onAction({ kind: 'new_workspace', sandboxId })}
             >
               New workspace
@@ -281,7 +281,7 @@ export function SandboxPage({
         client={client}
         sandbox={sandbox}
         permissions={permissions}
-        busy={busy}
+        busy={busy || pollError}
         onAction={onAction}
         onNavigate={onNavigate}
       />

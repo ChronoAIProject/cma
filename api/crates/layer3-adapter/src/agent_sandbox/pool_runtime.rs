@@ -125,7 +125,7 @@ impl AgentSandboxClient {
     ) -> Result<RuntimeHandle> {
         home.receipt.validate_for(&home.request)?;
         self.pools
-            .verify_explicit_network_policy(&original.request.pool)
+            .verify_explicit_template_policy(&original.request.pool)
             .await?;
         if request.metadata.get("cma/runtime-generation")
             != Some(&original.request.runtime_generation.to_string())
@@ -252,7 +252,7 @@ impl AgentSandboxClient {
                 &origin.claim.request.home,
             )?;
             self.pools
-                .verify_explicit_network_policy(&origin.claim.request.pool)
+                .verify_explicit_template_policy(&origin.claim.request.pool)
                 .await?;
         }
         Ok(())
@@ -274,9 +274,6 @@ impl AgentSandboxClient {
             return Ok(None);
         }
         self.verify_explicit_runtime_policy(&object).await?;
-        self.validate_request(runtime, request)
-            .await?
-            .ok_or_else(|| unavailable("native Sandbox disappeared before assignment"))?;
         let mut environment = request.env.clone();
         environment.insert(
             "CHRONO_RUNTIME_CONTROL_TOKEN".into(),
@@ -287,6 +284,18 @@ impl AgentSandboxClient {
             pod_uid: expected.pod_uid.clone(),
             environment,
         };
+        let origin: NativePoolHomeOrigin =
+            serde_json::from_str(&object.annotations()[NATIVE_HOME_ANNOTATION])
+                .map_err(|_| rejected("invalid native runtime origin"))?;
+        if origin.claim.request.home.policy.is_native_vct() {
+            return self
+                .assign_native_runtime(runtime, expected, request, &bootstrap, &origin)
+                .await
+                .map(Some);
+        }
+        self.validate_request(runtime, request)
+            .await?
+            .ok_or_else(|| unavailable("native Sandbox disappeared before assignment"))?;
         self.assign_runtime(runtime, expected, &bootstrap)
             .await
             .map(Some)

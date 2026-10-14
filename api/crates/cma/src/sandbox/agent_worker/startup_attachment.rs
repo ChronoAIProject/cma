@@ -19,27 +19,7 @@ impl AgentWorker {
                     "agent lifecycle lease is no longer held",
                 )
             })?;
-        let request = AgentOpenRequest::new(
-            format!("agent:{}:open:v1", agent.id),
-            runtime_options(agent, &context.sandbox, &context.worktree),
-            None,
-        );
-        if agent
-            .work
-            .receipts
-            .iter()
-            .find(|receipt| receipt.step == AgentWorkStep::OpenConversation)
-            .filter(|receipt| {
-                receipt.operation_id == request.operation_id
-                    && receipt.request_sha256 == request.request_sha256
-            })
-            .is_none()
-        {
-            return Err(WorkerFailure::terminal(
-                "agent_conversation_receipt_invalid",
-                "the durable conversation-open receipt does not match replay",
-            ));
-        }
+        let request = validated_open_request(agent, context)?;
         let recovered_prompt = agent.conversation.active_turn.map(|turn| {
             layer3_adapter::PromptIdentity::new(
                 &target.conversation_id,
@@ -178,4 +158,33 @@ impl AgentWorker {
             )
             .map_err(registry_failure)
     }
+}
+
+// A retained local channel has the same replay authority as a reconnect.
+pub(in super::super) fn validated_open_request(
+    agent: &Agent,
+    context: &AgentContext,
+) -> Result<AgentOpenRequest, WorkerFailure> {
+    let request = AgentOpenRequest::new(
+        format!("agent:{}:open:v1", agent.id),
+        runtime_options(agent, &context.sandbox, &context.worktree),
+        None,
+    );
+    if agent
+        .work
+        .receipts
+        .iter()
+        .find(|receipt| receipt.step == AgentWorkStep::OpenConversation)
+        .filter(|receipt| {
+            receipt.operation_id == request.operation_id
+                && receipt.request_sha256 == request.request_sha256
+        })
+        .is_none()
+    {
+        return Err(WorkerFailure::terminal(
+            "agent_conversation_receipt_invalid",
+            "the durable conversation-open receipt does not match replay",
+        ));
+    }
+    Ok(request)
 }

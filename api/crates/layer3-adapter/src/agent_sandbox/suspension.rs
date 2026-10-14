@@ -49,12 +49,48 @@ impl AgentSandboxClient {
         previous: &ProviderSandboxRequest,
         next: &ProviderSandboxRequest,
     ) -> Result<()> {
+        self.resume_inner(runtime, previous, next, None).await
+    }
+
+    pub(crate) async fn resume_with_home(
+        &self,
+        runtime: &RuntimeHandle,
+        previous: &ProviderSandboxRequest,
+        next: &ProviderSandboxRequest,
+        home: &crate::HomeVolumeAttachment,
+    ) -> Result<()> {
+        self.resume_inner(
+            runtime,
+            previous,
+            next,
+            home.request.policy.is_native_vct().then_some(home),
+        )
+        .await
+    }
+
+    async fn resume_inner(
+        &self,
+        runtime: &RuntimeHandle,
+        previous: &ProviderSandboxRequest,
+        next: &ProviderSandboxRequest,
+        home: Option<&crate::HomeVolumeAttachment>,
+    ) -> Result<()> {
+        let mut timing = resume_timing::ResumeTiming::new();
         validate_successor(previous, next)?;
         let (name, _) = parse_handle(runtime)?;
-        let mut before = self.desired_at(previous, name).await?;
+        timing.completed("local_guard");
+        let (mut before, desired) = if let Some(home) = home {
+            self.native_resume_desired(runtime, previous, next, home)
+                .await?
+        } else {
+            (
+                self.desired_at(previous, name).await?,
+                self.desired_at(next, name).await?,
+            )
+        };
         before.data["spec"]["operatingMode"] = json!("Suspended");
-        let desired = self.desired_at(next, name).await?;
         self.verify_explicit_runtime_policy(&desired).await?;
+        timing.completed("generation_proof_render");
         let actual = self
             .get(runtime)
             .await?
@@ -62,10 +98,12 @@ impl AgentSandboxClient {
         // A lost acknowledgement may leave the admitted next generation Running.
         // This does not authorize another generation or another creation.
         if self.matches(&actual, &desired).is_ok() {
+            timing.completed("already_resumed");
             return Ok(());
         }
         self.matches(&actual, &before)?;
         self.wait_suspended(runtime, &before).await?;
+        timing.completed("wait_suspended");
         let actual = self
             .get(runtime)
             .await?
@@ -87,7 +125,34 @@ impl AgentSandboxClient {
         if updated.uid() != actual.uid() {
             return Err(rejected("Sandbox UID changed during resume"));
         }
-        self.matches(&updated, &desired)
+        self.matches(&updated, &desired)?;
+        timing.completed("generation_patch");
+        Ok(())
+    }
+
+    async fn native_resume_desired(
+        &self,
+        runtime: &RuntimeHandle,
+        previous: &ProviderSandboxRequest,
+        next: &ProviderSandboxRequest,
+        home: &crate::HomeVolumeAttachment,
+    ) -> Result<(DynamicObject, DynamicObject)> {
+        let (name, _) = parse_handle(runtime)?;
+        // Keep the generic request guard before resource I/O, as desired_at does.
+        model::desired_at(&self.config, previous, &self.control_token(name), name)?;
+        let origin = self.native_runtime_home_origin(runtime, home)?;
+        // Both generations retain this persisted attachment. Acquire its complete
+        // Claim/Sandbox/PVC authority once, then render without additional reads.
+        // This proof is local to this call; suspension and final CAS still reread.
+        self.pools.prove_native_home(home).await?;
+        let before = self
+            .pools
+            .runtime_desired_for_home(origin, home, previous, name)?;
+        model::desired_at(&self.config, next, &self.control_token(name), name)?;
+        let desired = self
+            .pools
+            .runtime_desired_for_home(origin, home, next, name)?;
+        Ok((before, desired))
     }
 
     /// Observation is also used after restart, without requiring a live runtime HTTP endpoint.

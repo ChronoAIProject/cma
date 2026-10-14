@@ -1,6 +1,11 @@
 import { Presence } from '../ui/Presence';
 import { useId, useState } from 'react';
-import { sandboxChildrenAvailable, sandboxLifecycleLabel } from '../sandbox/lifecycle';
+import {
+  sandboxChildrenAvailable,
+  sandboxChildrenReadable,
+  sandboxChildStatus,
+  sandboxLifecycleLabel,
+} from '../sandbox/lifecycle';
 import type { AppRoute } from '../routing/routes';
 import { StateDot } from '../ui/StateDot';
 import { Button } from '../ui/Button';
@@ -200,7 +205,9 @@ export function Tree({
                     const originalWorkspaces =
                       items.find((item) => item.sandbox.id === sandbox.id)?.workspaces ?? [];
                     const sandboxNode = `sandbox:${sandbox.id}`;
-                    const childrenAvailable = sandboxChildrenAvailable(sandbox);
+                    const childrenAvailable = sandboxChildrenReadable(sandbox);
+                    const runtimeAvailable =
+                      !lifecycleBusy && !refreshError && sandboxChildrenAvailable(sandbox);
                     const sandboxExpanded = childrenAvailable && !collapsed.has(sandboxNode);
                     const paused = sandbox.status === 'paused';
                     return (
@@ -298,9 +305,9 @@ export function Tree({
                                       }
                                       meta={
                                         <>
-                                          {workspace.status === 'removing'
-                                            ? 'Deleting'
-                                            : statusLabel(workspace.status)}
+                                          {statusLabel(
+                                            sandboxChildStatus(sandbox, workspace.status),
+                                          )}
                                           <TreeFactsSummary
                                             channelFacts={channelFacts}
                                             facts={facts}
@@ -319,6 +326,7 @@ export function Tree({
                                         workspace,
                                         permissions,
                                         lifecycleBusy,
+                                        runtimeAvailable,
                                       )}
                                       onNavigate={onNavigate}
                                       onToggle={
@@ -338,9 +346,10 @@ export function Tree({
                                         {workspace.agents
                                           .filter((agent) => agent.status !== 'deleted')
                                           .map((agent) => {
-                                            const effectiveStatus = paused
-                                              ? 'paused'
-                                              : agent.status;
+                                            const effectiveStatus = sandboxChildStatus(
+                                              sandbox,
+                                              agent.status,
+                                            );
                                             return (
                                               <TreeRow
                                                 key={agent.id}
@@ -368,7 +377,11 @@ export function Tree({
                                                     </time>
                                                   </>,
                                                 )}
-                                                actions={agentActions(agent.status, permissions)}
+                                                actions={agentActions(
+                                                  agent.status,
+                                                  permissions,
+                                                  runtimeAvailable,
+                                                )}
                                                 onNavigate={onNavigate}
                                                 onAction={(kind) =>
                                                   onAction({

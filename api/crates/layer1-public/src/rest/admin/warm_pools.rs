@@ -35,6 +35,8 @@ pub struct WarmPoolView {
     pub id: String,
     pub revision: u64,
     pub image: String,
+    /// Immutable image, resources, home and Pod policy identity.
+    pub config_sha256: String,
     pub cpu_millis: u32,
     pub memory_mib: u32,
     pub target_replicas: u32,
@@ -51,6 +53,8 @@ pub struct WarmPoolList {
     pub default_image: String,
     pub default_cpu_millis: u32,
     pub default_memory_mib: u32,
+    /// Exact current default configuration; null when it cannot be planned.
+    pub default_config_sha256: Option<String>,
     pub available: bool,
 }
 

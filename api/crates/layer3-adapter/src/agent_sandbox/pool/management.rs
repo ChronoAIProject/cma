@@ -61,6 +61,7 @@ impl AgentSandboxPools {
         original.config.service_account = plan.pod_policy.service_account.clone();
         original.config.image_pull_secrets = plan.pod_policy.image_pull_secrets.clone();
         original.config.template_network_policy = plan.pod_policy.template_network_policy.clone();
+        original.config.template_fs_group_change_policy = plan.pod_policy.fs_group_change_policy;
         if plan.namespace != self.config.namespace
             || plan.deployment != self.config.deployment
             || original.plan(&plan.spec)? != *plan
@@ -258,16 +259,18 @@ impl AgentSandboxPools {
         {
             return Err(rejected("native pool binding has another configuration"));
         }
-        let template = self
-            .templates
-            .get(&binding.template_name)
-            .await
-            .map_err(api_error)?;
+        // Both names are persisted authority. Start the independent reads
+        // together, then preserve Template-before-Pool validation and errors.
+        let (template, actual) = tokio::join!(
+            self.templates.get(&binding.template_name),
+            self.pools.get(&binding.name),
+        );
+        let template = template.map_err(api_error)?;
         model::verify(&template, &desired)?;
         if template.uid().as_deref() != Some(&binding.template_uid) {
             return Err(rejected("native pool template UID changed"));
         }
-        let actual = self.pools.get(&binding.name).await.map_err(api_error)?;
+        let actual = actual.map_err(api_error)?;
         let desired = model::pool(&config, &binding.spec, &template, target(&actual)?)?;
         model::verify(&actual, &desired)?;
         if actual.uid().as_deref() != Some(&binding.uid) {
@@ -289,6 +292,7 @@ impl AgentSandboxPools {
             service_account: definition.pod_policy.service_account,
             image_pull_secrets: definition.pod_policy.image_pull_secrets,
             template_network_policy: definition.pod_policy.template_network_policy,
+            template_fs_group_change_policy: definition.pod_policy.fs_group_change_policy,
             ..self.config.clone()
         };
         let desired = model::template(&config, &definition.spec)?;
