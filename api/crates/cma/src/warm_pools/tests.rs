@@ -50,6 +50,7 @@ fn target() -> PoolTarget {
                 service_account: "original-service".into(),
                 image_pull_secrets: vec![],
                 template_network_policy: None,
+                fs_group_change_policy: None,
             },
             namespace: "sandboxes".into(),
             deployment: "test".into(),
@@ -122,8 +123,9 @@ impl Provider {
 }
 #[async_trait]
 impl NativePoolControl for Provider {
-    fn plan(&self, _: &NativePoolSpec) -> layer3_adapter::Result<NativePoolConfiguration> {
-        unreachable!()
+    fn plan(&self, spec: &NativePoolSpec) -> layer3_adapter::Result<NativePoolConfiguration> {
+        assert_eq!(spec, &self.original.spec);
+        Ok(self.original.clone())
     }
     async fn configure_planned(
         &self,
@@ -237,6 +239,55 @@ fn configure_replay_keeps_original_image_policy_and_rejects_changed_input() {
         ),
         Err(WarmPoolError::Conflict)
     ));
+}
+
+#[test]
+fn inventory_identifies_original_and_current_default_policy_even_with_identical_resources() {
+    let original = target();
+    let mut current = original.clone();
+    current.plan.pod_policy.fs_group_change_policy =
+        Some(layer3_adapter::agent_sandbox::NativeFsGroupChangePolicy::OnRootMismatch);
+    current.plan.config_sha256 = "b".repeat(64);
+    let provider = Provider {
+        calls: Arc::default(),
+        original: current.plan.clone(),
+        refuse_replaced_uid: AtomicBool::new(false),
+    };
+    let spec = &current.plan.spec;
+    let capacity = layer3_adapter::SandboxCapacity {
+        cpu_millis: spec.cpu_millis,
+        memory_mib: spec.memory_mib,
+    };
+    let default = default_config_sha256(Some(&provider), &spec.image, Some(&spec.home), &capacity);
+    assert_eq!(
+        original.view(None, true).image,
+        current.view(None, true).image
+    );
+    assert_eq!(
+        original.view(None, true).cpu_millis,
+        current.view(None, true).cpu_millis
+    );
+    assert_eq!(
+        original.view(None, true).memory_mib,
+        current.view(None, true).memory_mib
+    );
+    assert_ne!(Some(original.view(None, true).config_sha256), default);
+    assert_eq!(Some(current.view(None, true).config_sha256), default);
+    assert_eq!(
+        default_config_sha256(None, &spec.image, Some(&spec.home), &capacity),
+        None
+    );
+    assert_eq!(
+        default_config_sha256(Some(&provider), &spec.image, None, &capacity),
+        None
+    );
+    assert_eq!(
+        replay(original.clone(), &original.requested)
+            .unwrap()
+            .view(None, true)
+            .config_sha256,
+        original.plan.config_sha256
+    );
 }
 
 #[test]

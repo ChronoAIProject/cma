@@ -76,14 +76,8 @@ async fn quiet_attachment_restores_before_waiting_for_any_native_update() {
     });
     let (activate, activated) = oneshot::channel();
     let (send, updates) = mpsc::channel(1);
-    let task = spawn_update_task(
-        Weak::new(),
-        attachment(),
-        activated,
-        updates,
-        recorder.clone(),
-    );
-    activate.send(()).unwrap();
+    let task = spawn_update_task(Weak::new(), activated, updates, recorder.clone());
+    activate.send(attachment()).unwrap();
     assert_eq!(next(&mut received).await, "restore");
     // The runtime has emitted nothing, but durable restoration has already begun.
     send.send(ConversationUpdate::Lost { frames: 1 })
@@ -107,14 +101,8 @@ async fn invalid_restoration_does_not_record_a_queued_native_update() {
     });
     let (activate, activated) = oneshot::channel();
     let (send, updates) = mpsc::channel(1);
-    let task = spawn_update_task(
-        Weak::new(),
-        attachment(),
-        activated,
-        updates,
-        recorder.clone(),
-    );
-    activate.send(()).unwrap();
+    let task = spawn_update_task(Weak::new(), activated, updates, recorder.clone());
+    activate.send(attachment()).unwrap();
     assert_eq!(next(&mut received).await, "restore");
     send.send(ConversationUpdate::Lost { frames: 1 })
         .await

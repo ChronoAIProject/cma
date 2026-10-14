@@ -4,14 +4,14 @@ mod wire;
 
 use cma_sdk::{
     Error, IdempotencyKey,
-    admin::{ConfigureWarmPoolBody, ResizeWarmPoolBody, WarmPoolStatus},
+    admin::{ConfigureWarmPoolBody, ResizeWarmPoolBody, WarmPoolList, WarmPoolStatus},
 };
 use serde_json::{Value, json};
 use wire::{WireServer, json as response};
 
 fn pool() -> Value {
     json!({"id":"wp_original","revision":1,"image":"registry/runtime@sha256:original",
-        "cpu_millis":1000,"memory_mib":1024,"target_replicas":2,"ready_replicas":null,
+        "config_sha256":"c".repeat(64),"cpu_millis":1000,"memory_mib":1024,"target_replicas":2,"ready_replicas":null,
         "observed":false,"status":"pending","resource_name":null,"error":null})
 }
 
@@ -20,6 +20,49 @@ fn configure() -> ConfigureWarmPoolBody {
         cpu_millis: 1000,
         memory_mib: 1024,
         target_replicas: 2,
+    }
+}
+
+#[test]
+fn older_inventories_without_additive_configuration_digests_remain_readable() {
+    let mut old_pool = pool();
+    old_pool.as_object_mut().unwrap().remove("config_sha256");
+    for items in [json!([]), json!([old_pool])] {
+        let inventory: WarmPoolList = serde_json::from_value(json!({
+            "items":items,"default_image":"next-image","default_cpu_millis":1000,
+            "default_memory_mib":1024,"available":true
+        }))
+        .unwrap();
+        assert_eq!(inventory.default_config_sha256, None);
+        assert!(
+            inventory
+                .items
+                .iter()
+                .all(|item| item.config_sha256.is_none())
+        );
+    }
+}
+
+#[test]
+fn present_digest_fields_reject_malformed_values_and_allow_unavailable_default() {
+    let inventory = json!({"items":[pool()],"default_image":"next-image",
+        "default_cpu_millis":1000,"default_memory_mib":1024,
+        "default_config_sha256":null,"available":true});
+    assert_eq!(
+        serde_json::from_value::<WarmPoolList>(inventory.clone())
+            .unwrap()
+            .default_config_sha256,
+        None
+    );
+    for value in [Value::Null, json!(42), json!(false), json!({}), json!([])] {
+        let mut malformed_pool = inventory.clone();
+        malformed_pool["items"][0]["config_sha256"] = value.clone();
+        assert!(serde_json::from_value::<WarmPoolList>(malformed_pool).is_err());
+        if !value.is_null() {
+            let mut malformed_default = inventory.clone();
+            malformed_default["default_config_sha256"] = value;
+            assert!(serde_json::from_value::<WarmPoolList>(malformed_default).is_err());
+        }
     }
 }
 
@@ -34,11 +77,14 @@ async fn original_target_creation_and_disable_use_exact_authority_and_preserve_u
         None,
         200,
         json!({"items":[unobserved],"default_image":"registry/runtime@sha256:next",
-            "default_cpu_millis":1000,"default_memory_mib":1024,"available":false}),
+            "default_cpu_millis":1000,"default_memory_mib":1024,
+            "default_config_sha256":"d".repeat(64),"available":false}),
         true,
     ));
     let inventory = server.client.admin().list_warm_pools().await.unwrap();
     assert!(!inventory.available);
+    assert_eq!(inventory.items[0].config_sha256, Some("c".repeat(64)));
+    assert_eq!(inventory.default_config_sha256, Some("d".repeat(64)));
     assert_eq!(inventory.items[0].ready_replicas, None);
     assert_eq!(inventory.items[0].status, WarmPoolStatus::Unavailable);
     assert_ne!(inventory.items[0].image, inventory.default_image);

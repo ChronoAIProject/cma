@@ -1,5 +1,25 @@
 use super::*;
 
+#[test]
+fn sandbox_detail_preserves_optional_pinned_providers() {
+    let legacy: SandboxDetail = serde_json::from_value(sandbox_detail()).unwrap();
+    assert!(legacy.agent_provider.is_none());
+    assert!(legacy.model_access.is_none());
+    for access in [ModelAccess::ChronoaiManaged, ModelAccess::OwnCredentials] {
+        let mut body = sandbox_detail();
+        body["agent_provider"] = json!("codex");
+        body["model_access"] = serde_json::to_value(access).unwrap();
+        let detail: SandboxDetail = serde_json::from_value(body).unwrap();
+        assert_eq!(detail.agent_provider, Some(AgentProvider::Codex));
+        assert_eq!(detail.model_access, Some(access));
+    }
+    for (field, value) in [("agent_provider", "unknown"), ("model_access", "unknown")] {
+        let mut body = sandbox_detail();
+        body[field] = json!(value);
+        assert!(serde_json::from_value::<SandboxDetail>(body).is_err());
+    }
+}
+
 #[tokio::test]
 async fn accessible_hierarchy_requires_explicit_shapes_and_exact_identity() {
     let server = Server::new().await;

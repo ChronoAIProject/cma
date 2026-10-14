@@ -17,6 +17,7 @@ pub(super) struct State {
     pub list_queries: Vec<String>,
     pub assignments: Vec<crate::runtime_bootstrap::RuntimeBootstrapRequest>,
     pub fail_exec: bool,
+    pub exec_mutations: Vec<(String, String, Value)>,
     pub native_annotation_generation: bool,
     version: u64,
 }
