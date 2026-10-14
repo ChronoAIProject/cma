@@ -147,7 +147,12 @@ impl Fixture {
     }
 }
 
-fn respond(state: &Mutex<State>, method: &str, path: &str, body: Value) -> (u16, Value, bool) {
+pub(super) fn respond(
+    state: &Mutex<State>,
+    method: &str,
+    path: &str,
+    body: Value,
+) -> (u16, Value, bool) {
     let mut state = state.lock().unwrap();
     let url = reqwest::Url::parse(&format!("http://fixture{path}")).unwrap();
     let path = url.path();

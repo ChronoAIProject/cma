@@ -55,6 +55,7 @@ export interface AgentController {
 }
 
 interface AgentControllerOptions {
+  readonly viewerId?: string;
   readonly suspended?: boolean;
   readonly summary?: AgentSummary;
   readonly onHierarchyChange?: () => void;
@@ -111,6 +112,10 @@ export function useAgentController(
       state.detail.id === agentId &&
       state.detail.status === 'starting' &&
       state.v2 !== undefined,
+    state.status === 'ready' && state.detail.id === agentId && state.v2 !== undefined
+      ? state.detail.bootstrap
+      : undefined,
+    options.viewerId,
   );
   const activeTurn =
     state.status === 'ready' &&

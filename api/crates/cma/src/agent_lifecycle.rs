@@ -38,6 +38,8 @@ use crate::store::{
 #[path = "agent_lifecycle_profiles.rs"]
 mod profiles;
 
+#[path = "agent_lifecycle_bootstrap.rs"]
+mod bootstrap;
 #[path = "agent_lifecycle_sandbox.rs"]
 mod existing_sandbox;
 #[path = "agent_lifecycle_progress.rs"]
@@ -154,7 +156,7 @@ impl InlineAgentLifecycle {
             existing_agent_id,
             actor,
         } = input;
-        let (agent_revision, _workspace_profile, sandbox_profile) = profiles::create_profiles(
+        let (agent_revision, workspace_profile, sandbox_profile) = profiles::create_profiles(
             self.profiles.as_ref(),
             caller,
             &request,
@@ -214,17 +216,28 @@ impl InlineAgentLifecycle {
                 .map_err(|_| AgentLifecycleProvisioningError::Unavailable)?;
             sandbox.id
         };
-        let workspace_id = self
-            .wait_for_agent_workspace(caller, &sandbox_id, &lease)
-            .await?;
-        self.progress_pair(
-            &lease,
-            ("workspace_runtime", "ready", "Workspace is ready"),
-            ("agent_startup", "running", "Starting your Agent"),
-        )
-        .await?;
+        let early_admission = behavior == LifecycleBehavior::PromptRepository;
+        let workspace_id = if early_admission {
+            self.reserve_bootstrap_workspace(
+                caller,
+                &sandbox_id,
+                &sandbox_profile,
+                &workspace_profile,
+                &lease.id,
+            )
+            .await?
+        } else {
+            self.wait_for_agent_workspace(caller, &sandbox_id, &lease, None)
+                .await?
+        };
         let agent_id = if let Some(id) = existing_agent_id {
-            AgentId(id)
+            let agent = self
+                .agents
+                .read(caller, &AgentId(id))
+                .await
+                .map_err(agent_error)?;
+            bootstrap::validate_recorded_agent(&agent, &sandbox_id, &workspace_id, &lease.id)?;
+            agent.id
         } else {
             let agent = self
                 .agents
@@ -261,6 +274,25 @@ impl InlineAgentLifecycle {
                 .map_err(|_| AgentLifecycleProvisioningError::Unavailable)?;
             agent.id
         };
+        // The exact Starting Agent is durable before waiting for runtime I/O.
+        // Readiness and startup effects still use the original workspace and
+        // the real resolved base commit; early input is only durably queued.
+        if early_admission {
+            let ready_workspace = self
+                .wait_for_agent_workspace(caller, &sandbox_id, &lease, Some(&workspace_id))
+                .await?;
+            if ready_workspace != workspace_id {
+                return Err(AgentLifecycleProvisioningError::Conflict(
+                    "the prepared workspace does not match the recorded Agent".into(),
+                ));
+            }
+        }
+        self.progress_pair(
+            &lease,
+            ("workspace_runtime", "ready", "Workspace is ready"),
+            ("agent_startup", "running", "Starting your Agent"),
+        )
+        .await?;
         self.wait_for_agent_ready(caller, &agent_id).await?;
         self.progress(&lease, "agent_startup", "ready", "Your Agent is ready")
             .await?;

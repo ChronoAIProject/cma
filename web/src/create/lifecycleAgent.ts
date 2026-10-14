@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { AgentLifecycleOperationView, CmaWebClient } from '../api/client';
 import type { AgentDetail } from '../api/types';
+import { bootstrapInputAllowed } from '../agent/bootstrap';
 
 // The creation receipt identifies an operation. Only its admitted Agent may open early.
 export function useLifecycleAgent(
@@ -43,7 +44,8 @@ export function useLifecycleAgent(
               signal.aborted ||
               parent.id !== detail.sandbox.id ||
               (parent.owner !== undefined && parent.owner !== viewerId) ||
-              parent.status !== 'active' ||
+              (parent.status !== 'active' &&
+                !bootstrapInputAllowed(detail, parent, viewerId, operationId)) ||
               parent.lifecycle === undefined ||
               parent.lifecycle.operation !== undefined ||
               parent.lifecycle.checkpoint !== undefined

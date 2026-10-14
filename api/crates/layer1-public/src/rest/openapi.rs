@@ -360,6 +360,7 @@ use super::trigger_openapi_shapes::*;
         AgentListItemView,
         AgentPageView,
         AgentView,
+        AgentBootstrapView,
         AccessibleAgentView,
         AccessibleAgentPageView,
         AccessibleAgentListItemView,

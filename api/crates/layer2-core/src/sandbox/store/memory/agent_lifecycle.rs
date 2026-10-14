@@ -178,6 +178,11 @@ fn validate_mutation(state: &State, mutation: &AgentWorkMutation) -> Result<(), 
         .sandboxes
         .get(&current.sandbox_id)
         .ok_or(SandboxStoreError::NotFound)?;
+    let workspace = state
+        .workspaces
+        .get(&current.workspace_id)
+        .ok_or(SandboxStoreError::NotFound)?;
+    crate::sandbox::store::validate_agent_workspace_binding(current, mutation, sandbox, workspace)?;
     validate_agent_work_mutation_with_sandbox(
         current,
         current_worktree,

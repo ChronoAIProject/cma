@@ -154,6 +154,14 @@ pub(super) fn reserve(
         .get(&agent.sandbox_id)
         .ok_or(CommandLedgerError::NotFound)?;
     validate_command_reservation(request, agent, parent)?;
+    if agent.bootstrap_operation(parent).is_some()
+        && state
+            .workspaces
+            .get(&agent.workspace_id)
+            .is_none_or(|workspace| agent.bootstrap_lineage(parent, workspace).is_none())
+    {
+        return Err(CommandLedgerError::NotAdmissible);
+    }
     crate::sandbox::agent_io::validate_command_reservation_policy(
         request,
         parent,

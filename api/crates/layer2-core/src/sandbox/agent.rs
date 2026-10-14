@@ -1,3 +1,4 @@
+use super::AgentWorkStep;
 use serde::{Deserialize, Serialize};
 
 use crate::ids::{AgentId, SandboxId, SubjectId, WorkspaceId, WorktreeId};
@@ -114,6 +115,11 @@ pub struct Agent {
 impl Agent {
     pub fn validate_for_admission(&self, worktree: &Worktree) -> Result<(), SandboxModelError> {
         self.validate_lineage(worktree)?;
+        if self.work.step == AgentWorkStep::WaitForWorkspace
+            && (!self.has_no_runtime_effects() || !worktree.base_commit.is_empty())
+        {
+            return Err(SandboxModelError::invalid_value("agent.bootstrap"));
+        }
         if worktree.status != WorktreeStatus::Creating
             || worktree.agent_id.as_ref() != Some(&self.id)
             || self.status != AgentStatus::Starting

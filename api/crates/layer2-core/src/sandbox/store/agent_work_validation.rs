@@ -13,6 +13,44 @@ use super::agent_work_transition_validation::{
 use super::agent_worktree_validation::validate_worktree_delta;
 use super::{AgentWorkMutation, SandboxStoreError};
 
+/// Stores must read and write-fence both parents in the same transaction as this publication.
+pub fn validate_agent_workspace_binding(
+    current: &Agent,
+    mutation: &AgentWorkMutation,
+    sandbox: &Sandbox,
+    workspace: &crate::sandbox::Workspace,
+) -> Result<(), SandboxStoreError> {
+    if current.work.step != AgentWorkStep::WaitForWorkspace
+        || mutation.agent.work.step != AgentWorkStep::AddWorktree
+    {
+        return Ok(());
+    }
+    let exact_origin = matches!((&current.origin, &sandbox.origin),
+        (crate::sandbox::AgentOrigin::Lifecycle { operation_id: agent_op },
+        crate::sandbox::SandboxOrigin::Lifecycle { operation_id: parent_op }) if agent_op == parent_op);
+    if !exact_origin
+        || !current.has_no_runtime_effects()
+        || current.owner != sandbox.owner
+        || current.sandbox_id != sandbox.id
+        || current.workspace_id != workspace.id
+        || !crate::sandbox::lifecycle_bootstrap::bootstrap_workspace(sandbox, workspace)
+        || sandbox.status != SandboxStatus::Active
+        || !sandbox.credential.delivered
+        || sandbox.lifecycle.operation.is_some()
+        || sandbox.lifecycle.checkpoint_capture.is_some()
+        || workspace.status != crate::sandbox::WorkspaceStatus::Ready
+        || workspace.resolved_commit.as_ref().is_none_or(|commit| {
+            mutation
+                .worktree
+                .as_ref()
+                .is_none_or(|next| &next.worktree.base_commit != commit)
+        })
+    {
+        return Err(SandboxStoreError::Conflict);
+    }
+    Ok(())
+}
+
 /// Validate one fenced lifecycle publication against its complete durable snapshot.
 pub fn validate_agent_work_mutation(
     current: &Agent,
