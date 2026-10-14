@@ -191,3 +191,28 @@ it('retains a failed installation and does not offer an unsupported retry or ver
   await userEvent.click(button);
   expect(install).not.toHaveBeenCalled();
 });
+
+it.each(['installed', 'pending', 'failed'] as const)(
+  'shows the saved %s version even when the catalog only offers a newer release',
+  async (status) => {
+    render(
+      <CmaClientProvider
+        client={agentClient({
+          readAgentSkills: async () => ({
+            items: [{ ...installed.items[0]!, version: '1.1', status }],
+            pending: status === 'pending',
+            can_install: status !== 'pending',
+          }),
+          installAgentSkill: vi.fn(),
+        })}
+        profiles={profiles()}
+      >
+        <SkillsSettings agentId="agent-one" active busy={false} />
+      </CmaClientProvider>,
+    );
+    const version = await screen.findByRole('button', { name: 'Version for TypeScript' });
+    expect(version).toHaveTextContent('1.1');
+    expect(version).not.toHaveTextContent('1.2');
+    expect(version).toBeDisabled();
+  },
+);
