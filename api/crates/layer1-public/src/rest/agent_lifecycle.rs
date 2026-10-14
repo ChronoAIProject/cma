@@ -90,7 +90,7 @@ pub struct AgentLifecycleCreateReceipt {
 
 /// A durable lifecycle event exposed to Agent Manager clients.  The event
 /// stream is intentionally small and phase-oriented: the runtime owns the
-/// detailed sandbox events, while CMA exposes the three user-facing gates.
+/// detailed sandbox events, while CMA exposes observed provisioning stages.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct AgentLifecycleEventView {
     pub sequence: u64,

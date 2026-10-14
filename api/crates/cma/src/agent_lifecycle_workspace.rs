@@ -55,26 +55,55 @@ impl InlineAgentLifecycle {
             .mark_sandbox(&input.lease, sandbox.id.as_str())
             .await
             .map_err(|_| AgentLifecycleProvisioningError::Unavailable)?;
-        self.operations
-            .append_event(
-                &input.lease,
-                1,
-                "sandbox_ready",
-                "running",
-                "Checking the selected Workspace",
-            )
-            .await
-            .map_err(|_| AgentLifecycleProvisioningError::Unavailable)?;
-        self.operations
-            .append_event(
-                &input.lease,
-                2,
-                "sandbox_ready",
-                "ready",
-                "Selected Workspace and Agent Sandbox are ready",
-            )
-            .await
-            .map_err(|_| AgentLifecycleProvisioningError::Unavailable)?;
+        self.progress(
+            &input.lease,
+            "sandbox_ready",
+            "running",
+            "Checking the selected Sandbox",
+        )
+        .await?;
+        self.progress(
+            &input.lease,
+            "sandbox_ready",
+            "ready",
+            "Selected Sandbox is ready",
+        )
+        .await?;
+        self.progress(
+            &input.lease,
+            "workspace_runtime",
+            "running",
+            "Checking the selected workspace",
+        )
+        .await?;
+        self.progress(
+            &input.lease,
+            "workspace_runtime",
+            "ready",
+            "Selected workspace is ready",
+        )
+        .await?;
+        self.progress(
+            &input.lease,
+            "key_scope_ready",
+            "running",
+            "Checking Agent key permissions",
+        )
+        .await?;
+        self.progress(
+            &input.lease,
+            "key_scope_ready",
+            "ready",
+            "Agent inherits the existing Sandbox key permissions",
+        )
+        .await?;
+        self.progress(
+            &input.lease,
+            "agent_startup",
+            "running",
+            "Starting your Agent",
+        )
+        .await?;
         let agent_id = if let Some(id) = &input.existing_agent_id {
             let agent = self
                 .agents
@@ -139,26 +168,13 @@ impl InlineAgentLifecycle {
             agent.id
         };
         self.wait_for_agent_ready(caller, &agent_id).await?;
-        self.operations
-            .append_event(
-                &input.lease,
-                3,
-                "workspace_runtime",
-                "ready",
-                "Agent runtime is ready in the selected Workspace",
-            )
-            .await
-            .map_err(|_| AgentLifecycleProvisioningError::Unavailable)?;
-        self.operations
-            .append_event(
-                &input.lease,
-                4,
-                "key_scope_ready",
-                "ready",
-                "Agent inherits the existing Sandbox key scope",
-            )
-            .await
-            .map_err(|_| AgentLifecycleProvisioningError::Unavailable)?;
+        self.progress(
+            &input.lease,
+            "agent_startup",
+            "ready",
+            "Your Agent is ready",
+        )
+        .await?;
         Ok(agent_id.to_string())
     }
 }

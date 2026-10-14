@@ -84,6 +84,44 @@ impl MongoAgentLifecycleStore {
         Ok(())
     }
 
+    /// A leased worker records each observed phase transition once. Deriving
+    /// the next sequence from retained events also supports operations admitted
+    /// by older workers, whose four fixed event numbers had different timing.
+    pub(crate) async fn record_progress(
+        &self,
+        lease: &LifecycleLease,
+        phase: &str,
+        status: &str,
+        message: &str,
+    ) -> Result<(), StoreError> {
+        let current = self
+            .operations
+            .find_one(lease.filter())
+            .await
+            .map_err(driver)?
+            .ok_or(StoreError::RevisionConflict {
+                expected: 0,
+                actual: 1,
+            })?;
+        if current.events.iter().any(|event| {
+            event.phase == phase && (event.status == status || event.status == "ready")
+        }) {
+            return Ok(());
+        }
+        let sequence = current
+            .events
+            .iter()
+            .map(|event| event.sequence)
+            .max()
+            .unwrap_or(0)
+            .checked_add(1)
+            .ok_or_else(|| StoreError::Malformed("lifecycle event sequence exhausted".into()))?;
+        // Provisioning effects are sequential under this exact lease. The
+        // append rechecks its expiry, including after the read above.
+        self.append_event(lease, sequence, phase, status, message)
+            .await
+    }
+
     pub(crate) async fn mark_sandbox(
         &self,
         lease: &LifecycleLease,
@@ -115,7 +153,7 @@ impl MongoAgentLifecycleStore {
     ) -> Result<(), StoreError> {
         self.write(
             lease,
-            doc! { "$set": { "status": "succeeded", "phase": "key_scope_ready",
+            doc! { "$set": { "status": "succeeded", "phase": "agent_startup",
             "agent_id": agent_id, "lease_token": Bson::Null, "lease_expires_at": Bson::Null,
             "updated_at": DateTime::now() } },
         )
