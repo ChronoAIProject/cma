@@ -7,6 +7,7 @@ use layer2_core::{ServiceId, SubjectId, WorkspaceProfileId};
 use layer3_adapter::agent_sandbox::*;
 use layer3_adapter::{HomeVolumeMode, HomeVolumePolicy, HomeVolumeReceipt, RuntimeImage};
 
+pub(in crate::store) mod agent_replay_tests;
 mod claim_race_tests;
 mod installation_transfer_tests;
 mod workspace_proof_tests;

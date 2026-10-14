@@ -377,7 +377,7 @@ pub(super) fn skill_failure(error: AgentSkillResolutionError) -> WorkerFailure {
     }
 }
 
-fn record_receipt(
+pub(super) fn record_receipt(
     agent: &mut Agent,
     evidence: RequestEvidence,
     completed_at: &str,

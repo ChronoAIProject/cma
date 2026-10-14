@@ -9,7 +9,8 @@ use layer3_adapter::wire::{
 use layer3_adapter::{AgentLaunch, ConversationChannel, RuntimeObservation};
 
 #[derive(Clone, Copy)]
-enum Interleaving {
+pub(super) enum Interleaving {
+    ObserveOnly,
     FirstPrompt,
     FirstPromptOnReady,
     Stop,
@@ -24,19 +25,23 @@ enum Interleaving {
     Expire,
 }
 
-struct InterleavingBackend {
+pub(super) struct InterleavingBackend {
     backend: InMemoryHostedBackend,
     store: Arc<InMemorySandboxStore>,
     agent: Agent,
     operation: WireOperation,
     now: SystemTime,
     calls: AtomicUsize,
+    pub(super) adoptions: AtomicUsize,
     action: Interleaving,
 }
 
 impl InterleavingBackend {
     async fn completed(&self, operation: WireOperation) {
         if operation != self.operation || self.calls.fetch_add(1, Ordering::SeqCst) != 0 {
+            return;
+        }
+        if matches!(self.action, Interleaving::ObserveOnly) {
             return;
         }
         if matches!(self.action, Interleaving::Expire) {
@@ -73,6 +78,7 @@ impl InterleavingBackend {
         assert!(matches!(result, AgentAdmissionResult::Existing(_)));
         let mut current = self.store.get_agent(&self.agent.id).await.unwrap().unwrap();
         match self.action {
+            Interleaving::ObserveOnly => unreachable!(),
             Interleaving::FirstPrompt | Interleaving::FirstPromptOnReady => {
                 current.title = Some("Owner's title during startup".into());
             }
@@ -147,6 +153,7 @@ impl HostedBackend for InterleavingBackend {
         handle: &RuntimeHandle,
         request: &ProviderSandboxRequest,
     ) -> layer3_adapter::Result<Option<RuntimeObservation>> {
+        self.adoptions.fetch_add(1, Ordering::SeqCst);
         self.backend.adopt(handle, request).await
     }
 
@@ -186,7 +193,7 @@ impl HostedBackend for InterleavingBackend {
     }
 }
 
-fn interleave(
+pub(super) fn interleave(
     harness: &mut Harness,
     agent: &Agent,
     operation: WireOperation,
@@ -199,6 +206,7 @@ fn interleave(
         operation,
         now: harness.now,
         calls: AtomicUsize::new(0),
+        adoptions: AtomicUsize::new(0),
         action,
     });
     let adapter = Arc::new(CodexAdapter::new(
