@@ -332,3 +332,32 @@ async fn bootstrap_v2_queue_accepts_exact_parent_once_and_refuses_changed_worksp
         CommandReservationResult::Existing(_)
     ));
 }
+
+#[tokio::test]
+async fn bootstrap_ready_workspace_still_waits_for_parent_activation_without_binding_early() {
+    let (store, request) = pending().await;
+    {
+        let mut state = store.lock();
+        let workspace = state.workspaces.get_mut(&workspace().id).unwrap();
+        workspace.status = WorkspaceStatus::Ready;
+        workspace.resolved_commit = Some("a".repeat(40));
+        state.sandboxes.get_mut(&sandbox(2).id).unwrap().status = SandboxStatus::Installing;
+    }
+    let creation = created(store.admit_agent(request).await.unwrap());
+    assert_eq!(creation.agent.work.step, AgentWorkStep::WaitForWorkspace);
+    assert!(creation.worktree.base_commit.is_empty());
+    let parent = store
+        .get_sandbox(&creation.agent.sandbox_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let workspace = store
+        .get_workspace(&creation.agent.workspace_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        creation.agent.bootstrap_lineage(&parent, &workspace),
+        Some("bootstrap-one")
+    );
+}
