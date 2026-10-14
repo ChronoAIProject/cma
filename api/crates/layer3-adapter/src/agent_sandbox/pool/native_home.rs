@@ -226,7 +226,15 @@ impl AgentSandboxPools {
             .sandbox_name
             .as_deref()
             .ok_or_else(|| rejected("native Sandbox missing"))?;
-        let Some(member) = self.members.get_opt(name).await.map_err(api_error)? else {
+        // Both names come from the original Claim authority. Read concurrently,
+        // but retain member-first validation and error precedence below.
+        let (member, volume) = tokio::join!(self.members.get_opt(name), async {
+            self.volumes
+                .get_opt(&origin.storage_reference()?)
+                .await
+                .map_err(api_error)
+        });
+        let Some(member) = member.map_err(api_error)? else {
             return Ok(None);
         };
         if member.metadata.deletion_timestamp.is_some() {
@@ -236,12 +244,7 @@ impl AgentSandboxPools {
         if !self.member_spec(&member, &origin, false)? {
             return Ok(None);
         }
-        let Some(volume) = self
-            .volumes
-            .get_opt(&origin.storage_reference()?)
-            .await
-            .map_err(api_error)?
-        else {
+        let Some(volume) = volume? else {
             return Ok(None);
         };
         if volume.metadata.deletion_timestamp.is_some() {
