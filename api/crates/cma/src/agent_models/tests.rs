@@ -35,18 +35,18 @@ impl SandboxCredentialController for NoCredentials {
 #[test]
 fn provider_catalogue_is_the_only_source_of_selectable_models() {
     let models =
-        parse(br#"{"object":"list","data":[{"id":"z-model","name":"Model Z"},{"id":"a-model"}]}"#)
+        parse(br#"{"object":"list","data":[{"id":"gpt-6-sol","display_name":"GPT-6 Sol","name":"Legacy label"},{"id":"gpt-6"}]}"#)
             .unwrap();
     assert_eq!(
         models,
         vec![
             AgentModelView {
-                id: "a-model".into(),
-                label: "a-model".into()
+                id: "gpt-6".into(),
+                label: "gpt-6".into()
             },
             AgentModelView {
-                id: "z-model".into(),
-                label: "Model Z".into()
+                id: "gpt-6-sol".into(),
+                label: "GPT-6 Sol".into()
             }
         ]
     );
@@ -60,6 +60,74 @@ fn provider_catalogue_is_the_only_source_of_selectable_models() {
         assert!(parse(&serde_json::to_vec(&value).unwrap()).is_err());
     }
     assert!(parse(&serde_json::to_vec(&json!({"data": (0..=MAX_MODELS).map(|i| json!({"id":format!("m-{i}")})).collect::<Vec<_>>()})).unwrap()).is_err());
+}
+
+#[test]
+fn mixed_chrono_catalogue_excludes_image_and_unrecognized_model_families() {
+    let data = [
+        "gpt-5.6-sol",
+        "gpt-6",
+        "gpt-5.6",
+        "gpt-5.6-terra",
+        "gpt-5.6-luna",
+        "gpt-6.1-sol",
+        "gpt-6-sol",
+        "gpt-6-luna",
+        "gpt-6-astra",
+        "gpt-5.5",
+        "gpt-5.4",
+        "gpt-5.4-mini",
+        "gpt-5.3-codex-spark",
+        "codex-auto-review",
+        "gpt-5.2",
+        "gpt-image-1",
+        "gpt-image-1.5",
+        "gpt-image-2",
+        "gpt-image-2.5-flare",
+        "gpt-image-2.5-sunburst",
+    ];
+    // The observed provider contract has type=model for every row, including
+    // the image models. It provides no modality or endpoint capability fields.
+    let body = json!({"data": data.map(|id| json!({"id":id,"type":"model","object":"model","display_name":id}))});
+    let models = parse(&serde_json::to_vec(&body).unwrap()).unwrap();
+    assert_eq!(models.len(), 15);
+    assert!(models.iter().any(|model| model.id == "gpt-6.1-sol"));
+    assert!(models.iter().any(|model| model.id == "codex-auto-review"));
+    assert!(models
+        .iter()
+        .all(|model| !model.id.starts_with("gpt-image")));
+    for id in [
+        "gpt-",
+        "gpt-image-3",
+        "gpt-latest",
+        "gpt-6/other",
+        "gpt-６",
+        "o3",
+        "claude-new",
+    ] {
+        assert!(!agent_model(id), "unexpected admitted model: {id}");
+    }
+    for id in [
+        "gpt-6.2-future",
+        "gpt-7",
+        "gpt-6_preview",
+        "codex-auto-review",
+    ] {
+        assert!(agent_model(id), "catalogue model was refused: {id}");
+    }
+}
+
+#[test]
+fn labels_use_display_name_then_legacy_name_then_identity() {
+    let body = br#"{"data":[{"id":"gpt-6","display_name":"GPT-6","name":"Old name"},{"id":"gpt-6-sol","display_name":" bad ","name":"Sol"},{"id":"gpt-6-luna","display_name":"","name":"\nbad"}]}"#;
+    let models = parse(body).unwrap();
+    assert_eq!(
+        models
+            .iter()
+            .map(|model| model.label.as_str())
+            .collect::<Vec<_>>(),
+        ["GPT-6", "gpt-6-luna", "Sol"]
+    );
 }
 
 #[tokio::test]
@@ -79,7 +147,9 @@ async fn queries_exact_public_service_with_scoped_bearer_and_refuses_redirects()
                 assert!(headers
                     .get(header::AUTHORIZATION)
                     .is_some_and(|value| value == "Bearer scoped-test-key"));
-                Json(json!({"data":[{"id":"catalogue-model"}]}))
+                assert_eq!(headers[header::USER_AGENT], USER_AGENT);
+                assert_eq!(headers[header::ACCEPT], "application/json");
+                Json(json!({"data":[{"id":"gpt-6-sol","display_name":"GPT-6 Sol"},{"id":"gpt-image-2"}]}))
             }),
         )
         .route(
@@ -105,7 +175,9 @@ async fn queries_exact_public_service_with_scoped_bearer_and_refuses_redirects()
         .fetch("chrono-llm-public", "scoped-test-key")
         .await
         .unwrap();
-    assert_eq!(models[0].id, "catalogue-model");
+    assert_eq!(models.len(), 1);
+    assert_eq!(models[0].id, "gpt-6-sol");
+    assert_eq!(models[0].label, "GPT-6 Sol");
     assert!(catalog
         .fetch("chrono-llm", "scoped-test-key")
         .await
