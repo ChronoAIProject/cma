@@ -5,6 +5,23 @@ use super::{
 };
 
 impl Sandbox {
+    /// Early profile reservation must not turn ordinary parent preparation into
+    /// a failed Workspace attempt. The same atomic claim is offered again once
+    /// installation has a bound runtime and delivered credentials.
+    pub fn defers_lifecycle_workspace(&self, workspace: &Workspace) -> bool {
+        matches!(&self.origin, SandboxOrigin::Lifecycle { operation_id }
+            if self.accepts_lifecycle_bootstrap(operation_id))
+            && bootstrap_workspace(self, workspace)
+            && workspace.status == WorkspaceStatus::Preparing
+            && matches!(
+                workspace.work.step,
+                super::WorkspaceWorkStep::Prepare | super::WorkspaceWorkStep::Setup
+            )
+            && (self.status == SandboxStatus::Provisioning
+                || !self.credential.delivered
+                || self.runtime.is_none())
+    }
+
     pub fn accepts_lifecycle_bootstrap(&self, operation_id: &str) -> bool {
         matches!(&self.origin, SandboxOrigin::Lifecycle { operation_id: original } if original == operation_id)
             && matches!(
