@@ -73,6 +73,13 @@ request, owner popup approval, delivered key generation, and exactly one
 automatic notification in the original conversation; reload did not duplicate
 the notification. Stop showed Accepted/Waiting followed by Confirmed.
 
+Delete then passed on that stopped test fixture. Click-to-submitting feedback
+was **6.9 ms**, accepted feedback **289.8 ms**, and disappearance from active
+navigation **289.9 ms**. Cleanup navigation and underlying progress began closed
+and could be opened. The same request reached confirmed retirement in
+**34.420 seconds**. Immediate user-visible removal met the target; the background
+cleanup time is reported separately in `lifecycle-acceptance/delete-report.json`.
+
 Pause UI feedback took **1.8 ms**, accepted feedback **175.9 ms**, and Agent
 paused observation **1.547 seconds**; Sandbox completion took **8.797 seconds**.
 Resume UI feedback took **0.2 ms**, accepted feedback **1.781 seconds**, Agent
