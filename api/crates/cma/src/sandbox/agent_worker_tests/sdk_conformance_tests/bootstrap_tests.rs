@@ -261,8 +261,15 @@ async fn bootstrap_stop_supersedes_wait_and_delete_finishes_without_runtime_effe
             .await
             .unwrap();
     });
-    for _ in 0..3 {
-        h.run(&agent.id, h.now + Duration::from_secs(1)).await;
+    h.run(&agent.id, h.now + Duration::from_secs(1)).await;
+    // Existing Stop semantics retain the superseded lease's cleanup fence.
+    assert!(!h
+        .worker
+        .run_one(&agent.id, h.now + Duration::from_secs(1))
+        .await
+        .unwrap());
+    for _ in 0..2 {
+        h.run(&agent.id, h.now + Duration::from_secs(4)).await;
     }
     let stopped = h.stored(&agent.id).await;
     assert_eq!(stopped.status, AgentStatus::Stopped);
@@ -270,12 +277,12 @@ async fn bootstrap_stop_supersedes_wait_and_delete_finishes_without_runtime_effe
     h.store
         .schedule_agent_delete(AgentDeleteRequest {
             target: AgentControlTarget::from(&stopped),
-            requested_at: rfc3339_at(h.now + Duration::from_secs(2)),
+            requested_at: rfc3339_at(h.now + Duration::from_secs(5)),
         })
         .await
         .unwrap();
     for _ in 0..4 {
-        h.run(&agent.id, h.now + Duration::from_secs(2)).await;
+        h.run(&agent.id, h.now + Duration::from_secs(5)).await;
     }
     let deleted = h.stored(&agent.id).await;
     assert_eq!(deleted.status, AgentStatus::Deleted);
