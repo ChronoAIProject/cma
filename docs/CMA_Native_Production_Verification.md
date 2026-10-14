@@ -35,15 +35,38 @@ API and Web use the established
 | --- | --- |
 | `/tmp/cma-direct-home-v2-publish-01/publication-report.json` | `b06759305bb12851227a47310d19f5e188785f34481a4bff33e6c91bbf38937d` |
 | `/tmp/cma-direct-home-v2-publish-01/import-receipts.jsonl` | `0773163de2c13e3a3306c2021fe33734bb2ad874487e2dc5fe09805655ca7a59` |
+| `/tmp/cma-direct-home-v2-rollout-01/readiness.json` | `f3be18bcb55b5d1e8b8a33fe452d63cfc05015ddff98a18360e7db3922e5cce9` |
+| `/tmp/cma-performance-home-v2-pool-direct-01/ready.json` | `79d1377a1bd56229020a535865a80d1afed1377183336aeb811db999342ef79f` |
+| `/tmp/cma-agent-followup-live-FINAL_04cc_01/report.json` | `b5ce344ab796f7737179057f0505efbbe8411ccfce279661084c70a97a180f12` |
 
 Publication proved the actual PR merge parents `[ab789bde, 04ccbd6a]`, equal
 candidate/merge/CI trees, exact run attempt and artifact identities, runtime
 execution evidence, and destination manifest/config readback. The repository
 pins now match this completed publication.
 
-Deployment, pool readiness, fresh Agent creation latency, and same-PVC
-whole-home/history acceptance remain pending. Publication does not establish
-those live results.
+At **18:02:50 SGT**, Agent Manager generation **16**, Web generation **92**,
+and retained Gateway generation **6** each had one updated Ready replica, current
+observed generation, the exact published imageID and zero restarts. The rollout
+atomically changed the default runtime and home mode before restarting AM, then
+updated Web. Gateway configuration and specification were retained.
+
+At **18:04:03 SGT**, the new default pool had **two observed Ready replicas** at
+1,000 millicores and 1,024 MiB each. Native template inspection confirmed the
+exact runtime, `/home` mount with subPath `home`, full-home initializer and
+matching pool/template UIDs. The receipt preserved nine extant native bindings
+and the infra `python-a` pool/template; it recorded unrelated owner activity
+without treating revision changes as a release failure. No old pool was resized.
+
+A fresh actual UI creation at **18:04:18 SGT** used one creation request and
+succeeded, automatically opening the Agent with an enabled composer. Browser
+click-to-visible surface/composer time was **21.122 seconds**; the lifecycle
+terminal state was observed at **19.818 seconds** and the admission response took
+**159.22 ms**. These clocks measure different boundaries. The under-five-second
+creation target **was not met**. The matching Agent/Sandbox/Workspace identities
+and browser timing samples are retained in the creation receipt.
+
+Model/settings, skill and permission acceptance, plus same-PVC whole-home/history
+persistence across pause/resume, remain pending separate completed evidence.
 
 The release selects API, shared Web and runtime images while retaining Event
 Gateway. One Web image implements all three portals; Image Manager backend
