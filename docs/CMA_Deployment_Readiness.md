@@ -6,9 +6,11 @@ failures and receipt paths, see
 This document keeps operational instructions and dated infra diagnostics.
 
 PR #1027 is being tested through authorized local production builds. As of
-09:45 SGT on 2026-10-15, Agent Manager source `74842c4a` and Web source
+10:35 SGT on 2026-10-15, Agent Manager source `74842c4a` and Web source
 `47b56be7` are deployed in the existing CMA cluster. Their immutable image and
 running Pod identities were verified, along with the public Web asset hash.
+Combined API `6571e110` has been built and scanned locally, but its registry
+upload and deployment await Google reauthentication. It is not the live version.
 The five-second creation goal is not yet consistently met; source-ordered
 measurements are not browser measurements. Current candidate evidence and
 remaining acceptance gaps are recorded in the
@@ -877,6 +879,24 @@ its current unexpired writer lease before releasing that lease for a one-second
 retry. An admitted or uncertain dispatch is never reset to queued; ambiguous
 commits keep their existing reconciliation path. This prevents an unadmitted
 first message from waiting for the full worker lease after database contention.
+
+Connection publication has a separate lease after the opened conversation becomes
+Ready. Its Mongo transactions also back off known-aborted conflicts. If bounded
+publication attempts are exhausted, recovery rereads that exact connection claim
+and releases only its unchanged, unexpired lease for a one-second retry. It may
+adopt concurrent title/log metadata and a newly queued initial message; settings,
+existing input, runtime generation, work state or successor lease changes refuse
+that recovery. The ordinary worker reconnects under a new fence before dispatch.
+Unknown commits keep reconciliation and cannot release the lease as an abort.
+This path does not reset or replay an admitted user command whose queue deadline
+has expired.
+
+Response Stop inspection and reservation share one five-second retry scheduling
+budget with bounded backoff and jitter. Credential authority retains its original
+deadline. The budget does not cancel an in-flight transaction, resolve an unknown
+commit as a failure, or guarantee that the complete HTTP request takes less than
+five seconds. An uncertain result retains its exact control key and target for
+reconciliation; a new key must not be used to hide the uncertain original request.
 
 For acceptance, record a ready reservation's IDs and native Claim/member/PVC
 identity; submit one explicit create; verify that the resulting owned hierarchy
