@@ -3,6 +3,9 @@ use crate::store::agent_access_fixtures as fixtures;
 use layer2_core::sandbox::store::AgentStore;
 use layer2_core::{RuntimeCapabilities, RuntimeCapability};
 
+#[path = "notification_drift_tests.rs"]
+mod drift;
+
 fn agent() -> Agent {
     let sandbox = fixtures::sandbox("notify-select");
     let workspace = fixtures::workspace(&sandbox, "notify-select");
