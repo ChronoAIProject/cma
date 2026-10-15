@@ -37,10 +37,10 @@ it('hands the pending exact-Agent selection to one load, which still authorizes 
   expect(h.snapshot).not.toHaveBeenCalled();
   fresh.resolve('alice');
   expect(await loading).toMatchObject({ detail: { id: 'agt_1' }, v2: expect.anything() });
-  expect(h.currentUser).toHaveBeenCalledTimes(5);
+  expect(h.currentUser).toHaveBeenCalledTimes(4);
   expect(h.eligibility).toHaveBeenCalledOnce();
   await transport.openForLoad('agt_1');
-  expect(h.currentUser).toHaveBeenCalledTimes(7);
+  expect(h.currentUser).toHaveBeenCalledTimes(6);
   expect(h.eligibility).toHaveBeenCalledOnce();
   expect(h.post).not.toHaveBeenCalled();
 });
