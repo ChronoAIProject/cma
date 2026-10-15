@@ -37,6 +37,7 @@ import { scopeValue } from './resources/scope';
 import { ScopedNavigation } from './resources/ScopedNavigation';
 import { NavigationScopePicker, useNavigationScope } from './resources/NavigationScope';
 import { useConsoleScope } from './resources/useConsoleScope';
+import { OwnerViewsProvider, useOwnerViews } from './resources/retainedOwnerViews';
 
 interface ConsoleProps {
   readonly user: User;
@@ -48,7 +49,11 @@ interface ConsoleProps {
 }
 
 export function Console(props: ConsoleProps) {
-  return <ConsoleContent key={props.user.id} {...props} />;
+  return (
+    <OwnerViewsProvider key={props.user.id} viewerId={props.user.id}>
+      <ConsoleContent {...props} />
+    </OwnerViewsProvider>
+  );
 }
 
 function ConsoleContent({
@@ -68,6 +73,7 @@ function ConsoleContent({
   const [artifactPublicationScope] = useState(() => new ArtifactPublicationScope());
   const [revision, setRevision] = useState(0);
   const client = useCmaClient();
+  const ownerViews = useOwnerViews();
   const scopeClient = user.visitor ? undefined : client.resourceViews;
   const {
     value: navigationScope,
@@ -84,6 +90,15 @@ function ConsoleContent({
     client,
   );
   const accessUncertain = agentAccess.personalReadOnly;
+  useEffect(() => {
+    if (
+      route.kind === 'agent' &&
+      ((agentAccess.state.status === 'error' && !agentAccess.state.transient) ||
+        (agentAccess.state.status === 'ready' &&
+          agentAccess.state.value.detail.access === 'shared'))
+    )
+      ownerViews?.origins.delete(route.agentId);
+  }, [route, agentAccess.state, ownerViews]);
   const shared =
     agentAccess.state.status === 'ready' && agentAccess.state.value.detail.access === 'shared'
       ? agentAccess.state.value.detail
@@ -210,12 +225,13 @@ function ConsoleContent({
       id={route.sandboxId}
       commandScope={sandboxCommandScope}
       onNavigate={onNavigate}
-      personal={
+      personal={(accessUncertain) => (
         <SandboxPage
           key={route.sandboxId}
           client={client}
           sandboxId={route.sandboxId}
           viewerId={user.id}
+          accessUncertain={accessUncertain}
           revision={revision}
           permissions={permissions}
           busy={
@@ -226,7 +242,7 @@ function ConsoleContent({
           onAction={actions.select}
           onNavigate={onNavigate}
         />
-      }
+      )}
     />
   ) : route.kind === 'workspace' ? (
     client.resourceViews === undefined ? (

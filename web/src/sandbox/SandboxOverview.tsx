@@ -1,11 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { CmaWebClient } from '../api/client';
-import type {
-  AgentDetail,
-  SandboxDetail,
-  SandboxProfileSettings,
-  WorkspaceDetail,
-} from '../api/types';
+import type { SandboxDetail, SandboxProfileSettings } from '../api/types';
 import type { AppRoute } from '../routing/routes';
 import { routePath } from '../routing/routes';
 import type { TreeAction, TreePermissions } from '../shell/Tree';
@@ -16,6 +11,7 @@ import { sandboxChildrenAvailable, sandboxChildrenReadable, sandboxChildStatus }
 import { statusLabel } from '../vocabulary/status';
 import { codexProviderName, isCodexConnection } from '../profiles/modelProvider';
 import { Resources } from '../agent/Resources';
+import { useOwnerViews, type SandboxContents } from '../resources/retainedOwnerViews';
 
 export function SandboxOverview({
   client,
@@ -23,6 +19,7 @@ export function SandboxOverview({
   permissions,
   busy,
   stale = false,
+  readEnabled = true,
   onAction,
   onNavigate,
 }: {
@@ -31,16 +28,26 @@ export function SandboxOverview({
   readonly permissions: TreePermissions;
   readonly busy: boolean;
   readonly stale?: boolean;
+  readonly readEnabled?: boolean;
   readonly onAction: (action: TreeAction) => void;
   readonly onNavigate: (route: AppRoute) => void;
 }) {
-  const [profileSettings, setSettings] = useState<SandboxProfileSettings>();
-  const [settingsLoaded, setSettingsLoaded] = useState(false);
-  const [contents, setContents] = useState<{
-    workspaces: readonly WorkspaceDetail[];
-    agents: readonly AgentDetail[];
-    failed: boolean;
-  }>();
+  const ownerViews = useOwnerViews();
+  const views =
+    ownerViews?.client === client &&
+    sandbox.owner === ownerViews.viewerId &&
+    !['retiring', 'retired'].includes(sandbox.status)
+      ? ownerViews
+      : undefined;
+  const profileKey = JSON.stringify(sandbox.profile);
+  const retainedSettings = views?.settings.get(sandbox.id);
+  const [profileSettings, setSettings] = useState<SandboxProfileSettings | undefined>(() =>
+    retainedSettings?.profileKey === profileKey ? retainedSettings.value : undefined,
+  );
+  const [settingsLoaded, setSettingsLoaded] = useState(profileSettings !== undefined);
+  const [contents, setContents] = useState<SandboxContents | undefined>(() =>
+    views?.contents.get(sandbox.id),
+  );
   const [retry, setRetry] = useState(0);
   const { agentProvider, modelAccess } = sandbox;
   const hasPinnedSettings = agentProvider !== undefined && modelAccess !== undefined;
@@ -49,7 +56,7 @@ export function SandboxOverview({
     : profileSettings;
   const { id: profileId, revision: profileRevision, digest: profileDigest } = sandbox.profile;
   useEffect(() => {
-    if (hasPinnedSettings) return;
+    if (hasPinnedSettings || !readEnabled) return;
     const abort = new AbortController();
     void client
       .readSandboxProfileSettings(
@@ -57,17 +64,36 @@ export function SandboxOverview({
         { signal: abort.signal },
       )
       .then((value) => {
-        if (!abort.signal.aborted) setSettings(value);
+        if (!abort.signal.aborted) {
+          setSettings(value);
+          if (JSON.stringify(views?.sandboxes.get(sandbox.id)?.sandbox.profile) === profileKey)
+            views?.settings.put(sandbox.id, { profileKey, value });
+        }
       })
       .catch(() => {
-        if (!abort.signal.aborted) setSettings(undefined);
+        if (!abort.signal.aborted) {
+          setSettings(undefined);
+          views?.settings.delete(sandbox.id);
+        }
       })
       .finally(() => {
         if (!abort.signal.aborted) setSettingsLoaded(true);
       });
     return () => abort.abort();
-  }, [client, profileId, profileRevision, profileDigest, hasPinnedSettings, retry]);
+  }, [
+    client,
+    profileId,
+    profileRevision,
+    profileDigest,
+    hasPinnedSettings,
+    retry,
+    readEnabled,
+    views,
+    sandbox.id,
+    profileKey,
+  ]);
   useEffect(() => {
+    if (!readEnabled) return;
     const abort = new AbortController();
     void (async () => {
       const results = await Promise.allSettled(
@@ -84,6 +110,8 @@ export function SandboxOverview({
       const workspaces = results.flatMap((result) =>
         result.status === 'fulfilled' ? [result.value] : [],
       );
+      if (results.some((result) => result.status === 'rejected'))
+        views?.contents.delete(sandbox.id);
       setContents((previous) => ({
         workspaces,
         agents:
@@ -116,17 +144,22 @@ export function SandboxOverview({
             }),
         ),
       );
-      if (!abort.signal.aborted)
-        setContents({
+      if (!abort.signal.aborted) {
+        const value = {
           workspaces,
           agents: agentResults.flatMap((result) =>
             result.status === 'fulfilled' ? [result.value] : [],
           ),
           failed: [...results, ...agentResults].some((result) => result.status === 'rejected'),
-        });
+        };
+        setContents(value);
+        if (value.failed) views?.contents.delete(sandbox.id);
+        else if (views?.sandboxes.get(sandbox.id)?.sandbox === sandbox)
+          views.contents.put(sandbox.id, value);
+      }
     })();
     return () => abort.abort();
-  }, [client, sandbox, retry]);
+  }, [client, sandbox, retry, views, readEnabled]);
   const reach = (sandbox.nyxidServices ?? contents?.agents[0]?.reach)?.filter(
     (id) => !isCodexConnection(id),
   );

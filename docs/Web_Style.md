@@ -2036,6 +2036,16 @@ history from zero. Denied access clears the view, and account/client changes
 cannot reuse it. An ordinary stream handshake does not create a lost-update
 warning. Explicit lag and actually discarded live fragments remain visible.
 
+The same account/client scope retains up to six recently visited owner Sandbox
+snapshots and their loaded Workspace/Agent details. Re-entry paints this recorded
+content immediately while current access and lifecycle state are checked; all
+mutation controls, connection setup and live resource readings wait for those
+checks. Shared views never consume owner snapshots. Access denial, missing or
+retiring/retired resources clear their retained display data. Retain only the
+immutable Agent creation category for the owner header; privileged provenance
+and source actions still require fresh authorized reads. Memory retention adds
+no background polling and ends with the authenticated scope.
+
 ## Changelog
 
 Append-only. Never edit or delete an entry.
@@ -2282,3 +2292,4 @@ draft. Summary readers never receive the management history control.
 - 2026-10-15 — Preserve displayed opacity when menu, dialog or notification presence reverses mid-transition. Use shared opacity transitions with starting styles for first appearance; retain immediate inert exits, focus behavior, drafts and reduced-motion removal.
 
 - 2026-10-15 — Reuse already resolved profile/service/skill labels synchronously when a view returns within the same authenticated reference provider. Keep existing link identities and error handling, and discard names immediately when the client/account changes so loading text does not flash in place of known names.
+| 2026-10-15 | Preserve recent owner Sandbox content and immutable Agent creation labels across route re-entry within a bounded account/client scope. Revalidate access and lifecycle state before controls become usable; discard denied, missing, shared and retired projections, reject late replies, and retain no privileged provenance facts. |
