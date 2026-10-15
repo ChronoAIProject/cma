@@ -29,6 +29,7 @@ import { useAgentConnectionReadiness } from './connectionReadiness';
 import { useOptimisticMessages } from './optimisticMessages';
 import type { AgentViewPosition } from './viewPosition';
 import type { MessageUser } from './MessageIdentity';
+import { agentDisplayTitle } from './presentation';
 
 interface AgentSurfaceProps {
   readonly lifecycleClient?: CmaWebClient;
@@ -91,9 +92,7 @@ export function AgentSurface({
       ? { status: 'loading' }
       : controller.state;
   const documentTitle =
-    state.status === 'ready'
-      ? `${state.detail.runtimeMetadata?.description || state.detail.title || 'Untitled agent'} · CMA`
-      : undefined;
+    state.status === 'ready' ? `${agentDisplayTitle(state.detail)} · CMA` : undefined;
   const source = useAgentSource(agentId, state.status === 'ready' && !accessUncertain);
   const provenance = useAgentProvenance(agentId, state.status === 'ready' && !accessUncertain);
   const sandboxOwner = controller.progressObservation?.sandbox.owner;
@@ -184,8 +183,7 @@ export function AgentSurface({
 
   const { detail, conversation } = state;
   const status = detail.status;
-  const title =
-    detail.runtimeMetadata?.description?.trim() || detail.title?.trim() || 'Untitled agent';
+  const title = agentDisplayTitle(detail);
   const pausedNotice =
     conversation.livePausedNotice === undefined
       ? detail.pausedNotice

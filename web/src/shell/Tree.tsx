@@ -28,6 +28,7 @@ import { dotFor, stateMeta, keyboardNavigation } from './treePresentation';
 import type { ResourceViewsClient } from '../resources/client';
 import { useChannelFacts } from '../resources/useChannelFacts';
 import { ChannelBadge, TreeFactsSummary, treeAgentIds } from './treeChannel';
+import { agentDisplayTitle } from '../agent/presentation';
 
 export interface TreePermissions {
   readonly createWorkspace: boolean;
@@ -367,11 +368,7 @@ export function Tree({
                                                 nodeId={`agent:${agent.id}`}
                                                 parentId={workspaceNode}
                                                 level={3}
-                                                label={
-                                                  agent.runtimeMetadata?.description?.trim() ||
-                                                  agent.title?.trim() ||
-                                                  'Untitled agent'
-                                                }
+                                                label={agentDisplayTitle(agent)}
                                                 icon={<IconAgentPresetOutline16 />}
                                                 route={{ kind: 'agent', agentId: agent.id }}
                                                 selected={
