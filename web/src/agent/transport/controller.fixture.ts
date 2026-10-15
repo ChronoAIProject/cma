@@ -41,6 +41,7 @@ export function queuedPage(text = 'Cancel this waiting message', revision = 7) {
   return {
     object: 'cma.agent.queued_inputs',
     agent_id: 'agt_1',
+    next_after: null,
     data: [
       {
         response: queuedObservation('resp_1', revision).response,
@@ -60,7 +61,7 @@ export function harness() {
   const cancel = vi.fn();
   const currentUser = vi.fn(async () => 'alice' as string | undefined);
   const listQueued = vi.fn(async () =>
-    json({ object: 'cma.agent.queued_inputs', agent_id: 'agt_1', data: [] }),
+    json({ object: 'cma.agent.queued_inputs', agent_id: 'agt_1', data: [], next_after: null }),
   );
   const observeQueued = vi.fn(async (responseId: string) =>
     json(queuedObservation(responseId, 7, false)),
