@@ -456,7 +456,7 @@ for (const width of [1440, 390]) {
               : JSON.stringify(kind === 'Sandbox' ? boundary.sandbox : boundary.workspace),
         });
       });
-      await page.goto('/');
+      await page.goto('/agent-manager');
       if (width === 390)
         await page.getByRole('button', { name: 'Show navigation', exact: true }).click();
       const level = kind === 'Sandbox' ? 1 : kind === 'Workspace' ? 2 : 3;

@@ -276,7 +276,7 @@ async function main() {
     for (const problem of await oneIndicator(page)) problems.push(`signed out: ${problem}`);
 
     identity = 'authenticated';
-    await visit(page, PORT, 'domcontentloaded');
+    await visit(page, PORT, 'domcontentloaded', '/agent-manager');
     await ready(page, '.frame', { label: 'authenticated shell' });
     await page.evaluate(() => document.fonts.ready.then(() => undefined));
     for (const problem of await fills(page)) problems.push(`authenticated ${problem}`);
